@@ -1,4 +1,4 @@
--- Byeolharu — Milestone 1: player profiles + auth structure.
+-- Byeharu — Milestone 1: player profiles + auth structure.
 -- Server-authoritative: clients never insert profiles directly; a trigger on
 -- auth.users creates one on signup. RLS restricts each player to their own row.
 

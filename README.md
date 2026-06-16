@@ -1,4 +1,4 @@
-# Byeolharu
+# Byeharu
 
 A PvE space-strategy game (no PvP for now) — build bases, gather resources, move
 fleets, fight pirates, explore sectors. Inspired by OGame / Tribal Wars / Travian

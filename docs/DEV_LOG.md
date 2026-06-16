@@ -1,7 +1,25 @@
-# Byeolharu — Dev Log
+# Byeharu — Dev Log
 
 Running record of **requests**, **work done**, **bugs**, and **fixes**.
 Newest entries at the top. Dates are absolute (YYYY-MM-DD).
+
+---
+
+## 2026-06-16 — Rename to Byeharu
+
+**Request**
+Change the game name to **Byeharu** (the initial scaffold used "Byeolharu"; user
+confirmed the shorter spelling).
+
+**Work done**
+- Renamed project folder `byeolharu` → `byeharu`.
+- Updated `package.json` / `package-lock.json` name, `index.html` title, README,
+  the migration comment, the Supabase client warning tag, and the AuthPage /
+  Dashboard headings from "Byeolharu" to "Byeharu".
+- Updated saved project memory.
+
+**Bugs / fixes**
+- _(none)_
 
 ---
 
@@ -14,7 +32,7 @@ Rebuild the PvE space-strategy game from scratch as a clean web-first project na
 milestone-by-milestone. First milestone: scaffold + basic auth structure.
 
 **Work done**
-- Created Vite React+TS project at `C:\Users\디폴리스\byeolharu`.
+- Created Vite React+TS project at `C:\Users\디폴리스\byeharu`.
 - Installed `zustand`, `@supabase/supabase-js`, `react-router-dom`, and
   `tailwindcss` + `@tailwindcss/vite` (Tailwind v4).
 - Wired Tailwind via the Vite plugin (`vite.config.ts`) and `@import 'tailwindcss'`
@@ -38,7 +56,6 @@ milestone-by-milestone. First milestone: scaffold + basic auth structure.
 
 **Open follow-ups**
 - User must create a Supabase project and fill `.env.local`.
-- Confirm final game name spelling (see conversation — "byeharu" vs "Byeolharu").
 - For CI: add repo secrets `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`,
   `SUPABASE_DB_PASSWORD`.
 - Run `npm run build` / typecheck once `.env.local` exists to confirm green.

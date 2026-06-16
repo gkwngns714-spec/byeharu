@@ -42,7 +42,7 @@ export function AuthPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur">
         <h1 className="mb-1 text-center text-3xl font-semibold tracking-tight text-indigo-200">
-          Byeolharu
+          Byeharu
         </h1>
         <p className="mb-6 text-center text-sm text-white/50">
           {mode === 'signin' ? 'Welcome back, commander.' : 'Claim your first colony.'}

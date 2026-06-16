@@ -7,7 +7,7 @@ if (!url || !anonKey) {
   // Surfaced early so a missing .env is obvious in dev instead of a cryptic
   // network error later.
   console.warn(
-    '[byeolharu] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. ' +
+    '[byeharu] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. ' +
       'Copy .env.example to .env.local and fill in your Supabase project values.',
   )
 }

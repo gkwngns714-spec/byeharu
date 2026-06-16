@@ -13,7 +13,7 @@ export function Dashboard() {
       <header className="mb-10 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-indigo-200">
-            Byeolharu
+            Byeharu
           </h1>
           <p className="text-sm text-white/40">{user?.email}</p>
         </div>
