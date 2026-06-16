@@ -53,10 +53,17 @@ Apply the database migrations to your Supabase project (via the Supabase CLI
 
 ## Milestones
 
-1. **Scaffold + auth** ✅ — Vite/React/TS/Tailwind/Zustand, Supabase client, auth.
-2. Living base — data model + RLS + lazy resource accrual.
-3. Buildings + build queue.
-4. Fleets + movement.
-5. Galaxy map + pirate pressure (co-op PvE layer).
-6. Combat + reports.
-7. Balance + polish + deploy.
+> Authoritative roadmap — see `docs/ARCHITECTURE.md` §16. The MVP proves one loop:
+> `map → location → movement → presence → combat → retreat → return → report`.
+> Economy is **combat-reward-only** for now (buildings/production/training deferred — §17).
+
+1. **Scaffold + auth** ✅ — Vite/React/TS/Tailwind/Zustand, Supabase client, `profiles`.
+2. **World map** ✅ — `sectors`/`zones`/`locations` + seed + `get_world_map()` + read-only map screen.
+3. **Movement + presence spine** ✅ — bases/units/config, fleets, `send_fleet_to_location()`,
+   `process_fleet_movements()`, return; send → travel → present at a safe zone → return (no combat).
+4. **Pirate combat** ✅ — `combat_encounters`/`ticks`/`reports`, `process_combat_ticks()`, wave
+   scaling, per-unit HP, retreat, metal rewards on home-arrival; full pirate-hunt loop.
+5. **Living world** ⬜ — `process_location_state_ticks()` + zone/location dynamics (pirate
+   pressure / danger drift), wire all cron jobs together, balance.
+6. **Frontend depth** ⬜ — location panel, send-fleet preview math, fleet status, active-combat
+   panel, round log, report page — polished playable loop.

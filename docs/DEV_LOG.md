@@ -5,6 +5,66 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M5 Living World (built; pending deploy + verify)
+
+**Request** Build M5 per the "Living World Design Law": world-state pressure +
+danger drift + location dynamics via a 60s cron, **without rewriting** the M2–M4
+loop. Strict ownership (World State sole writer of `location_state`/`zone_state`),
+combat may only *read* `danger_modifier`, acyclic cron, anti-cheat lockdown.
+
+**Step 0 inspection (key findings)**
+- No `worldstate_*` / `location_state` / `zone_state` existed — only deferred-stub
+  comments (`0002`, `0008`). Built fresh.
+- **Single unregister seam:** every terminal presence transition (escape, defeat,
+  safe-leave) funnels through `presence_complete()` → one hook, not six.
+- **Combat touches one function:** `combat_create_encounter` starts
+  `enemy_integrity_current = 0`, so wave 1 spawns inside `process_combat_ticks`;
+  the danger read goes there only.
+
+**Work done (migrations `0031`–`0033`)**
+- `0031_worldstate_tables.sql`: `location_state` (pressure/danger_modifier/
+  active_fleets/last_tick_at) + `zone_state` rollup; public-read RLS, no client
+  write; seeded one row per location/zone.
+- `0032_worldstate_fns.sql`: 10 `game_config` keys (no magic numbers);
+  `worldstate_register_presence` / `worldstate_unregister_presence` (cache ±1) /
+  `worldstate_tick()` (reconcile active_fleets from real presences → drift/relief
+  if elapsed ≥ min → bounded `danger_modifier` → zone rollup); service-role-only
+  `dev_worldstate_prime` test helper; **edges wired** by re-creating
+  `presence_create` (→ register) and `presence_complete` (→ unregister), behavior
+  otherwise identical; **combat read** added to `process_combat_ticks` (× a
+  fallback-guarded `danger_modifier`, else 1.0); re-locked execute surface.
+- `0033_cron_location_state.sql`: `process_location_state_ticks()` → only
+  `worldstate_tick()`; pg_cron every 60s. Cadences now 30s / 2s / 60s.
+
+**Balance safety (Rule F):** `danger_modifier` is **piecewise with baseline → exactly
+1.0**, and seed pressure = baseline = 50 → fresh locations multiply combat by 1.0,
+so M4 numbers are unchanged until pressure actually drifts.
+
+**Frontend (minimal, read-only):** `mapTypes.ts` `LocationState`; `mapApi.ts`
+`fetchLocationStates()` (public read); `MapPage.tsx` shows "Pirate activity:
+Calm/Rising/Severe" + "Danger: Low/Medium/High" on pirate_hunt cards. No writes.
+
+**Verification:** `scripts/verify-m5.mjs` + `verify:m5` — Tests 1–9 (rows, drift,
+register, relief, unregister, reconcile, danger-feeds-combat, double-tick
+idempotency, M2/M3/M4 regression). Uses a **service-role key** to drive the locked
+`worldstate_tick()`/dev helper (clients stay denied), mirroring the `dev_reset_player`
+precedent.
+
+**Not yet run (gated on user):** fresh clone has no `.env.local` and migrations
+aren't on the remote. Local `npm install`/build also blocked by a known npm bug on
+this OneDrive path (optional wasm deps `@tailwindcss/oxide-wasm32-wasi` etc. fail to
+reify → "Exit handler never called", no `.bin` shims). **To finish M5:** `supabase
+db push`, add `SUPABASE_SERVICE_ROLE_KEY` to `.env.local`, `npm run verify:m5`.
+
+**CI:** added `.github/workflows/verify.yml` — runs `verify:m5` (chains M2/M3/M4) on
+ubuntu after the deploy workflow succeeds, or via manual dispatch. Sidesteps the local
+npm/TLS toolchain blockers. Needs repo secrets `VITE_SUPABASE_URL`,
+`VITE_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+**Also:** reconciled README milestone list to the real M1–M6 roadmap.
+
+---
+
 ## 2026-06-17 — M4 cleanup (loose ends; verified 40/40)
 
 **1. Reward deposit → home arrival.** Combat no longer deposits at escape. On

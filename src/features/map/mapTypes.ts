@@ -61,3 +61,14 @@ export interface MapSector {
 export interface WorldMap {
   sectors: MapSector[]
 }
+
+/**
+ * M5: World State (dynamic). Read-only mirror of the location_state table. The
+ * client never writes these — worldstate_tick() (server cron) owns them.
+ */
+export interface LocationState {
+  location_id: string
+  pressure: number
+  danger_modifier: number
+  active_fleets: number
+}

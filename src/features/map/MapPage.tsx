@@ -1,21 +1,22 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchWorldMap } from './mapApi'
-import type { MapLocation, WorldMap } from './mapTypes'
+import { fetchLocationStates, fetchWorldMap } from './mapApi'
+import type { LocationState, MapLocation, WorldMap } from './mapTypes'
 
 /**
  * M2: read-only galaxy browser. Shows the static world (sectors → zones →
- * locations). No fleets, movement, presence, or combat yet — distance/travel-time
- * arrive in M3 once a base exists.
+ * locations). M5 overlays live World State (pirate activity / danger) on
+ * pirate_hunt locations — read-only; the server owns those values.
  */
 export function MapPage() {
   const [world, setWorld] = useState<WorldMap | null>(null)
+  const [states, setStates] = useState<Record<string, LocationState>>({})
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchWorldMap()
-      .then(setWorld)
+    Promise.all([fetchWorldMap(), fetchLocationStates()])
+      .then(([w, s]) => { setWorld(w); setStates(s) })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
   }, [])
@@ -74,7 +75,7 @@ export function MapPage() {
 
                   <ul className="grid gap-2 sm:grid-cols-2">
                     {zone.locations.map((loc) => (
-                      <LocationCard key={loc.id} loc={loc} />
+                      <LocationCard key={loc.id} loc={loc} state={states[loc.id]} />
                     ))}
                   </ul>
                 </div>
@@ -87,7 +88,19 @@ export function MapPage() {
   )
 }
 
-function LocationCard({ loc }: { loc: MapLocation }) {
+// M5: derive friendly labels from live World State (read-only).
+function activityLabel(pressure: number): { text: string; cls: string } {
+  if (pressure < 34) return { text: 'Calm', cls: 'text-emerald-300' }
+  if (pressure < 67) return { text: 'Rising', cls: 'text-amber-300' }
+  return { text: 'Severe', cls: 'text-red-300' }
+}
+function dangerLabel(mod: number): { text: string; cls: string } {
+  if (mod <= 1.0) return { text: 'Low', cls: 'text-emerald-300' }
+  if (mod < 1.13) return { text: 'Medium', cls: 'text-amber-300' }
+  return { text: 'High', cls: 'text-red-300' }
+}
+
+function LocationCard({ loc, state }: { loc: MapLocation; state?: LocationState }) {
   const isHunt = loc.location_type === 'pirate_hunt'
   return (
     <li className="rounded-lg border border-white/10 bg-white/5 p-3">
@@ -109,6 +122,22 @@ function LocationCard({ loc }: { loc: MapLocation }) {
           ? `difficulty ${loc.base_difficulty} · reward tier ${loc.reward_tier}`
           : 'safe — no activity'}
       </div>
+      {isHunt && state && (
+        <div className="mt-1.5 flex gap-3 text-[11px] text-white/50">
+          <span>
+            Pirate activity:{' '}
+            <span className={activityLabel(state.pressure).cls}>
+              {activityLabel(state.pressure).text}
+            </span>
+          </span>
+          <span>
+            Danger:{' '}
+            <span className={dangerLabel(state.danger_modifier).cls}>
+              {dangerLabel(state.danger_modifier).text}
+            </span>
+          </span>
+        </div>
+      )}
     </li>
   )
 }
