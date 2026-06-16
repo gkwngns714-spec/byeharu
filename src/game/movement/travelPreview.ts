@@ -27,11 +27,18 @@ export function previewTravelSeconds(
   return Math.max(minSeconds, (dist / fleetSpeed) * scale)
 }
 
-/** mm:ss countdown from a future ISO timestamp; "arrived" once elapsed. */
-export function countdownTo(targetIso: string | null | undefined, now: number = Date.now()): string {
-  if (!targetIso) return '—'
+/**
+ * "m:ss" while time remains; null once the clock reaches zero or there's no
+ * target. Callers decide the wording (e.g. "arriving in {clock}" vs an
+ * "awaiting server confirmation" state), so we never compose a stray fallback.
+ */
+export function countdownClock(
+  targetIso: string | null | undefined,
+  now: number = Date.now(),
+): string | null {
+  if (!targetIso) return null
   const ms = new Date(targetIso).getTime() - now
-  if (ms <= 0) return 'arriving…'
+  if (ms <= 0) return null
   const total = Math.ceil(ms / 1000)
   const m = Math.floor(total / 60)
   const s = total % 60

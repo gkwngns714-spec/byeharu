@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { countdownTo } from '../../game/movement/travelPreview'
+import { countdownClock } from '../../game/movement/travelPreview'
 import type { MapLocation } from '../map/mapTypes'
 import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from './fleetTypes'
 import { requestLeaveLocation } from './fleetApi'
@@ -96,12 +96,28 @@ export function FleetStatusPanel({
                 </div>
 
                 <div className="mt-1 text-xs text-white/45">
-                  {f.status === 'moving' && move && (
-                    <>→ {locName(move.target_location_id)} · arriving in {countdownTo(move.arrive_at)}</>
-                  )}
-                  {f.status === 'returning' && move && (
-                    <>← returning home · arriving in {countdownTo(move.arrive_at)}</>
-                  )}
+                  {f.status === 'moving' &&
+                    move &&
+                    (() => {
+                      const clock = countdownClock(move.arrive_at)
+                      return (
+                        <>
+                          → {locName(move.target_location_id)} ·{' '}
+                          {clock ? `arriving in ${clock}` : 'awaiting server confirmation…'}
+                        </>
+                      )
+                    })()}
+                  {f.status === 'returning' &&
+                    move &&
+                    (() => {
+                      const clock = countdownClock(move.arrive_at)
+                      return (
+                        <>
+                          ← returning home ·{' '}
+                          {clock ? `arriving in ${clock}` : 'awaiting server confirmation…'}
+                        </>
+                      )
+                    })()}
                   {f.status === 'present' && <>at {locName(f.current_location_id)}</>}
                 </div>
 
