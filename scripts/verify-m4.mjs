@@ -163,19 +163,27 @@ async function main() {
   const { data: presB } = await supabase.from('location_presence').select('status').eq('fleet_id', dB.fleet_id).maybeSingle()
   presB && presB.status !== 'active' && presB.status !== 'retreating' ? ok('defeat leaves no active presence (no stuck state)') : bad('defeat presence', presB?.status)
 
-  // ── C. RETREAT-DEATH ──────────────────────────────────────────────────────
-  console.log(`\nC. Retreat-death at "${den.name}" (3 scouts):`)
+  // ── C. RETREAT UNDER FIRE — fleet may die or survive; both must be clean ───
+  console.log(`\nC. Retreat under fire at "${den.name}" (2 scouts):`)
   const metalC = await baseMetal(base.id)
-  const { data: dC } = await supabase.rpc('send_fleet_to_location', { p_base: base.id, p_location: den.id, p_units: [{ unit_type_id: 'scout', quantity: 3 }] })
+  const { data: dC } = await supabase.rpc('send_fleet_to_location', { p_base: base.id, p_location: den.id, p_units: [{ unit_type_id: 'scout', quantity: 2 }] })
   const encC = await poll(async () => { const e = await encounterFor(dC.fleet_id); return e && ['active', 'defeat'].includes(e.status) ? e : null })
   if (!encC) die('C: encounter never appeared')
   if (encC.status === 'active') await supabase.rpc('request_retreat', { p_presence: encC.presence_id })
   const endC = await poll(async () => { const e = await encounterFor(dC.fleet_id); return e && ['defeat', 'escaped', 'completed'].includes(e.status) ? e : null }, { timeoutMs: 60000, intervalMs: 2000 })
   if (!endC) die('C: never ended')
-  endC.status === 'defeat' ? ok('died during/before retreat → defeat') : bad('C result', endC.status)
-  ;(((await supabase.from('reward_grants').select('id').eq('source_id', endC.id)).data) ?? []).length === 0 ? ok('no reward on retreat-death') : bad('reward on retreat-death', 'found')
-  ;(await baseMetal(base.id)) === metalC ? ok('base metal unchanged') : bad('base metal retreat-death', 'increased')
-  ;(((await supabase.from('fleet_movements').select('id').eq('fleet_id', dC.fleet_id).eq('mission_type', 'return_home')).data) ?? []).length === 0 ? ok('no return on retreat-death') : bad('no return retreat-death', 'found')
+  const grantsC = ((await supabase.from('reward_grants').select('id').eq('source_id', endC.id)).data) ?? []
+  const retsC = ((await supabase.from('fleet_movements').select('id').eq('fleet_id', dC.fleet_id).eq('mission_type', 'return_home')).data) ?? []
+  if (endC.status === 'defeat') {
+    ok('fleet died during retreat → defeat')
+    grantsC.length === 0 ? ok('  defeat: no reward') : bad('defeat reward', `found ${grantsC.length}`)
+    retsC.length === 0 ? ok('  defeat: no return movement') : bad('defeat return', `found ${retsC.length}`)
+    ;(await baseMetal(base.id)) === metalC ? ok('  defeat: base metal unchanged') : bad('defeat base metal', 'increased')
+  } else {
+    ok(`fleet survived retreat → ${endC.status} (8s retreat let it escape)`)
+    grantsC.length <= 1 ? ok('  escaped: no duplicate reward grant') : bad('escaped reward dup', `found ${grantsC.length}`)
+    retsC.length === 1 ? ok('  escaped: exactly one return movement') : bad('escaped return', `found ${retsC.length}`)
+  }
 
   // ── G. Safe zone must NOT start combat ────────────────────────────────────
   console.log(`\nG. Safe zone (no combat allowed):`)

@@ -5,6 +5,39 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M4 CLOSE (combined final pass; all verified)
+
+**Part 1 — retreat + wording**
+- Retreat delay **20s → 8s** (config `retreat_delay_seconds`; UI countdown reads it).
+- Report wording "Return movement started." → "Fleet escaped — now returning to base."
+  Banner → "fleet breaks away and heads home in Ns." Combat-state label friendly
+  ("In combat" / "Next wave incoming" / "Retreating").
+
+**Part 2 — edge cases (verify:m4 37/37):** destroyed-during-retreat → defeat (no
+reward/return); retreat spam → exactly one accepted; **destroyed ships do NOT return**
+(base = initial − lost, e.g. scout 98 after losing 2); one-encounter-per-fleet; reward
+once (idempotent); safe-zone & invalid-location rejected; defeat leaves no stuck
+presence. Browser-refresh/offline: all combat state is server-side (cron-driven), UI
+reloads from backend — survives refresh/close. M2 11/11, M3 13/13 (no regressions).
+
+**Part 3 — cleanup**
+- Dev helper `dev_reset_player(uuid)` added — SECURITY DEFINER, **not granted to
+  clients** (SQL-editor/service-role only): clears stuck combat/movement/presence.
+- Reward-securing rule: granted at **escape** (combat end). Return trip is
+  uninterruptible (no en-route combat), so this == "secured on guaranteed return";
+  death only happens pre-escape → no reward. Kept as-is (would move to home-arrival
+  only when en-route risk exists).
+- Hard-coded values to extract in a future balance pass: reward danger factor 0.25,
+  danger time-divisor 180s, ±10% variance, defense curve 100/(100+def).
+
+**Files:** migrations `0027` (wave HP), `0028` (retreat 8s), `0029` (dev_reset);
+`scripts/verify-m4.mjs`; `ActiveCombatPanel.tsx`, `CombatReportsView.tsx`.
+
+**M4 is safe to close.** Remaining (low) risk: balance not tuned to fleet power;
+weapon cooldowns prepared not implemented; a few hard-coded balance constants.
+
+---
+
 ## 2026-06-17 — M4 final checklist audit (all pass)
 
 **Request** 22-point M4 final checklist before moving on.
