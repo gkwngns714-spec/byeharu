@@ -5,6 +5,24 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — ✅ M3 COMPLETE
+
+Browser click-through passed; M3 accepted. Criteria met: units return correctly,
+fleets complete correctly, no duplicate fleets, no console errors, no backend
+errors. One UI wording bug found + fixed (`arriving in arriving…` →
+`awaiting server confirmation…` once the client clock hits zero, while the cron
+resolves; backend untouched).
+
+**M4 requirement captured (user):** combat must feel MORE active than movement.
+Movement stays slow (cron ~30s OK). Combat needs **faster server combat steps**
+(tune `game_config.combat_tick_seconds`) and **client-side `combat_events` for
+missile/laser visuals** — cosmetic, driven by server-authoritative results, never
+client authority. Do NOT optimize movement's zero-countdown gap.
+
+M4 not started — awaiting go-ahead.
+
+---
+
 ## 2026-06-16 — M3 frontend (Command Center)
 
 **Request**
