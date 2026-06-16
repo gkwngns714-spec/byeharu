@@ -77,9 +77,10 @@ export function ActiveCombatPanel({
         <div>
           <h2 className="text-lg font-medium text-red-200">⚔️ Combat — {locationName}</h2>
           <p className="text-sm text-white/45">
-            wave <span className="text-white/80">{encounter.wave_number}</span> · danger{' '}
-            <span className="text-white/80">{encounter.danger_level}</span> · cleared{' '}
-            <span className="text-white/80">{encounter.waves_cleared}</span> · {encounter.status}
+            Wave <span className="text-white/80">{encounter.wave_number}</span> · Danger{' '}
+            <span className="text-white/80">{encounter.danger_level}</span> ·{' '}
+            <span className="text-white/80">{encounter.waves_cleared}</span> waves cleared ·{' '}
+            {encounter.status.charAt(0).toUpperCase() + encounter.status.slice(1)}
           </p>
         </div>
         <button
@@ -93,8 +94,8 @@ export function ActiveCombatPanel({
 
       {retreating && (
         <p className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
-          Retreating — escaping in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}. Warning: the
-          fleet can still take damage during retreat.
+          Retreating — return movement starts in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}.
+          Warning: the fleet can still take damage during retreat.
         </p>
       )}
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
@@ -123,10 +124,11 @@ export function ActiveCombatPanel({
           {units.length === 0 && <p className="text-sm text-white/40">no units</p>}
           {units.slice().sort((a, b) => a.unit_type_id.localeCompare(b.unit_type_id)).map((u) => {
             const pct = u.hp_max > 0 ? (u.hp_current / u.hp_max) * 100 : 0
+            const lost = u.initial_count - u.alive_count
             return (
               <Bar
                 key={u.id}
-                label={`${typeName(u.unit_type_id)} — ${u.alive_count}/${u.initial_count} ships`}
+                label={`${typeName(u.unit_type_id)} — ${u.alive_count}/${u.initial_count} ships${lost > 0 ? ` (${lost} lost)` : ''}`}
                 pct={pct}
                 text={`${pct.toFixed(0)}% · ${Math.round(u.hp_current)}/${Math.round(u.hp_max)} HP`}
                 color={u.alive_count === 0 ? 'bg-white/20' : 'bg-emerald-400'}
@@ -140,8 +142,17 @@ export function ActiveCombatPanel({
       {latest && (
         <div className="mb-4 rounded-lg border border-white/10 bg-black/20 p-3 text-sm">
           <h4 className="mb-1 text-[10px] uppercase tracking-wide text-white/35">Latest exchange (tick {latest.tick_number})</h4>
-          <p className="text-white/70">You dealt <span className="text-indigo-300">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
-          <p className="text-white/70">Pirates dealt <span className="text-red-300">{Math.round(latest.enemy_damage)}</span> damage.</p>
+          {retreating ? (
+            <>
+              <p className="text-amber-200/80">Your fleet is retreating — weapons disengaged.</p>
+              <p className="text-white/70">Pirates dealt <span className="text-red-300">{Math.round(latest.enemy_damage)}</span> damage during disengagement.</p>
+            </>
+          ) : (
+            <>
+              <p className="text-white/70">You dealt <span className="text-indigo-300">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
+              <p className="text-white/70">Pirates dealt <span className="text-red-300">{Math.round(latest.enemy_damage)}</span> damage.</p>
+            </>
+          )}
           <p className="text-white/55">{lossText(latest.player_losses_json)}</p>
         </div>
       )}
@@ -153,6 +164,11 @@ export function ActiveCombatPanel({
         <p className="text-sm">
           {rewards.length === 0 ? <span className="text-white/40">none yet</span>
             : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-white/70">{code}: {amt}</span>)}
+        </p>
+        <p className="mt-1 text-[11px] text-white/35">
+          {retreating
+            ? 'Locked — secured only if your fleet returns home safely.'
+            : 'Not secured yet — kept only if your fleet returns home (lost if destroyed).'}
         </p>
       </div>
 

@@ -93,7 +93,7 @@ export function Dashboard() {
             locations={game.locations}
             onChanged={game.refresh}
           />
-          <CombatReportsView reports={combat.reports} locations={game.locations} />
+          <CombatReportsView reports={combat.reports} locations={game.locations} unitTypes={game.unitTypes} />
         </div>
       )}
     </div>

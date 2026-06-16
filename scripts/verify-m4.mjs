@@ -120,6 +120,10 @@ async function main() {
   ;(await baseMetal(base.id)) === locked && locked > 0 ? ok(`base metal +${locked} once`) : bad('base metal', `got ${await baseMetal(base.id)}`)
   const { data: retA } = await supabase.from('fleet_movements').select('id').eq('fleet_id', fleetA).eq('mission_type', 'return_home').maybeSingle()
   retA ? ok('return movement created (M3 spine)') : bad('return movement', 'missing')
+  const { data: repA } = await supabase.from('combat_reports').select('survivors_json,total_losses_json').eq('encounter_id', escaped.id).maybeSingle()
+  repA && Object.keys(repA.survivors_json ?? {}).length > 0
+    ? ok(`report has survivors for summary (${JSON.stringify(repA.survivors_json)})`)
+    : bad('report survivors', JSON.stringify(repA))
 
   // ── B. DEFEAT: no reward, base unchanged, no return ───────────────────────
   console.log(`\nB. Defeat at "${den.name}" (1 scout):`)

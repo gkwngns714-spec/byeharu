@@ -96,6 +96,7 @@ export interface CombatReport {
   duration_seconds: number
   total_losses_json: Record<string, number>
   total_rewards_json: Record<string, number>
+  survivors_json: Record<string, number>
   summary_text: string | null
   created_at: string
 }
