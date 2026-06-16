@@ -5,6 +5,36 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M4 combat clarity pass (verified 28/28)
+
+**Request**
+Combat now feels like a survival loop. Small clarity improvements + fixed-interval
+tick confirmation.
+
+**Backend (`0026`)**
+- Combat tick **2/4s → fixed 3s** (cron + config; damage keeps ±10% variance, the
+  *interval* is fixed/non-random per design). Confirmed fixed-interval model; per-group
+  damage loop already structured for future weapon/unit cooldowns (not implemented yet).
+- Added `combat_reports.survivors_json`; `report_create` now records exact survivors +
+  losses from per-unit `combat_units` (drives the post-retreat summary).
+
+**Frontend (clarity)**
+1. Latest exchange while retreating: "Your fleet is retreating — weapons disengaged" +
+   "Pirates dealt N damage during disengagement" (no more confusing "0 damage").
+2. Pending rewards note: "Locked — secured only if your fleet returns home safely"
+   (and not-secured warning while active).
+3. Retreat banner: "Retreating — return movement starts in Ns" (ties to M3 spine).
+4. Per-unit rows show "alive/original ships (N lost) · HP · %".
+5. Post-retreat **result summary** in Combat reports: result, waves, ships returned,
+   ships lost, rewards secured/forfeited, "Return movement started."
+6. Top line: "Wave 3 · Danger 3 · 2 waves cleared · Retreating".
+
+**Verification — `verify:m4`: 28/28** (incl. report survivors `{scout:7,frigate:2,corvette:5}`).
+Boundaries intact: server-authoritative; client renders + retreat only; M3 movement
+used only after retreat succeeds; no captain/trading logic.
+
+---
+
 ## 2026-06-17 — M4 combat overhaul: pacing + per-unit HP (verified 27/27)
 
 **Request**
