@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "verify:m2": "node scripts/verify-m2.mjs"
+    "verify:m2": "node scripts/verify-m2.mjs",
+    "verify:m3": "node scripts/verify-m3.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

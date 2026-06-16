@@ -5,6 +5,47 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — M3 backend built, deployed, and verified live
+
+**Request**
+Build M3 (movement + presence spine, no combat), deploy via GitHub Action, verify
+the full backend loop. Keep systems separated; server authoritative.
+
+**Work done**
+- M3a migrations `0003`–`0005`: game_config, unit_catalog, base_system
+  (bases/units/resources + initialize_new_player + signup bootstrap + backfill).
+- M3b migrations `0006`–`0011`: fleet_system, movement_system, presence_system,
+  movement_processor, player_rpcs, cron_movement (pg_cron 30s).
+- Switched deploy to the free GitHub Action (3 secrets in GitHub UI). First run
+  failed at *Link project* — invalid `SUPABASE_ACCESS_TOKEN` secret; after user
+  re-added a valid `sbp_` token, re-run succeeded.
+- Wrote `scripts/verify-m3.mjs` (throwaway-user integration test) + `verify:m3`.
+
+**Deploy result — GitHub Action run 27619768482: ✅ success**
+- Migrations `0003`–`0011` all applied to remote, incl. `0011` (pg_cron enabled,
+  job `process-fleet-movements` scheduled every 30s, no permission error).
+
+**Verification — `verify:m3`: 13/13 PASSED**
+bootstrap → base → starting units(100/20/5)+resources → dispatch to "Safe Rally
+Point" → movement row (5.0s, dist 12.1) → units reserved 100→90 → processor resolves
+arrival → fleet present + presence active(none) → leave → return movement
+(return_home) → processor resolves → fleet completed → survivors merged 90→100.
+
+**Bugs / fixes**
+- Deploy 1 failed: bad `SUPABASE_ACCESS_TOKEN` secret (JWT could not be decoded) →
+  user re-added valid token → re-run green.
+- verify:m3 v1: Supabase rejected `.test` email domain + a Node/libuv exit crash
+  (auth auto-refresh timer). Fixed: use `@example.com`, `autoRefreshToken:false`,
+  clean exit via `process.exitCode`.
+- Email confirmation was ON → signup rate-limited; user disabled "Confirm email".
+
+**Follow-ups**
+- A few throwaway `m3test.*@example.com` users exist in auth (each with a base);
+  harmless, can prune later.
+- M3 frontend (base view, send-fleet panel, fleet status) is next.
+
+---
+
 ## 2026-06-16 — M2 verified live against real Supabase
 
 **Request**
