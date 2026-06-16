@@ -5,6 +5,48 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — Foundation architecture & milestone plan (no code)
+
+**Request**
+User supplied a detailed server-authoritative PvE design spec (map → location →
+movement → presence → activity → combat → retreat → return → report) and asked to
+**plan only, no code yet**, then persist the design as living docs.
+
+**Decisions made**
+- **Economy = combat-reward only (Option 1).** Seed a starter base + starter units;
+  resources come solely from pirate-combat rewards landing in `base_resources` at
+  encounter end. _Why:_ the priority is proving the core world/loop foundation, not
+  the economy. Adding production/buildings/training now would build too many systems
+  at once and make bugs hard to isolate. Deferred: buildings, build queues, passive
+  production, lazy resource accrual, unit training, research, trade/market, cargo.
+- **Sequencing = movement+presence spine first (M3), combat second (M4).** _Why:_
+  spec keeps movement and combat as separate systems bridged by presence; proving the
+  movement→presence→return spine on a harmless `safe_zone` first isolates any later
+  combat bugs to the combat system (which the `combat_rounds` table is built to debug).
+- **Write architecture docs before any game code.** _Why:_ the spec is large and
+  prescriptive; capturing it as `docs/ARCHITECTURE.md` makes it the source of truth so
+  every milestone (and future session) follows the same modular, anti-cheat,
+  server-authoritative rules instead of re-deriving them.
+
+**Gap resolutions agreed (added beyond original spec)**
+- `base_resources` table — rewards need somewhere to land (not an economy system).
+- `initialize_new_player()` — seeds starter base + units + resources (no training in MVP).
+- `game_config` table — tunable balance (travel_scale, max_active_fleets, tick/retreat
+  seconds, reward multipliers, random variance) without code redeploys.
+
+**Work done**
+- Verified Supabase Cron supports sub-minute (seconds) schedules on Postgres
+  15.1.1.61+ → 30s movement / 10–15s combat / 60s location-state ticks are feasible.
+- Wrote `docs/ARCHITECTURE.md` (core principle, world hierarchy, all systems, combat
+  formulas, anti-cheat, RLS/RPC, state machines, constraints/locking/idempotency,
+  cron timing, MVP table list, milestone roadmap M1–M6, deferred list).
+- No game code or migrations written yet (next step: M2 world map, after review).
+
+**Bugs / fixes**
+- _(none — planning only)_
+
+---
+
 ## 2026-06-16 — Rename to Byeharu
 
 **Request**
