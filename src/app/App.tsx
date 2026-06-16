@@ -4,6 +4,7 @@ import { useAuthStore } from '../store/authStore'
 import { RequireAuth } from './RequireAuth'
 import { AuthPage } from '../features/auth/AuthPage'
 import { Dashboard } from '../features/dashboard/Dashboard'
+import { MapPage } from '../features/map/MapPage'
 
 export function App() {
   const init = useAuthStore((s) => s.init)
@@ -23,6 +24,14 @@ export function App() {
           element={
             <RequireAuth>
               <Dashboard />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/map"
+          element={
+            <RequireAuth>
+              <MapPage />
             </RequireAuth>
           }
         />

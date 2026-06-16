@@ -1,8 +1,9 @@
+import { Link } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 
 /**
- * Placeholder home screen for Milestone 1. Milestone 2 replaces this with the
- * living-base view (resources accruing in real time).
+ * Home screen. M2 adds a read-only galaxy map. Fleets, bases, and combat arrive
+ * in later milestones.
  */
 export function Dashboard() {
   const user = useAuthStore((s) => s.user)
@@ -27,11 +28,16 @@ export function Dashboard() {
 
       <div className="rounded-2xl border border-white/10 bg-white/5 p-8">
         <h2 className="mb-2 text-lg font-medium">Command center</h2>
-        <p className="text-sm leading-relaxed text-white/50">
-          You're signed in. This is the Milestone&nbsp;1 shell — auth + routing +
-          Supabase are wired up. Next up (Milestone&nbsp;2): your first colony with
-          resources ticking up in real time.
+        <p className="mb-5 text-sm leading-relaxed text-white/50">
+          You're signed in. Auth, routing, and Supabase are wired up, and the galaxy
+          is charted. Sending fleets and hunting pirates arrive in later milestones.
         </p>
+        <Link
+          to="/map"
+          className="inline-block rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-400"
+        >
+          Open galaxy map →
+        </Link>
       </div>
     </div>
   )

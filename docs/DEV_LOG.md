@@ -5,6 +5,47 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — System boundaries approved; M2 (read-only world map)
+
+**Request**
+Before coding, define strict system boundaries (sole writer per table, acyclic
+cross-system call graph via exposed functions only). Approve and persist, then build
+M2 as a **read-only** world map: `sectors`/`zones`/`locations` + seed +
+`get_world_map()` + map screen. No movement/fleets/presence/combat/rewards/resources.
+
+**Decisions made**
+- Approved all 5 beyond-spec ownership additions: **Fleet**, **Base**, **World State**
+  systems as sole owners of their shared tables; **`reward_grants`** ledger as the only
+  reward-application path; **Activity** table-less router. _Why:_ enforces every
+  separation law with a single-writer-per-table rule and prevents hidden coupling.
+- M2 scope locked to the 3 static Map tables only; `zone_state`/`location_state`
+  deferred (they belong to World State, built later) so Map stays pure.
+
+**Work done**
+- Wrote `docs/SYSTEM_BOUNDARIES.md` (table→sole-writer matrix, per-system
+  owns/exposes/forbidden, the 5 allowed call-edges, forbidden edges, invariant
+  checklist).
+- **M2 migration** `20260616000002_world_map.sql`: `sectors`/`zones`/`locations`
+  (static, Map-owned) with CHECK constraints + FKs + unique(sector,name)/(zone,name);
+  public-read RLS, no write policies (no client writes); `get_world_map()` (nested
+  jsonb, `stable`, granted to anon/authenticated); seed = 2 sectors / 2 zones /
+  5 locations (mix of `safe_zone` + `pirate_hunt`).
+- **M2 frontend**: `features/map/` (`mapTypes.ts`, `mapApi.ts`, `MapPage.tsx`);
+  `/map` route (auth-guarded); "Open galaxy map" link on Dashboard.
+- Verified: `npm run build` green (tsc + vite, 75 modules). SQL not run locally
+  (no psql/docker/supabase CLI on this machine) — reviewed by hand; first live run
+  on migration apply.
+
+**Bugs / fixes**
+- _(none)_
+
+**Follow-ups for user**
+- Apply migrations + set `.env.local`, then the map screen loads live data.
+- M2 shows Map-owned fields only (name/type/danger/reward). Distance & travel-time
+  need a base + movement formula → arrive in M3.
+
+---
+
 ## 2026-06-16 — Foundation architecture & milestone plan (no code)
 
 **Request**
