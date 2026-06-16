@@ -5,6 +5,39 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M4 final checklist audit (all pass)
+
+**Request** 22-point M4 final checklist before moving on.
+
+**Already passing (no change):** combat start rules, ownership/RLS, one-active-
+encounter-per-fleet (partial unique indexes), fixed 3s tick, wave transition,
+pirate scaling (HP+attack+reward all danger-scaled), player damage (single
+aggregate, no double-count), per-group damage distribution, per-unit integrity,
+damage carryover, ship destruction, retreat behavior, defeat behavior, reward
+behavior (idempotent), combat feed, debug (`combat_ticks` incl. `unit_snapshot_json`),
+processor idempotency (FOR UPDATE SKIP LOCKED), client/server authority, boundaries,
+final summaries.
+
+**Needed change:** wave pacing was ~2 ticks for a modest fleet at low danger
+(undertuned vs the 3-6 target). Fix `0027`: `enemy_hp_base` 6→14 → easy waves ~3+
+ticks, scaling to normal/strong with danger. Added verify cases C (damage w/o loss),
+F (one encounter/fleet), G (safe zone starts no combat), pacing assert ≥3, defeat
+leaves no active presence.
+
+**Files:** `supabase/migrations/0027_wave_hp_pacing.sql`, `scripts/verify-m4.mjs`.
+**Backend:** 1 config value (wave HP). **Frontend:** none.
+
+**Verification:** `verify:m4` **33/33**, `verify:m2` 11/11, `verify:m3` 13/13 — no
+regressions (checklist J). Wave 504→320 (dealt 185), 3+ ticks/wave; survivors report
+`{scout:7,frigate:2,corvette:5}`.
+
+**Remaining M4 risk (low):** wave HP scales with danger, not fleet power → a
+massively-overpowered fleet still clears low-danger waves fast (acceptable/by design);
+weapon cooldowns prepared but not implemented; per-unit before/after captured in
+`combat_ticks` but not surfaced in the UI debug table. Deep balance deferred.
+
+---
+
 ## 2026-06-17 — M4 combat clarity pass (verified 28/28)
 
 **Request**
