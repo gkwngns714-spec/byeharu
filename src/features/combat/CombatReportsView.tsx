@@ -82,7 +82,7 @@ export function CombatReportsView({
                     <div>Ships returning: <span className="text-white/75">{ships(r.survivors_json)}</span></div>
                     <div>Ships lost: <span className="text-white/75">{ships(r.total_losses_json)}</span></div>
                     <div>Rewards pending: <span className="text-white/75">{metal(r.total_rewards_json)}</span></div>
-                    <div className="text-amber-300/70">Fleet is traveling back to base. Rewards will be secured on arrival.</div>
+                    <div className="text-amber-300/70">Fleet escaped. Rewards will be secured when it reaches base.</div>
                   </div>
                 )}
               </li>
