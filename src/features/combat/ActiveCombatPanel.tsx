@@ -80,7 +80,9 @@ export function ActiveCombatPanel({
             Wave <span className="text-white/80">{encounter.wave_number}</span> · Danger{' '}
             <span className="text-white/80">{encounter.danger_level}</span> ·{' '}
             <span className="text-white/80">{encounter.waves_cleared}</span> waves cleared ·{' '}
-            {encounter.status.charAt(0).toUpperCase() + encounter.status.slice(1)}
+            <span className="text-white/70">
+              {retreating ? 'Retreating' : waveCleared ? 'Next wave incoming' : 'In combat'}
+            </span>
           </p>
         </div>
         <button
@@ -94,8 +96,8 @@ export function ActiveCombatPanel({
 
       {retreating && (
         <p className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
-          Retreating — return movement starts in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}.
-          Warning: the fleet can still take damage during retreat.
+          Retreating — fleet breaks away and heads home in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}.
+          Warning: it can still take damage until it escapes.
         </p>
       )}
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}

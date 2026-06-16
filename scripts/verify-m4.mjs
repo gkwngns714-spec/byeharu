@@ -109,7 +109,10 @@ async function main() {
     : bad('per-unit damage', 'no unit took damage')
   ok(`pending metal accrued (${encA.total_rewards_json.metal})`)
 
-  await supabase.rpc('request_retreat', { p_presence: encA.presence_id })
+  // retreat spam: 3 concurrent requests → exactly one accepted
+  const spam = await Promise.all([0, 1, 2].map(() => supabase.rpc('request_retreat', { p_presence: encA.presence_id })))
+  const accepted = spam.filter((r) => !r.error).length
+  accepted === 1 ? ok('retreat spam: exactly one accepted') : bad('retreat spam', `${accepted} accepted`)
   encA = await encounterFor(fleetA)
   const locked = encA.total_rewards_json?.metal ?? 0
   encA.status === 'retreating' && encA.retreat_started_at ? ok('retreating + retreat_started_at set') : bad('retreating', JSON.stringify(encA.status))
@@ -128,6 +131,20 @@ async function main() {
     : bad('report survivors', JSON.stringify(repA))
   const { data: encsA } = await supabase.from('combat_encounters').select('id').eq('fleet_id', fleetA)
   ;(encsA ?? []).length === 1 ? ok('F: exactly one combat encounter per fleet') : bad('one encounter/fleet', `found ${(encsA ?? []).length}`)
+
+  // Destroyed ships must NOT return: wait for return-home, then base = initial - lost.
+  const doneA = await poll(async () => {
+    const { data: f } = await supabase.from('fleets').select('status').eq('id', fleetA).single()
+    return f?.status === 'completed' ? f : null
+  }, { timeoutMs: 90000, intervalMs: 3000 })
+  doneA ? ok('fleet returned home (completed)') : bad('return completion', 'timeout')
+  const lossesA = repA?.total_losses_json ?? {}
+  const { data: buA } = await supabase.from('base_units').select('unit_type_id,quantity').eq('base_id', base.id)
+  const q = Object.fromEntries((buA ?? []).map((u) => [u.unit_type_id, u.quantity]))
+  const exp = { scout: 100 - (lossesA.scout ?? 0), corvette: 20 - (lossesA.corvette ?? 0), frigate: 5 - (lossesA.frigate ?? 0) }
+  q.scout === exp.scout && q.corvette === exp.corvette && q.frigate === exp.frigate
+    ? ok(`destroyed ships did NOT return (base scout ${q.scout}/corvette ${q.corvette}/frigate ${q.frigate}; lost ${JSON.stringify(lossesA)})`)
+    : bad('destroyed ships returned?', `base=${JSON.stringify(q)} expected=${JSON.stringify(exp)}`)
 
   // ── B. DEFEAT: no reward, base unchanged, no return ───────────────────────
   console.log(`\nB. Defeat at "${den.name}" (1 scout):`)
@@ -171,6 +188,10 @@ async function main() {
   presentG ? ok('fleet present at safe zone') : bad('safe zone arrival', 'never present')
   const encG = await encounterFor(dG.fleet_id)
   !encG ? ok('no combat started at safe zone') : bad('safe zone combat', `encounter created (${encG.id})`)
+
+  // Invalid location id must be rejected.
+  const { error: invErr } = await supabase.rpc('send_fleet_to_location', { p_base: base.id, p_location: ZERO, p_units: [{ unit_type_id: 'scout', quantity: 1 }] })
+  invErr ? ok('invalid location id rejected') : bad('invalid location', 'accepted')
 }
 
 try { await main() } catch (e) {

@@ -54,7 +54,7 @@ export function CombatReportsView({
                   <span className="text-white/55">Ships returned: <span className="text-white/75">{won ? (returned ?? 'none') : 'none — fleet lost'}</span></span>
                   <span className="text-white/55">Ships lost: <span className="text-white/75">{lost ?? 'none'}</span></span>
                   <span className="text-white/55">Rewards {won ? 'secured' : 'forfeited'}: <span className="text-white/75">{won ? (rewards ?? 'none') : 'none — lost with fleet'}</span></span>
-                  {won && <span className="text-emerald-300/70">Return movement started.</span>}
+                  {won && <span className="text-emerald-300/70">Fleet escaped — now returning to base.</span>}
                 </div>
               </li>
             )
