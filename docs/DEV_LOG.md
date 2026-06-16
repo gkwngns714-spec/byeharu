@@ -5,6 +5,48 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — M2 verified live against real Supabase
+
+**Request**
+Verify M2 against a real database before M3. Apply migrations (no manual SQL paste,
+no secrets in chat).
+
+**Setup**
+- Supabase project created (ref `dlkbwztrdvnnjlvaydut`, Free plan, Asia-Pacific).
+- GitHub repo `gkwngns714-spec/byeharu` (private) created; full project pushed.
+- User chose Supabase's **native GitHub integration** + connected the repo.
+
+**Work done**
+- `.env.local` written with Project URL + **publishable** key (`sb_publishable_…`);
+  git-ignored. Frontend uses publishable key only (never secret/service_role).
+- Secrets handled via local git-ignored `supabase/.secrets.env` (access token +
+  db password), loaded into transient env vars, **never** printed or committed;
+  file deleted immediately after `db push`.
+- Applied migrations via `npx supabase link` + `npx supabase db push`
+  (`20260616000001_init_profiles`, `20260616000002_world_map`).
+
+**Result — `npm run verify:m2`: 11/11 PASSED**
+- Data: 2 sectors / 2 zones / 5 locations; nested sectors→zones→locations;
+  3 pirate_hunt + 2 safe_zone.
+- RLS read: anon can read sectors/zones/locations.
+- RLS write-denial: insert blocked (42501 insufficient_privilege — SELECT-only grant),
+  update/delete affect 0 rows.
+- Frontend: dev server up at http://localhost:5173/ for click-through.
+
+**Bugs / fixes**
+- Native GitHub integration did **not** auto-deploy on Free plan (first verify found
+  no tables). Applied via CLI instead. Future migrations need a deploy decision
+  (upgrade for native, or use the free GitHub Action with secrets in GitHub UI).
+- The redundant custom Action `deploy-migrations.yml` fails on push (no secrets set);
+  left in place pending the deploy-mechanism decision.
+
+**Follow-ups**
+- Rotate/revoke the temporary Supabase access token (it lived only in the deleted
+  local file, but rotate as good hygiene).
+- Decide future migration deploy mechanism before/at M3.
+
+---
+
 ## 2026-06-16 — System boundaries approved; M2 (read-only world map)
 
 **Request**
