@@ -71,6 +71,7 @@ async function main() {
   })
   if (dAe) die(`dispatch A failed: ${dAe.message}`)
   const fleetA = dA.fleet_id
+  const metalBeforeA = await baseMetal(base.id)
   let encA = await poll(async () => {
     const { data: f } = await supabase.from('fleets').select('status').eq('id', fleetA).single()
     if (f?.status !== 'present') return null
@@ -119,12 +120,13 @@ async function main() {
   const escaped = await poll(async () => { const e = await encounterFor(fleetA); return e?.status === 'escaped' ? e : null }, { timeoutMs: 45000, intervalMs: 2000 })
   if (!escaped) die('A: never escaped')
   ok('combat ended: escaped')
-  ;(escaped.total_rewards_json?.metal ?? 0) === locked ? ok(`rewards locked during retreat (${locked})`) : bad('reward locking', `${locked} → ${escaped.total_rewards_json?.metal}`)
-  const { data: grantsA } = await supabase.from('reward_grants').select('*').eq('source_id', escaped.id)
-  ;(grantsA ?? []).length === 1 ? ok('reward_grants exactly 1') : bad('reward_grants', `count=${(grantsA ?? []).length}`)
-  ;(await baseMetal(base.id)) === locked && locked > 0 ? ok(`base metal +${locked} once`) : bad('base metal', `got ${await baseMetal(base.id)}`)
-  const { data: retA } = await supabase.from('fleet_movements').select('id').eq('fleet_id', fleetA).eq('mission_type', 'return_home').maybeSingle()
+  ;(escaped.total_rewards_json?.metal ?? 0) === locked ? ok(`rewards locked at escape (${locked})`) : bad('reward locking', `${locked} → ${escaped.total_rewards_json?.metal}`)
+  // NEW RULE: rewards are NOT deposited at escape — deferred to home arrival.
+  ;(await baseMetal(base.id)) === metalBeforeA ? ok('base metal NOT increased at escape') : bad('premature deposit', 'metal increased at escape')
+  ;(((await supabase.from('reward_grants').select('id').eq('source_id', escaped.id)).data) ?? []).length === 0 ? ok('no reward_grant at escape (deferred to home)') : bad('premature grant', 'grant exists at escape')
+  const { data: retA } = await supabase.from('fleet_movements').select('id,reward_payload_json').eq('fleet_id', fleetA).eq('mission_type', 'return_home').maybeSingle()
   retA ? ok('return movement created (M3 spine)') : bad('return movement', 'missing')
+  retA && (retA.reward_payload_json?.metal ?? 0) === locked ? ok('return movement carries the locked rewards') : bad('return cargo', JSON.stringify(retA?.reward_payload_json))
   const { data: repA } = await supabase.from('combat_reports').select('survivors_json,total_losses_json').eq('encounter_id', escaped.id).maybeSingle()
   repA && Object.keys(repA.survivors_json ?? {}).length > 0
     ? ok(`report has survivors for summary (${JSON.stringify(repA.survivors_json)})`)
@@ -132,12 +134,14 @@ async function main() {
   const { data: encsA } = await supabase.from('combat_encounters').select('id').eq('fleet_id', fleetA)
   ;(encsA ?? []).length === 1 ? ok('F: exactly one combat encounter per fleet') : bad('one encounter/fleet', `found ${(encsA ?? []).length}`)
 
-  // Destroyed ships must NOT return: wait for return-home, then base = initial - lost.
+  // Wait for return-home → deposit on arrival exactly once; destroyed ships don't return.
   const doneA = await poll(async () => {
     const { data: f } = await supabase.from('fleets').select('status').eq('id', fleetA).single()
     return f?.status === 'completed' ? f : null
   }, { timeoutMs: 90000, intervalMs: 3000 })
   doneA ? ok('fleet returned home (completed)') : bad('return completion', 'timeout')
+  ;(((await supabase.from('reward_grants').select('id').eq('source_id', escaped.id)).data) ?? []).length === 1 ? ok('reward deposited exactly once ON ARRIVAL') : bad('home deposit', 'not exactly one grant')
+  ;(await baseMetal(base.id)) === metalBeforeA + locked && locked > 0 ? ok(`base metal +${locked} on arrival`) : bad('base metal arrival', `got ${await baseMetal(base.id)}, expected ${metalBeforeA + locked}`)
   const lossesA = repA?.total_losses_json ?? {}
   const { data: buA } = await supabase.from('base_units').select('unit_type_id,quantity').eq('base_id', base.id)
   const q = Object.fromEntries((buA ?? []).map((u) => [u.unit_type_id, u.quantity]))

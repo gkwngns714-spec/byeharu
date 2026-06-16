@@ -169,8 +169,8 @@ export function ActiveCombatPanel({
         </p>
         <p className="mt-1 text-[11px] text-white/35">
           {retreating
-            ? 'Locked — secured only if your fleet returns home safely.'
-            : 'Not secured yet — kept only if your fleet returns home (lost if destroyed).'}
+            ? 'Locked — secured only after your fleet returns to base.'
+            : 'Pending — secured only after your fleet returns to base (lost if destroyed).'}
         </p>
       </div>
 

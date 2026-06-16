@@ -106,10 +106,14 @@ export function FleetStatusPanel({
                     move &&
                     (() => {
                       const clock = countdownClock(move.arrive_at)
+                      const hasReward = move.reward_payload_json && Object.keys(move.reward_payload_json).length > 0
                       return (
                         <>
                           ← returning home ·{' '}
                           {clock ? `arriving in ${clock}` : 'awaiting server confirmation…'}
+                          {hasReward && (
+                            <span className="text-amber-300/70"> · 💰 rewards locked (secured on arrival)</span>
+                          )}
                         </>
                       )
                     })()}

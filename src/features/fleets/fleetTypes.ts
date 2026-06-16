@@ -34,6 +34,7 @@ export interface FleetMovement {
   arrive_at: string
   travel_seconds: number
   travel_distance: number
+  reward_payload_json?: Record<string, number>
 }
 
 export interface LocationPresence {
