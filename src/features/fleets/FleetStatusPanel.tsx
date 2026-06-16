@@ -61,12 +61,7 @@ export function FleetStatusPanel({
 
   return (
     <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-      <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="text-lg font-medium">Fleets</h2>
-        {completedCount > 0 && (
-          <span className="text-xs text-white/35">{completedCount} completed run(s)</span>
-        )}
-      </div>
+      <h2 className="mb-4 text-lg font-medium">Fleets</h2>
 
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
 
@@ -122,7 +117,9 @@ export function FleetStatusPanel({
                 </div>
 
                 {f.status === 'present' && presence && presence.activity_type === 'hunt_pirates' && (
-                  <p className="mt-2 text-xs text-red-300/80">⚔️ in combat — retreat from the combat panel below</p>
+                  <p className="mt-2 text-xs text-red-300/80">
+                    ⚔️ in combat — use the Retreat button in the combat panel
+                  </p>
                 )}
                 {f.status === 'present' && presence && presence.activity_type !== 'hunt_pirates' && (
                   <button
@@ -137,6 +134,14 @@ export function FleetStatusPanel({
             )
           })}
         </ul>
+      )}
+
+      {completedCount > 0 && (
+        <details className="mt-4">
+          <summary className="cursor-pointer text-xs text-white/35">
+            Completed history: {completedCount} previous run(s)
+          </summary>
+        </details>
       )}
     </section>
   )

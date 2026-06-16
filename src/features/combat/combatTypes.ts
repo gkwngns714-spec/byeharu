@@ -17,8 +17,13 @@ export interface CombatEncounter {
   player_power_start: number
   player_power_current: number
   enemy_power_current: number
+  player_integrity_max: number
+  player_integrity_current: number
+  enemy_integrity_max: number
+  enemy_integrity_current: number
   total_rewards_json: Record<string, number>
   started_at: string
+  retreat_started_at: string | null
   ended_at: string | null
 }
 
@@ -31,6 +36,10 @@ export interface CombatTick {
   enemy_power: number
   player_damage: number
   enemy_damage: number
+  player_integrity_before: number
+  player_integrity_after: number
+  enemy_integrity_before: number
+  enemy_integrity_after: number
   player_losses_json: Record<string, number>
   reward_delta_json: Record<string, number>
   result: string

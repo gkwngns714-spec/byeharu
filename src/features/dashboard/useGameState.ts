@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchUnitTypes, type UnitType } from '../../lib/catalog'
+import { fetchGameConfig, fetchUnitTypes, type UnitType } from '../../lib/catalog'
 import { fetchWorldMap } from '../map/mapApi'
 import type { MapLocation } from '../map/mapTypes'
 import { ensureBase, fetchBase, fetchBaseResources, fetchBaseUnits } from '../base/baseApi'
@@ -20,6 +20,7 @@ export interface GameState {
   resources: BaseResource[]
   unitTypes: UnitType[]
   locations: MapLocation[]
+  config: Record<string, number>
   fleets: Fleet[]
   fleetUnits: FleetUnit[]
   movements: FleetMovement[]
@@ -34,6 +35,7 @@ const EMPTY: GameState = {
   resources: [],
   unitTypes: [],
   locations: [],
+  config: {},
   fleets: [],
   fleetUnits: [],
   movements: [],
@@ -47,14 +49,22 @@ const EMPTY: GameState = {
  */
 export function useGameState(pollMs = 3000) {
   const [state, setState] = useState<GameState>(EMPTY)
-  const staticRef = useRef<{ unitTypes: UnitType[]; locations: MapLocation[] } | null>(null)
+  const staticRef = useRef<{
+    unitTypes: UnitType[]
+    locations: MapLocation[]
+    config: Record<string, number>
+  } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [unitTypes, world] = await Promise.all([fetchUnitTypes(), fetchWorldMap()])
+        const [unitTypes, world, config] = await Promise.all([
+          fetchUnitTypes(),
+          fetchWorldMap(),
+          fetchGameConfig(),
+        ])
         const locations = world.sectors.flatMap((s) => s.zones.flatMap((z) => z.locations))
-        staticRef.current = { unitTypes, locations }
+        staticRef.current = { unitTypes, locations, config }
       }
 
       const base = await fetchBase()
@@ -79,6 +89,7 @@ export function useGameState(pollMs = 3000) {
         presences,
         unitTypes: staticRef.current.unitTypes,
         locations: staticRef.current.locations,
+        config: staticRef.current.config,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))
