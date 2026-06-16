@@ -5,6 +5,51 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — M4 backend: server-authoritative pirate combat (verified)
+
+**Request**
+Build M4 backend: active-feeling combat (2s server ticks), 20s retreat, single-resource
+metal rewards, 30-min forced auto-extract safety cap. Server owns all outcomes; client
+animates cosmetic events later. Strict boundaries; backend first.
+
+**Security finding (fixed in this milestone)**
+Probed the live DB: M1–M3 internal `SECURITY DEFINER` functions (e.g.
+`base_reserve_units`, `fleet_set_present`, `process_fleet_movements`) were
+**client-callable** — Postgres grants `EXECUTE` to `PUBLIC` by default and PostgREST
+exposes the whole `public` schema. That's an anti-cheat hole (client could mutate
+units/fleet state). Fixed in `0021_lock_function_execute`: revoke execute on all
+public functions from public/anon/authenticated, `alter default privileges` to block
+future leaks, and grant execute only on the 6 client RPCs (`get_world_map`,
+`bootstrap_me`, `send_fleet_to_location`, `request_leave_location`, `request_retreat`,
+`get_combat_reports`). Verified denied post-deploy.
+
+**Work done (migrations 0012–0021)**
+- Base `base_add_resources`; Fleet `fleet_combat_stats` + `fleet_apply_losses`.
+- Combat tables `combat_encounters` / `combat_ticks` (truth log) / `combat_events`
+  (cosmetic stream); Reward `reward_grants` + idempotent `reward_grant`; Report
+  `combat_reports` + `report_create` + `get_combat_reports`.
+- `combat_create_encounter`, `combat_set_retreating`, **`process_combat_ticks()`**
+  (2s, FOR UPDATE SKIP LOCKED, idempotent; one tick row + several event rows; wave
+  scaling, power combat, losses, rewards, defeat/escaped/completed).
+- Presence `activity_start` routes hunt_pirates→Combat; `presence_request_leave`
+  combat-retreat branch. Player RPCs: allow hunt sends (+min_power), `request_retreat`.
+- Config: combat_tick_seconds 12→2, retreat_delay 30→20, max_presence_seconds 1800,
+  reward_metal_base 10. Cron `process-combat-ticks` every 2s.
+
+**Deploy:** GitHub Action run 27623526054 ✅ — 0012–0021 applied (incl. 2s cron + lockdown).
+
+**Verification — `verify:m4`: 20/20 PASSED**
+- Lockdown: 4 internal fns denied to client.
+- Success: dispatch hunt → arrival → encounter active → ticks/waves/events accrue
+  (danger rising) → retreat → escaped → fleet returning + return movement → reward
+  granted exactly once (315 metal in base). `verify:m3` still 13/13 (lockdown safe).
+- Defeat: 1 scout vs Pirate Den → wiped → defeat → fleet destroyed → defeat report →
+  no return, no reward.
+
+**Next:** M4 frontend (ActiveCombatPanel + cosmetic CombatEventLayer) — awaiting go.
+
+---
+
 ## 2026-06-16 — ✅ M3 COMPLETE
 
 Browser click-through passed; M3 accepted. Criteria met: units return correctly,
