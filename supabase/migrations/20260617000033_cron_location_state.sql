@@ -36,8 +36,10 @@ exception
 end;
 $$;
 
+-- pg_cron's "N seconds" form only accepts 1–59s; 60s = standard cron '* * * * *'
+-- (every minute). Using '60 seconds' errors with "invalid schedule" (SQLSTATE 22023).
 select cron.schedule(
   'process-location-state-ticks',
-  '60 seconds',
+  '* * * * *',
   $$select public.process_location_state_ticks();$$
 );
