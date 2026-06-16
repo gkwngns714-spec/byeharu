@@ -1,0 +1,33 @@
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useAuthStore } from '../store/authStore'
+import { RequireAuth } from './RequireAuth'
+import { AuthPage } from '../features/auth/AuthPage'
+import { Dashboard } from '../features/dashboard/Dashboard'
+
+export function App() {
+  const init = useAuthStore((s) => s.init)
+
+  useEffect(() => {
+    // Subscribe to Supabase auth once for the app's lifetime.
+    const unsubscribe = init()
+    return unsubscribe
+  }, [init])
+
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/auth" element={<AuthPage />} />
+        <Route
+          path="/"
+          element={
+            <RequireAuth>
+              <Dashboard />
+            </RequireAuth>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  )
+}
