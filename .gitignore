@@ -17,6 +17,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# Local-only secrets for migration apply (NEVER commit)
+supabase/.secrets.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

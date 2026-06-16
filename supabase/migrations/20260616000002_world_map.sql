@@ -82,6 +82,11 @@ create policy "sectors_public_read"   on public.sectors   for select using (true
 create policy "zones_public_read"      on public.zones      for select using (true);
 create policy "locations_public_read"  on public.locations  for select using (true);
 
+-- Explicit SELECT-only grants. We intentionally do NOT grant insert/update/delete,
+-- so the API roles cannot write the map even before RLS is considered. This works
+-- regardless of the project's "auto-expose new tables" setting (which we disable).
+grant select on public.sectors, public.zones, public.locations to anon, authenticated;
+
 -- ── get_world_map(): nested read of the static world (display fields only) ────
 create or replace function public.get_world_map()
 returns jsonb
