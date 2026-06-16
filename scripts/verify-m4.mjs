@@ -96,7 +96,9 @@ async function main() {
   const byWave = {}
   combatTicks.forEach((t) => { byWave[t.wave_number] = (byWave[t.wave_number] ?? 0) + 1 })
   const maxPerWave = Math.max(0, ...Object.values(byWave))
-  maxPerWave >= 2 ? ok(`waves last multiple ticks (max ${maxPerWave} ticks on one wave)`) : bad('multi-tick waves', `max ${maxPerWave} ticks/wave (one-shotting)`)
+  maxPerWave >= 3 ? ok(`waves last 3+ ticks (max ${maxPerWave} on one wave)`) : bad('wave pacing', `max ${maxPerWave} ticks/wave (undertuned, want 3-6)`)
+  const noLossTick = combatTicks.find((t) => t.enemy_damage > 0 && Object.keys(t.player_losses_json ?? {}).length === 0)
+  noLossTick ? ok('C: damage taken without ship loss (hull-only tick observed)') : bad('damage-no-loss', 'not observed')
   const ongoing = combatTicks.find((t) => t.result === 'ongoing' && t.enemy_integrity_after < t.enemy_integrity_before && t.enemy_integrity_after > 0)
   ongoing ? ok(`wave HP visibly decreasing (${Math.round(ongoing.enemy_integrity_before)} → ${Math.round(ongoing.enemy_integrity_after)}; you dealt ${Math.round(ongoing.player_damage)})`) : bad('wave HP decreasing', 'no mid-wave tick found')
   const notOneShot = combatTicks.find((t) => t.enemy_integrity_before > t.player_damage)
@@ -124,6 +126,8 @@ async function main() {
   repA && Object.keys(repA.survivors_json ?? {}).length > 0
     ? ok(`report has survivors for summary (${JSON.stringify(repA.survivors_json)})`)
     : bad('report survivors', JSON.stringify(repA))
+  const { data: encsA } = await supabase.from('combat_encounters').select('id').eq('fleet_id', fleetA)
+  ;(encsA ?? []).length === 1 ? ok('F: exactly one combat encounter per fleet') : bad('one encounter/fleet', `found ${(encsA ?? []).length}`)
 
   // ── B. DEFEAT: no reward, base unchanged, no return ───────────────────────
   console.log(`\nB. Defeat at "${den.name}" (1 scout):`)
@@ -139,6 +143,8 @@ async function main() {
   ;((await supabase.from('reward_grants').select('id').eq('source_id', defB.id)).data ?? []).length === 0 ? ok('no reward_grants on defeat') : bad('reward_grants on defeat', 'found rows')
   ;(await baseMetal(base.id)) === metalB ? ok('base metal unchanged on defeat') : bad('base metal on defeat', 'increased')
   ;(((await supabase.from('fleet_movements').select('id').eq('fleet_id', dB.fleet_id).eq('mission_type', 'return_home')).data) ?? []).length === 0 ? ok('no return on defeat') : bad('no return on defeat', 'found')
+  const { data: presB } = await supabase.from('location_presence').select('status').eq('fleet_id', dB.fleet_id).maybeSingle()
+  presB && presB.status !== 'active' && presB.status !== 'retreating' ? ok('defeat leaves no active presence (no stuck state)') : bad('defeat presence', presB?.status)
 
   // ── C. RETREAT-DEATH ──────────────────────────────────────────────────────
   console.log(`\nC. Retreat-death at "${den.name}" (3 scouts):`)
@@ -153,6 +159,18 @@ async function main() {
   ;(((await supabase.from('reward_grants').select('id').eq('source_id', endC.id)).data) ?? []).length === 0 ? ok('no reward on retreat-death') : bad('reward on retreat-death', 'found')
   ;(await baseMetal(base.id)) === metalC ? ok('base metal unchanged') : bad('base metal retreat-death', 'increased')
   ;(((await supabase.from('fleet_movements').select('id').eq('fleet_id', dC.fleet_id).eq('mission_type', 'return_home')).data) ?? []).length === 0 ? ok('no return on retreat-death') : bad('no return retreat-death', 'found')
+
+  // ── G. Safe zone must NOT start combat ────────────────────────────────────
+  console.log(`\nG. Safe zone (no combat allowed):`)
+  const safe = world.sectors.flatMap((s) => s.zones).flatMap((z) => z.locations).find((l) => l.location_type === 'safe_zone')
+  const { data: dG } = await supabase.rpc('send_fleet_to_location', { p_base: base.id, p_location: safe.id, p_units: [{ unit_type_id: 'scout', quantity: 5 }] })
+  const presentG = await poll(async () => {
+    const { data: f } = await supabase.from('fleets').select('status').eq('id', dG.fleet_id).single()
+    return f?.status === 'present' ? f : null
+  })
+  presentG ? ok('fleet present at safe zone') : bad('safe zone arrival', 'never present')
+  const encG = await encounterFor(dG.fleet_id)
+  !encG ? ok('no combat started at safe zone') : bad('safe zone combat', `encounter created (${encG.id})`)
 }
 
 try { await main() } catch (e) {
