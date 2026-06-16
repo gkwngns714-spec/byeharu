@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { UnitType } from '../../lib/catalog'
-import type { FleetUnit } from '../fleets/fleetTypes'
 import { CombatEventLayer } from './CombatEventLayer'
 import { requestRetreat } from './combatApi'
-import type { CombatEncounter, CombatEvent, CombatTick } from './combatTypes'
+import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
 
 // Display-only combat panel. All values are server-authoritative; the only action
-// is the Retreat request. Integrity bars + latest-exchange summary make the fight
-// readable without the client computing anything.
+// is the Retreat request. Shows total + per-unit-type integrity, the pirate wave,
+// the latest exchange, the battle feed, and a debug tick log.
 export function ActiveCombatPanel({
   encounter,
   locationName,
-  fleetUnits,
+  units,
   unitTypes,
   events,
   ticks,
@@ -20,7 +19,7 @@ export function ActiveCombatPanel({
 }: {
   encounter: CombatEncounter
   locationName: string
-  fleetUnits: FleetUnit[]
+  units: CombatUnit[]
   unitTypes: UnitType[]
   events: CombatEvent[]
   ticks: CombatTick[]
@@ -37,7 +36,6 @@ export function ActiveCombatPanel({
 
   const retreating = encounter.status === 'retreating'
   const typeName = (id: string) => unitTypes.find((t) => t.id === id)?.name ?? id
-  const survivors = fleetUnits.filter((u) => u.quantity > 0)
   const rewards = Object.entries(encounter.total_rewards_json ?? {})
 
   const playerPct = encounter.player_integrity_max > 0
@@ -45,7 +43,11 @@ export function ActiveCombatPanel({
   const enemyPct = encounter.enemy_integrity_max > 0
     ? (encounter.enemy_integrity_current / encounter.enemy_integrity_max) * 100 : 0
 
-  const latest = ticks.slice().sort((a, b) => b.tick_number - a.tick_number)[0]
+  const waveCleared = encounter.enemy_integrity_current <= 0
+  const incomingIn = encounter.next_wave_at
+    ? Math.ceil((new Date(encounter.next_wave_at).getTime() - now) / 1000) : 0
+
+  const latest = ticks.slice().sort((a, b) => b.tick_number - a.tick_number).find((t) => t.result !== 'next_wave_incoming')
   const lossText = (j: Record<string, number>) => {
     const e = Object.entries(j ?? {}).filter(([, v]) => v > 0)
     return e.length ? `Lost: ${e.map(([k, v]) => `${v} ${typeName(k)}`).join(', ')}` : 'Hull damaged, no ships destroyed.'
@@ -75,7 +77,8 @@ export function ActiveCombatPanel({
         <div>
           <h2 className="text-lg font-medium text-red-200">⚔️ Combat — {locationName}</h2>
           <p className="text-sm text-white/45">
-            danger <span className="text-white/80">{encounter.danger_level}</span> · waves cleared{' '}
+            wave <span className="text-white/80">{encounter.wave_number}</span> · danger{' '}
+            <span className="text-white/80">{encounter.danger_level}</span> · cleared{' '}
             <span className="text-white/80">{encounter.waves_cleared}</span> · {encounter.status}
           </p>
         </div>
@@ -91,65 +94,69 @@ export function ActiveCombatPanel({
       {retreating && (
         <p className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
           Retreating — escaping in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}. Warning: the
-          fleet can still take damage during retreat (server decides the outcome).
+          fleet can still take damage during retreat.
         </p>
       )}
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
 
-      {/* Integrity bars */}
-      <div className="mb-5 space-y-3">
-        <IntegrityBar
-          label="Fleet integrity"
-          pct={playerPct}
-          current={encounter.player_integrity_current}
-          max={encounter.player_integrity_max}
-          color="bg-indigo-400"
-        />
-        <IntegrityBar
-          label="Pirate wave"
-          pct={enemyPct}
-          current={encounter.enemy_integrity_current}
-          max={encounter.enemy_integrity_max}
-          color="bg-red-400"
-          emptyLabel="incoming…"
-        />
+      {/* Fleet (total) + pirate wave */}
+      <div className="mb-4 space-y-3">
+        <Bar label="Fleet integrity" pct={playerPct} text={`${playerPct.toFixed(0)}% · ${Math.round(encounter.player_integrity_current).toLocaleString()} / ${Math.round(encounter.player_integrity_max).toLocaleString()}`} color="bg-indigo-400" />
+        {waveCleared ? (
+          <div>
+            <div className="mb-1 text-xs text-white/60">Pirate wave</div>
+            <p className="text-xs text-amber-300/80">
+              {incomingIn > 0 ? `Next wave incoming in ${incomingIn}s…` : 'Next wave incoming…'}
+            </p>
+          </div>
+        ) : (
+          <Bar label={`Pirate wave ${encounter.wave_number}`} pct={enemyPct}
+            text={`${enemyPct.toFixed(0)}% · ${Math.round(encounter.enemy_integrity_current).toLocaleString()} / ${Math.round(encounter.enemy_integrity_max).toLocaleString()}`}
+            color="bg-red-400" />
+        )}
+      </div>
+
+      {/* Per-unit-type integrity */}
+      <div className="mb-4">
+        <h4 className="mb-2 text-[10px] uppercase tracking-wide text-white/35">Fleet units</h4>
+        <div className="space-y-2">
+          {units.length === 0 && <p className="text-sm text-white/40">no units</p>}
+          {units.slice().sort((a, b) => a.unit_type_id.localeCompare(b.unit_type_id)).map((u) => {
+            const pct = u.hp_max > 0 ? (u.hp_current / u.hp_max) * 100 : 0
+            return (
+              <Bar
+                key={u.id}
+                label={`${typeName(u.unit_type_id)} — ${u.alive_count}/${u.initial_count} ships`}
+                pct={pct}
+                text={`${pct.toFixed(0)}% · ${Math.round(u.hp_current)}/${Math.round(u.hp_max)} HP`}
+                color={u.alive_count === 0 ? 'bg-white/20' : 'bg-emerald-400'}
+              />
+            )
+          })}
+        </div>
       </div>
 
       {/* Latest exchange */}
       {latest && (
-        <div className="mb-5 rounded-lg border border-white/10 bg-black/20 p-3 text-sm">
+        <div className="mb-4 rounded-lg border border-white/10 bg-black/20 p-3 text-sm">
           <h4 className="mb-1 text-[10px] uppercase tracking-wide text-white/35">Latest exchange (tick {latest.tick_number})</h4>
-          <p className="text-white/70">You dealt <span className="text-indigo-300">{Math.round(latest.player_damage)}</span> damage.</p>
+          <p className="text-white/70">You dealt <span className="text-indigo-300">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
           <p className="text-white/70">Pirates dealt <span className="text-red-300">{Math.round(latest.enemy_damage)}</span> damage.</p>
           <p className="text-white/55">{lossText(latest.player_losses_json)}</p>
         </div>
       )}
 
-      <div className="grid gap-6 sm:grid-cols-2">
-        <div>
-          <h4 className="mb-2 text-[10px] uppercase tracking-wide text-white/35">Surviving units</h4>
-          <ul className="space-y-1 text-sm">
-            {survivors.length === 0 && <li className="text-white/40">none</li>}
-            {survivors.map((u) => (
-              <li key={u.id} className="flex justify-between">
-                <span className="text-white/70">{typeName(u.unit_type_id)}</span>
-                <span className="tabular-nums">{u.quantity}</span>
-              </li>
-            ))}
-          </ul>
-          <h4 className="mb-2 mt-4 text-[10px] uppercase tracking-wide text-white/35">
-            Pending rewards {retreating && <span className="text-amber-300/70">(locked)</span>}
-          </h4>
-          <ul className="space-y-1 text-sm">
-            {rewards.length === 0 && <li className="text-white/40">none yet</li>}
-            {rewards.map(([code, amt]) => (
-              <li key={code} className="flex justify-between">
-                <span className="capitalize text-white/70">{code}</span>
-                <span className="tabular-nums">{amt}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <div className="mb-1">
+        <h4 className="mb-2 text-[10px] uppercase tracking-wide text-white/35">
+          Pending rewards {retreating && <span className="text-amber-300/70">(locked)</span>}
+        </h4>
+        <p className="text-sm">
+          {rewards.length === 0 ? <span className="text-white/40">none yet</span>
+            : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-white/70">{code}: {amt}</span>)}
+        </p>
+      </div>
+
+      <div className="mt-4">
         <CombatEventLayer events={events} />
       </div>
 
@@ -161,17 +168,19 @@ export function ActiveCombatPanel({
           <table className="w-full text-left text-[11px] text-white/50">
             <thead className="text-white/30">
               <tr>
-                <th className="pr-3">tick</th><th className="pr-3">danger</th>
-                <th className="pr-3">dmg→pirate</th><th className="pr-3">dmg→you</th>
-                <th className="pr-3">your hull</th><th className="pr-3">result</th>
+                <th className="pr-3">tick</th><th className="pr-3">wave</th><th className="pr-3">danger</th>
+                <th className="pr-3">→wave</th><th className="pr-3">wave HP</th>
+                <th className="pr-3">→you</th><th className="pr-3">your HP</th><th className="pr-3">result</th>
               </tr>
             </thead>
             <tbody>
-              {ticks.slice().sort((a, b) => b.tick_number - a.tick_number).slice(0, 8).map((t) => (
+              {ticks.slice().sort((a, b) => b.tick_number - a.tick_number).slice(0, 10).map((t) => (
                 <tr key={t.id}>
                   <td className="pr-3 tabular-nums">{t.tick_number}</td>
+                  <td className="pr-3 tabular-nums">{t.wave_number}</td>
                   <td className="pr-3 tabular-nums">{t.danger_level}</td>
                   <td className="pr-3 tabular-nums">{Math.round(t.player_damage)}</td>
+                  <td className="pr-3 tabular-nums">{Math.round(t.enemy_integrity_before)}→{Math.round(t.enemy_integrity_after)}</td>
                   <td className="pr-3 tabular-nums">{Math.round(t.enemy_damage)}</td>
                   <td className="pr-3 tabular-nums">{Math.round(t.player_integrity_after)}</td>
                   <td className="pr-3">{t.result}</td>
@@ -185,28 +194,13 @@ export function ActiveCombatPanel({
   )
 }
 
-function IntegrityBar({
-  label, pct, current, max, color, emptyLabel,
-}: {
-  label: string
-  pct: number
-  current: number
-  max: number
-  color: string
-  emptyLabel?: string
-}) {
+function Bar({ label, pct, text, color }: { label: string; pct: number; text: string; color: string }) {
   const clamped = Math.max(0, Math.min(100, pct))
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between text-xs">
         <span className="text-white/60">{label}</span>
-        {max > 0 ? (
-          <span className="tabular-nums text-white/45">
-            {clamped.toFixed(0)}% · {Math.round(current).toLocaleString()} / {Math.round(max).toLocaleString()}
-          </span>
-        ) : (
-          <span className="text-white/30">{emptyLabel ?? '—'}</span>
-        )}
+        <span className="tabular-nums text-white/45">{text}</span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded bg-white/10">
         <div className={`h-full ${color} transition-all duration-300`} style={{ width: `${clamped}%` }} />

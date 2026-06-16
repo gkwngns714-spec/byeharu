@@ -1,18 +1,40 @@
-import type { CombatEvent, CombatEventType } from './combatTypes'
+import type { CombatEvent } from './combatTypes'
 
-// COSMETIC ONLY. Animates the server-generated combat_events. Decides nothing.
-// First visual version: an event feed of icon + label streaks (newest on top).
+// COSMETIC ONLY. Animates the server-generated combat_events into a readable feed.
+// Decides nothing — all values come from the server.
 
-const META: Record<CombatEventType, { icon: string; label: string }> = {
-  missile_salvo: { icon: '🚀', label: 'Missile salvo' },
-  laser_burst: { icon: '⚡', label: 'Laser burst' },
-  shield_hit: { icon: '🛡️', label: 'Shield hit' },
-  hull_damage: { icon: '🔧', label: 'Hull damage' },
-  explosion: { icon: '💥', label: 'Explosion' },
-  unit_destroyed: { icon: '☠️', label: 'Units lost' },
-  wave_spawned: { icon: '👾', label: 'Pirate wave' },
-  retreat_started: { icon: '🏳️', label: 'Retreat started' },
-  retreat_completed: { icon: '🟢', label: 'Retreat complete' },
+const cap = (s: unknown) => {
+  const str = String(s ?? '')
+  return str.charAt(0).toUpperCase() + str.slice(1)
+}
+const num = (v: unknown) => (typeof v === 'number' ? v : Number(v ?? 0))
+
+function describe(e: CombatEvent): { icon: string; text: string } {
+  const p = e.payload_json ?? {}
+  switch (e.event_type) {
+    case 'wave_spawned':
+      return { icon: '👾', text: `Wave ${num(p.wave)} incoming (danger ${num(p.danger)}${p.hp ? `, ${num(p.hp)} HP` : ''})` }
+    case 'missile_salvo':
+      return { icon: '🚀', text: `Missile salvo hit the pirate wave for ${num(p.damage)} damage` }
+    case 'laser_burst':
+      return { icon: '⚡', text: 'Pirates opened fire' }
+    case 'hull_damage':
+      return { icon: '🔧', text: `Pirates damaged ${cap(p.group)} group for ${num(p.damage)} hull` }
+    case 'unit_destroyed':
+      return { icon: '☠️', text: `${num(p.count)} ${cap(p.group)} destroyed` }
+    case 'explosion':
+      if (p.wave_cleared) return { icon: '💥', text: `Wave ${num(p.wave)} cleared. +${num(p.reward_metal)} metal pending` }
+      if (p.reason === 'fleet_lost') return { icon: '💀', text: 'Fleet destroyed' }
+      return { icon: '💥', text: 'Explosion' }
+    case 'retreat_started':
+      return { icon: '🏳️', text: 'Retreat ordered — disengaging' }
+    case 'retreat_completed':
+      return { icon: '🟢', text: p.forced ? 'Auto-extracted to safety' : 'Escaped to safety' }
+    case 'shield_hit':
+      return { icon: '🛡️', text: 'Shields absorbed a hit' }
+    default:
+      return { icon: '•', text: e.event_type }
+  }
 }
 
 function sideColor(source: string | null) {
@@ -22,7 +44,7 @@ function sideColor(source: string | null) {
 }
 
 export function CombatEventLayer({ events }: { events: CombatEvent[] }) {
-  const recent = events.slice().sort((a, b) => b.id - a.id).slice(0, 12)
+  const recent = events.slice().sort((a, b) => b.id - a.id).slice(0, 14)
 
   return (
     <div>
@@ -32,23 +54,14 @@ export function CombatEventLayer({ events }: { events: CombatEvent[] }) {
       ) : (
         <ul className="space-y-1">
           {recent.map((e) => {
-            const m = META[e.event_type] ?? { icon: '•', label: e.event_type }
-            const count = e.projectile_count ? ` ×${e.projectile_count}` : ''
+            const d = describe(e)
             return (
               <li
                 key={e.id}
                 className={`bh-fade-in flex items-center gap-2 border-l-2 ${sideColor(e.source)} bg-black/20 px-2 py-1 text-xs`}
               >
-                <span>{m.icon}</span>
-                <span className="text-white/75">
-                  {m.label}
-                  {count}
-                </span>
-                {e.source && e.target && (
-                  <span className="text-white/30">
-                    {e.source} → {e.target}
-                  </span>
-                )}
+                <span>{d.icon}</span>
+                <span className="text-white/75">{d.text}</span>
                 <span className="ml-auto text-white/25">t{e.tick_number}</span>
               </li>
             )

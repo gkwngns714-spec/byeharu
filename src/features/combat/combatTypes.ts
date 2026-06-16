@@ -21,16 +21,30 @@ export interface CombatEncounter {
   player_integrity_current: number
   enemy_integrity_max: number
   enemy_integrity_current: number
+  wave_number: number
+  next_wave_at: string | null
   total_rewards_json: Record<string, number>
   started_at: string
   retreat_started_at: string | null
   ended_at: string | null
 }
 
+export interface CombatUnit {
+  id: string
+  encounter_id: string
+  unit_type_id: string
+  ship_hp: number
+  initial_count: number
+  alive_count: number
+  hp_max: number
+  hp_current: number
+}
+
 export interface CombatTick {
   id: number
   encounter_id: string
   tick_number: number
+  wave_number: number
   danger_level: number
   player_power_before: number
   enemy_power: number

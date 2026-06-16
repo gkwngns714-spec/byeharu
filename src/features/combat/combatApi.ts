@@ -1,5 +1,5 @@
 import { supabase } from '../../lib/supabase'
-import type { CombatEncounter, CombatEvent, CombatReport, CombatTick } from './combatTypes'
+import type { CombatEncounter, CombatEvent, CombatReport, CombatTick, CombatUnit } from './combatTypes'
 
 // Combat client API — read-only reads + the retreat request. The client never
 // triggers combat resolution (process_combat_ticks is cron-only and locked down).
@@ -24,6 +24,13 @@ export async function fetchCombatEvents(encounterIds: string[]): Promise<CombatE
     .limit(60)
   if (error) throw new Error(error.message)
   return (data as CombatEvent[]) ?? []
+}
+
+export async function fetchCombatUnits(encounterIds: string[]): Promise<CombatUnit[]> {
+  if (encounterIds.length === 0) return []
+  const { data, error } = await supabase.from('combat_units').select('*').in('encounter_id', encounterIds)
+  if (error) throw new Error(error.message)
+  return (data as CombatUnit[]) ?? []
 }
 
 export async function fetchRecentTicks(encounterIds: string[]): Promise<CombatTick[]> {

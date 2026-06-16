@@ -3,14 +3,16 @@ import {
   fetchActiveEncounters,
   fetchCombatEvents,
   fetchCombatReports,
+  fetchCombatUnits,
   fetchRecentTicks,
 } from './combatApi'
-import type { CombatEncounter, CombatEvent, CombatReport, CombatTick } from './combatTypes'
+import type { CombatEncounter, CombatEvent, CombatReport, CombatTick, CombatUnit } from './combatTypes'
 
 export interface CombatState {
   encounters: CombatEncounter[]
   events: CombatEvent[]
   ticks: CombatTick[]
+  units: CombatUnit[]
   reports: CombatReport[]
   refresh: () => Promise<void>
 }
@@ -23,20 +25,23 @@ export function useCombat(pollMs = 1500): CombatState {
   const [encounters, setEncounters] = useState<CombatEncounter[]>([])
   const [events, setEvents] = useState<CombatEvent[]>([])
   const [ticks, setTicks] = useState<CombatTick[]>([])
+  const [units, setUnits] = useState<CombatUnit[]>([])
   const [reports, setReports] = useState<CombatReport[]>([])
 
   const refresh = useCallback(async () => {
     try {
       const encs = await fetchActiveEncounters()
       const ids = encs.map((e) => e.id)
-      const [evs, tks, reps] = await Promise.all([
+      const [evs, tks, uts, reps] = await Promise.all([
         fetchCombatEvents(ids),
         fetchRecentTicks(ids),
+        fetchCombatUnits(ids),
         fetchCombatReports(),
       ])
       setEncounters(encs)
       setEvents(evs)
       setTicks(tks)
+      setUnits(uts)
       setReports(reps)
     } catch {
       /* transient read error; next poll retries */
@@ -55,5 +60,5 @@ export function useCombat(pollMs = 1500): CombatState {
     }
   }, [refresh, pollMs])
 
-  return { encounters, events, ticks, reports, refresh }
+  return { encounters, events, ticks, units, reports, refresh }
 }

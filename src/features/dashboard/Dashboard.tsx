@@ -67,7 +67,7 @@ export function Dashboard() {
               key={enc.id}
               encounter={enc}
               locationName={locName(enc.location_id)}
-              fleetUnits={game.fleetUnits.filter((u) => u.fleet_id === enc.fleet_id)}
+              units={combat.units.filter((u) => u.encounter_id === enc.id)}
               unitTypes={game.unitTypes}
               events={combat.events.filter((e) => e.encounter_id === enc.id)}
               ticks={combat.ticks.filter((t) => t.encounter_id === enc.id)}
