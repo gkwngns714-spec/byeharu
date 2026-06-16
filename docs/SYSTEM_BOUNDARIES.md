@@ -46,7 +46,7 @@ server-side functions — **never** by directly changing another system's tables
 | **Map** | sectors, zones, locations | `get_world_map()`, `get_location_detail()` | move fleets · combat · rewards · change unit counts · create presence |
 | **World State** | zone_state, location_state | `worldstate_register_presence(loc)`, `worldstate_unregister_presence(loc)`, `worldstate_tick()` | touch fleets/combat/rewards |
 | **Base** | bases, base_units, base_resources | `initialize_new_player()`, `base_reserve_units(base,units)`, `base_merge_units(base,units)`, `base_add_resources(base,rewards)` *(only Reward calls this)* | movement/combat logic |
-| **Fleet** | fleets, fleet_units | `fleet_create(...)`, `fleet_set_moving/present/returning/complete/destroy(...)` *(state-guarded)*, `fleet_apply_losses(fleet,ratio)`, `fleet_get_power(fleet)` | write base_/combat_/movement tables |
+| **Fleet** | fleets, fleet_units | `fleet_create(...)`, `fleet_set_moving/present/returning/complete/destroy(...)` *(state-guarded)*, `fleet_combat_stats(fleet)`, `fleet_sync_quantities(fleet,counts)`, `fleet_get_power(fleet)` | write base_/combat_/movement tables |
 | **Movement** | fleet_movements | `movement_create(fleet,origin,target,mission)`, `process_fleet_movements()` | combat math · spawn pirates · rewards · unit losses · victory/defeat |
 | **Presence** | location_presence | `presence_create(fleet,loc,activity)`, `presence_request_leave(presence)`, `presence_complete/destroy/expire(...)` | combat damage · resource writes · map writes |
 | **Activity** *(no table — router)* | — | `activity_start(presence,type)` → `hunt_pirates`→Combat, `none`→no-op | own gameplay state; MVP only dispatches |

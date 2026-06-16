@@ -5,6 +5,36 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M4 cleanup (loose ends; verified 40/40)
+
+**1. Reward deposit → home arrival.** Combat no longer deposits at escape. On
+escape/auto-extract the pending rewards are attached to the return movement
+(`fleet_movements.reward_grant_source` + `reward_payload_json` via new
+`movement_attach_cargo()`), and `process_fleet_movements()`'s **return-arrival
+branch** deposits them via `reward_grant` (idempotent unique source). Defeat → none
+(zeroed). Deferred so future en-route risk/cargo "just works."
+**2. Config extraction.** Added `reward_danger_scale=0.25`, `danger_time_divisor_seconds=180`,
+`combat_damage_variance_pct=0.10`, `defense_curve_base=100`; `process_combat_ticks`
+now reads them. No combat magic numbers remain in code.
+**3. Dead code.** Dropped `fleet_apply_losses()` (superseded by combat_units +
+fleet_sync_quantities; confirmed no live caller).
+
+**UI:** combat pending note "secured only after your fleet returns to base"; returning
+fleet shows "💰 rewards locked (secured on arrival)"; report "rewards secured when it
+reaches base".
+
+**Files:** `0030_m4_cleanup_reward_on_arrival.sql`; `scripts/verify-m4.mjs`;
+`fleetTypes.ts`, `FleetStatusPanel.tsx`, `ActiveCombatPanel.tsx`, `CombatReportsView.tsx`;
+`SYSTEM_BOUNDARIES.md`. Backend: 1 migration. Frontend: wording/types only.
+
+**Verify:** `verify:m4` **40/40** (escape: not deposited; return carries rewards;
+arrival deposits exactly once +metal; defeat/retreat-death: none; destroyed don't
+return), `verify:m2` 11/11, `verify:m3` 13/13.
+
+**M4 closed — no known loose ends.**
+
+---
+
 ## 2026-06-17 — M4 CLOSE (combined final pass; all verified)
 
 **Part 1 — retreat + wording**
