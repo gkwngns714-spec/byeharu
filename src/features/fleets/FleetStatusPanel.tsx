@@ -121,7 +121,10 @@ export function FleetStatusPanel({
                   {f.status === 'present' && <>at {locName(f.current_location_id)}</>}
                 </div>
 
-                {f.status === 'present' && presence && (
+                {f.status === 'present' && presence && presence.activity_type === 'hunt_pirates' && (
+                  <p className="mt-2 text-xs text-red-300/80">⚔️ in combat — retreat from the combat panel below</p>
+                )}
+                {f.status === 'present' && presence && presence.activity_type !== 'hunt_pirates' && (
                   <button
                     onClick={() => handleLeave(presence.id)}
                     disabled={leavingId === presence.id}

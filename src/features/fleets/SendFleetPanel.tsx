@@ -20,9 +20,9 @@ export function SendFleetPanel({
   locations: MapLocation[]
   onSent: () => void
 }) {
-  // M3: only safe zones (activity 'none') are dispatchable; combat arrives in M4.
-  const safeLocations = useMemo(
-    () => locations.filter((l) => l.location_type === 'safe_zone' && l.activity_type === 'none'),
+  // Dispatchable locations: safe zones (activity 'none') and pirate hunts (M4).
+  const destinations = useMemo(
+    () => locations.filter((l) => l.activity_type === 'none' || l.activity_type === 'hunt_pirates'),
     [locations],
   )
 
@@ -39,7 +39,8 @@ export function SendFleetPanel({
     .map(([unit_type_id, quantity]) => ({ unit_type_id, quantity }))
 
   const totalSelected = selected.reduce((n, s) => n + s.quantity, 0)
-  const location = safeLocations.find((l) => l.id === locationId)
+  const location = destinations.find((l) => l.id === locationId)
+  const isHunt = location?.activity_type === 'hunt_pirates'
 
   // Preview only (not authoritative).
   const previewEta = useMemo(() => {
@@ -73,19 +74,27 @@ export function SendFleetPanel({
     <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
       <h2 className="mb-4 text-lg font-medium">Send a fleet</h2>
 
-      <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">Destination (safe zone)</label>
+      <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">Destination</label>
       <select
         value={locationId}
         onChange={(e) => setLocationId(e.target.value)}
-        className="mb-4 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+        className="mb-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-indigo-400"
       >
         <option value="">Choose a location…</option>
-        {safeLocations.map((l) => (
+        {destinations.map((l) => (
           <option key={l.id} value={l.id}>
-            {l.name}
+            {l.location_type === 'pirate_hunt'
+              ? `⚔️ ${l.name} (hunt · difficulty ${l.base_difficulty})`
+              : `🛡️ ${l.name} (safe)`}
           </option>
         ))}
       </select>
+      {isHunt && (
+        <p className="mb-4 text-xs text-red-300/80">
+          Combat begins automatically on arrival. Retreat when you want to bank rewards —
+          the longer you stay, the stronger the waves.
+        </p>
+      )}
 
       <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">Units</label>
       <div className="space-y-2">

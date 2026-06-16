@@ -4,6 +4,9 @@ import { useGameState } from './useGameState'
 import { BasePanel } from '../base/BasePanel'
 import { SendFleetPanel } from '../fleets/SendFleetPanel'
 import { FleetStatusPanel } from '../fleets/FleetStatusPanel'
+import { useCombat } from '../combat/useCombat'
+import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
+import { CombatReportsView } from '../combat/CombatReportsView'
 
 /**
  * Command Center (home). Composes the M3 feature panels — base, send-fleet, fleet
@@ -14,6 +17,9 @@ export function Dashboard() {
   const user = useAuthStore((s) => s.user)
   const signOut = useAuthStore((s) => s.signOut)
   const game = useGameState()
+  const combat = useCombat()
+  const locName = (id: string | null) =>
+    (id && game.locations.find((l) => l.id === id)?.name) || 'unknown'
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
@@ -56,6 +62,21 @@ export function Dashboard() {
             resources={game.resources}
             unitTypes={game.unitTypes}
           />
+          {combat.encounters.map((enc) => (
+            <ActiveCombatPanel
+              key={enc.id}
+              encounter={enc}
+              locationName={locName(enc.location_id)}
+              fleetUnits={game.fleetUnits.filter((u) => u.fleet_id === enc.fleet_id)}
+              unitTypes={game.unitTypes}
+              events={combat.events.filter((e) => e.encounter_id === enc.id)}
+              ticks={combat.ticks.filter((t) => t.encounter_id === enc.id)}
+              onChanged={() => {
+                void combat.refresh()
+                void game.refresh()
+              }}
+            />
+          ))}
           <SendFleetPanel
             base={game.base}
             units={game.units}
@@ -71,6 +92,7 @@ export function Dashboard() {
             locations={game.locations}
             onChanged={game.refresh}
           />
+          <CombatReportsView reports={combat.reports} locations={game.locations} />
         </div>
       )}
     </div>

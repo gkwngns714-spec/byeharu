@@ -1,0 +1,78 @@
+// Combat — client-side row types (read-only mirror). combat_ticks are the
+// authoritative log; combat_events are cosmetic. The client never computes any
+// of these values.
+
+export type CombatStatus = 'active' | 'retreating' | 'escaped' | 'defeat' | 'completed'
+
+export interface CombatEncounter {
+  id: string
+  player_id: string
+  fleet_id: string
+  presence_id: string
+  location_id: string | null
+  status: CombatStatus
+  tick_number: number
+  danger_level: number
+  waves_cleared: number
+  player_power_start: number
+  player_power_current: number
+  enemy_power_current: number
+  total_rewards_json: Record<string, number>
+  started_at: string
+  ended_at: string | null
+}
+
+export interface CombatTick {
+  id: number
+  encounter_id: string
+  tick_number: number
+  danger_level: number
+  player_power_before: number
+  enemy_power: number
+  player_damage: number
+  enemy_damage: number
+  player_losses_json: Record<string, number>
+  reward_delta_json: Record<string, number>
+  result: string
+  resolved_at: string
+}
+
+export type CombatEventType =
+  | 'missile_salvo'
+  | 'laser_burst'
+  | 'shield_hit'
+  | 'hull_damage'
+  | 'explosion'
+  | 'unit_destroyed'
+  | 'wave_spawned'
+  | 'retreat_started'
+  | 'retreat_completed'
+
+export interface CombatEvent {
+  id: number
+  encounter_id: string
+  tick_number: number
+  seq: number
+  event_type: CombatEventType
+  source: string | null
+  target: string | null
+  projectile_type: string | null
+  projectile_count: number | null
+  impact_delay_ms: number | null
+  payload_json: Record<string, unknown>
+  created_at: string
+}
+
+export interface CombatReport {
+  id: string
+  encounter_id: string
+  fleet_id: string | null
+  location_id: string | null
+  result: string
+  waves_cleared: number
+  duration_seconds: number
+  total_losses_json: Record<string, number>
+  total_rewards_json: Record<string, number>
+  summary_text: string | null
+  created_at: string
+}

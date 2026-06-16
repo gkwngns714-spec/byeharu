@@ -5,6 +5,32 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — M4 frontend (active combat UI, display-only)
+
+**Request**
+Build the M4 frontend only (no backend changes): ActiveCombatPanel, CombatEventLayer,
+combat reports view, ~1–2s combat polling, SendFleetPanel allows pirate_hunt. Client
+display-only; combat_events cosmetic; combat_ticks truth/log; keep boundaries.
+
+**Work done (files)**
+- `src/features/combat/` — `combatTypes.ts`, `combatApi.ts` (read encounters/events/
+  ticks/reports + `request_retreat`), `useCombat.ts` (1.5s poll), `CombatEventLayer.tsx`
+  (cosmetic missile/laser/explosion feed), `ActiveCombatPanel.tsx` (danger/waves/
+  survivors/pending rewards/Retreat + combat_ticks debug log), `CombatReportsView.tsx`.
+- `SendFleetPanel.tsx` — dispatch to safe **and** pirate_hunt locations (danger label
+  + combat warning).
+- `FleetStatusPanel.tsx` — present hunt fleets show "in combat" (retreat via combat panel).
+- `Dashboard.tsx` — renders ActiveCombatPanel per active encounter + CombatReportsView,
+  using a separate faster `useCombat` poll. `index.css` — `bh-fade-in` for event feed.
+
+**Boundaries:** client display-only; only action is `request_retreat`; no client math;
+events cosmetic, ticks read-only. No backend changes.
+
+**Verification:** `npm run build` green (88 modules, no type errors); dev server HTTP 200
+at http://localhost:5173/. Visual click-through handed to user.
+
+---
+
 ## 2026-06-16 — M4 backend: server-authoritative pirate combat (verified)
 
 **Request**
