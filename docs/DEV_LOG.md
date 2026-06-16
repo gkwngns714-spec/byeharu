@@ -5,6 +5,54 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M4 combat overhaul: pacing + per-unit HP (verified 27/27)
+
+**Request**
+Browser feedback: waves one-shot (HP 195 vs 385 dmg), no visible wave progress,
+only total fleet HP, unclear feed. Make combat readable + per-unit correct.
+
+**Root cause**
+Wave HP and wave damage were the SAME number → a 385-attack fleet one-shot a
+195-HP wave. Fixed by decoupling: wave **HP** scales large with danger; wave
+**attack** is a separate, smaller danger-scaled value.
+
+**Backend (migrations 0023–0025)**
+- `0023`: tick 2s→**4s**; config knobs `enemy_hp_base`(6), `enemy_hp_danger_scale`(0.6),
+  `enemy_attack_base`(1.0), `enemy_attack_danger_scale`(0.25), `wave_transition_seconds`(3).
+  New table **`combat_units`** (per-unit-type combat HP: ship_hp, initial/alive count,
+  hp_max/current, carries over between waves). `combat_create_encounter` snapshots it;
+  `process_combat_ticks` rewritten: decoupled HP/attack, **server-side damage
+  distribution across unit groups by ship count**, deterministic ship loss
+  (alive = ceil(hp/ship_hp)), `next_wave_at` transition, richer event payloads,
+  `fleet_sync_quantities` to write survivors back to Fleet. encounter `wave_number`;
+  ticks `wave_number` + `unit_snapshot_json`.
+- `0024`: re-lock execute (also block anon/authenticated default).
+- `0025`: `fleet_sync_quantities` → **SECURITY INVOKER** (Supabase re-grants execute to
+  authenticated on new fns and resists revoke; invoker means a client call runs as
+  authenticated with no fleet_units UPDATE grant → denied; internal caller runs as
+  owner → works). Grant-independent lockdown.
+
+**Frontend**
+- `combatTypes`/`combatApi`/`useCombat`: `CombatUnit` + fetch combat_units; encounter
+  wave fields. `ActiveCombatPanel`: total + **per-unit-type integrity bars**
+  (alive/initial ships, HP, %), wave-incoming display, "latest exchange", richer debug.
+- `CombatEventLayer`: meaningful text ("Missile salvo hit the pirate wave for N
+  damage", "Pirates damaged Corvette group for N hull", "N Scout destroyed",
+  "Wave N cleared. +M metal pending", "Wave N incoming").
+
+**Verification — `verify:m4`: 27/27**
+- Lockdown: process_combat_ticks / fleet_sync_quantities / base_add_resources denied.
+- A: multi-tick wave (HP 252→37, dealt 215; not one-shot), per-unit HP present +
+  decreasing via distribution, metal accrued, retreat→escaped, reward once, +metal,
+  return via M3.
+- B defeat: 0 rewards, base unchanged, no return, destroyed. C retreat-death: same.
+
+**Remaining:** wave pacing is multi-tick but on the short side (~2 ticks for a strong
+fleet at low danger); deeper balance deferred per request — tunable via game_config
+(`enemy_hp_base`, `enemy_hp_danger_scale`).
+
+---
+
 ## 2026-06-16 — M4 fixes from browser feedback (verified 26/26)
 
 **Request**
