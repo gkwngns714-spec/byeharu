@@ -5,6 +5,40 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — M3 frontend (Command Center)
+
+**Request**
+Build the M3 frontend to click the live loop: base → send fleet → countdown →
+present → leave → return → units restored. Keep modules separated; client only
+requests + renders; M2 map read-only.
+
+**Work done (files)**
+- `src/game/movement/travelPreview.ts` — client ETA PREVIEW math only (mirrors
+  server formula; not authoritative).
+- `src/lib/catalog.ts` — shared `unit_types` read.
+- `src/features/base/` — `baseTypes.ts`, `baseApi.ts` (ensureBase/fetch*),
+  `BasePanel.tsx` (base + resources + units at base).
+- `src/features/fleets/` — `fleetTypes.ts`, `fleetApi.ts` (send/leave + reads),
+  `SendFleetPanel.tsx` (pick safe location + quantities, preview ETA),
+  `FleetStatusPanel.tsx` (status/dest/countdown + leave button).
+- `src/features/dashboard/useGameState.ts` — single 3s poll loop; panels stay
+  presentational. `Dashboard.tsx` composes the panels (Command Center).
+
+**Boundaries:** base UI in features/base, fleet UI in features/fleets, preview-only
+math in game/movement; M2 map untouched/read-only; no client-side game authority
+(all mutations via RPCs); reusable for future combat/trading/captains.
+
+**Verification**
+- `npm run build` green (tsc + vite, 83 modules, no type errors).
+- Dev server serving HTTP 200 at http://localhost:5173/.
+- Backend loop already proven by `verify:m3` (13/13) — frontend calls the same RPCs.
+- Visual/console click-through: handed to user (browser).
+
+**Bugs / fixes**
+- _(none in build)_
+
+---
+
 ## 2026-06-16 — M3 backend built, deployed, and verified live
 
 **Request**
