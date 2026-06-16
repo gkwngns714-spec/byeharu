@@ -5,6 +5,33 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — ✅ M5 CLOSED (deployed + verified green in CI)
+
+Migrations `0031`–`0033` deployed to the remote via the GitHub Action, and the new
+**Verify** workflow ran the full suite on CI (Node 22). All green:
+
+- **M5: 25/25** · **M4: 40/40** · **M3: 13/13** · **M2: 11/11** — 0 failures.
+- M5 coverage proven: world-state rows seeded, passive drift, register/relief/
+  unregister edges, active_fleets reconciliation, double-tick idempotency, and
+  combat safely reading `danger_modifier` at a high-pressure location.
+- M4 balance confirmed untouched (baseline pressure → danger_modifier 1.0).
+
+**Bugs found + fixed during deploy/verify (couldn't surface without a live DB/CI):**
+1. **pg_cron `'60 seconds'` invalid** (SQLSTATE 22023) — sub-minute syntax is 1–59s;
+   60s must be standard cron `'* * * * *'`. Fixed in `0033`. (031/032 had already
+   applied; 033 rolled back cleanly and re-applied after the fix.)
+2. **CI on Node 20 threw "Node.js 20 detected without native WebSocket support"** —
+   supabase-js 2.108's realtime client needs native WebSocket (Node 22+). Bumped
+   `verify.yml` to Node 22.
+
+**Verify CI:** secrets `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` /
+`SUPABASE_SERVICE_ROLE_KEY` configured; workflow auto-runs after each deploy and on
+manual dispatch. Verification no longer depends on the local toolchain.
+
+**Next:** M6 (frontend depth) per `docs/ARCHITECTURE.md` §16.
+
+---
+
 ## 2026-06-17 — M5 Living World (built; pending deploy + verify)
 
 **Request** Build M5 per the "Living World Design Law": world-state pressure +
