@@ -40,7 +40,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22+: supabase-js 2.108's realtime client needs a native WebSocket
+          # (Node 20 throws "detected without native WebSocket support" at createClient).
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
