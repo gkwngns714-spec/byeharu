@@ -179,7 +179,7 @@ async function main() {
   })
   if (!encC) die('C: encounter never appeared')
   if (encC.status === 'active') {
-    await supabase.rpc('request_retreat', { p_presence: encC.presence_id }).catch(() => {})
+    await supabase.rpc('request_retreat', { p_presence: encC.presence_id })
   }
   const endC = await poll(async () => {
     const e = await encounterFor(fleetC)

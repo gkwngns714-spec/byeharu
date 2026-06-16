@@ -5,6 +5,41 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-16 — M4 fixes from browser feedback (verified 26/26)
+
+**Request**
+Browser testing surfaced issues. Fix before M4 complete.
+
+**Fixes**
+1. **Reward-on-defeat bug (critical, backend):** defeat kept accrued
+   `total_rewards_json`, so the report/pending looked rewarded. Migration `0022`:
+   on defeat (both paths) `total_rewards_json = '{}'`, no `reward_grant`, no
+   `base_add_resources`, no return. reward_grant only ever called on escaped/completed.
+2. **Integrity model (backend):** added `player_integrity_max/current`,
+   `enemy_integrity_max/current` on encounters and `*_integrity_before/after` on
+   ticks. Persistent integrity pool decreases each tick (visible HP), unit losses
+   incremental-proportional → explains "hull damaged, no ships destroyed". Frontend:
+   Fleet/Pirate-wave HP bars + "Latest exchange" (you dealt / they dealt / losses).
+3. **Retreat reward-locking (backend):** while `retreating`, fleet takes damage but
+   deals none, clears no waves, accrues no rewards (locked at retreat). `0022` adds
+   `retreat_started_at`; frontend shows "Retreating — escaping in Ns" countdown.
+4. **Completed history:** collapsed into "Completed history: N previous run(s)".
+5. **Wording:** "use the Retreat button in the combat panel" (non-positional).
+6. **Balance:** left as-is per request (combat still easy; tune later).
+
+**Verification — `verify:m4`: 26/26 PASSED**
+- Anti-cheat lockdown (4 fns denied).
+- A escape: integrity exposed, pending accrued, retreat → escaped, rewards locked
+  (no farming), reward_grants ×1, base metal +once, return created.
+- B defeat (1 scout): defeat, destroyed, report 0 rewards, 0 reward_grants, base
+  unchanged, no return.
+- C retreat-death (6 scouts): defeat, 0 rewards, base unchanged, no return.
+- (verify script bug fixed: `.catch` on supabase builder → plain await.)
+
+Deploy: GitHub Action ✅ (migration 0022). Frontend build green (88 modules).
+
+---
+
 ## 2026-06-16 — M4 frontend (active combat UI, display-only)
 
 **Request**
