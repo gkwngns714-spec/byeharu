@@ -267,6 +267,16 @@ Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 
 ## 16. Milestone roadmap
 
+> **Direction update (2026-06-17).** Byeharu is now a **main-ship expedition game** — see
+> **`docs/ROADMAP.md`** for the forward plan (Main Ship + Captains + Modules + Support Craft
+> → Expedition → Activity → Return → Inventory → Progression → Ranking). The milestones
+> below are **reclassified, not rewritten**: **M2–M4 = the Expedition Engine** (reused by all
+> future activities) and **M4.5 = the Serial Build Queue Foundation** (becomes support-craft /
+> equipment production). The old "combat-reward-only economy" framing is superseded by the
+> generic inventory + pending-loot-bundle model in ROADMAP Phases 3–5. **Standing law:** don't
+> replace the engine — replace the *source* of expedition stats via
+> `calculate_expedition_stats()` (capacity + tradeoffs, never a plain sum).
+
 | Milestone | Scope | Outcome |
 |---|---|---|
 | **M1** ✅ | Scaffold + auth + `profiles` | done |

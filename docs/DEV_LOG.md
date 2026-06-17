@@ -5,6 +5,31 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — Phase 1: roadmap / architecture reconciliation (docs only)
+
+**Request** After M4.5, make the docs match the real game direction — **main-ship expedition
+game**. Documentation only; no gameplay code; M2/M3/M4/M4.5 stay green.
+
+**Work (docs only):**
+- **New `docs/ROADMAP.md`** — the authoritative forward direction: final identity (one main
+  ship + captains + modules + support craft → expedition → activity → return → inventory →
+  progression → ranking); reclassification (**M2–M4 = Expedition Engine**, **M4.5 = Serial
+  Build Queue Foundation**); standing laws (support craft = capacity-limited loadout, not
+  additive power; one-directional pipeline *activity → pending → secure-on-return → inventory →
+  progression → ranking*; don't replace the engine, replace the source of expedition stats via
+  `calculate_expedition_stats`); the Phase 1–20 plan.
+- **README** — intro reframed to main-ship expedition; milestones reclassified (Engine +
+  Build Queue Foundation done) + forward direction → ROADMAP; removed the stale "M7 not
+  started" / combat-reward-only framing.
+- **ARCHITECTURE §16** — direction-update note + reclassification + pointer to ROADMAP.
+
+**Not built (deferred to later phases):** main ship · captains · modules · inventory · trading
+· exploration · mining · ranking. No migrations, no frontend behavior change. M2 11/11 · M3
+13/13 · M4 40/40 · M4.5 27/27 unaffected. **Next:** Phase 2 (expedition activity architecture,
+design only) when chosen.
+
+---
+
 ## 2026-06-17 — ✅ M4.5 CLOSED (browser acceptance passed)
 
 The automated **Playwright browser acceptance** test passed against the live Pages site —

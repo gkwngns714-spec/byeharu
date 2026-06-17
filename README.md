@@ -1,8 +1,13 @@
 # Byeharu
 
-A PvE space-strategy game (no PvP for now) — build bases, gather resources, move
-fleets, fight pirates, explore sectors. Inspired by OGame / Tribal Wars / Travian
-and EVE-style living-world ideas. Clean web-first rebuild.
+A PvE **main-ship expedition game** (no PvP for now). You command **one main ship** —
+captains, modules, support craft, cargo — and send **expeditions** to pirate / trade /
+exploration / mining locations, then return home to secure loot, profit, resources, and
+ranking points and grow stronger. Server-authoritative, web-first.
+
+> Core fantasy: *my ship and crew go on dangerous expeditions, return with rewards, and
+> become stronger.* The current engine (movement → combat → retreat → return → reward)
+> is the **expedition engine**; the forward direction is in **`docs/ROADMAP.md`**.
 
 ## Stack
 
@@ -53,18 +58,26 @@ Apply the database migrations to your Supabase project (via the Supabase CLI
 
 ## Milestones
 
-> Authoritative roadmap — see `docs/ARCHITECTURE.md` §16. The MVP proves one loop:
-> `map → location → movement → presence → combat → retreat → return → report`.
-> Economy is **combat-reward-only** for now (buildings/production/training deferred — §17).
+> The forward direction (Main Ship + Support Craft + Activities + Ranking) lives in
+> **`docs/ROADMAP.md`**; engine design in `docs/ARCHITECTURE.md`; ownership law in
+> `docs/SYSTEM_BOUNDARIES.md`; running history in `docs/DEV_LOG.md`.
 
-1. **Scaffold + auth** ✅ — Vite/React/TS/Tailwind/Zustand, Supabase client, `profiles`.
-2. **World map** ✅ — `sectors`/`zones`/`locations` + seed + `get_world_map()` + read-only map screen.
-3. **Movement + presence spine** ✅ — bases/units/config, fleets, `send_fleet_to_location()`,
-   `process_fleet_movements()`, return; send → travel → present at a safe zone → return (no combat).
-4. **Pirate combat** ✅ — `combat_encounters`/`ticks`/`reports`, `process_combat_ticks()`, wave
-   scaling, per-unit HP, retreat, metal rewards on home-arrival; full pirate-hunt loop.
-5. **Living world** ✅ — `process_location_state_ticks()` + zone/location dynamics (pirate
-   pressure / danger drift), wire all cron jobs together, balance.
-6. **Frontend depth** ✅ CLOSED — location panel, send-fleet preview, fleet status, active-combat
-   panel, round log, report page — polished, player-clear loop.
-7. **M7** ⬜ — not started (next milestone; economy & depth per §17 deferred list, scope TBD).
+### Foundation — built & verified (KEEP; reclassified, not rewritten)
+- **M1** ✅ Scaffold + auth.
+- **M2–M4 = the Expedition Engine** ✅ — world map · bases/fleets/movement · pirate combat
+  (3s ticks, waves, per-unit HP, retreat) · return · **reward deposit only on home arrival** ·
+  combat report. *(Verified: M2 11/11 · M3 13/13 · M4 40/40.)* Reused by every future activity.
+- **M5** ✅ Living world — `location_state`/`zone_state`, 60s cron, pressure decay to baseline.
+- **M6** ✅ Frontend depth — location panel, round log, `/reports`, friendly UI.
+- **M7** ✅ Metal-spend ship training.
+- **M4.5 = the Serial Build Queue Foundation** ✅ — serial queue · one active slot · cancel +
+  refund/penalty · per-ship + total time · history fold · friendly labels. *(Verified
+  27/27 + a Playwright browser-acceptance test.)* Future meaning: **support craft / module /
+  drone / equipment production** (same queue).
+
+### Forward direction
+Byeharu is a **main-ship expedition game**: one main ship + captains + modules + support
+craft → expedition → activity (`pirate_hunt` / `trade_run` / `exploration` / `mining`) →
+return → secured loot → craft/upgrade. **Support craft are capacity-limited loadout choices,
+not additive power.** Phased plan (incremental, M2–M4.5 green throughout) in
+**`docs/ROADMAP.md`**.
