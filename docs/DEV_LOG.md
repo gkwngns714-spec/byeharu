@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Phase 6: Support Craft Reframe (implemented; pending deploy/verify)
+## 2026-06-18 — Phase 6: Support Craft Reframe (DEPLOYED + VERIFIED ✅)
 
 **Request** Reframe "build ships" toward the future "build support craft / expedition
 equipment" model — **metadata foundation only**, no engine change. Support craft must be
@@ -37,7 +37,13 @@ new ownership decision #6 (metadata only, capacity enforced later by main ship +
 matching documented costs; every craft has role + activity_tags + tradeoffs; zero overlap with
 combat `unit_types` (engine untouched); client INSERT/UPDATE blocked by RLS; then chains
 `verify-phase5` (→ phase4 → inventory → m45 → m5 → m2/m3/m4) to prove combat + serial queue
-unchanged. CI runs `verify:phase6`. **Pending deploy + verify.**
+unchanged. CI runs `verify:phase6`.
+
+**Result (commit `4038209`):** Deploy ✅ · Build ✅ · Pages ✅ · Verify ✅ —
+**Phase 6 10/10, Phase 5 25/25, Phase 4 16/16, Inventory 18/18, M4.5 27/27, M5 28/28,
+M4 40/40** (M2 11 / M3 13 chained), 0 failed. 8 craft seeded, capacity 1–5, client writes
+blocked, zero overlap with combat unit_types. Migration 0042 live on `dlkbwztrdvnnjlvaydut`.
+**Phase 6 CLOSED.**
 
 ---
 
