@@ -50,7 +50,16 @@ each activity will read from the adapter later.
 non-integer; duplicate-combine; per-craft effects (missile_boat→combat+attention/speed,
 cargo_drone→cargo+attention, survey→scouting, mining→yield, decoy→retreat, repair→repair+
 survival); no-NaN; determinism; ship + inventory not mutated; client-denied; then chains
-`verify-phase7` (full regression). CI runs `verify:phase8`. **Pending deploy + verify.**
+`verify-phase7` (full regression). CI runs `verify:phase8`.
+
+**Status (commit `5a4c954`):** Migration 0044 **deployed ✅** (direct-Postgres push succeeded).
+**Verification BLOCKED by a Supabase infra issue, not code:** every REST/RPC request returns
+`upstream request timeout` — including a trivial read of the public `main_ship_hull_types`
+table (which touches no Phase 8 code), persisting 13+ min across two runs. The REST/PostgREST
+layer is globally unresponsive (DB accepts direct connections — deploy worked — but the API
+gateway times out). Needs the Supabase project checked/restarted (paused / compute-exhausted /
+stuck schema reload), then re-run `verify:phase8`. **Phase 8 code complete; verify pending
+infra recovery.**
 
 ---
 
