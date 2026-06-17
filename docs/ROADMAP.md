@@ -67,7 +67,7 @@ become stronger."*
 | Phase | Scope | Notes |
 |---|---|---|
 | **1** ✅ | **Docs/roadmap reconciliation** | this doc + README/ARCHITECTURE; no code |
-| 2 | Expedition activity architecture (design only) | clean activity abstraction; no giant switch |
+| **2** ✅ | Expedition activity architecture (design only) → **`docs/ACTIVITIES.md`** | clean activity abstraction; no giant switch |
 | 3 | Generic inventory (`item_types`, `player_inventory`, deposit/spend fns) | keep metal working |
 | 4 | Pending **loot bundle** (`{ metal?, items[] }`) | metal becomes one field; deposit-on-arrival law kept |
 | 5 | Multi-item pirate loot | combat → pending bundle; secured on return only |

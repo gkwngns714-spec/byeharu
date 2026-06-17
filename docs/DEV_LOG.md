@@ -5,6 +5,29 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — Phase 2: Expedition Activity Architecture (design doc only)
+
+**Request** Define the clean activity abstraction so future gameplay types plug into the
+Expedition Engine without spaghetti. Docs only — no code, no migrations, no `src/`.
+
+**Work:** new **`docs/ACTIVITIES.md`** covering the 10 required items —
+`ExpeditionActivityType` (pirate_hunt / trade_run / exploration / mining, mapped to the
+existing `activity_type` enum placeholders); shared lifecycle owned by the Engine (travel ·
+arrival · presence · dispatch · pending-reward accrual · return · secured-on-arrival deposit ·
+status · reports); per-activity ownership table; the **Activity Handler contract**
+(`<activity>_create` + `process_<activity>_ticks` cron + optional `_request_leave` +
+Engine.finish) — grounded in the existing `activity_start` router + the Combat precedent;
+`PendingRewardBundle` (`{ metal?, items[] }`); history-only report/result shape; "add an
+activity = enum value + handler + one dispatch line + one panel" (no giant switch); the
+anti-spaghetti call graph (`activity → pending → secure-on-return → inventory → progression →
+ranking`); explicit non-goals; acceptance criteria.
+
+**No code / migrations / `src/` changes.** ROADMAP Phase 2 marked done → ACTIVITIES.md.
+M2 11/11 · M3 13/13 · M4 40/40 · M4.5 27/27 unaffected (nothing executable changed). **Next:**
+Phase 3 (generic inventory) when chosen.
+
+---
+
 ## 2026-06-17 — Phase 1: roadmap / architecture reconciliation (docs only)
 
 **Request** After M4.5, make the docs match the real game direction — **main-ship expedition
