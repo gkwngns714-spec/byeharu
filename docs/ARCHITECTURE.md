@@ -275,6 +275,7 @@ Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 | **M4** | `combat_encounters`/`combat_rounds`/`combat_reports`; `process_combat_ticks()`; wave scaling; `request_leave_location()` + retreat; reports | full pirate-hunt loop |
 | **M5** | `process_location_state_ticks()` + zone/location dynamics; wire all cron jobs; balance | living world, unattended ticks |
 | **M6** | Frontend depth: location panel, send-fleet panel + preview math, fleet status, active-combat panel, round log, report page | polished playable loop |
+| **M7** | **Training / ship production** (Production system): `unit_types.metal_cost`; `build_orders` + `train_units()` + `process_build_queue()`; spend metal via `base_spend_resources`, deposit via `base_merge_units`; Train Ships + Training Queue UI | spend metal → train ships → stronger fleet |
 
 ### Migration order (timestamp-prefixed, one system per file)
 `…0001_init_profiles` (done) → `world_map` → `bases` → `units` → `config` →

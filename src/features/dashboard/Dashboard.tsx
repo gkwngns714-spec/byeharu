@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useGameState } from './useGameState'
 import { BasePanel } from '../base/BasePanel'
+import { TrainShipsPanel } from '../production/TrainShipsPanel'
+import { BuildQueuePanel } from '../production/BuildQueuePanel'
 import { SendFleetPanel } from '../fleets/SendFleetPanel'
 import { FleetStatusPanel } from '../fleets/FleetStatusPanel'
 import { useCombat } from '../combat/useCombat'
@@ -68,6 +70,15 @@ export function Dashboard() {
             resources={game.resources}
             unitTypes={game.unitTypes}
           />
+          <TrainShipsPanel
+            base={game.base}
+            units={game.units}
+            resources={game.resources}
+            unitTypes={game.unitTypes}
+            config={game.config}
+            onTrained={game.refresh}
+          />
+          <BuildQueuePanel orders={game.buildOrders} unitTypes={game.unitTypes} />
           {combat.encounters.map((enc) => (
             <ActiveCombatPanel
               key={enc.id}

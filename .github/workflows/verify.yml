@@ -48,10 +48,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run M5 verification (chains M2/M3/M4)
+      - name: Run M7 verification (chains M5 → M2/M3/M4)
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          M5_SKIP_REGRESS: ${{ inputs.skip_regress && '1' || '0' }}
-        run: npm run verify:m5
+          M7_SKIP_REGRESS: ${{ inputs.skip_regress && '1' || '0' }}
+        run: npm run verify:m7

@@ -11,6 +11,8 @@ import {
   fetchFleets,
 } from '../fleets/fleetApi'
 import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from '../fleets/fleetTypes'
+import { fetchBuildOrders } from '../production/productionApi'
+import type { BuildOrder } from '../production/productionTypes'
 
 export interface GameState {
   loading: boolean
@@ -26,6 +28,7 @@ export interface GameState {
   movements: FleetMovement[]
   presences: LocationPresence[]
   locationStates: Record<string, LocationState>
+  buildOrders: BuildOrder[]
 }
 
 const EMPTY: GameState = {
@@ -42,6 +45,7 @@ const EMPTY: GameState = {
   movements: [],
   presences: [],
   locationStates: {},
+  buildOrders: [],
 }
 
 /**
@@ -70,15 +74,17 @@ export function useGameState(pollMs = 3000) {
       }
 
       const base = await fetchBase()
-      const [units, resources, fleets, fleetUnits, movements, presences, locationStates] = await Promise.all([
-        base ? fetchBaseUnits(base.id) : Promise.resolve([]),
-        base ? fetchBaseResources(base.id) : Promise.resolve([]),
-        fetchFleets(),
-        fetchFleetUnits(),
-        fetchActiveMovements(),
-        fetchActivePresences(),
-        fetchLocationStates(),
-      ])
+      const [units, resources, fleets, fleetUnits, movements, presences, locationStates, buildOrders] =
+        await Promise.all([
+          base ? fetchBaseUnits(base.id) : Promise.resolve([]),
+          base ? fetchBaseResources(base.id) : Promise.resolve([]),
+          fetchFleets(),
+          fetchFleetUnits(),
+          fetchActiveMovements(),
+          fetchActivePresences(),
+          fetchLocationStates(),
+          fetchBuildOrders(),
+        ])
 
       setState({
         loading: false,
@@ -91,6 +97,7 @@ export function useGameState(pollMs = 3000) {
         movements,
         presences,
         locationStates,
+        buildOrders,
         unitTypes: staticRef.current.unitTypes,
         locations: staticRef.current.locations,
         config: staticRef.current.config,

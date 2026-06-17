@@ -33,6 +33,7 @@ server-side functions — **never** by directly changing another system's tables
 | `combat_encounters`, `combat_rounds` | **Combat** | owner |
 | `reward_grants` | **Reward** | owner |
 | `combat_reports` | **Report** | owner |
+| `build_orders` | **Production** (Training) | owner |
 
 **Source of truth for active combat** = `combat_encounters` + `combat_rounds` +
 `fleet_units` + `location_presence`. **Never** `combat_reports` (history only).
@@ -45,7 +46,7 @@ server-side functions — **never** by directly changing another system's tables
 |---|---|---|---|
 | **Map** | sectors, zones, locations | `get_world_map()`, `get_location_detail()` | move fleets · combat · rewards · change unit counts · create presence |
 | **World State** | zone_state, location_state | `worldstate_register_presence(loc)`, `worldstate_unregister_presence(loc)`, `worldstate_tick()` | touch fleets/combat/rewards |
-| **Base** | bases, base_units, base_resources | `initialize_new_player()`, `base_reserve_units(base,units)`, `base_merge_units(base,units)`, `base_add_resources(base,rewards)` *(only Reward calls this)* | movement/combat logic |
+| **Base** | bases, base_units, base_resources | `initialize_new_player()`, `base_reserve_units(base,units)`, `base_merge_units(base,units)`, `base_add_resources(base,rewards)` *(only Reward calls this)*, `base_spend_resources(base,resource,amount)` *(only Production calls this)* | movement/combat logic |
 | **Fleet** | fleets, fleet_units | `fleet_create(...)`, `fleet_set_moving/present/returning/complete/destroy(...)` *(state-guarded)*, `fleet_combat_stats(fleet)`, `fleet_sync_quantities(fleet,counts)`, `fleet_get_power(fleet)` | write base_/combat_/movement tables |
 | **Movement** | fleet_movements | `movement_create(fleet,origin,target,mission)`, `process_fleet_movements()` | combat math · spawn pirates · rewards · unit losses · victory/defeat |
 | **Presence** | location_presence | `presence_create(fleet,loc,activity)`, `presence_request_leave(presence)`, `presence_complete/destroy/expire(...)` | combat damage · resource writes · map writes |
@@ -53,6 +54,7 @@ server-side functions — **never** by directly changing another system's tables
 | **Combat** | combat_encounters, combat_rounds | `combat_create_encounter(presence)`, `process_combat_ticks()`, `combat_set_retreating(enc)` | move fleets (except request return via Movement) · edit map · add resources directly · mining/trade/captains |
 | **Reward** | reward_grants | `reward_grant(source_type,source_id,base,rewards)` *(idempotent; sole caller of `base_add_resources`)* | combat math · movement |
 | **Report** | combat_reports | `report_create(encounter)` *(idempotent)*, `get_combat_reports()` | **any** gameplay mutation · be a source of truth for active state |
+| **Production** (Training) | build_orders | `train_units(base,unit,qty)` *(player)*, `process_build_queue()` *(cron)*, `production_create_order/complete_order(...)` *(internal)* | write base_units/base_resources directly (spends via `Base.base_spend_resources`, deposits via `Base.base_merge_units`) · touch combat/world-state/movement · change reward logic |
 
 ---
 

@@ -13,6 +13,7 @@ export interface UnitType {
   cargo: number
   power_score: number
   build_time_seconds: number
+  metal_cost: number
   status: string
 }
 

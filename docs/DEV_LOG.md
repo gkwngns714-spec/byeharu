@@ -5,6 +5,42 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M7 Ship Training (implemented; pending deploy/verify + click-through)
+
+**Status: NOT closed.** Training-first ship production — the spending loop: **spend metal
+→ queue training → cron completes ships into `base_units`**. Metal-only, timed queue, no
+buildings/shipyard/research/captains/trade/mining/multi-resource.
+
+**Migrations 0035–0037:**
+- `0035_unit_costs.sql` — `unit_types.metal_cost` (scout 50 / corvette 150 / frigate 400);
+  config `build_time_scale=1.0`, `min_build_seconds=5`, `max_build_orders=5`.
+- `0036_production_system.sql` — `build_orders` table (Production-owned, RLS owner-read, no
+  client writes); `base_spend_resources` (Base fn); `production_create_order/complete_order`;
+  `train_units` RPC (auth → validate ownership/unit/qty/metal/queue-cap → `Base.spend` →
+  `Production.create`); `process_build_queue` cron fn (FOR UPDATE SKIP LOCKED; idempotent —
+  only `queued→completed`, ships never double-added); lockdown re-grant (+`train_units` to
+  authenticated, `process_build_queue` to service_role).
+- `0037_cron_build_queue.sql` — `process-build-queue` every 30s.
+
+**Frontend:** `features/production/{productionTypes,productionApi,TrainShipsPanel,
+BuildQueuePanel}`, `game/production/buildPreview` (cost+ETA preview, non-authoritative),
+`catalog.ts` +`metal_cost`, `useGameState` +`build_orders`, `Dashboard` composes. Player
+wording: **Train Ships / Training Queue / Not enough metal**. Only new action = `train_units`.
+
+**Boundaries:** Production = sole writer of `build_orders` only; **never** writes
+`base_units`/`base_resources` (spends via `Base.base_spend_resources`, deposits via
+`Base.base_merge_units`). Acyclic Production→Base. Reward logic unchanged (only reads/debits
+metal). No combat/world-state/movement changes.
+
+**Verify:** `scripts/verify-m7.mjs` (16 tests) + `verify:m7`; CI `verify.yml` now runs
+`verify:m7` (chains m5 → m2/m3/m4).
+
+**Closure gate (pending):** deploy 0035–0037 · `verify:m7` green · M2–M6 regression · CI
+build/typecheck · browser check (Train Ships + Training Queue render, train works, ships
+appear).
+
+---
+
 ## 2026-06-17 — M5 balance correction: pressure decay toward baseline (follow-up #3, Option A)
 
 **Request** Fix the M5 issue where, with no players, every pirate_hunt location drifted to
