@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-17 — Phase 3: generic inventory foundation (implemented; pending deploy/verify)
+## 2026-06-17 — Phase 3: generic inventory foundation (DEPLOYED + VERIFIED ✅)
 
 **Request** Clean generic item inventory for future rewards/materials. Metal stays in
 `base_resources` (untouched); a future loot bundle deposits metal → base_resources, items →
@@ -29,7 +29,11 @@ world-state/reward unchanged.
 **Verify:** `scripts/verify-inventory.mjs` (11 tests: seed, owner-read, cross-user RLS,
 client-cannot-mutate, deposit-adds, idempotent deposit, spend-subtracts, insufficient,
 no-negative, unknown-item, regression). CI `verify.yml` now runs `verify:inventory` (chains
-M4.5 → M5 → M2/M3/M4). **Pending deploy + verify.**
+M4.5 → M5 → M2/M3/M4).
+
+**Result (commit `49cc946`):** Deploy ✅ · Build ✅ · Pages ✅ · Verify ✅ —
+**Inventory 18/18, M4.5 27/27, M5 28/28, M4 40/40** (M2/M3 chained green), 0 failed.
+Migration 0039 live on `dlkbwztrdvnnjlvaydut`. **Phase 3 CLOSED.**
 
 ---
 
