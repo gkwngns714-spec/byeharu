@@ -291,6 +291,18 @@ Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 > not drive expeditions yet** — it sits `home`, and combat/fleet/movement/production are
 > unchanged. Phase 8's `calculate_expedition_stats()` will be the adapter that finally reads
 > the ship (+ support craft, later captains/modules) into final expedition stats.
+>
+> **Phase 8 (2026-06-18).** `calculate_expedition_stats(player, main_ship_id, loadout,
+> activity)` now exists — the **deterministic, read/compute stat adapter**. It reads the main
+> ship + hull + `support_craft_types`, validates a support loadout (type/qty/positive-integer),
+> **enforces `support_capacity` as a hard cap** (over-capacity → rejected; this is the
+> anti-unlimited-stacking mechanism, not a plain sum), and returns normalized stats
+> (`combat_power`, `survival`, `retreat_safety`, `scouting`, `mining_yield`, `repair`,
+> `cargo_capacity`, `speed`, `pirate_attention`, `support_capacity_used/limit`, `warnings`).
+> Effects derive from each craft's `base_stats_json` + role-based attention/speed rules.
+> It **mutates nothing** and is **not wired into live combat** — the proven fleet-stack path
+> still owns outcomes. Captains/modules will plug into this same function later; Phase 9/10+
+> integrate it gradually (likely a shadow-read first).
 
 | Milestone | Scope | Outcome |
 |---|---|---|

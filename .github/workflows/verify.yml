@@ -48,10 +48,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Phase 7 verification (main ship; chains Phase6 → Phase5 → Phase4 → Inventory → M4.5 → M5 → M2/M3/M4)
+      - name: Run Phase 8 verification (expedition stats; chains Phase7 → … → M2/M3/M4)
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          PHASE7_SKIP_REGRESS: ${{ inputs.skip_regress && '1' || '0' }}
-        run: npm run verify:phase7
+          PHASE8_SKIP_REGRESS: ${{ inputs.skip_regress && '1' || '0' }}
+        run: npm run verify:phase8

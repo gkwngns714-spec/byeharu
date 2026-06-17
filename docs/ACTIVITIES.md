@@ -72,6 +72,22 @@ The engine knows the *lifecycle*; it does NOT know any activity's internal rules
 Each owns **only its own state table(s) and processor**. None reads or writes another
 activity's tables. None writes inventory, fitting, captains, world-state, or rankings.
 
+**Stat source (Phase 8 — `calculate_expedition_stats`).** Activities will not read raw
+fleet/ship rows; they read final stats from the deterministic adapter
+`calculate_expedition_stats(player, main_ship_id, support_loadout, activity)` (read/compute
+only; enforces `support_capacity` as a hard cap — never a plain sum). Which normalized stats
+each activity will consume (documented now; consumption wired later):
+
+| Activity | Reads from `calculate_expedition_stats` |
+|---|---|
+| **pirate_hunt** | combat_power · survival · repair · retreat_safety · pirate_attention · speed |
+| **trade_run** | cargo_capacity · speed · scouting · pirate_attention · retreat_safety |
+| **exploration** | scouting · speed · survival · retreat_safety · cargo_capacity |
+| **mining** | mining_yield · cargo_capacity · survival · repair · pirate_attention |
+
+The adapter is the seam where Main Ship + Support Craft (+ later Captains + Modules) become
+expedition power — replacing the *source* of stats, never the proven engine.
+
 ## 4. Activity Handler contract (the "interface", Postgres-functions style)
 
 There is no class polymorphism in SQL; instead every activity implements the **same named

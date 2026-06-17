@@ -5,6 +5,55 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Phase 8: calculate_expedition_stats() (implemented; pending deploy/verify)
+
+**Request** Build the deterministic stat ADAPTER that will eventually turn Main Ship +
+Support Craft (+ later Captains + Modules) + Activity into final expedition stats — the
+bridge between the new main-ship model and the proven engine. **Read/compute only**; no
+mutation; engine unchanged; live combat still uses the old fleet-stack path.
+
+**Migration `0044_calculate_expedition_stats.sql`** — one function,
+`calculate_expedition_stats(p_player, p_main_ship_id, p_loadout jsonb, p_activity_type)`
+returns jsonb. SECURITY DEFINER, **STABLE (read-only)**, **service_role only**:
+- Reads the owned `main_ship_instances` row (+ `main_ship_hull_types` for base_speed); errors
+  if the ship isn't found/owned. Validates `activity_type ∈ {pirate_hunt, trade_run,
+  exploration, mining, none}`.
+- Normalizes the support loadout: **combines duplicate** craft ids; **rejects** unknown
+  types, and non-positive / non-integer / NaN / Inf quantities.
+- **Enforces `support_capacity` as a HARD cap** — `used = Σ(qty × capacity_cost)`; over the
+  ship limit → rejected. This is the anti-unlimited-stacking mechanism (never a plain sum).
+- Effects (conservative, linear within the cap) derive from each craft's Phase-6
+  `base_stats_json` (attack→combat_power, defense→survival, repair, cargo, scan→scouting,
+  mining→mining_yield, evasion→retreat_safety) plus role rules for `pirate_attention`
+  (combat_damage/cargo +2, heavy_cargo +4) and a speed penalty (combat_damage 0.05,
+  heavy_cargo 0.08, extraction 0.02). Non-useful-for-activity craft add a non-fatal warning.
+- Returns normalized, **clamped (≥0), rounded** stats: support_capacity_used/limit, speed,
+  cargo_capacity, combat_power, survival, retreat_safety, scouting, mining_yield, repair,
+  pirate_attention, warnings[] — **never NaN, never negative, deterministic**.
+
+**Read/compute only (verified):** mutates nothing — ship row + inventory unchanged after many
+calls; no fleets/combat/rewards/ranking/reports touched. **NOT wired into live combat** — the
+fleet-stack path still owns outcomes (M2–M5 untouched). Support-craft OWNERSHIP isn't
+implemented yet, so Phase 8 validates **type/capacity/math** against `support_craft_types`
+only; ownership consumption comes when loadouts attach to real expeditions.
+
+**Anti-cheat:** new function default-grants to PUBLIC on create → re-ran the lockdown
+(revoke; re-grant the 8 client RPCs; `calculate_expedition_stats` → service_role only). A
+client preview RPC (auth.uid()-scoped) will arrive with the Phase 9 UI.
+
+**Boundaries/docs:** SYSTEM_BOUNDARIES decision #8 (table-less read/compute adapter, mutates
+nothing). ROADMAP Phase 8 ✅. ARCHITECTURE Phase 8 note. ACTIVITIES: documented which stats
+each activity will read from the adapter later.
+
+**Verify:** `scripts/verify-phase8.mjs` — base stats on empty loadout (0/10, speed 1, cargo
+50); mixed loadout capacity (7/10); reject over-capacity / unknown / zero / negative /
+non-integer; duplicate-combine; per-craft effects (missile_boat→combat+attention/speed,
+cargo_drone→cargo+attention, survey→scouting, mining→yield, decoy→retreat, repair→repair+
+survival); no-NaN; determinism; ship + inventory not mutated; client-denied; then chains
+`verify-phase7` (full regression). CI runs `verify:phase8`. **Pending deploy + verify.**
+
+---
+
 ## 2026-06-18 — Phase 7: Main Ship Instance (DEPLOYED + VERIFIED ✅)
 
 **Request** Create the player's ONE main ship — the player identity, not stackable, one

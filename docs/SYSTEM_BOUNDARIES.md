@@ -123,6 +123,13 @@ secured by `Reward.grant` **on home arrival only** *(→ `Base.add_resources` fo
    exposes the finite `support_capacity` a future `calculate_expedition_stats` will enforce.
    **Phase 7 does NOT drive expeditions** — the ship sits `home`, untouched by combat/fleet/
    movement/production; nothing consumes it yet.
+8. **Stat adapter (Phase 8)** — `calculate_expedition_stats(player, main_ship_id, loadout,
+   activity)` owns **no table**; it is a **pure read/compute** function (reads
+   `main_ship_instances` + `main_ship_hull_types` + `support_craft_types`, enforces
+   `support_capacity` as a hard cap, returns normalized stats). It **must NOT** mutate any
+   state — no expeditions/fleets/combat/rewards/inventory/ranking/reports/ship/support counts.
+   It is the future single source of expedition stats (later +captains +modules), but is
+   **not wired into live combat yet** — the proven fleet-stack path still owns outcomes.
 
 These keep every architecture law enforceable with a single-writer-per-table rule.
 
