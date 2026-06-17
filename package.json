@@ -15,7 +15,8 @@
     "verify:m45": "node scripts/verify-m45.mjs",
     "verify:m45:browser": "playwright test",
     "verify:inventory": "node scripts/verify-inventory.mjs",
-    "verify:phase4": "node scripts/verify-phase4.mjs"
+    "verify:phase4": "node scripts/verify-phase4.mjs",
+    "verify:phase5": "node scripts/verify-phase5.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

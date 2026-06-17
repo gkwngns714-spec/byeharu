@@ -114,6 +114,16 @@ Rules (unchanged reward law): the bundle is **pending** while the expedition is 
 its expedition's pending bundle; it never deposits to inventory directly. (Phase 2 defines the
 shape; Phases 4–5 wire items through.)
 
+**Phase 5 — `pirate_hunt` loot is live.** On each cleared wave, `process_combat_ticks`
+accrues item drops next to metal via the server-only, deterministic helper
+`pirate_loot_for_wave(wave, danger)` (merged into `total_rewards_json.items` with
+`loot_merge_items`). Conservative v1 loot table (small, clamped, seeded items only): scrap
+(every wave) · pirate_alloy (wave ≥3) · weapon_parts (≥5) · engine_parts (≥8) · repair_parts
+(≥10). Loot is computed **server-side only** — the frontend never rolls or awards loot.
+captain_memory_shard / blueprint_fragment / artifact_core stay reserved for later rare/
+progression drops. Other activities (trade/explore/mine) will add their own loot sources the
+same way — by writing into the pending bundle, never by touching Inventory directly.
+
 ## 6. Report / result shape concept
 
 The expedition produces a **history-only** report on completion (never a source of truth for

@@ -5,6 +5,50 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Phase 5: Multi-Item Pirate Loot (implemented; pending deploy/verify)
+
+**Request** Pirate combat should accrue real item drops alongside metal — a controlled
+combat-reward DATA change, not an engine rewrite. Reuse the proven Phase 4 bundle; keep the
+reward timing law; metal stays in `base_resources`; server-authoritative loot only. No
+crafting/modules/captains/UI.
+
+**Migration `0041_pirate_loot.sql`** — two isolated, server-only helpers + a 3-line injection
+into the existing combat tick:
+- `pirate_loot_for_wave(p_wave int, p_danger numeric)` — the loot table. **Deterministic**
+  (no RNG → stable tests), small/clamped, **only Phase-3-seeded ids**: scrap (every wave),
+  pirate_alloy (≥3), weapon_parts (≥5), engine_parts (≥8), repair_parts (≥10). `p_danger`
+  reserved for future scaling; v1 keeps qty=1 so survival can't make loot explode. Returns
+  `[]` below wave 1 (no NaN, no unknown ids).
+- `loot_merge_items(a, b)` — combines two items[] by id (summed) to keep the accumulated
+  bundle tidy across waves. (reward_grant also de-dups on deposit — belt & suspenders.)
+- `process_combat_ticks` (copied verbatim from 0030) gains exactly three PHASE-5 lines:
+  declare `v_loot_items`; on wave-clear set `v_loot_items := pirate_loot_for_wave(wave,danger)`
+  and put it in `reward_delta`; merge `items[]` into `total_rewards_json` next to the
+  accumulated metal. Everything else — carry-home, retreat, defeat-forfeit (`'{}'`),
+  secured-on-arrival — is unchanged.
+
+**Reward flow (all unchanged from Phase 4):** drops are pending in `total_rewards_json` →
+ride `reward_payload_json` home → `reward_grant` on arrival splits metal→`base_resources`,
+items→`player_inventory` (idempotent). Defeat clears the bundle → forfeits metal AND items.
+Retreat alone never secures.
+
+**Boundaries/docs:** `ACTIVITIES.md` pirate_hunt loot section made concrete (server-side
+only; rare progression ids reserved). Combat still owns only its reward accrual — it writes
+the pending bundle, never Inventory/Base directly. Frontend unchanged (no client loot path).
+
+**Anti-cheat:** new helpers default-grant to PUBLIC on create → 0041 re-runs the lockdown
+(revoke from public/anon/authenticated, re-grant the 8 client RPCs; loot helpers → service_role
+for CI only). reward_grant/inventory_* service_role grants untouched.
+
+**Verify:** `scripts/verify-phase5.mjs` — (A) deterministic loot-table + merge helpers
+(positive ints, known ids, clamped, dedup), (B) **real combat**: items appear in
+`total_rewards_json`, stay pending through retreat, deposit to `player_inventory` +
+`base_resources` on home arrival, report keeps metal; (C) **defeat** forfeits metal+items;
+(D) chains `verify-phase4` (→ inventory → m45 → m5 → m2/m3/m4). CI runs `verify:phase5`.
+**Pending deploy + verify.**
+
+---
+
 ## 2026-06-17 — Phase 4: Pending Loot Bundle (DEPLOYED + VERIFIED ✅)
 
 **Request** Generalize the metal-only pending reward into a future-proof
