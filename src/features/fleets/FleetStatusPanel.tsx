@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { countdownClock } from '../../game/movement/travelPreview'
+import { formatCountdown } from '../../lib/time'
 import type { MapLocation } from '../map/mapTypes'
 import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from './fleetTypes'
 import { requestLeaveLocation } from './fleetApi'
@@ -15,7 +15,7 @@ const STATUS_STYLE: Record<string, string> = {
 
 // M6: friendlier lifecycle wording (server status stays the truth).
 const PHASE_LABEL: Record<string, string> = {
-  moving: 'En route',
+  moving: 'Traveling',
   present: 'On station',
   returning: 'Returning',
   completed: 'Completed',
@@ -104,10 +104,10 @@ export function FleetStatusPanel({
                   {f.status === 'moving' &&
                     move &&
                     (() => {
-                      const clock = countdownClock(move.arrive_at)
+                      const clock = formatCountdown(move.arrive_at)
                       return (
                         <>
-                          → {locName(move.target_location_id)} ·{' '}
+                          Traveling to {locName(move.target_location_id)} ·{' '}
                           {clock ? `arriving in ${clock}` : 'awaiting server confirmation…'}
                         </>
                       )
@@ -115,11 +115,11 @@ export function FleetStatusPanel({
                   {f.status === 'returning' &&
                     move &&
                     (() => {
-                      const clock = countdownClock(move.arrive_at)
+                      const clock = formatCountdown(move.arrive_at)
                       const hasReward = move.reward_payload_json && Object.keys(move.reward_payload_json).length > 0
                       return (
                         <>
-                          ← returning home ·{' '}
+                          Returning home ·{' '}
                           {clock ? `arriving in ${clock}` : 'awaiting server confirmation…'}
                           {hasReward && (
                             <span className="text-amber-300/70"> · 💰 rewards locked (secured on arrival)</span>

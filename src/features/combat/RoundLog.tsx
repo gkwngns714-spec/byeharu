@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { UnitType } from '../../lib/catalog'
+import { formatShortTime } from '../../lib/time'
 import type { CombatTick } from './combatTypes'
 
 // M6: player-facing round-by-round log. Built ONLY from real combat_ticks fields
@@ -60,7 +61,9 @@ export function RoundLog({
 
         return (
           <li key={t.id} className="flex gap-2 text-xs text-white/60">
-            <span className="tabular-nums text-white/30">#{t.tick_number}</span>
+            <span className="tabular-nums text-white/30">
+              #{t.tick_number} · {formatShortTime(t.resolved_at)}
+            </span>
             <span>{line}</span>
           </li>
         )

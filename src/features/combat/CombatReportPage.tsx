@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchUnitTypes, type UnitType } from '../../lib/catalog'
 import { fetchWorldMap } from '../map/mapApi'
+import { formatDateTime, formatDuration } from '../../lib/time'
 import { fetchCombatReports, fetchTicksForEncounter } from './combatApi'
 import { RoundLog } from './RoundLog'
 import type { CombatReport, CombatTick } from './combatTypes'
@@ -101,7 +102,8 @@ export function CombatReportPage() {
               </button>
 
               <div className="border-t border-white/10 px-4 py-3 text-xs text-white/55">
-                <div>Waves cleared: {r.waves_cleared} · {r.duration_seconds}s</div>
+                <div>Reported: <span className="text-white/75">{formatDateTime(r.created_at)}</span></div>
+                <div>Waves cleared: {r.waves_cleared} · lasted {formatDuration(r.duration_seconds)}</div>
                 {won ? (
                   <>
                     <div>Ships recovered: <span className="text-white/75">{ships(r.survivors_json)}</span></div>
