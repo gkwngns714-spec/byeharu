@@ -39,7 +39,7 @@ export function FleetStatusPanel({
   onChanged: () => void
 }) {
   // Local 1s tick drives the countdown display only (backend remains the truth).
-  const [, setNow] = useState(Date.now())
+  const [, setNow] = useState(() => Date.now())
   useEffect(() => {
     const iv = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(iv)

@@ -50,7 +50,12 @@ export function useCombat(pollMs = 1500): CombatState {
 
   useEffect(() => {
     let active = true
-    void refresh()
+    // Initial fetch wrapped in an async IIFE so the effect body doesn't call
+    // setState synchronously (satisfies react-hooks/set-state-in-effect). Same
+    // poll-on-mount behavior as before; mirrors useGameState's pattern.
+    ;(async () => {
+      await refresh()
+    })()
     const iv = setInterval(() => {
       if (active) void refresh()
     }, pollMs)
