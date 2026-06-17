@@ -68,7 +68,7 @@ become stronger."*
 |---|---|---|
 | **1** ✅ | **Docs/roadmap reconciliation** | this doc + README/ARCHITECTURE; no code |
 | **2** ✅ | Expedition activity architecture (design only) → **`docs/ACTIVITIES.md`** | clean activity abstraction; no giant switch |
-| 3 | Generic inventory (`item_types`, `player_inventory`, deposit/spend fns) | keep metal working |
+| **3** ✅ | Generic inventory (`item_types`, `player_inventory`, `inventory_ledger`; deposit/spend/balance fns) | metal kept in base_resources; items in player_inventory |
 | 4 | Pending **loot bundle** (`{ metal?, items[] }`) | metal becomes one field; deposit-on-arrival law kept |
 | 5 | Multi-item pirate loot | combat → pending bundle; secured on return only |
 | 6 | Reframe produced ships → **support craft** (role + capacity cost) | reuse serial queue |

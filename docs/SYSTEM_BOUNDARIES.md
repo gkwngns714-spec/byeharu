@@ -24,7 +24,7 @@ server-side functions — **never** by directly changing another system's tables
 |---|---|---|
 | `profiles` | **Auth** | owner |
 | `sectors`, `zones`, `locations` | **Map** | public |
-| `unit_types`, `game_config` | **Reference/Config** (admin/migration) | public read-only |
+| `unit_types`, `game_config`, `item_types` | **Reference/Config** (admin/migration) | public read-only |
 | `zone_state`, `location_state` | **World State** | public |
 | `bases`, `base_units`, `base_resources` | **Base** | owner |
 | `fleets`, `fleet_units` | **Fleet** | owner |
@@ -34,6 +34,7 @@ server-side functions — **never** by directly changing another system's tables
 | `reward_grants` | **Reward** | owner |
 | `combat_reports` | **Report** | owner |
 | `build_orders` | **Production** (Training) | owner |
+| `player_inventory`, `inventory_ledger` | **Inventory** | owner |
 
 **Source of truth for active combat** = `combat_encounters` + `combat_rounds` +
 `fleet_units` + `location_presence`. **Never** `combat_reports` (history only).
@@ -55,6 +56,7 @@ server-side functions — **never** by directly changing another system's tables
 | **Reward** | reward_grants | `reward_grant(source_type,source_id,base,rewards)` *(idempotent; sole caller of `base_add_resources`)* | combat math · movement |
 | **Report** | combat_reports | `report_create(encounter)` *(idempotent)*, `get_combat_reports()` | **any** gameplay mutation · be a source of truth for active state |
 | **Production** (Training) | build_orders | `train_units(base,unit,qty)` *(player)*, `process_build_queue()` *(cron)*, `production_create_order/complete_order(...)` *(internal)* | write base_units/base_resources directly (spends via `Base.base_spend_resources`, deposits via `Base.base_merge_units`) · touch combat/world-state/movement · change reward logic |
+| **Inventory** | player_inventory, inventory_ledger | `inventory_deposit(player,item,qty,key?)` *(idempotent)*, `inventory_spend(player,item,qty)` *(transactional)*, `inventory_get_balance(player,item)` | combat/movement/world-state · be a source of truth for live combat · client writes · touch metal/`base_resources` (metal stays Base-owned) |
 
 ---
 

@@ -13,7 +13,8 @@
     "verify:m4": "node scripts/verify-m4.mjs",
     "verify:m5": "node scripts/verify-m5.mjs",
     "verify:m45": "node scripts/verify-m45.mjs",
-    "verify:m45:browser": "playwright test"
+    "verify:m45:browser": "playwright test",
+    "verify:inventory": "node scripts/verify-inventory.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

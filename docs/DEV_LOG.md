@@ -5,6 +5,34 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — Phase 3: generic inventory foundation (implemented; pending deploy/verify)
+
+**Request** Clean generic item inventory for future rewards/materials. Metal stays in
+`base_resources` (untouched); a future loot bundle deposits metal → base_resources, items →
+player_inventory. No trading/mining/crafting/etc.
+
+**Migration `0039_inventory.sql`:**
+- `item_types` (Reference/Config, public read) + 10 starter items (scrap, ore, crystal,
+  pirate_alloy, weapon_parts, engine_parts, repair_parts, captain_memory_shard,
+  blueprint_fragment, artifact_core).
+- `player_inventory` (PK `(player_id,item_id)`, `quantity >= 0`) — **owner-read RLS, no client
+  write**. `inventory_ledger` (audit + `unique(idempotency_key)`) — owner-read.
+- Functions (SECURITY DEFINER, server-only): `inventory_deposit(player,item,qty,key?)`
+  (validates item+qty, upserts, **idempotent via the ledger key**), `inventory_spend`
+  (transactional `FOR UPDATE`, rejects insufficient, **never negative**),
+  `inventory_get_balance`. Lockdown re-grant (clients unchanged; inventory_* → service_role).
+
+**Boundaries:** new **Inventory** system owns `player_inventory`+`inventory_ledger`;
+`item_types` = Reference/Config. Metal/`base_resources` **untouched**; combat/movement/
+world-state/reward unchanged.
+
+**Verify:** `scripts/verify-inventory.mjs` (11 tests: seed, owner-read, cross-user RLS,
+client-cannot-mutate, deposit-adds, idempotent deposit, spend-subtracts, insufficient,
+no-negative, unknown-item, regression). CI `verify.yml` now runs `verify:inventory` (chains
+M4.5 → M5 → M2/M3/M4). **Pending deploy + verify.**
+
+---
+
 ## 2026-06-17 — Phase 2: Expedition Activity Architecture (design doc only)
 
 **Request** Define the clean activity abstraction so future gameplay types plug into the
