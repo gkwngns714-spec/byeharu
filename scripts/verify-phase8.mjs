@@ -49,9 +49,13 @@ async function main() {
   if (suErr) die(`signup failed: ${suErr.message}`)
   if (!su.session) die('no session — email confirmation still ON')
   const userId = su.user.id
-  await admin.rpc('ensure_main_ship_for_player', { p_player: userId })
-  const ship = (await admin.from('main_ship_instances').select('*').eq('player_id', userId).maybeSingle()).data
-  if (!ship) die('no main ship created')
+  const ens = await admin.rpc('ensure_main_ship_for_player', { p_player: userId })
+  if (ens.error) console.log('   · ensure rpc error:', JSON.stringify(ens.error))
+  const hullDiag = await admin.from('main_ship_hull_types').select('hull_type_id')
+  console.log('   · hull types present:', JSON.stringify(hullDiag.data), hullDiag.error ? `(err ${hullDiag.error.message})` : '')
+  let ships = (await admin.from('main_ship_instances').select('*').eq('player_id', userId)).data ?? []
+  const ship = ships[0]
+  if (!ship) die(`no main ship created — ensure.data=${JSON.stringify(ens.data)} ensure.error=${JSON.stringify(ens.error)}`)
   ok(`set up player + main ship (support_capacity ${ship.support_capacity}, cargo ${ship.cargo_capacity})`)
 
   // 1/2. starter ship, empty loadout → base stats, 0/10 capacity.
