@@ -5,6 +5,50 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M6 Frontend Depth (implemented / CI green / pending click-through)
+
+**Status: NOT fully closed.** Implemented and CI-verified to compile; closure gate is a
+manual browser click-through (below). Player-clarity pass over the M2–M5 loop —
+**frontend only**: no migrations, no backend/combat/reward math, reads server truth only.
+
+**Created (5):** `src/game/worldstate/danger.ts` (shared display labels +
+High/Severe warning), `src/features/map/LocationPanel.tsx`,
+`src/features/combat/RoundLog.tsx` (real `combat_ticks` fields only),
+`src/features/combat/CombatReportPage.tsx` (`/reports`), `.github/workflows/build.yml`.
+
+**Modified (9):** `combatApi.ts` (+read-only `fetchTicksForEncounter`, owner-RLS),
+`useGameState.ts` (+`location_state` poll), `MapPage.tsx` (clickable cards → panel),
+`SendFleetPanel.tsx` (pre-dispatch danger preview/warning), `FleetStatusPanel.tsx`
+(lifecycle wording), `ActiveCombatPanel.tsx` (RoundLog replaces debug table),
+`CombatReportsView.tsx` (link to `/reports`), `Dashboard.tsx` (pass states + nav),
+`App.tsx` (`/reports` route).
+
+**CI build/typecheck — ✅ green** (run 27656389298): `tsc -b` pass, `vite build` pass
+(92 modules). `lint` is **non-blocking** and flagged 3 **pre-existing** M3/M4 files
+(`useState(Date.now())`, `void refresh()` in effect — strict react-hooks v7); none of
+the new M6 files. CI frontend verification is required since local npm is unreliable
+(see [[byeharu-build-onedrive-bug]] equivalent note).
+
+**Backend untouched:** zero migration/SQL/RPC changes; push did not trigger
+deploy/verify. M5-close verification (M5 25/25 · M4 40/40 · M3 13/13 · M2 11/11) stands.
+
+**M6 closure gate (manual browser click-through — all must pass):**
+1. Map card click opens LocationPanel.
+2. LocationPanel shows correct danger/activity + warning.
+3. SendFleetPanel shows pre-dispatch danger preview.
+4. FleetStatusPanel lifecycle wording is clear.
+5. ActiveCombatPanel shows RoundLog (not the debug table).
+6. Retreat/return messaging is understandable.
+7. `/reports` opens correctly.
+8. A past report can load its RoundLog.
+9. No obvious broken layout.
+10. No frontend writes to World State.
+
+**Deferred (out of M6):** pre-existing react-hooks lint cleanup; danger-decay balance
+(separate small migration only if the UI proves misleading — not rebalanced here).
+
+---
+
 ## 2026-06-17 — ✅ M5 CLOSED (deployed + verified green in CI)
 
 Migrations `0031`–`0033` deployed to the remote via the GitHub Action, and the new
