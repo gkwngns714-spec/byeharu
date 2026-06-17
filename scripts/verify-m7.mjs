@@ -44,6 +44,12 @@ const getShips = async (baseId, unit) =>
 const getOrder = async (id) => (await admin.from('build_orders').select('*').eq('id', id).maybeSingle()).data
 const queuedCount = async (playerId) =>
   ((await admin.from('build_orders').select('id').eq('player_id', playerId).eq('status', 'queued')).data ?? []).length
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+async function poll(fn, { timeoutMs = 40000, intervalMs = 2000 } = {}) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) { const v = await fn(); if (v) return v; await sleep(intervalMs) }
+  return null
+}
 
 async function newUser(tag) {
   const c = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -85,10 +91,17 @@ async function main() {
 
   // ── 6/7/8. cron completes due order → ships added once (idempotent) ──────────
   const scoutBefore = await getShips(base.id, 'scout')
-  await admin.from('build_orders').update({ complete_at: new Date(Date.now() - 1000).toISOString() }).eq('id', orderId)
+  // Make the order due. complete_at >= queued_at is a CHECK constraint, so backdate
+  // BOTH timestamps (not just complete_at) to keep the order valid.
+  const { error: bderr } = await admin.from('build_orders').update({
+    queued_at: new Date(Date.now() - 120000).toISOString(),
+    complete_at: new Date(Date.now() - 60000).toISOString(),
+  }).eq('id', orderId)
+  if (bderr) die(`backdate failed: ${bderr.message}`)
   await admin.rpc('process_build_queue')
-  const ordDone = await getOrder(orderId)
-  ordDone.status === 'completed' ? ok('6. process_build_queue completed the due order') : bad('6. complete', ordDone.status)
+  // Either our manual call or the live 30s cron completes it — poll until done.
+  const ordDone = await poll(async () => { const o = await getOrder(orderId); return o?.status === 'completed' ? o : null })
+  ordDone ? ok('6. process_build_queue completed the due order') : bad('6. complete', 'still queued after 40s')
   ;(await getShips(base.id, 'scout')) === scoutBefore + 2 ? ok('7. completed ships added to base_units (+2 scouts)') : bad('7. ships added', `${scoutBefore} → ${await getShips(base.id, 'scout')}`)
   await admin.rpc('process_build_queue')  // run again
   ;(await getShips(base.id, 'scout')) === scoutBefore + 2 ? ok('8. second process_build_queue does NOT double-add ships') : bad('8. double-add', 'ships changed on re-run')
