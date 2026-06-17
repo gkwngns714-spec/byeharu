@@ -24,7 +24,7 @@ server-side functions — **never** by directly changing another system's tables
 |---|---|---|
 | `profiles` | **Auth** | owner |
 | `sectors`, `zones`, `locations` | **Map** | public |
-| `unit_types`, `game_config`, `item_types`, `support_craft_types` | **Reference/Config** (admin/migration) | public read-only |
+| `unit_types`, `game_config`, `item_types`, `support_craft_types`, `main_ship_hull_types` | **Reference/Config** (admin/migration) | public read-only |
 | `zone_state`, `location_state` | **World State** | public |
 | `bases`, `base_units`, `base_resources` | **Base** | owner |
 | `fleets`, `fleet_units` | **Fleet** | owner |
@@ -35,6 +35,7 @@ server-side functions — **never** by directly changing another system's tables
 | `combat_reports` | **Report** | owner |
 | `build_orders` | **Production** (Training) | owner |
 | `player_inventory`, `inventory_ledger` | **Inventory** | owner |
+| `main_ship_instances` | **Main Ship** | owner |
 
 **Source of truth for active combat** = `combat_encounters` + `combat_rounds` +
 `fleet_units` + `location_presence`. **Never** `combat_reports` (history only).
@@ -57,6 +58,7 @@ server-side functions — **never** by directly changing another system's tables
 | **Report** | combat_reports | `report_create(encounter)` *(idempotent)*, `get_combat_reports()` | **any** gameplay mutation · be a source of truth for active state |
 | **Production** (Training) | build_orders | `train_units(base,unit,qty)` *(player)*, `process_build_queue()` *(cron)*, `production_create_order/complete_order(...)` *(internal)* | write base_units/base_resources directly (spends via `Base.base_spend_resources`, deposits via `Base.base_merge_units`) · touch combat/world-state/movement · change reward logic |
 | **Inventory** | player_inventory, inventory_ledger | `inventory_deposit(player,item,qty,key?)` *(idempotent)*, `inventory_spend(player,item,qty)` *(transactional)*, `inventory_get_balance(player,item)` | combat/movement/world-state · be a source of truth for live combat · client writes · touch metal/`base_resources` (metal stays Base-owned) |
+| **Main Ship** | main_ship_instances | `ensure_main_ship_for_player(player)` *(idempotent; one per player)*, `get_main_ship(player)`, `rename_main_ship(player,name)` *(all server-only)* | touch fleets/combat/movement/production · drive expeditions yet · client writes |
 
 ---
 
@@ -115,6 +117,12 @@ secured by `Reward.grant` **on home arrival only** *(→ `Base.add_resources` fo
    attachment, no capacity enforcement, no stat consumption yet** — combat still uses
    `unit_types` (separate namespace). A future main ship exposes finite `support_capacity`
    and `calculate_expedition_stats` consumes these (Phases 7–8).
+7. **Main Ship (Phase 7)** — `main_ship_hull_types` = Reference/Config (public read);
+   `main_ship_instances` = the Main Ship system (owner-read; one row per player via a
+   `player_id` UNIQUE; writes only through `ensure/get/rename`, all server-only). The hull
+   exposes the finite `support_capacity` a future `calculate_expedition_stats` will enforce.
+   **Phase 7 does NOT drive expeditions** — the ship sits `home`, untouched by combat/fleet/
+   movement/production; nothing consumes it yet.
 
 These keep every architecture law enforceable with a single-writer-per-table rule.
 

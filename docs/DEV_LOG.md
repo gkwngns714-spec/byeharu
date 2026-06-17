@@ -5,6 +5,47 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Phase 7: Main Ship Instance (implemented; pending deploy/verify)
+
+**Request** Create the player's ONE main ship — the player identity, not stackable, one
+active per player. Additive foundation only: no combat hook, no support-craft attachment, no
+`calculate_expedition_stats`, no capacity enforcement. Engine untouched.
+
+**Migration `0043_main_ship_instance.sql`** — two tables + three server-only functions:
+- `main_ship_hull_types` (Reference/Config, public-read): one starter hull `starter_frigate`
+  — base_hp 500, base_speed 1.0, cargo 50, **support_capacity 10**, captain_slots 2,
+  module_slots 3. (Conservative; not final balance.)
+- `main_ship_instances` (Main Ship system, owner-read, **no client write**): `player_id`
+  UNIQUE (one per player), hull FK, name default 'Byeharu', `status` CHECK in the 10 allowed
+  states (default `home`), hp/max_hp/cargo_used/cargo_capacity/support_capacity/captain_slots/
+  module_slots with `>=0`/`>0` checks. Stats are copied from the hull on creation so the
+  instance can later diverge (damage/upgrades) without mutating the template.
+- `ensure_main_ship_for_player(player)` — idempotent, concurrency-safe via the `player_id`
+  UNIQUE (`on conflict do nothing` → select) → one ship per player. `get_main_ship(player)`
+  read helper. `rename_main_ship(player,name)` — trims, rejects empty + >40 chars, requires an
+  existing ship. All SECURITY DEFINER, **service_role only** (clients read their ship via
+  owner-read RLS; no client mutation/RPC path).
+
+**What did NOT change (by design):** combat, fleets, `fleet_movements`, presence, production/
+build queue, rewards, inventory, support_craft metadata. No fleet-table renames. Player-
+creation path (`initialize_new_player`) untouched — the ship is created on demand via
+`ensure_main_ship_for_player` (a future bootstrap/RPC will call it). Anti-cheat: new functions
+default-grant to PUBLIC → re-ran the lockdown (revoke; re-grant the 8 client RPCs; ensure/get/
+rename → service_role). Prior service_role grants untouched.
+
+**Boundaries/docs:** `main_ship_hull_types` added to Reference/Config; new **Main Ship** owner
+row (sole writer of `main_ship_instances`) + per-system contract + ownership decision #7.
+ROADMAP Phase 7 ✅. ARCHITECTURE Phase 7 note (ship exists, doesn't drive expeditions yet).
+
+**Verify:** `scripts/verify-phase7.mjs` — starter hull public-read + client-write-blocked;
+ensure creates exactly one ship (idempotent, no dup); owner-read + cross-user RLS; client
+INSERT/UPDATE/DELETE + server-RPCs all blocked; stats valid & copied from hull; status
+defaults `home`; rename trims + rejects empty/overlong/no-ship; then chains `verify-phase6`
+(full regression) to prove the engine is unchanged. CI runs `verify:phase7`.
+**Pending deploy + verify.**
+
+---
+
 ## 2026-06-18 — Phase 6: Support Craft Reframe (DEPLOYED + VERIFIED ✅)
 
 **Request** Reframe "build ships" toward the future "build support craft / expedition

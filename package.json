@@ -17,7 +17,8 @@
     "verify:inventory": "node scripts/verify-inventory.mjs",
     "verify:phase4": "node scripts/verify-phase4.mjs",
     "verify:phase5": "node scripts/verify-phase5.mjs",
-    "verify:phase6": "node scripts/verify-phase6.mjs"
+    "verify:phase6": "node scripts/verify-phase6.mjs",
+    "verify:phase7": "node scripts/verify-phase7.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

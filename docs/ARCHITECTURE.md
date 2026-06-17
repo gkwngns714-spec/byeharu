@@ -283,6 +283,14 @@ Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 > current combat is untouched and still uses `unit_types`. The serial build queue (M4.5) is
 > the conceptual home for building them later. Capacity + tradeoffs will be enforced by
 > `calculate_expedition_stats()` once Phases 7–8 land — never a plain additive sum.
+>
+> **Phase 7 (2026-06-18).** The **main ship** now exists: `main_ship_hull_types` (Reference/
+> Config, one starter hull exposing `support_capacity` 10) + `main_ship_instances` (one per
+> player, owner-read, created/renamed only via server-only `ensure_main_ship_for_player` /
+> `get_main_ship` / `rename_main_ship`). It is the player identity (not stackable) but **does
+> not drive expeditions yet** — it sits `home`, and combat/fleet/movement/production are
+> unchanged. Phase 8's `calculate_expedition_stats()` will be the adapter that finally reads
+> the ship (+ support craft, later captains/modules) into final expedition stats.
 
 | Milestone | Scope | Outcome |
 |---|---|---|

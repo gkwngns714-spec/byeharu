@@ -72,7 +72,7 @@ become stronger."*
 | **4** ✅ | Pending **loot bundle** (`{ metal?, items[] }`) — `reward_grant` splits metal→base_resources, items→player_inventory | jsonb-only (no schema change); deposit-on-arrival law kept; no new drops yet |
 | **5** ✅ | Multi-item pirate loot — `pirate_loot_for_wave` (deterministic, seeded items) merged into the combat bundle | combat → pending bundle; secured on return only; no crafting/UI yet |
 | **6** ✅ | **support craft metadata** (`support_craft_types`: role + capacity_cost + activity tags + tradeoffs; 8 seeded) | metadata-only reframe; no instances/attachment/enforcement yet; serial queue reused conceptually |
-| 7 | `main_ship_instance` (one per player; hull base stats) | doesn't replace the engine yet |
+| **7** ✅ | `main_ship_hull_types` + `main_ship_instances` (one per player; hull base stats; ensure/get/rename) | server-authoritative; sits `home`; doesn't drive expeditions yet |
 | 8 | `calculate_expedition_stats()` (capacity + tradeoffs, not a sum) | old fleet-stack path = fallback |
 | 9 | Expedition UI reframe (Fleet→Ship, Train Ships→Support Craft, Send Fleet→Send Expedition) | no table renames |
 | 10 | Trading (buy low / travel / sell high; cargo, route danger) | activity-isolated |
