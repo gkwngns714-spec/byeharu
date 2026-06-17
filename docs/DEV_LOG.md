@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Phase 7: Main Ship Instance (implemented; pending deploy/verify)
+## 2026-06-18 — Phase 7: Main Ship Instance (DEPLOYED + VERIFIED ✅)
 
 **Request** Create the player's ONE main ship — the player identity, not stackable, one
 active per player. Additive foundation only: no combat hook, no support-craft attachment, no
@@ -42,7 +42,12 @@ ensure creates exactly one ship (idempotent, no dup); owner-read + cross-user RL
 INSERT/UPDATE/DELETE + server-RPCs all blocked; stats valid & copied from hull; status
 defaults `home`; rename trims + rejects empty/overlong/no-ship; then chains `verify-phase6`
 (full regression) to prove the engine is unchanged. CI runs `verify:phase7`.
-**Pending deploy + verify.**
+
+**Result (commit `05b1cc5`):** Deploy ✅ · Build ✅ · Pages ✅ · Verify ✅ —
+**Phase 7 18/18, Phase 6 10/10, Phase 5 25/25, Phase 4 16/16, Inventory 18/18, M4.5 27/27,
+M5 28/28, M4 40/40** (M2 11 / M3 13 chained), 0 failed. Ship created hp 500/500, support 10,
+captain 2, module 3, status `home`; idempotent; client writes + server RPCs blocked. Migration
+0043 live on `dlkbwztrdvnnjlvaydut`. **Phase 7 CLOSED.**
 
 ---
 
