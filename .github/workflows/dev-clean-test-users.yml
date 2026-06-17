@@ -1,0 +1,33 @@
+name: Dev — clean test users
+
+# DEV/ADMIN tool to run scripts/dev-clean-test-users.mjs against the live DB (the
+# service-role key lives in repo secrets, not locally). DRY-RUN by default; deletion
+# happens ONLY when confirm=true is explicitly chosen. Only users with repo write
+# access can dispatch workflows (the public cannot).
+
+on:
+  workflow_dispatch:
+    inputs:
+      pattern:
+        description: 'Email LIKE pattern (must contain "test")'
+        required: true
+        default: 'm%test%@example.com'
+      confirm:
+        description: 'DELETE matched users? false = dry-run (default)'
+        type: boolean
+        default: false
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run cleanup (dry-run unless confirm=true)
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/dev-clean-test-users.mjs --pattern "${{ inputs.pattern }}" ${{ inputs.confirm && '--confirm' || '--dry-run' }}
