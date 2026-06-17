@@ -51,6 +51,19 @@ export async function fetchCombatReports(): Promise<CombatReport[]> {
   return (data as CombatReport[]) ?? []
 }
 
+// M6: full per-tick log for ONE past encounter (drives the report-page round log).
+// Read-only; RLS (combat_ticks_select_own) ensures only the caller's own ticks load.
+// No service-role key — this runs as the authenticated player.
+export async function fetchTicksForEncounter(encounterId: string): Promise<CombatTick[]> {
+  const { data, error } = await supabase
+    .from('combat_ticks')
+    .select('*')
+    .eq('encounter_id', encounterId)
+    .order('tick_number', { ascending: true })
+  if (error) throw new Error(error.message)
+  return (data as CombatTick[]) ?? []
+}
+
 export async function requestRetreat(presenceId: string): Promise<void> {
   const { error } = await supabase.rpc('request_retreat', { p_presence: presenceId })
   if (error) throw new Error(error.message)

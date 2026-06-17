@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchLocationStates, fetchWorldMap } from './mapApi'
 import type { LocationState, MapLocation, WorldMap } from './mapTypes'
+import { LocationPanel } from './LocationPanel'
+import { activityFromPressure, dangerFromModifier } from '../../game/worldstate/danger'
 
 /**
  * M2: read-only galaxy browser. Shows the static world (sectors → zones →
@@ -11,6 +13,7 @@ import type { LocationState, MapLocation, WorldMap } from './mapTypes'
 export function MapPage() {
   const [world, setWorld] = useState<WorldMap | null>(null)
   const [states, setStates] = useState<Record<string, LocationState>>({})
+  const [selected, setSelected] = useState<MapLocation | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -53,6 +56,12 @@ export function MapPage() {
         <p className="text-white/40">No sectors found. Did the seed data load?</p>
       )}
 
+      {selected && (
+        <div className="mb-6">
+          <LocationPanel loc={selected} state={states[selected.id]} onClose={() => setSelected(null)} />
+        </div>
+      )}
+
       <div className="space-y-8">
         {world?.sectors.map((sector) => (
           <section key={sector.id}>
@@ -75,7 +84,7 @@ export function MapPage() {
 
                   <ul className="grid gap-2 sm:grid-cols-2">
                     {zone.locations.map((loc) => (
-                      <LocationCard key={loc.id} loc={loc} state={states[loc.id]} />
+                      <LocationCard key={loc.id} loc={loc} state={states[loc.id]} onSelect={setSelected} />
                     ))}
                   </ul>
                 </div>
@@ -88,56 +97,57 @@ export function MapPage() {
   )
 }
 
-// M5: derive friendly labels from live World State (read-only).
-function activityLabel(pressure: number): { text: string; cls: string } {
-  if (pressure < 34) return { text: 'Calm', cls: 'text-emerald-300' }
-  if (pressure < 67) return { text: 'Rising', cls: 'text-amber-300' }
-  return { text: 'Severe', cls: 'text-red-300' }
-}
-function dangerLabel(mod: number): { text: string; cls: string } {
-  if (mod <= 1.0) return { text: 'Low', cls: 'text-emerald-300' }
-  if (mod < 1.13) return { text: 'Medium', cls: 'text-amber-300' }
-  return { text: 'High', cls: 'text-red-300' }
-}
-
-function LocationCard({ loc, state }: { loc: MapLocation; state?: LocationState }) {
+// M6: clickable card → opens the LocationPanel. Danger labels come from the shared
+// worldstate/danger util so map, location panel, and send-fleet stay consistent.
+function LocationCard({
+  loc,
+  state,
+  onSelect,
+}: {
+  loc: MapLocation
+  state?: LocationState
+  onSelect: (l: MapLocation) => void
+}) {
   const isHunt = loc.location_type === 'pirate_hunt'
   return (
-    <li className="rounded-lg border border-white/10 bg-white/5 p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-white/90">{loc.name}</span>
-        <span
-          className={
-            'rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ' +
-            (isHunt
-              ? 'bg-red-500/15 text-red-300'
-              : 'bg-emerald-500/15 text-emerald-300')
-          }
-        >
-          {loc.location_type.replace('_', ' ')}
-        </span>
-      </div>
-      <div className="mt-1 text-xs text-white/40">
-        {isHunt
-          ? `difficulty ${loc.base_difficulty} · reward tier ${loc.reward_tier}`
-          : 'safe — no activity'}
-      </div>
-      {isHunt && state && (
-        <div className="mt-1.5 flex gap-3 text-[11px] text-white/50">
-          <span>
-            Pirate activity:{' '}
-            <span className={activityLabel(state.pressure).cls}>
-              {activityLabel(state.pressure).text}
-            </span>
-          </span>
-          <span>
-            Danger:{' '}
-            <span className={dangerLabel(state.danger_modifier).cls}>
-              {dangerLabel(state.danger_modifier).text}
-            </span>
+    <li>
+      <button
+        onClick={() => onSelect(loc)}
+        className="w-full rounded-lg border border-white/10 bg-white/5 p-3 text-left transition hover:border-white/25 hover:bg-white/[0.08]"
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-white/90">{loc.name}</span>
+          <span
+            className={
+              'rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ' +
+              (isHunt ? 'bg-red-500/15 text-red-300' : 'bg-emerald-500/15 text-emerald-300')
+            }
+          >
+            {loc.location_type.replace('_', ' ')}
           </span>
         </div>
-      )}
+        <div className="mt-1 text-xs text-white/40">
+          {isHunt
+            ? `difficulty ${loc.base_difficulty} · reward tier ${loc.reward_tier}`
+            : 'safe — no activity'}
+        </div>
+        {isHunt && state && (
+          <div className="mt-1.5 flex gap-3 text-[11px] text-white/50">
+            <span>
+              Pirate activity:{' '}
+              <span className={activityFromPressure(state.pressure).cls}>
+                {activityFromPressure(state.pressure).label}
+              </span>
+            </span>
+            <span>
+              Danger:{' '}
+              <span className={dangerFromModifier(state.danger_modifier).cls}>
+                {dangerFromModifier(state.danger_modifier).label}
+              </span>
+            </span>
+          </div>
+        )}
+      </button>
     </li>
   )
 }

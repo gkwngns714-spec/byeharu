@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchGameConfig, fetchUnitTypes, type UnitType } from '../../lib/catalog'
-import { fetchWorldMap } from '../map/mapApi'
-import type { MapLocation } from '../map/mapTypes'
+import { fetchLocationStates, fetchWorldMap } from '../map/mapApi'
+import type { LocationState, MapLocation } from '../map/mapTypes'
 import { ensureBase, fetchBase, fetchBaseResources, fetchBaseUnits } from '../base/baseApi'
 import type { Base, BaseResource, BaseUnit } from '../base/baseTypes'
 import {
@@ -25,6 +25,7 @@ export interface GameState {
   fleetUnits: FleetUnit[]
   movements: FleetMovement[]
   presences: LocationPresence[]
+  locationStates: Record<string, LocationState>
 }
 
 const EMPTY: GameState = {
@@ -40,6 +41,7 @@ const EMPTY: GameState = {
   fleetUnits: [],
   movements: [],
   presences: [],
+  locationStates: {},
 }
 
 /**
@@ -68,13 +70,14 @@ export function useGameState(pollMs = 3000) {
       }
 
       const base = await fetchBase()
-      const [units, resources, fleets, fleetUnits, movements, presences] = await Promise.all([
+      const [units, resources, fleets, fleetUnits, movements, presences, locationStates] = await Promise.all([
         base ? fetchBaseUnits(base.id) : Promise.resolve([]),
         base ? fetchBaseResources(base.id) : Promise.resolve([]),
         fetchFleets(),
         fetchFleetUnits(),
         fetchActiveMovements(),
         fetchActivePresences(),
+        fetchLocationStates(),
       ])
 
       setState({
@@ -87,6 +90,7 @@ export function useGameState(pollMs = 3000) {
         fleetUnits,
         movements,
         presences,
+        locationStates,
         unitTypes: staticRef.current.unitTypes,
         locations: staticRef.current.locations,
         config: staticRef.current.config,

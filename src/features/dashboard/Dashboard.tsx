@@ -35,6 +35,12 @@ export function Dashboard() {
           >
             Galaxy map
           </Link>
+          <Link
+            to="/reports"
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
+          >
+            Reports
+          </Link>
           <button
             onClick={signOut}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
@@ -83,6 +89,7 @@ export function Dashboard() {
             units={game.units}
             unitTypes={game.unitTypes}
             locations={game.locations}
+            locationStates={game.locationStates}
             onSent={game.refresh}
           />
           <FleetStatusPanel

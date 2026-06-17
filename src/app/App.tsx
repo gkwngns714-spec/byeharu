@@ -5,6 +5,7 @@ import { RequireAuth } from './RequireAuth'
 import { AuthPage } from '../features/auth/AuthPage'
 import { Dashboard } from '../features/dashboard/Dashboard'
 import { MapPage } from '../features/map/MapPage'
+import { CombatReportPage } from '../features/combat/CombatReportPage'
 
 export function App() {
   const init = useAuthStore((s) => s.init)
@@ -32,6 +33,14 @@ export function App() {
           element={
             <RequireAuth>
               <MapPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/reports"
+          element={
+            <RequireAuth>
+              <CombatReportPage />
             </RequireAuth>
           }
         />

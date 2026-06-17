@@ -1,0 +1,42 @@
+name: Build (frontend typecheck)
+
+# M6: frontend verification in CI — local npm is unreliable on the dev machine, so
+# CI build/typecheck is REQUIRED, not optional. Runs lint (if present), the TS
+# project build, and the Vite production build. Node 22 (supabase-js needs native
+# WebSocket; see verify.yml).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Lint surfaces issues but does not gate the build (style != compile).
+      - name: Lint (if available)
+        run: npm run lint --if-present
+        continue-on-error: true
+
+      - name: Typecheck (tsc -b)
+        run: npx tsc -b
+
+      - name: Production build (vite build)
+        run: npx vite build

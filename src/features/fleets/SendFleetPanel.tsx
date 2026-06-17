@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { UnitType } from '../../lib/catalog'
 import type { Base, BaseUnit } from '../base/baseTypes'
-import type { MapLocation } from '../map/mapTypes'
+import type { LocationState, MapLocation } from '../map/mapTypes'
+import { activityFromPressure, dangerFromModifier, dangerWarningText } from '../../game/worldstate/danger'
 import { distance, previewTravelSeconds, slowestSpeed } from '../../game/movement/travelPreview'
 import { sendFleetToLocation, type SelectedUnit } from './fleetApi'
 
@@ -12,12 +13,14 @@ export function SendFleetPanel({
   units,
   unitTypes,
   locations,
+  locationStates,
   onSent,
 }: {
   base: Base
   units: BaseUnit[]
   unitTypes: UnitType[]
   locations: MapLocation[]
+  locationStates: Record<string, LocationState>
   onSent: () => void
 }) {
   // Dispatchable locations: safe zones (activity 'none') and pirate hunts (M4).
@@ -89,11 +92,30 @@ export function SendFleetPanel({
           </option>
         ))}
       </select>
-      {isHunt && (
-        <p className="mb-4 text-xs text-red-300/80">
-          Combat begins automatically on arrival. Retreat when you want to bank rewards —
-          the longer you stay, the stronger the waves.
-        </p>
+      {isHunt && location && (
+        <div className="mb-4 space-y-1.5">
+          {locationStates[location.id] && (
+            <p className="text-xs text-white/55">
+              Pirate activity:{' '}
+              <span className={activityFromPressure(locationStates[location.id].pressure).cls}>
+                {activityFromPressure(locationStates[location.id].pressure).label}
+              </span>{' '}
+              · Danger:{' '}
+              <span className={dangerFromModifier(locationStates[location.id].danger_modifier).cls}>
+                {dangerFromModifier(locationStates[location.id].danger_modifier).label}
+              </span>
+            </p>
+          )}
+          {dangerWarningText(locationStates[location.id]) && (
+            <p className="rounded-lg border border-red-400/30 bg-red-400/10 px-3 py-2 text-xs text-red-200">
+              {dangerWarningText(locationStates[location.id])}
+            </p>
+          )}
+          <p className="text-xs text-red-300/80">
+            Combat begins automatically on arrival. Retreat when you want to bank rewards —
+            the longer you stay, the stronger the waves.
+          </p>
+        </div>
       )}
 
       <label className="mb-1 block text-xs uppercase tracking-wide text-white/40">Units</label>

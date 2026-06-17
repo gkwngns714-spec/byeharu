@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import type { UnitType } from '../../lib/catalog'
 import type { MapLocation } from '../map/mapTypes'
 import type { Fleet } from '../fleets/fleetTypes'
@@ -32,7 +33,12 @@ export function CombatReportsView({
 
   return (
     <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-      <h2 className="mb-4 text-lg font-medium">Combat reports</h2>
+      <div className="mb-4 flex items-baseline justify-between">
+        <h2 className="text-lg font-medium">Combat reports</h2>
+        <Link to="/reports" className="text-xs text-indigo-300 transition hover:text-indigo-200">
+          View all →
+        </Link>
+      </div>
       {reports.length === 0 ? (
         <p className="text-sm text-white/40">No battles fought yet.</p>
       ) : (

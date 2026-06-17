@@ -13,6 +13,16 @@ const STATUS_STYLE: Record<string, string> = {
   destroyed: 'bg-red-500/15 text-red-300',
 }
 
+// M6: friendlier lifecycle wording (server status stays the truth).
+const PHASE_LABEL: Record<string, string> = {
+  moving: 'En route',
+  present: 'On station',
+  returning: 'Returning',
+  completed: 'Completed',
+  idle: 'Idle',
+  destroyed: 'Destroyed',
+}
+
 export function FleetStatusPanel({
   fleets,
   movements,
@@ -86,7 +96,7 @@ export function FleetStatusPanel({
                       (STATUS_STYLE[f.status] ?? 'bg-white/10 text-white/50')
                     }
                   >
-                    {f.status}
+                    {PHASE_LABEL[f.status] ?? f.status}
                   </span>
                 </div>
 
@@ -122,7 +132,7 @@ export function FleetStatusPanel({
 
                 {f.status === 'present' && presence && presence.activity_type === 'hunt_pirates' && (
                   <p className="mt-2 text-xs text-red-300/80">
-                    ⚔️ in combat — use the Retreat button in the combat panel
+                    ⚔️ In combat at {locName(f.current_location_id)} — retreat from the combat panel below to bank rewards.
                   </p>
                 )}
                 {f.status === 'present' && presence && presence.activity_type !== 'hunt_pirates' && (

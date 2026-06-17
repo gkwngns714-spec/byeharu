@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { UnitType } from '../../lib/catalog'
 import { CombatEventLayer } from './CombatEventLayer'
+import { RoundLog } from './RoundLog'
 import { requestRetreat } from './combatApi'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
 
@@ -178,36 +179,10 @@ export function ActiveCombatPanel({
         <CombatEventLayer events={events} />
       </div>
 
-      <details className="mt-4">
-        <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-white/35">
-          combat_ticks (debug log)
-        </summary>
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full text-left text-[11px] text-white/50">
-            <thead className="text-white/30">
-              <tr>
-                <th className="pr-3">tick</th><th className="pr-3">wave</th><th className="pr-3">danger</th>
-                <th className="pr-3">→wave</th><th className="pr-3">wave HP</th>
-                <th className="pr-3">→you</th><th className="pr-3">your HP</th><th className="pr-3">result</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ticks.slice().sort((a, b) => b.tick_number - a.tick_number).slice(0, 10).map((t) => (
-                <tr key={t.id}>
-                  <td className="pr-3 tabular-nums">{t.tick_number}</td>
-                  <td className="pr-3 tabular-nums">{t.wave_number}</td>
-                  <td className="pr-3 tabular-nums">{t.danger_level}</td>
-                  <td className="pr-3 tabular-nums">{Math.round(t.player_damage)}</td>
-                  <td className="pr-3 tabular-nums">{Math.round(t.enemy_integrity_before)}→{Math.round(t.enemy_integrity_after)}</td>
-                  <td className="pr-3 tabular-nums">{Math.round(t.enemy_damage)}</td>
-                  <td className="pr-3 tabular-nums">{Math.round(t.player_integrity_after)}</td>
-                  <td className="pr-3">{t.result}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
+      <div className="mt-4">
+        <h4 className="mb-2 text-[10px] uppercase tracking-wide text-white/35">Round log</h4>
+        <RoundLog ticks={ticks} unitTypes={unitTypes} limit={12} />
+      </div>
     </section>
   )
 }
