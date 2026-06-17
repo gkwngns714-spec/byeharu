@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-17 — Phase 4: Pending Loot Bundle (implemented; pending deploy/verify)
+## 2026-06-17 — Phase 4: Pending Loot Bundle (DEPLOYED + VERIFIED ✅)
 
 **Request** Generalize the metal-only pending reward into a future-proof
 `PendingRewardBundle { metal?, items:[{item_id,quantity}] }`. Backend plumbing only — no
@@ -48,7 +48,11 @@ display intact; items ride along for free, display deferred).
 duplicate-combine · negative/zero/NaN-skip · empty-bundle no-op · client-denied) then chains
 the regression (`verify-inventory` → m45 → m5 → m2/m3/m4) which proves the end-to-end timing
 law (defeat forfeits, retreat doesn't secure, reports keep metal). CI `verify.yml` now runs
-`verify:phase4`. **Pending deploy + verify.**
+`verify:phase4`.
+
+**Result (commit `4e1d7eb`):** Deploy ✅ · Build ✅ · Pages ✅ · Verify ✅ —
+**Phase 4 16/16, Inventory 18/18, M4.5 27/27, M5 28/28, M4 40/40** (M2 11 / M3 13 chained),
+0 failed. Migration 0040 live on `dlkbwztrdvnnjlvaydut`. **Phase 4 CLOSED.**
 
 ---
 
