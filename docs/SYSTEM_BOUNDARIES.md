@@ -24,7 +24,7 @@ server-side functions — **never** by directly changing another system's tables
 |---|---|---|
 | `profiles` | **Auth** | owner |
 | `sectors`, `zones`, `locations` | **Map** | public |
-| `unit_types`, `game_config`, `item_types` | **Reference/Config** (admin/migration) | public read-only |
+| `unit_types`, `game_config`, `item_types`, `support_craft_types` | **Reference/Config** (admin/migration) | public read-only |
 | `zone_state`, `location_state` | **World State** | public |
 | `bases`, `base_units`, `base_resources` | **Base** | owner |
 | `fleets`, `fleet_units` | **Fleet** | owner |
@@ -109,6 +109,12 @@ secured by `Reward.grant` **on home arrival only** *(→ `Base.add_resources` fo
 3. **World State System** — sole owner of `zone_state`+`location_state`; Map stays static.
 4. **Reward ledger** `reward_grants` + idempotent `reward_grant()` = only reward path.
 5. **Activity** owns no table in MVP — thin router / extension point.
+6. **Support craft (Phase 6)** — `support_craft_types` is **Reference/Config metadata only**
+   (public read, no client write, no functions). Capacity-limited loadout definitions
+   (`capacity_cost`, role, activity tags, tradeoffs). **No instances, no expedition
+   attachment, no capacity enforcement, no stat consumption yet** — combat still uses
+   `unit_types` (separate namespace). A future main ship exposes finite `support_capacity`
+   and `calculate_expedition_stats` consumes these (Phases 7–8).
 
 These keep every architecture law enforceable with a single-writer-per-table rule.
 

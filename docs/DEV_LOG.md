@@ -5,6 +5,42 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Phase 6: Support Craft Reframe (implemented; pending deploy/verify)
+
+**Request** Reframe "build ships" toward the future "build support craft / expedition
+equipment" model — **metadata foundation only**, no engine change. Support craft must be
+**capacity-limited loadout choices, not unlimited additive power**. No instances, no
+expedition attachment, no `calculate_expedition_stats`, no capacity enforcement yet.
+
+**Migration `0042_support_craft_types.sql`** — one Reference/Config table (mirrors
+`item_types`): `support_craft_type_id` PK, name, role, `capacity_cost int check (>0)`,
+stackable, buildable, `activity_tags jsonb`, `tradeoffs_json`, `base_stats_json`. Public-read
+RLS, **no write policy / no write grant → clients cannot mutate**. Seeds the **8 starter
+craft** with real roles + capacity costs + tradeoffs:
+- scout_escort (light_escort, cap 1) · missile_boat (combat_damage, cap 3) · repair_drone
+  (repair, cap 2) · cargo_drone (cargo, cap 2) · survey_drone (scanning, cap 2) · decoy_drone
+  (retreat_safety, cap 1) · mining_drone (extraction, cap 2) · trade_barge (heavy_cargo, cap 5).
+- `base_stats_json` is illustrative only — **nothing consumes it yet** (Phase 8).
+
+**What did NOT change (by design):** combat (`unit_types` scout/corvette/frigate untouched,
+separate namespace), the serial build queue / `build_orders` / `train_units`, fleets,
+movement, rewards, inventory. No fleet-table renames. No new functions (so no execute-lockdown
+needed). Frontend wording left as-is to avoid risking the M4.5 browser acceptance; the
+build-queue reframe is conceptual/documented (M4.5 = Serial Build Queue Foundation; ARCHITECTURE
++ SYSTEM_BOUNDARIES updated).
+
+**Boundaries/docs:** `support_craft_types` added to the Reference/Config sole-writer row;
+new ownership decision #6 (metadata only, capacity enforced later by main ship +
+`calculate_expedition_stats`). ROADMAP Phase 6 ✅. ARCHITECTURE Phase 6 note.
+
+**Verify:** `scripts/verify-phase6.mjs` — 8 definitions exist & public-read; capacity_cost > 0
+matching documented costs; every craft has role + activity_tags + tradeoffs; zero overlap with
+combat `unit_types` (engine untouched); client INSERT/UPDATE blocked by RLS; then chains
+`verify-phase5` (→ phase4 → inventory → m45 → m5 → m2/m3/m4) to prove combat + serial queue
+unchanged. CI runs `verify:phase6`. **Pending deploy + verify.**
+
+---
+
 ## 2026-06-18 — Phase 5: Multi-Item Pirate Loot (DEPLOYED + VERIFIED ✅)
 
 **Request** Pirate combat should accrue real item drops alongside metal — a controlled

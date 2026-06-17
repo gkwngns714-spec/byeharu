@@ -276,6 +276,13 @@ Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 > generic inventory + pending-loot-bundle model in ROADMAP Phases 3–5. **Standing law:** don't
 > replace the engine — replace the *source* of expedition stats via
 > `calculate_expedition_stats()` (capacity + tradeoffs, never a plain sum).
+>
+> **Phase 6 (2026-06-18).** `support_craft_types` seeds the **capacity-limited support craft**
+> definitions (metadata only — Reference/Config, public read, no client write). They are NOT
+> yet attached to expeditions and `support_capacity` is NOT yet enforced (no main ship yet);
+> current combat is untouched and still uses `unit_types`. The serial build queue (M4.5) is
+> the conceptual home for building them later. Capacity + tradeoffs will be enforced by
+> `calculate_expedition_stats()` once Phases 7–8 land — never a plain additive sum.
 
 | Milestone | Scope | Outcome |
 |---|---|---|
