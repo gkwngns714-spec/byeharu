@@ -78,7 +78,12 @@ export function Dashboard() {
             config={game.config}
             onTrained={game.refresh}
           />
-          <BuildQueuePanel orders={game.buildOrders} unitTypes={game.unitTypes} onChanged={game.refresh} />
+          <BuildQueuePanel
+            orders={game.buildOrders}
+            unitTypes={game.unitTypes}
+            config={game.config}
+            onChanged={game.refresh}
+          />
           {combat.encounters.map((enc) => (
             <ActiveCombatPanel
               key={enc.id}

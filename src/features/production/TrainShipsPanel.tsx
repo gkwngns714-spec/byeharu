@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { UnitType } from '../../lib/catalog'
 import type { Base, BaseResource, BaseUnit } from '../base/baseTypes'
 import { formatDuration } from '../../lib/time'
-import { previewBuildSeconds, previewMetalCost } from '../../game/production/buildPreview'
+import { perShipBuildSeconds, previewBuildSeconds, previewMetalCost } from '../../game/production/buildPreview'
 import { trainUnits } from './productionApi'
 
 // M7 — player-facing "Train Ships": spend metal to queue ship training. The only
@@ -31,6 +31,7 @@ export function TrainShipsPanel({
   const trainable = unitTypes.filter((u) => u.status === 'active')
   const unit = trainable.find((u) => u.id === unitTypeId)
   const cost = previewMetalCost(unit, qty)
+  const perShip = perShipBuildSeconds(unit, config)
   const secs = previewBuildSeconds(unit, qty, config)
   const shipsOf = (id: string) => units.find((u) => u.unit_type_id === id)?.quantity ?? 0
   const affordable = !!unit && cost <= metal
@@ -66,7 +67,7 @@ export function TrainShipsPanel({
         <option value="">Choose a ship…</option>
         {trainable.map((u) => (
           <option key={u.id} value={u.id}>
-            {u.name} — {u.metal_cost} metal · {u.build_time_seconds}s each · have {shipsOf(u.id)}
+            {u.name} — {u.metal_cost} metal · {formatDuration(perShipBuildSeconds(u, config))} per ship · have {shipsOf(u.id)}
           </option>
         ))}
       </select>
@@ -82,11 +83,16 @@ export function TrainShipsPanel({
       />
 
       {unit && (
-        <p className="text-xs text-white/50">
-          Cost <span className={affordable ? 'text-white/75' : 'text-red-300'}>{cost} metal</span> · Training time ≈{' '}
-          <span className="text-white/75">{formatDuration(secs)}</span>
-          {!affordable && <span className="text-red-300"> · Not enough metal</span>}
-        </p>
+        <div className="text-xs text-white/50">
+          <p>
+            Cost: <span className={affordable ? 'text-white/75' : 'text-red-300'}>{cost} metal</span>
+            {!affordable && <span className="text-red-300"> · Not enough metal</span>}
+          </p>
+          <p>
+            Per ship: <span className="text-white/75">{formatDuration(perShip)}</span> · Total order:{' '}
+            <span className="text-white/75">{formatDuration(secs)}</span> for {qty}
+          </p>
+        </div>
       )}
       {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { UnitType } from '../../lib/catalog'
-import { formatCountdown } from '../../lib/time'
+import { formatCountdown, formatDuration } from '../../lib/time'
+import { perShipBuildSeconds, previewBuildSeconds } from '../../game/production/buildPreview'
 import { cancelBuildOrder } from './productionApi'
 import type { BuildOrder } from './productionTypes'
 
@@ -9,10 +10,12 @@ import type { BuildOrder } from './productionTypes'
 export function BuildQueuePanel({
   orders,
   unitTypes,
+  config,
   onChanged,
 }: {
   orders: BuildOrder[]
   unitTypes: UnitType[]
+  config: Record<string, number>
   onChanged: () => void
 }) {
   // 1s tick drives the active countdown only (lazy init keeps it pure).
@@ -55,21 +58,23 @@ export function BuildQueuePanel({
           {items.map((o) => {
             const isActive = o.status === 'active'
             const left = isActive ? formatCountdown(o.complete_at) : null
+            const unit = unitTypes.find((u) => u.id === o.unit_type_id)
+            const perShip = perShipBuildSeconds(unit, config)
+            const total = previewBuildSeconds(unit, o.quantity, config)
             return (
               <li
                 key={o.id}
                 className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 p-3 text-sm"
               >
-                <div className="flex flex-col">
+                <div className="flex flex-col gap-0.5">
                   <span className="text-white/80">
-                    {o.quantity}× {typeName(o.unit_type_id)}
+                    {typeName(o.unit_type_id)} ×{o.quantity}
                   </span>
                   <span className="text-xs text-white/45">
-                    {isActive
-                      ? left
-                        ? `Building · ready in ${left}`
-                        : 'Training complete — arriving…'
-                      : 'Waiting'}
+                    Per ship: {formatDuration(perShip)} · Total order: {formatDuration(total)}
+                  </span>
+                  <span className="text-xs text-white/45">
+                    {isActive ? (left ? `Remaining: ${left}` : 'Completing…') : 'Waiting'}
                   </span>
                 </div>
                 <button
