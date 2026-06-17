@@ -17,7 +17,7 @@ export function App() {
   }, [init])
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
         <Route
