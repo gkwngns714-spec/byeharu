@@ -7,10 +7,17 @@ import type { BuildOrder } from './productionTypes'
 export async function fetchBuildOrders(): Promise<BuildOrder[]> {
   const { data, error } = await supabase
     .from('build_orders')
-    .select('id, base_id, unit_type_id, quantity, metal_spent, status, queued_at, complete_at, resolved_at')
-    .order('queued_at', { ascending: false })
+    .select('id, base_id, unit_type_id, quantity, metal_spent, status, queued_at, started_at, complete_at, resolved_at')
+    .order('queued_at', { ascending: true })
   if (error) throw new Error(error.message)
   return (data as BuildOrder[]) ?? []
+}
+
+// M4.5 — cancel a waiting/active training order (server-authoritative; validates
+// ownership + status, refunds metal, and starts the next waiting item).
+export async function cancelBuildOrder(orderId: string): Promise<void> {
+  const { error } = await supabase.rpc('cancel_build_order', { p_order: orderId })
+  if (error) throw new Error(error.message)
 }
 
 export async function trainUnits(baseId: string, unitTypeId: string, quantity: number): Promise<string> {

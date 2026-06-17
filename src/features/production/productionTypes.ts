@@ -2,7 +2,7 @@
 // is authoritative; the client only requests training via the train_units RPC and
 // reads its own build_orders. Player-facing wording is "Training".
 
-export type BuildOrderStatus = 'queued' | 'completed' | 'cancelled'
+export type BuildOrderStatus = 'waiting' | 'active' | 'completed' | 'cancelled'
 
 export interface BuildOrder {
   id: string
@@ -12,6 +12,7 @@ export interface BuildOrder {
   metal_spent: number
   status: BuildOrderStatus
   queued_at: string
-  complete_at: string
+  started_at: string | null
+  complete_at: string | null
   resolved_at: string | null
 }

@@ -5,6 +5,40 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M4.5 Core UX + production queue law fix (implemented; pending verify + click-through)
+
+**Status: NOT closed.** Fixes to the **M7 production queue** + two UI bugs (`build_orders`
+is the M7 system — M5/M6/M7 already done; full M2–M7 kept green). Migration `0038`.
+
+**Production now SERIAL** (was accidentally parallel — every order got `complete_at` on
+creation): `build_orders` gains `waiting`/`active` states, nullable `complete_at`,
+`started_at`; config `max_active_ship_production_slots=1` (designed to become N).
+`train_units` enqueues **waiting** then `production_start_next` promotes one to **active**
+(absolute `started_at` + `complete_at`). `process_build_queue` completes due **active**
+orders then starts the next. Waiting items have **no `complete_at`** and don't tick.
+
+**Cancellation:** `cancel_build_order` RPC — server-authoritative; validates ownership +
+status; **waiting → 100% refund, active → 50%, completed/cancelled → rejected** (refund via
+`Base.base_add_resources`). Cancelling the active item starts the next waiting one.
+
+**UI:** `BuildQueuePanel` shows active (countdown) vs waiting (no countdown) + Cancel
+buttons; `FleetStatusPanel` completed-history fold fixed (was an empty `<details>`) →
+controlled toggle "Show N previous run(s)" / "Hide previous run(s)" with real content;
+new `src/lib/location.ts` `formatLocationLabel` + `BasePanel` replace raw "0, 0" with
+"Sector 0:0" / friendly names.
+
+**Boundaries:** Production-only; combat/movement/world-state/reward untouched; absolute
+timestamps (no per-tick decrement). `SYSTEM_BOUNDARIES` Production row already covers it.
+
+**Verify:** `scripts/verify-m45.mjs` (serial · completion-starts-next · cancel waiting/active
+· cannot-cancel-completed · ownership · anti-cheat · regression) — **supersedes `verify-m7`**
+(parallel model; removed). CI `verify.yml` now runs `verify:m45`.
+
+**Closure gate (pending):** deploy `0038` · `verify:m45` green · M2–M5 regression · CI build ·
+browser check (serial countdown, cancel works, history folds, friendly coords).
+
+---
+
 ## 2026-06-17 — M7 Ship Training (implemented; pending deploy/verify + click-through)
 
 **Status: NOT closed.** Training-first ship production — the spending loop: **spend metal

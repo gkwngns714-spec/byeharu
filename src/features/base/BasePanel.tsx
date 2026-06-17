@@ -1,4 +1,5 @@
 import type { UnitType } from '../../lib/catalog'
+import { formatLocationLabel } from '../../lib/location'
 import type { Base, BaseResource, BaseUnit } from './baseTypes'
 
 // Presentational base view. Renders backend state only — no calculations of game
@@ -23,7 +24,7 @@ export function BasePanel({
       <div className="mb-4 flex items-baseline justify-between">
         <h2 className="text-lg font-medium">{base.name}</h2>
         <span className="text-xs text-white/40">
-          coords {base.x}, {base.y}
+          {formatLocationLabel({ x: base.x, y: base.y })}
         </span>
       </div>
 

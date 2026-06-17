@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { formatCountdown } from '../../lib/time'
+import { formatLocationLabel } from '../../lib/location'
 import type { MapLocation } from '../map/mapTypes'
 import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from './fleetTypes'
 import { requestLeaveLocation } from './fleetApi'
@@ -47,6 +48,7 @@ export function FleetStatusPanel({
 
   const [leavingId, setLeavingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
 
   const locName = (id: string | null | undefined) =>
     (id && locations.find((l) => l.id === id)?.name) || '—'
@@ -54,7 +56,7 @@ export function FleetStatusPanel({
     fleetUnits.filter((u) => u.fleet_id === fleetId && u.quantity > 0)
 
   const active = fleets.filter((f) => f.status === 'moving' || f.status === 'present' || f.status === 'returning')
-  const completedCount = fleets.filter((f) => f.status === 'completed').length
+  const completed = fleets.filter((f) => f.status === 'completed')
 
   async function handleLeave(presenceId: string) {
     setLeavingId(presenceId)
@@ -150,12 +152,33 @@ export function FleetStatusPanel({
         </ul>
       )}
 
-      {completedCount > 0 && (
-        <details className="mt-4">
-          <summary className="cursor-pointer text-xs text-white/35">
-            Completed history: {completedCount} previous run(s)
-          </summary>
-        </details>
+      {completed.length > 0 && (
+        <div className="mt-4">
+          <button
+            onClick={() => setShowHistory((s) => !s)}
+            className="text-xs text-white/40 transition hover:text-white/70"
+          >
+            {showHistory ? 'Hide previous run(s)' : `Show ${completed.length} previous run(s)`}
+          </button>
+          {showHistory && (
+            <ul className="mt-2 space-y-1">
+              {completed.map((f) => {
+                const composition = unitsOf(f.id)
+                  .map((cu) => `${cu.quantity} ${cu.unit_type_id}`)
+                  .join(', ')
+                return (
+                  <li
+                    key={f.id}
+                    className="flex justify-between rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/55"
+                  >
+                    <span>{composition || 'fleet'}</span>
+                    <span className="text-white/40">returned to {formatLocationLabel({ is_home: true })}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
       )}
     </section>
   )
