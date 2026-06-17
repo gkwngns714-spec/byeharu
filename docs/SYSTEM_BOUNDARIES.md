@@ -53,7 +53,7 @@ server-side functions — **never** by directly changing another system's tables
 | **Presence** | location_presence | `presence_create(fleet,loc,activity)`, `presence_request_leave(presence)`, `presence_complete/destroy/expire(...)` | combat damage · resource writes · map writes |
 | **Activity** *(no table — router)* | — | `activity_start(presence,type)` → `hunt_pirates`→Combat, `none`→no-op | own gameplay state; MVP only dispatches |
 | **Combat** | combat_encounters, combat_rounds | `combat_create_encounter(presence)`, `process_combat_ticks()`, `combat_set_retreating(enc)` | move fleets (except request return via Movement) · edit map · add resources directly · mining/trade/captains |
-| **Reward** | reward_grants | `reward_grant(source_type,source_id,base,rewards)` *(idempotent; sole caller of `base_add_resources`)* | combat math · movement |
+| **Reward** | reward_grants | `reward_grant(source_type,source_id,player,base,bundle)` *(idempotent; splits the `{metal?, items[]}` bundle: metal → `Base.base_add_resources` (sole caller), items → `Inventory.inventory_deposit`)* | combat math · movement · write inventory/base tables directly |
 | **Report** | combat_reports | `report_create(encounter)` *(idempotent)*, `get_combat_reports()` | **any** gameplay mutation · be a source of truth for active state |
 | **Production** (Training) | build_orders | `train_units(base,unit,qty)` *(player)*, `process_build_queue()` *(cron)*, `production_create_order/complete_order(...)` *(internal)* | write base_units/base_resources directly (spends via `Base.base_spend_resources`, deposits via `Base.base_merge_units`) · touch combat/world-state/movement · change reward logic |
 | **Inventory** | player_inventory, inventory_ledger | `inventory_deposit(player,item,qty,key?)` *(idempotent)*, `inventory_spend(player,item,qty)` *(transactional)*, `inventory_get_balance(player,item)` | combat/movement/world-state · be a source of truth for live combat · client writes · touch metal/`base_resources` (metal stays Base-owned) |
@@ -74,11 +74,15 @@ mission allowed · fleet limit · not-already-assigned)
 - outbound arrival → `Movement.mark_arrived` → `Fleet.set_present` → `Presence.create`
   *(→ `WorldState.register_presence` + `Activity.start` → `Combat.create_encounter` for hunt)*
 - return arrival → `Movement.mark_arrived` → `Base.merge_units` → `Fleet.complete`
+  *(→ `Reward.grant(bundle)` secures the carried `{metal?, items[]}` once: metal →
+  `Base.add_resources`, items → `Inventory.inventory_deposit`)*
 
 **`process_combat_ticks()`** *(cron 10–15s · locked · idempotent on `last_resolved_at`/`ended_at`)*
 → load units via `Fleet.get` → spawn wave → `Fleet.apply_losses` → accrue pending
 reward on encounter → insert `combat_round`
-→ on end: `Reward.grant` *(→ `Base.add_resources`)* → `Report.create` →
+→ on end: rewards ride the return movement as a `{metal?, items[]}` bundle and are
+secured by `Reward.grant` **on home arrival only** *(→ `Base.add_resources` for metal,
+`Inventory.inventory_deposit` for items)* → `Report.create` →
 `Presence.complete` *(→ `WorldState.unregister_presence`)* →
 `Movement.create(return)` + `Fleet.set_returning`, **or** `Fleet.destroy` on death
 

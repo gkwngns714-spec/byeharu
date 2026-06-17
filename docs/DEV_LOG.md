@@ -5,6 +5,53 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — Phase 4: Pending Loot Bundle (implemented; pending deploy/verify)
+
+**Request** Generalize the metal-only pending reward into a future-proof
+`PendingRewardBundle { metal?, items:[{item_id,quantity}] }`. Backend plumbing only — no
+new pirate drops, no trading/mining/crafting/UI. Keep the reward timing law exactly:
+pending while travelling · secured **once on home arrival** · forfeited on defeat · retreat
+doesn't secure. Metal stays in `base_resources`; items go to `player_inventory`.
+
+**Key finding (no schema change needed).** The pending bundle already rides existing jsonb
+columns end-to-end: combat accrues → `combat_encounters.total_rewards_json` → (on exit)
+`fleet_movements.reward_payload_json` (via `movement_attach_cargo`) → (on arrival)
+`reward_grant('combat', encounter, player, base, bundle)`. So Phase 4 is a **single
+function change** — additive, no new column, no rename.
+
+**Migration `0040_pending_loot_bundle.sql`** — rewrites `reward_grant()` (the secured-
+deposit owner) to **split the bundle**:
+- metal (and any scalar resource) → `Base.base_add_resources(p_rewards - 'items')`. The
+  `- 'items'` strip is essential: `base_add_resources` casts every jsonb value to double and
+  would choke on the items array.
+- items[] → `Inventory.inventory_deposit(player, item, qty, key)` with key
+  `'<source_type>:<source_id>:<item_id>'`.
+- **Idempotency:** metal guarded by `reward_grants` UNIQUE(source_type,source_id) (one
+  grant/source, early-return on replay) **plus** the inventory ledger key — both metal and
+  items double-deposit-proof across cron retry / reprocessing.
+- **Fail-safe validation:** items deduped by id (quantities summed), filtered to positive
+  integers `< 1e9` (rejects negative/zero/NaN/Infinity); unknown item ids skipped with a
+  logged `WARNING`; per-item + outer exception isolation so one bad entry never forfeits the
+  metal or the valid items.
+- Anti-cheat: `create or replace` preserves the 0039 client-revoke; added
+  `grant execute … reward_grant … to service_role` (server/CI only, never clients) so the
+  verifier can drive it — mirrors `inventory_deposit` / `process_build_queue`.
+
+**Boundaries:** `SYSTEM_BOUNDARIES.md` — Reward now splits the bundle (sole caller of
+`base_add_resources`; calls `Inventory.inventory_deposit` for items). Call graph stays
+acyclic (Reward → Base, Reward → Inventory). Combat/movement unchanged; combat still accrues
+**metal only** (no new drops — that's Phase 5). Reports keep `total_rewards_json` (metal
+display intact; items ride along for free, display deferred).
+
+**Verify:** `scripts/verify-phase4.mjs` — drives `reward_grant` directly as service_role
+(metal-only · metal+items · idempotent re-grant · per-source key · unknown-item-safe ·
+duplicate-combine · negative/zero/NaN-skip · empty-bundle no-op · client-denied) then chains
+the regression (`verify-inventory` → m45 → m5 → m2/m3/m4) which proves the end-to-end timing
+law (defeat forfeits, retreat doesn't secure, reports keep metal). CI `verify.yml` now runs
+`verify:phase4`. **Pending deploy + verify.**
+
+---
+
 ## 2026-06-17 — Phase 3: generic inventory foundation (DEPLOYED + VERIFIED ✅)
 
 **Request** Clean generic item inventory for future rewards/materials. Metal stays in
