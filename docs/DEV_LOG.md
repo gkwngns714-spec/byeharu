@@ -5,7 +5,30 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-17 — M4.5 Core UX + production queue law fix (implemented; pending verify + click-through)
+## 2026-06-17 — ✅ M4.5 CLOSED (browser acceptance passed)
+
+The automated **Playwright browser acceptance** test passed against the live Pages site —
+M4.5's manual gate is met, so M4.5 is **closed**.
+
+- **Browser test:** `tests/m45.spec.ts` (`verify:m45:browser`), CI workflow
+  `.github/workflows/browser.yml`, run against `https://gkwngns714-spec.github.io/byeharu/`.
+  **1 passed (17.3s).** Verified live: friendly coords (Sector 0:0, no raw "0, 0") · Train
+  Scout ×5 active row (Per ship / Total order / Ship 1 of 5 / Remaining ticking / "delivered
+  when full order completes") · Corvette ×2 waiting (no countdown, no Ship N) · cancel inline
+  confirm (Refund + Penalty + Keep Building + Confirm Cancel) · Keep Building doesn't cancel ·
+  Confirm refunds **once** (+125 = 50%) and the next waiting starts · refresh = no duplicate
+  refund, cancelled gone · completed-history fold/unfold. Screenshots + traces uploaded as the
+  `playwright-m45` CI artifact.
+- **Backend:** `verify:m45` **27/27**; regression **M2 11/11 · M3 13/13 · M4 40/40**; CI build
+  green. No gameplay/migration changes for the test (test infra only).
+
+M4.5 reframed for the future as the **Serial Build Queue Foundation** (see
+[[byeharu-final-direction]] — Main Ship + Support Craft). **Next:** Phase 1 docs/roadmap
+reconciliation (docs only).
+
+---
+
+## 2026-06-17 — M4.5 Core UX + production queue law fix (CLOSED — see entry above)
 
 **Status: NOT closed.** Fixes to the **M7 production queue** + two UI bugs (`build_orders`
 is the M7 system — M5/M6/M7 already done; full M2–M7 kept green). Migration `0038`.
