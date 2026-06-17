@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Playwright (browser test artifacts)
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
 # Env files (keep .env.example committed, never real keys)
 .env
 .env.*

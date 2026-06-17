@@ -12,7 +12,8 @@
     "verify:m3": "node scripts/verify-m3.mjs",
     "verify:m4": "node scripts/verify-m4.mjs",
     "verify:m5": "node scripts/verify-m5.mjs",
-    "verify:m45": "node scripts/verify-m45.mjs"
+    "verify:m45": "node scripts/verify-m45.mjs",
+    "verify:m45:browser": "playwright test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
