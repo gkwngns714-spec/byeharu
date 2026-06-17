@@ -63,7 +63,8 @@ Apply the database migrations to your Supabase project (via the Supabase CLI
    `process_fleet_movements()`, return; send → travel → present at a safe zone → return (no combat).
 4. **Pirate combat** ✅ — `combat_encounters`/`ticks`/`reports`, `process_combat_ticks()`, wave
    scaling, per-unit HP, retreat, metal rewards on home-arrival; full pirate-hunt loop.
-5. **Living world** ⬜ — `process_location_state_ticks()` + zone/location dynamics (pirate
+5. **Living world** ✅ — `process_location_state_ticks()` + zone/location dynamics (pirate
    pressure / danger drift), wire all cron jobs together, balance.
-6. **Frontend depth** ⬜ — location panel, send-fleet preview math, fleet status, active-combat
-   panel, round log, report page — polished playable loop.
+6. **Frontend depth** ✅ CLOSED — location panel, send-fleet preview, fleet status, active-combat
+   panel, round log, report page — polished, player-clear loop.
+7. **M7** ⬜ — not started (next milestone; economy & depth per §17 deferred list, scope TBD).

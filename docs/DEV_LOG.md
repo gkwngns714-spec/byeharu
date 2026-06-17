@@ -5,9 +5,33 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-17 — M6 Frontend Depth (implemented / CI green / pending click-through)
+## 2026-06-17 — ✅ M6 CLOSED (frontend depth / player clarity)
 
-**Status: NOT fully closed.** Implemented and CI-verified to compile; closure gate is a
+M6 browser re-test passed; milestone officially closed.
+
+**Closure evidence:**
+- M6 browser re-test passed.
+- CI build/typecheck passed.
+- Reports now show readable time.
+- Round logs show per-round time.
+- "en route" was removed from player-facing UI.
+- Fleet wording is clearer: Traveling / Traveling to / Returning home.
+- Dev-only ship grant script was added.
+- No backend logic changed.
+- No migrations changed.
+- No combat math changed.
+- No reward logic changed.
+- M2–M5 backend systems remained untouched.
+
+**Open follow-ups (tracked separately — NOT part of M6):** pre-existing react-hooks lint
+cleanup · stuck throwaway test users/presences cleanup · danger pressure balance /
+newbie-safe zones. **Next:** M7 (not started).
+
+---
+
+## 2026-06-17 — M6 Frontend Depth (implementation record — CLOSED above)
+
+**Status: CLOSED 2026-06-17 (see closure entry above).** Implemented and CI-verified to compile; closure gate is a
 manual browser click-through (below). Player-clarity pass over the M2–M5 loop —
 **frontend only**: no migrations, no backend/combat/reward math, reads server truth only.
 
