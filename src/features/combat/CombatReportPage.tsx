@@ -62,8 +62,8 @@ export function CombatReportPage() {
   const locName = (id: string | null) => (id && locNames[id]) || 'unknown'
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
-      <header className="mb-8 flex items-center justify-between">
+    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
+      <header className="mb-8 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-indigo-200">Combat reports</h1>
           <p className="text-sm text-white/40">Byeharu — battle history</p>

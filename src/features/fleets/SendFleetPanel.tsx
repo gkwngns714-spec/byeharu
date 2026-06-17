@@ -128,7 +128,7 @@ export function SendFleetPanel({
             const val = qty[u.unit_type_id] ?? 0
             const over = val > u.quantity
             return (
-              <div key={u.id} className="flex items-center gap-3">
+              <div key={u.id} className="flex flex-wrap items-center gap-3">
                 <span className="w-24 text-sm text-white/70">{name}</span>
                 <input
                   type="number"
