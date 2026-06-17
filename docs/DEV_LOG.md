@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Phase 5: Multi-Item Pirate Loot (implemented; pending deploy/verify)
+## 2026-06-18 — Phase 5: Multi-Item Pirate Loot (DEPLOYED + VERIFIED ✅)
 
 **Request** Pirate combat should accrue real item drops alongside metal — a controlled
 combat-reward DATA change, not an engine rewrite. Reuse the proven Phase 4 bundle; keep the
@@ -45,7 +45,11 @@ for CI only). reward_grant/inventory_* service_role grants untouched.
 `total_rewards_json`, stay pending through retreat, deposit to `player_inventory` +
 `base_resources` on home arrival, report keeps metal; (C) **defeat** forfeits metal+items;
 (D) chains `verify-phase4` (→ inventory → m45 → m5 → m2/m3/m4). CI runs `verify:phase5`.
-**Pending deploy + verify.**
+
+**Result (commit `bf32dbf`):** Deploy ✅ · Build ✅ · Pages ✅ · Verify ✅ —
+**Phase 5 25/25, Phase 4 16/16, Inventory 18/18, M4.5 27/27, M5 28/28, M4 40/40** (M2 11 /
+M3 13 chained), 0 failed. Real run banked metal +38 and scrap +1 on arrival; defeat forfeited
+the bundle. Migration 0041 live on `dlkbwztrdvnnjlvaydut`. **Phase 5 CLOSED.**
 
 ---
 
