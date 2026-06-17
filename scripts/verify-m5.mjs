@@ -111,17 +111,30 @@ async function main() {
   for (const h of hunts) { if (!(await lsFor(h.id))) allHunts = false }
   allHunts ? ok('every pirate_hunt location has a location_state row') : bad('hunt rows', 'missing')
 
-  // ── Test 2: passive pressure drift (no active fleet) ────────────────────────
-  console.log('\n2. Passive drift (no fleet):')
-  await prime(locDrift.id, 0, 0, 50)            // reset to baseline
-  await prime(locDrift.id, 0, 120)              // age it so the next tick applies drift
-  const p2a = (await lsFor(locDrift.id)).pressure
+  // ── Test 2: pure decay toward baseline (Option A — replaces old drift-up) ────
+  console.log('\n2. Pressure decays toward baseline (no fleet):')
+  // (a) above baseline → decays DOWN, never overshoots below baseline
+  await prime(locDrift.id, 0, 120, 90)
+  const a0 = (await lsFor(locDrift.id)).pressure
   await tick()
-  const r2 = await lsFor(locDrift.id)
-  r2.pressure >= p2a ? ok(`pressure drifted up (${p2a} → ${r2.pressure})`) : bad('drift', `${p2a} → ${r2.pressure}`)
-  r2.pressure >= 0 && r2.pressure <= 100 ? ok(`pressure clamped in [0,100] (${r2.pressure})`) : bad('clamp', `${r2.pressure}`)
-  isFiniteNum(Number(r2.danger_modifier)) && Number(r2.danger_modifier) > 0
-    ? ok(`danger_modifier finite & > 0 (${r2.danger_modifier})`) : bad('danger_modifier', `${r2.danger_modifier}`)
+  const a1 = (await lsFor(locDrift.id)).pressure
+  a1 < a0 && a1 >= 50 ? ok(`above baseline decays down, no overshoot (${a0} → ${a1}, ≥50)`) : bad('decay above', `${a0} → ${a1}`)
+  // (b) below baseline → rises UP toward baseline, never overshoots above baseline
+  await prime(locDrift.id, 0, 120, 10)
+  const b0 = (await lsFor(locDrift.id)).pressure
+  await tick()
+  const b1 = (await lsFor(locDrift.id)).pressure
+  b1 > b0 && b1 <= 50 ? ok(`below baseline rises toward baseline, no overshoot (${b0} → ${b1}, ≤50)`) : bad('decay below', `${b0} → ${b1}`)
+  // (c) at baseline → stays; danger_modifier exactly 1.0
+  await prime(locDrift.id, 0, 120, 50)
+  await tick()
+  const atB = await lsFor(locDrift.id)
+  atB.pressure === 50 ? ok('at baseline stays baseline (50)') : bad('baseline stay', `${atB.pressure}`)
+  Number(atB.danger_modifier) === 1 ? ok('danger_modifier at baseline is exactly 1.0') : bad('baseline modifier', `${atB.danger_modifier}`)
+  // (d) clamp + finite modifier
+  atB.pressure >= 0 && atB.pressure <= 100 ? ok(`pressure clamped in [0,100] (${atB.pressure})`) : bad('clamp', `${atB.pressure}`)
+  isFiniteNum(Number(atB.danger_modifier)) && Number(atB.danger_modifier) > 0
+    ? ok('danger_modifier finite & > 0') : bad('danger_modifier', `${atB.danger_modifier}`)
 
   // ── Test 8: double-tick idempotency ─────────────────────────────────────────
   console.log('\n8. Double-tick idempotency:')
@@ -156,11 +169,11 @@ async function main() {
 
   // ── Test 4: active-fleet relief ─────────────────────────────────────────────
   console.log('\n4. Active-fleet relief:')
+  await prime(locActive.id, 0, 120, 60)         // known mid pressure; age so the tick applies
   const p4a = (await lsFor(locActive.id)).pressure
-  await prime(locActive.id, 0, 120)             // age; tick reconciles active_fleets back to the real (>=1)
-  await tick()
+  await tick()                                  // tick reconciles active_fleets to real (>=1) → relief
   const r4 = await lsFor(locActive.id)
-  r4.pressure <= p4a ? ok(`pressure relieved by active fleet (${p4a} → ${r4.pressure})`) : bad('relief', `${p4a} → ${r4.pressure}`)
+  r4.pressure < p4a ? ok(`pressure relieved by active fleet (${p4a} → ${r4.pressure})`) : bad('relief', `${p4a} → ${r4.pressure}`)
   r4.pressure >= 0 ? ok(`pressure not below min (${r4.pressure})`) : bad('relief floor', `${r4.pressure}`)
 
   // ── Test 5: unregister on presence end (retreat → return) ───────────────────

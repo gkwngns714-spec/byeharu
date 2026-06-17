@@ -5,6 +5,33 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-17 — M5 balance correction: pressure decay toward baseline (follow-up #3, Option A)
+
+**Request** Fix the M5 issue where, with no players, every pirate_hunt location drifted to
+pressure 100 / Severe and punished new players. **Option A only** (pure decay) — no newbie
+zones, no new columns, no Option B/C.
+
+**Change (migration `0034_worldstate_pressure_decay.sql`):** `worldstate_tick` passive
+pressure now **DECAYS toward baseline** instead of drifting up:
+`pressure += (baseline − pressure) * decay_rate − active_fleets * relief`. The step is a
+fraction of the gap, so it asymptotes to baseline and **never overshoots** (decay_rate in
+(0,1]). Empty locations return to **NORMAL** (baseline 50 → danger_modifier **exactly 1.0**
+≈ M4); hunting still relieves below baseline; future defeat/event pressure can still raise
+it above baseline (defeat_pressure remains a TODO, unwired). New config key
+`worldstate_pressure_decay_rate = 0.1`. danger_modifier mapping unchanged.
+
+**M5 law preserved:** World State still sole writer of `location_state`/`zone_state`; combat
+**reads** `danger_modifier` only; presence is source of truth; `active_fleets` stays a
+reconciled cache; cron unchanged (`process_location_state_ticks` → `worldstate_tick`). No
+new schema/columns, no newbie zones, no frontend / combat / reward / fleet / presence
+changes.
+
+**Verify:** verify-m5 Test 2 changed from drift-up to decay (above→down, below→up,
+at-baseline stays + modifier exactly 1.0, no overshoot, clamped); Test 4 relief made
+deterministic. M2/M3/M4 regression unchanged.
+
+---
+
 ## 2026-06-17 — ✅ M6 CLOSED (frontend depth / player clarity)
 
 M6 browser re-test passed; milestone officially closed.
