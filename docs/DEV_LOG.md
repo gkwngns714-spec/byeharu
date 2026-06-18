@@ -23,8 +23,21 @@ workflow, dry-run default). It collects runtime player_ids, **proves ownership v
 child→parent **only** those players' runtime rows. No TRUNCATE; no guard change; never touches
 bases/inventory/main_ship/config/world.
 
-**Result:** (pending dry-run → confirm → re-check). Target: db:counts runtime = 0; M4.5
-browser self-cleans going forward.
+**Result:** dry-run proved **1** orphan player (`m45browser.1781756112790@example.com`) owning
+exactly 3 rows (1 completed fleet + 2 terminal build_orders); `--confirm` deleted them
+(child→parent). The renamed M4.5 browser run self-cleaned its own 3 rows via `%m45testbrowser%`.
+**verify:phase8 ✅ 21/21, galaxy 9A/9B ✅, M4.5 browser ✅** — all test data self-cleans to 0.
+
+**db:counts after = 360, and that is CORRECT (not test junk):** a read-only owner diagnostic
+(`scripts/whoami-runtime.mjs` + `runtime-owners.yml`) showed all remaining runtime rows belong
+to **ONE REAL player — `gkwngns714@gmail.com`** (the project owner's own manual galaxy-map test:
+an expedition to a pirate hunt → 1 fleet + 1 combat encounter, 88 ticks/264 events). **Not
+deleted — real player data.** Test infrastructure leftover = **0**. (The 88 ticks mean a verify
+run had `combat_tick_logging` on during that combat; it's reset to false by m4/m5's finally and
+those ticks age out via Phase B 3-day retention.)
+
+**Net:** M4.5 browser test is now self-cleaning + serialized; old orphans removed; no real/
+config/permanent data touched; no TRUNCATE; no gameplay change. **Follow-up CLOSED.**
 
 ---
 
