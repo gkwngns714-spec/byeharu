@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Phase 9C: Expedition UI Reframe (implemented; pending build/verify)
+## 2026-06-18 — Phase 9C: Expedition UI Reframe (BUILD + VERIFY + BROWSER GREEN ✅)
 
 **Request** Make the player understand: Galaxy Map = where you send expeditions; Command
 Center = status + shortcuts; fleet status area = active/returning/completed. Remove duplicate
@@ -33,7 +33,12 @@ map or send flow. Phase 9B send logic unchanged.
 
 **Tests:** `galaxy9b.spec.ts` gains a check that the Command Center shows
 `dashboard-expedition-launcher` and has **no** "Send a fleet" control (single-surface proof).
-9A/9B/m45 selectors preserved. **Pending build + verify + browser.**
+9A/9B/m45 selectors preserved.
+
+**Result (commit `aaea9d5`):** build/typecheck + lint ✅, Pages deployed. **verify:phase8 ✅
+21/21.** **Browser: 9A 1/1, 9B 1/1** (incl. single-send-surface assertion), **M4.5 1/1**
+(confirms the FleetStatusPanel reframe kept its selectors). **db:counts runtime = 0.** No
+backend/migration/table-write change; `/galaxy` is the only send surface. **Phase 9C CLOSED.**
 
 ---
 
