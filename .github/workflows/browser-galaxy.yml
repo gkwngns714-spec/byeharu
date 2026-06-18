@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# Serialize with the verify suite so the two never mutate/clean the shared DB at once.
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   browser:
     runs-on: ubuntu-latest
@@ -40,12 +45,14 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PLAYWRIGHT_BASE_URL: https://gkwngns714-spec.github.io/byeharu/
         run: npm run verify:galaxy9b:browser
-      - name: Clean up test runtime rows (always)
+      # Scope cleanup to GALAXY test users only (%galaxytest%) so it can never delete a
+      # concurrent verify run's in-flight data (those use m*/p* test emails).
+      - name: Clean up galaxy test runtime rows (always)
         if: always()
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npm run verify:cleanup
+        run: node scripts/verify-cleanup.mjs --confirm --pattern '%galaxytest%@example.com'
       - name: Upload screenshots + traces
         if: always()
         uses: actions/upload-artifact@v4

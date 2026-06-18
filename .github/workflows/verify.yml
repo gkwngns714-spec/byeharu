@@ -26,8 +26,8 @@ on:
 
 # Serialize: two verifies racing on the same world-state locations would interfere.
 concurrency:
-  group: verify-${{ github.ref }}
-  cancel-in-progress: true
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   verify:

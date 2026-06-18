@@ -23,7 +23,7 @@ test('Phase 9A — read-only galaxy map smoke', async ({ page }) => {
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
 
   // ── setup: throwaway user (no fleets — proves nothing gets sent) ──────────────
-  const email = `galaxybrowser.${Date.now()}@example.com`
+  const email = `galaxytest9a.${Date.now()}@example.com`
   const password = 'Test123456!'
   const anonC = createClient(URL_, ANON, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: su, error: suErr } = await anonC.auth.signUp({ email, password })
