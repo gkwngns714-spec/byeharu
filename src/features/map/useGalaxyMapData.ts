@@ -19,7 +19,6 @@ export interface MainShipLite {
   hull_type_id: string
   hp: number
   max_hp: number
-  support_capacity: number
   cargo_capacity: number
 }
 
@@ -47,7 +46,7 @@ async function fetchMainShip(): Promise<MainShipLite | null> {
   // Owner-read RLS returns only the caller's ship (or nothing if not created yet).
   const { data, error } = await supabase
     .from('main_ship_instances')
-    .select('main_ship_id, name, status, hull_type_id, hp, max_hp, support_capacity, cargo_capacity')
+    .select('main_ship_id, name, status, hull_type_id, hp, max_hp, cargo_capacity')
     .maybeSingle()
   if (error) return null // non-fatal: ship is optional in Phase 9A
   return (data as MainShipLite) ?? null
