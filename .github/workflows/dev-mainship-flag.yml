@@ -1,0 +1,38 @@
+name: Dev — mainship flag
+
+# DEV/ADMIN manual-test control: set ONLY game_config.mainship_send_enabled to an explicit value.
+# Dispatch-only. It does NOT auto-restore — you flip it true to test, then dispatch again with
+# false when done (the flag must end false). Touches no other config, ships, fleets, combat, data,
+# migrations, or UI. Uses the service-role secret in the repo (not available locally). Only repo-
+# write users can dispatch. Shares the live-DB concurrency group to avoid races.
+
+on:
+  workflow_dispatch:
+    inputs:
+      enabled:
+        description: 'Set mainship_send_enabled to true (test) or false (restore)'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  set-flag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Set mainship_send_enabled
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/dev-mainship-flag.mjs --enabled ${{ inputs.enabled }}
