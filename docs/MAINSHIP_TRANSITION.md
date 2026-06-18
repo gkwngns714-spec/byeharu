@@ -1,13 +1,73 @@
 # Byeharu — Main Ship Transition Plan (Phase 10)
 
-> **Status: Phase 10A (design/audit only).** Authoritative plan for moving from the current
-> metal-built **disposable-ship** fleet loop to a persistent **Main Ship + Captains + Modules +
-> Support Craft** model — **without breaking or deleting the verified system**. Companion to
-> `ARCHITECTURE.md` (engine), `SYSTEM_BOUNDARIES.md` (ownership), `ROADMAP.md` (forward plan),
-> `ACTIVITIES.md` (activity abstraction). Recorded 2026-06-18.
+> **Status: Phase 10A design (audit) + 10B done/accepted (read-only preview).** Authoritative
+> plan for moving from the current metal-built **disposable-ship** fleet loop to a persistent
+> **Main Ship(s) + Captains + Modules + Support Craft** model — **without breaking or deleting
+> the verified system**. Companion to `ARCHITECTURE.md` (engine), `SYSTEM_BOUNDARIES.md`
+> (ownership), `ROADMAP.md` (forward plan), `ACTIVITIES.md` (activity abstraction). Recorded
+> 2026-06-18; **clarified-vision update 2026-06-18** (see "★ Clarified core vision" below).
 >
 > **Standing law (unchanged):** *replace the SOURCE of expedition stats, never the engine.*
 > The M2–M5 engine (travel · combat · retreat · return · reward-on-arrival · reports) stays.
+>
+> **Core vision (clarified):** the future model is **multiple persistent main ships with
+> flexible, stat-driven assignment** — not "one ship" and not "one ship locked to one role."
+> See the ★ section next.
+
+---
+
+## ★ Clarified core vision (2026-06-18) — multiple persistent main ships, flexible assignment
+
+The future byeharu model is **multiple persistent main ships with flexible, stat-driven
+assignment.** It is explicitly **NOT** "one main ship only" and **NOT** "one ship locked to one
+role."
+
+**What the player eventually controls:**
+- **Several** persistent main ships, each a strategic asset with its own captains / modules /
+  upgrades / hp / support capacity.
+- **Free assignment** of any ship to any activity — combat, trading, mining, exploration, and
+  future activities.
+
+**Player freedom (must be preserved):**
+- Send **all** main ships to combat if they want.
+- Send **all** main ships to trade if they want.
+- **Split** ships across multiple tasks simultaneously (strategic multitasking).
+- Some content should **require or reward multiple main ships in the same area/group** —
+  especially larger combat encounters; trading/mining/exploration may also benefit from multiple
+  ships on the same task if the player chooses.
+
+**No hardcoded ship classes / activity locks.** Do NOT build "combat ship can only fight",
+"trade ship can only trade", "mining ship can only mine". Instead: **any ship can attempt any
+activity; captains / modules / upgrades / loadout / stats determine how effective or risky it
+is.** Role is *emergent from fit*, not a permanent type lock.
+
+**Architectural implications (bake in now, even though we start with one ship):**
+1. **"One main ship per player" is STARTER-PHASE behavior, not permanent architecture.** It is
+   fine for Phase 10C to send/own exactly one ship for safety — but nothing in the wording, API,
+   or schema may *assume one forever*.
+2. **Avoid one-ship wording** in code/UI/docs ("your main ship", "the ship") where it implies a
+   permanent cap. Prefer "a main ship" / "your main ships" framing as we go.
+3. **Avoid API/schema that blocks multiple ships later.** Concretely:
+   - `main_ship_instances.player_id` is currently **UNIQUE** (one row per player). This is the
+     *starter constraint*; multi-ship will later **drop the UNIQUE** (an additive migration) so a
+     player can own many `main_ship_instances`. **Do not relax it now**, but design every new
+     function/RPC to **take an explicit `main_ship_id`** (not "the player's only ship"), so
+     relaxing the constraint later requires no rewrites.
+   - Send/preview/stats functions must be **ship-id-parameterized** (`calculate_expedition_stats`
+     already takes `main_ship_id` ✓; the 10B preview wrapper currently derives the single ship —
+     it will gain a `main_ship_id` arg when multi-ship lands).
+4. **The send model is a "main-ship expedition GROUP."** Phase 10C may dispatch **one** ship for
+   safety, but the RPC contract should be shaped so a *group* of ships (a list of `main_ship_id`)
+   can be sent to one destination later **without a redesign** — e.g. accept a `p_ships jsonb`
+   list even if 10C validates "exactly one".
+5. **Combat eventually allows multiple main ships in the same area/group** (co-located
+   expeditions stack into one larger encounter, or fight side-by-side). The engine already
+   represents an expedition as `fleets`/`fleet_units`; a multi-ship group resolves into the same
+   combat input — **no second combat system.**
+6. **Trading / mining / exploration** likewise support multiple ships on the same activity if the
+   player chooses.
+7. **Activity rules stay stat-driven, never hardcoded per ship type** — the primary
+   anti-spaghetti rule for the whole transition.
 
 ---
 
@@ -92,8 +152,9 @@ queue), `tests/galaxy9b.spec.ts` (unit-loadout send).
   `base_hp, base_speed, base_cargo_capacity, base_support_capacity, base_captain_slots,
   base_module_slots`. Seeded `starter_frigate` (hp 500, **support_capacity 10**, captain 2,
   module 3).
-- **`main_ship_instances`** (Phase 7, owner-read, server-write only): one per player
-  (`player_id` UNIQUE); `hp/max_hp, cargo_used/cargo_capacity, support_capacity, captain_slots,
+- **`main_ship_instances`** (Phase 7, owner-read, server-write only): one per player today via
+  `player_id` **UNIQUE** — **starter-phase constraint only** (multi-ship later drops the UNIQUE,
+  additive; see ★ vision). `hp/max_hp, cargo_used/cargo_capacity, support_capacity, captain_slots,
   module_slots`; **status enum already covers the full lifecycle**:
   `home, traveling, hunting, trading, exploring, mining, retreating, returning, repairing,
   destroyed`. Functions: `ensure_main_ship_for_player`, `get_main_ship`, `rename_main_ship`
@@ -141,17 +202,22 @@ wired to combat or the client. This is the clean seam.**
 ## 5. Proposed future expedition model
 
 ```
-/galaxy: pick destination
-  → SOURCE = the player's main_ship_instance (persistent, unique) — not a stack of base_units
-  → loadout = support craft (capacity-limited) + later captains + modules
-  → calculate_expedition_stats(ship + loadout + activity) → final stats (capacity + tradeoffs, never a sum)
+/galaxy: pick destination + an ACTIVITY (combat / trade / mine / explore)
+  → SOURCE = one or more main_ship_instances (a "main-ship expedition GROUP") — not base_units
+            (Phase 10C dispatches ONE ship for safety; the contract supports a group later)
+  → each ship's loadout = support craft (capacity-limited) + later captains + modules
+  → calculate_expedition_stats(ship + loadout + activity) per ship → final stats (capacity + tradeoffs, never a sum)
   → travel (fleet_movements) → combat / scan / extract (existing engine, fed by computed stats)
-  → DEFEAT = forced retreat + main ship DAMAGED (never destroyed); loadout consequences
+  → DEFEAT = forced retreat + main ship(s) DAMAGED (never destroyed); loadout consequences
   → return home → rewards secured (unchanged) → repair over time
 ```
 
+Any ship can attempt any activity; **effectiveness/risk come from captains/modules/loadout/
+stats, never from a hardcoded ship class** (★ vision). Co-located ships on the same activity may
+group into one larger encounter/effort.
+
 Shifts from today:
-- **Source:** `main_ship_instance` instead of `base_units` quantities.
+- **Source:** one or more `main_ship_instance`(s) instead of `base_units` quantities.
 - **Power:** from `calculate_expedition_stats` (enforces `support_capacity`), not
   `fleet_get_power(sum of units)`.
 - **Defeat:** no `fleet_destroy` of the main ship — set the ship `repairing` with reduced
@@ -163,9 +229,10 @@ Shifts from today:
 
 ## 6. Anti-softlock design (the persistent main ship IS the fix)
 
-- The player **always has a main ship** (one per account, never deleted) → "0 ships" is
-  impossible; they can always launch *something*.
-- **Defeat → damaged, not destroyed.**
+- The player **always has at least one persistent main ship** (never deleted/destroyed) → "0
+  ships" is impossible; they can always launch *something*. (With multi-ship, losing a risky
+  expedition still leaves the player's other main ships — and even the damaged ones survive.)
+- **Defeat → damaged, not destroyed** (per ship in the group).
 - **Free, slow self-repair to a minimum readiness:** a `repairing` ship auto-regenerates `hp`
   to an **expedition-ready floor** over time with **no metal/resource gate**. Metal / repair
   kits only *speed up* or *fully* repair — an optimization, never a gate. This removes the
@@ -190,12 +257,15 @@ Shifts from today:
 |---|---|---|---|
 | **10A** ◀ *(this doc)* | Audit + this design doc | docs only | untouched |
 | **10B** | **Read-only** main-ship stats preview: client-scoped wrapper over `calculate_expedition_stats` (auth.uid → own ship) + a read-only `/galaxy` preview panel | 1 small migration (read-only RPC) + 1 read-only component + verify | untouched |
-| **10C** | New **`send_main_ship_expedition(...)`** RPC (sibling of `send_fleet_to_location`), behind a flag — resolves ship+loadout → `fleets`/`fleet_units` → existing movement/combat. No client UI yet; new `verify:mainship` | 1 migration + verify | both coexist |
+| **10C** | New **`send_main_ship_expedition(...)`** RPC (sibling of `send_fleet_to_location`), behind a flag — **group-shaped contract** (accept a `p_ships` list) but **validate exactly one ship for safety**; resolves ship+loadout → `fleets`/`fleet_units` → existing movement/combat. No client UI yet; new `verify:mainship` | 1 migration + verify | both coexist |
 | **10D** | `/galaxy` `ExpeditionCommand` switches its send to the main-ship RPC (unit picker → support-craft loadout picker). Old path still callable | frontend only | still callable |
 | **10E** | Combat **defeat → damaged / forced-retreat** for main-ship expeditions (never destroyed) + **free slow repair** timer | combat function change (carefully, with regression) | disposable-fleet defeat unchanged |
 | **10F** | Deprecate the old metal-built *send* path **only after** all tests green; **tables/functions stay (no deletes)** for a release, then revisit | flag flip + docs | retired, not deleted |
+| **10G+** *(multi-ship, later)* | **Relax to multiple main ships:** drop `main_ship_instances.player_id` UNIQUE (additive); ship management UI (own/commission/assign several); enable **multi-ship expedition groups** (10C's `p_ships` list accepts >1); **co-located multi-ship combat** (larger encounters); multi-ship trade/mine/explore | migrations + UI + combat group resolution | engine reused, not replaced |
 
 Every phase keeps `verify-m2..m5`, `m45`, `galaxy9b` green. **Nothing is deleted or renamed.**
+**The 10C–10F contracts are shaped (ship-id-parameterized, group-ready) so 10G+ adds ships
+without rewrites** (★ vision).
 
 ---
 
@@ -209,6 +279,13 @@ Every phase keeps `verify-m2..m5`, `m45`, `galaxy9b` green. **Nothing is deleted
   not inline `if`s.
 - Stats must have **one source**: `calculate_expedition_stats`. The frontend must never
   re-derive stats.
+- **Activity rules must be stat-driven, NOT hardcoded per ship class** (★ vision). No
+  `if ship.type = 'combat'` style locks anywhere — any ship can attempt any activity; its
+  captains/modules/loadout/stats (via `calculate_expedition_stats`) decide effectiveness/risk.
+  This keeps the "can I send this ship here?" logic in *one* place (stats), not scattered.
+- **Multi-ship later:** a group of ships must resolve into the **same `fleet_units`-shaped
+  combat input** (sum the resolved units), so combat stays single-path. Do not add per-ship
+  combat branches; group composition is just a bigger input.
 
 **Duplicate systems**
 - Two send RPCs (old + `send_main_ship_expedition`) coexist only during 10C–10F. `/galaxy` must
@@ -234,19 +311,27 @@ Every phase keeps `verify-m2..m5`, `m45`, `galaxy9b` green. **Nothing is deleted
 - `base_units`, `fleet_units`, `unit_types`, `send_fleet_to_location`, existing combat
   functions — **kept and working.**
 - No emergency-recovery-kit implementation (superseded by the persistent ship; stays parked).
+- **Do NOT relax `main_ship_instances.player_id` UNIQUE yet** — multi-ship is 10G+; the
+  intervening phases only need to be *shaped* for it (ship-id-parameterized, group-ready
+  contracts), not actually multi-ship.
 
 ---
 
 ## 10. Recommended next implementation phase
 
-**Phase 10B — read-only main-ship expedition stats preview.** Lowest risk, highest clarity:
-- One tiny migration: a client-callable wrapper (e.g. `get_my_expedition_preview(loadout,
-  activity)`) that calls `calculate_expedition_stats` scoped to `auth.uid()`'s own ship — **no
-  writes, no engine change.**
-- One read-only `/galaxy` panel showing "Main ship + loadout → combat power / survival / cargo
-  / capacity used", with the `support_capacity` cap visualized.
-- A `verify:mainship-preview` script.
+**Phase 10B — read-only main-ship preview — DONE & accepted** (`get_my_expedition_preview` RPC,
+read-only `/galaxy` panel, `verify:mainship-preview` 8/8). Strict no-write; validated the
+stat-source model end-to-end.
 
-It validates the whole stat-source model end-to-end, produces a visible artifact to react to,
-touches nothing in the engine, and is fully reversible — **before** any send/combat behavior
-changes. Do **not** start it until explicitly approved.
+**Next: Phase 10C — `send_main_ship_expedition` (new write path), behind a flag, no UI.** Key
+shaping per the ★ vision:
+- **Group-ready contract:** accept a `p_ships jsonb` list of `main_ship_id` (+ per-ship loadout)
+  and `p_activity` — but **validate exactly one ship for safety** in 10C. This lets 10G+ allow
+  groups without a redesign.
+- **Ship-id-parameterized**, never "the player's only ship."
+- Resolves ship+loadout → `fleets`/`fleet_units` (reusing the engine) → existing movement/combat;
+  rewards/return unchanged.
+- New `verify:mainship` script; old `send_fleet_to_location` path untouched.
+
+**Gate:** 10C introduces writes, so it starts **only after** the player's **live-web check of
+10B** and explicit approval. Do **not** start 10C until then.
