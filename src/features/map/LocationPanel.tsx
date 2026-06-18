@@ -59,8 +59,8 @@ export function LocationPanel({
         <p className="text-sm text-white/50">Safe zone — no pirate activity. A good place to rally.</p>
       )}
 
-      <Link to="/" className="mt-4 inline-block text-xs text-indigo-300 transition hover:text-indigo-200">
-        → Send a fleet from the Command Center
+      <Link to="/galaxy" className="mt-4 inline-block text-xs text-indigo-300 transition hover:text-indigo-200">
+        → Send an expedition from the Galaxy Map
       </Link>
     </div>
   )

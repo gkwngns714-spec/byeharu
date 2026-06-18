@@ -82,7 +82,7 @@ export function CombatReportPage() {
         <div className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{error}</div>
       )}
       {!loading && reports.length === 0 && !error && (
-        <p className="text-white/40">No battles fought yet. Send a fleet to a pirate hunt to begin.</p>
+        <p className="text-white/40">No battles fought yet. Send an expedition to a pirate hunt from the Galaxy Map to begin.</p>
       )}
 
       <ul className="space-y-3">
