@@ -5,6 +5,7 @@ import { RequireAuth } from './RequireAuth'
 import { AuthPage } from '../features/auth/AuthPage'
 import { Dashboard } from '../features/dashboard/Dashboard'
 import { MapPage } from '../features/map/MapPage'
+import { GalaxyMapScreen } from '../features/map/GalaxyMapScreen'
 import { CombatReportPage } from '../features/combat/CombatReportPage'
 
 export function App() {
@@ -33,6 +34,14 @@ export function App() {
           element={
             <RequireAuth>
               <MapPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/galaxy"
+          element={
+            <RequireAuth>
+              <GalaxyMapScreen />
             </RequireAuth>
           }
         />

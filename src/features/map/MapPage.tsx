@@ -33,12 +33,20 @@ export function MapPage() {
           </h1>
           <p className="text-sm text-white/40">Byeharu — read-only world view</p>
         </div>
-        <Link
-          to="/"
-          className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
-        >
-          ← Command center
-        </Link>
+        <div className="flex gap-2">
+          <Link
+            to="/galaxy"
+            className="rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-3 py-1.5 text-sm text-indigo-200 transition hover:bg-indigo-500/20"
+          >
+            🗺 Visual map
+          </Link>
+          <Link
+            to="/"
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
+          >
+            ← Command center
+          </Link>
+        </div>
       </header>
 
       {loading && <p className="text-white/40">Charting the galaxy…</p>}

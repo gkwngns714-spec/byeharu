@@ -32,10 +32,16 @@ export function Dashboard() {
         </div>
         <div className="flex items-center gap-2">
           <Link
+            to="/galaxy"
+            className="rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-3 py-1.5 text-sm text-indigo-200 transition hover:bg-indigo-500/20"
+          >
+            🗺 Galaxy map
+          </Link>
+          <Link
             to="/map"
             className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
           >
-            Galaxy map
+            List view
           </Link>
           <Link
             to="/reports"

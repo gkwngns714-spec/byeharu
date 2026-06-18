@@ -25,9 +25,15 @@ export interface FleetMovement {
   id: string
   fleet_id: string
   origin_type: string
+  origin_location_id?: string | null
+  origin_base_id?: string | null
+  origin_x: number
+  origin_y: number
   target_type: string
   target_location_id: string | null
   target_base_id: string | null
+  target_x: number
+  target_y: number
   mission_type: string
   status: string
   depart_at: string

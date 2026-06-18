@@ -5,6 +5,42 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Phase 9A: Read-only Visual Galaxy Map (implemented; pending build/verify)
+
+**Request** First visual galaxy map screen — read-only, using existing backend world data.
+See the world/locations/home/ship/active movements; select a location for details. No
+commands, no writes, no backend change.
+
+**No backend change needed.** All data already exists: `get_world_map()` (sectors→zones→
+locations with x,y), `bases` (x,y,name), `fleet_movements` (**origin_x/y + target_x/y** stored
+→ paths drawable directly), `location_state` (pressure/danger), `main_ship_instances`
+(owner-read). Confirmed before building; **no migration added**.
+
+**Files (all `src/features/map/`, matching the existing feature structure):**
+- `useGalaxyMapData.ts` — read-only hook: world map + base once; polls movements + location
+  states + a small `main_ship_instances` owner-read every 4s. Builds location→sector/zone meta.
+- `GalaxyMap.tsx` — plain **SVG** 2D map (no canvas/WebGL). Normalizes world coords into a
+  0..1000 viewBox; transform group gives pan (drag) + zoom (wheel/+/−/reset). Renders movement
+  paths, home/ship anchor, and location markers. Labels hidden when zoomed out.
+- `LocationMarker.tsx` — colored marker + truncated label, counter-scaled to stay constant
+  on-screen size; selecting only highlights.
+- `FleetMovementLine.tsx` — dashed origin→target path (amber outbound / sky return) + ETA
+  (`formatCountdown`). Purely visual.
+- `GalaxyMapScreen.tsx` — page with loading / error / empty / selection states + a **read-only
+  detail panel** (name, sector/zone, type, coords, status, difficulty/reward, live world
+  state) + a disabled “Send expedition (Phase 9B)” button + “coming in Phase 9B” note.
+- `fleetTypes.ts` — additive: `origin_x/y`, `target_x/y` (already returned by `select('*')`).
+- `App.tsx` — new `/galaxy` route (RequireAuth). Nav links added from Dashboard + MapPage.
+
+**Read-only guarantees:** the screen calls only read paths (`get_world_map`, table selects on
+`location_state`/`fleets`/`fleet_movements`/`main_ship_instances`). No RPC mutation, no
+`send_fleet`, no table writes. Action-implying controls are disabled/labeled Phase 9B.
+
+**Pending:** frontend build/typecheck (CI `build.yml`) + confirm verify stays green + manual
+browser check. No gameplay/combat/cleanup logic touched. **db:size/db:counts unaffected.**
+
+---
+
 ## 2026-06-18 — Prevention Phase C: self-cleaning verify runs (DEPLOYED + VERIFIED ✅)
 
 **Request** Stop verify runs leaving runtime/test rows behind. Minimal + safe; no gameplay/
