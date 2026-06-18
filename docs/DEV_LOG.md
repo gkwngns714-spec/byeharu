@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Prevention Phase A: combat logging controls + DB visibility (implemented; pending deploy/verify)
+## 2026-06-18 — Prevention Phase A: combat logging controls + DB visibility (DEPLOYED + VERIFIED ✅)
 
 **Request** Stop byeharu re-filling the disk: make high-volume combat logging opt-in and add
 size/row visibility. No deletes (that's Phase B), no combat-outcome changes.
@@ -36,7 +36,13 @@ and **0** `hull_damage` events (was 1 tick + N hull_damage); only milestone/anim
 (`npm run db:counts`), plus a `db-report.yml` dispatch workflow to run both in CI.
 
 **Restrictions honored:** no TRUNCATE, no deletes, no seeded/config/world/player tables
-touched. **Pending deploy + verify (`db:size`, `db:counts`, `verify:phase8`).**
+touched.
+
+**Result (commit `e3d0ba4`):** migration 0046 deployed ✅. `db:size` + `db:counts` work
+(post-cleanup DB tiny — largest table 120 kB; 240 total runtime rows). **verify:phase8 ✅ —
+Phase 8 21/21, Phase 7 18/18, Phase 6 10/10, Phase 5 25/25, Phase 4 16/16, Inventory 18/18,
+M4.5 27/27, M5 28/28, M4 40/40** (incl. "waves last 3+ ticks" — m4/m5 tick-toggle works).
+**Phase A CLOSED.** Next: Phase B (retention cleanup function, dry-run first).
 
 ---
 
