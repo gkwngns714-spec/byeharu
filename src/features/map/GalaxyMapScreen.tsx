@@ -16,7 +16,7 @@ export function GalaxyMapScreen() {
   const selState = selectedId ? locationStates[selectedId] : undefined
 
   return (
-    <div className="flex h-[100dvh] flex-col bg-slate-950 text-slate-100">
+    <div data-testid="galaxy-map-screen" className="flex h-[100dvh] flex-col bg-slate-950 text-slate-100">
       <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
         <div>
           <h1 className="text-lg font-semibold">Galaxy Map</h1>
@@ -32,12 +32,12 @@ export function GalaxyMapScreen() {
         {/* Map area */}
         <div className="relative flex-1 p-2">
           {loading && (
-            <div className="flex h-full items-center justify-center text-slate-400">
+            <div data-testid="galaxy-map-loading" className="flex h-full items-center justify-center text-slate-400">
               <span className="animate-pulse">Loading galaxy…</span>
             </div>
           )}
           {!loading && error && (
-            <div className="flex h-full items-center justify-center px-6 text-center">
+            <div data-testid="galaxy-map-error" className="flex h-full items-center justify-center px-6 text-center">
               <div>
                 <p className="font-medium text-rose-400">Couldn't load the map</p>
                 <p className="mt-1 text-sm text-slate-400">{error}</p>
@@ -63,7 +63,7 @@ export function GalaxyMapScreen() {
 
         {/* Read-only detail panel */}
         {selected && (
-          <aside className="border-t border-slate-800 bg-slate-900/95 p-4 md:w-80 md:border-l md:border-t-0">
+          <aside data-testid="galaxy-location-detail-panel" className="border-t border-slate-800 bg-slate-900/95 p-4 md:w-80 md:border-l md:border-t-0">
             <div className="flex items-start justify-between">
               <h2 className="text-base font-semibold">{selected.name}</h2>
               <button onClick={() => setSelectedId(null)} className="text-slate-400 hover:text-white" aria-label="Close details">✕</button>
@@ -84,6 +84,7 @@ export function GalaxyMapScreen() {
               Expedition selection coming in Phase 9B.
             </div>
             <button
+              data-testid="galaxy-send-expedition-disabled"
               disabled
               className="mt-3 w-full cursor-not-allowed rounded-md border border-slate-700 bg-slate-800/40 py-2 text-sm text-slate-500"
             >

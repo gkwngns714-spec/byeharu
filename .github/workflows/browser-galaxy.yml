@@ -1,0 +1,44 @@
+name: Browser smoke (Galaxy 9A)
+
+# Playwright read-only smoke test for the Phase 9A galaxy map, against the live Pages
+# site. Test infrastructure only — it never writes game state (it asserts no fleet/
+# movement is created). @playwright/test installed ad-hoc with --no-save.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install app deps (for @supabase/supabase-js in the test setup)
+        run: npm ci
+      - name: Install Playwright (ad-hoc, no lockfile change)
+        run: |
+          npm install --no-save @playwright/test@latest
+          npx playwright install --with-deps chromium
+      - name: Run galaxy smoke test
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PLAYWRIGHT_BASE_URL: https://gkwngns714-spec.github.io/byeharu/
+        run: npm run verify:galaxy:browser
+      - name: Upload screenshots + traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-galaxy
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
