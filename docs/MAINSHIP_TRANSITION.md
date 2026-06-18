@@ -22,9 +22,19 @@ The future byeharu model is **multiple persistent main ships with flexible, stat
 assignment.** It is explicitly **NOT** "one main ship only" and **NOT** "one ship locked to one
 role."
 
+> **⚠️ Support capacity / support craft is DEPRECATED — not part of the core design (correction
+> 2026-06-18).** The desired core is **multiple persistent main ships + captains + modules +
+> upgrades** (and a ship's own hull/hp/cargo/slots stats). There is **no support-craft loadout**
+> and **no support-capacity budget** in the player-facing game. The existing
+> `support_craft_types` table, the `support_capacity` columns, and the support logic inside
+> `calculate_expedition_stats` are **dormant scaffolding** — left in place for now (no sudden
+> deletes) and **hidden from the UI**. They will be removed later, safely, only once no code
+> path depends on them (see "Removing support — later" below). Treat every "support craft" /
+> "support capacity" mention elsewhere in this doc as dormant/deprecated.
+
 **What the player eventually controls:**
 - **Several** persistent main ships, each a strategic asset with its own captains / modules /
-  upgrades / hp / support capacity.
+  upgrades and hull stats (hp / cargo / captain & module slots / speed). *(No support capacity.)*
 - **Free assignment** of any ship to any activity — combat, trading, mining, exploration, and
   future activities.
 
@@ -205,8 +215,10 @@ wired to combat or the client. This is the clean seam.**
 /galaxy: pick destination + an ACTIVITY (combat / trade / mine / explore)
   → SOURCE = one or more main_ship_instances (a "main-ship expedition GROUP") — not base_units
             (Phase 10C dispatches ONE ship for safety; the contract supports a group later)
-  → each ship's loadout = support craft (capacity-limited) + later captains + modules
-  → calculate_expedition_stats(ship + loadout + activity) per ship → final stats (capacity + tradeoffs, never a sum)
+  → each ship's effectiveness = its own hull stats + captains + modules + upgrades  (NO support craft)
+  → a stat source per ship → final stats (captain/module/upgrade-driven, never a plain sum)
+    [today's calculate_expedition_stats only computes the now-dormant support layer; the real
+     captain/module/upgrade stat source replaces it later — support is not exposed]
   → travel (fleet_movements) → combat / scan / extract (existing engine, fed by computed stats)
   → DEFEAT = forced retreat + main ship(s) DAMAGED (never destroyed); loadout consequences
   → return home → rewards secured (unchanged) → repair over time
@@ -258,7 +270,7 @@ Shifts from today:
 | **10A** ◀ *(this doc)* | Audit + this design doc | docs only | untouched |
 | **10B** | **Read-only** main-ship stats preview: client-scoped wrapper over `calculate_expedition_stats` (auth.uid → own ship) + a read-only `/galaxy` preview panel | 1 small migration (read-only RPC) + 1 read-only component + verify | untouched |
 | **10C** | New **`send_main_ship_expedition(...)`** RPC (sibling of `send_fleet_to_location`), behind a flag — **group-shaped contract** (accept a `p_ships` list) but **validate exactly one ship for safety**; resolves ship+loadout → `fleets`/`fleet_units` → existing movement/combat. No client UI yet; new `verify:mainship` | 1 migration + verify | both coexist |
-| **10D** | `/galaxy` `ExpeditionCommand` switches its send to the main-ship RPC (unit picker → support-craft loadout picker). Old path still callable | frontend only | still callable |
+| **10D** | `/galaxy` `ExpeditionCommand` switches its send to the main-ship RPC (unit picker → **main-ship + captains/modules** loadout — NOT support craft). Old path still callable | frontend only | still callable |
 | **10E** | Combat **defeat → damaged / forced-retreat** for main-ship expeditions (never destroyed) + **free slow repair** timer | combat function change (carefully, with regression) | disposable-fleet defeat unchanged |
 | **10F** | Deprecate the old metal-built *send* path **only after** all tests green; **tables/functions stay (no deletes)** for a release, then revisit | flag flip + docs | retired, not deleted |
 | **10G+** *(multi-ship, later)* | **Relax to multiple main ships:** drop `main_ship_instances.player_id` UNIQUE (additive); ship management UI (own/commission/assign several); enable **multi-ship expedition groups** (10C's `p_ships` list accepts >1); **co-located multi-ship combat** (larger encounters); multi-ship trade/mine/explore | migrations + UI + combat group resolution | engine reused, not replaced |
@@ -314,6 +326,25 @@ without rewrites** (★ vision).
 - **Do NOT relax `main_ship_instances.player_id` UNIQUE yet** — multi-ship is 10G+; the
   intervening phases only need to be *shaped* for it (ship-id-parameterized, group-ready
   contracts), not actually multi-ship.
+
+---
+
+## 9b. Removing support capacity / support craft — later (safe order, NOT now)
+
+Support is **deprecated/dormant**, not core. Remove it **only after** nothing depends on it,
+in this order (each step keeps everything green; no sudden deletes):
+1. **Hide from UI** *(done in this correction)* — the 10B preview shows the main ship only; no
+   support-craft picker, no capacity bar, no support wording. Player-facing game has no support.
+2. **Stop depending on the support stat path** — when the captain/module/upgrade stat source
+   lands (replacing `calculate_expedition_stats`'s support math), drop the support layer from
+   the preview/send code so no live path calls support logic.
+3. **Deprecate the functions** — once unused: stop computing support in `calculate_expedition_stats`
+   (or retire the function), and drop `get_my_expedition_preview`'s loadout arg.
+4. **Drop the schema last** — only when no code references them: remove `support_craft_types`,
+   the `support_capacity` / `base_support_capacity` columns, and update the `support_capacity_used`
+   verify (Phase 6's `verify-phase6` will be retired/updated then).
+
+Until step 4, **do not delete tables/columns** — they sit dormant and unused.
 
 ---
 

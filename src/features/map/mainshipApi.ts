@@ -1,55 +1,59 @@
 import { supabase } from '../../lib/supabase'
 
-// Phase 10B — READ-ONLY main-ship expedition preview. These calls never write game state.
-// They feed a preview panel only; the real send path (Phase 9B) is unchanged.
+// Phase 10B (revised) — READ-ONLY main-ship view. Shows the player's persistent main ship and
+// its base stats only. No support craft, no support capacity, no loadout. Pure reads
+// (owner-read instance + public hull); never writes.
+//
+// NOTE: support capacity / support craft is DEPRECATED (see docs/MAINSHIP_TRANSITION.md). The
+// backend get_my_expedition_preview / calculate_expedition_stats / support_craft_types remain
+// in place but DORMANT and are no longer used by the UI.
 
-export interface SupportCraftType {
-  support_craft_type_id: string
+export interface MainShipRow {
   name: string
-  role: string
-  capacity_cost: number
-  activity_tags: string[]
-}
-
-export interface PreviewStats {
-  support_capacity_used: number
-  support_capacity_limit: number
-  speed: number
+  status: string
+  hp: number
+  max_hp: number
   cargo_capacity: number
-  combat_power: number
-  survival: number
-  retreat_safety: number
-  scouting: number
-  mining_yield: number
-  repair: number
-  pirate_attention: number
-  warnings: string[]
+  captain_slots: number
+  module_slots: number
+  hull_type_id: string
 }
 
-export interface ExpeditionPreview {
+export interface HullRow {
+  hull_type_id: string
+  name: string
+  base_hp: number
+  base_speed: number
+  base_cargo_capacity: number
+  base_captain_slots: number
+  base_module_slots: number
+}
+
+export interface MainShipView {
   has_ship: boolean
-  valid?: boolean
-  ship?: { name: string; status: string; hp: number; max_hp: number; support_capacity: number; cargo_capacity: number; captain_slots: number; module_slots: number }
-  stats?: PreviewStats
-  error?: string
-  hull?: { name: string; base_hp: number; base_speed: number; base_cargo_capacity: number; base_support_capacity: number; base_captain_slots: number; base_module_slots: number }
+  ship?: MainShipRow
+  hull?: HullRow
 }
 
-export type LoadoutEntry = { support_craft_type_id: string; quantity: number }
+const HULL_COLS = 'hull_type_id, name, base_hp, base_speed, base_cargo_capacity, base_captain_slots, base_module_slots'
 
-/** Public-read catalog of capacity-limited support craft (Phase 6 metadata). */
-export async function fetchSupportCraftTypes(): Promise<SupportCraftType[]> {
-  const { data, error } = await supabase
-    .from('support_craft_types')
-    .select('support_craft_type_id, name, role, capacity_cost, activity_tags')
-    .order('capacity_cost', { ascending: true })
-  if (error) throw new Error(error.message)
-  return (data as SupportCraftType[]) ?? []
+async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
+  const { data } = await supabase.from('main_ship_hull_types').select(HULL_COLS).eq('hull_type_id', hullTypeId).maybeSingle()
+  return (data as HullRow) ?? undefined
 }
 
-/** Read-only preview of the caller's main ship + loadout for an activity. No writes. */
-export async function fetchExpeditionPreview(loadout: LoadoutEntry[], activity: string): Promise<ExpeditionPreview> {
-  const { data, error } = await supabase.rpc('get_my_expedition_preview', { p_loadout: loadout, p_activity_type: activity })
+/** Read the caller's own main ship (owner-read RLS) + its hull. No writes; no support data. */
+export async function fetchMyMainShip(): Promise<MainShipView> {
+  const { data: ship, error } = await supabase
+    .from('main_ship_instances')
+    .select('name, status, hp, max_hp, cargo_capacity, captain_slots, module_slots, hull_type_id')
+    .maybeSingle() // owner-read RLS → the caller's single ship, or null
   if (error) throw new Error(error.message)
-  return data as ExpeditionPreview
+
+  if (ship) {
+    const hull = await fetchHull((ship as MainShipRow).hull_type_id)
+    return { has_ship: true, ship: ship as MainShipRow, hull }
+  }
+  // no ship commissioned yet → read-only starter-hull teaser
+  return { has_ship: false, hull: await fetchHull('starter_frigate') }
 }

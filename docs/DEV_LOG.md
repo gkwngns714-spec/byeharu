@@ -5,6 +5,38 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Design correction: deprecate support capacity / support craft (UI + docs)
+
+**Decision:** support capacity / support craft is **no longer part of the byeharu vision**. The
+core is **multiple persistent main ships + captains + modules + upgrades**. Remove support
+**safely** (hide → stop depending → delete), not by sudden deletion. This step: **hide from UI +
+mark deprecated in docs.** No backend change, no migration, no deletes.
+
+**Docs (`MAINSHIP_TRANSITION.md`):** added a ⚠️ deprecation callout in the ★ vision (support is
+dormant scaffolding, not core; loadout = captains/modules/upgrades, no support craft, no
+capacity budget); revised the model + 10D wording; added a **"9b. Removing support — later"**
+safe-order section (hide → stop depending → deprecate fns → drop schema last).
+
+**UI (10B preview revised → "Main Ship" read-only view):** `MainShipPreview.tsx` now shows the
+**main ship only** — name, hull, status, readiness (hp/max_hp), speed, cargo, captain slots,
+module slots. **Removed: support-craft picker, support-capacity bar, support-loadout wording,
+activity selector.** `mainshipApi.ts` rewritten to read `main_ship_instances` (owner-read) +
+`main_ship_hull_types` (public) directly — dropped `fetchSupportCraftTypes` /
+`fetchExpeditionPreview` (the support-laden client wrappers). Galaxy toggle relabeled
+"🛰 Main Ship". Still strictly read-only; no writes.
+
+**Backend: UNCHANGED.** No migration. `get_my_expedition_preview`, `calculate_expedition_stats`,
+`support_craft_types`, and the `support_capacity` columns stay in place but **dormant + unused by
+the UI**. (`verify:mainship-preview` still exercises the dormant RPC — left as a backend
+regression.) **Remaining support dependencies (to remove in a later phase):** `support_craft_types`
+table (Phase 6 + `verify-phase6`); `calculate_expedition_stats` support math (Phase 8) +
+`get_my_expedition_preview` wrapper (Phase 10B); `support_capacity`/`base_support_capacity`
+columns; a non-displayed `support_capacity` read in `useGalaxyMapData` (Phase 9A). **Recommended
+later removal phase:** after the captain/module/upgrade stat source replaces the support layer
+and no live path calls it. **Docs + UI only; not pushed; no CI run.**
+
+---
+
 ## 2026-06-18 — Phase 10B: read-only main-ship expedition preview (implemented; pending verify)
 
 **Scope: strict preview only** — see what your main ship + a support-craft loadout WOULD bring.

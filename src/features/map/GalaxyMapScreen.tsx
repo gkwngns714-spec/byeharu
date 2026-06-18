@@ -32,7 +32,7 @@ export function GalaxyMapScreen() {
             onClick={() => setShowPreview((s) => !s)}
             className="rounded border border-sky-400/30 bg-sky-500/10 px-2.5 py-1 text-sky-200 hover:bg-sky-500/20"
           >
-            🛰 Main Ship preview
+            🛰 Main Ship
           </button>
           <Link to="/" className="text-slate-300 hover:text-white">Command Center</Link>
           <Link to="/map" className="text-slate-300 hover:text-white">List view</Link>
