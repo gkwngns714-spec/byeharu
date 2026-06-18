@@ -5,7 +5,42 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Phase 8: calculate_expedition_stats() (implemented; pending deploy/verify)
+## 2026-06-18 — Prevention Phase A: combat logging controls + DB visibility (implemented; pending deploy/verify)
+
+**Request** Stop byeharu re-filling the disk: make high-volume combat logging opt-in and add
+size/row visibility. No deletes (that's Phase B), no combat-outcome changes.
+
+**Migration `0046_combat_logging_controls.sql`:**
+- `cfg_bool(key)` accessor + `set_game_config(key, value jsonb)` (service_role/CI only).
+- 7 `game_config` flags (insert-if-absent): `combat_debug_logging=false`,
+  `combat_tick_logging=false`, `combat_event_logging=true`, `runtime_cleanup_enabled=true`,
+  `combat_tick_retention_days=3`, `combat_event_retention_days=7`, `combat_report_retention_days=30`.
+- `process_combat_ticks` (same combat math) now **gates logging**: all `combat_ticks` inserts
+  behind `combat_tick_logging` (default OFF → no per-tick rows); per-unit `hull_damage` events
+  behind `combat_debug_logging` (default OFF → kills the worst per-tick multiplier); other
+  meaningful events behind `combat_event_logging` (default ON → UI animation + reports intact).
+  `v_seq` still advances so display ordering is unchanged.
+- `db_table_sizes()` (top-20 by `pg_total_relation_size`) + `db_runtime_counts()` (10 runtime
+  tables) — service_role only.
+
+**Default logging after this change:** per combat tick we now write **0** `combat_ticks` rows
+and **0** `hull_damage` events (was 1 tick + N hull_damage); only milestone/animation events
+(wave_spawned, missile_salvo, laser_burst, unit_destroyed, explosion, retreat) remain.
+`combat_reports` (player-facing summary) untouched.
+
+**Regression compatibility:** verify-m4 + verify-m5 inspect `combat_ticks`, so they flip
+`combat_tick_logging` on via `set_game_config` at start and **restore it off in finally**
+(shared DB → production default stays off). Only those two scripts read ticks.
+
+**Visibility:** `scripts/db-size.mjs` (`npm run db:size`) + `scripts/db-counts.mjs`
+(`npm run db:counts`), plus a `db-report.yml` dispatch workflow to run both in CI.
+
+**Restrictions honored:** no TRUNCATE, no deletes, no seeded/config/world/player tables
+touched. **Pending deploy + verify (`db:size`, `db:counts`, `verify:phase8`).**
+
+---
+
+## 2026-06-18 — Phase 8: calculate_expedition_stats() (DEPLOYED + VERIFIED ✅)
 
 **Request** Build the deterministic stat ADAPTER that will eventually turn Main Ship +
 Support Craft (+ later Captains + Modules) + Activity into final expedition stats — the
@@ -58,8 +93,15 @@ survival); no-NaN; determinism; ship + inventory not mutated; client-denied; the
 table (which touches no Phase 8 code), persisting 13+ min across two runs. The REST/PostgREST
 layer is globally unresponsive (DB accepts direct connections — deploy worked — but the API
 gateway times out). Needs the Supabase project checked/restarted (paused / compute-exhausted /
-stuck schema reload), then re-run `verify:phase8`. **Phase 8 code complete; verify pending
-infra recovery.**
+stuck schema reload), then re-run `verify:phase8`.
+
+**Resolution:** free-tier disk was full (combat-log churn from dozens of verify runs).
+Cleared via one-time migration `0045_dev_cleanup_churn` (TRUNCATE of 10 throwaway runtime/log
+tables over the working direct-Postgres connection — user-authorized), then a dashboard
+**project restart** bounced the stuck PostgREST. **Verify ✅ — Phase 8 21/21, Phase 7 18/18,
+Phase 6 10/10, Phase 5 25/25, Phase 4 16/16, Inventory 18/18, M4.5 27/27, M5 28/28, M4 40/40.
+Phase 8 CLOSED.** Follow-up: Phases A–C add logging controls + safe retention cleanup + self-
+cleaning verify so the disk can't fill again.
 
 ---
 

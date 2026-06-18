@@ -68,9 +68,13 @@ const encounterFor = async (fleetId) => (await admin.from('combat_encounters').s
   .eq('fleet_id', fleetId).order('created_at', { ascending: false }).limit(1).maybeSingle()).data
 const ticksFor = async (encId) => (await admin.from('combat_ticks').select('*').eq('encounter_id', encId)).data ?? []
 const isFiniteNum = (x) => typeof x === 'number' && Number.isFinite(x)
+// Phase A: combat_ticks logging is off by default; this test inspects ticks, so enable
+// it for the run and restore the default in finally (shared DB).
+const setTickLogging = async (on) => { try { await admin.rpc('set_game_config', { p_key: 'combat_tick_logging', p_value: on }) } catch {} }
 
 async function main() {
   console.log(`\nM5 verification against ${url}\n`)
+  await setTickLogging(true)
 
   // Anti-cheat: the worldstate writers must be client-denied.
   console.log('Anti-cheat: world-state functions must be client-denied:')
@@ -230,7 +234,8 @@ async function main() {
 
 main()
   .catch((e) => { if (e instanceof Abort) bad('ABORTED', e.message); else bad('UNEXPECTED', e?.message ?? String(e)) })
-  .finally(() => {
+  .finally(async () => {
+    await setTickLogging(false)  // Phase A: restore production default (logging off)
     console.log(`\nM5: ${pass} passed, ${fail} failed\n`)
     process.exitCode = fail > 0 ? 1 : 0
   })

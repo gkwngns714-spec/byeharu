@@ -18,6 +18,12 @@ const env = { ...loadEnv('.env.local'), ...process.env }
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 })
+// combat_ticks logging is OFF by default (Phase A). This test inspects per-tick rows,
+// so it enables the debug flag for its run and restores the default afterwards. Needs
+// the service key (present in the CI chain env); skipped gracefully if absent.
+const _svc = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY || env.SUPABASE_SECRET_KEY
+const _admin = _svc ? createClient(env.VITE_SUPABASE_URL, _svc, { auth: { persistSession: false, autoRefreshToken: false } }) : null
+const setTickLogging = async (on) => { if (_admin) { try { await _admin.rpc('set_game_config', { p_key: 'combat_tick_logging', p_value: on }) } catch {} } }
 
 let pass = 0, fail = 0
 const ok = (n) => { console.log('  ✓', n); pass++ }
@@ -40,6 +46,7 @@ const baseMetal = async (baseId) => (await supabase.from('base_resources').selec
 
 async function main() {
   console.log(`\nM4 verification against ${env.VITE_SUPABASE_URL}\n`)
+  await setTickLogging(true)  // Phase A: enable per-tick combat_ticks for this test
   const { data: su, error: suErr } = await supabase.auth.signUp({
     email: `m4test.${Date.now()}@example.com`, password: 'Test123456!',
   })
@@ -209,6 +216,8 @@ async function main() {
 try { await main() } catch (e) {
   if (e instanceof Abort) bad('ABORTED', e.message)
   else bad('UNEXPECTED', e?.message ?? String(e))
+} finally {
+  await setTickLogging(false)  // Phase A: restore the production default (logging off)
 }
 console.log(`\n${fail === 0 ? '✅ ALL PASSED' : '❌ FAILURES'}: ${pass} passed, ${fail} failed\n`)
 process.exitCode = fail === 0 ? 0 : 1
