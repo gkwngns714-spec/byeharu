@@ -24,7 +24,7 @@ if (!url || !serviceKey) { console.error('db:cleanup needs VITE_SUPABASE_URL + S
 const confirm = process.argv.includes('--confirm')
 const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
-const { data, error } = await admin.rpc('maintenance_cleanup_runtime_data', { dry_run: !confirm, batch_limit: 5000 })
+const { data, error } = await admin.rpc('maintenance_cleanup_runtime_data', { p_dry_run: !confirm, p_batch_limit: 5000 })
 if (error) { console.error('maintenance_cleanup_runtime_data failed:', error.message); process.exit(1) }
 
 console.log(`\nRetention cleanup — ${confirm ? 'LIVE (deleting)' : 'DRY-RUN (no deletes)'} — ${url}\n`)

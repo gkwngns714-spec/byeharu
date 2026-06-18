@@ -36,9 +36,11 @@ create index if not exists reward_grants_granted_at_idx       on public.reward_g
 create index if not exists build_orders_status_updated_idx    on public.build_orders (status, updated_at);
 
 -- ── B. maintenance_cleanup_runtime_data ─────────────────────────────────────────
+-- Params are p_-prefixed (project convention) so the input `p_dry_run` does not collide
+-- with the OUT column `dry_run` (Postgres 42P13). Call via RPC with p_dry_run/p_batch_limit.
 create or replace function public.maintenance_cleanup_runtime_data(
-  dry_run boolean default true,
-  batch_limit integer default 5000)
+  p_dry_run boolean default true,
+  p_batch_limit integer default 5000)
 returns table (
   table_name     text,
   retention_rule text,
@@ -50,8 +52,8 @@ security definer
 set search_path = public
 as $$
 declare
-  v_dry        boolean := dry_run;
-  v_batch      integer := greatest(1, least(coalesce(batch_limit, 5000), 50000));
+  v_dry        boolean := p_dry_run;
+  v_batch      integer := greatest(1, least(coalesce(p_batch_limit, 5000), 50000));
   v_now        timestamptz := now();
   v_cut_ticks  timestamptz := v_now - make_interval(days => coalesce(cfg_num('combat_tick_retention_days')::int, 3));
   v_cut_events timestamptz := v_now - make_interval(days => coalesce(cfg_num('combat_event_retention_days')::int, 7));
