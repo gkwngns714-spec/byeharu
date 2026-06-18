@@ -37,11 +37,11 @@ export function MainShipPreview() {
 
   useEffect(() => {
     let active = true
-    setLoading(true)
-    fetchExpeditionPreview(loadout, activity)
-      .then((p) => { if (active) { setPreview(p); setError(null) } })
-      .catch((e) => { if (active) setError(e instanceof Error ? e.message : String(e)) })
-      .finally(() => { if (active) setLoading(false) })
+    // All setState happens AFTER the async boundary (never synchronously in the effect).
+    fetchExpeditionPreview(loadout, activity).then(
+      (p) => { if (active) { setPreview(p); setError(null); setLoading(false) } },
+      (e) => { if (active) { setError(e instanceof Error ? e.message : String(e)); setLoading(false) } },
+    )
     return () => { active = false }
   }, [loadout, activity])
 
