@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Phase 9B: Map-based Expedition Send (implemented; pending build/verify)
+## 2026-06-18 — Phase 9B: Map-based Expedition Send (BUILD + VERIFY + BROWSER GREEN ✅)
 
 **Backend path inspection (done before wiring — no backend change, no migration):**
 - **RPC used:** `send_fleet_to_location(p_base uuid, p_location uuid, p_units jsonb)` (migration
@@ -46,8 +46,17 @@ before a loadout). `galaxy9b.spec.ts` (new) — select a dispatchable marker →
 → confirm (double-clicked) → success → assert **exactly one** fleet+movement via backend read
 → movement line on map → no dup from double-submit → send disabled before units → no console
 errors. `browser-galaxy.yml` runs both then `verify:cleanup` (test email contains `test` so
-`cleanup_test_runtime` removes its runtime rows → db:counts back to 0). **Pending build +
-verify + browser.**
+`cleanup_test_runtime` removes its runtime rows → db:counts back to 0).
+
+**Result (commit `aefd5ea`):** build/typecheck ✅ (lint clean after remount-via-key + CSS
+cursor fixes), Pages deployed. **verify:phase8 ✅ 21/21 … M4 40/40** (run alone). **Browser:
+9A smoke 1/1, 9B send 1/1.** **db:counts runtime = 0** (galaxy cleanup scoped to
+`%galaxytest%`). **Transient verify failure root-caused + fixed:** I'd dispatched the browser
+suite + verify concurrently; the browser workflow's broad `%test%` cleanup deleted verify's
+in-flight phase5 fleet mid-combat → "no wave cleared". Fixed: shared `live-db-tests`
+concurrency group on both workflows + galaxy cleanup narrowed to `%galaxytest%` (can't touch
+verify's m*/p* users). Re-run verify alone = 21/21. **No backend/migration/table-write/second-
+expedition-system added.** **Phase 9B CLOSED.**
 
 ---
 
