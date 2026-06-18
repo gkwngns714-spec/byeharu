@@ -43,6 +43,15 @@ not runnable from the dev sandbox (no GUI/network) — offered a Playwright smok
 follow-up. **Phase 9A code complete + CI-green.** Phase 9B: click-to-select destination +
 expedition send.
 
+**Follow-up — Playwright /galaxy smoke (commit `6d84d19`):** `tests/galaxy.spec.ts` signs in,
+opens `/galaxy`, asserts the map + ≥1 marker render, selecting a marker opens the read-only
+detail panel, the Send button is **disabled + Phase-9B**, and **no fleet/movement is created**
+(read-only proof), failing on serious console/page errors. Stable testids added
+(`galaxy-map-screen/-loading/-error`, `galaxy-location-marker`, `galaxy-location-detail-panel`,
+`galaxy-send-expedition-disabled`). `verify:galaxy:browser` script + `browser-galaxy.yml`
+dispatch. **Result: smoke 1/1 ✅, build ✅, verify:phase8 ✅ (21/21 … M4 40/40), db:counts
+runtime = 0.** No backend/migration/write change.
+
 ---
 
 ## 2026-06-18 — Prevention Phase C: self-cleaning verify runs (DEPLOYED + VERIFIED ✅)
