@@ -5,6 +5,29 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Follow-up: M4.5 browser test self-cleaning + orphan cleanup (test hygiene)
+
+**Why** The M4.5 browser test (`m45browser.*@example.com`, no `"test"`, no cleanup step) left
+runtime orphans the guarded `cleanup_test_runtime` couldn't remove (3 rows: 1 fleet + 2
+build_orders). Pre-existing, predates the Phase C `%test%` convention; not a 9C change.
+
+**Part A — prevent future:** test email `m45browser.*` → **`m45testbrowser.*@example.com`**;
+`browser.yml` gains the shared `live-db-tests` **concurrency group** + an `if: always()`
+cleanup step `verify-cleanup --pattern '%m45testbrowser%@example.com'`. That pattern is unique:
+it can NOT match verify (`m45test.TAG` / `m*test` / `p*test` / `invtest`) or galaxy
+(`galaxytest*`).
+
+**Part B — remove existing orphans:** one-time `scripts/cleanup-m45-orphans.mjs` (+ dispatch
+workflow, dry-run default). It collects runtime player_ids, **proves ownership via
+`auth.admin.getUserById` (email must match `/^m45browser\./`)**, shows the rows, then deletes
+child→parent **only** those players' runtime rows. No TRUNCATE; no guard change; never touches
+bases/inventory/main_ship/config/world.
+
+**Result:** (pending dry-run → confirm → re-check). Target: db:counts runtime = 0; M4.5
+browser self-cleans going forward.
+
+---
+
 ## 2026-06-18 — Phase 9C: Expedition UI Reframe (BUILD + VERIFY + BROWSER GREEN ✅)
 
 **Request** Make the player understand: Galaxy Map = where you send expeditions; Command

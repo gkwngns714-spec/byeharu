@@ -10,6 +10,12 @@ on:
 permissions:
   contents: read
 
+# Serialize with the verify + galaxy-browser suites so the shared DB is never mutated/
+# cleaned by two runs at once.
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   browser:
     runs-on: ubuntu-latest
@@ -36,6 +42,16 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PLAYWRIGHT_BASE_URL: https://gkwngns714-spec.github.io/byeharu/
         run: npm run verify:m45:browser
+
+      # Self-cleaning: remove this run's throwaway runtime rows. Scoped to %m45testbrowser%
+      # so it can never touch verify (m45test.TAG / m*test / p*test) or galaxy (galaxytest*)
+      # users. Runs even on failure.
+      - name: Clean up M4.5 browser test runtime rows (always)
+        if: always()
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/verify-cleanup.mjs --confirm --pattern '%m45testbrowser%@example.com'
 
       - name: Upload screenshots + traces
         if: always()

@@ -18,7 +18,7 @@ const shot = (page: Page, name: string) => page.screenshot({ path: `test-results
 
 test('M4.5 production queue browser acceptance', async ({ page }) => {
   // ── setup: throwaway user + metal + a completed fleet (service-role) ─────────
-  const email = `m45browser.${Date.now()}@example.com`
+  const email = `m45testbrowser.${Date.now()}@example.com`
   const password = 'Test123456!'
   const anonC = createClient(URL_, ANON, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data: su, error: suErr } = await anonC.auth.signUp({ email, password })

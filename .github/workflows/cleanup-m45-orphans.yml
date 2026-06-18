@@ -1,0 +1,38 @@
+name: Cleanup — M4.5 browser orphans (one-time)
+
+# One-time targeted removal of OLD m45browser test orphan runtime rows (predate the
+# %test% cleanup convention). DRY-RUN by default; deletes only when confirm=true. Proves
+# each row's owner is an m45browser.* user before deleting. Never TRUNCATE; never touches
+# real/permanent/config data.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Actually DELETE the proven m45browser orphan rows? false = dry-run'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run orphan cleanup
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/cleanup-m45-orphans.mjs ${{ inputs.confirm && '--confirm' || '' }}
