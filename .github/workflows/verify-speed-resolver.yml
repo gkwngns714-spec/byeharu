@@ -1,0 +1,33 @@
+name: Verify — speed resolver
+
+# Regression check for the canonical resolve_fleet_movement_speed (legacy unchanged + main-ship
+# outbound/return resolve from hull + no NULL speed). Temporarily enables the flag + shrinks travel
+# config, restoring all of it in finally. Shares the live-DB concurrency group. Dispatch on demand.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run speed-resolver regression test
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run verify:speed-resolver
