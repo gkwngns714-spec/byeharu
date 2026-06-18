@@ -23,6 +23,7 @@
     "verify:phase7": "node scripts/verify-phase7.mjs",
     "verify:phase8": "node scripts/verify-phase8.mjs",
     "verify:mainship-preview": "node scripts/verify-mainship-preview.mjs",
+    "verify:mainship-send": "node scripts/verify-mainship-send.mjs",
     "db:size": "node scripts/db-size.mjs",
     "db:counts": "node scripts/db-counts.mjs",
     "db:cleanup:dry-run": "node scripts/db-cleanup.mjs",
