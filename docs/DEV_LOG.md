@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Prevention Phase C: self-cleaning verify runs (implemented; pending deploy/verify)
+## 2026-06-18 — Prevention Phase C: self-cleaning verify runs (DEPLOYED + VERIFIED ✅)
 
 **Request** Stop verify runs leaving runtime/test rows behind. Minimal + safe; no gameplay/
 combat/reward/movement/report changes; no TRUNCATE; no real/config/permanent data touched.
@@ -27,7 +27,13 @@ DEFINER, service_role only.
 **Files:** migration 0048; `scripts/verify-cleanup.mjs` (`verify:cleanup:dry-run` /
 `verify:cleanup --confirm`, optional `--pattern`); `package.json`; `verify-phase8.mjs` prints
 a cleanup reminder at the end; `verify.yml` adds a final `if: always()` **auto-cleanup step**
-so every CI verify removes its own test data (even on failure). **Pending deploy + verify.**
+so every CI verify removes its own test data (even on failure).
+
+**Result (commit `2ac700f`):** migration 0048 deployed ✅. verify:phase8 ✅ (Phase 8 21/21 …
+M4 40/40). Auto-cleanup deleted **728 runtime rows** (matched == deleted every table — the
+whole accumulated test backlog + this run). `db:counts` after: **all 10 runtime tables = 0**.
+No TRUNCATE; no auth.users/bases/inventory/main_ship/config/world touched. **Phase C CLOSED —
+prevention complete (A logging controls · B retention cleanup · C self-cleaning verify).**
 
 ---
 
