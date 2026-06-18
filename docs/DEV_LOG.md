@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Phase 9A: Read-only Visual Galaxy Map (implemented; pending build/verify)
+## 2026-06-18 — Phase 9A: Read-only Visual Galaxy Map (BUILD + VERIFY GREEN ✅)
 
 **Request** First visual galaxy map screen — read-only, using existing backend world data.
 See the world/locations/home/ship/active movements; select a location for details. No
@@ -36,8 +36,12 @@ locations with x,y), `bases` (x,y,name), `fleet_movements` (**origin_x/y + targe
 `location_state`/`fleets`/`fleet_movements`/`main_ship_instances`). No RPC mutation, no
 `send_fleet`, no table writes. Action-implying controls are disabled/labeled Phase 9B.
 
-**Pending:** frontend build/typecheck (CI `build.yml`) + confirm verify stays green + manual
-browser check. No gameplay/combat/cleanup logic touched. **db:size/db:counts unaffected.**
+**Result (commit `c1de252`):** frontend **build/typecheck ✅** (`tsc -b && vite build`), **Pages
+deployed** (`/galaxy` live), **verify:phase8 ✅** (Phase 8 21/21 … M4 40/40; frontend can't
+affect backend). db:counts unaffected (auto-cleanup ran). Manual interactive browser check
+not runnable from the dev sandbox (no GUI/network) — offered a Playwright smoke test as
+follow-up. **Phase 9A code complete + CI-green.** Phase 9B: click-to-select destination +
+expedition send.
 
 ---
 
