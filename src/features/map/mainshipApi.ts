@@ -1,12 +1,16 @@
 import { supabase } from '../../lib/supabase'
 
-// Phase 10B (revised) — READ-ONLY main-ship view. Shows the player's persistent main ship and
-// its base stats only. No support craft, no support capacity, no loadout. Pure reads
-// (owner-read instance + public hull); never writes.
+// Main-ship client API.
 //
-// NOTE: support capacity / support craft is DEPRECATED (see docs/MAINSHIP_TRANSITION.md). The
-// backend get_my_expedition_preview / calculate_expedition_stats / support_craft_types remain
-// in place but DORMANT and are no longer used by the UI.
+// Phase 10B (revised) — READ-ONLY main-ship view (fetchMyMainShip): name, hull, base stats.
+// No support craft, no support capacity, no loadout. NOTE: support capacity / support craft is
+// DEPRECATED (see docs/MAINSHIP_TRANSITION.md); the dormant backend stays but the UI never uses it.
+//
+// Phase 10D — thin client wrappers over the VERIFIED 10C non-combat write path
+// (send_main_ship_expedition / request_main_ship_return) + a small owner-read of the active
+// linked fleet for live status. The client only REQUESTS; the server validates and decides.
+// Main ships are NOT old fleet_units: the linked fleet carries zero units and is only used here
+// to read status (moving/present/returning) and to address the return RPC by fleet id.
 
 export interface MainShipRow {
   name: string
@@ -56,4 +60,69 @@ export async function fetchMyMainShip(): Promise<MainShipView> {
   }
   // no ship commissioned yet → read-only starter-hull teaser
   return { has_ship: false, hull: await fetchHull('starter_frigate') }
+}
+
+// ── Phase 10D: main-ship send/return + live status ────────────────────────────────
+
+export type MainShipDisplayStatus = 'home' | 'traveling' | 'present' | 'returning'
+
+/** The active fleet linked to a main ship (zero units; status drives the UI). */
+export interface MainShipFleet {
+  id: string
+  status: string // 'moving' | 'present' | 'returning'
+}
+
+const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
+
+/**
+ * Owner-read the caller's active main-ship fleet (the one tagged with this ship), if any.
+ * Returns null when the ship is idle at home (no in-flight linked fleet).
+ */
+export async function fetchActiveMainShipFleet(mainShipId: string): Promise<MainShipFleet | null> {
+  const { data, error } = await supabase
+    .from('fleets')
+    .select('id, status')
+    .eq('main_ship_id', mainShipId)
+    .in('status', ACTIVE_FLEET_STATUSES)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null // non-fatal: treat as no active fleet (home)
+  return (data as MainShipFleet) ?? null
+}
+
+/**
+ * Display status derived from the active linked fleet (the main ship's own status row stays
+ * 'traveling' while the fleet is 'present', so the fleet is the source of truth here):
+ *   no fleet → home · moving → traveling · present → present · returning → returning
+ */
+export function deriveMainShipStatus(fleet: MainShipFleet | null): MainShipDisplayStatus {
+  if (!fleet) return 'home'
+  if (fleet.status === 'present') return 'present'
+  if (fleet.status === 'returning') return 'returning'
+  return 'traveling' // 'moving'
+}
+
+export interface MainShipSendResult {
+  fleet_id: string
+  movement_id: string
+  main_ship_id: string
+  arrive_at: string
+}
+
+/** Send the main ship on a NON-COMBAT expedition (10C RPC; server re-validates everything). */
+export async function sendMainShipExpedition(shipId: string, locationId: string): Promise<MainShipSendResult> {
+  const { data, error } = await supabase.rpc('send_main_ship_expedition', {
+    p_ships: [shipId],
+    p_location: locationId,
+  })
+  if (error) throw new Error(error.message)
+  return data as MainShipSendResult
+}
+
+/** Recall a main-ship fleet that is currently present at a location (10C RPC). */
+export async function requestMainShipReturn(fleetId: string): Promise<{ return_movement_id: string; main_ship_id: string }> {
+  const { data, error } = await supabase.rpc('request_main_ship_return', { p_fleet: fleetId })
+  if (error) throw new Error(error.message)
+  return data as { return_movement_id: string; main_ship_id: string }
 }

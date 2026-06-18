@@ -4,14 +4,17 @@ import { useGalaxyMapData } from './useGalaxyMapData'
 import { GalaxyMap } from './GalaxyMap'
 import { ExpeditionCommand } from './ExpeditionCommand'
 import { MainShipPreview } from './MainShipPreview'
+import { MainShipCommand } from './MainShipCommand'
 
 // Read-only Galaxy Map screen (Phase 9A). Shows the world, the player's home/ship, and
 // active fleet movements. Selecting a location opens a read-only detail panel. NO writes,
 // NO expedition commands — those arrive in Phase 9B.
 
 export function GalaxyMapScreen() {
-  const { loading, error, locations, meta, base, mainShip, movements, locationStates, baseUnits, unitTypes, refresh } =
-    useGalaxyMapData()
+  const {
+    loading, error, locations, meta, base, mainShip, movements, locationStates, baseUnits, unitTypes,
+    mainshipSendEnabled, mainShipFleet, refresh,
+  } = useGalaxyMapData()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showPreview, setShowPreview] = useState(false)
 
@@ -39,10 +42,10 @@ export function GalaxyMapScreen() {
         </nav>
       </header>
 
-      {/* Phase 10B: read-only main-ship preview overlay (does not send) */}
+      {/* Main-ship overlay. 10B read-only by default; 10D adds the flag-gated status + recall. */}
       {showPreview && (
         <div className="border-b border-slate-800 bg-slate-900/95 p-3">
-          <MainShipPreview />
+          <MainShipPreview sendEnabled={mainshipSendEnabled} fleet={mainShipFleet} onChanged={refresh} />
         </div>
       )}
 
@@ -106,6 +109,17 @@ export function GalaxyMapScreen() {
               unitTypes={unitTypes}
               onSent={refresh}
             />
+            {/* Phase 10D: separate main-ship send surface, ONLY when the flag is on. The old
+                disposable fleet send above stays untouched and always available. */}
+            {mainshipSendEnabled && (
+              <MainShipCommand
+                key={`ms-${selected.id}`}
+                location={selected}
+                mainShip={mainShip}
+                fleet={mainShipFleet}
+                onSent={refresh}
+              />
+            )}
           </aside>
         )}
       </main>

@@ -6,7 +6,8 @@ import { fetchBase, fetchBaseUnits } from '../base/baseApi'
 import type { Base, BaseUnit } from '../base/baseTypes'
 import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
-import { fetchUnitTypes, type UnitType } from '../../lib/catalog'
+import { fetchUnitTypes, fetchMainshipSendEnabled, type UnitType } from '../../lib/catalog'
+import { fetchActiveMainShipFleet, type MainShipFleet } from './mainshipApi'
 
 // Read-only galaxy-map data. Reuses existing world-map / base / movement fetchers and
 // adds a tiny owner-read of main_ship_instances. NO writes, NO new backend. Static world
@@ -39,6 +40,9 @@ export interface GalaxyMapData {
   locationStates: Record<string, LocationState>
   baseUnits: BaseUnit[]
   unitTypes: UnitType[]
+  // Phase 10D: feature flag (read once) + the ship's active linked fleet (polled, for status).
+  mainshipSendEnabled: boolean
+  mainShipFleet: MainShipFleet | null
   refresh: () => Promise<void>
 }
 
@@ -63,6 +67,8 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   locationStates: {},
   baseUnits: [],
   unitTypes: [],
+  mainshipSendEnabled: false,
+  mainShipFleet: null,
 }
 
 export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
@@ -72,12 +78,15 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
     meta: Record<string, LocationMeta>
     base: Base | null
     unitTypes: UnitType[]
+    mainshipSendEnabled: boolean
   } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [world, base, unitTypes] = await Promise.all([fetchWorldMap(), fetchBase(), fetchUnitTypes()])
+        const [world, base, unitTypes, mainshipSendEnabled] = await Promise.all([
+          fetchWorldMap(), fetchBase(), fetchUnitTypes(), fetchMainshipSendEnabled(),
+        ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
         for (const sector of world.sectors) {
@@ -88,7 +97,7 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
             }
           }
         }
-        staticRef.current = { locations, meta, base, unitTypes }
+        staticRef.current = { locations, meta, base, unitTypes, mainshipSendEnabled }
       }
 
       const base = staticRef.current.base
@@ -98,6 +107,9 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         fetchMainShip(),
         base ? fetchBaseUnits(base.id) : Promise.resolve([]),
       ])
+      // The active linked fleet (zero units) drives the live main-ship status. Only read it
+      // when a ship exists; absent ship or no in-flight fleet → null (home).
+      const mainShipFleet = mainShip ? await fetchActiveMainShipFleet(mainShip.main_ship_id) : null
 
       setState({
         loading: false,
@@ -110,6 +122,8 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         locationStates,
         baseUnits,
         unitTypes: staticRef.current.unitTypes,
+        mainshipSendEnabled: staticRef.current.mainshipSendEnabled,
+        mainShipFleet,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))

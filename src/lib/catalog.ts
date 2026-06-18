@@ -38,3 +38,16 @@ export async function fetchGameConfig(): Promise<Record<string, number>> {
   }
   return out
 }
+
+// Phase 10D feature gate. `game_config.value` is jsonb, so the flag comes back as a real
+// boolean — read it as a boolean (NOT via the numeric fetchGameConfig above). Absent or
+// unreadable → treated as OFF, so the UI falls back to today's behavior. Read only.
+export async function fetchMainshipSendEnabled(): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('game_config')
+    .select('value')
+    .eq('key', 'mainship_send_enabled')
+    .maybeSingle()
+  if (error) return false
+  return (data?.value as unknown) === true
+}
