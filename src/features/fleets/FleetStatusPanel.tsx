@@ -56,8 +56,13 @@ export function FleetStatusPanel({
   const unitsOf = (fleetId: string) =>
     fleetUnits.filter((u) => u.fleet_id === fleetId && u.quantity > 0)
 
-  const active = fleets.filter((f) => f.status === 'moving' || f.status === 'present' || f.status === 'returning')
-  const completed = fleets.filter((f) => f.status === 'completed')
+  // Exclude main-ship fleets from this LEGACY panel entirely. They carry no fleet_units and must
+  // never reach the legacy leave/return path (request_leave_location → presence_request_leave →
+  // fleet_speed → NULL). Main ships are sent/recalled only from the Galaxy Map 🛰 overlay
+  // (request_main_ship_return). This keeps the old disposable-fleet UI and main ships separate.
+  const legacy = fleets.filter((f) => !f.main_ship_id)
+  const active = legacy.filter((f) => f.status === 'moving' || f.status === 'present' || f.status === 'returning')
+  const completed = legacy.filter((f) => f.status === 'completed')
 
   async function handleLeave(presenceId: string) {
     setLeavingId(presenceId)

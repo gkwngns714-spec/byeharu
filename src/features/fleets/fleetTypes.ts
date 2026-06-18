@@ -10,6 +10,10 @@ export interface Fleet {
   location_mode: string
   current_location_id: string | null
   active_movement_id: string | null
+  // Set when this fleet is a main-ship expedition (Phase 10C). Such fleets carry NO fleet_units
+  // and must NEVER be acted on by the legacy leave/return path — they recall via
+  // request_main_ship_return only. The legacy Fleets UI excludes them on this field.
+  main_ship_id: string | null
   created_at: string
   updated_at: string
 }
