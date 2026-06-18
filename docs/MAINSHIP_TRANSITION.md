@@ -35,6 +35,9 @@ role."
 **What the player eventually controls:**
 - **Several** persistent main ships, each a strategic asset with its own captains / modules /
   upgrades and hull stats (hp / cargo / captain & module slots / speed). *(No support capacity.)*
+  *Persistent = a lasting asset kept across expeditions — but **NOT immortal**; ships can be
+  permanently destroyed (high-stakes model, §6). The account is protected by an emergency
+  restart, not by ship immortality.*
 - **Free assignment** of any ship to any activity — combat, trading, mining, exploration, and
   future activities.
 
@@ -108,9 +111,11 @@ With (1)+(2) you can neither **send** (`send_fleet_to_location` requires non-emp
 `fleet_power >= min_power_required`) nor **train**. With (3)+(4) nothing will ever change it.
 → **permanent softlock by design of the disposable-ship economy.**
 
-**The fix direction:** a *persistent* main ship that can be **damaged but never destroyed**,
-with **free slow self-repair to a minimum readiness** — so "0 ships" and "no metal" can never
-fully lock the player out.
+**The fix direction (high-stakes model, see §6):** main ships are persistent strategic assets
+that **CAN be permanently destroyed** — real risk. The *account* is never permanently locked:
+when a player has **zero usable main ships**, a **weak emergency replacement starter ship** lets
+them restart basic gameplay. **Permanent ship loss is allowed; permanent account lockout is
+not.** (This replaces the earlier "never destroyed + free self-repair" idea.)
 
 ---
 
@@ -135,9 +140,12 @@ fully lock the player out.
 `inventory_deposit` · `report_create` · `train_units` / `process_build_queue` /
 `cancel_build_order`.
 
-**The softlock coupling:** on death, `process_combat_ticks` calls **`fleet_destroy(fleet_id)`**
-(permanent loss). This is the single behavior the new model must change for main-ship
-expeditions (defeat → damaged/forced-retreat, not destroyed).
+**The softlock coupling (note — the *economy*, not destruction, is the bug):** on death,
+`process_combat_ticks` calls **`fleet_destroy(fleet_id)`** (permanent loss). In the high-stakes
+model, **permanent ship destruction is intentionally KEPT** — the softlock fix is *not* "stop
+destroying ships", it is "**guarantee an emergency restart when the player has zero usable
+ships**" (§6). For main-ship expeditions, defeat will apply consequences + possible permanent
+destruction (Phase 10E), never an account lock.
 
 ### Frontend touchpoints (unit selection / fleet send)
 - `src/features/map/ExpeditionCommand.tsx` — **the only send surface** (`sendFleetToLocation`,
@@ -220,8 +228,9 @@ wired to combat or the client. This is the clean seam.**
     [today's calculate_expedition_stats only computes the now-dormant support layer; the real
      captain/module/upgrade stat source replaces it later — support is not exposed]
   → travel (fleet_movements) → combat / scan / extract (existing engine, fed by computed stats)
-  → DEFEAT = forced retreat + main ship(s) DAMAGED (never destroyed); loadout consequences
-  → return home → rewards secured (unchanged) → repair over time
+  → DEFEAT can PERMANENTLY DESTROY a ship (gone/retired) + lose its cargo/rewards; SURVIVING
+    ships in the group remain usable; if the player hits ZERO usable ships → emergency restart (§6)
+  → return home → rewards secured (unchanged); surviving ships return, destroyed ships do not
 ```
 
 Any ship can attempt any activity; **effectiveness/risk come from captains/modules/loadout/
@@ -230,36 +239,50 @@ group into one larger encounter/effort.
 
 Shifts from today:
 - **Source:** one or more `main_ship_instance`(s) instead of `base_units` quantities.
-- **Power:** from `calculate_expedition_stats` (enforces `support_capacity`), not
-  `fleet_get_power(sum of units)`.
-- **Defeat:** no `fleet_destroy` of the main ship — set the ship `repairing` with reduced
-  `hp`, force a return, and apply *loadout* consequences (support craft consumed, cargo
-  dropped, a module damaged, or a captain injured). The **main ship instance always survives.**
+- **Power:** from the future captain/module/upgrade stat source per ship (support deprecated),
+  not `fleet_get_power(sum of units)`.
+- **Defeat:** a defeated main ship **can be permanently DESTROYED** (gone/retired) with its
+  cargo/pending rewards lost; later, modules may be lost/damaged/salvaged and captains injured/
+  rescued/captured. **Surviving ships in the group keep going.** The **account** is protected by
+  the emergency restart (§6), not by ship immortality.
 - **Rewards:** still pending → secured only on home arrival (no change).
 
 ---
 
-## 6. Anti-softlock design (the persistent main ship IS the fix)
+## 6. Anti-softlock design (HIGH-STAKES model — destructible ships + emergency restart)
 
-- The player **always has at least one persistent main ship** (never deleted/destroyed) → "0
-  ships" is impossible; they can always launch *something*. (With multi-ship, losing a risky
-  expedition still leaves the player's other main ships — and even the damaged ones survive.)
-- **Defeat → damaged, not destroyed** (per ship in the group).
-- **Free, slow self-repair to a minimum readiness:** a `repairing` ship auto-regenerates `hp`
-  to an **expedition-ready floor** over time with **no metal/resource gate**. Metal / repair
-  kits only *speed up* or *fully* repair — an optimization, never a gate. This removes the
-  "no metal → stuck" branch.
-- **Minimum emergency readiness:** even with zero support craft, zero metal, and a freshly
-  damaged ship, a bare main-ship expedition can be sent to a low-difficulty target to earn the
-  first reward. **Recovery is always possible by playing**, not by a handout.
+**Design correction (2026-06-18): ships are persistent but NOT immortal.** Real strategic risk
+comes from permanent loss; the account is protected by a weak emergency restart, never by ship
+immortality. This replaces the earlier "never destroyed + free self-repair" design.
 
-**Avoiding free-resource abuse:**
-- No free *resources* are granted — only the ship's own rate-limited hp regen to a floor.
-  Nothing to farm: `support_capacity` caps loadout regardless, support craft must still be
-  produced/owned, and repair regen is timer-rate-limited so spamming defeats yields nothing.
-- **This supersedes the earlier "emergency recovery kit" idea** — a persistent self-repairing
-  main ship makes a separate recovery-grant RPC largely unnecessary. (Recovery kit stays
-  *unimplemented* per instruction.)
+**Core rules:**
+- Main ships are **persistent strategic assets, but mortal** — a ship **can be permanently
+  destroyed** in combat or dangerous gameplay. Destroyed = **gone/retired/lost permanently**
+  (not damaged-and-repairable). This is the *point*: ships matter because they can be lost.
+- **Safelock rule:** **permanent ship loss is ALLOWED; permanent account lockout is NOT.**
+- **Other surviving ships remain usable** — with multi-ship, losing one expedition does not end
+  the player; their other ships keep going.
+
+**Emergency replacement (the safelock mechanism):**
+- **Only when the player has ZERO usable main ships** → grant **one weak emergency starter ship**
+  so they can restart basic gameplay.
+- It **does NOT** restore the destroyed ship, and **does NOT** refund resources.
+- It is deliberately **weak/basic:** starter hull · **no modules** · **no captain bonuses** ·
+  **basic readiness** · *just enough to restart core gameplay.*
+- **Strict eligibility + cooldown** so it can't be farmed.
+
+**Avoiding abuse:**
+- Eligibility is gated on **truly zero usable ships** — a player with any usable ship is
+  ineligible, so there is nothing to farm.
+- The replacement is **weak** (starter hull, no modules/captains) — it can never be used to
+  *gain* power, only to recover from total loss.
+- A **cooldown** (and/or a one-shot-until-you-earn-a-real-ship rule) prevents repeated claims;
+  re-acquiring strong ships still requires *playing*.
+
+**This RE-INSTATES a deliberate emergency path** (earlier the "recovery kit" was parked because
+ships were going to be immortal — they are not). The emergency replacement is now a **designed
+part of the model**, implemented with combat destruction in **Phase 10E / a dedicated
+destruction-&-safelock phase** — **not in 10C** (10C is non-combat-only and creates no destruction).
 
 ---
 
@@ -269,9 +292,9 @@ Shifts from today:
 |---|---|---|---|
 | **10A** ◀ *(this doc)* | Audit + this design doc | docs only | untouched |
 | **10B** | **Read-only** main-ship stats preview: client-scoped wrapper over `calculate_expedition_stats` (auth.uid → own ship) + a read-only `/galaxy` preview panel | 1 small migration (read-only RPC) + 1 read-only component + verify | untouched |
-| **10C** | New **`send_main_ship_expedition(...)`** RPC (sibling of `send_fleet_to_location`), behind a flag — **group-shaped contract** (accept a `p_ships` list) but **validate exactly one ship for safety**; resolves ship+loadout → `fleets`/`fleet_units` → existing movement/combat. No client UI yet; new `verify:mainship` | 1 migration + verify | both coexist |
+| **10C** | New **`send_main_ship_expedition(...)`** RPC (sibling of `send_fleet_to_location`), behind a flag — **group-shaped contract** (accept a `p_ships` list) but **validate exactly one ship for safety**. **NON-COMBAT destinations only** (safe/rally) — reuses movement + return, **no combat, no destruction**. No client UI yet; new `verify:mainship` | 1 migration + verify | both coexist |
 | **10D** | `/galaxy` `ExpeditionCommand` switches its send to the main-ship RPC (unit picker → **main-ship + captains/modules** loadout — NOT support craft). Old path still callable | frontend only | still callable |
-| **10E** | Combat **defeat → damaged / forced-retreat** for main-ship expeditions (never destroyed) + **free slow repair** timer | combat function change (carefully, with regression) | disposable-fleet defeat unchanged |
+| **10E** *(destruction & safelock)* | Combat for main-ship expeditions + **defeat → possible PERMANENT destruction** of the ship (gone) with cargo/reward loss; **surviving ships remain**; **emergency replacement starter ship when the player has ZERO usable ships** (weak: starter hull, no modules/captains; strict eligibility + cooldown). | combat + new emergency-replacement RPC (carefully, with regression) | disposable-fleet defeat unchanged |
 | **10F** | Deprecate the old metal-built *send* path **only after** all tests green; **tables/functions stay (no deletes)** for a release, then revisit | flag flip + docs | retired, not deleted |
 | **10G+** *(multi-ship, later)* | **Relax to multiple main ships:** drop `main_ship_instances.player_id` UNIQUE (additive); ship management UI (own/commission/assign several); enable **multi-ship expedition groups** (10C's `p_ships` list accepts >1); **co-located multi-ship combat** (larger encounters); multi-ship trade/mine/explore | migrations + UI + combat group resolution | engine reused, not replaced |
 
@@ -304,11 +327,18 @@ without rewrites** (★ vision).
   call **exactly one** (the flag decides) — never two send buttons.
 - No new combat/movement/reward tables — reuse the engine.
 
-**Residual softlock**
-- A `repairing` ship MUST always be sendable at ≥ a minimum-readiness floor (or auto-regen to
-  it on a timer with no resource gate). If "damaged" = "unsendable", the lock returns.
-- A weak loadout that can't beat *any* hunt is a **balance** issue, not a hard lock (low-tier /
-  safe targets remain). Keep at least one always-winnable low-tier target.
+**Residual softlock (high-stakes model)**
+- **Zero usable ships MUST trigger the emergency replacement** (eligibility + cooldown). The
+  account lock is prevented by the *emergency restart*, not by immortal ships. If destruction can
+  reach zero ships with no replacement, the lock returns — so the emergency path is mandatory and
+  must ship together with destruction (10E).
+- The emergency replacement must be **weak but actually playable** — enough to earn the first
+  reward and rebuild. Keep at least one always-winnable low-tier target so a bare starter ship
+  can recover.
+- Eligibility must be airtight: "usable ship" = a `main_ship_instance` the player owns that is
+  not destroyed/retired and not permanently stuck. Edge cases (ship out on an expedition,
+  mid-destruction) must be defined so the player is never *both* without a usable ship *and*
+  ineligible for replacement.
 
 ---
 
@@ -322,7 +352,9 @@ without rewrites** (★ vision).
 - `train_units` / `build_orders` (reframed later, not removed now).
 - `base_units`, `fleet_units`, `unit_types`, `send_fleet_to_location`, existing combat
   functions — **kept and working.**
-- No emergency-recovery-kit implementation (superseded by the persistent ship; stays parked).
+- **No destruction and no emergency replacement in 10C** — both belong to **10E / the dedicated
+  destruction-&-safelock phase**. (The emergency replacement is now a *designed* part of the
+  model, not parked — but it ships *with* destruction, never before.)
 - **Do NOT relax `main_ship_instances.player_id` UNIQUE yet** — multi-ship is 10G+; the
   intervening phases only need to be *shaped* for it (ship-id-parameterized, group-ready
   contracts), not actually multi-ship.

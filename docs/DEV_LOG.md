@@ -5,6 +5,31 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-19 — Design correction: HIGH-STAKES ships (destructible) + emergency restart (docs)
+
+**Decision (replaces "never destroyed + self-repair"):** main ships are persistent but **NOT
+immortal** — they **can be permanently destroyed** (gone/retired) for real strategic stakes.
+**Safelock rule: permanent ship loss is allowed; permanent account lockout is not.** When a
+player has **zero usable main ships**, grant **one weak emergency starter ship** (starter hull,
+**no modules, no captain bonuses, basic readiness, restart-only**) — does NOT restore the
+destroyed ship, does NOT refund resources, gated by **strict eligibility + cooldown** (no farming;
+a player with any usable ship is ineligible). Future defeat consequences: destroyed ship lost ·
+cargo/rewards lost · modules lost/damaged/salvaged later · captains injured/rescued/captured later
+· surviving ships keep going.
+
+**Docs only (`MAINSHIP_TRANSITION.md`):** rewrote §6 anti-softlock to the high-stakes
+destructible-ship + emergency-restart model; updated the fix-direction, softlock-coupling note,
+§5 model (defeat = possible permanent destruction; surviving ships remain), the ★ vision
+(persistent ≠ immortal), §8 residual-softlock (zero-ships → mandatory emergency replacement;
+airtight eligibility), §9 (no destruction/replacement in 10C; both ship together in 10E), and the
+phase table — **10C stays NON-COMBAT-only (no destruction)**; **10E renamed to destruction &
+safelock** (permanent destruction + emergency-replacement RPC).
+
+**Not implemented.** No code, no migration, no combat change. 10C not started (awaiting separate
+approval). Backend unchanged.
+
+---
+
 ## 2026-06-18 — Design correction: deprecate support capacity / support craft (UI + docs)
 
 **Decision:** support capacity / support craft is **no longer part of the byeharu vision**. The
