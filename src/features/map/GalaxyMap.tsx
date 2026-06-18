@@ -118,8 +118,7 @@ export function GalaxyMap({
         ref={svgRef}
         viewBox={`0 0 ${VIEW} ${VIEW}`}
         preserveAspectRatio="xMidYMid meet"
-        className="h-full w-full touch-none select-none"
-        style={{ cursor: drag.current ? 'grabbing' : 'grab' }}
+        className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

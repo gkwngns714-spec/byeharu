@@ -83,6 +83,7 @@ export function GalaxyMapScreen() {
               {selState && <Row label="Active fleets" value={String(selState.active_fleets)} />}
             </dl>
             <ExpeditionCommand
+              key={selected.id}
               location={selected}
               base={base}
               units={baseUnits}

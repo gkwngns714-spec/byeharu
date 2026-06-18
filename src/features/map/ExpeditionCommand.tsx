@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { MapLocation } from './mapTypes'
 import type { Base, BaseUnit } from '../base/baseTypes'
 import type { UnitType } from '../../lib/catalog'
@@ -31,14 +31,8 @@ export function ExpeditionCommand({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const sendingRef = useRef(false)
-
-  // Reset the form whenever a different destination is selected.
-  useEffect(() => {
-    setQty({})
-    setConfirming(false)
-    setError(null)
-    setSuccess(null)
-  }, [location.id])
+  // Note: the parent remounts this component with key={location.id}, so each destination
+  // gets fresh state — no reset effect needed.
 
   const dispatchable = DISPATCHABLE.has(location.activity_type)
   const nameOf = (id: string) => unitTypes.find((t) => t.id === id)?.name ?? id
