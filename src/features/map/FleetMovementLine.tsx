@@ -28,7 +28,7 @@ export function FleetMovementLine({
   const dotR = 4 / k
 
   return (
-    <g style={{ pointerEvents: 'none' }}>
+    <g data-testid="galaxy-movement-line" style={{ pointerEvents: 'none' }}>
       <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity={0.85} />
       {/* travelling fleet dot near the destination end */}
       <circle cx={x2 - (x2 - x1) * 0.12} cy={y2 - (y2 - y1) * 0.12} r={dotR} fill={color} stroke="#0b1220" strokeWidth={1} vectorEffect="non-scaling-stroke" />

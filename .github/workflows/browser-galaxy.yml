@@ -26,13 +26,26 @@ jobs:
         run: |
           npm install --no-save @playwright/test@latest
           npx playwright install --with-deps chromium
-      - name: Run galaxy smoke test
+      - name: Run galaxy 9A smoke test (read-only)
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PLAYWRIGHT_BASE_URL: https://gkwngns714-spec.github.io/byeharu/
         run: npm run verify:galaxy:browser
+      - name: Run galaxy 9B send test
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PLAYWRIGHT_BASE_URL: https://gkwngns714-spec.github.io/byeharu/
+        run: npm run verify:galaxy9b:browser
+      - name: Clean up test runtime rows (always)
+        if: always()
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run verify:cleanup
       - name: Upload screenshots + traces
         if: always()
         uses: actions/upload-artifact@v4

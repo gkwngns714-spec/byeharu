@@ -53,20 +53,18 @@ test('Phase 9A — read-only galaxy map smoke', async ({ page }) => {
   // 5. select one marker
   await markers.first().click()
 
-  // 6. read-only detail panel opens
+  // 6. detail panel + command area open
   const panel = page.getByTestId('galaxy-location-detail-panel')
   await expect(panel).toBeVisible()
-  await expect(panel.getByText(/coming in Phase 9B/i)).toBeVisible()
+  await expect(page.getByTestId('galaxy-expedition-command')).toBeVisible()
 
-  // 7. Send Expedition button is present, disabled, and marked Phase 9B
-  const sendBtn = page.getByTestId('galaxy-send-expedition-disabled')
+  // 7. Send button present but DISABLED before any loadout is chosen (read-only until acted on)
+  const sendBtn = page.getByTestId('galaxy-send-expedition')
   await expect(sendBtn).toBeVisible()
   await expect(sendBtn).toBeDisabled()
-  await expect(sendBtn).toContainText(/Phase 9B/i)
   await shot(page, '02-detail-panel')
 
-  // 8. no write / no expedition: clicking the disabled button does nothing, and no fleet
-  //    was created for this user by anything on the screen.
+  // 8. no write / no expedition: nothing on the screen created a fleet for this user.
   await sendBtn.click({ force: true }).catch(() => {}) // disabled → no-op
   await page.waitForTimeout(1500)
   const fleetsAfter = ((await admin.from('fleets').select('id').eq('player_id', userId)).data ?? []).length

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { fetchWorldMap, fetchLocationStates } from './mapApi'
 import type { LocationState, MapLocation } from './mapTypes'
-import { fetchBase } from '../base/baseApi'
-import type { Base } from '../base/baseTypes'
+import { fetchBase, fetchBaseUnits } from '../base/baseApi'
+import type { Base, BaseUnit } from '../base/baseTypes'
 import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
+import { fetchUnitTypes, type UnitType } from '../../lib/catalog'
 
 // Read-only galaxy-map data. Reuses existing world-map / base / movement fetchers and
 // adds a tiny owner-read of main_ship_instances. NO writes, NO new backend. Static world
@@ -37,6 +38,8 @@ export interface GalaxyMapData {
   mainShip: MainShipLite | null
   movements: FleetMovement[]
   locationStates: Record<string, LocationState>
+  baseUnits: BaseUnit[]
+  unitTypes: UnitType[]
   refresh: () => Promise<void>
 }
 
@@ -59,16 +62,23 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainShip: null,
   movements: [],
   locationStates: {},
+  baseUnits: [],
+  unitTypes: [],
 }
 
 export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
   const [state, setState] = useState(EMPTY)
-  const staticRef = useRef<{ locations: MapLocation[]; meta: Record<string, LocationMeta>; base: Base | null } | null>(null)
+  const staticRef = useRef<{
+    locations: MapLocation[]
+    meta: Record<string, LocationMeta>
+    base: Base | null
+    unitTypes: UnitType[]
+  } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [world, base] = await Promise.all([fetchWorldMap(), fetchBase()])
+        const [world, base, unitTypes] = await Promise.all([fetchWorldMap(), fetchBase(), fetchUnitTypes()])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
         for (const sector of world.sectors) {
@@ -79,13 +89,15 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
             }
           }
         }
-        staticRef.current = { locations, meta, base }
+        staticRef.current = { locations, meta, base, unitTypes }
       }
 
-      const [movements, locationStates, mainShip] = await Promise.all([
+      const base = staticRef.current.base
+      const [movements, locationStates, mainShip, baseUnits] = await Promise.all([
         fetchActiveMovements(),
         fetchLocationStates(),
         fetchMainShip(),
+        base ? fetchBaseUnits(base.id) : Promise.resolve([]),
       ])
 
       setState({
@@ -93,10 +105,12 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         error: null,
         locations: staticRef.current.locations,
         meta: staticRef.current.meta,
-        base: staticRef.current.base,
+        base,
         mainShip,
         movements,
         locationStates,
+        baseUnits,
+        unitTypes: staticRef.current.unitTypes,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))

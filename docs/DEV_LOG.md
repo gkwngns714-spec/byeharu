@@ -5,6 +5,52 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Phase 9B: Map-based Expedition Send (implemented; pending build/verify)
+
+**Backend path inspection (done before wiring — no backend change, no migration):**
+- **RPC used:** `send_fleet_to_location(p_base uuid, p_location uuid, p_units jsonb)` (migration
+  0019), via the existing wrapper `sendFleetToLocation(baseId, locationId, units)` in
+  `fleetApi.ts`. This is the same path Phase 8's chain (verify-m4) drives — already verified.
+- **Inputs:** base id, location id, `units` = `[{unit_type_id, quantity}]`.
+- **Success:** `{ fleet_id, movement_id, arrive_at }`.
+- **Failure:** raises → supabase-js returns `error.message`; the wrapper throws it.
+- **Backend-authoritative validation (already present):** base owned+active · location valid/
+  active · `activity_type ∈ {none, hunt_pirates}` · **active-fleet-limit (max_active_fleets=3,
+  counts moving/present/returning)** · units non-empty · units available & positive (via
+  `base_reserve_units`, which also *reserves* them so the same units can't be re-sent) · fleet
+  power ≥ `min_power_required`. → it already blocks invalid sends, over-limit/duplicate active
+  expeditions, insufficient units, and invalid/locked destinations. **No second expedition
+  system created.**
+
+**Implementation (frontend only):**
+- `useGalaxyMapData.ts` — additionally loads `unitTypes` (catalog, static) + `baseUnits`
+  (polled) so the command area can offer a loadout. Still read-only fetches.
+- `ExpeditionCommand.tsx` (new) — replaces the disabled 9A placeholder. Compact unit picker +
+  Send → **confirmation step** → calls `sendFleetToLocation` **exactly once** (synchronous
+  `sendingRef` guard + `sending` state → double-submit-proof). Shows sending / success / error
+  states + a disabled reason. **No optimistic movement** — on success it calls the hook's
+  `refresh()`; the movement line appears only from refetched `movements`.
+- `GalaxyMapScreen.tsx` — wires the command area into the detail panel; passes base/units/
+  unitTypes; `onSent` → refresh.
+- `LocationMarker.tsx` — adds `data-activity` / `data-location-id` (test selectors). `FleetMovementLine.tsx` — adds `data-testid="galaxy-movement-line"`.
+- **Frontend-only checks (clarity, not authority):** no destination / non-dispatchable
+  activity / no units selected / already sending → disabled with a reason. Everything real
+  (ownership, limits, units, power, validity) stays backend-authoritative; backend errors are
+  surfaced verbatim.
+
+**No direct table writes from the UI** — the only write is the approved `send_fleet_to_location`
+RPC. No combat/reward/return/cleanup/logging logic touched.
+
+**Tests:** `galaxy.spec.ts` updated (9A read-only smoke kept; send button asserted disabled
+before a loadout). `galaxy9b.spec.ts` (new) — select a dispatchable marker → pick units → send
+→ confirm (double-clicked) → success → assert **exactly one** fleet+movement via backend read
+→ movement line on map → no dup from double-submit → send disabled before units → no console
+errors. `browser-galaxy.yml` runs both then `verify:cleanup` (test email contains `test` so
+`cleanup_test_runtime` removes its runtime rows → db:counts back to 0). **Pending build +
+verify + browser.**
+
+---
+
 ## 2026-06-18 — Phase 9A: Read-only Visual Galaxy Map (BUILD + VERIFY GREEN ✅)
 
 **Request** First visual galaxy map screen — read-only, using existing backend world data.

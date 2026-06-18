@@ -2,13 +2,15 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useGalaxyMapData } from './useGalaxyMapData'
 import { GalaxyMap } from './GalaxyMap'
+import { ExpeditionCommand } from './ExpeditionCommand'
 
 // Read-only Galaxy Map screen (Phase 9A). Shows the world, the player's home/ship, and
 // active fleet movements. Selecting a location opens a read-only detail panel. NO writes,
 // NO expedition commands — those arrive in Phase 9B.
 
 export function GalaxyMapScreen() {
-  const { loading, error, locations, meta, base, mainShip, movements, locationStates } = useGalaxyMapData()
+  const { loading, error, locations, meta, base, mainShip, movements, locationStates, baseUnits, unitTypes, refresh } =
+    useGalaxyMapData()
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
@@ -80,16 +82,13 @@ export function GalaxyMapScreen() {
               {selState && <Row label="Danger mod" value={selState.danger_modifier.toFixed(2)} />}
               {selState && <Row label="Active fleets" value={String(selState.active_fleets)} />}
             </dl>
-            <div className="mt-4 rounded-md border border-slate-700 bg-slate-800/60 p-3 text-xs text-slate-400">
-              Expedition selection coming in Phase 9B.
-            </div>
-            <button
-              data-testid="galaxy-send-expedition-disabled"
-              disabled
-              className="mt-3 w-full cursor-not-allowed rounded-md border border-slate-700 bg-slate-800/40 py-2 text-sm text-slate-500"
-            >
-              Send expedition (Phase 9B)
-            </button>
+            <ExpeditionCommand
+              location={selected}
+              base={base}
+              units={baseUnits}
+              unitTypes={unitTypes}
+              onSent={refresh}
+            />
           </aside>
         )}
       </main>

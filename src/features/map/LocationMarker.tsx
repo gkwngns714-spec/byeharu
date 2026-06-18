@@ -40,6 +40,9 @@ export function LocationMarker({
   return (
     <g
       data-testid="galaxy-location-marker"
+      data-location-id={location.id}
+      data-activity={location.activity_type}
+      data-location-type={location.location_type}
       onClick={(e) => {
         e.stopPropagation()
         onSelect(location.id)
