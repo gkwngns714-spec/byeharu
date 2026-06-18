@@ -398,3 +398,44 @@ shaping per the ★ vision:
 
 **Gate:** 10C introduces writes, so it starts **only after** the player's **live-web check of
 10B** and explicit approval. Do **not** start 10C until then.
+
+---
+
+## 11. Old system retirement plan (transition, NOT hybrid-forever)
+
+**Architecture rule:** the old **disposable ship / fleet / `base_units` / `send_fleet_to_location`**
+flow is **temporary migration scaffolding** — it protects current *verified* gameplay during the
+transition, but it must **NOT become a permanent parallel gameplay system.** Main ships become the
+**single source of truth** for player expeditions; future combat / trading / mining / exploration
+are designed around **main ships only.**
+
+**Anti-spaghetti guardrails:**
+- **No permanent adapters** that make old fleets and main ships equal forever. A short-lived
+  bridge (e.g. resolving a main-ship expedition into `fleet_units` so the *engine* is reused) is
+  fine; a *permanent* "support both input models everywhere" layer is not.
+- **Every new main-ship phase must move us closer to retiring the old path**, not deeper into
+  dual-system dependency. New systems target the **main-ship path only** — they do not add
+  old-fleet support.
+- Keeping the old path **untouched during 10C is allowed** (safety); but 10C is the *last* phase
+  that simply coexists — from 10D on, the trend is toward replacement.
+
+**Retirement sequence (each step keeps the verified game green; nothing deleted until the end):**
+1. **Old system stays — temporarily** — for verified gameplay continuity (M2–M5 + 9B remain green).
+2. **New main-ship write path is built separately and narrowly** (10C: its own RPC
+   `send_main_ship_expedition`, flag-gated, non-combat-only — not woven into the old path).
+3. **UI switches to the main-ship path** (10D): `/galaxy` sends via the main-ship RPC; the old
+   unit-picker send is no longer the player's route.
+4. **Combat + destruction + safelock implemented for main ships** (10E): main-ship expeditions
+   fight, can be permanently destroyed, and the emergency-replacement safelock exists.
+5. **Disable old disposable sending** (10F): once main-ship **send + combat + return + reward +
+   safelock are verified**, turn OFF the old `send_fleet_to_location` send path (flag/guard) —
+   still no deletes; the functions/tables remain but are unreachable from the game.
+6. **Planned cleanup migration** (10F-cleanup / 10G): **after no frontend, RPC, or test depends on
+   the old path**, delete or archive the disposable scaffolding (`send_fleet_to_location`,
+   `base_units`/`fleet_units` as combat bodies, `train_units`/`build_orders` as the ship source,
+   the now-dormant support tables) in **one planned, reviewed migration** — never piecemeal,
+   never mid-transition.
+
+**Exit criterion:** the old system is deleted **only** when the main-ship path is *fully verified*
+and *nothing references the old path*. Until then it stays, dormant or active, but the direction is
+always **toward one system, not two.**
