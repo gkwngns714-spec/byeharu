@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useGalaxyMapData } from './useGalaxyMapData'
 import { GalaxyMap } from './GalaxyMap'
 import { ExpeditionCommand } from './ExpeditionCommand'
+import { MainShipPreview } from './MainShipPreview'
 
 // Read-only Galaxy Map screen (Phase 9A). Shows the world, the player's home/ship, and
 // active fleet movements. Selecting a location opens a read-only detail panel. NO writes,
@@ -12,6 +13,7 @@ export function GalaxyMapScreen() {
   const { loading, error, locations, meta, base, mainShip, movements, locationStates, baseUnits, unitTypes, refresh } =
     useGalaxyMapData()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [showPreview, setShowPreview] = useState(false)
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
@@ -24,11 +26,25 @@ export function GalaxyMapScreen() {
           <h1 className="text-lg font-semibold">Galaxy Map</h1>
           <p className="text-xs text-slate-400">Read-only view · expeditions coming in Phase 9B</p>
         </div>
-        <nav className="flex gap-3 text-sm">
+        <nav className="flex items-center gap-3 text-sm">
+          <button
+            data-testid="mainship-preview-toggle"
+            onClick={() => setShowPreview((s) => !s)}
+            className="rounded border border-sky-400/30 bg-sky-500/10 px-2.5 py-1 text-sky-200 hover:bg-sky-500/20"
+          >
+            🛰 Main Ship preview
+          </button>
           <Link to="/" className="text-slate-300 hover:text-white">Command Center</Link>
           <Link to="/map" className="text-slate-300 hover:text-white">List view</Link>
         </nav>
       </header>
+
+      {/* Phase 10B: read-only main-ship preview overlay (does not send) */}
+      {showPreview && (
+        <div className="border-b border-slate-800 bg-slate-900/95 p-3">
+          <MainShipPreview />
+        </div>
+      )}
 
       <main className="relative flex flex-1 flex-col overflow-hidden md:flex-row">
         {/* Map area */}

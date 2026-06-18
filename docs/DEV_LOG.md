@@ -5,6 +5,40 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Phase 10B: read-only main-ship expedition preview (implemented; pending verify)
+
+**Scope: strict preview only** — see what your main ship + a support-craft loadout WOULD bring.
+No writes, no sending, no combat/engine change; the Phase 9B send path is untouched. Per
+`docs/MAINSHIP_TRANSITION.md` (10B).
+
+**Migration `0049_mainship_preview.sql`** — `get_my_expedition_preview(p_loadout jsonb,
+p_activity_type text)` → jsonb. **STABLE (read-only)**, SECURITY DEFINER, `auth.uid()`-scoped,
+granted to **authenticated**. Reuses the **single stat source** `calculate_expedition_stats`
+(Phase 8, stays server-only — the wrapper calls it as the definer; not exposed to clients).
+- Ship exists → `{has_ship:true, valid:true, ship, stats}`.
+- Validation errors (over-capacity / unknown craft / bad qty) are **caught** → `{valid:false,
+  error}` (a preview warning, not a client crash).
+- No ship yet → `{has_ship:false, hull:…}` starter-hull teaser. **It does NOT commission a
+  ship** (no write) — commissioning is a later phase.
+
+**Frontend (read-only):** `mainshipApi.ts` (`fetchSupportCraftTypes`, `fetchExpeditionPreview`);
+`MainShipPreview.tsx` — a panel with an activity dropdown + capacity-limited support-craft
+picker + live stat grid + a `support_capacity` used/limit bar + warnings, labeled **"Preview
+only · does not send."** Wired into `/galaxy` behind a header toggle (`🛰 Main Ship preview`),
+**separate from the send command** (single send surface preserved).
+
+**Verify:** `scripts/verify-mainship-preview.mjs` (`npm run verify:mainship-preview`,
+standalone — NOT wired into the chained verify): base stats · valid loadout (reuses adapter) ·
+over-capacity → warning · unknown craft → warning · no-ship hull teaser · **wrote-nothing
+proof** (no-ship player still has none) · adapter still client-denied.
+
+**Untouched:** combat/fleet/movement/reward/send/cleanup. No deletes, no renames. Known limit:
+to see *loadout* numbers a ship must exist; live players without one see the hull teaser
+(commissioning = later phase). Test main-ship rows for `mspreviewtest*` users persist (not a
+runtime table; tiny). **Pending build + verify (handed off to user).**
+
+---
+
 ## 2026-06-18 — Follow-up: M4.5 browser test self-cleaning + orphan cleanup (test hygiene)
 
 **Why** The M4.5 browser test (`m45browser.*@example.com`, no `"test"`, no cleanup step) left
