@@ -137,4 +137,8 @@ async function main() {
 
 main()
   .catch((e) => { if (e instanceof Abort) bad('ABORTED', e.message); else bad('UNEXPECTED', e?.message ?? String(e)) })
-  .finally(() => { console.log(`\nPhase 8: ${pass} passed, ${fail} failed\n`); process.exitCode = fail > 0 ? 1 : 0 })
+  .finally(() => {
+    console.log(`\nPhase 8: ${pass} passed, ${fail} failed`)
+    console.log("ℹ Verify created throwaway test data. Run `npm run verify:cleanup` to remove leftover runtime rows (CI does this automatically).\n")
+    process.exitCode = fail > 0 ? 1 : 0
+  })

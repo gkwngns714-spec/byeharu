@@ -55,3 +55,13 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PHASE8_SKIP_REGRESS: ${{ inputs.skip_regress && '1' || '0' }}
         run: npm run verify:phase8
+
+      # Self-cleaning: remove the throwaway test data this run created so verify rows
+      # never accumulate. Runs even if the tests failed (if: always()). Deletes ONLY
+      # runtime rows owned by test-email players — never real/config/permanent data.
+      - name: Clean up verify test data
+        if: always()
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run verify:cleanup

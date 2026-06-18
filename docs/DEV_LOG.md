@@ -5,6 +5,32 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Prevention Phase C: self-cleaning verify runs (implemented; pending deploy/verify)
+
+**Request** Stop verify runs leaving runtime/test rows behind. Minimal + safe; no gameplay/
+combat/reward/movement/report changes; no TRUNCATE; no real/config/permanent data touched.
+
+**How test data is identified (no `test_run_id` added):** every verify script signs up
+throwaway users with emails matching `%test%@example.com` (m4test/m5test/m45test/invtest/
+p4test…p8test), and every runtime table carries `player_id`. So verify-created runtime rows =
+rows owned by a test-email player. The email pattern is the cleanup key — the existing
+convention made a schema column unnecessary.
+
+**Migration `0048_cleanup_test_runtime.sql`:** `cleanup_test_runtime(p_pattern default
+'%test%@example.com', p_dry_run default true)` → returns `(table_name, rows_matched,
+rows_deleted, cleanup_key)`. Deletes ONLY the 9 runtime tables (+ fleet_units) for test-email
+players, child→parent. Guards: pattern MUST contain `test` (else raises); **never** touches
+`auth.users`, `bases`, `base_units`, `base_resources`, `player_inventory`, `inventory_ledger`,
+`main_ship_instances`, `*_types`, `game_config`, or world tables. No TRUNCATE. SECURITY
+DEFINER, service_role only.
+
+**Files:** migration 0048; `scripts/verify-cleanup.mjs` (`verify:cleanup:dry-run` /
+`verify:cleanup --confirm`, optional `--pattern`); `package.json`; `verify-phase8.mjs` prints
+a cleanup reminder at the end; `verify.yml` adds a final `if: always()` **auto-cleanup step**
+so every CI verify removes its own test data (even on failure). **Pending deploy + verify.**
+
+---
+
 ## 2026-06-18 — Prevention Phase B: safe retention cleanup (DEPLOYED + VERIFIED ✅)
 
 **Request** Add a batched, dry-run-first retention cleanup. No TRUNCATE, no destructive

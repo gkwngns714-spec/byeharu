@@ -23,7 +23,9 @@
     "db:size": "node scripts/db-size.mjs",
     "db:counts": "node scripts/db-counts.mjs",
     "db:cleanup:dry-run": "node scripts/db-cleanup.mjs",
-    "db:cleanup": "node scripts/db-cleanup.mjs --confirm"
+    "db:cleanup": "node scripts/db-cleanup.mjs --confirm",
+    "verify:cleanup:dry-run": "node scripts/verify-cleanup.mjs",
+    "verify:cleanup": "node scripts/verify-cleanup.mjs --confirm"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
