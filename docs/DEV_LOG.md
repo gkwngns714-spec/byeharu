@@ -5,6 +5,47 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Prevention Phase B: safe retention cleanup (implemented; pending deploy/verify)
+
+**Request** Add a batched, dry-run-first retention cleanup. No TRUNCATE, no destructive
+reset, no active/seeded/player-owned data touched.
+
+**Schema reconciliation (inspected, not assumed) — reported deviations:**
+- `combat_ticks` has **`resolved_at`**, not `created_at` → index + rule use `resolved_at`.
+- `fleet_movements` has **no `updated_at`** → index + rule use `resolved_at` (set on resolve).
+- `reward_grants` has **`granted_at`**, not `claimed_at` → use `granted_at`. (There is no
+  "pending"/"claimed" state in this table — a grant row IS an already-secured deposit; pending
+  rewards live on `combat_encounters`/`fleet_movements` jsonb and are untouched.)
+
+**Cascade hazard (inspected):** ON DELETE CASCADE roots everything at `fleets`
+(→ fleet_units, fleet_movements, location_presence, combat_encounters → ticks/events/reports;
+presence → encounters too). Since `combat_reports` (30d) hangs under encounters/presence/
+fleets, deleting any ancestor would cascade-delete a still-retained report. So **encounters,
+location_presence, and fleets are additionally gated**: never deleted while they have an
+ACTIVE encounter or a RETAINED (<30d) report. Net: those three are effectively kept until
+their report expires; non-combat presence (no report) still cleans at 1 day.
+
+**Migration `0047_runtime_retention_cleanup.sql`:**
+- 10 indexes (`CREATE INDEX IF NOT EXISTS`) on the real scan columns (3 substituted per above).
+- `maintenance_cleanup_runtime_data(dry_run boolean default true, batch_limit int default 5000)`
+  → returns `(table_name, retention_rule, rows_matched, rows_deleted, dry_run)` per table.
+  Batched deletes via `ctid in (… limit batch_limit)` loops — never one-shot, never TRUNCATE.
+  Kill-switch: if `runtime_cleanup_enabled=false`, forced to dry-run. SECURITY DEFINER,
+  service_role only.
+- Retention: ticks 3d, events 7d, reports 30d, encounters terminal>14d(+guard), presence
+  terminal>1d(+guard), movements terminal>14d, fleet_units (parent terminal>14d), fleets
+  terminal>14d(+guard), reward_grants 30d, build_orders terminal>30d.
+- Safety: only TERMINAL statuses deleted (active/retreating/moving/waiting/queued never
+  match); active encounters/fleets/movements/rewards/builds never deleted; no bases/
+  base_resources/base_units/inventory/main_ship/_types/game_config/world tables referenced.
+
+**Files:** migration 0047; `scripts/db-cleanup.mjs` (`db:cleanup:dry-run` / `db:cleanup
+--confirm`); `package.json`; `.github/workflows/db-cleanup.yml` (dispatch; dry-run default,
+deletes only on confirm=true; shows size/counts before+after). **Pending deploy + dry-run
+review + verify.**
+
+---
+
 ## 2026-06-18 — Prevention Phase A: combat logging controls + DB visibility (DEPLOYED + VERIFIED ✅)
 
 **Request** Stop byeharu re-filling the disk: make high-volume combat logging opt-in and add

@@ -1,0 +1,44 @@
+name: DB cleanup (retention; dry-run default)
+
+# Runs the safe retention cleanup against the live project. DRY-RUN by default; it only
+# deletes when confirm=true is explicitly chosen. Shows db:size + db:counts before and
+# (when confirming) after. Read-mostly; never TRUNCATEs; never touches active gameplay,
+# config/world, or permanent player-owned data. Only repo-write users can dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Actually DELETE expired rows? false = dry-run (default)'
+        type: boolean
+        default: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: db:size (before)
+        run: npm run db:size
+      - name: db:counts (before)
+        run: npm run db:counts
+      - name: db:cleanup:dry-run (always)
+        run: npm run db:cleanup:dry-run
+      - name: db:cleanup (LIVE — only when confirm=true)
+        if: ${{ inputs.confirm }}
+        run: npm run db:cleanup
+      - name: db:size (after)
+        if: ${{ inputs.confirm }}
+        run: npm run db:size
+      - name: db:counts (after)
+        if: ${{ inputs.confirm }}
+        run: npm run db:counts
