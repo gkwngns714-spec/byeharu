@@ -1,0 +1,37 @@
+name: Dev — commission main ship
+
+# DEV/ADMIN one-off: commission ONE starter main ship for a single account so it can manually
+# test the verified 10C/10D main-ship send/recall path. NOT the future player-facing Commission
+# feature. Uses the service-role key from repo secrets (not available locally). Idempotent: the
+# helper public.ensure_main_ship_for_player cannot create duplicates. Only repo-write users can
+# dispatch workflows (the public cannot). Shares the live-DB concurrency group to avoid races.
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'Account email to commission a main ship for'
+        required: true
+        default: 'gkwngns714@gmail.com'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  commission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Commission main ship (idempotent)
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/dev-commission-mainship.mjs --email "${{ inputs.email }}"
