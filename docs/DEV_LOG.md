@@ -5,6 +5,38 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-18 — Phase 9C: Expedition UI Reframe (implemented; pending build/verify)
+
+**Request** Make the player understand: Galaxy Map = where you send expeditions; Command
+Center = status + shortcuts; fleet status area = active/returning/completed. Remove duplicate
+send controls. Frontend/copy only — no backend.
+
+**Duplicate removed:** the old in-dashboard `SendFleetPanel` (list-based send) duplicated the
+Phase 9B map send → **deleted** (`src/features/fleets/SendFleetPanel.tsx`; only the Dashboard
+imported it). `/galaxy` is now the **only** send surface.
+
+**Reframe (frontend only):**
+- `ExpeditionLauncher.tsx` (new) — replaces the dashboard send panel with a pointer card:
+  "Send your first from the Galaxy Map", a prominent **Open Galaxy Map** button, and the
+  reward rule in plain words ("pending while out · secured only on return"). Empty-vs-active
+  copy. testid `dashboard-expedition-launcher`.
+- `Dashboard.tsx` — swaps `SendFleetPanel` → `ExpeditionLauncher`; header already links to the
+  map. No other send control remains.
+- `FleetStatusPanel.tsx` — kept the `Fleets` heading + "previous run(s)" wording (m45 selectors)
+  but added a subtitle ("Active expeditions — travel, on-station, and returns"), reframed the
+  empty state to **"No active expedition. Send your first from the Galaxy Map →"** (links to
+  `/galaxy`), and made the status badge **activity-aware** (present + hunt → "Fighting", else
+  "On station"). Existing reward wording kept ("rewards locked (secured on arrival)").
+
+**No backend touched** — no migration, no RPC/combat/reward/return/cleanup change, no second
+map or send flow. Phase 9B send logic unchanged.
+
+**Tests:** `galaxy9b.spec.ts` gains a check that the Command Center shows
+`dashboard-expedition-launcher` and has **no** "Send a fleet" control (single-surface proof).
+9A/9B/m45 selectors preserved. **Pending build + verify + browser.**
+
+---
+
 ## 2026-06-18 — Phase 9B: Map-based Expedition Send (BUILD + VERIFY + BROWSER GREEN ✅)
 
 **Backend path inspection (done before wiring — no backend change, no migration):**

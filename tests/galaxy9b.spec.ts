@@ -36,6 +36,9 @@ test('Phase 9B — map-based expedition send', async ({ page }) => {
   await page.getByPlaceholder('Email').fill(email)
   await page.getByPlaceholder('Password').fill(password)
   await page.getByRole('button', { name: 'Sign in' }).click()
+  // 9C reframe: Command Center points to the map and has NO duplicate send control.
+  await expect(page.getByTestId('dashboard-expedition-launcher')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Send a fleet' })).toHaveCount(0)
   await page.getByRole('link', { name: /Galaxy map/i }).first().click()
   await expect(page.getByTestId('galaxy-map-screen')).toBeVisible()
   await expect(page.getByTestId('galaxy-location-marker').first()).toBeVisible({ timeout: 30_000 })

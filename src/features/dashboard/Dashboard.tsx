@@ -4,7 +4,7 @@ import { useGameState } from './useGameState'
 import { BasePanel } from '../base/BasePanel'
 import { TrainShipsPanel } from '../production/TrainShipsPanel'
 import { BuildQueuePanel } from '../production/BuildQueuePanel'
-import { SendFleetPanel } from '../fleets/SendFleetPanel'
+import { ExpeditionLauncher } from '../map/ExpeditionLauncher'
 import { FleetStatusPanel } from '../fleets/FleetStatusPanel'
 import { useCombat } from '../combat/useCombat'
 import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
@@ -106,13 +106,8 @@ export function Dashboard() {
               }}
             />
           ))}
-          <SendFleetPanel
-            base={game.base}
-            units={game.units}
-            unitTypes={game.unitTypes}
-            locations={game.locations}
-            locationStates={game.locationStates}
-            onSent={game.refresh}
+          <ExpeditionLauncher
+            hasActive={game.fleets.some((f) => f.status === 'moving' || f.status === 'present' || f.status === 'returning')}
           />
           <FleetStatusPanel
             fleets={game.fleets}

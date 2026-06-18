@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { formatCountdown } from '../../lib/time'
 import { formatLocationLabel } from '../../lib/location'
 import type { MapLocation } from '../map/mapTypes'
@@ -73,12 +74,18 @@ export function FleetStatusPanel({
 
   return (
     <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-      <h2 className="mb-4 text-lg font-medium">Fleets</h2>
+      <h2 className="text-lg font-medium">Fleets</h2>
+      <p className="mb-4 text-xs text-white/40">Active expeditions — travel, on-station, and returns.</p>
 
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
 
       {active.length === 0 ? (
-        <p className="text-sm text-white/40">No active fleets. Send one above.</p>
+        <p className="text-sm text-white/40">
+          No active expedition.{' '}
+          <Link to="/galaxy" className="text-indigo-300 underline-offset-2 hover:underline">
+            Send your first from the Galaxy Map →
+          </Link>
+        </p>
       ) : (
         <ul className="space-y-3">
           {active.map((f) => {
@@ -87,6 +94,13 @@ export function FleetStatusPanel({
             const composition = unitsOf(f.id)
               .map((u) => `${u.quantity} ${u.unit_type_id}`)
               .join(', ')
+            // Activity-aware phase label (server status stays the truth).
+            const phaseLabel =
+              f.status === 'present'
+                ? presence?.activity_type === 'hunt_pirates'
+                  ? 'Fighting'
+                  : 'On station'
+                : (PHASE_LABEL[f.status] ?? f.status)
 
             return (
               <li key={f.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
@@ -98,7 +112,7 @@ export function FleetStatusPanel({
                       (STATUS_STYLE[f.status] ?? 'bg-white/10 text-white/50')
                     }
                   >
-                    {PHASE_LABEL[f.status] ?? f.status}
+                    {phaseLabel}
                   </span>
                 </div>
 
