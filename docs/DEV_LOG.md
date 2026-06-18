@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-06-18 — Prevention Phase B: safe retention cleanup (implemented; pending deploy/verify)
+## 2026-06-18 — Prevention Phase B: safe retention cleanup (DEPLOYED + VERIFIED ✅)
 
 **Request** Add a batched, dry-run-first retention cleanup. No TRUNCATE, no destructive
 reset, no active/seeded/player-owned data touched.
@@ -41,8 +41,15 @@ their report expires; non-combat presence (no report) still cleans at 1 day.
 
 **Files:** migration 0047; `scripts/db-cleanup.mjs` (`db:cleanup:dry-run` / `db:cleanup
 --confirm`); `package.json`; `.github/workflows/db-cleanup.yml` (dispatch; dry-run default,
-deletes only on confirm=true; shows size/counts before+after). **Pending deploy + dry-run
-review + verify.**
+deletes only on confirm=true; shows size/counts before+after).
+
+**Fix during deploy:** first push failed 42P13 — input param `dry_run` collided with the OUT
+column `dry_run`; renamed inputs to `p_dry_run`/`p_batch_limit` (project `p_`-convention),
+OUT column stays `dry_run`. **Result (commit `dac35a1`):** migration 0047 deployed ✅.
+**Dry-run: 0 matched across all 10 tables** (all data fresh — nothing past the 3/7/14/30-day
+cutoffs); **live run (confirm=true): 0 matched / 0 deleted** — delete path executes cleanly,
+nothing destructive. **verify:phase8 ✅ — Phase 8 21/21 … M4 40/40** (indexes + function did
+not affect combat/regression). **Phase B CLOSED.** Next: Phase C (self-cleaning verify runs).
 
 ---
 
