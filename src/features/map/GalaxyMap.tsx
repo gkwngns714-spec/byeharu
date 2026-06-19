@@ -33,6 +33,18 @@ function buildNormalizer(points: Pt[]): (p: Pt) => Pt {
 
 const clampK = (k: number) => Math.min(8, Math.max(0.4, k))
 
+// Camera pan bounds: keep the transformed content overlapping the 0..VIEW viewBox so the map can
+// never be dragged/zoomed completely off-screen (fixes the "black screen on pan" bug). When zoomed
+// in (content ≥ viewport) the viewport stays fully covered; when zoomed out, content stays inside.
+// This only bounds the camera — future gameplay overlays (trading/mining/combat/routes) should be
+// added as separate layers later, not folded into this clamp.
+function clampPan(tx: number, ty: number, k: number): { tx: number; ty: number } {
+  const content = k * VIEW
+  const [minT, maxT] = content >= VIEW ? [VIEW - content, 0] : [0, VIEW - content]
+  const cl = (t: number) => Math.min(maxT, Math.max(minT, t))
+  return { tx: cl(tx), ty: cl(ty) }
+}
+
 export function GalaxyMap({
   locations,
   base,
@@ -79,7 +91,7 @@ export function GalaxyMap({
     if (!drag.current) return
     const dx = toSvgUnits(e.clientX - drag.current.x)
     const dy = toSvgUnits(e.clientY - drag.current.y)
-    setView((v) => ({ ...v, tx: drag.current!.tx + dx, ty: drag.current!.ty + dy }))
+    setView((v) => ({ ...v, ...clampPan(drag.current!.tx + dx, drag.current!.ty + dy, v.k) }))
   }
   const onPointerUp = () => { drag.current = null }
   const onWheel = (e: RWheelEvent) => {
@@ -90,7 +102,7 @@ export function GalaxyMap({
       // zoom around viewBox centre (500,500) — keeps it simple + stable on mobile.
       const cx = VIEW / 2
       const cy = VIEW / 2
-      return { k, tx: cx - (cx - v.tx) * ratio, ty: cy - (cy - v.ty) * ratio }
+      return { k, ...clampPan(cx - (cx - v.tx) * ratio, cy - (cy - v.ty) * ratio, k) }
     })
   }
   const zoomBtn = (factor: number) =>
@@ -99,8 +111,9 @@ export function GalaxyMap({
       const ratio = k / v.k
       const cx = VIEW / 2
       const cy = VIEW / 2
-      return { k, tx: cx - (cx - v.tx) * ratio, ty: cy - (cy - v.ty) * ratio }
+      return { k, ...clampPan(cx - (cx - v.tx) * ratio, cy - (cy - v.ty) * ratio, k) }
     })
+  // Reset is already a safe state (k=1 → clampPan bounds force tx=ty=0).
   const reset = () => setView({ k: 1, tx: 0, ty: 0 })
 
   const homePt = base ? norm({ x: base.x, y: base.y }) : null
@@ -126,6 +139,9 @@ export function GalaxyMap({
         onWheel={onWheel}
         onClick={() => onSelect(null)}
       >
+        {/* Static backdrop (NOT transformed): the map area always renders a deliberate background,
+            even at the camera bounds. Visual safety layer only — not a map-layer framework. */}
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="#070b14" pointerEvents="none" />
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.k})`}>
           {/* movement paths (under markers) */}
           {movements.map((m) => {
