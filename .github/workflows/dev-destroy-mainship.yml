@@ -1,0 +1,37 @@
+name: Dev — destroy main ship
+
+# DEV/ADMIN one-off for the Phase 10F UI smoke test: put ONE account's main ship into the
+# destroyed/needs-repair state (NOT deleted) by calling the existing canonical helper
+# public.dev_set_main_ship_destroyed. The ship is recoverable in-app via "Repair main ship".
+# Uses the service-role secret in the repo (not available locally). Only repo-write users can
+# dispatch. Shares the live-DB concurrency group to avoid races.
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'Account email whose main ship to disable (destroyed/needs-repair)'
+        required: true
+        default: 'gkwngns714@gmail.com'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Disable main ship (destroyed/needs-repair)
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/dev-destroy-mainship.mjs --email "${{ inputs.email }}"
