@@ -5,6 +5,7 @@ import { formatLocationLabel } from '../../lib/location'
 import type { MapLocation } from '../map/mapTypes'
 import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from './fleetTypes'
 import { requestLeaveLocation } from './fleetApi'
+import { isMainShipFleet } from './fleetGuards'
 
 const STATUS_STYLE: Record<string, string> = {
   moving: 'bg-amber-500/15 text-amber-300',
@@ -56,19 +57,25 @@ export function FleetStatusPanel({
   const unitsOf = (fleetId: string) =>
     fleetUnits.filter((u) => u.fleet_id === fleetId && u.quantity > 0)
 
-  // Exclude main-ship fleets from this LEGACY panel entirely. They carry no fleet_units and must
-  // never reach the legacy leave/return path (request_leave_location → presence_request_leave →
-  // fleet_speed → NULL). Main ships are sent/recalled only from the Galaxy Map 🛰 overlay
-  // (request_main_ship_return). This keeps the old disposable-fleet UI and main ships separate.
-  const legacy = fleets.filter((f) => !f.main_ship_id)
+  // Exclude main-ship fleets from this LEGACY panel entirely (Phase 10E). They carry no fleet_units
+  // and must never reach the legacy leave/return path. Main ships are sent/recalled only from the
+  // Galaxy Map 🛰 overlay (request_main_ship_return). Uses the shared isMainShipFleet predicate so
+  // the rule has a single source of truth.
+  const legacy = fleets.filter((f) => !isMainShipFleet(f))
   const active = legacy.filter((f) => f.status === 'moving' || f.status === 'present' || f.status === 'returning')
   const completed = legacy.filter((f) => f.status === 'completed')
 
-  async function handleLeave(presenceId: string) {
+  async function handleLeave(presenceId: string, fleet: Fleet) {
+    // Belt-and-suspenders: this panel already excludes main-ship fleets, but guard again before
+    // the legacy leave call (main ships recall from the Galaxy Map 🛰 overlay).
+    if (isMainShipFleet(fleet)) {
+      setError('Main ships are recalled from the Galaxy Map, not the Fleets panel.')
+      return
+    }
     setLeavingId(presenceId)
     setError(null)
     try {
-      await requestLeaveLocation(presenceId)
+      await requestLeaveLocation(presenceId, fleet)
       onChanged()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -158,7 +165,7 @@ export function FleetStatusPanel({
                 )}
                 {f.status === 'present' && presence && presence.activity_type !== 'hunt_pirates' && (
                   <button
-                    onClick={() => handleLeave(presence.id)}
+                    onClick={() => handleLeave(presence.id, f)}
                     disabled={leavingId === presence.id}
                     className="mt-2 rounded-md border border-white/15 px-3 py-1 text-xs text-white/80 transition hover:bg-white/10 disabled:opacity-40"
                   >

@@ -5,6 +5,8 @@ import { deriveMainShipStatus, sendMainShipExpedition, type MainShipFleet } from
 
 // Phase 10D — main-ship send surface. Deliberately SEPARATE from ExpeditionCommand: it has no
 // unit pickers and never touches old fleet_units. Non-combat only (activity_type === 'none').
+// INVARIANT (Phase 10E): this is the ONLY main-ship SEND surface (send_main_ship_expedition).
+// The legacy expedition send (ExpeditionCommand → send_fleet_to_location) is a separate system.
 // Rendered by GalaxyMapScreen ONLY when mainship_send_enabled is true, so when the flag is off
 // the location panel is byte-for-byte today's behavior. The single write is the verified 10C
 // RPC, fired once behind a synchronous ref guard + confirm step. The server re-validates all of

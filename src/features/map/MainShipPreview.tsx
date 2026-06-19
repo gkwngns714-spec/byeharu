@@ -11,6 +11,8 @@ import {
 // captain/module slots) — NO support craft, NO support capacity, NO loadout. Phase 10D adds an
 // OPTIONAL, flag-gated control block (derived status + Recall) via props: when `sendEnabled` is
 // false/omitted it renders exactly as the 10B read-only view. Main ships are never old fleet_units.
+// INVARIANT (Phase 10E): this is the ONLY main-ship RECALL surface (request_main_ship_return).
+// The legacy leave/return path (request_leave_location) must never act on a main-ship fleet.
 
 function Row({ label, value }: { label: string; value: string | number }) {
   return (
