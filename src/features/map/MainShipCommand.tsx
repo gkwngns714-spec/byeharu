@@ -85,9 +85,15 @@ export function MainShipCommand({
           )}
 
           {!available ? (
-            <p data-testid="mainship-send-unavailable" className="mt-3 text-center text-xs text-slate-500">
-              Main ship is currently {status} — recall it before sending again.
-            </p>
+            status === 'destroyed' ? (
+              <p data-testid="mainship-send-disabled" className="mt-3 text-center text-xs text-amber-300/80">
+                Main ship is disabled. Repair it before sending.
+              </p>
+            ) : (
+              <p data-testid="mainship-send-unavailable" className="mt-3 text-center text-xs text-slate-500">
+                Main ship is currently {status} — recall it before sending again.
+              </p>
+            )
           ) : !confirming ? (
             <button
               data-testid="mainship-send"

@@ -25,6 +25,7 @@
     "verify:mainship-preview": "node scripts/verify-mainship-preview.mjs",
     "verify:mainship-send": "node scripts/verify-mainship-send.mjs",
     "verify:speed-resolver": "node scripts/verify-speed-resolver.mjs",
+    "verify:mainship-repair": "node scripts/verify-mainship-repair.mjs",
     "db:size": "node scripts/db-size.mjs",
     "db:counts": "node scripts/db-counts.mjs",
     "db:cleanup:dry-run": "node scripts/db-cleanup.mjs",

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   deriveMainShipStatus,
   fetchMyMainShip,
+  repairMainShip,
   requestMainShipReturn,
   type MainShipFleet,
   type MainShipView,
@@ -38,6 +39,9 @@ export function MainShipPreview({
   const [recallError, setRecallError] = useState<string | null>(null)
   const [recalling, setRecalling] = useState(false)
   const recallRef = useRef(false)
+  const [repairError, setRepairError] = useState<string | null>(null)
+  const [repairing, setRepairing] = useState(false)
+  const repairRef = useRef(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -58,10 +62,14 @@ export function MainShipPreview({
 
   const ship = view?.ship
   const hull = view?.hull
+  // 10F: status='destroyed' = DISABLED / needs-repair for a PERSISTENT ship (never deletion).
+  // It is read from the ship row (a disabled ship has no active fleet), and overrides the
+  // fleet-derived status below.
+  const isDisabled = ship?.status === 'destroyed'
   // 10D: the active linked fleet is the source of truth for live status (the ship row stays
   // 'traveling' while the fleet is 'present'). Recall is valid ONLY when present.
   const displayStatus = deriveMainShipStatus(fleet)
-  const canRecall = sendEnabled && displayStatus === 'present' && !!fleet
+  const canRecall = sendEnabled && !isDisabled && displayStatus === 'present' && !!fleet
 
   async function doRecall() {
     if (recallRef.current || !fleet) return // synchronous double-submit guard
@@ -77,6 +85,23 @@ export function MainShipPreview({
     } finally {
       recallRef.current = false
       setRecalling(false)
+    }
+  }
+
+  async function doRepair() {
+    if (repairRef.current) return // synchronous double-submit guard
+    repairRef.current = true
+    setRepairing(true)
+    setRepairError(null)
+    try {
+      await repairMainShip() // 10F recovery RPC (auth.uid()-scoped; own ship only)
+      if (onChanged) await onChanged()
+      await load() // refresh this panel's own view → home + full hp
+    } catch (e) {
+      setRepairError(e instanceof Error ? e.message : String(e))
+    } finally {
+      repairRef.current = false
+      setRepairing(false)
     }
   }
 
@@ -98,8 +123,8 @@ export function MainShipPreview({
             <dl className="mt-3 space-y-1.5">
               <Row label="Name" value={ship.name} />
               <Row label="Hull" value={hull?.name ?? ship.hull_type_id} />
-              {/* When the flag is on, show the live (fleet-derived) status; otherwise the raw ship row. */}
-              <Row label="Status" value={sendEnabled ? displayStatus : ship.status} />
+              {/* When the flag is on, show the live status (disabled wins, else fleet-derived); otherwise the raw ship row. */}
+              <Row label="Status" value={sendEnabled ? (isDisabled ? 'Disabled — needs repair' : displayStatus) : ship.status} />
               <Row label="Readiness (HP)" value={`${ship.hp} / ${ship.max_hp}`} />
               <Row label="Speed" value={hull?.base_speed ?? '—'} />
               <Row label="Cargo capacity" value={ship.cargo_capacity} />
@@ -107,28 +132,51 @@ export function MainShipPreview({
               <Row label="Module slots" value={ship.module_slots} />
             </dl>
 
-            {/* 10D recall control — only when the flag is on. */}
+            {/* Flag-on control block: 10F repair (when disabled) OR 10D recall (otherwise). */}
             {sendEnabled && (
               <div className="mt-3 border-t border-slate-700/60 pt-3">
-                {recallError && (
-                  <p data-testid="mainship-recall-error" className="mb-2 rounded border border-rose-600/40 bg-rose-500/10 px-2 py-1.5 text-sm text-rose-300">
-                    {recallError}
-                  </p>
-                )}
-                <button
-                  data-testid="mainship-recall"
-                  disabled={!canRecall || recalling}
-                  onClick={doRecall}
-                  className="w-full rounded-md bg-sky-500 py-2 text-sm font-medium text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700/60 disabled:text-slate-500"
-                >
-                  {recalling ? 'Recalling…' : 'Recall main ship'}
-                </button>
-                {!canRecall && (
-                  <p data-testid="mainship-recall-note" className="mt-2 text-center text-xs text-slate-500">
-                    {displayStatus === 'home'
-                      ? 'Main ship is home.'
-                      : `Recall is available once the ship is present (currently ${displayStatus}).`}
-                  </p>
+                {isDisabled ? (
+                  <>
+                    <p data-testid="mainship-disabled-note" className="mb-2 rounded border border-amber-600/40 bg-amber-500/10 px-2 py-1.5 text-sm text-amber-200">
+                      🛠 Your main ship was disabled and must be repaired before it can travel again.
+                    </p>
+                    {repairError && (
+                      <p data-testid="mainship-repair-error" className="mb-2 rounded border border-rose-600/40 bg-rose-500/10 px-2 py-1.5 text-sm text-rose-300">
+                        {repairError}
+                      </p>
+                    )}
+                    <button
+                      data-testid="mainship-repair"
+                      disabled={repairing}
+                      onClick={doRepair}
+                      className="w-full rounded-md bg-amber-500 py-2 text-sm font-medium text-white transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-700/60 disabled:text-slate-500"
+                    >
+                      {repairing ? 'Repairing…' : 'Repair main ship'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {recallError && (
+                      <p data-testid="mainship-recall-error" className="mb-2 rounded border border-rose-600/40 bg-rose-500/10 px-2 py-1.5 text-sm text-rose-300">
+                        {recallError}
+                      </p>
+                    )}
+                    <button
+                      data-testid="mainship-recall"
+                      disabled={!canRecall || recalling}
+                      onClick={doRecall}
+                      className="w-full rounded-md bg-sky-500 py-2 text-sm font-medium text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700/60 disabled:text-slate-500"
+                    >
+                      {recalling ? 'Recalling…' : 'Recall main ship'}
+                    </button>
+                    {!canRecall && (
+                      <p data-testid="mainship-recall-note" className="mt-2 text-center text-xs text-slate-500">
+                        {displayStatus === 'home'
+                          ? 'Main ship is home.'
+                          : `Recall is available once the ship is present (currently ${displayStatus}).`}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             )}

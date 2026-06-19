@@ -126,3 +126,12 @@ export async function requestMainShipReturn(fleetId: string): Promise<{ return_m
   if (error) throw new Error(error.message)
   return data as { return_movement_id: string; main_ship_id: string }
 }
+
+// Phase 10F — repair a disabled main ship (status='destroyed' = disabled/needs-repair for a
+// PERSISTENT ship; never deletion). The only normal player recovery path; instant + free, restores
+// hp=max_hp and status='home'. Not routed through any legacy fleet API.
+export async function repairMainShip(): Promise<{ main_ship_id: string; status: string; hp: number; max_hp: number }> {
+  const { data, error } = await supabase.rpc('repair_main_ship', {})
+  if (error) throw new Error(error.message)
+  return data as { main_ship_id: string; status: string; hp: number; max_hp: number }
+}

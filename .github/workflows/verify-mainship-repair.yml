@@ -1,0 +1,35 @@
+name: Verify — main-ship repair (10F)
+
+# Regression check for the Phase 10F destroyed/repair safelock: dev-destroy (service-role) cleans
+# up the linked fleet and wins over in-flight state; send/return blocked while destroyed;
+# repair_main_ship restores home + full hp; send works again; no fleet_units for main-ship fleets.
+# Temporarily enables the flag + shrinks travel config, restoring all of it in finally. Shares the
+# live-DB concurrency group. Dispatch on demand.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run main-ship repair verification
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run verify:mainship-repair
