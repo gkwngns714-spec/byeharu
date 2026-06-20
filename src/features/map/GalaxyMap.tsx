@@ -3,8 +3,10 @@ import type { MapLocation } from './mapTypes'
 import type { Base } from '../base/baseTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MainShipLite } from './useGalaxyMapData'
+import type { MainShipFleet } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
+import { MainShipMarker } from './MainShipMarker'
 
 // Read-only 2D galaxy map (plain SVG — no canvas/WebGL). World coordinates are normalized
 // once into a 0..1000 viewBox; a transform group provides pan (drag) + zoom (wheel/buttons).
@@ -49,6 +51,8 @@ export function GalaxyMap({
   locations,
   base,
   mainShip,
+  mainShipFleet,
+  mainshipSendEnabled,
   movements,
   selectedId,
   onSelect,
@@ -56,6 +60,8 @@ export function GalaxyMap({
   locations: MapLocation[]
   base: Base | null
   mainShip: MainShipLite | null
+  mainShipFleet: MainShipFleet | null
+  mainshipSendEnabled: boolean
   movements: FleetMovement[]
   selectedId: string | null
   onSelect: (id: string | null) => void
@@ -205,6 +211,16 @@ export function GalaxyMap({
               />
             )
           })}
+
+          {/* OSN-1: local player's own main-ship marker — top of the transform group, pointer-transparent,
+              flag-gated. Read-only; position comes solely from resolveMainShipMarker. */}
+          {mainshipSendEnabled && (
+            <MainShipMarker
+              inputs={{ mainShip, mainShipFleet, movements, base, locations }}
+              norm={norm}
+              k={view.k}
+            />
+          )}
         </g>
       </svg>
 

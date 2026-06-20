@@ -75,6 +75,8 @@ export function GalaxyMapScreen() {
               locations={locations}
               base={base}
               mainShip={mainShip}
+              mainShipFleet={mainShipFleet}
+              mainshipSendEnabled={mainshipSendEnabled}
               movements={movements}
               selectedId={selectedId}
               onSelect={setSelectedId}
