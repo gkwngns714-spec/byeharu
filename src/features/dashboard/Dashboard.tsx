@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useGameState } from './useGameState'
 import { BasePanel } from '../base/BasePanel'
+import { MainShipPanel } from './MainShipPanel'
 import { TrainShipsPanel } from '../production/TrainShipsPanel'
 import { BuildQueuePanel } from '../production/BuildQueuePanel'
 import { ExpeditionLauncher } from '../map/ExpeditionLauncher'
@@ -76,6 +77,15 @@ export function Dashboard() {
             resources={game.resources}
             unitTypes={game.unitTypes}
           />
+          {/* Phase 10H: main-ship status in Command Center, gated by the master flag (hidden until launch). */}
+          {game.mainshipSendEnabled && (
+            <MainShipPanel
+              mainShip={game.mainShip}
+              fleets={game.fleets}
+              movements={game.movements}
+              locations={game.locations}
+            />
+          )}
           <TrainShipsPanel
             base={game.base}
             units={game.units}
