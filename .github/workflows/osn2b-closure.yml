@@ -1,18 +1,14 @@
 name: OSN-2b closure (strict)
 
 # Focused, on-demand closure gate for OSN-2b. Every step is BLOCKING (no continue-on-error):
-#   1. npm ci                        — reproducible install (incl. tracked @playwright/test)
-#   2. strict ESLint over OSN-2b's   — runs WITHOUT continue-on-error. Scoped to the files OSN-2b
-#      own changed files               actually changed, because the repo has 2 PRE-EXISTING eslint
-#                                       errors unrelated to OSN-2b (react-hooks v7 "Date.now during
-#                                       render" in dashboard/MainShipPanel.tsx and map/MainShipMarker.tsx,
-#                                       the latter from OSN-1). Fixing those is out of OSN-2b scope, so
-#                                       this gate proves OSN-2b's surface is lint-clean without a broad
-#                                       repo-wide gate. `npm run lint` (eslint .) remains the repo lint.
-#   3. tsc -b                        — whole-project typecheck
-#   4. vite build                    — whole-project production build
-#   5. resolver unit test            — npm run verify:osn:resolver
-# This is NOT a repo-wide CI policy change and does not gate other pushes.
+#   1. npm ci             — reproducible install (incl. tracked, exactly-pinned @playwright/test)
+#   2. npm run lint       — FULL-REPO ESLint (eslint .), no continue-on-error. Green after the
+#                           dedicated lint-fix of the two prior Date.now()-during-render errors
+#                           (dashboard/MainShipPanel.tsx, map/MainShipMarker.tsx).
+#   3. tsc -b             — whole-project typecheck
+#   4. vite build         — whole-project production build
+#   5. resolver unit test — npm run verify:osn:resolver
+# This is an on-demand gate; it does not change the repo-wide push CI policy.
 
 on:
   workflow_dispatch:
@@ -31,15 +27,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Strict lint (OSN-2b changed surface)
-        run: >
-          npx eslint
-          src/features/map/resolveMainShipMarker.ts
-          src/features/map/mainshipApi.ts
-          src/features/map/useGalaxyMapData.ts
-          src/features/map/GalaxyMap.tsx
-          src/features/map/GalaxyMapScreen.tsx
-          tests/resolveMainShipMarker.spec.ts
+      - name: Strict lint (full repo, no continue-on-error)
+        run: npm run lint
       - name: Typecheck (tsc -b)
         run: npx tsc -b
       - name: Production build (vite build)

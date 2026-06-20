@@ -1,0 +1,33 @@
+name: OSN-2b — spatial_state distribution (read-only)
+
+# Read-only diagnostic: prints the live distribution of main_ship_instances.spatial_state via the
+# service-role key (owner-read RLS blocks the anon key from seeing all rows). SELECT only — no
+# writes, no DB mutation, no flag/config change. Fails ONLY if a live row uses home/at_location/
+# in_transit (which the OSN-2b resolver would render hidden). On-demand.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  distribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Read spatial_state distribution (read-only)
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run verify:osn2:distribution
