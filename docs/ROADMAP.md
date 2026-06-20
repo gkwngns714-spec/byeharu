@@ -75,9 +75,9 @@ become stronger."*
 | **7** ✅ | `main_ship_hull_types` + `main_ship_instances` (one per player; hull base stats; ensure/get/rename) | server-authoritative; sits `home`; doesn't drive expeditions yet |
 | **8** ✅ | `calculate_expedition_stats()` (read/compute adapter; capacity hard-cap + tradeoffs, not a sum) | old fleet-stack path still owns combat; not live-wired yet |
 | 9 | Expedition UI reframe (Fleet→Ship, Train Ships→Support Craft, Send Fleet→Send Expedition) | no table renames |
-| 10 | Trading (buy low / travel / sell high; cargo, route danger) | activity-isolated |
-| 11 | Exploration (scan/discover → data/shards/blueprints) | pending discovery rewards |
-| 12 | Mining (extract → ore/crystal/cores) | pending resource rewards |
+| 10 | Trading (buy low / travel / sell high; cargo, route danger) | activity-isolated; uses the **OSN** spatial/route model where movement is involved (preferred substrate, not a hard gate) |
+| 11 | Exploration (scan/discover → data/shards/blueprints) | pending discovery rewards; scan in **OSN** proximity of unexplored coordinates where applicable |
+| 12 | Mining (extract → ore/crystal/cores) | pending resource rewards; navigate via **OSN**, extract within proximity where applicable |
 | 13 | Module instances + crafting | instances, not stack-only |
 | 14 | Module fitting (`fit_module_to_ship`) | server-validated; feeds stats |
 | 15 | Captain instances + assignment | effects via `calculate_expedition_stats` |
@@ -89,3 +89,26 @@ become stronger."*
 
 **Each phase has its own acceptance criteria + verification; backend changes go through a
 migration with a `verify:*` script, and the engine's M2/M3/M4/M4.5 tests must stay green.**
+
+## Cross-cutting initiative: Open-Space Navigation (OSN)
+
+OSN is a **cross-cutting spatial foundation — NOT a numbered Phase.** It deliberately sits *outside*
+the numbered plan above so it does not collide with **Phase 10 (Trading)** / **Phase 11 (Exploration)**
+or the separate main-ship **Phase 10A–10H** transition. It gives the main ship one authoritative
+position model, free movement across open space, stop-in-space, and proximity rules.
+
+**Product direction (2026-06-20):** prioritize **OSN before new main-ship combat** — the intended game
+is exploration / mining / trading / persistent open-space movement, and combat should later build on
+the resulting real coordinate, route, and proximity model.
+
+Stages (sequential, additive; every completed system stays green each stage):
+- **OSN-1** — live read-only main-ship marker + route visualization (one shared position resolver).
+- **OSN-2** — durable free-space position model (storage choice deferred; criteria only).
+- **OSN-3** — arbitrary-coordinate movement (parallel, main-ship-only; verified location RPCs frozen).
+- **OSN-4** — stop mid-travel (server-side, one locked transaction; DB time, no orphans).
+- **OSN-5** — proximity / docking semantics (interaction range ≠ docked/present).
+
+OSN is the **preferred** shared spatial substrate for trading, exploration, mining, main-ship combat,
+and multi-ship work — **not a hard prerequisite** for a minimal version of each (sequencing stays
+flexible). Full architecture rules and the main-ship-specific design live in
+`docs/MAINSHIP_TRANSITION.md` **§12. Open-Space Navigation (OSN)**.

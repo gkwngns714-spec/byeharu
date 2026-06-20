@@ -302,6 +302,25 @@ Every phase keeps `verify-m2..m5`, `m45`, `galaxy9b` green. **Nothing is deleted
 **The 10C–10F contracts are shaped (ship-id-parameterized, group-ready) so 10G+ adds ships
 without rewrites** (★ vision).
 
+> **Implemented-vs-planned reconciliation (added 2026-06-20 — historical; labels preserved, NOT renamed).**
+> The §7 table above is the *original plan*. What was actually built diverged, and some numbers were
+> reused for different content. The original labels are kept as-is above; this note records reality:
+> - **10E** — *planned:* combat + defeat→permanent destruction + emergency starter. *Built instead:*
+>   **legacy/main-ship isolation hardening** (commit `30b9172`). The planned combat content was **not** built.
+> - **10F** — *planned:* deprecate the old metal-built send path. *Built instead:* **destroyed/repair
+>   safelock foundation** (commit `a3cfaf0`, migration 0052) — a recovery *landing* with **no combat
+>   trigger**. The old send path is **not** yet deprecated.
+> - **10H** — *no original §7 entry.* *Built:* **main-ship panel in Command Center + Repair** (commits
+>   `85100b2`/`eda5876`/`e6ff5f2`).
+> - **Unnumbered:** direct **location→location** move — `move_main_ship_to_location` (migration 0053,
+>   commits `a5975ac`/`d7e6f83`, `verify-mainship-move` 17/17). Also unnumbered: canonical
+>   `resolve_fleet_movement_speed` (migration 0051).
+> - **10G** remains *planned multi-ship* (this doc), unbuilt. **Main-ship combat was never built.**
+>
+> **Product direction (2026-06-20): prioritize Open-Space Navigation (OSN, §12) before new main-ship
+> combat work, so future combat should be designed to consume the same coordinate and proximity model
+> where appropriate.**
+
 ---
 
 ## 8. Spaghetti risks & mitigations
@@ -439,3 +458,75 @@ are designed around **main ships only.**
 **Exit criterion:** the old system is deleted **only** when the main-ship path is *fully verified*
 and *nothing references the old path*. Until then it stays, dormant or active, but the direction is
 always **toward one system, not two.**
+
+---
+
+## 12. Open-Space Navigation (OSN) — cross-cutting initiative (added 2026-06-20)
+
+OSN is a **named initiative, NOT a numbered Phase** — it sits outside the §7 main-ship numbering and
+the `ROADMAP.md` Phase 10/11 numbering so it collides with neither. It extends the *implemented*
+main-ship movement (10C send, 10D UI, the unnumbered direct location→location move, 10F safelock) from
+"jump between named locations" toward **persistent free movement across open space**. It is additive;
+the implemented systems stay frozen and canonical.
+
+**Product direction (2026-06-20):** prioritize **OSN before new main-ship combat work**, so future
+combat should be designed to consume the same coordinate and proximity model where appropriate.
+
+### Core rule — ONE authoritative spatial state
+A main ship resolves to **exactly one** authoritative spatial state at any time:
+- **home** → base coordinates;
+- **present at a named location** → that location's coordinates;
+- **moving / returning** → the active movement's coordinates + **server-controlled** time;
+- **stopped in free space** → the durable coordinate model added in OSN-2;
+- **destroyed** → **no map coordinate** (unless a later, explicit last-known-position rule is added).
+
+No UI or feature may compute ship position from a different source. **OSN-1 establishes one pure,
+shared, read-only position resolver** that every surface reads.
+
+### OSN-1 — Live marker & route visualization (read-only)
+- **Read-only ONLY:** no migrations, RPCs, flags, writes, movement-rule changes, or command changes.
+- Renders the marker from the single resolver: home / location / interpolated-while-moving / returning;
+  **destroyed → marker HIDDEN**, with destroyed state shown through the existing UI. Do **not** invent a
+  last-known coordinate, and do **not** promise both a hidden and a disabled destroyed marker.
+- Uses the **existing coordinate-conversion / wrapping conventions**; defines **shortest-path
+  interpolation across wrapped map axes**; **clamps movement progress to 0..1**.
+- Client interpolation is **visual only**; server movement state stays authoritative. Polling may
+  correct the marker but must **never mutate game state**. **No marker command interaction in OSN-1.**
+- **Out of OSN-1:** combat, trading, mining, captains, modules, legacy fleets, `fleet_units`,
+  `base_units`, arbitrary-coordinate movement, stop, the free-space model, and any migration/RPC/flag.
+
+### OSN-2 — Durable free-space position model (design; storage choice deferred)
+Do **not** pick the storage table in this docs pass. Selection criteria:
+- exactly **one** write owner / source of truth;
+- **no** duplicate fleet/main-ship coordinate storage;
+- coexists cleanly with home, named-location presence, movement, destroyed state, and future multi-ship;
+- **never** creates fake `location_presence` for empty space (presence stays for real locations only).
+
+### OSN-3 — Arbitrary-coordinate movement
+Travel from the current coordinate (home / location / free-space) to a chosen world coordinate, reusing
+the movement engine. The verified location RPCs are **FROZEN and canonical** and MUST NOT be rewritten
+in OSN-1–4: `send_main_ship_expedition`, `move_main_ship_to_location`, `request_main_ship_return`,
+`repair_main_ship`, `process_fleet_movements`. Coordinate movement is a **parallel, main-ship-only** path.
+
+### OSN-4 — Stop mid-travel (server-side, ONE locked transaction)
+- lock the fleet + active movement;
+- compute current position using **database time, not browser time**;
+- verify the movement is still active / not arrived;
+- persist the stopped coordinate **atomically**;
+- close/cancel the old movement with an **explicit terminal reason**;
+- leave **no** orphan movement, duplicate movement, or active location presence.
+
+### OSN-5 — Proximity / docking
+Define **"in interaction range"** SEPARATELY from **"docked / present."** Proximity alone must **not**
+auto-create location presence or trigger trade/combat — docking is an explicit transition.
+
+### How future systems consume OSN (preferred substrate, NOT a hard gate)
+- **Trading** (`ROADMAP` 10): markets at coordinates; route = OSN path; danger evaluated along the segment.
+- **Exploration** (`ROADMAP` 11): scan/discover when in **proximity (OSN-5)** of an unexplored coordinate.
+- **Mining** (`ROADMAP` 12): navigate (OSN-3) to a field coordinate, extract within proximity.
+- **Main-ship combat** (formerly §7's planned 10E content): proximity-triggered encounters; defeat lands
+  in the already-built **10F destroyed/repair safelock** — combat comes **after** OSN and builds on it.
+- **Multi-ship** (§7's 10G): each ship carries its own free-space position; group movement composes OSN.
+
+OSN is the **preferred** shared spatial substrate — **not a hard prerequisite** for a minimal version
+of any one system; product sequencing stays flexible.
