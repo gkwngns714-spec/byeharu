@@ -108,10 +108,15 @@ export function GalaxyMap({
     drag.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }
   }
   const onPointerMove = (e: RPointerEvent) => {
-    if (!drag.current) return
-    const dx = toSvgUnits(e.clientX - drag.current.x)
-    const dy = toSvgUnits(e.clientY - drag.current.y)
-    setView((v) => ({ ...v, ...clampPan(drag.current!.tx + dx, drag.current!.ty + dy, v.k) }))
+    // Capture the drag snapshot locally. The setView updater runs LATER (React render phase), and
+    // drag.current can be null by then (pointer already released) — dereferencing it inside the
+    // updater crashed the whole tree ("Cannot read properties of null (reading 'tx')"), which with
+    // no error boundary blanked the page on pan. The captured `d` is guaranteed non-null here.
+    const d = drag.current
+    if (!d) return
+    const dx = toSvgUnits(e.clientX - d.x)
+    const dy = toSvgUnits(e.clientY - d.y)
+    setView((v) => ({ ...v, ...clampPan(d.tx + dx, d.ty + dy, v.k) }))
   }
   const onPointerUp = () => { drag.current = null }
   const onWheel = (e: RWheelEvent) => {
