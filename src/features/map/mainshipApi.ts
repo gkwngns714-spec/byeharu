@@ -70,6 +70,7 @@ export type MainShipDisplayStatus = 'home' | 'traveling' | 'present' | 'returnin
 export interface MainShipFleet {
   id: string
   status: string // 'moving' | 'present' | 'returning'
+  current_location_id: string | null // set when present (used to exclude the current location)
 }
 
 const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
@@ -81,7 +82,7 @@ const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
 export async function fetchActiveMainShipFleet(mainShipId: string): Promise<MainShipFleet | null> {
   const { data, error } = await supabase
     .from('fleets')
-    .select('id, status')
+    .select('id, status, current_location_id')
     .eq('main_ship_id', mainShipId)
     .in('status', ACTIVE_FLEET_STATUSES)
     .order('created_at', { ascending: false })
@@ -125,6 +126,23 @@ export async function requestMainShipReturn(fleetId: string): Promise<{ return_m
   const { data, error } = await supabase.rpc('request_main_ship_return', { p_fleet: fleetId })
   if (error) throw new Error(error.message)
   return data as { return_movement_id: string; main_ship_id: string }
+}
+
+// Move a PRESENT main-ship fleet directly from its current location to another valid non-combat
+// location — no forced return home (move_main_ship_to_location RPC). Server re-validates present +
+// non-combat + not-the-current-location.
+export interface MainShipMoveResult {
+  fleet_id: string
+  movement_id: string
+  main_ship_id: string
+  from_location_id: string
+  to_location_id: string
+  arrive_at: string
+}
+export async function moveMainShipToLocation(fleetId: string, locationId: string): Promise<MainShipMoveResult> {
+  const { data, error } = await supabase.rpc('move_main_ship_to_location', { p_fleet: fleetId, p_location: locationId })
+  if (error) throw new Error(error.message)
+  return data as MainShipMoveResult
 }
 
 // Phase 10F — repair a disabled main ship (status='destroyed' = disabled/needs-repair for a
