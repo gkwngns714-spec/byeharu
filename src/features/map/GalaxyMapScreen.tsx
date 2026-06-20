@@ -13,7 +13,7 @@ import { MainShipCommand } from './MainShipCommand'
 export function GalaxyMapScreen() {
   const {
     loading, error, locations, meta, base, mainShip, movements, locationStates, baseUnits, unitTypes,
-    mainshipSendEnabled, mainShipFleet, refresh,
+    mainshipSendEnabled, mainShipFleet, mainShipPresence, refresh,
   } = useGalaxyMapData()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showPreview, setShowPreview] = useState(false)
@@ -76,6 +76,7 @@ export function GalaxyMapScreen() {
               base={base}
               mainShip={mainShip}
               mainShipFleet={mainShipFleet}
+              mainShipPresence={mainShipPresence}
               mainshipSendEnabled={mainshipSendEnabled}
               movements={movements}
               selectedId={selectedId}

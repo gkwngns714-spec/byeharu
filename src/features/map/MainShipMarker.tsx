@@ -31,7 +31,13 @@ export function MainShipMarker({
   if (!marker) return null
   const p = norm({ x: marker.x, y: marker.y })
   const color =
-    marker.state === 'returning' ? '#38bdf8' : marker.state === 'outbound' ? '#fbbf24' : '#34d399'
+    marker.state === 'returning'
+      ? '#38bdf8'
+      : marker.state === 'outbound'
+        ? '#fbbf24'
+        : marker.state === 'in_space'
+          ? '#a78bfa' // parked in open space (OSN-2b) — distinct violet
+          : '#34d399'
   const r = 7 / k
   // Upward chevron/triangle — distinct from the cyan home diamond and the location dots.
   const points = `${p.x},${p.y - r} ${p.x + r * 0.8},${p.y + r * 0.7} ${p.x - r * 0.8},${p.y + r * 0.7}`

@@ -17,6 +17,7 @@
     "verify:galaxy:browser": "playwright test galaxy.spec.ts",
     "verify:galaxy9b:browser": "playwright test galaxy9b.spec.ts",
     "verify:osn1:unit": "playwright test resolveMainShipMarker.spec.ts",
+    "verify:osn:resolver": "playwright test resolveMainShipMarker.spec.ts",
     "verify:inventory": "node scripts/verify-inventory.mjs",
     "verify:phase4": "node scripts/verify-phase4.mjs",
     "verify:phase5": "node scripts/verify-phase5.mjs",

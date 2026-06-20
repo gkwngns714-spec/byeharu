@@ -12,6 +12,11 @@ import { supabase } from '../../lib/supabase'
 // Main ships are NOT old fleet_units: the linked fleet carries zero units and is only used here
 // to read status (moving/present/returning) and to address the return RPC by fleet id.
 
+// OSN-2 spatial-mode selector (migration 0054). NULL on every row today (legacy): no writer sets
+// a non-null value yet. Position for NULL rows still comes from the base/fleet/movement/presence
+// model; only 'in_space' (a future OSN-3/4 writer) carries ship-owned coordinates.
+export type SpatialState = 'home' | 'at_location' | 'in_transit' | 'in_space' | 'destroyed'
+
 export interface MainShipRow {
   name: string
   status: string
@@ -90,6 +95,33 @@ export async function fetchActiveMainShipFleet(mainShipId: string): Promise<Main
     .maybeSingle()
   if (error) return null // non-fatal: treat as no active fleet (home)
   return (data as MainShipFleet) ?? null
+}
+
+// The active location-presence row for a main-ship fleet (owner-read). Used ONLY to validate a
+// named-location marker per the OSN-2b deterministic rule (fleet present ∧ current_location_id ∧
+// matching ACTIVE presence). Read-only; no new polling — fetched inside the existing map poll.
+export interface MainShipPresence {
+  fleet_id: string
+  location_id: string | null
+  status: string // 'active' is the only state that validates a present-at-location marker
+}
+
+/**
+ * Owner-read the ACTIVE location-presence row for a main-ship fleet, if any. Returns null when the
+ * fleet has no active presence (e.g. moving/returning, or none). No RPC; owner-read RLS on
+ * location_presence already grants SELECT to the authenticated owner.
+ */
+export async function fetchActiveMainShipPresence(fleetId: string): Promise<MainShipPresence | null> {
+  const { data, error } = await supabase
+    .from('location_presence')
+    .select('fleet_id, location_id, status')
+    .eq('fleet_id', fleetId)
+    .eq('status', 'active')
+    .order('entered_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null // non-fatal: treat as no active presence
+  return (data as MainShipPresence) ?? null
 }
 
 /**
