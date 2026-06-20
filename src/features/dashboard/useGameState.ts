@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchGameConfig, fetchUnitTypes, type UnitType } from '../../lib/catalog'
+import { fetchGameConfig, fetchMainshipSendEnabled, fetchUnitTypes, type UnitType } from '../../lib/catalog'
+import { fetchMyMainShip, type MainShipView } from '../map/mainshipApi'
 import { fetchLocationStates, fetchWorldMap } from '../map/mapApi'
 import type { LocationState, MapLocation } from '../map/mapTypes'
 import { ensureBase, fetchBase, fetchBaseResources, fetchBaseUnits } from '../base/baseApi'
@@ -29,6 +30,10 @@ export interface GameState {
   presences: LocationPresence[]
   locationStates: Record<string, LocationState>
   buildOrders: BuildOrder[]
+  // Phase 10H: the player's main ship (owner-read) + the master flag (read-only, for panel gating).
+  // The active main-ship fleet + its movement are derived from `fleets`/`movements` in the panel.
+  mainShip: MainShipView | null
+  mainshipSendEnabled: boolean
 }
 
 const EMPTY: GameState = {
@@ -46,6 +51,8 @@ const EMPTY: GameState = {
   presences: [],
   locationStates: {},
   buildOrders: [],
+  mainShip: null,
+  mainshipSendEnabled: false,
 }
 
 /**
@@ -59,22 +66,24 @@ export function useGameState(pollMs = 3000) {
     unitTypes: UnitType[]
     locations: MapLocation[]
     config: Record<string, number>
+    mainshipSendEnabled: boolean
   } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [unitTypes, world, config] = await Promise.all([
+        const [unitTypes, world, config, mainshipSendEnabled] = await Promise.all([
           fetchUnitTypes(),
           fetchWorldMap(),
           fetchGameConfig(),
+          fetchMainshipSendEnabled(),
         ])
         const locations = world.sectors.flatMap((s) => s.zones.flatMap((z) => z.locations))
-        staticRef.current = { unitTypes, locations, config }
+        staticRef.current = { unitTypes, locations, config, mainshipSendEnabled }
       }
 
       const base = await fetchBase()
-      const [units, resources, fleets, fleetUnits, movements, presences, locationStates, buildOrders] =
+      const [units, resources, fleets, fleetUnits, movements, presences, locationStates, buildOrders, mainShip] =
         await Promise.all([
           base ? fetchBaseUnits(base.id) : Promise.resolve([]),
           base ? fetchBaseResources(base.id) : Promise.resolve([]),
@@ -84,6 +93,7 @@ export function useGameState(pollMs = 3000) {
           fetchActivePresences(),
           fetchLocationStates(),
           fetchBuildOrders(),
+          fetchMyMainShip().catch(() => null), // non-fatal: a main-ship read hiccup must not break the Command Center
         ])
 
       setState({
@@ -98,6 +108,8 @@ export function useGameState(pollMs = 3000) {
         presences,
         locationStates,
         buildOrders,
+        mainShip,
+        mainshipSendEnabled: staticRef.current.mainshipSendEnabled,
         unitTypes: staticRef.current.unitTypes,
         locations: staticRef.current.locations,
         config: staticRef.current.config,
