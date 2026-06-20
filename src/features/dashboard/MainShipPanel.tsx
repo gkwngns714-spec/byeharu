@@ -27,7 +27,7 @@ export function MainShipPanel({
   onChanged: () => void
 }) {
   // 1s tick for a smooth countdown/progress bar (the backend stays the source of truth).
-  const [, setNow] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const iv = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(iv)
@@ -85,7 +85,7 @@ export function MainShipPanel({
         const dep = new Date(move.depart_at).getTime()
         const arr = new Date(move.arrive_at).getTime()
         if (!(arr > dep)) return null
-        return Math.max(0, Math.min(1, (Date.now() - dep) / (arr - dep)))
+        return Math.max(0, Math.min(1, (now - dep) / (arr - dep)))
       })()
     : null
 

@@ -17,14 +17,16 @@ export function MainShipMarker({
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
 }) {
-  const [, setTick] = useState(0)
-  const marker = resolveMainShipMarker(inputs, Date.now())
+  // `now` in state (lazy init), advanced by the 1s tick below ONLY while moving — keeps Date.now()
+  // out of render (react-hooks purity) while preserving the exact prior tick behavior.
+  const [now, setNow] = useState(() => Date.now())
+  const marker = resolveMainShipMarker(inputs, now)
   const moving = marker?.state === 'outbound' || marker?.state === 'returning'
 
   // Local visual tick — only while moving; clears when static/hidden. Never mutates game state.
   useEffect(() => {
     if (!moving) return
-    const iv = setInterval(() => setTick((n) => n + 1), 1000)
+    const iv = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(iv)
   }, [moving])
 
