@@ -543,3 +543,34 @@ world X/Y · state · visibility · optional label/display metadata**. This is a
 boundary only** for now. During OSN, do **NOT** add a marker table, a global ship feed, a realtime
 listener, or any cross-player coordinate query — those arrive (gated by visibility policy) only in
 Online Presence & Visibility v1.
+
+---
+
+## 13. Main Ship Repair & Recovery (future initiative)
+
+A **named cross-cutting initiative, NOT a numbered Phase.** **Timing:** design/build **after** OSN
+establishes a **durable free-space position** (OSN-2) and **proximity/docking** rules (OSN-5), and
+**before main-ship combat is released** — combat causes destruction, so real repair/recovery must
+exist before ships can be destroyed in play.
+
+**Why this is filed now (placeholder).** The OSN-1 destroyed-state smoke confirmed the current
+`repair_main_ship()` works as a **safelock** but is **not final gameplay**: it is instant, free,
+teleports the ship to Home, and has no repair-location / cargo / time / cost consequence. That RPC
+(and the `destroyed` status from §6/10F) is **preserved as a temporary compatibility + test-recovery
+path** until this initiative replaces it — it is **not** changed by OSN-1.
+
+**Future design must cover:**
+1. **Destruction/recovery state** + whether a **last-known coordinate** is retained (ties to OSN free-space model, OSN-2).
+2. **Home-only repair vs station/colony repair facilities** (depends on OSN-5 docking + future station/colony progression).
+3. **Server-authoritative repair duration / queue** — no instant repair; computed from DB time (same discipline as OSN-4).
+4. **Cost** — materials / currency / service fee.
+5. **Emergency recovery vs normal repair** — the safelock guarantee (never a permanent account lock) must survive.
+6. **Cargo, active activities, and movement consequences** of destruction and of repair.
+7. **Safe behavior when destroyed in open space** (free-space coordinate; tow/recovery vs abandon).
+8. **Migration:** how the existing `destroyed` status + `repair_main_ship()` migrate to the new model
+   **without breaking current players** — keep the RPC as a compatibility path; deprecate only after
+   the new path is verified and nothing depends on the old one (same retirement discipline as §11).
+
+**Dependencies / order:** OSN-2 (durable position) + OSN-5 (proximity/docking) land first → this
+initiative → then main-ship combat. Until then, the **10F safelock + `repair_main_ship()` remain the
+interim recovery**, unchanged.

@@ -155,3 +155,17 @@ listener, or cross-player coordinate query (see the OSN marker rule in `docs/MAI
 7. Outpost → Station → Colony progression once economy + location investment mature (Phases **18–19**).
 
 *(These extend the existing numbered phases where applicable; historical labels are not renamed.)*
+
+## Cross-cutting initiative: Main Ship Repair & Recovery
+
+A **cross-cutting initiative — NOT a numbered Phase.** **Timing:** **after** OSN establishes a durable
+free-space position (**OSN-2**) and proximity/docking (**OSN-5**), and **before main-ship combat is
+released** (combat causes destruction, so real repair/recovery must exist first).
+
+The current `repair_main_ship()` is a **temporary safelock / test-recovery path** only — it's instant,
+free, teleports to Home, and has no location/cargo/time/cost consequence. It is **preserved unchanged**
+as a compatibility path until this initiative replaces it. Full design (destruction/recovery state +
+last-known coordinate, Home-vs-station/colony repair, server-authoritative duration/queue, cost,
+emergency-vs-normal recovery, cargo/activity/movement consequences, open-space destruction, and a
+non-breaking migration of the existing `destroyed`/`repair_main_ship()` safelock) lives in
+`docs/MAINSHIP_TRANSITION.md` **§13. Main Ship Repair & Recovery**.
