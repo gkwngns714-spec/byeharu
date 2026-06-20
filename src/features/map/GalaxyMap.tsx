@@ -1,5 +1,4 @@
 import { useMemo, useRef, useState, type PointerEvent as RPointerEvent, type WheelEvent as RWheelEvent } from 'react'
-import { createPortal } from 'react-dom'
 import type { MapLocation } from './mapTypes'
 import type { Base } from '../base/baseTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
@@ -81,25 +80,6 @@ export function GalaxyMap({
     return (dxPx * VIEW) / w
   }
 
-  // ── TEMPORARY opt-in camera debug (?cameraDebug=1). Read-only; does NOT change clamp behavior.
-  //    Proves where the coordinate model diverges. Remove in the camera-fix cleanup phase. ──
-  const cameraDebug =
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('cameraDebug') === '1'
-  const debugInfo = useMemo(() => {
-    if (!cameraDebug) return null
-    const pts: Pt[] = locations.map((l) => ({ x: l.x, y: l.y }))
-    if (base) pts.push({ x: base.x, y: base.y })
-    for (const m of movements) {
-      pts.push({ x: m.origin_x, y: m.origin_y })
-      pts.push({ x: m.target_x, y: m.target_y })
-    }
-    const ext = (arr: number[]) => (arr.length ? { lo: Math.min(...arr), hi: Math.max(...arr) } : { lo: 0, hi: 0 })
-    const wx = ext(pts.map((p) => p.x)), wy = ext(pts.map((p) => p.y))
-    const np = pts.map(norm)
-    const nx = ext(np.map((p) => p.x)), ny = ext(np.map((p) => p.y))
-    return { count: pts.length, wx, wy, nx, ny }
-  }, [cameraDebug, locations, base, movements, norm])
-
   const showLabels = view.k >= 0.9
 
   // ── pan / zoom handlers (read-only camera; no data mutation) ──
@@ -142,13 +122,6 @@ export function GalaxyMap({
   const reset = () => setView({ k: 1, tx: 0, ty: 0 })
 
   const homePt = base ? norm({ x: base.x, y: base.y }) : null
-
-  // Debug-only derived values (mirror clampPan's CURRENT bounds for inspection; not used to clamp).
-  const dbgRect = cameraDebug ? svgRef.current?.getBoundingClientRect() : undefined
-  const dbgContentSize = view.k * VIEW
-  const dbgAllowMin = dbgContentSize >= VIEW ? VIEW - dbgContentSize : 0
-  const dbgAllowMax = dbgContentSize >= VIEW ? 0 : VIEW - dbgContentSize
-  const dbgFinite = Number.isFinite(view.tx) && Number.isFinite(view.ty)
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-lg border border-slate-700 bg-[#070b14]">
@@ -238,29 +211,6 @@ export function GalaxyMap({
       <div className="pointer-events-none absolute bottom-2 left-2 z-10 text-[10px] text-slate-500">
         {locations.length} locations · {movements.length} moving · drag to pan · scroll/buttons to zoom
       </div>
-
-      {/* TEMPORARY camera debug overlay (?cameraDebug=1). Portaled to <body> with position:fixed +
-          max z-index + pointer-events:none so it stays visible even if the map subtree is
-          clipped/transformed off-screen. If it ALSO vanishes during the black state, the whole React
-          tree unmounted (a crash) rather than just the map content. Read-only; no clamp change. */}
-      {cameraDebug && typeof document !== 'undefined' && createPortal(
-        <div
-          style={{ position: 'fixed', top: 8, left: 8, zIndex: 2147483647, pointerEvents: 'none', maxWidth: '92vw' }}
-          className="rounded bg-black/90 p-2 font-mono text-[10px] leading-tight text-emerald-300"
-        >
-          <div>k={view.k.toFixed(3)} · tx={view.tx.toFixed(1)} · ty={view.ty.toFixed(1)} · finite={String(dbgFinite)}</div>
-          <div>transform: translate({view.tx.toFixed(1)} {view.ty.toFixed(1)}) scale({view.k.toFixed(3)})</div>
-          <div>viewport(px): {dbgRect ? `${Math.round(dbgRect.width)}×${Math.round(dbgRect.height)}` : '—'} · viewBox: {VIEW}×{VIEW}</div>
-          {debugInfo && (
-            <>
-              <div>world: x[{debugInfo.wx.lo}..{debugInfo.wx.hi}] y[{debugInfo.wy.lo}..{debugInfo.wy.hi}] · pts={debugInfo.count}</div>
-              <div>contentN: x[{debugInfo.nx.lo.toFixed(1)}..{debugInfo.nx.hi.toFixed(1)}] y[{debugInfo.ny.lo.toFixed(1)}..{debugInfo.ny.hi.toFixed(1)}]</div>
-            </>
-          )}
-          <div>clamp allow tx,ty ∈ [{dbgAllowMin.toFixed(1)} .. {dbgAllowMax.toFixed(1)}] (same both axes — current logic)</div>
-        </div>,
-        document.body,
-      )}
     </div>
   )
 }

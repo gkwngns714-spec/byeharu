@@ -7,7 +7,6 @@ import { Dashboard } from '../features/dashboard/Dashboard'
 import { MapPage } from '../features/map/MapPage'
 import { GalaxyMapScreen } from '../features/map/GalaxyMapScreen'
 import { CombatReportPage } from '../features/combat/CombatReportPage'
-import { DebugErrorBoundary } from './DebugErrorBoundary'
 
 export function App() {
   const init = useAuthStore((s) => s.init)
@@ -42,10 +41,7 @@ export function App() {
           path="/galaxy"
           element={
             <RequireAuth>
-              {/* TEMPORARY: catch + display the pan-crash render error (remove in cleanup). */}
-              <DebugErrorBoundary>
-                <GalaxyMapScreen />
-              </DebugErrorBoundary>
+              <GalaxyMapScreen />
             </RequireAuth>
           }
         />
