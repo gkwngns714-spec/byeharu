@@ -23,6 +23,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      # @playwright/test is NOT a tracked dependency — install it ad-hoc with --no-save so
+      # package-lock.json stays in sync and other workflows' `npm ci` keep working (mirrors browser.yml).
+      - name: Install Playwright (ad-hoc, no lockfile change)
+        run: |
+          npm install --no-save @playwright/test@latest
+          npx playwright install --with-deps chromium
       - name: Run OSN resolver unit test
         run: npm run verify:osn:resolver
