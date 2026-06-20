@@ -1,0 +1,36 @@
+name: Verify — OSN-2a (spatial_state schema)
+
+# Schema-only verification for migration 0054 (main_ship_instances.spatial_state + space_x/space_y).
+# Proves: columns exist, nullable with no default; NO existing ship back-filled to 'home' (legacy
+# rows stay NULL); legacy NULL + null coords accepted; every invalid spatial_state/coordinate combo
+# rejected by the CHECK constraints; in_space + coords accepted (double precision round-trips);
+# authenticated + anon clients cannot write the new columns; OSN-1 resolver source references none of
+# them. Touches NO config/flags/gameplay. Shares the live-DB concurrency group. Dispatch on demand.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run OSN-2a schema verification
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run verify:osn2
