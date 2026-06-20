@@ -160,7 +160,8 @@ async function main() {
   {
     const here = dirname(fileURLToPath(import.meta.url))
     const src = readFileSync(join(here, '..', 'src', 'features', 'map', 'resolveMainShipMarker.ts'), 'utf8')
-    /spatial_state|space_x|space_y/.test(src)
+    const referencesNew = /spatial_state|space_x|space_y/.test(src)
+    referencesNew
       ? bad('13. resolver untouched', 'resolveMainShipMarker.ts references a new OSN-2 column')
       : ok('13. OSN-1 resolver references none of the new columns (no read-model change)')
   }
