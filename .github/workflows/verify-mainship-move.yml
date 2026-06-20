@@ -1,0 +1,35 @@
+name: Verify — main-ship move
+
+# Regression check for move_main_ship_to_location: a PRESENT main ship goes directly A→B (departing
+# A, no forced return home); same-location/combat/moving/returning/destroyed are rejected; one
+# active fleet throughout; presence A completed + B active; recall from B still returns home; zero
+# fleet_units / no base_units pollution. Temporarily enables the flag + shrinks travel config,
+# restoring all of it in finally. Shares the live-DB concurrency group. Dispatch on demand.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run main-ship move verification
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run verify:mainship-move
