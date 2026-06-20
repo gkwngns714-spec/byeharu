@@ -5,6 +5,56 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-21 — OSN-1 / OSN-2a / OSN-2b (Open-Space Navigation, read side) — CLOSED
+
+Cross-cutting **Open-Space Navigation (OSN)** initiative (see `MAINSHIP_TRANSITION.md` §12). These
+stages add the main ship's single position model and a durable open-space coordinate — **read/schema
+only, no movement writers yet**. `mainship_send_enabled` stays **false**; engine + legacy paths frozen.
+(Builds on the earlier, separately-recorded main-ship transition 10C–10H + direct A→B move, which live
+in `MAINSHIP_TRANSITION.md` §7 rather than this log.)
+
+**OSN-1 — read-only main-ship map marker (commit `727388f`).** New pure resolver
+`src/features/map/resolveMainShipMarker.ts` (single source of main-ship display position: home→base,
+present→location, moving/returning→interpolate active movement clamp 0..1, destroyed→null,
+in-flight-without-movement→null no-teleport) + `MainShipMarker.tsx` (pointer-transparent, 1s tick only
+while moving) + Playwright unit test. Flag-gated; camera/command paths untouched.
+
+**OSN-2a — durable open-space position SCHEMA (commits `1f844e9`, `9534319`; migration `0054`).** Added
+nullable-no-default `main_ship_instances.spatial_state` + `space_x`/`space_y` (double precision) as the
+single authoritative owner of a "stopped in open space" coordinate. CHECKs: domain
+`NULL|home|at_location|in_transit|in_space|destroyed`; coords both-null-or-both-set; coords present IFF
+`in_space`; finite-only (reject NaN/±Inf). **No back-fill** — existing ships stay `spatial_state=NULL`
+(legacy; position still from base/fleet/movement/presence). No functions → no relock; RLS/grants
+unchanged (owner-read, no client write). `verify:osn2` 23/23. *Bug fixed:* ASI hazard (regex at
+statement start) in the verifier (`9534319`).
+
+**OSN-2b — resolver reads the new columns, read-model only (commits `bfebb1f`, `30289fe`, `f400ee4`,
+`17ceb51`, `8a9518d`).** Extended the **single** resolver (no second resolver): `in_space`→ship-owned
+`space_x/space_y` (finite, no active fleet/presence); `NULL`→legacy, with the named-location path now
+deterministic (requires fleet `present` + `current_location_id` + matching ACTIVE `location_presence` +
+resolvable location, else null); destroyed/contradiction/other→null. Read-side plumbing only:
+`MainShipLite` + owner-read select gain the 3 columns; `fetchActiveMainShipPresence` (narrow: linked
+`fleet_id` + `status='active'`, 3 fields, limit 1) runs inside the existing poll; `GalaxyMap` threads
+presence into the marker. No writer/migration/RPC/flag/status/reconciler/destruction/lock change.
+
+**Closure verification (commit `8a9518d`).** `@playwright/test` pinned **exactly `1.61.0`** (devDep +
+lockfile); resolver test runs via `npm ci` (dropped ad-hoc `npm install --no-save`); on-demand strict
+closure workflow runs **full `npm run lint` + `tsc -b` + `vite build` + resolver test**, all green;
+read-only `verify:osn2:distribution` confirmed the live distribution is **54/54 `spatial_state=NULL`**
+(zero `in_space`/`home`/`at_location`/`in_transit`/`destroyed` — no live ship hidden by the resolver).
+*Bugs fixed during closure:* resolver workflow missing Playwright install → exit 127 (`30289fe`);
+violet `in_space` marker color reverted — it was `LocationMarker`'s derelict-station color, not main-ship
+visual language (`f400ee4`); two pre-existing `Date.now()`-during-render eslint errors
+(`MainShipPanel.tsx`, `MainShipMarker.tsx`) fixed via the existing `now`-in-state tick so full repo lint
+is green (`17ceb51`).
+
+**Local toolchain note:** the dev machine cannot run lint/tsc/build/playwright locally (OneDrive
+`node_modules` corruption + TLS-intercepting proxy); all verification runs in CI. Migrations through
+**0054**. **NEXT:** OSN-3 (arbitrary-coordinate movement) — Design Gate A produced; 4 open decisions
+before schema slice S1 (see the OSN-3 design report / `MAINSHIP_TRANSITION.md`).
+
+---
+
 ## 2026-06-19 — Design correction: HIGH-STAKES ships (destructible) + emergency restart (docs)
 
 **Decision (replaces "never destroyed + self-repair"):** main ships are persistent but **NOT
