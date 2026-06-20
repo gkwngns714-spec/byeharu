@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { deriveMainShipStatus, type MainShipView } from '../map/mainshipApi'
+import { useEffect, useRef, useState } from 'react'
+import { deriveMainShipStatus, repairMainShip, type MainShipView } from '../map/mainshipApi'
 import type { Fleet, FleetMovement } from '../fleets/fleetTypes'
 import { isMainShipFleet } from '../fleets/fleetGuards'
 import type { MapLocation } from '../map/mapTypes'
@@ -18,11 +18,13 @@ export function MainShipPanel({
   fleets,
   movements,
   locations,
+  onChanged,
 }: {
   mainShip: MainShipView | null
   fleets: Fleet[]
   movements: FleetMovement[]
   locations: MapLocation[]
+  onChanged: () => void
 }) {
   // 1s tick for a smooth countdown/progress bar (the backend stays the source of truth).
   const [, setNow] = useState(() => Date.now())
@@ -30,6 +32,25 @@ export function MainShipPanel({
     const iv = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(iv)
   }, [])
+  const [repairing, setRepairing] = useState(false)
+  const [repairError, setRepairError] = useState<string | null>(null)
+  const repairRef = useRef(false)
+
+  async function doRepair() {
+    if (repairRef.current) return // synchronous double-submit guard
+    repairRef.current = true
+    setRepairing(true)
+    setRepairError(null)
+    try {
+      await repairMainShip() // 10F recovery RPC (ungated; auth.uid()-scoped, own ship only)
+      onChanged()
+    } catch (e) {
+      setRepairError(e instanceof Error ? e.message : String(e))
+    } finally {
+      repairRef.current = false
+      setRepairing(false)
+    }
+  }
 
   if (!mainShip) return null
   const ship = mainShip.has_ship ? mainShip.ship : undefined
@@ -85,9 +106,24 @@ export function MainShipPanel({
       </div>
 
       {isDisabled && (
-        <p className="mb-3 rounded border border-amber-600/40 bg-amber-500/10 px-2 py-1.5 text-sm text-amber-200">
-          🛠 Your main ship was disabled and must be repaired before it can travel again.
-        </p>
+        <div className="mb-3">
+          <p className="rounded border border-amber-600/40 bg-amber-500/10 px-2 py-1.5 text-sm text-amber-200">
+            🛠 Your main ship was disabled and must be repaired before it can travel again.
+          </p>
+          {repairError && (
+            <p data-testid="mainship-repair-error" className="mt-2 rounded border border-rose-600/40 bg-rose-500/10 px-2 py-1.5 text-sm text-rose-300">
+              {repairError}
+            </p>
+          )}
+          <button
+            data-testid="mainship-repair"
+            disabled={repairing}
+            onClick={doRepair}
+            className="mt-2 w-full rounded-md bg-amber-500 py-2 text-sm font-medium text-white transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-700/60 disabled:text-slate-500"
+          >
+            {repairing ? 'Repairing…' : 'Repair main ship'}
+          </button>
+        </div>
       )}
 
       <dl className="space-y-1.5 text-sm">

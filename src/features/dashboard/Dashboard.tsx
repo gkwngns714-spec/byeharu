@@ -84,6 +84,7 @@ export function Dashboard() {
               fleets={game.fleets}
               movements={game.movements}
               locations={game.locations}
+              onChanged={game.refresh}
             />
           )}
           <TrainShipsPanel
