@@ -492,6 +492,10 @@ shared, read-only position resolver** that every surface reads.
   interpolation across wrapped map axes**; **clamps movement progress to 0..1**.
 - Client interpolation is **visual only**; server movement state stays authoritative. Polling may
   correct the marker but must **never mutate game state**. **No marker command interaction in OSN-1.**
+- **Local player only:** OSN-1 renders **only the authenticated player's own main ship**. The marker
+  architecture **must be multi-entity-capable** (see "Marker architecture rule" below), but OSN-1 adds
+  **no** other-player queries, global RLS reads, realtime subscriptions, marker tables, or
+  online-presence APIs. Other-player data is **deferred to Online Presence & Visibility v1** (`ROADMAP.md`).
 - **Out of OSN-1:** combat, trading, mining, captains, modules, legacy fleets, `fleet_units`,
   `base_units`, arbitrary-coordinate movement, stop, the free-space model, and any migration/RPC/flag.
 
@@ -530,3 +534,12 @@ auto-create location presence or trigger trade/combat — docking is an explicit
 
 OSN is the **preferred** shared spatial substrate — **not a hard prerequisite** for a minimal version
 of any one system; product sequencing stays flexible.
+
+### Marker architecture rule (OSN-1 onward)
+Build the marker rendering layer so it can **eventually render multiple entities**, but supply **only
+the local player's own main ship** until **Online Presence & Visibility v1** (`ROADMAP.md`). A
+normalized internal marker read-model may carry: **entity id · entity type · relation to viewer ·
+world X/Y · state · visibility · optional label/display metadata**. This is an **internal UI/read-model
+boundary only** for now. During OSN, do **NOT** add a marker table, a global ship feed, a realtime
+listener, or any cross-player coordinate query — those arrive (gated by visibility policy) only in
+Online Presence & Visibility v1.

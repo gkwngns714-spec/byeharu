@@ -102,7 +102,7 @@ is exploration / mining / trading / persistent open-space movement, and combat s
 the resulting real coordinate, route, and proximity model.
 
 Stages (sequential, additive; every completed system stays green each stage):
-- **OSN-1** — live read-only main-ship marker + route visualization (one shared position resolver).
+- **OSN-1** — live read-only marker + route of the **local player's own** main ship (one shared position resolver). Marker layer is multi-entity-capable, but **no other-player data** until Online Presence & Visibility v1.
 - **OSN-2** — durable free-space position model (storage choice deferred; criteria only).
 - **OSN-3** — arbitrary-coordinate movement (parallel, main-ship-only; verified location RPCs frozen).
 - **OSN-4** — stop mid-travel (server-side, one locked transaction; DB time, no orphans).
@@ -112,3 +112,46 @@ OSN is the **preferred** shared spatial substrate for trading, exploration, mini
 and multi-ship work — **not a hard prerequisite** for a minimal version of each (sequencing stays
 flexible). Full architecture rules and the main-ship-specific design live in
 `docs/MAINSHIP_TRANSITION.md` **§12. Open-Space Navigation (OSN)**.
+
+## Cross-cutting initiative: Online Presence & Visibility v1
+
+Byeharu will become an online persistent-space game, but other-player visibility is **deliberately
+deferred** — not built merely because the game is online. **Timing rule:**
+
+> Implement **Online Presence & Visibility v1 AFTER** the baseline **Exploration, Mining, and Trading**
+> loops are functioning (each consuming the OSN position/proximity model), **and BEFORE** any
+> player-to-player interaction (player trade, alliances, escorting, piracy, PvP, shared exploration,
+> player combat, or any direct player encounter).
+
+**Why this timing:** OSN must first establish a reliable single-ship coordinate + proximity model;
+Exploration/Mining/Trading must first reveal what "visibility" should mean in real gameplay; and
+online visibility must arrive **before** player-interaction systems so those systems don't invent
+separate, incompatible position/visibility logic.
+
+**Purpose — define what *seeing another player* means, from real gameplay.** The design must decide:
+1. **Who sees whom:** nearby-only / global / alliance-only / scan-revealed / docked-station-visible / hostile-war / fog-of-war.
+2. **Position precision:** exact-live / sampled / delayed / last-seen / approximate-area-only.
+3. **Movement visibility:** current marker only / no route line by default / moving vs stopped/docked treated differently.
+4. **Scale & interest management:** never load every ship in the galaxy by default; query only relevant ships/areas; define viewport/radius/sector/subscription boundaries; define polling/realtime cadence + limits.
+5. **Interaction authority:** visibility alone permits nothing — trade / attack / inspect / follow / dock each need their own server-authoritative rule.
+
+**First implementation scope (deliberately small):** nearby visible ships only; **no** global
+all-player map; **no** full route display for other players; **no** automatic interaction; likely
+**sampled/delayed** positions (not exact live tracking); an explicit **relation field**
+(self / ally / neutral / hostile); server/RLS rules expose only what the visibility policy allows.
+
+**Deferred until AFTER v1:** player-to-player trade, alliances, escorting, piracy, PvP, shared
+exploration, player combat. **Global player visibility, realtime feeds, and player interaction are
+explicitly deferred** — and during OSN there is **no** marker table, global ship feed, realtime
+listener, or cross-player coordinate query (see the OSN marker rule in `docs/MAINSHIP_TRANSITION.md` §12).
+
+### Post-visibility sequence (after Online Presence & Visibility v1)
+1. Player-to-player trade & market interaction.
+2. Alliances, escorting, cooperative exploration.
+3. Piracy / hostile encounters / PvP rules.
+4. **Main-ship combat** using the same coordinate / proximity / visibility model (defeat → the already-built **10F** safelock).
+5. Captains, modules, fitting, support craft, deeper specialization (extends Phases **13–16**).
+6. Rankings / leagues on stable combat / trade / exploration / mining metrics (Phase **17**).
+7. Outpost → Station → Colony progression once economy + location investment mature (Phases **18–19**).
+
+*(These extend the existing numbered phases where applicable; historical labels are not renamed.)*
