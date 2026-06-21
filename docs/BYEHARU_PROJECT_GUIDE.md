@@ -42,10 +42,10 @@ the **Glossary** (§12).
 **As of this writing:**
 
 - **Branch / commit:** `main` equals `origin/main` (nothing unpushed), working tree clean. The last
-  **code / schema / deploy baseline** is the OSN-3 S4 merge **`6b1a88e`** (migration `0058`), plus a
-  read-only S4 live-spot-check tooling commit; any commits on `main` above those are
+  **code / schema / deploy baseline** is the OSN-3 S5 merge **`0d84256`** (migration `0059`), plus a
+  read-only S5 live-spot-check tooling commit; any commits on `main` above those are
   **documentation-only** closure records.
-- **Database migrations:** applied through **0058** (`osn3_s4_arrival_processor`).
+- **Database migrations:** applied through **0059** (`osn3_s5_destruction_coordinate_complete`).
 - **Two feature flags:** `mainship_send_enabled` is **`true`** on live (2026-06-21) — a controlled,
   reversible activation of the **legacy named-location** main-ship send/move/return path only; and
   `mainship_space_movement_enabled` **remains `false`** (gates the coordinate-domain movement — the one
@@ -67,7 +67,7 @@ the **Glossary** (§12).
 
 | Category | Meaning | Examples in Byeharu |
 |---|---|---|
-| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers), OSN-3 **S3** (one private, service_role-only, flag-dark coordinate-movement writer `mainship_space_begin_move`), OSN-3 **S4** (one private, service_role-only, cron-driven coordinate-arrival processor `process_mainship_space_arrivals`) |
+| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers), OSN-3 **S3** (one private, service_role-only, flag-dark coordinate-movement writer `mainship_space_begin_move`), OSN-3 **S4** (one private, service_role-only, cron-driven coordinate-arrival processor `process_mainship_space_arrivals`), OSN-3 **S5** (coordinate-complete trusted destruction primitive `dev_set_main_ship_destroyed`) |
 | **Design-only work** | Decided/approved on paper, **not** built | OSN-3 follow-ups (S4 arrival processor, S5 reconciler/destruction hardening, S7 target UI; a public player wrapper for the writer), OSN-4 Stop, final Repair & Recovery |
 | **Future initiatives** | Intended, but not yet fully designed | OSN-5, Exploration/Mining/Trading, Online Presence, player interaction, main-ship combat |
 
@@ -371,7 +371,7 @@ guardrail (what it must **not** accidentally change).
   existing ship stays legacy `NULL`). **OSN-2b** extended the single resolver to read `in_space` and
   treat `NULL` as legacy. Verified; flag-gated; no movement writer.
 
-#### OSN-3 — Arbitrary-coordinate movement **[In progress — S1 + S2 + S3 + S4 done; UI/Stop are future]**
+#### OSN-3 — Arbitrary-coordinate movement **[In progress — S1 + S2 + S3 + S4 + S5 done; player UI/Stop are future]**
 
 - **Player-facing (eventually):** point at *any* coordinate and fly there — not just named locations.
 - **Architecture job:** a parallel, main-ship-only coordinate-movement engine (its own
@@ -433,9 +433,29 @@ guardrail (what it must **not** accidentally change).
   skip-locked-then-settles, flag-off-still-settles, the seven contradiction no-mutation cases, ACL +
   REST/RPC denial, cron-present-once — plus the Build gate and S1/S2/S3 regression, and verified
   read-only on live (processor signature/owner/ACL, one cron job @30s, flags/cap,
-  `main_ship_space_movements`=0, command_receipts=0). **Still to come:** reconciler/destruction hardening
-  (**S5**), target-selection UI (**S7**), a public player wrapper for the writer, then **OSN-4 Stop**
-  (S8) — none of which exist yet.
+  `main_ship_space_movements`=0, command_receipts=0).
+- **Status detail — S5 [Implemented] (migration 0059), flags unchanged, the DESTRUCTION primitive made
+  coordinate-complete (no public RPC/UI).** S5 re-created **only** the unique trusted destruction writer
+  `dev_set_main_ship_destroyed(p_player uuid)` (still `service_role`-only, `SECURITY DEFINER`, owner
+  `postgres`, no player wrapper, no new cron) so it can destroy a ship in any valid coordinate state.
+  It acquires `mainship_space_lock_context(id, false)` first (canonical order; never locks legacy
+  `fleet_movements`); requires `validate_context` to succeed — **any generic contradiction aborts the
+  whole operation atomically, leaving every row unchanged** (no reconciliation/guessing); for a coherent
+  `in_transit` it cancels the active coordinate movement (`status='cancelled'`,
+  `terminal_reason='ship_destroyed'`, `resolved_at` — history preserved) and clears
+  `active_space_movement_id`; it preserves the existing legacy fleet/presence cleanup; and it sets the
+  ship `destroyed`/`hp=0`/**`spatial_state=NULL`**/coords NULL. The `NULL` spatial_state (not
+  `'destroyed'`) is deliberate: `repair_main_ship` sets `status='home'` without resetting `spatial_state`,
+  so a repaired ship is a clean `legacy_home` with **no change to `repair_main_ship`**. The S3 command
+  receipt is immutable; no history is deleted. Proven on the real chain (`0001..0059`) — coherent
+  destruction of `in_transit`/`in_space`/`at_location`/legacy, idempotency, real repair-after-destruction,
+  the full contradiction-abort matrix, arrival-vs-destruction concurrency races, ACL + REST/RPC denial —
+  plus the Build gate and S1/S2/S3/S4 regression, and verified read-only on live (primitive signature/
+  owner/ACL, S4 cron unchanged @30s, flags/cap, counts 0). With S5, the internal coordinate lifecycle is
+  complete and dark: **departure (S3) → arrival settlement (S4) → parked `in_space` → coordinate-complete
+  destruction (S5)**. **Still to come:** a PC-first coordinate command/map surface (a public player
+  wrapper for the writer + target-selection UI, gated by `mainship_space_movement_enabled`), then
+  **OSN-4 Stop** — none of which exist yet.
 
 #### OSN-4 — Stop mid-travel **[Future]**
 

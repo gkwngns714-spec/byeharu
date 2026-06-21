@@ -5,6 +5,68 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-21 — OSN-3 S5: coordinate-complete trusted destruction primitive — CLOSED (flag OFF)
+
+Fifth **OSN-3** slice (branch `osn3-s5-destruction-hardening`, approved head `a7ab585`, normal **no-ff**
+merge **`0d84256`**, migration **`0059`**; final `main == origin/main == fda8778` after a read-only
+live-spot-check tooling commit). **Narrow hardening only — NO public RPC, NO UI, NO new processor/cron,
+NO Return/Stop, NO generic reconciliation, NO flag change.** Both flags untouched (`mainship_send_enabled`
+stays **true**, `mainship_space_movement_enabled` stays **false**).
+
+**The defect S5 fixes.** `dev_set_main_ship_destroyed(p_player uuid)` — the **unique** trusted main-ship
+destruction writer (audited: the only fn that sets `main_ship_instances.status='destroyed'`/`hp=0`;
+combat destroys legacy unit-fleets via `fleet_destroy`, never main ships; `repair_main_ship` only
+recovers) — predated the coordinate domain and therefore could **not** destroy a ship in a valid
+coordinate state without violating a coordinate constraint (`in_transit` left
+`fleets.active_space_movement_id` set → violates `fleets_active_space_movement_requires_moving`;
+`in_space`/`at_location` left a non-null `spatial_state` → violates the `…_ss_*_status` CHECKs). Latent
+(service_role-only path; coordinate movement dark), but closed before coordinate movement is ever enabled.
+
+**Migration 0059** re-creates **only** `dev_set_main_ship_destroyed` (same signature, `SECURITY DEFINER`,
+owner `postgres`, `search_path=public`, **service_role-only**, no player wrapper, no new cron). It:
+acquires `mainship_space_lock_context(id,false)` first (canonical order; never locks `fleet_movements`);
+requires `validate_context` ok — **any generic contradiction ABORTS atomically with all rows unchanged**;
+for a coherent `in_transit` cancels the active coordinate movement → `status='cancelled'`,
+`terminal_reason='ship_destroyed'`, `resolved_at` (history preserved); clears `active_space_movement_id`;
+preserves the existing legacy cleanup; and sets the ship `destroyed`/`hp=0`/**`spatial_state=NULL`**/
+`space_x`/`space_y` NULL (NULL — not `'destroyed'` — so `repair_main_ship`, which sets `status='home'`
+without resetting `spatial_state`, stays valid → a repaired ship is a clean `legacy_home`). The S3 command
+receipt is immutable; no history deletion. `repair_main_ship`, the S4 processor, the S3 writer, the S2
+helpers, and all legacy writers are untouched; migrations `0052/0055/0056/0057/0058` are untouched.
+
+**Authoritative proof (real chain `0001..0059`, disposable Supabase; `osn3-s5-realchain-proof.yml`).**
+GREEN at `a7ab585`: coherent destruction of `in_transit` (movement→cancelled/ship_destroyed, receipt
+immutable), `in_space`, `at_location`, and preserved `legacy_present`; idempotent repeated destruction;
+**real `repair_main_ship` after destruction → clean `legacy_home`** with no coordinate residue; the full
+contradiction-abort matrix (active legacy movement, unexpected presence, pointer/ownership mismatch,
+multiple fleets, in_transit-without-movement, destroyed-plus-moving) each non-mutating; real
+concurrent-session races (arrival-wins-then-destroy-clears-`in_space`; destruction-wins-arrival-never-
+settles-cancelled; two destructions race → one terminal, second idempotent); runtime ACL + SET ROLE
+denial; REST/RPC denial of the primitive + processor + writer + S2 helpers for anon and a real
+authenticated JWT. *Root-cause note:* the first run was red only on a **proof-harness** transaction
+defect (concurrency sessB ran destruction in autocommit, never observed idle-in-transaction); fixed by
+holding sessB's destruction in a txn — **the migration/primitive needed no change** (no `0060`).
+
+**Gates (all green at `a7ab585`):** S5 real-chain proof; S1/S2/S3/S4 real-chain regression; the Build
+gate via draft PR #3 (`npm ci`, lint, `tsc -b`, `vite build`); `verify:osn:resolver`; the legacy-send
+read-only verifier. **Live read-only spot check** (`osn3-s5-live-spotcheck.yml`, post-deploy): 0059
+applied; primitive present with the approved signature (`p_player uuid`), owner=postgres, SECURITY
+DEFINER, search_path=public, no dynamic SQL, no player wrapper, service_role-only; canonical client-RPC
+inventory unchanged; `repair_main_ship` still authenticated-executable; S2 helpers + S3 writer + S4
+processor non-client-executable; exactly one S4 arrival cron @ `30 seconds` (cadence unchanged);
+`mainship_send_enabled=true`, `mainship_space_movement_enabled=false`, `max_coordinate_travel_seconds=86400`;
+`main_ship_space_movements=0`, `main_ship_space_command_receipts=0` — no game-state mutation by the deploy
+or verification.
+
+**Scope confirmation.** S5 added **no** player coordinate RPC, UI, processor/cron, Return, Stop, generic
+reconciliation, history cleanup/retention, legacy-writer change, `repair_main_ship` change, S2/S3/S4
+helper change, or feature enablement. The internal coordinate lifecycle is now complete and dark:
+**departure (S3) → arrival settlement (S4) → parked `in_space` → coordinate-complete destruction (S5)**.
+**NEXT (not started, awaiting a separate explicit charter):** a PC-first coordinate command/map surface
+(public wrapper + UI, gated by `mainship_space_movement_enabled`), then **OSN-4 Stop**.
+
+---
+
 ## 2026-06-21 — OSN-3 S4: coordinate-arrival processor — CLOSED (flag OFF)
 
 Fourth **OSN-3** slice (branch `osn3-s4-arrival-processor`, approved head `33588e2`, normal **no-ff**
