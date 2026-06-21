@@ -41,8 +41,9 @@ the **Glossary** (§12).
 
 **As of this writing:**
 
-- **Branch / commit:** `main` at commit **`a38247f`**, which equals `origin/main` (nothing
-  unpushed), working tree clean.
+- **Branch / commit:** `main` equals `origin/main` (nothing unpushed), working tree clean. The last
+  **code / schema / deploy baseline** is **`a38247f`** (OSN-3 S2 live-verification tooling head,
+  migration `0056`); any commits on `main` above it are **documentation-only** closure records.
 - **Database migrations:** applied through **0056** (`osn3_s2_transition_core`).
 - **Two feature flags, both `false`:** `mainship_send_enabled` (gates all player-facing main-ship
   send/move + the open-space marker) and `mainship_space_movement_enabled` (gates the future
