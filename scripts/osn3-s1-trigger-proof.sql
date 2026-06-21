@@ -41,10 +41,14 @@ create table main_ship_space_movements (
   status       text not null default 'moving'
 );
 
--- The cycle: fleets.active_space_movement_id -> main_ship_space_movements.id (SET NULL on movement delete)
+-- The cycle: fleets.active_space_movement_id -> main_ship_space_movements.id (SET NULL on movement delete).
+-- DEFERRABLE INITIALLY DEFERRED: makes the cyclic fleets<->movements graph order-independent — during a
+-- ship delete that cascade-deletes the movement while the fleet survives, the FK check defers to COMMIT
+-- (after the SET NULL settles), so a transient dangling pointer mid-cascade is tolerated.
 alter table fleets
   add constraint fleets_active_space_movement_fk
-  foreign key (active_space_movement_id) references main_ship_space_movements(id) on delete set null;
+  foreign key (active_space_movement_id) references main_ship_space_movements(id)
+  on delete set null deferrable initially deferred;
 
 create table main_ship_space_command_receipts (
   id           uuid primary key default gen_random_uuid(),
