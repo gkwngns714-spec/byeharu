@@ -251,3 +251,66 @@ test('does not mutate the input object', () => {
   resolveMainShipMarker(inp, midMs)
   expect(JSON.stringify(inp)).toBe(snap)
 })
+
+// ── OSN-3 S6B2: coordinate-space provenance (the `coordinateSpace` discriminant) ─────────────────────
+// The existing assertions above (state/x/y, null cases) remain valid unchanged — requirement 8. These
+// add the provenance contract: legacy/named → 'legacy_dynamic'; in_space + coordinate in_transit →
+// 'open_space_fixed'; stale/incoherent coordinate data → null (never a guessed legacy fallback).
+
+test('S6B2: legacy / home / at-location states → coordinateSpace legacy_dynamic', () => {
+  expect(resolveMainShipMarker(inputs(), Date.now())?.coordinateSpace).toBe('legacy_dynamic') // legacy null-home
+  expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'home', spatial_state: 'home' }) }), Date.now())?.coordinateSpace).toBe('legacy_dynamic') // §E home
+  expect(resolveMainShipMarker(atLocInputs(), Date.now())?.coordinateSpace).toBe('legacy_dynamic') // §D at_location
+  expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'traveling' }), mainShipFleet: fleet({ status: 'present', current_location_id: 'loc-A' }), presence: pres() }), Date.now())?.coordinateSpace).toBe('legacy_dynamic') // §F present
+})
+
+test('S6B2: legacy named outbound + return travel → legacy_dynamic', () => {
+  const out = resolveMainShipMarker(inputs({ mainShip: ship({ status: 'traveling' }), mainShipFleet: fleet({ status: 'moving' }), movements: [mv({ target_type: 'location' })] }), midMs)
+  expect(out).toMatchObject({ state: 'outbound', coordinateSpace: 'legacy_dynamic' })
+  const ret = resolveMainShipMarker(inputs({ mainShip: ship({ status: 'returning' }), mainShipFleet: fleet({ status: 'returning' }), movements: [mv({ target_type: 'base', origin_x: 100, origin_y: 100, target_x: 0, target_y: 0 })] }), midMs)
+  expect(ret).toMatchObject({ state: 'returning', coordinateSpace: 'legacy_dynamic' })
+})
+
+test('S6B2: in_space → open_space_fixed', () => {
+  const m = resolveMainShipMarker(inputs({ mainShip: ship({ status: 'stationary', spatial_state: 'in_space', space_x: 42, space_y: -17 }) }), Date.now())
+  expect(m).toMatchObject({ state: 'in_space', x: 42, y: -17, coordinateSpace: 'open_space_fixed' })
+})
+
+test('S6B2: coordinate in_transit (coherent) → open_space_fixed; world-space interp at start/mid/end', () => {
+  expect(resolveMainShipMarker(transitInputs(), depMs)).toMatchObject({ x: 0, y: 0, coordinateSpace: 'open_space_fixed' })
+  const mid = resolveMainShipMarker(transitInputs(), midMs)
+  expect(mid?.coordinateSpace).toBe('open_space_fixed'); expect(mid?.x).toBeCloseTo(50); expect(mid?.y).toBeCloseTo(50)
+  expect(resolveMainShipMarker(transitInputs(), arrMs)).toMatchObject({ x: 100, y: 100, coordinateSpace: 'open_space_fixed' })
+})
+
+test('S6B2: in_transit with missing / stale / incoherent space movement → null (no legacy fallback)', () => {
+  expect(resolveMainShipMarker(transitInputs({ spaceMovement: null }), midMs)).toBeNull() // missing
+  expect(resolveMainShipMarker(transitInputs({ spaceMovement: spaceMv({ status: 'arrived' }) }), midMs)).toBeNull() // stale (not 'moving')
+  expect(resolveMainShipMarker(transitInputs({ spaceMovement: spaceMv({ fleet_id: 'other' }) }), midMs)).toBeNull() // incoherent link
+})
+
+test('S6B2: destroyed / repair-unavailable never produce a fixed-space marker', () => {
+  // destroyed status wins even over a populated in_space coordinate state → no marker at all.
+  expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'destroyed', spatial_state: 'in_space', space_x: 1, space_y: 2 }) }), Date.now())).toBeNull()
+  expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'traveling', spatial_state: 'destroyed' }) }), Date.now())).toBeNull()
+})
+
+test('S6B2: no legacy / home / at-location / travel path can acquire open_space_fixed', () => {
+  const legacyCases = [
+    inputs(),
+    inputs({ mainShip: ship({ status: 'home', spatial_state: 'home' }) }),
+    atLocInputs(),
+    inputs({ mainShip: ship({ status: 'traveling' }), mainShipFleet: fleet({ status: 'moving' }), movements: [mv()] }),
+    inputs({ mainShip: ship({ status: 'returning' }), mainShipFleet: fleet({ status: 'returning' }), movements: [mv({ target_type: 'base' })] }),
+  ]
+  for (const inp of legacyCases) {
+    const m = resolveMainShipMarker(inp, midMs)
+    expect(m).not.toBeNull()
+    expect(m?.coordinateSpace).toBe('legacy_dynamic')
+  }
+})
+
+test('S6B2: only in_space and coordinate in_transit yield open_space_fixed', () => {
+  expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'stationary', spatial_state: 'in_space', space_x: 0, space_y: 0 }) }), Date.now())?.coordinateSpace).toBe('open_space_fixed')
+  expect(resolveMainShipMarker(transitInputs(), midMs)?.coordinateSpace).toBe('open_space_fixed')
+})

@@ -15,6 +15,12 @@ import type { MapLocation } from './mapTypes'
 
 export type MainShipMarkerState = 'home' | 'present' | 'outbound' | 'returning' | 'in_space'
 
+// OSN-3 S6B2 — which coordinate-space layer renders this marker. Legacy/named states project through the
+// map's dynamic buildNormalizer (`norm`); open-space states (in_space, coordinate in_transit) project
+// through the S6B1 fixed-domain transform. Discriminated + mandatory on every marker so a call site can
+// never silently route a coordinate marker through the dynamic normalizer.
+export type CoordinateSpace = 'legacy_dynamic' | 'open_space_fixed'
+
 export interface ShipMarker {
   entityId: string
   entityType: 'main_ship'
@@ -22,6 +28,7 @@ export interface ShipMarker {
   x: number // WORLD coordinate
   y: number // WORLD coordinate
   state: MainShipMarkerState
+  coordinateSpace: CoordinateSpace
 }
 
 export interface MarkerInputs {
@@ -40,13 +47,21 @@ const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFi
 export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMarker | null {
   const { mainShip, mainShipFleet: fleet, movements, presence, spaceMovement, base, locations } = inp
   if (!mainShip) return null
-  const make = (state: MainShipMarkerState, x: number, y: number): ShipMarker => ({
+  // `coordinateSpace` is a REQUIRED parameter: every return path must declare its provenance explicitly
+  // (no default), so a forgotten branch is a TypeScript error rather than a silent legacy fallback.
+  const make = (
+    state: MainShipMarkerState,
+    coordinateSpace: CoordinateSpace,
+    x: number,
+    y: number,
+  ): ShipMarker => ({
     entityId: mainShip.main_ship_id,
     entityType: 'main_ship',
     relation: 'self',
     x,
     y,
     state,
+    coordinateSpace,
   })
 
   // §A — Destroyed / contradictory-destroyed → hide.
@@ -64,7 +79,7 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
     if (coordMoving) return null
     const { space_x, space_y } = mainShip
     if (!finite(space_x) || !finite(space_y)) return null
-    return make('in_space', space_x, space_y)
+    return make('in_space', 'open_space_fixed', space_x, space_y)
   }
 
   // §C (OSN-3 S1) — in_transit: interpolate the active COORDINATE movement, only when fully coherent.
@@ -87,7 +102,7 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
     const t = Math.max(0, Math.min(1, (nowMs - dep) / (arr - dep)))
     const x = spaceMovement.origin_x + t * (spaceMovement.target_x - spaceMovement.origin_x)
     const y = spaceMovement.origin_y + t * (spaceMovement.target_y - spaceMovement.origin_y)
-    return make(spaceMovement.target_kind === 'base' ? 'returning' : 'outbound', x, y)
+    return make(spaceMovement.target_kind === 'base' ? 'returning' : 'outbound', 'open_space_fixed', x, y)
   }
 
   // §D (OSN-3 S1) — at_location: validated named-location position.
@@ -103,7 +118,7 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
     if (presence.location_id !== fleet.current_location_id) return null
     const loc = locations.find((l) => l.id === fleet.current_location_id)
     if (!loc || !finite(loc.x) || !finite(loc.y)) return null
-    return make('present', loc.x, loc.y)
+    return make('present', 'legacy_dynamic', loc.x, loc.y)
   }
 
   // §E (OSN-3 S1) — home: authoritative base coordinates, no active state.
@@ -113,7 +128,7 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
     if (presenceActive) return null
     if (coordMoving) return null
     if (!base || !finite(base.x) || !finite(base.y)) return null
-    return make('home', base.x, base.y)
+    return make('home', 'legacy_dynamic', base.x, base.y)
   }
 
   // §F — legacy (spatial_state IS NULL): unchanged derivation.
@@ -129,7 +144,7 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
       const t = Math.max(0, Math.min(1, (nowMs - dep) / (arr - dep)))
       const x = mv.origin_x + t * (mv.target_x - mv.origin_x)
       const y = mv.origin_y + t * (mv.target_y - mv.origin_y)
-      return make(mv.target_type === 'base' ? 'returning' : 'outbound', x, y)
+      return make(mv.target_type === 'base' ? 'returning' : 'outbound', 'legacy_dynamic', x, y)
     }
     // Present at a named location — only when the entire named-location state is coherent.
     if (fleet && fleet.status === 'present') {
@@ -139,11 +154,11 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
       if (presence.location_id !== fleet.current_location_id) return null
       const loc = locations.find((l) => l.id === fleet.current_location_id)
       if (!loc || !finite(loc.x) || !finite(loc.y)) return null
-      return make('present', loc.x, loc.y)
+      return make('present', 'legacy_dynamic', loc.x, loc.y)
     }
     // Genuinely home: no active fleet AND ship 'home' AND base resolves.
     if (!fleet && mainShip.status === 'home' && base && finite(base.x) && finite(base.y)) {
-      return make('home', base.x, base.y)
+      return make('home', 'legacy_dynamic', base.x, base.y)
     }
     return null
   }
