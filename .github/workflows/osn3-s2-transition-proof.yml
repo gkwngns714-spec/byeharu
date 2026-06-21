@@ -1,10 +1,11 @@
-name: OSN-3 S2 — transition-core proof (disposable)
+name: OSN-3 S2 — transition-core proof (SUPPLEMENTARY, stub-schema, NON-GATING)
 
-# Proves the four S2 helper functions on an EPHEMERAL postgres:15 container — NOT Supabase, NOT main.
-# Real two-session locking via dblink (blocking conflict, skip-locked, all-four-rows-locked,
-# fleet_movements NOT locked), static lock order, validate/resolve/exclusion truth tables, and
-# mutation-safety. Disposable: the container is destroyed after the job. Runs on push to the OSN-3
-# branch(es) (a workflow_dispatch-only file on a non-default branch is not dispatchable until on main).
+# SUPPLEMENTARY / NON-GATING coverage only — NOT the authoritative S2 proof. This runs the four helper
+# bodies against a RECREATED STUB schema on a bare postgres:15 container (it does NOT apply the actual
+# migration chain and does NOT exercise the real S1 CHECKs/RLS/FK-actions/roles). The AUTHORITATIVE S2
+# proof is `OSN-3 S2 — real-migration-chain proof (disposable Supabase)`, which applies migrations
+# 0001..0056 and proves permissions/RPC/fixtures/lock-order against the real schema. This stub proof
+# is retained only as fast dblink lock-conflict coverage; do not treat it as schema-faithful.
 
 on:
   push:

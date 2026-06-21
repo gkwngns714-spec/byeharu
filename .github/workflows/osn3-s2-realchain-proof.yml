@@ -1,0 +1,65 @@
+name: OSN-3 S2 — real-migration-chain proof (disposable Supabase)
+
+# Authoritative/gating S2 proof. Boots a DISPOSABLE local Supabase stack via the repository-supported
+# CLI (supabase/config.toml), which applies the ACTUAL migration chain 0001..0056 — real S1 tables,
+# CHECKs, indexes, RLS, triggers, grants, auth schema, and the real roles anon/authenticated/
+# service_role. NOT a stub; NEVER the shared/live DB. Proves the private boundary (permissions/RPC),
+# the fixture matrix, no-mutation, cleanup, and both flags false. (Dynamic staged lock-order + REST
+# probes are added in follow-up steps/commits.) Runs on push to the OSN-3 branch(es).
+
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0056)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: Inspect installed helpers + permission/boundary proof (real chain)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-s2-realchain-perm.sql
+
+      - name: Runtime SET ROLE EXECUTE denial + service_role success
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          for r in anon authenticated; do
+            out=$(psql "$DB_URL" -X -c "set role $r; select public.mainship_space_lock_context('00000000-0000-0000-0000-000000000000', false);" 2>&1 || true)
+            echo "$out" | grep -qi "permission denied" && echo "ok: $r cannot EXECUTE the helper" || { echo "FAIL: $r executed helper -> $out"; exit 1; }
+          done
+          out=$(psql "$DB_URL" -X -c "set role service_role; select public.mainship_space_lock_context('00000000-0000-0000-0000-000000000000', false);" 2>&1)
+          echo "$out" | grep -qi "not_found" && echo "ok: service_role can EXECUTE (returned not_found)" || { echo "FAIL: service_role -> $out"; exit 1; }
+
+      - name: Fixture matrix proof (real chain)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-s2-realchain-fixtures.sql
+
+      - name: Cleanup fixtures (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3s2fix.%@example.com';" || true; fi
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
