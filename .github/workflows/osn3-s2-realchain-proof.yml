@@ -54,11 +54,18 @@ jobs:
           set -a; . /tmp/sbenv; set +a
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-s2-realchain-fixtures.sql
 
+      - name: Dynamic staged lock-order proof (real concurrent sessions)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn3-s2-realchain-lockorder.sh
+
       - name: Cleanup fixtures (always)
         if: always()
         run: |
           set -a; . /tmp/sbenv 2>/dev/null || true; set +a
-          if [ -n "${DB_URL:-}" ]; then psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3s2fix.%@example.com';" || true; fi
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3s2fix.%@example.com' or email = 'osn3s2lock@example.com';" || true
+          fi
 
       - name: Stop disposable stack (always)
         if: always()
