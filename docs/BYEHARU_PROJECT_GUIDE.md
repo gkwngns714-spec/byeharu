@@ -42,10 +42,10 @@ the **Glossary** (§12).
 **As of this writing:**
 
 - **Branch / commit:** `main` equals `origin/main` (nothing unpushed), working tree clean. The last
-  **code / schema / deploy baseline** is the OSN-3 S3 merge **`f4ba07e`** (migration `0057`), plus a
-  read-only S3 live-spot-check tooling commit; any commits on `main` above those are
+  **code / schema / deploy baseline** is the OSN-3 S4 merge **`6b1a88e`** (migration `0058`), plus a
+  read-only S4 live-spot-check tooling commit; any commits on `main` above those are
   **documentation-only** closure records.
-- **Database migrations:** applied through **0057** (`osn3_s3_begin_move`).
+- **Database migrations:** applied through **0058** (`osn3_s4_arrival_processor`).
 - **Two feature flags:** `mainship_send_enabled` is **`true`** on live (2026-06-21) — a controlled,
   reversible activation of the **legacy named-location** main-ship send/move/return path only; and
   `mainship_space_movement_enabled` **remains `false`** (gates the coordinate-domain movement — the one
@@ -67,7 +67,7 @@ the **Glossary** (§12).
 
 | Category | Meaning | Examples in Byeharu |
 |---|---|---|
-| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers), OSN-3 **S3** (one private, service_role-only, flag-dark coordinate-movement writer `mainship_space_begin_move`) |
+| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers), OSN-3 **S3** (one private, service_role-only, flag-dark coordinate-movement writer `mainship_space_begin_move`), OSN-3 **S4** (one private, service_role-only, cron-driven coordinate-arrival processor `process_mainship_space_arrivals`) |
 | **Design-only work** | Decided/approved on paper, **not** built | OSN-3 follow-ups (S4 arrival processor, S5 reconciler/destruction hardening, S7 target UI; a public player wrapper for the writer), OSN-4 Stop, final Repair & Recovery |
 | **Future initiatives** | Intended, but not yet fully designed | OSN-5, Exploration/Mining/Trading, Online Presence, player interaction, main-ship combat |
 
@@ -371,7 +371,7 @@ guardrail (what it must **not** accidentally change).
   existing ship stays legacy `NULL`). **OSN-2b** extended the single resolver to read `in_space` and
   treat `NULL` as legacy. Verified; flag-gated; no movement writer.
 
-#### OSN-3 — Arbitrary-coordinate movement **[In progress — S1 + S2 + S3 done; processor/UI are future]**
+#### OSN-3 — Arbitrary-coordinate movement **[In progress — S1 + S2 + S3 + S4 done; UI/Stop are future]**
 
 - **Player-facing (eventually):** point at *any* coordinate and fly there — not just named locations.
 - **Architecture job:** a parallel, main-ship-only coordinate-movement engine (its own
@@ -413,9 +413,29 @@ guardrail (what it must **not** accidentally change).
   one additive non-flag guard `max_coordinate_travel_seconds=86400` caps travel time. Proven on the real
   chain (`0001..0057`) — all five origins, full rejection matrix, idempotency, real concurrent-session
   races, ACL + REST/RPC denial — plus the Build gate and S1/S2 regression, and verified read-only on live
-  (signature/owner/ACL/flags/cap, `main_ship_space_movements`=0, command_receipts=0). **Still to come:**
-  the dedicated arrival processor (**S4**), reconciler/destruction hardening (**S5**), target-selection
-  UI (**S7**), a public player wrapper for the writer, then **OSN-4 Stop** (S8) — none of which exist yet.
+  (signature/owner/ACL/flags/cap, `main_ship_space_movements`=0, command_receipts=0).
+- **Status detail — S4 [Implemented] (migration 0058), flag still `false`, the arrival PROCESSOR (no
+  public RPC/UI).** S4 added one private, `service_role`-only, `SECURITY DEFINER` processor
+  `process_mainship_space_arrivals()` (no args), driven by a **pg_cron** job
+  `process-mainship-space-arrivals` at the established **`30 seconds`** cadence (the same convention as
+  `process_fleet_movements`). Each tick it non-lockingly scans due rows (`status='moving'` and
+  `arrive_at<=now()`, oldest first, `LIMIT 100`), claims each ship with `mainship_space_lock_context(id,
+  true)` (skip-locked; S2 canonical lock order; never locks legacy `fleet_movements`), re-validates the
+  `in_transit` context under the lock, and **settles exactly once**: movement `moving → arrived`
+  (`resolved_at`, `terminal_reason='auto_arrival'`, history immutable); fleet `moving → completed`
+  (`location_mode='movement'`, both movement pointers + base fields cleared — the truthful open-space
+  terminal, not a return-to-base); ship `traveling`/`in_transit` → **`stationary`/`in_space`** at the
+  movement's `target_x`/`target_y` (which the existing map resolver already renders). It **never gates
+  settlement on `mainship_space_movement_enabled`** (so turning the flag off can't strand in-transit
+  ships), never touches `mainship_send_enabled`, creates no receipt/presence, deletes no history, and
+  leaves every contradictory state **untouched** (no settle/fail/repair — hardening deferred to S5).
+  Proven on the real chain (`0001..0058`) — settle-once, idempotency, two-concurrent-settle-once,
+  skip-locked-then-settles, flag-off-still-settles, the seven contradiction no-mutation cases, ACL +
+  REST/RPC denial, cron-present-once — plus the Build gate and S1/S2/S3 regression, and verified
+  read-only on live (processor signature/owner/ACL, one cron job @30s, flags/cap,
+  `main_ship_space_movements`=0, command_receipts=0). **Still to come:** reconciler/destruction hardening
+  (**S5**), target-selection UI (**S7**), a public player wrapper for the writer, then **OSN-4 Stop**
+  (S8) — none of which exist yet.
 
 #### OSN-4 — Stop mid-travel **[Future]**
 

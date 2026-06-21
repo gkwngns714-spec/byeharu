@@ -5,6 +5,74 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-21 — OSN-3 S4: coordinate-arrival processor — CLOSED (flag OFF)
+
+Fourth **OSN-3** slice (branch `osn3-s4-arrival-processor`, approved head `33588e2`, normal **no-ff**
+merge **`6b1a88e`**, migration **`0058`**; final `main == origin/main == 6b1a88e`). **One private,
+server-only background PROCESSOR — still NO public RPC, NO UI, NO Return/Stop, NO feature enablement,
+NO reconciliation/destruction.** `mainship_space_movement_enabled` stays **false** (the processor does
+not gate on it); `mainship_send_enabled` stays **true** (untouched legacy path).
+
+**Migration 0058 — `public.process_mainship_space_arrivals() returns integer`.** One `SECURITY DEFINER`,
+owner `postgres`, `search_path=public`, **service_role-only** processor (PUBLIC/anon/authenticated
+revoked; no player wrapper), driven by a **pg_cron** job `process-mainship-space-arrivals` at the
+established **`30 seconds`** cadence (`command = select public.process_mainship_space_arrivals();`,
+idempotent unschedule-by-name). It settles each due, still-coherent S3 coordinate movement **exactly
+once**: non-locking candidate scan (`status='moving' and arrive_at<=now()`, `ORDER BY arrive_at,id LIMIT
+100`) → per ship `mainship_space_lock_context(id, true)` skip-locked (S2 canonical order ship → fleet →
+coordinate-movement → presence; never locks legacy `fleet_movements`) → `validate_context` must be
+`in_transit` → `assert_cross_domain_exclusion` → re-confirm under lock → atomic settlement.
+
+- **Arrival transition:** movement **`moving → arrived`** (`resolved_at=now()`,
+  `terminal_reason='auto_arrival'`; immutable origin/target/speed/time history preserved); fleet
+  **`moving → completed`** with `location_mode='movement'` and `active_space_movement_id` /
+  `active_movement_id` / `current_*` cleared (truthful open-space terminal — verified legal once the
+  space pointer is NULL; no base field set, `fleet_complete()` not used); ship **`traveling`/`in_transit`
+  → `stationary`/`in_space`** at the movement's `target_x`/`target_y`.
+- **Terminal history preserved** (the `arrived` row stays; existing FK CASCADE cleans it only on
+  owner/ship deletion — no retention/cleanup job added). The S3 creation receipt is immutable; S4 writes
+  no receipt and creates/leaves no `location_presence`.
+- **Contradiction policy (frozen):** every contradiction / malformed / destroyed / legacy-conflict /
+  presence-conflict / pointer-mismatch / ownership-mismatch / not-due / already-terminal case is left
+  **untouched** with a concise log (no settle/fail/repair/normalize/delete; hardening deferred to S5).
+- **Flag rule:** the processor never reads `mainship_space_movement_enabled` (so disabling it can't
+  strand in-transit ships) and never touches `mainship_send_enabled`.
+
+**Authoritative proof (real chain `0001..0058`, disposable Supabase; `osn3-s4-realchain-proof.yml`).**
+GREEN at `33588e2`: due settles exactly once; not-yet-due stays moving; second call settles 0
+(idempotent); two concurrent processors settle once (loser skip-locked); skip-locked ship skipped then
+settles; settlement proceeds with the space flag FALSE; full arrival-state assertions (movement
+arrived/`auto_arrival`/`resolved`, ship `stationary`/`in_space` at exact target, fleet `completed`/
+`movement` with pointers+base cleared, no presence, no legacy mv, S2 `validate_context`=`in_space`, S3
+receipt unchanged, terminal history present); the seven contradiction cases each proven non-mutating
+(per-ship state hash) as real due candidates; runtime ACL + SET ROLE denial; REST/RPC denial of the
+processor + writer + S2 helpers for anon and a real authenticated JWT; cron asserted present once @30s;
+cleanup + flags/cap/cron restored & asserted. *Root-cause note:* the first proof run was red on a
+**fixture** timestamp assumption only (transaction-scoped `now()` made `arrive_at < depart_at`),
+corrected by moving both timestamps into the past + asserting every fixture's precondition; **the
+processor/0058 needed no change** (no `0059`).
+
+**Gates (all green at `33588e2`):** S4 real-chain proof; S1/S2/S3 real-chain regression; the Build gate
+via draft PR #2 (`npm ci`, lint, `tsc -b`, `vite build`); `verify:osn:resolver`; the legacy-send
+read-only activation verifier. **Live read-only spot check** (`osn3-s4-live-spotcheck.yml`, post-deploy):
+0058 applied; processor present with the approved signature (no args), owner=postgres, SECURITY DEFINER,
+search_path=public, no dynamic SQL, no player wrapper, service_role-only (anon/authenticated/PUBLIC
+denied); S3 writer + four S2 helpers service_role-only; canonical client-RPC inventory unchanged;
+anon/authenticated cannot CREATE in `public`; **exactly one** cron job `process-mainship-space-arrivals`
+@ `30 seconds` (no duplicate); `mainship_send_enabled=true`, `mainship_space_movement_enabled=false`,
+`max_coordinate_travel_seconds=86400`; **`main_ship_space_movements`=0 and
+`main_ship_space_command_receipts`=0** — live deployment created zero coordinate movements and zero
+receipts; no game-state side effect (a natural cron tick that finds zero due movements is harmless).
+
+**Scope confirmation.** S4 added **no** player coordinate RPC, UI, Return, Stop, reconciliation/auto-
+repair, destruction/repair behavior, history cleanup/retention, legacy-writer/processor change, S2/S3
+helper change, or feature enablement. `mainship_send_enabled=true` remains the temporary playable legacy
+named-location path; `mainship_space_movement_enabled=false` remains dark. **NEXT (not started, awaiting
+a separate explicit S5 charter):** reconciler / destruction hardening (S5) → target UI (S7) → a public
+player wrapper for the writer → **OSN-4 Stop** (S8).
+
+---
+
 ## 2026-06-21 — Legacy main-ship send: controlled production activation (config-only, reversible)
 
 Enabled the **already-built legacy named-location** main-ship travel path on live by flipping **one**
