@@ -51,3 +51,17 @@ export async function fetchMainshipSendEnabled(): Promise<boolean> {
   if (error) return false
   return (data?.value as unknown) === true
 }
+
+// OSN-3 S6A feature gate for the coordinate-movement (open-space) command surface. Same safe public
+// read path + boolean semantics as fetchMainshipSendEnabled above. Absent or unreadable → OFF. Read
+// only. NOTE (S6A): nothing renders coordinate-command UI yet — this is a typed seed for S6B's gating;
+// the production flag stays false, so this returns false in production.
+export async function fetchMainshipSpaceMovementEnabled(): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('game_config')
+    .select('value')
+    .eq('key', 'mainship_space_movement_enabled')
+    .maybeSingle()
+  if (error) return false
+  return (data?.value as unknown) === true
+}

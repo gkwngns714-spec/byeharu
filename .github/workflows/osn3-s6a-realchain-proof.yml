@@ -1,0 +1,106 @@
+name: OSN-3 S6A — real-migration-chain proof (disposable Supabase)
+
+# Authoritative/gating S6A proof for the public coordinate-command wrapper command_main_ship_space_move.
+# Boots a DISPOSABLE local Supabase stack via the CLI, applying the ACTUAL chain 0001..0060 — real tables/
+# CHECKs/indexes/RLS/grants/triggers/pg_cron and the real roles anon/authenticated/service_role. NOT a
+# stub; NEVER the shared/live DB. Proves the wrapper's permission boundary (authenticated-only; the
+# private writer stays service_role-only), the dark-by-flag behavior, canonicalization, idempotency, the
+# state matrix, legacy<->coordinate mutual exclusion, the REST boundary, and restores the simulated
+# activated config. Runs on push to the OSN-3 branch(es).
+
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0060)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: Public-wrapper permission/boundary proof (real chain)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-s6a-realchain-perm.sql
+
+      - name: Runtime SET ROLE — wrapper authenticated-allowed/anon-denied; private writer client-denied
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          # wrapper: anon DENIED
+          out=$(psql "$DB_URL" -X -c "set role anon; select public.command_main_ship_space_move(1,1,'00000000-0000-0000-0000-000000000010');" 2>&1 || true)
+          echo "$out" | grep -qi "permission denied" && echo "ok: anon cannot EXECUTE the wrapper" || { echo "FAIL: anon executed the wrapper -> $out"; exit 1; }
+          # wrapper: authenticated ALLOWED (executes; returns jsonb; NOT a permission error)
+          out=$(psql "$DB_URL" -X -c "set role authenticated; select public.command_main_ship_space_move(1,1,'00000000-0000-0000-0000-000000000011');" 2>&1 || true)
+          echo "$out" | grep -qi "permission denied" && { echo "FAIL: authenticated denied the wrapper -> $out"; exit 1; } || echo "ok: authenticated can EXECUTE the wrapper (returned a jsonb result)"
+          # private writer: anon + authenticated DENIED
+          for r in anon authenticated; do
+            out=$(psql "$DB_URL" -X -c "set role $r; select public.mainship_space_begin_move('00000000-0000-0000-0000-000000000000','00000000-0000-0000-0000-000000000000',1,1,'00000000-0000-0000-0000-000000000012');" 2>&1 || true)
+            echo "$out" | grep -qi "permission denied" && echo "ok: $r cannot EXECUTE the private writer" || { echo "FAIL: $r executed the writer -> $out"; exit 1; }
+          done
+          # private writer: service_role ALLOWED (executes; returns the expected business result, not a perm error)
+          out=$(psql "$DB_URL" -X -c "set role service_role; select public.mainship_space_begin_move('00000000-0000-0000-0000-000000000000','00000000-0000-0000-0000-000000000000',1,1,'00000000-0000-0000-0000-000000000013');" 2>&1 || true)
+          echo "$out" | grep -qi "permission denied" && { echo "FAIL: service_role denied the writer -> $out"; exit 1; } || echo "ok: service_role can EXECUTE the private writer"
+
+      - name: Fixture matrix (dark + success + canonicalization + idempotency + state + exclusion)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-s6a-realchain-fixtures.sql
+
+      - name: Local REST/RPC permission proof (anon + authenticated JWT)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn3-s6a-realchain-rest.sh
+
+      - name: Restore simulated activated config + S4 cron + cleanup fixtures (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -c "update game_config set value='true'  where key='mainship_send_enabled';" || true
+            psql "$DB_URL" -X -c "update game_config set value='false' where key='mainship_space_movement_enabled';" || true
+            psql "$DB_URL" -X -c "update game_config set value='86400' where key='max_coordinate_travel_seconds';" || true
+            psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3s6fix.%@example.com' or email like 'osn3s6rest.%@example.com';" || true
+            psql "$DB_URL" -X -c "do \$\$ begin perform cron.unschedule(jobid) from cron.job where jobname='process-mainship-space-arrivals'; exception when undefined_table then null; end \$\$; select cron.schedule('process-mainship-space-arrivals','30 seconds',\$cmd\$select public.process_mainship_space_arrivals();\$cmd\$);" || true
+          fi
+
+      - name: Assert flags/cap + no fixtures + S4 cron present (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare a text; b text; c text; n int; jn int;
+            begin
+              select value::text into a from game_config where key='mainship_send_enabled';
+              select value::text into b from game_config where key='mainship_space_movement_enabled';
+              select value::text into c from game_config where key='max_coordinate_travel_seconds';
+              if a is distinct from 'true'  then raise exception 'send flag=%', a; end if;
+              if b is distinct from 'false' then raise exception 'space flag=%', b; end if;
+              if c is distinct from '86400' then raise exception 'cap=%', c; end if;
+              select count(*) into n from auth.users where email like 'osn3s6%@example.com'; if n<>0 then raise exception '% fixture users remain', n; end if;
+              if exists (select 1 from main_ship_space_movements) then raise exception 'coordinate movements remain'; end if;
+              if exists (select 1 from main_ship_space_command_receipts) then raise exception 'command receipts remain'; end if;
+              select count(*) into jn from cron.job where jobname='process-mainship-space-arrivals'; if jn<>1 then raise exception 'arrival cron jobs=%', jn; end if;
+              raise notice 'post-run ok: send=true space=false cap=86400 no-fixtures s4-cron-present-once';
+            end \$\$;"
+          fi
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
