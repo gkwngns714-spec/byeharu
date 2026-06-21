@@ -178,17 +178,17 @@ do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgr
 do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select id from main_ship_space_movements where id=''00000000-0000-0000-0000-00000000d001'' for update nowait'); raise exception 'TEST A FAIL: coord movement not locked'; exception when others then raise notice 'TEST A ok: coordinate movement locked'; end $$;
 do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select id from location_presence where id=''00000000-0000-0000-0000-00000000e001'' for update nowait'); raise exception 'TEST A FAIL: presence not locked'; exception when others then raise notice 'TEST A ok: presence locked'; end $$;
 -- fleet_movements is NOT locked by lock_context (only a non-locking EXISTS read): NOWAIT succeeds
-do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select id from fleet_movements where id=''00000000-0000-0000-0000-00000000ab01'' for update nowait'); raise notice 'TEST A ok: fleet_movements NOT locked (legacy domain untouched)'; exception when others then raise exception 'TEST A FAIL: fleet_movements was locked: %', sqlerrm; end $$;
+do $$ declare n int; begin select count(*) into n from dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select id from fleet_movements where id=''00000000-0000-0000-0000-00000000ab01'' for update nowait') as t(id uuid); raise notice 'TEST A ok: fleet_movements NOT locked (legacy domain untouched)'; exception when others then raise exception 'TEST A FAIL: fleet_movements was locked: %', sqlerrm; end $$;
 commit;
 -- after commit, the separate session can lock the ship
-do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select main_ship_id from main_ship_instances where main_ship_id=''00000000-0000-0000-0000-00000000a001'' for update nowait'); raise notice 'TEST A ok: after commit, ship lockable again'; exception when others then raise exception 'TEST A FAIL: ship still locked after commit'; end $$;
+do $$ declare n int; begin select count(*) into n from dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select main_ship_id from main_ship_instances where main_ship_id=''00000000-0000-0000-0000-00000000a001'' for update nowait') as t(mid uuid); raise notice 'TEST A ok: after commit, ship lockable again'; exception when others then raise exception 'TEST A FAIL: ship still locked after commit'; end $$;
 
 -- Test B: skip-locked mode — while A holds the ship lock, a separate session in skip mode returns 'skipped'.
 begin;
 select 1 from public.mainship_space_lock_context('00000000-0000-0000-0000-00000000a001', false);  -- hold lock
 do $$ declare r text; begin
-  select dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres',
-                'select public.mainship_space_lock_context(''00000000-0000-0000-0000-00000000a001'', true)::text') into r;
+  select x into r from dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres',
+                'select public.mainship_space_lock_context(''00000000-0000-0000-0000-00000000a001'', true)::text') as t(x text);
   if r like '%skipped%' then raise notice 'TEST B ok: skip-locked mode returned skipped (no block): %', r; else raise exception 'TEST B FAIL: expected skipped, got %', r; end if;
 end $$;
 commit;
