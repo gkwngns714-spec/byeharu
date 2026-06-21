@@ -5,6 +5,63 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-21 — OSN-3 S6A: public coordinate-command boundary (flag-dark) — CLOSED (flag OFF)
+
+First **player-facing** coordinate-movement command surface (branch `osn3-s6a-public-space-move-command`,
+no-ff merge **`ac9230a`**, code commit `581dea9`, migration **`0060`**). A narrow, **authenticated**,
+SECURITY DEFINER wrapper **`command_main_ship_space_move(p_target_x, p_target_y, p_request_id)`** that
+derives the caller from `auth.uid()`, derives the caller's **own** main ship server-side (**no client
+player/ship id**), defense-in-depth flag-gates, **canonicalizes** the target to the integer world-unit
+grid (`round(numeric)` — half **away from zero**, deterministic; non-finite rejected before the cast;
+bounds remain the writer's authority, so a raw value with `|canonical| ≤ 10000` snaps inward and is
+accepted), **DELEGATES** to the existing private writer `mainship_space_begin_move`, and **maps** the
+result to a narrow player-safe payload. Canonicalization is a discrete-grid concern only — **`p_request_id`
+remains the idempotency key**. The private writer stays the **final authority** on flag/ownership/bounds/
+state/exclusion/travel-cap/locking/idempotency/movement-creation and remains **service_role-only** (the
+client never gains it; the definer-owner `postgres` invokes it). **NO writer/processor/S2/S5 change, NO
+new table/cron, NO flag flip, NO UI/CTA.**
+
+**Dark in production:** `mainship_space_movement_enabled` stays **false**, so the wrapper returns
+`feature_disabled` and writes nothing → **net player-visible effect: none**. `mainship_send_enabled` stays
+**true**; legacy named-location travel is untouched and **mutually exclusive** with coordinate movement
+(proven both directions: a coordinate-domain ship rejects legacy send/move by precondition; a legacy-busy
+ship rejects the coordinate command via cross-domain exclusion; the fleet `active_movement_id` XOR
+`active_space_movement_id` holds).
+
+Also: sibling dev flag tool **`dev-mainship-space-movement-flag.mjs`** (+ workflow) for the coordinate flag
+(legacy send-flag tool untouched; **not** run against prod in S6A); **`fetchMainshipSpaceMovementEnabled()`**
+typed read in `src/lib/catalog.ts` (no UI wiring — an S6B seed). The migration re-locks the execute surface
+(canonical client RPCs **+ the new wrapper**; writer/processor/destruction/S2 helpers stay service_role-only).
+
+**Authoritative proof (real chain `0001..0060`, disposable Supabase; `osn3-s6a-realchain-proof.yml`).**
+GREEN: permission/boundary (wrapper authenticated-only, owner postgres / SECURITY DEFINER / search_path
+public / no dynamic SQL / no player-or-ship param; private writer + S4 + S5 + four S2 helpers
+service_role-only; canonical client-RPC inventory = prior 13 **+** the wrapper); runtime **SET ROLE** (anon
+denied / authenticated allowed on the wrapper; writer client-denied, service_role-allowed); fixture matrix
+(dark→`feature_disabled` + no write; success from home/in_space/at_location; canonicalization
+half-away-from-zero + near-edge inward snap + `out_of_bounds`/non-finite reject; `zero_distance`;
+idempotency exact **and** equivalent-canonical replay + `request_conflict` + no duplicate; state matrix
+`in_transit→must_stop_first` / `destroyed→ship_destroyed` / legacy-busy`→busy_legacy`; legacy↔coordinate
+mutual exclusion both directions + fleet pointer XOR); REST boundary (private writer rejected for anon **and**
+authenticated; wrapper reachable for authenticated but dark → `feature_disabled`, no movement). Flags
+restored `if: always()`.
+
+**Gates (all green):** S6A real-chain proof; **S1–S5 real-chain regression**; Build (`tsc -b` + `vite
+build`); `deploy-migrations` (live `db push` of 0060); post-deploy integration **Verify**; live legacy
+regressions `verify-mainship-send` (send **+ return/recall**), `verify-mainship-move`,
+`verify-mainship-repair`. **Live read-only spot check** (`osn3-s6a-live-spotcheck.yml`): 0060 applied;
+wrapper present **authenticated-only**; private engine **service_role-only**; canonical inventory intact;
+one S4 arrival cron @30s; `mainship_send_enabled=true`, `mainship_space_movement_enabled=false`, cap=86400;
+`main_ship_space_movements=0`, `command_receipts=0` — **no game-state mutation by the deploy**. (An earlier
+batch of live runs was **cancelled** by the shared `live-db-tests` concurrency group — a workflow-concurrency
+incident, not a test failure; each was re-run serially to a real `success`.)
+
+**NEXT (not started, needs approval):** OSN-3 **S6B** — the fixed-domain paired coordinate transform
+(`worldToMap`/`mapToWorld` over `[-10000,10000]`, Y-inverting, pan/zoom-aware) **+ a read-only target
+preview**, still flag-off. No map tap/CTA until S6C; no enablement until S6D; OSN-4 Stop remains deferred.
+
+---
+
 ## 2026-06-21 — OSN-3 S5: coordinate-complete trusted destruction primitive — CLOSED (flag OFF)
 
 Fifth **OSN-3** slice (branch `osn3-s5-destruction-hardening`, approved head `a7ab585`, normal **no-ff**

@@ -42,14 +42,15 @@ the **Glossary** (§12).
 **As of this writing:**
 
 - **Branch / commit:** `main` equals `origin/main` (nothing unpushed), working tree clean. The last
-  **code / schema / deploy baseline** is the OSN-3 S5 merge **`0d84256`** (migration `0059`), plus a
-  read-only S5 live-spot-check tooling commit; any commits on `main` above those are
-  **documentation-only** closure records.
-- **Database migrations:** applied through **0059** (`osn3_s5_destruction_coordinate_complete`).
+  **code / schema / deploy baseline** is the OSN-3 S6A merge **`ac9230a`** (code commit `581dea9`,
+  migration `0060`); any commits on `main` above it are **documentation-only** closure records.
+- **Database migrations:** applied through **0060** (`osn3_s6a_public_space_move_command`).
 - **Two feature flags:** `mainship_send_enabled` is **`true`** on live (2026-06-21) — a controlled,
   reversible activation of the **legacy named-location** main-ship send/move/return path only; and
-  `mainship_space_movement_enabled` **remains `false`** (gates the coordinate-domain movement — the one
-  internal writer exists (S3) but stays dark behind this flag, which was **not** touched). The legacy
+  `mainship_space_movement_enabled` **remains `false`** (gates the coordinate-domain movement — the
+  internal writer (S3), the arrival processor (S4), and now the **public, authenticated command wrapper**
+  `command_main_ship_space_move` (S6A) all exist but stay **dark** behind this flag, which was **not**
+  touched; with it false the public wrapper returns `feature_disabled` and writes nothing). The legacy
   send flip enables only the established named-location send UI; it does **not** enable any
   coordinate-movement or OSN player command. Rollback is the same controlled workflow
   (`dev-mainship-flag.yml`) with `mainship_send_enabled=false`.
@@ -58,7 +59,11 @@ the **Glossary** (§12).
   `space_x/space_y`). **OSN-3 S1** (schema + read-model), **OSN-3 S2** (the private, server-only
   transition boundary — lock/validate/resolve-origin/cross-domain-exclusion helpers), and **OSN-3 S3**
   (one private, `service_role`-only, flag-dark coordinate-movement *writer* `mainship_space_begin_move`
-  that composes the S2 boundary) are also [Implemented] — **no public RPC, no UI, no processor yet**.
+  that composes the S2 boundary) are also [Implemented]. **OSN-3 S4** (the cron-driven coordinate-arrival
+  processor), **S5** (coordinate-complete destruction), and **S6A** (the **public, authenticated,
+  flag-dark** coordinate-command wrapper `command_main_ship_space_move` that delegates to the private
+  writer — the first player-facing boundary) are [Implemented] too — **still no map UI, no target
+  selection, no player CTA, and the coordinate flag stays off**.
 - **One main ship per player** is a durable design fact: the `main_ship_instances` table holds
   exactly one ship row per player today (enforced by a uniqueness rule on `player_id`). Multiple
   ships per player is a deliberately deferred future step.
@@ -67,8 +72,8 @@ the **Glossary** (§12).
 
 | Category | Meaning | Examples in Byeharu |
 |---|---|---|
-| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers), OSN-3 **S3** (one private, service_role-only, flag-dark coordinate-movement writer `mainship_space_begin_move`), OSN-3 **S4** (one private, service_role-only, cron-driven coordinate-arrival processor `process_mainship_space_arrivals`), OSN-3 **S5** (coordinate-complete trusted destruction primitive `dev_set_main_ship_destroyed`) |
-| **Design-only work** | Decided/approved on paper, **not** built | OSN-3 follow-ups (S4 arrival processor, S5 reconciler/destruction hardening, S7 target UI; a public player wrapper for the writer), OSN-4 Stop, final Repair & Recovery |
+| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers), OSN-3 **S3** (one private, service_role-only, flag-dark coordinate-movement writer `mainship_space_begin_move`), OSN-3 **S4** (one private, service_role-only, cron-driven coordinate-arrival processor `process_mainship_space_arrivals`), OSN-3 **S5** (coordinate-complete trusted destruction primitive `dev_set_main_ship_destroyed`), OSN-3 **S6A** (the public, authenticated, flag-dark coordinate-command wrapper `command_main_ship_space_move` that delegates to the private writer) |
+| **Design-only work** | Decided/approved on paper, **not** built | OSN-3 follow-ups: **S6B** (fixed-domain `worldToMap`/`mapToWorld` transform + read-only target preview), **S6C** (tap-to-target + confirm UI), **S6D** (controlled enablement); OSN-4 Stop; final Repair & Recovery |
 | **Future initiatives** | Intended, but not yet fully designed | OSN-5, Exploration/Mining/Trading, Online Presence, player interaction, main-ship combat |
 
 ---
