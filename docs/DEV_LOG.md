@@ -5,6 +5,55 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-21 — OSN-3 S1: coordinate-domain schema + invariants + read-model — CLOSED (flag OFF)
+
+First **OSN-3** implementation slice (merge commit `90637d6`, branch `osn3-s1-schema-read`, migration
+`0055`). **Schema + read-model only — NO movement writers, NO processor, NO UI, NO Stop.** Both flags
+stay false (`mainship_send_enabled`, new `mainship_space_movement_enabled`). Builds on OSN-2 (the
+durable open-space position model). Five design gates (A → A3.2) preceded it; all blockers resolved.
+
+**Mandatory preflight (proven before deploy).** A disposable `postgres:15` CI container
+(`scripts/osn3-s1-trigger-proof.sql` + `osn3-s1-schema-proof.sql`, workflow `osn3-s1-trigger-proof.yml`)
+proved, on the real engine but off the shared DB: the `fleets.main_ship_id` **write-once** trigger
+(rejects reassignment / late-attach / ordinary detach), that `ON DELETE SET NULL` fires **after** the
+parent ship row is gone (so the trigger permits parent-deletion orphaning and existing user/ship
+hard-delete cleanup keeps working), and the full §5.1 constraint matrix. *Bug found by the proof:* the
+cyclic `fleets ⇄ main_ship_space_movements` FK graph tripped a constraint mid-cascade on a direct ship
+delete → fixed by making `fleets.active_space_movement_id` FK **`DEFERRABLE INITIALLY DEFERRED`**.
+
+**Migration 0055 (additive, transactional).**
+- `main_ship_space_movements` — the coordinate route engine, **separate** from frozen `fleet_movements`
+  so `process_fleet_movements` can never claim it. `target_kind` ∈ space|location|base with an explicit
+  id-iff-kind CHECK; all coords finite + within `[-10000,10000]²`; `speed_used` finite>0; `arrive>depart`;
+  status/`resolved_at` integrity; one-active partial-uniques per ship & per fleet; due-arrival index;
+  owner-read RLS, no client write; FKs cascade on ship/fleet/user.
+- `fleets.active_space_movement_id` (+ FK DEFERRABLE) — the honest moving-fleet pointer; mutual-exclusion
+  with `active_movement_id` + requires-moving/movement CHECKs; one-fleet-per-movement unique.
+- `main_ship_space_command_receipts` — `UNIQUE(main_ship_id,request_id)` + `canonical_payload_hash`;
+  RLS on, **no** client read/write (server-only).
+- `main_ship_instances.status += 'stationary'` + six legacy-safe forward lifecycle CHECKs (the reverse
+  `stationary` rule uses `… IS TRUE` to reject `stationary`+NULL). No reverse rules for legacy statuses;
+  no back-fill (existing rows stay `spatial_state=NULL`).
+- write-once `fleets.main_ship_id` trigger; `mainship_space_movement_enabled=false`; execute relock.
+
+**Read-model (the SINGLE resolver, extended — no second resolver).** `resolveMainShipMarker` now reads
+the already-deployed coordinate states: `in_transit` (interpolate the active `main_ship_space_movements`
+row, fully validated against ship/fleet/pointer/timestamps/presence), `at_location` (validated present
+fleet + matching active presence), and `home` (base, no active state). Legacy `NULL` behavior unchanged;
+any contradiction → `null`. A new owner-read fetch of the active coordinate movement runs inside the
+existing 4s poll; the fleet read gains `location_mode`/`active_movement_id`/`active_space_movement_id`.
+
+**Verification (all green via CI; local toolchain unusable).** Disposable trigger+schema proofs ✓;
+branch closure (`npm run lint` + `tsc -b` + `vite build` + resolver unit tests **32/32**) ✓; migration
+deploy ✓; phase8 engine regression ✓; live `verify:osn3:s1` **13/13** (both flags false, RLS owner-read,
+client writes denied, receipts unreadable, write-once trigger live, **0 coordinate rows**) ✓; live
+`spatial_state` distribution **56/56 NULL**. No writer/processor/UI/reconciler/repair/legacy change.
+**NEXT (not started):** shared transition boundary → begin-move RPC (S3) → arrival processor (S4) →
+reconciler/destruction hardening (S5) → target UI (S7) → OSN-4 Stop (S8). `MAX_COORDINATE_MOVE_DISTANCE`
+/ `MAX_COORDINATE_TRAVEL_SECONDS` and the emergency processor-pause contract are deferred to those slices.
+
+---
+
 ## 2026-06-21 — OSN-1 / OSN-2a / OSN-2b (Open-Space Navigation, read side) — CLOSED
 
 Cross-cutting **Open-Space Navigation (OSN)** initiative (see `MAINSHIP_TRANSITION.md` §12). These
