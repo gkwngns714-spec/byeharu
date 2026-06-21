@@ -1,0 +1,39 @@
+name: OSN-3 S2 — transition-core proof (disposable)
+
+# Proves the four S2 helper functions on an EPHEMERAL postgres:15 container — NOT Supabase, NOT main.
+# Real two-session locking via dblink (blocking conflict, skip-locked, all-four-rows-locked,
+# fleet_movements NOT locked), static lock order, validate/resolve/exclusion truth tables, and
+# mutation-safety. Disposable: the container is destroyed after the job. Runs on push to the OSN-3
+# branch(es) (a workflow_dispatch-only file on a non-default branch is not dispatchable until on main).
+
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run disposable S2 transition-core proof
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -f scripts/osn3-s2-transition-core-proof.sql
