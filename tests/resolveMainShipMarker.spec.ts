@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { resolveMainShipMarker, type MarkerInputs } from '../src/features/map/resolveMainShipMarker'
+import { markerViewBoxPoint } from '../src/features/map/MainShipMarker'
+import { worldToViewBox } from '../src/features/map/openSpaceTransform'
 
 // OSN-1 / OSN-2b / OSN-3-S1 — pure unit test for the single main-ship marker resolver. No browser/page.
 // Run: `npm run verify:osn:resolver`.
@@ -313,4 +315,30 @@ test('S6B2: no legacy / home / at-location / travel path can acquire open_space_
 test('S6B2: only in_space and coordinate in_transit yield open_space_fixed', () => {
   expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'stationary', spatial_state: 'in_space', space_x: 0, space_y: 0 }) }), Date.now())?.coordinateSpace).toBe('open_space_fixed')
   expect(resolveMainShipMarker(transitInputs(), midMs)?.coordinateSpace).toBe('open_space_fixed')
+})
+
+// ── OSN-3 S6B4: the REAL MainShipMarker fixed-provenance route (markerViewBoxPoint — the SAME helper the
+// component calls). Proves a resolved open_space_fixed marker is projected through worldToViewBox and
+// NEVER through the dynamic `norm`; a legacy marker still routes through the supplied `norm`. ─────────────
+
+test('S6B4: a resolved open_space_fixed marker routes through the fixed transform (real component helper)', () => {
+  // a real in_space ship resolves to an open_space_fixed marker at world (8000,-8000)
+  const m = resolveMainShipMarker(inputs({ mainShip: ship({ status: 'stationary', spatial_state: 'in_space', space_x: 8000, space_y: -8000 }) }), Date.now())
+  expect(m?.coordinateSpace).toBe('open_space_fixed')
+  // route via the EXACT helper MainShipMarker uses, with a `norm` stub that must NEVER be called
+  let normCalled = false
+  const stubNorm = (_p: { x: number; y: number }) => { normCalled = true; return { x: -999, y: -999 } }
+  const pt = markerViewBoxPoint(m!, stubNorm)
+  expect(pt).toEqual(worldToViewBox({ x: 8000, y: -8000 })) // fixed transform, exact-by-construction
+  expect(Math.abs(pt.x - 900)).toBeLessThanOrEqual(1e-6) // === { x: 900, y: 900 }
+  expect(Math.abs(pt.y - 900)).toBeLessThanOrEqual(1e-6)
+  expect(normCalled).toBe(false) // the dynamic normalizer is NEVER used for a coordinate marker
+})
+
+test('S6B4: a legacy_dynamic marker routes through the supplied norm', () => {
+  let normCalled = false
+  const stubNorm = (p: { x: number; y: number }) => { normCalled = true; return { x: p.x + 1, y: p.y + 2 } }
+  const pt = markerViewBoxPoint({ x: 300, y: 400, coordinateSpace: 'legacy_dynamic' }, stubNorm)
+  expect(normCalled).toBe(true)
+  expect(pt).toEqual({ x: 301, y: 402 }) // the stub's transformed result
 })

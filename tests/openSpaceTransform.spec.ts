@@ -207,3 +207,29 @@ test('isWithinOpenSpaceBounds: in-domain, edges, out-of-domain, non-finite', () 
   expect(isWithinOpenSpaceBounds({ x: Infinity, y: 0 })).toBe(false)
   expect(isWithinOpenSpaceBounds({ x: 20000, y: 0 })).toBe(false)
 })
+
+// ── OSN-3 S6B4: fixed-layer camera CO-MOVEMENT — the S6B3 preview fixture and a distinct fixed-space ship
+// point preserve their relative geometry through the SAME camera/viewport transform across pan/zoom/
+// viewports. Pure geometry only; NO comparison against dynamically-normalized named-location coordinates.
+
+test('S6B4: preview + fixed-space ship co-move (screen Δ = letterbox·zoom × viewBox Δ) across pan/zoom/viewports', () => {
+  const PREVIEW = { x: 8000, y: -8000 } // the S6B3 dev-preview fixture
+  const SHIP = { x: -4000, y: 2000 } // a distinct fixed-space ship point (≠ the preview)
+  const vbA = worldToViewBox(PREVIEW)
+  const vbB = worldToViewBox(SHIP)
+  const vbDelta = { x: vbB.x - vbA.x, y: vbB.y - vbA.y } // camera-independent (fixed layer)
+  for (const cam of CAMERAS) {
+    // CAMERAS covers zoom 0.4 / 1 / 2 / 8 and both zero pan and nonzero pan
+    for (const vp of VIEWPORTS) {
+      // VIEWPORTS covers square / wide / tall / mobile-portrait / mobile-landscape
+      const sA = worldToScreen(PREVIEW, cam, vp)
+      const sB = worldToScreen(SHIP, cam, vp)
+      const s = viewBoxDisplayRect(vp).scale
+      // both points feed worldToViewBox → the same camera <g> (scale-then-translate) → the same letterbox,
+      // so their SCREEN-space relative vector equals the viewBox-relative vector scaled by (letterbox·zoom).
+      // The pan term cancels in the delta → pan-invariant; consistent across every viewport/zoom.
+      near(sB.x - sA.x, s * cam.k * vbDelta.x)
+      near(sB.y - sA.y, s * cam.k * vbDelta.y)
+    }
+  }
+})
