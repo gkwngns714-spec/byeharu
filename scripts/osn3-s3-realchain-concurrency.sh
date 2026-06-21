@@ -31,13 +31,13 @@ wait_blocked() {
     sleep 0.2
   done; echo "FAIL: $1 did not reach Lock wait"; cat /tmp/s3sessB.log 2>/dev/null; exit 1
 }
-# wait until session $1 is idle-in-transaction (its statement finished, txn open holding locks)
+# wait until session $1 is idle-in-transaction AFTER the begin_move writer ran (not merely after BEGIN),
+# so the holder has actually acquired its locks + done its work before the peer is released/probed.
 wait_idletx() {
-  for _ in $(seq 1 100); do
-    case "$(q "select state from pg_stat_activity where application_name='$1' order by query_start desc limit 1")" in
-      "idle in transaction") return 0;; esac
+  for _ in $(seq 1 150); do
+    [ "$(q "select (state='idle in transaction' and query ilike '%mainship_space_begin_move%') from pg_stat_activity where application_name='$1' order by query_start desc limit 1")" = "t" ] && return 0
     sleep 0.2
-  done; echo "FAIL: $1 not idle-in-transaction"; cat /tmp/s3sessA.log /tmp/s3sessB.log 2>/dev/null; exit 1
+  done; echo "FAIL: $1 not idle-in-transaction after writer"; cat /tmp/s3sessA.log /tmp/s3sessB.log 2>/dev/null; exit 1
 }
 
 mkfifo "$FIFOA"; mkfifo "$FIFOB"
@@ -49,21 +49,24 @@ exec 3>"$FIFOA" 4>"$FIFOB"
 #    auto-provisions this player's 'Home Base' at (0,0) via the on_auth_user_created_base trigger, so
 #    resolve_origin resolves a real base origin — no manual base is inserted. ──
 q "update game_config set value='true' where key='mainship_space_movement_enabled';" >/dev/null
-U=$(q "
+# One ship per player (main_ship_instances has a one-ship-per-player unique), so use a distinct user
+# (each with its own auto-base) per scenario.
+mkuser() { q "
   with u as (
     insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated','authenticated','osn3s3lock.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
     returning id)
-  select id from u;")
-[ -n "$(q "select id from bases where player_id='$U' and status='active' limit 1")" ] || { echo "FAIL: auto-base not provisioned for lock fixture user"; exit 1; }
-S1=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U','starter_frigate','home',null,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
-S2=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U','starter_frigate','home',null,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
+  select id from u;"; }
+U1=$(mkuser); U2=$(mkuser)
+for u in "$U1" "$U2"; do [ -n "$(q "select id from bases where player_id='$u' and status='active' limit 1")" ] || { echo "FAIL: auto-base not provisioned for $u"; exit 1; }; done
+S1=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U1','starter_frigate','home',null,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
+S2=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U2','starter_frigate','home',null,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
 R1=$(q "select gen_random_uuid()"); R2=$(q "select gen_random_uuid()"); R3=$(q "select gen_random_uuid()")
 
 echo "=== Scenario 1: two DISTINCT commands for ship S1 — B waits on the lock, then rejects ==="
-echo "begin; with r as (select public.mainship_space_begin_move('$U','$S1',100,50,'$R1') j) select 'A_OK='||(j->>'ok') from r;" >&3
+echo "begin; with r as (select public.mainship_space_begin_move('$U1','$S1',100,50,'$R1') j) select 'A_OK='||(j->>'ok') from r;" >&3
 wait_idletx s3sessA                                  # A ran the writer, holds the txn (locks + uncommitted move)
-echo "begin; with r as (select public.mainship_space_begin_move('$U','$S1',200,60,'$R2') j) select 'B_OK='||(j->>'ok')||' B_REASON='||coalesce(j->>'reason','none') from r;" >&4
+echo "begin; with r as (select public.mainship_space_begin_move('$U1','$S1',200,60,'$R2') j) select 'B_OK='||(j->>'ok')||' B_REASON='||coalesce(j->>'reason','none') from r;" >&4
 wait_blocked s3sessB                                 # B blocks on the ship FOR UPDATE
 echo "commit;" >&3                                   # A commits → releases the lock; ship now in_transit
 wait_idletx s3sessB                                  # B proceeds and completes its statement
@@ -76,9 +79,9 @@ N=$(q "select count(*) from main_ship_space_movements where main_ship_id='$S1' a
 echo "  ok: distinct concurrent commands → exactly one move; the loser rejected after revalidation"
 
 echo "=== Scenario 2: two SAME-request retries for ship S2 — B waits, then replays A's receipt ==="
-echo "begin; with r as (select public.mainship_space_begin_move('$U','$S2',77,77,'$R3') j) select 'A_OK='||(j->>'ok')||' A_MV='||(j->>'movement_id') from r;" >&3
+echo "begin; with r as (select public.mainship_space_begin_move('$U2','$S2',77,77,'$R3') j) select 'A_OK='||(j->>'ok')||' A_MV='||(j->>'movement_id') from r;" >&3
 wait_idletx s3sessA
-echo "begin; with r as (select public.mainship_space_begin_move('$U','$S2',77,77,'$R3') j) select 'B_OK='||(j->>'ok')||' B_MV='||(j->>'movement_id') from r;" >&4
+echo "begin; with r as (select public.mainship_space_begin_move('$U2','$S2',77,77,'$R3') j) select 'B_OK='||(j->>'ok')||' B_MV='||(j->>'movement_id') from r;" >&4
 wait_blocked s3sessB
 echo "commit;" >&3
 wait_idletx s3sessB
