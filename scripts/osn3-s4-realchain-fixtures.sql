@@ -166,6 +166,19 @@ begin
   raise notice 'ok no-op (%): all rows untouched', p_label;
 end $$;
 
+-- Precondition: the ship has a moving movement that satisfies the S1 invariant and is due (or not-due).
+-- p_due=true  → assert depart_at < arrive_at AND arrive_at <= now()  (a real settlement candidate)
+-- p_due=false → assert depart_at < arrive_at AND arrive_at >  now()  (deliberately not yet due)
+create or replace function s4_assert_moving(p_ship uuid, p_due boolean) returns void language plpgsql as $$
+declare v_st text; v_d timestamptz; v_a timestamptz;
+begin
+  select status, depart_at, arrive_at into v_st, v_d, v_a from main_ship_space_movements where main_ship_id = p_ship and status = 'moving';
+  if v_st is null then raise exception 'precond: ship % has no moving movement', p_ship; end if;
+  if not (v_d < v_a) then raise exception 'precond: depart_at < arrive_at violated (% >= %)', v_d, v_a; end if;
+  if p_due and not (v_a <= now()) then raise exception 'precond: due movement but arrive_at > now() (%)', v_a; end if;
+  if (not p_due) and not (v_a > now()) then raise exception 'precond: not-due movement but arrive_at <= now() (%)', v_a; end if;
+end $$;
+
 -- ════════ SECTION A — real S3-writer movement settles with the FLAG OFF; receipt immutable ════════
 do $$ declare s uuid; p uuid; req uuid := gen_random_uuid(); r jsonb; mv uuid; rcpt_before jsonb; n int;
 begin
@@ -175,9 +188,13 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'A: begin_move failed: %', r; end if;
   mv := (r->>'movement_id')::uuid;
   select result_json into rcpt_before from main_ship_space_command_receipts where main_ship_id=s and request_id=req;
-  update main_ship_space_movements set arrive_at = now() - interval '1 second' where id = mv;  -- simulate elapsed travel
+  -- simulate elapsed travel: move BOTH timestamps into the past so depart_at < arrive_at holds (now() is
+  -- transaction-scoped and constant, so adjusting only arrive_at backwards would break arrive_at>depart_at).
+  update main_ship_space_movements set depart_at = now() - interval '2 hours', arrive_at = now() - interval '1 hour' where id = mv;
+  if (mainship_space_validate_context(s)->>'state') is distinct from 'in_transit' then raise exception 'A precond: not in_transit after timestamp adjust: %', mainship_space_validate_context(s); end if;
+  perform s4_assert_moving(s, true);  -- moving, depart<arrive, due
   update game_config set value='false' where key='mainship_space_movement_enabled';  -- FLAG OFF before settlement
-  perform process_mainship_space_arrivals();
+  if process_mainship_space_arrivals() < 1 then raise exception 'A: processor settled 0 (expected >=1)'; end if;
   perform s4_assert_arrived(s, 120, -60);
   select count(*) into n from main_ship_space_command_receipts where main_ship_id=s and request_id=req and result_json = rcpt_before and movement_id = mv;
   if n <> 1 then raise exception 'A: S3 creation receipt was changed'; end if;
@@ -189,16 +206,19 @@ do $$ declare s uuid; h1 text; h2 text;
 begin
   s := s4fix('in_transit_due');
   if (mainship_space_validate_context(s)->>'state') is distinct from 'in_transit' then raise exception 'B precond: fixture not in_transit'; end if;
+  perform s4_assert_moving(s, true);  -- moving, depart<arrive, due
+  if (select count(*) from main_ship_space_movements where main_ship_id=s and status='moving') <> 1 then raise exception 'B precond: not exactly one moving movement'; end if;
   perform process_mainship_space_arrivals();
   perform s4_assert_arrived(s, 100, 50);
   h1 := s4_ship_hash(s); perform process_mainship_space_arrivals(); h2 := s4_ship_hash(s);  -- idempotent
   if h1 is distinct from h2 then raise exception 'B: second processor call re-settled / mutated an arrived ship'; end if;
-  raise notice 'SECTION B ok: due coherent movement settles once; second processor call idempotent';
+  raise notice 'SECTION B ok: due coherent movement settles once; second processor call settles 0 additional (idempotent)';
 end $$;
 do $$ declare s uuid; h1 text; h2 text;
 begin
   s := s4fix('in_transit_future');
   if (mainship_space_validate_context(s)->>'state') is distinct from 'in_transit' then raise exception 'future precond'; end if;
+  perform s4_assert_moving(s, false);  -- moving, depart<arrive, NOT due (arrive_at > now())
   h1 := s4_ship_hash(s); perform process_mainship_space_arrivals(); h2 := s4_ship_hash(s);
   if h1 is distinct from h2 then raise exception 'not-yet-due movement was mutated'; end if;
   if (select status from main_ship_space_movements where main_ship_id=s) <> 'moving' then raise exception 'future: movement not still moving'; end if;
@@ -208,14 +228,18 @@ end $$;
 -- ════════ SECTION C — contradiction / no-op matrix (each leaves all affected rows untouched) ════════
 do $$ declare s uuid;
 begin
-  s := s4fix('destroyed_due');         perform s4_assert_noop(s, 'destroyed ship + due movement');
-  s := s4fix('legacy_conflict_due');   perform s4_assert_noop(s, 'active legacy movement + due coordinate movement');
-  s := s4fix('presence_conflict_due'); perform s4_assert_noop(s, 'unexpected active presence + due movement');
-  s := s4fix('pointer_mismatch_due');  perform s4_assert_noop(s, 'fleet pointer ≠ active moving movement');
-  s := s4fix('ownership_mismatch_due');perform s4_assert_noop(s, 'movement.player_id ≠ ship.player_id');
-  s := s4fix('malformed_due');         perform s4_assert_noop(s, 'in_transit ship + due movement but fleet pointer NULL');
-  s := s4fix('already_arrived');       perform s4_assert_noop(s, 'already-arrived movement (never scanned)');
-  raise notice 'SECTION C ok: every contradiction left all affected rows untouched (no settle/fail/repair/delete)';
+  -- each contradiction below is a genuine DUE candidate (moving + depart<arrive + arrive<=now()), so the
+  -- processor scans it, claims the ship, and then declines to mutate — proving the skip, not mere absence.
+  s := s4fix('destroyed_due');          perform s4_assert_moving(s, true); perform s4_assert_noop(s, 'destroyed ship + due movement');
+  s := s4fix('legacy_conflict_due');    perform s4_assert_moving(s, true); perform s4_assert_noop(s, 'active legacy movement + due coordinate movement');
+  s := s4fix('presence_conflict_due');  perform s4_assert_moving(s, true); perform s4_assert_noop(s, 'unexpected active presence + due movement');
+  s := s4fix('pointer_mismatch_due');   perform s4_assert_moving(s, true); perform s4_assert_noop(s, 'fleet pointer ≠ active moving movement');
+  s := s4fix('ownership_mismatch_due'); perform s4_assert_moving(s, true); perform s4_assert_noop(s, 'movement.player_id ≠ ship.player_id');
+  s := s4fix('malformed_due');          perform s4_assert_moving(s, true); perform s4_assert_noop(s, 'in_transit ship + due movement but fleet pointer NULL');
+  s := s4fix('already_arrived');
+  if (select status from main_ship_space_movements where main_ship_id=s) <> 'arrived' then raise exception 'already_arrived precond: movement not arrived'; end if;
+  perform s4_assert_noop(s, 'already-arrived movement (terminal; never a candidate)');
+  raise notice 'SECTION C ok: every contradiction is a real due candidate left fully untouched (no settle/fail/repair/delete)';
 end $$;
 
 -- ════════ cleanup + final assertions ════════
@@ -231,9 +255,12 @@ begin
 end $$;
 drop function if exists s4_assert_arrived(uuid, double precision, double precision);
 drop function if exists s4_assert_noop(uuid, text);
+drop function if exists s4_assert_moving(uuid, boolean);
 drop function if exists s4_ship_hash(uuid);
 drop function if exists s4fix(text);
 drop function if exists s4fix_user();
+-- NOTE: the arrival cron stays UNSCHEDULED through the concurrency/REST steps for determinism; the
+-- workflow's always-cleanup restores it (and the always-assert re-verifies it present @ "30 seconds").
 do $$ declare a text; b text; c text; begin
   select value::text into a from game_config where key='mainship_send_enabled';
   select value::text into b from game_config where key='mainship_space_movement_enabled';

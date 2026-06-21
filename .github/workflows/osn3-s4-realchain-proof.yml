@@ -75,6 +75,8 @@ jobs:
             psql "$DB_URL" -X -c "update game_config set value='false' where key='mainship_space_movement_enabled';" || true
             psql "$DB_URL" -X -c "update game_config set value='86400' where key='max_coordinate_travel_seconds';" || true
             psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3s4fix.%@example.com' or email like 'osn3s4lock.%@example.com' or email like 'osn3s4rest.%@example.com';" || true
+            # restore the migration's arrival cron job (fixtures unscheduled it for deterministic tests)
+            psql "$DB_URL" -X -c "do \$\$ begin perform cron.unschedule(jobid) from cron.job where jobname='process-mainship-space-arrivals'; exception when undefined_table then null; end \$\$; select cron.schedule('process-mainship-space-arrivals','30 seconds',\$cmd\$select public.process_mainship_space_arrivals();\$cmd\$);" || true
           fi
 
       - name: Assert flags/cap + no fixtures remain (always)
@@ -82,7 +84,7 @@ jobs:
         run: |
           set -a; . /tmp/sbenv 2>/dev/null || true; set +a
           if [ -n "${DB_URL:-}" ]; then
-            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare a text; b text; c text; n int;
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare a text; b text; c text; n int; jn int;
             begin
               select value::text into a from game_config where key='mainship_send_enabled';
               select value::text into b from game_config where key='mainship_space_movement_enabled';
@@ -91,7 +93,10 @@ jobs:
               if b is distinct from 'false' then raise exception 'space flag=%', b; end if;
               if c is distinct from '86400' then raise exception 'cap=%', c; end if;
               select count(*) into n from auth.users where email like 'osn3s4%@example.com'; if n<>0 then raise exception '% fixture users remain', n; end if;
-              raise notice 'post-run ok: send=true space=false cap=86400 no-fixture-users';
+              if exists (select 1 from main_ship_space_movements) then raise exception 'coordinate movements remain'; end if;
+              if exists (select 1 from main_ship_space_command_receipts) then raise exception 'command receipts remain'; end if;
+              select count(*) into jn from cron.job where jobname='process-mainship-space-arrivals'; if jn<>1 then raise exception 'arrival cron jobs=%', jn; end if;
+              raise notice 'post-run ok: send=true space=false cap=86400 no-fixtures cron-restored-once';
             end \$\$;"
           fi
 
