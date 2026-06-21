@@ -1,0 +1,51 @@
+name: Verify — OSN S6B3 dev-preview (unit + production absence)
+
+# OSN-3 S6B3 proof. Two gates: (1) a PURE unit test of the development-only fixed-space preview
+# component (sentinel / pointer-events / aria-hidden / fixed-space position; no browser/DB); and (2) a
+# STRUCTURAL production-absence proof — `vite build`, then assert the `s6b3-dev-preview` sentinel and the
+# DevFixedSpacePreview component are ABSENT from the emitted dist/ (i.e. compile-time eliminated by Vite/
+# Rollup behind `import.meta.env.DEV`). Runs on its own pull requests (path-scoped) so S6B3 is gated, and
+# is workflow_dispatch-able afterward. No DB, no secrets, no feature-flag flip.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/features/map/DevFixedSpacePreview.tsx'
+      - 'src/features/map/GalaxyMap.tsx'
+      - 'tests/devFixedSpacePreview.spec.ts'
+      - '.github/workflows/verify-s6b3.yml'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Dev-preview pure unit test (sentinel / pointer-events / fixed-space position)
+        run: npm run verify:osn:s6b3
+      - name: Production build (tsc -b + vite build)
+        run: npm run build
+      - name: Assert dev-preview is ABSENT from the production dist/ (compile-time eliminated)
+        run: |
+          set -e
+          echo "Scanning dist/ for dev-preview sentinels…"
+          hits=$(grep -rIl -e 's6b3-dev-preview' -e 'DevFixedSpacePreview' dist/ || true)
+          if [ -n "$hits" ]; then
+            echo "FAIL: dev-preview sentinel/component reference found in production dist/:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "ok: no 's6b3-dev-preview' sentinel and no DevFixedSpacePreview reference in dist/ — preview is compile-time eliminated from the production bundle"
