@@ -41,17 +41,18 @@ the **Glossary** (§12).
 
 **As of this writing:**
 
-- **Branch / commit:** `main` at commit **`90637d6`**, which equals `origin/main` (nothing
+- **Branch / commit:** `main` at commit **`a38247f`**, which equals `origin/main` (nothing
   unpushed), working tree clean.
-- **Database migrations:** applied through **0055** (`osn3_s1_space_schema`).
+- **Database migrations:** applied through **0056** (`osn3_s2_transition_core`).
 - **Two feature flags, both `false`:** `mainship_send_enabled` (gates all player-facing main-ship
   send/move + the open-space marker) and `mainship_space_movement_enabled` (gates the future
   coordinate-domain movement, which has **no writers yet**). With both off, none of this appears
   to normal players — the work exists in the codebase but is not live gameplay.
 - **OSN-1 / OSN-2 (a+b) are [Implemented], flag-gated.** The single map-marker resolver draws your
   main ship and now understands the durable open-space position model (`spatial_state` +
-  `space_x/space_y`). **OSN-3 S1** (the coordinate-domain *schema* + read-model) is also
-  [Implemented] — schema only, no movement writers.
+  `space_x/space_y`). **OSN-3 S1** (the coordinate-domain *schema* + read-model) and **OSN-3 S2**
+  (the private, server-only transition boundary — lock/validate/resolve-origin/cross-domain-exclusion
+  helpers, `service_role`-only, no public RPC) are also [Implemented] — **still no movement writers**.
 - **One main ship per player** is a durable design fact: the `main_ship_instances` table holds
   exactly one ship row per player today (enforced by a uniqueness rule on `player_id`). Multiple
   ships per player is a deliberately deferred future step.
@@ -60,8 +61,8 @@ the **Glossary** (§12).
 
 | Category | Meaning | Examples in Byeharu |
 |---|---|---|
-| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model) |
-| **Design-only work** | Decided/approved on paper, **not** built | OSN-3 movement writers (S2+), OSN-4 Stop, final Repair & Recovery |
+| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers) |
+| **Design-only work** | Decided/approved on paper, **not** built | OSN-3 movement writers (S3+: begin-move RPC, arrival processor, reconciler), OSN-4 Stop, final Repair & Recovery |
 | **Future initiatives** | Intended, but not yet fully designed | OSN-5, Exploration/Mining/Trading, Online Presence, player interaction, main-ship combat |
 
 ---
@@ -364,7 +365,7 @@ guardrail (what it must **not** accidentally change).
   existing ship stays legacy `NULL`). **OSN-2b** extended the single resolver to read `in_space` and
   treat `NULL` as legacy. Verified; flag-gated; no movement writer.
 
-#### OSN-3 — Arbitrary-coordinate movement **[In progress — S1 done; movement writers are future]**
+#### OSN-3 — Arbitrary-coordinate movement **[In progress — S1 + S2 done; movement writers are future]**
 
 - **Player-facing (eventually):** point at *any* coordinate and fly there — not just named locations.
 - **Architecture job:** a parallel, main-ship-only coordinate-movement engine (its own
@@ -380,9 +381,19 @@ guardrail (what it must **not** accidentally change).
   `main_ship_space_command_receipts` idempotency table, the honest moving-fleet pointer
   `fleets.active_space_movement_id`, the `stationary` status + legacy-safe lifecycle CHECKs, a
   write-once `fleets.main_ship_id` trigger, and read-model support so the single resolver understands
-  `in_transit` / `at_location` / `home`. **Still to come:** the shared transition boundary, the
-  begin-move RPC (**S3**), the dedicated arrival processor (**S4**), reconciler/destruction hardening
-  (**S5**), target-selection UI (**S7**), then **OSN-4 Stop** (S8) — none of which exist yet.
+  `in_transit` / `at_location` / `home`.
+- **Status detail — S2 [Implemented] (migration 0056), flag still `false`, STILL NO writers.** S2 added
+  the **private, server-only transition boundary** that the future writer will call: four `SECURITY
+  DEFINER` helpers — `mainship_space_lock_context(uuid, boolean)` (locks in the canonical order
+  `main_ship_instances → fleets → main_ship_space_movements → location_presence`, never locks legacy
+  `fleet_movements`, skip-lock at the ship row), `mainship_space_validate_context(uuid)`,
+  `mainship_space_resolve_origin(uuid)`, and `mainship_space_assert_cross_domain_exclusion(uuid)`. All
+  are owned by `postgres`, pinned to `search_path=public`, and granted to `service_role` **only** —
+  `PUBLIC`/`anon`/`authenticated` have no EXECUTE and none is a player-facing RPC. Proven via the real
+  migration chain (`0001..0056`) in a disposable Supabase stack with real concurrent-session lock-order
+  tests, and verified read-only on live (owner/ACL/flags/0-row-count). **Still to come:** the begin-move
+  RPC (**S3**), the dedicated arrival processor (**S4**), reconciler/destruction hardening (**S5**),
+  target-selection UI (**S7**), then **OSN-4 Stop** (S8) — none of which exist yet.
 
 #### OSN-4 — Stop mid-travel **[Future]**
 

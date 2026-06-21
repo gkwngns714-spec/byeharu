@@ -5,6 +5,59 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-21 — OSN-3 S2: internal transition boundary + validation core — CLOSED (flag OFF)
+
+Second **OSN-3** slice (branch `osn3-s2-transition-core`, approved head `1f2c45d`, normal **no-ff** merge
+`93cb977`, migration `0056`). **Private, server-only transition boundary — NO movement writer, NO
+processor, NO Stop, NO UI, NO public RPC, NO flag change.** Current `main == origin/main == a38247f`
+(the four commits after `93cb977` changed **only** read-only live-verification tooling:
+`.github/workflows/osn3-s2-live-spotcheck.yml`, `scripts/osn3-s2-live-spotcheck.sh`,
+`scripts/osn3-s2-live-inspect.sql`). No history rewrite / force-push / rebase / squash / reset.
+
+**Migration 0056 — four `SECURITY DEFINER` helpers (server-only), the locking/validation core for the
+future coordinate-move writer (S3+):**
+- `public.mainship_space_lock_context(uuid, boolean)` — acquires per-ship locks in the canonical order
+  `main_ship_instances → fleets → main_ship_space_movements → location_presence`; never locks legacy
+  `fleet_movements` (non-locking `EXISTS` read only); `boolean` = skip-lock (`FOR UPDATE SKIP LOCKED`
+  at the ship row → returns `skipped` with no downstream locks).
+- `public.mainship_space_validate_context(uuid)` — validates the full ship/fleet/pointer/presence state.
+- `public.mainship_space_resolve_origin(uuid)` — resolves the move origin from current authoritative state.
+- `public.mainship_space_assert_cross_domain_exclusion(uuid)` — enforces the legacy/coordinate domain
+  mutual exclusion.
+All are owned by `postgres`, `set search_path = public`, and relocked so `PUBLIC`/`anon`/`authenticated`
+have **no** EXECUTE; `service_role` only. None is exposed as a player-facing PostgREST/RPC function. The
+canonical client-RPC grants survived the relock intact; `anon`/`authenticated` cannot CREATE in `public`.
+
+**Authoritative proof (real migration chain, off the shared DB).** A disposable local Supabase stack
+applied the actual chain `0001..0056` (`osn3-s2-realchain-proof.yml`). Real concurrent psql sessions
+(FIFO-driven, `pg_stat_activity` wait-state + `FOR UPDATE NOWAIT` probes) proved the runtime lock
+sequence stage-by-stage (`osn3-s2-realchain-lockorder.sh`), plus blocking vs. skip-lock behavior, the
+legacy `fleet_movements` non-locking path, valid/contradictory state fixtures, cross-domain exclusions,
+ownership/pointer/presence mismatches, origin resolution, no-mutation (md5 before/after), fixture
+cleanup, and runtime REST/RPC denial under `anon`/`authenticated` (`osn3-s2-realchain-perm.sql`,
+`-fixtures.sql`, `-rest.sh`). The earlier reduced `postgres:15` stub proof
+(`osn3-s2-transition-proof.yml`) is demoted to **supplementary / non-gating**.
+
+**Live read-only spot check (`osn3-s2-live-spotcheck.yml`, run passed).** Method = `migration list` +
+`db dump` (corroboration) + an **authoritative direct catalog query** (pure `SELECT`s over
+`pg_catalog`/`game_config` + one `count`, via the Supabase pooler `aws-1-ap-southeast-1`) + REST reads.
+Confirmed on live: `0056` applied; all four helpers present with approved signatures, `owner=postgres`,
+`prosecdef=t`, `search_path=public`, `acl={postgres,service_role}` (no PUBLIC/anon/authenticated EXECUTE);
+canonical 13-RPC inventory preserved; `anon` keeps `get_world_map`; no helper authenticated-executable;
+schema CREATE denied to client roles; **`mainship_send_enabled=false`**, **`mainship_space_movement_enabled=false`**;
+**`main_ship_space_movements` row count = 0**. *Note:* `supabase db dump` is `--no-owner` and lossy for
+privileges, so owner/ACL facts come from the direct catalog query (authoritative); the dump only
+corroborates presence/`SECURITY DEFINER`/`search_path`. No test users, fixtures, game-state rows,
+coordinate movements, or flag changes were created during deployment or verification — strictly read-only.
+
+**Scope confirmation.** S2 added **no** coordinate-movement writer, no coordinate return, no arrival
+settlement, no processor/cron, no Stop, no target UI, no public movement RPC, no public grant, no
+reconciler, no repair/destruction change, no legacy-writer change, no feature enablement, no frontend
+change. **NEXT (not started, awaiting a separate explicit S3 charter):** begin-move RPC (S3) → arrival
+processor (S4) → reconciler/destruction hardening (S5) → target UI (S7) → OSN-4 Stop (S8).
+
+---
+
 ## 2026-06-21 — OSN-3 S1: coordinate-domain schema + invariants + read-model — CLOSED (flag OFF)
 
 First **OSN-3** implementation slice (merge commit `90637d6`, branch `osn3-s1-schema-read`, migration
