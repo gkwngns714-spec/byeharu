@@ -1,0 +1,36 @@
+name: Verify — OSN S6B transform (unit)
+
+# Runner for the pure openSpaceTransform unit tests (OSN-3 S6B1). Node-side Playwright unit test (no
+# page/browser interaction, no DB, no secrets) — it exercises pure coordinate-transform logic. It exists
+# because the dev machine's local toolchain is unreliable (OneDrive node_modules corruption), so these
+# tests must run in CI. It runs on its OWN pull requests (path-scoped) so S6B1 is gated before merge, and
+# is also workflow_dispatch-able afterward. It is deliberately NOT a gate on every unrelated push.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/features/map/openSpaceTransform.ts'
+      - 'tests/openSpaceTransform.spec.ts'
+      - '.github/workflows/verify-osn-s6b.yml'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run OSN S6B transform unit test
+        run: npm run verify:osn:s6b
