@@ -1,0 +1,35 @@
+name: Verify — OSN-3 S1 (live)
+
+# Live (post-deploy) verification of the OSN-3 S1 Supabase-specific surface: both flags OFF, RLS/grants
+# on the new coordinate tables, the write-once fleets.main_ship_id trigger on the real table, and the
+# live coordinate-movement distribution (must be 0). Constraint LOGIC is proven separately on an
+# ephemeral postgres (osn3-s1 trigger/schema proofs). Service-role; cleans up its throwaway user.
+# On-demand, after the migration has deployed to the shared DB. Shares the live-DB concurrency group.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run OSN-3 S1 live verification
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run verify:osn3:s1

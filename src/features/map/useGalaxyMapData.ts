@@ -8,8 +8,8 @@ import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import { fetchUnitTypes, fetchMainshipSendEnabled, type UnitType } from '../../lib/catalog'
 import {
-  fetchActiveMainShipFleet, fetchActiveMainShipPresence,
-  type MainShipFleet, type MainShipPresence, type SpatialState,
+  fetchActiveMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
+  type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
 
 // Read-only galaxy-map data. Reuses existing world-map / base / movement fetchers and
@@ -53,6 +53,9 @@ export interface GalaxyMapData {
   // OSN-2b: the active location-presence for the main-ship fleet (polled), used by the resolver to
   // validate a named-location marker. Null unless the fleet is genuinely present at a location.
   mainShipPresence: MainShipPresence | null
+  // OSN-3 S1: the active coordinate movement for the main ship (polled, read-only). Null unless a
+  // future coordinate move exists (no writer in S1, so always null in practice until OSN-3 S3+).
+  mainShipSpaceMovement: MainShipSpaceMovement | null
   refresh: () => Promise<void>
 }
 
@@ -80,6 +83,7 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainshipSendEnabled: false,
   mainShipFleet: null,
   mainShipPresence: null,
+  mainShipSpaceMovement: null,
 }
 
 export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
@@ -127,6 +131,10 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         mainShipFleet && mainShipFleet.status === 'present'
           ? await fetchActiveMainShipPresence(mainShipFleet.id)
           : null
+      // OSN-3 S1: at most one active coordinate movement, scoped by main_ship_id (read-only).
+      const mainShipSpaceMovement = mainShip
+        ? await fetchActiveMainShipSpaceMovement(mainShip.main_ship_id)
+        : null
 
       setState({
         loading: false,
@@ -142,6 +150,7 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         mainshipSendEnabled: staticRef.current.mainshipSendEnabled,
         mainShipFleet,
         mainShipPresence,
+        mainShipSpaceMovement,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))

@@ -3,7 +3,7 @@ import type { MapLocation } from './mapTypes'
 import type { Base } from '../base/baseTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MainShipLite } from './useGalaxyMapData'
-import type { MainShipFleet, MainShipPresence } from './mainshipApi'
+import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { MainShipMarker } from './MainShipMarker'
@@ -53,6 +53,7 @@ export function GalaxyMap({
   mainShip,
   mainShipFleet,
   mainShipPresence,
+  mainShipSpaceMovement,
   mainshipSendEnabled,
   movements,
   selectedId,
@@ -63,6 +64,7 @@ export function GalaxyMap({
   mainShip: MainShipLite | null
   mainShipFleet: MainShipFleet | null
   mainShipPresence: MainShipPresence | null
+  mainShipSpaceMovement: MainShipSpaceMovement | null
   mainshipSendEnabled: boolean
   movements: FleetMovement[]
   selectedId: string | null
@@ -218,7 +220,7 @@ export function GalaxyMap({
               flag-gated. Read-only; position comes solely from resolveMainShipMarker. */}
           {mainshipSendEnabled && (
             <MainShipMarker
-              inputs={{ mainShip, mainShipFleet, presence: mainShipPresence, movements, base, locations }}
+              inputs={{ mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, base, locations }}
               norm={norm}
               k={view.k}
             />

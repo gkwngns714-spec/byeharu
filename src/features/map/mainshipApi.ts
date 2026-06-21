@@ -76,6 +76,10 @@ export interface MainShipFleet {
   id: string
   status: string // 'moving' | 'present' | 'returning'
   current_location_id: string | null // set when present (used to exclude the current location)
+  // OSN-3 S1 read fields (used by the resolver to validate coordinate in_transit / at_location / home).
+  location_mode: string | null
+  active_movement_id: string | null
+  active_space_movement_id: string | null
 }
 
 const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
@@ -87,7 +91,7 @@ const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
 export async function fetchActiveMainShipFleet(mainShipId: string): Promise<MainShipFleet | null> {
   const { data, error } = await supabase
     .from('fleets')
-    .select('id, status, current_location_id')
+    .select('id, status, current_location_id, location_mode, active_movement_id, active_space_movement_id')
     .eq('main_ship_id', mainShipId)
     .in('status', ACTIVE_FLEET_STATUSES)
     .order('created_at', { ascending: false })
@@ -95,6 +99,38 @@ export async function fetchActiveMainShipFleet(mainShipId: string): Promise<Main
     .maybeSingle()
   if (error) return null // non-fatal: treat as no active fleet (home)
   return (data as MainShipFleet) ?? null
+}
+
+// OSN-3 S1: the active coordinate-movement row for a main ship (read-model only; no writer in S1).
+// Only the fields the display resolver needs to interpolate a coordinate in_transit marker.
+export interface MainShipSpaceMovement {
+  id: string
+  main_ship_id: string
+  fleet_id: string
+  origin_x: number
+  origin_y: number
+  target_x: number
+  target_y: number
+  target_kind: string // 'space' | 'location' | 'base'
+  status: string // 'moving' (only active rows are fetched)
+  depart_at: string
+  arrive_at: string
+}
+
+/**
+ * Owner-read the caller's ACTIVE coordinate movement (status='moving') for a main ship, if any.
+ * Scoped by exact main_ship_id; at most one row (enforced by a partial unique index). No writer in S1.
+ */
+export async function fetchActiveMainShipSpaceMovement(mainShipId: string): Promise<MainShipSpaceMovement | null> {
+  const { data, error } = await supabase
+    .from('main_ship_space_movements')
+    .select('id, main_ship_id, fleet_id, origin_x, origin_y, target_x, target_y, target_kind, status, depart_at, arrive_at')
+    .eq('main_ship_id', mainShipId)
+    .eq('status', 'moving')
+    .limit(1)
+    .maybeSingle()
+  if (error) return null // non-fatal (e.g. table not yet present pre-deploy): treat as no coordinate movement
+  return (data as MainShipSpaceMovement) ?? null
 }
 
 // The active location-presence row for a main-ship fleet (owner-read). Used ONLY to validate a
