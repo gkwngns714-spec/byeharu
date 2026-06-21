@@ -5,6 +5,51 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-22 — OSN-3 S6B: fixed-space frontend coordinate foundation — CLOSED (flag OFF, read-only)
+
+S6B closes the **read-only frontend coordinate-rendering foundation** for open space across four merged
+sub-slices. It is **not** a player-enabled movement feature: coordinate movement remains **production-dark**
+(`mainship_space_movement_enabled=false`; `mainship_send_enabled=true`), there is **no player command path,
+tap selection, selected-target persistence, or coordinate-movement enablement**, and **no migration / RPC /
+flag / server change** in any S6B slice (migrations remain through **0060**).
+
+- **S6B1** (merge `586d67c`) — `src/features/map/openSpaceTransform.ts`: a **pure** fixed-domain transform —
+  `worldToViewBox`/`viewBoxToWorld` over `[-10000,10000]→[0,1000]` (explicit Y-inversion), `worldToScreen`/
+  `screenToWorld` (camera + `preserveAspectRatio` letterbox), and a **separate** `isWithinOpenSpaceBounds`
+  predicate (no hidden clamping; conversions never validate). Verifier `verify:osn:s6b`.
+- **S6B2** (merge `f7974ac`) — a **mandatory discriminated** `coordinateSpace: 'legacy_dynamic' |
+  'open_space_fixed'` on the resolved `ShipMarker`; the ship's open-space states (`in_space`, coordinate
+  `in_transit`) route through the fixed transform while legacy/named states keep `buildNormalizer`.
+  Exhaustive switch + `never` guard, no silent legacy fallback. Verifier `verify:osn:resolver`.
+- **S6B3** (merge `e2de473`) — a **development-only**, non-interactive fixed-space preview
+  (`DevFixedSpacePreview`), gated **solely** by `import.meta.env.DEV` and **compile-time eliminated** from
+  the production bundle — proven by `vite build` + a `dist/` grep showing the `s6b3-dev-preview` sentinel
+  and the component are **absent** (true removal, not runtime hiding). `pointerEvents:none`, `aria-hidden`,
+  minimal hollow ring/crosshair. Verifier `verify-s6b3`.
+- **S6B4** (merge `adc7009`) — behavior-preserving extraction of `MainShipMarker`'s routing into a pure
+  exported `markerViewBoxPoint(marker, norm)` that **the component and the tests both call** (no duplicate);
+  proves a **resolved** `open_space_fixed` marker is projected through `worldToViewBox` (the dynamic `norm`
+  is **never** called) and that the preview + a distinct fixed-space ship point **co-move** under the camera
+  (screen Δ = letterbox·zoom × viewBox Δ across zoom 0.4/1/2/8 × zero/nonzero pan × square/wide/tall/mobile
+  viewports; pure geometry, no comparison to dynamic named-location coords). Verifiers `verify:osn:resolver`
+  + `verify:osn:s6b`.
+
+**Acceptance (all green):** `verify:osn:s6b` (transform) · `verify:osn:resolver` (provenance + S6B4 routing)
+· `verify-s6b3` (dev preview + production-elimination) · `build` (tsc -b + vite build) · post-merge **Build +
+Pages** deploy. On production data the ship marker is always `legacy_dynamic` (open-space states are dark)
+and the dev preview is absent → **zero production visual change**.
+
+**Explicitly NOT done / still pending.** Fixed-space markers and legacy named locations are **not yet an
+approved co-registered presentation**. **S6B-PRES is mandatory before any S6D enablement** — it must
+charter, implement, and prove **either** named locations rendered through a verified fixed-domain transform
+**or** a distinct coordinate-navigation map mode where legacy dynamic markers are hidden/non-spatial. No
+tap/`mapToWorld` wiring (S6C), no command/CTA/RPC, no flag flip.
+
+**NEXT:** OSN-3 **S6B-PRES** reconnaissance — the fixed-space ↔ named-location presentation decision (the
+mandatory pre-S6D gate). S6C input wiring must **not** precede that decision.
+
+---
+
 ## 2026-06-21 — OSN-3 S6A: public coordinate-command boundary (flag-dark) — CLOSED (flag OFF)
 
 First **player-facing** coordinate-movement command surface (branch `osn3-s6a-public-space-move-command`,

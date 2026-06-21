@@ -42,9 +42,10 @@ the **Glossary** (§12).
 **As of this writing:**
 
 - **Branch / commit:** `main` equals `origin/main` (nothing unpushed), working tree clean. The last
-  **code / schema / deploy baseline** is the OSN-3 S6A merge **`ac9230a`** (code commit `581dea9`,
-  migration `0060`); any commits on `main` above it are **documentation-only** closure records.
-- **Database migrations:** applied through **0060** (`osn3_s6a_public_space_move_command`).
+  **code / deploy baseline** is the OSN-3 **S6B4** merge **`adc7009`** (code commit `777fbd1`); the
+  migration baseline is unchanged at **0060** (S6B is **frontend-only** — no migration); any commits on
+  `main` above it are **documentation-only** closure records.
+- **Database migrations:** applied through **0060** (`osn3_s6a_public_space_move_command`) — unchanged by S6B.
 - **Two feature flags:** `mainship_send_enabled` is **`true`** on live (2026-06-21) — a controlled,
   reversible activation of the **legacy named-location** main-ship send/move/return path only; and
   `mainship_space_movement_enabled` **remains `false`** (gates the coordinate-domain movement — the
@@ -64,6 +65,14 @@ the **Glossary** (§12).
   flag-dark** coordinate-command wrapper `command_main_ship_space_move` that delegates to the private
   writer — the first player-facing boundary) are [Implemented] too — **still no map UI, no target
   selection, no player CTA, and the coordinate flag stays off**.
+- **OSN-3 S6B (S6B1–S6B4) is [Implemented]** — a **read-only, frontend** fixed-space coordinate
+  foundation: a pure fixed-domain transform (`openSpaceTransform`: `worldToViewBox`/`worldToScreen` over
+  the fixed `[-10000,10000]` world), provenance routing of the ship's open-space states through it (the
+  discriminated `coordinateSpace`), a **development-only** preview that is **compile-time eliminated** from
+  production bundles, and acceptance that the **real** `MainShipMarker` fixed route + the preview **co-move**
+  under the camera. Still **no** map command UI, tap selection, target persistence, or flag flip. The
+  fixed-space ↔ named-location **presentation** (**S6B-PRES**) is the **mandatory gate before any S6D
+  enablement**.
 - **One main ship per player** is a durable design fact: the `main_ship_instances` table holds
   exactly one ship row per player today (enforced by a uniqueness rule on `player_id`). Multiple
   ships per player is a deliberately deferred future step.
@@ -72,8 +81,8 @@ the **Glossary** (§12).
 
 | Category | Meaning | Examples in Byeharu |
 |---|---|---|
-| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers), OSN-3 **S3** (one private, service_role-only, flag-dark coordinate-movement writer `mainship_space_begin_move`), OSN-3 **S4** (one private, service_role-only, cron-driven coordinate-arrival processor `process_mainship_space_arrivals`), OSN-3 **S5** (coordinate-complete trusted destruction primitive `dev_set_main_ship_destroyed`), OSN-3 **S6A** (the public, authenticated, flag-dark coordinate-command wrapper `command_main_ship_space_move` that delegates to the private writer) |
-| **Design-only work** | Decided/approved on paper, **not** built | OSN-3 follow-ups: **S6B** (fixed-domain `worldToMap`/`mapToWorld` transform + read-only target preview), **S6C** (tap-to-target + confirm UI), **S6D** (controlled enablement); OSN-4 Stop; final Repair & Recovery |
+| **Implemented systems** | Built, deployed, verified, live (some gated behind a flag) | The expedition engine (travel/combat/return), inventory, the galaxy map, the main-ship instance, the OSN-1 marker, OSN-2 (durable open-space position model), OSN-3 **S1** (coordinate-domain schema + read-model), OSN-3 **S2** (server-only transition boundary — lock/validate/resolve-origin/exclusion helpers), OSN-3 **S3** (one private, service_role-only, flag-dark coordinate-movement writer `mainship_space_begin_move`), OSN-3 **S4** (one private, service_role-only, cron-driven coordinate-arrival processor `process_mainship_space_arrivals`), OSN-3 **S5** (coordinate-complete trusted destruction primitive `dev_set_main_ship_destroyed`), OSN-3 **S6A** (the public, authenticated, flag-dark coordinate-command wrapper `command_main_ship_space_move` that delegates to the private writer), OSN-3 **S6B** (S6B1–S6B4: read-only frontend fixed-space coordinate foundation — pure transform, provenance routing of the ship's open-space states, a dev-only compile-time-eliminated preview, and the real fixed-route + camera-co-move acceptance) |
+| **Design-only work** | Decided/approved on paper, **not** built | OSN-3 follow-ups: **S6B-PRES** (the **mandatory** pre-S6D fixed-space ↔ named-location presentation decision — named locations through a verified fixed-domain transform **or** a separate coordinate map mode where legacy markers are hidden/non-spatial), **S6C** (tap-to-target + confirm UI), **S6D** (controlled enablement); OSN-4 Stop; final Repair & Recovery |
 | **Future initiatives** | Intended, but not yet fully designed | OSN-5, Exploration/Mining/Trading, Online Presence, player interaction, main-ship combat |
 
 ---
