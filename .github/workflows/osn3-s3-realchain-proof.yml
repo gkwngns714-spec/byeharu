@@ -1,0 +1,98 @@
+name: OSN-3 S3 — real-migration-chain proof (disposable Supabase)
+
+# Authoritative/gating S3 proof for the internal coordinate writer mainship_space_begin_move. Boots a
+# DISPOSABLE local Supabase stack via the repository-supported CLI (supabase/config.toml), applying the
+# ACTUAL migration chain 0001..0057 — real tables, CHECKs, indexes, RLS, triggers, grants, auth schema,
+# and the real roles anon/authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves the
+# writer's permission/RPC boundary, the positive+rejection fixture matrix (no-mutation on every reject),
+# idempotency, real concurrent-session races, REST/RPC denial, and restores both flags to false +
+# max_coordinate_travel_seconds to 86400. Runs on push to the OSN-3 branch(es).
+
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0057)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: Writer permission/boundary proof (real chain)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-s3-realchain-perm.sql
+
+      - name: Runtime SET ROLE EXECUTE denial + service_role success (writer)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          for r in anon authenticated; do
+            out=$(psql "$DB_URL" -X -c "set role $r; select public.mainship_space_begin_move('00000000-0000-0000-0000-000000000000','00000000-0000-0000-0000-000000000000',1,1,'00000000-0000-0000-0000-000000000001');" 2>&1 || true)
+            echo "$out" | grep -qi "permission denied" && echo "ok: $r cannot EXECUTE the writer" || { echo "FAIL: $r executed writer -> $out"; exit 1; }
+          done
+          out=$(psql "$DB_URL" -X -c "set role service_role; select public.mainship_space_begin_move('00000000-0000-0000-0000-000000000000','00000000-0000-0000-0000-000000000000',1,1,'00000000-0000-0000-0000-000000000001');" 2>&1)
+          echo "$out" | grep -qi "missing_ship" && echo "ok: service_role can EXECUTE (returned missing_ship)" || { echo "FAIL: service_role -> $out"; exit 1; }
+
+      - name: Writer fixture matrix (positive + rejection + idempotency, real chain)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-s3-realchain-fixtures.sql
+
+      - name: Dynamic concurrency proof (real concurrent sessions)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn3-s3-realchain-concurrency.sh
+
+      - name: Local REST/RPC permission proof (anon + authenticated JWT)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn3-s3-realchain-rest.sh
+
+      - name: Restore flags/cap + cleanup fixtures (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -c "update game_config set value='false' where key in ('mainship_space_movement_enabled');" || true
+            psql "$DB_URL" -X -c "update game_config set value='86400' where key='max_coordinate_travel_seconds';" || true
+            psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3s3fix.%@example.com' or email like 'osn3s3lock.%@example.com' or email like 'osn3s3rest.%@example.com';" || true
+          fi
+
+      - name: Assert flags false + cap restored + no fixtures remain (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare a text; b text; c text; n int;
+            begin
+              select value::text into a from game_config where key='mainship_send_enabled';
+              select value::text into b from game_config where key='mainship_space_movement_enabled';
+              select value::text into c from game_config where key='max_coordinate_travel_seconds';
+              if a is distinct from 'false' then raise exception 'send flag=%', a; end if;
+              if b is distinct from 'false' then raise exception 'space flag=%', b; end if;
+              if c is distinct from '86400' then raise exception 'cap=%', c; end if;
+              select count(*) into n from auth.users where email like 'osn3s3%@example.com'; if n<>0 then raise exception '% fixture users remain', n; end if;
+              raise notice 'post-run ok: send=false space=false cap=86400 no-fixture-users';
+            end \$\$;"
+          fi
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
