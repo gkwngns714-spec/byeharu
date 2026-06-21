@@ -47,10 +47,10 @@ echo "=== Scenario 1: arrival wins first → then destruction clears the parked 
 read -r S1 P1 < <(mkship)
 echo "begin; select 'A='||public.process_mainship_space_arrivals();" >&3
 wait_idletx s5A process_mainship_space_arrivals           # A settled S1 (→in_space), holds txn
-echo "select public.dev_set_main_ship_destroyed('$P1');" >&4
+echo "begin; select public.dev_set_main_ship_destroyed('$P1');" >&4   # held txn so it can be observed idle-in-tx
 wait_blocked s5B                                          # destruction blocks on the ship lock
 echo "commit;" >&3                                        # A commits → movement arrived, ship in_space
-wait_idletx s5B dev_set_main_ship_destroyed               # destruction proceeds and completes
+wait_idletx s5B dev_set_main_ship_destroyed               # destruction proceeds and completes (txn held)
 echo "commit;" >&4
 sleep 0.4
 grep -q "A=1" /tmp/s5A.log || { echo "FAIL: arrival did not settle S1"; cat /tmp/s5A.log; exit 1; }
@@ -79,10 +79,10 @@ echo "=== Scenario 3: two destructions race → one terminal result, second idem
 read -r S3 P3 < <(mkship)
 echo "begin; select 'A='||(public.dev_set_main_ship_destroyed('$P3')->>'status');" >&3
 wait_idletx s5A dev_set_main_ship_destroyed               # A destroyed, holds txn
-echo "select 'B='||(public.dev_set_main_ship_destroyed('$P3')->>'status');" >&4
+echo "begin; select 'B='||(public.dev_set_main_ship_destroyed('$P3')->>'status');" >&4   # held txn
 wait_blocked s5B                                          # second destruction blocks on the ship lock
 echo "commit;" >&3                                        # A commits
-wait_idletx s5B dev_set_main_ship_destroyed               # B proceeds idempotently
+wait_idletx s5B dev_set_main_ship_destroyed               # B proceeds idempotently (txn held)
 echo "commit;" >&4
 sleep 0.4
 grep -q "A=destroyed" /tmp/s5A.log || { echo "FAIL: first destruction did not return destroyed"; cat /tmp/s5A.log; exit 1; }
