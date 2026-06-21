@@ -1,0 +1,45 @@
+name: OSN-3 S1 — trigger/FK proof (disposable)
+
+# Mandatory pre-implementation proof (OSN-3 S1 §2): proves the fleets.main_ship_id write-once trigger
+# + the planned FK delete-action graph on an EPHEMERAL postgres:15 container — NOT the shared Supabase
+# DB, NOT main. It reproduces the exact relational shapes/delete-actions/trigger and asserts that
+# ON DELETE SET NULL runs only AFTER the parent ship row is gone (so cleanup paths keep working), plus
+# cyclic-FK + cascade cleanup. Disposable: the container is destroyed after the job. On-demand.
+
+# Runs on push to the OSN-3 branch(es) — a workflow_dispatch-only file on a non-default branch is not
+# dispatchable until it lands on main, so the branch push is the trigger during S1 development.
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run disposable trigger/FK ordering proof
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -f scripts/osn3-s1-trigger-proof.sql
+      - name: Run disposable schema/constraint proof
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -f scripts/osn3-s1-schema-proof.sql
