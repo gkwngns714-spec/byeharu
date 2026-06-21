@@ -5,6 +5,69 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-21 — OSN-3 S3: first internal coordinate-movement writer — CLOSED (flag OFF)
+
+Third **OSN-3** slice (branch `osn3-s3-begin-move-writer`, approved head `e267eee`, normal **no-ff**
+merge **`f4ba07e`**, migration **`0057`**; final `main == origin/main == f4ba07e`). **One private,
+server-only WRITER — still NO public RPC, NO UI, NO processor, NO arrival/Return/Stop, NO feature
+enablement.** Both flags stay false on live.
+
+**Migration 0057 — `public.mainship_space_begin_move(p_player uuid, p_main_ship_id uuid, p_target_x
+double precision, p_target_y double precision, p_request_id uuid) returns jsonb`.** One `SECURITY
+DEFINER`, owner `postgres`, `search_path=public`, **service_role-only** function (PUBLIC/anon/
+authenticated revoked) that composes the deployed S2 boundary — `mainship_space_lock_context` →
+`mainship_space_validate_context` → `mainship_space_assert_cross_domain_exclusion` →
+`mainship_space_resolve_origin` — to begin exactly one coordinate move. Hard-gated on
+`mainship_space_movement_enabled` (stays false); `mainship_send_enabled` untouched. Adds one additive
+non-flag guard `max_coordinate_travel_seconds=86400` (the `[-10000,10000]²` envelope is the distance
+bound; no `MAX_COORDINATE_MOVE_DISTANCE`).
+
+- **Supported stationary origins:** `home`/`legacy_home`/`in_space` (materialise a new main-ship fleet
+  in-txn) and `at_location`/`legacy_present` (reuse the present fleet, closing its active presence).
+  **Space-only target contract** (`target_kind='space'` + `p_target_x`/`p_target_y` + `p_request_id`);
+  the client never supplies origin/player/ownership/state/fleet/speed/ETA/status or screen coords.
+- **One atomic transaction, canonical S2 lock order** (ship → fleet → coordinate-movement → presence);
+  never locks legacy `fleet_movements`; never calls a frozen legacy writer. Creates one `moving`
+  `main_ship_space_movements` row + coherent fleet pointer (`active_space_movement_id`, legacy
+  `active_movement_id` stays NULL) + ship `traveling`/`in_transit` + finalised idempotency receipt.
+- **Idempotency** via `main_ship_space_command_receipts (main_ship_id, request_id)`: same id + same
+  canonical payload hash → replays the committed `result_json`; same id + changed payload →
+  `request_id_payload_conflict`; rejections write no receipt.
+- **Validate-before-mutate:** every admission rejection (incl. `travel_time_exceeds_limit`) returns
+  `{ok:false,reason}` *before* any write — no rejection leaves an orphan fleet/movement/ship/presence/
+  receipt; only a genuine integrity fault raises and rolls back.
+
+**Authoritative proof (real chain `0001..0057`, disposable Supabase; `osn3-s3-realchain-proof.yml`).**
+GREEN at `e267eee`: positives from all five origins (each asserting `movement.origin == resolved
+origin`, `speed_used == resolve_fleet_movement_speed(fleet)`, coherent fleet/ship/receipt, presence
+closed once); the full rejection matrix each proven non-mutating; idempotent replay + payload conflict;
+real concurrent-session races (two distinct → one move, loser rejects after revalidation; two
+same-request retries → identical committed receipt); `travel_time_exceeds_limit` with explicit
+no-effect; runtime ACL + SET ROLE denial; REST/RPC denial of the writer + S2 helpers for anon and a
+real authenticated JWT; cleanup + flags/cap restored & asserted. *Root-cause note:* the first proof run
+was red on a **fixture** assumption only (the real chain auto-provisions a Home Base at (0,0) via
+`initialize_new_player`, so the zero-distance fixture's hard-coded target was wrong) — corrected by
+deriving every origin from `mainship_space_resolve_origin`; **the writer/0057 needed no change** (no
+`0058`).
+
+**Gates (all green at `e267eee`):** S3 real-chain proof; S1 trigger/FK + S2 real-chain regression; the
+Build gate via draft PR #1 (`npm ci`, lint, `tsc -b`, `vite build`); `verify:osn:resolver` (resolver
+unit suite). **Live read-only spot check** (`osn3-s3-live-spotcheck.yml`, post-deploy): 0057 applied;
+writer present with the exact approved signature, owner=postgres, SECURITY DEFINER, search_path=public,
+no dynamic SQL, `acl={postgres,service_role}` (anon/authenticated/PUBLIC denied); four S2 helpers
+service_role-only; canonical client-RPC inventory unchanged; anon/authenticated cannot CREATE in
+`public`; `mainship_send_enabled=false`, `mainship_space_movement_enabled=false`,
+`max_coordinate_travel_seconds=86400`; **`main_ship_space_movements`=0 and
+`main_ship_space_command_receipts`=0** — no coordinate movement created live, no game-state side effect.
+No fixtures/users/movements/receipts created by the deployment.
+
+**Scope confirmation.** S3 added **no** public player RPC, UI, processor/cron, arrival settlement,
+Return, Stop, reconciler, repair/destruction, legacy-writer change, S2-helper change, or feature
+enablement. **NEXT (not started, awaiting a separate explicit S4 charter):** arrival processor (S4) →
+reconciler/destruction hardening (S5) → target UI (S7) → OSN-4 Stop (S8).
+
+---
+
 ## 2026-06-21 — OSN-3 S2: internal transition boundary + validation core — CLOSED (flag OFF)
 
 Second **OSN-3** slice (branch `osn3-s2-transition-core`, approved head `1f2c45d`, normal **no-ff** merge
