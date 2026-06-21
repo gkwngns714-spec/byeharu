@@ -45,7 +45,9 @@ PGAPPNAME=s3sessA psql "$DB_URL" -X -q < "$FIFOA" >/tmp/s3sessA.log 2>&1 & PA=$!
 PGAPPNAME=s3sessB psql "$DB_URL" -X -q < "$FIFOB" >/tmp/s3sessB.log 2>&1 & PB=$!
 exec 3>"$FIFOA" 4>"$FIFOB"
 
-# ── fixtures: enable the writer + two legacy_home ships (one per scenario) ──
+# ── fixtures: enable the writer + two legacy_home ships (one per scenario). The auth.users insert
+#    auto-provisions this player's 'Home Base' at (0,0) via the on_auth_user_created_base trigger, so
+#    resolve_origin resolves a real base origin — no manual base is inserted. ──
 q "update game_config set value='true' where key='mainship_space_movement_enabled';" >/dev/null
 U=$(q "
   with u as (
@@ -53,8 +55,7 @@ U=$(q "
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated','authenticated','osn3s3lock.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
     returning id)
   select id from u;")
-SEC=$(q "select id from sectors order by sector_index limit 1")
-q "insert into bases (player_id,name,sector_id,x,y) values ('$U','s3lockbase','$SEC',1,2);" >/dev/null
+[ -n "$(q "select id from bases where player_id='$U' and status='active' limit 1")" ] || { echo "FAIL: auto-base not provisioned for lock fixture user"; exit 1; }
 S1=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U','starter_frigate','home',null,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
 S2=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U','starter_frigate','home',null,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
 R1=$(q "select gen_random_uuid()"); R2=$(q "select gen_random_uuid()"); R3=$(q "select gen_random_uuid()")
