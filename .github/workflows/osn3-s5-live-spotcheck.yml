@@ -1,0 +1,34 @@
+name: OSN-3 S5 — live spot check (READ-ONLY)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-db-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  spotcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Link live project (read-only usage)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+      - name: Read-only live spot check (migration 0059, destruction primitive, ACL, cron, flags, counts)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          URL: ${{ secrets.VITE_SUPABASE_URL }}
+          ANON: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SRV: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: bash scripts/osn3-s5-live-check.sh
