@@ -13,22 +13,24 @@ awk -F'|' '/20260618000056/{r=$2; gsub(/ /,"",r); if (r=="20260618000056") print
 
 echo "=== 2) schema dump → helper existence / SECURITY DEFINER / search_path / owner / live ACLs ==="
 supabase db dump --linked --password "$SUPABASE_DB_PASSWORD" -f /tmp/live.sql
+echo "[diag] dump lines=$(wc -l </tmp/live.sql); mainship_space occurrences=$(grep -c mainship_space_ /tmp/live.sql || true)"
+FQ='(public\.|"public"\.)?"?'   # tolerant: optional public. qualification and optional quotes
 for h in mainship_space_lock_context mainship_space_validate_context mainship_space_resolve_origin mainship_space_assert_cross_domain_exclusion; do
-  grep -qE "CREATE FUNCTION public\.$h\(" /tmp/live.sql || fail "$h not present on live"
-  awk "/CREATE FUNCTION public\.$h\(/,/\\\$_\\\$;|\\\$\\\$;/" /tmp/live.sql | grep -qi "SECURITY DEFINER" || fail "$h not SECURITY DEFINER"
-  grep -qiE "ALTER FUNCTION public\.$h\(.*OWNER TO postgres;" /tmp/live.sql || fail "$h owner != postgres"
-  grep -qE "REVOKE ALL ON FUNCTION public\.$h\(.*FROM PUBLIC;" /tmp/live.sql || fail "$h not revoked from PUBLIC"
-  grep -qE "GRANT ALL ON FUNCTION public\.$h\(.*TO service_role;" /tmp/live.sql || fail "$h not granted to service_role"
-  if grep -qE "GRANT.*ON FUNCTION public\.$h\(.*TO anon;" /tmp/live.sql; then fail "$h granted to anon"; fi
-  if grep -qE "GRANT.*ON FUNCTION public\.$h\(.*TO authenticated;" /tmp/live.sql; then fail "$h granted to authenticated"; fi
-  echo "ok: $h — present, SECURITY DEFINER, owner=postgres, PUBLIC revoked, service_role only, anon/authenticated NOT granted"
+  blk=$(grep -iE -A10 "create (or replace )?function ${FQ}${h}\"?\(" /tmp/live.sql)
+  if [ -z "$blk" ]; then echo "[diag] no CREATE FUNCTION match for $h; lines mentioning it:"; grep -iE "$h" /tmp/live.sql | head -6; fail "$h not present on live"; fi
+  echo "$blk" | grep -qi "SECURITY DEFINER" || fail "$h not SECURITY DEFINER"
+  echo "$blk" | grep -qiE "search_path" || fail "$h search_path not set"
+  grep -qiE "ALTER FUNCTION ${FQ}${h}\"?\(.*OWNER TO postgres" /tmp/live.sql || fail "$h owner != postgres"
+  grep -qiE "REVOKE ALL ON FUNCTION ${FQ}${h}\"?\(.*FROM PUBLIC" /tmp/live.sql || fail "$h not revoked from PUBLIC"
+  grep -qiE "GRANT ALL ON FUNCTION ${FQ}${h}\"?\(.*TO service_role" /tmp/live.sql || fail "$h not granted to service_role"
+  if grep -qiE "GRANT.*ON FUNCTION ${FQ}${h}\"?\(.*TO anon" /tmp/live.sql; then fail "$h granted to anon"; fi
+  if grep -qiE "GRANT.*ON FUNCTION ${FQ}${h}\"?\(.*TO authenticated" /tmp/live.sql; then fail "$h granted to authenticated"; fi
+  echo "ok: $h — present, SECURITY DEFINER, search_path set, owner=postgres, PUBLIC revoked, service_role only, anon/authenticated NOT granted"
 done
-# search_path pinned to public for each helper (function-level SET)
-grep -cE "SET search_path TO '?public'?" /tmp/live.sql >/dev/null && echo "ok: function-level search_path SET present in dump"
 # canonical client RPC sanity (not lost) + anon get_world_map
-grep -qE "GRANT ALL ON FUNCTION public\.send_main_ship_expedition\(.*TO authenticated;" /tmp/live.sql || fail "send_main_ship_expedition lost authenticated grant"
-grep -qE "GRANT ALL ON FUNCTION public\.get_world_map\(\) TO anon;" /tmp/live.sql || fail "get_world_map lost anon grant"
-if grep -nE "GRANT.*mainship_space_.*TO (anon|authenticated);" /tmp/live.sql; then fail "an S2 helper is client-granted on live"; fi
+grep -qiE "GRANT ALL ON FUNCTION ${FQ}send_main_ship_expedition\"?\(.*TO authenticated" /tmp/live.sql || fail "send_main_ship_expedition lost authenticated grant"
+grep -qiE "GRANT ALL ON FUNCTION ${FQ}get_world_map\"?\(\) TO anon" /tmp/live.sql || fail "get_world_map lost anon grant"
+if grep -niE "GRANT.*mainship_space_.*TO (anon|authenticated)" /tmp/live.sql; then fail "an S2 helper is client-granted on live"; fi
 echo "ok: no S2 helper is client-exposed (no anon/authenticated grant); canonical client RPCs intact"
 if grep -qE "REVOKE (ALL|CREATE) ON SCHEMA public FROM PUBLIC;" /tmp/live.sql; then
   echo "ok: public-schema CREATE revoked from PUBLIC (dump-evidenced)"
