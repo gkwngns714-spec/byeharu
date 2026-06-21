@@ -165,7 +165,7 @@ export async function fetchActiveMainShipPresence(fleetId: string): Promise<Main
  * 'traveling' while the fleet is 'present', so the fleet is the source of truth here):
  *   no fleet → home · moving → traveling · present → present · returning → returning
  */
-export function deriveMainShipStatus(fleet: MainShipFleet | null): MainShipDisplayStatus {
+export function deriveMainShipStatus(fleet: { status: string } | null): MainShipDisplayStatus {
   if (!fleet) return 'home'
   if (fleet.status === 'present') return 'present'
   if (fleet.status === 'returning') return 'returning'
