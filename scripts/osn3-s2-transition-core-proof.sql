@@ -153,16 +153,16 @@ end; $$;
 \set conn 'host=localhost port=5432 dbname=postgres user=postgres password=postgres'
 
 -- a parked-in-space ship + a present-at-location ship + an in-transit ship + a home ship
-insert into bases(id, player_id, x, y) values ('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000u1', 0, 0);
+insert into bases(id, player_id, x, y) values ('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-000000000001', 0, 0);
 insert into locations(id, x, y) values ('00000000-0000-0000-0000-0000000000c1', 300, 400);
 
 -- LOCK fixture ship: home, with one idle fleet, a (fake) coordinate movement, and a presence — so all four rows exist to lock.
-insert into main_ship_instances(main_ship_id, player_id, status, spatial_state) values ('00000000-0000-0000-0000-00000000a001','00000000-0000-0000-0000-0000000000u1','home', null);
-insert into fleets(id, main_ship_id, player_id, status, location_mode) values ('00000000-0000-0000-0000-00000000f001','00000000-0000-0000-0000-00000000a001','00000000-0000-0000-0000-0000000000u1','moving','movement');
-insert into main_ship_space_movements(id, main_ship_id, fleet_id, player_id, status) values ('00000000-0000-0000-0000-00000000d001','00000000-0000-0000-0000-00000000a001','00000000-0000-0000-0000-00000000f001','00000000-0000-0000-0000-0000000000u1','moving');
+insert into main_ship_instances(main_ship_id, player_id, status, spatial_state) values ('00000000-0000-0000-0000-00000000a001','00000000-0000-0000-0000-000000000001','home', null);
+insert into fleets(id, main_ship_id, player_id, status, location_mode) values ('00000000-0000-0000-0000-00000000f001','00000000-0000-0000-0000-00000000a001','00000000-0000-0000-0000-000000000001','moving','movement');
+insert into main_ship_space_movements(id, main_ship_id, fleet_id, player_id, status) values ('00000000-0000-0000-0000-00000000d001','00000000-0000-0000-0000-00000000a001','00000000-0000-0000-0000-00000000f001','00000000-0000-0000-0000-000000000001','moving');
 update fleets set active_space_movement_id='00000000-0000-0000-0000-00000000d001' where id='00000000-0000-0000-0000-00000000f001';
 insert into location_presence(id, fleet_id, status, location_id) values ('00000000-0000-0000-0000-00000000e001','00000000-0000-0000-0000-00000000f001','active','00000000-0000-0000-0000-0000000000c1');
-insert into fleet_movements(id, fleet_id, status) values ('00000000-0000-0000-0000-00000000m001','00000000-0000-0000-0000-00000000f001','moving');
+insert into fleet_movements(id, fleet_id, status) values ('00000000-0000-0000-0000-00000000ab01','00000000-0000-0000-0000-00000000f001','moving');
 
 -- ════════════════════ PART 1: two-session lock proofs (dblink) ════════════════════
 -- Test A: ship-row serialization — while we hold the lock, a SEPARATE session NOWAIT conflicts.
@@ -178,7 +178,7 @@ do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgr
 do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select id from main_ship_space_movements where id=''00000000-0000-0000-0000-00000000d001'' for update nowait'); raise exception 'TEST A FAIL: coord movement not locked'; exception when others then raise notice 'TEST A ok: coordinate movement locked'; end $$;
 do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select id from location_presence where id=''00000000-0000-0000-0000-00000000e001'' for update nowait'); raise exception 'TEST A FAIL: presence not locked'; exception when others then raise notice 'TEST A ok: presence locked'; end $$;
 -- fleet_movements is NOT locked by lock_context (only a non-locking EXISTS read): NOWAIT succeeds
-do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select id from fleet_movements where id=''00000000-0000-0000-0000-00000000m001'' for update nowait'); raise notice 'TEST A ok: fleet_movements NOT locked (legacy domain untouched)'; exception when others then raise exception 'TEST A FAIL: fleet_movements was locked: %', sqlerrm; end $$;
+do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select id from fleet_movements where id=''00000000-0000-0000-0000-00000000ab01'' for update nowait'); raise notice 'TEST A ok: fleet_movements NOT locked (legacy domain untouched)'; exception when others then raise exception 'TEST A FAIL: fleet_movements was locked: %', sqlerrm; end $$;
 commit;
 -- after commit, the separate session can lock the ship
 do $$ begin perform dblink('host=localhost port=5432 dbname=postgres user=postgres password=postgres','select main_ship_id from main_ship_instances where main_ship_id=''00000000-0000-0000-0000-00000000a001'' for update nowait'); raise notice 'TEST A ok: after commit, ship lockable again'; exception when others then raise exception 'TEST A FAIL: ship still locked after commit'; end $$;
