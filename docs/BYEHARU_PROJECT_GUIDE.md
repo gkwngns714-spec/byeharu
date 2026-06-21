@@ -46,11 +46,13 @@ the **Glossary** (§12).
   read-only S3 live-spot-check tooling commit; any commits on `main` above those are
   **documentation-only** closure records.
 - **Database migrations:** applied through **0057** (`osn3_s3_begin_move`).
-- **Two feature flags, both `false`:** `mainship_send_enabled` (gates all player-facing main-ship
-  send/move + the open-space marker) and `mainship_space_movement_enabled` (gates the future
-  coordinate-domain movement — the **one internal writer now exists (S3)** but stays dark behind this
-  flag). With both off, none of this appears to normal players — the work exists in the codebase but
-  is not live gameplay.
+- **Two feature flags:** `mainship_send_enabled` is **`true`** on live (2026-06-21) — a controlled,
+  reversible activation of the **legacy named-location** main-ship send/move/return path only; and
+  `mainship_space_movement_enabled` **remains `false`** (gates the coordinate-domain movement — the one
+  internal writer exists (S3) but stays dark behind this flag, which was **not** touched). The legacy
+  send flip enables only the established named-location send UI; it does **not** enable any
+  coordinate-movement or OSN player command. Rollback is the same controlled workflow
+  (`dev-mainship-flag.yml`) with `mainship_send_enabled=false`.
 - **OSN-1 / OSN-2 (a+b) are [Implemented], flag-gated.** The single map-marker resolver draws your
   main ship and now understands the durable open-space position model (`spatial_state` +
   `space_x/space_y`). **OSN-3 S1** (schema + read-model), **OSN-3 S2** (the private, server-only

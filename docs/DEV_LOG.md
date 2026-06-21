@@ -5,6 +5,36 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-21 — Legacy main-ship send: controlled production activation (config-only, reversible)
+
+Enabled the **already-built legacy named-location** main-ship travel path on live by flipping **one**
+game-config key via the established controlled workflow `dev-mainship-flag.yml` →
+`scripts/dev-mainship-flag.mjs --enabled true` (writes only `mainship_send_enabled` via the owned
+`set_game_config`). **No migration, no code/UI change, no fixtures, no test users, no writer execution.**
+
+**Target/result live config:** `mainship_send_enabled = true`, **`mainship_space_movement_enabled =
+false`** (untouched), `max_coordinate_travel_seconds = 86400` (untouched). The activation script logged
+`Before: false → After: true`.
+
+**Read-only preflight** (`osn3-s3-live-spotcheck`, run `27899732391`): confirmed the pre-state —
+send=false, space=false, cap=86400, `main_ship_space_movements`=0, `main_ship_space_command_receipts`=0,
+S3 writer + four S2 helpers service_role-only, canonical client-RPC inventory unchanged. **Read-only
+post-activation verification** (`osn3-legacy-send-activation-check`, run `27899841147`): confirmed
+send=true, space_movement=false, cap=86400, `main_ship_space_movements`=0, `command_receipts`=0, and
+that `mainship_space_begin_move` + the four S2 helpers remain **service_role-only / non-client-executable**
+with the canonical client-RPC inventory unchanged and `public`-schema CREATE denied to anon/authenticated.
+
+**What this does / does not do.** It re-exposes only the **legacy named-location** player capability
+(`send_main_ship_expedition` base→location, `move_main_ship_to_location` location→location, plus the
+always-available recovery paths `request_main_ship_return` and `repair_main_ship`). It does **not**
+enable coordinate movement or any OSN player command: the S3 coordinate writer stays service_role-only
+and flag-dark (`mainship_space_movement_enabled=false`), no coordinate UI/command surface exists, and no
+coordinate movement or command receipt was created (both counts remain 0). No game-state row was created
+or modified by the activation. **Rollback** is the same controlled workflow with
+`mainship_send_enabled=false` (single-key, instant, no migration). **S4 has not started.**
+
+---
+
 ## 2026-06-21 — OSN-3 S3: first internal coordinate-movement writer — CLOSED (flag OFF)
 
 Third **OSN-3** slice (branch `osn3-s3-begin-move-writer`, approved head `e267eee`, normal **no-ff**
