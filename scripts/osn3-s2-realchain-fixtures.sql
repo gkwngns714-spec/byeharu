@@ -102,7 +102,7 @@ end $$;
 
 -- ── matrix ──────────────────────────────────────────────────────────────────────────────────────
 do $$
-declare s uuid; r jsonb;
+declare s uuid; r jsonb; v_other uuid;
 begin
   s := s2fix('legacy_home');    r := mainship_space_validate_context(s); if r->>'state'<>'legacy_home' then raise exception 'legacy_home validate: %', r; end if;
                                 r := mainship_space_resolve_origin(s);   if r->>'origin_kind'<>'base' then raise exception 'legacy_home resolve: %', r; end if; raise notice 'ok legacy_home → validate legacy_home / resolve base';
@@ -126,7 +126,7 @@ begin
   s := s2fix('in_space_with_presence'); r := mainship_space_validate_context(s); if (r->>'ok')::boolean then raise exception 'in_space_with_presence should reject: %', r; end if; raise notice 'ok reject: in_space + active presence';
 
   -- mismatched player/ship/fleet ownership: in_transit movement whose player_id ≠ ship's player
-  s := s2fix('in_transit'); update main_ship_space_movements set player_id = gen_random_uuid() where main_ship_id = s and status='moving';
+  s := s2fix('in_transit'); v_other := s2fix_user(); update main_ship_space_movements set player_id = v_other where main_ship_id = s and status='moving';
   r := mainship_space_validate_context(s); if (r->>'ok')::boolean then raise exception 'mismatched player should reject: %', r; end if; raise notice 'ok reject: mismatched player/ship/fleet ownership';
 
   -- exclusion
