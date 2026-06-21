@@ -1,11 +1,5 @@
 name: OSN-3 S2 — live spot check (READ-ONLY)
 
-# READ-ONLY post-deploy verification of OSN-3 S2 against the SHARED/LIVE database. Uses only
-# read paths: `supabase migration list --linked` (0056 applied), `supabase db dump --linked`
-# (schema-only DDL: helper existence/signatures/SECURITY DEFINER/search_path/owner + live GRANT/REVOKE
-# ACLs), and REST table reads (flags, row count). NO fixtures, NO test users, NO mutation, NO direct
-# helper calls under client roles, NO flag change. Dispatch-only.
-
 on:
   workflow_dispatch:
 
@@ -20,74 +14,20 @@ jobs:
   spotcheck:
     runs-on: ubuntu-latest
     timeout-minutes: 12
-    env:
-      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-
       - name: Link live project (read-only usage)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
-
-      - name: Migration 0056 applied on live (migration list --linked)
+        run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+      - name: Read-only live spot check
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: |
-          supabase migration list --linked --password "$SUPABASE_DB_PASSWORD" | tee /tmp/migs
-          grep -E '20260618000056' /tmp/migs | grep -qvE '^\s*\|?\s*20260618000056\s*\|\s*\|' && echo "ok: 0056 present in list" || true
-          # assert 0056 appears with a REMOTE column populated (applied remotely)
-          awk -F'|' '/20260618000056/{r=$2; gsub(/ /,"",r); if(r=="20260618000056") print "REMOTE_OK"}' /tmp/migs | grep -q REMOTE_OK \
-            && echo "ok: migration 0056 is applied on the live database" \
-            || { echo "FAIL: 0056 not shown as applied remotely"; cat /tmp/migs; exit 1; }
-
-      - name: Schema dump (read-only) → helper existence / SECURITY DEFINER / owner / live ACLs
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: |
-          supabase db dump --linked --password "$SUPABASE_DB_PASSWORD" -f /tmp/live.sql
-          fail() { echo "FAIL: $1"; exit 1; }
-          for h in mainship_space_lock_context mainship_space_validate_context mainship_space_resolve_origin mainship_space_assert_cross_domain_exclusion; do
-            grep -qE "CREATE FUNCTION public\.$h\(" /tmp/live.sql || fail "$h not present on live"
-            # the CREATE … block must carry SECURITY DEFINER and search_path=public
-            awk "/CREATE FUNCTION public\.$h\(/,/\\\$\\\$;/" /tmp/live.sql | grep -qi "SECURITY DEFINER" || fail "$h not SECURITY DEFINER on live"
-            awk "/CREATE FUNCTION public\.$h\(/,/\\\$\\\$;/" /tmp/live.sql | grep -qiE "SET search_path TO '?public'?|SET \"search_path\"" || fail "$h search_path not public on live"
-            grep -qE "ALTER FUNCTION public\.$h\(.*OWNER TO postgres;" /tmp/live.sql || fail "$h owner != postgres on live"
-            grep -qE "REVOKE ALL ON FUNCTION public\.$h\(.*FROM PUBLIC;" /tmp/live.sql || fail "$h not revoked from PUBLIC on live"
-            grep -qE "GRANT ALL ON FUNCTION public\.$h\(.*TO service_role;" /tmp/live.sql || fail "$h not granted to service_role on live"
-            grep -qE "GRANT.*ON FUNCTION public\.$h\(.*TO anon;" /tmp/live.sql && fail "$h is granted to anon on live" || true
-            grep -qE "GRANT.*ON FUNCTION public\.$h\(.*TO authenticated;" /tmp/live.sql && fail "$h is granted to authenticated on live" || true
-            echo "ok: $h — present, SECURITY DEFINER, search_path=public, owner=postgres, PUBLIC revoked, service_role only, anon/authenticated NOT granted"
-          done
-          # canonical client RPC sanity: a representative client RPC keeps its grant; anon keeps get_world_map
-          grep -qE "GRANT ALL ON FUNCTION public\.send_main_ship_expedition\(.*TO authenticated;" /tmp/live.sql || fail "send_main_ship_expedition lost authenticated grant"
-          grep -qE "GRANT ALL ON FUNCTION public\.get_world_map\(\) TO anon;" /tmp/live.sql || fail "get_world_map lost anon grant"
-          # no S2 helper appears in any GRANT to anon/authenticated anywhere
-          grep -nE "GRANT.*mainship_space_.*TO (anon|authenticated);" /tmp/live.sql && fail "an S2 helper is client-granted on live" || echo "ok: no S2 helper is client-exposed on live"
-          # public schema not writable by client roles
-          grep -qE "REVOKE ALL ON SCHEMA public FROM PUBLIC;|REVOKE CREATE ON SCHEMA public FROM PUBLIC;" /tmp/live.sql && echo "ok: public schema CREATE revoked from PUBLIC (dump-evidenced)" || echo "note: no explicit public-schema revoke in dump (PG15+ default has no PUBLIC CREATE on public)"
-
-      - name: REST read-only — flags false + zero coordinate-movement rows
-        env:
           URL: ${{ secrets.VITE_SUPABASE_URL }}
           ANON: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           SRV: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          fail() { echo "FAIL: $1"; exit 1; }
-          flags=$(curl -s "$URL/rest/v1/game_config?key=in.(mainship_send_enabled,mainship_space_movement_enabled)&select=key,value" -H "apikey: $ANON" -H "Authorization: Bearer $ANON")
-          echo "flags: $flags"
-          echo "$flags" | grep -q '"mainship_send_enabled","value":false' || echo "$flags" | grep -q 'mainship_send_enabled.*false' || fail "mainship_send_enabled not false"
-          echo "$flags" | grep -q 'mainship_space_movement_enabled.*false' || fail "mainship_space_movement_enabled not false"
-          echo "ok: both flags false on live"
-          cnt=$(curl -s -I "$URL/rest/v1/main_ship_space_movements?select=id" -H "apikey: $SRV" -H "Authorization: Bearer $SRV" -H "Prefer: count=exact" -H "Range: 0-0" | tr -d '\r' | awk -F'[ /]' 'tolower($0) ~ /content-range/ {print $NF}')
-          echo "main_ship_space_movements count = ${cnt:-?}"
-          [ "${cnt:-x}" = "0" ] || fail "main_ship_space_movements row count != 0 (got ${cnt:-?})"
-          echo "ok: main_ship_space_movements row count = 0 on live"
-
-      - name: Result
-        run: echo "OSN-3 S2 LIVE SPOT CHECK (READ-ONLY): ALL PASSED"
+        run: bash scripts/osn3-s2-live-spotcheck.sh
