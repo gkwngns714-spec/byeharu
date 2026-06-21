@@ -81,7 +81,7 @@ stage() { # $1=label; $2=row to hold (sql); then B blocks; probes via $3.. handl
 
 echo "=== Stage A: hold FLEET → B must hold SHIP and block before fleet (no movement/presence) ==="
 echo "begin; select id from fleets where id='$F' for update;" >&3; sleep 1
-echo "begin; select status from public.mainship_space_lock_context('$S', false);" >&4
+echo "begin; select public.mainship_space_lock_context('$S', false);" >&4
 wait_blocked sessB
 want_locked "ship (B acquired it first)" "$PS"
 want_free   "coordinate movement (not yet reached)" "$PM"
@@ -95,7 +95,7 @@ echo "commit;" >&4                        # B releases all
 
 echo "=== Stage B: hold COORDINATE MOVEMENT → B holds SHIP+FLEET and blocks before presence ==="
 echo "begin; select id from main_ship_space_movements where id='$M' for update;" >&3; sleep 1
-echo "begin; select status from public.mainship_space_lock_context('$S', false);" >&4
+echo "begin; select public.mainship_space_lock_context('$S', false);" >&4
 wait_blocked sessB
 want_locked "ship" "$PS"
 want_locked "fleet" "$PF"
@@ -108,7 +108,7 @@ echo "commit;" >&4
 
 echo "=== Stage C: hold PRESENCE → B holds SHIP+FLEET+MOVEMENT and blocks at presence ==="
 echo "begin; select id from location_presence where id='$P' for update;" >&3; sleep 1
-echo "begin; select status from public.mainship_space_lock_context('$S', false);" >&4
+echo "begin; select public.mainship_space_lock_context('$S', false);" >&4
 wait_blocked sessB
 want_locked "ship" "$PS"
 want_locked "fleet" "$PF"
@@ -120,10 +120,9 @@ echo "commit;" >&4
 
 echo "=== Stage D: hold a legacy FLEET_MOVEMENTS row → lock_context must NOT block on it ==="
 echo "begin; select id from fleet_movements where id='$FM' for update;" >&3; sleep 1
-echo "begin; select status from public.mainship_space_lock_context('$S', false);" >&4
+echo "begin; select public.mainship_space_lock_context('$S', false);" >&4
 wait_idletx sessB                          # B completes WITHOUT blocking (legacy movement only EXISTS-read)
 echo "  ok: lock_context did NOT block on the held legacy fleet_movements row"
-want_free "legacy fleet_movements is NOT held by the context session (still lockable by A's holder check skipped)" "$PFM" 2>/dev/null || true
 echo "commit;" >&4                          # B releases
 echo "commit;" >&3                          # A releases the legacy row
 # after both release, legacy row is free
@@ -131,7 +130,7 @@ want_free "legacy fleet_movements free after release (context never retained a l
 
 echo "=== Stage E: skip-lock — hold SHIP, call lock_context(...,true) → skips at ship, no downstream locks ==="
 echo "begin; select main_ship_id from main_ship_instances where main_ship_id='$S' for update;" >&3; sleep 1
-R=$(q "select status from public.mainship_space_lock_context('$S', true)" sessB)   # one-shot (not in a held txn)
+R=$(q "select public.mainship_space_lock_context('$S', true)->>'status'" sessB)   # one-shot (not in a held txn)
 echo "  skip-mode result: $R"
 [ "$R" = "skipped" ] || { echo "FAIL: expected skipped, got $R"; cleanup; exit 1; }
 want_free "fleet (skip acquired no downstream lock)" "$PF"
