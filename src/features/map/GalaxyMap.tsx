@@ -7,6 +7,7 @@ import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './m
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { MainShipMarker } from './MainShipMarker'
+import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 
 // Read-only 2D galaxy map (plain SVG — no canvas/WebGL). World coordinates are normalized
 // once into a 0..1000 viewBox; a transform group provides pan (drag) + zoom (wheel/buttons).
@@ -225,6 +226,13 @@ export function GalaxyMap({
               k={view.k}
             />
           )}
+
+          {/* OSN-3 S6B3 — DEVELOPMENT-ONLY, non-interactive fixed-space preview. Final visual child of the
+              camera <g> (top z), pointer-transparent. `import.meta.env.DEV` is statically `false` in
+              `vite build`, so this branch (and the imported module + its sentinel) is compile-time
+              eliminated from the production bundle. It does not alter camera/viewBox/pan or the ordering
+              of any existing production marker. */}
+          {import.meta.env.DEV && <DevFixedSpacePreview k={view.k} />}
         </g>
       </svg>
 
