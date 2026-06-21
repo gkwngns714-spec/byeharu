@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { resolveMainShipMarker, type MarkerInputs } from './resolveMainShipMarker'
+import { worldToViewBox } from './openSpaceTransform'
 
 // OSN-1 — presentational main-ship marker. Renders ONLY the local player's own ship (relation
 // 'self'), pointer-transparent, as the top child of the map's transform group. Position comes
@@ -31,7 +32,24 @@ export function MainShipMarker({
   }, [moving])
 
   if (!marker) return null
-  const p = norm({ x: marker.x, y: marker.y })
+  // OSN-3 S6B2 — route the marker's WORLD coords to viewBox-local space by its coordinate-space
+  // provenance: legacy/named states use the map's dynamic normalizer; open-space states use the S6B1
+  // fixed-domain transform. Both yield viewBox-local coords; the existing camera <g> applies pan/zoom
+  // afterward. Exhaustive switch with a `never` guard — NO default and NO silent fallback to `norm`, so
+  // a coordinate marker can never be projected through buildNormalizer() by accident.
+  let p: { x: number; y: number }
+  switch (marker.coordinateSpace) {
+    case 'legacy_dynamic':
+      p = norm({ x: marker.x, y: marker.y })
+      break
+    case 'open_space_fixed':
+      p = worldToViewBox({ x: marker.x, y: marker.y })
+      break
+    default: {
+      const _exhaustive: never = marker.coordinateSpace
+      throw new Error(`MainShipMarker: unhandled coordinateSpace ${String(_exhaustive)}`)
+    }
+  }
   // OSN-2b note: in_space reuses the existing default marker colour (no new main-ship visual
   // language introduced here). A distinct parked-in-space colour is a future approved visual decision.
   const color =
