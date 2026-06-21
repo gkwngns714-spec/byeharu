@@ -178,8 +178,12 @@ test('full round trip: screenToViewBox(viewBoxToScreen(V)) ≈ V', () => {
 // ── Safeguard 1: no hidden clamping; explicit non-finite + out-of-domain behavior ───────────────────
 
 test('out-of-domain world coords convert WITHOUT clamping', () => {
-  expect(worldToViewBox({ x: 20000, y: 0 }).x).toBe(1500) // not snapped to 1000
-  expect(worldToViewBox({ x: -20000, y: 0 }).x).toBe(-500) // not snapped to 0
+  const hi = worldToViewBox({ x: 20000, y: 0 }).x
+  near(hi, 1500)
+  expect(hi).toBeGreaterThan(VIEWBOX_SIZE) // explicitly NOT snapped into [0,1000]
+  const lo = worldToViewBox({ x: -20000, y: 0 }).x
+  near(lo, -500)
+  expect(lo).toBeLessThan(0) // explicitly NOT snapped into [0,1000]
   // viewBox values outside [0,1000] invert back to out-of-domain world coords, also unclamped.
   near(viewBoxToWorld({ x: 1500, y: 500 }).x, 20000)
 })
