@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase'
+import { SPACE_MOVE_RPC, buildSpaceMoveRpcArgs, type SpaceMoveResult } from './spaceMoveCommand'
 
 // Main-ship client API.
 //
@@ -220,4 +221,16 @@ export async function repairMainShip(): Promise<{ main_ship_id: string; status: 
   const { data, error } = await supabase.rpc('repair_main_ship', {})
   if (error) throw new Error(error.message)
   return data as { main_ship_id: string; status: string; hp: number; max_hp: number }
+}
+
+// OSN-3 S6C — thin client wrapper over the EXISTING S6A public coordinate-command boundary
+// (command_main_ship_space_move). Empty-space movement ONLY: it sends a coordinate target + an
+// idempotency key and NOTHING else (no location id, no target_kind, no ship/player id — the server
+// derives the ship from auth.uid()). It writes no table directly. The flag (mainship_space_movement_
+// enabled) is the server's authority; while dark the wrapper returns {ok:false, code:'feature_disabled'}.
+// On a Postgres error the call still resolves to a normalized failure (no throw) so the UI can map it.
+export async function commandMainShipSpaceMove(targetX: number, targetY: number, requestId: string): Promise<SpaceMoveResult> {
+  const { data, error } = await supabase.rpc(SPACE_MOVE_RPC, buildSpaceMoveRpcArgs({ x: targetX, y: targetY }, requestId))
+  if (error) return { ok: false, code: 'unavailable', message: error.message }
+  return data as SpaceMoveResult
 }

@@ -8,6 +8,10 @@ import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { MainShipMarker } from './MainShipMarker'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
+import { useSpaceMoveCommand } from './useSpaceMoveCommand'
+import { SpaceMoveTargetMarker, SpaceMoveControls, type SpaceMoveEligibility } from './SpaceMoveTarget'
+import { classifyPointerGesture } from './spaceMoveCommand'
+import { screenToWorld } from './openSpaceTransform'
 
 // Read-only 2D galaxy map (plain SVG — no canvas/WebGL). World coordinates are normalized
 // once into a 0..1000 viewBox; a transform group provides pan (drag) + zoom (wheel/buttons).
@@ -75,6 +79,28 @@ export function GalaxyMap({
   const [view, setView] = useState({ k: 1, tx: 0, ty: 0 })
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
 
+  // ── OSN-3 S6C — empty-space coordinate command surface (flag-dark by default) ──
+  // The hook reads `mainship_space_movement_enabled` itself; while dark `sm.enabled` is false and the
+  // whole surface stays unmounted → zero production visual change. Coordinate-target taps are only
+  // captured when the flag is on AND the ship is eligible. Camera behavior is unchanged either way.
+  const sm = useSpaceMoveCommand()
+  const eligibility: SpaceMoveEligibility = !mainShip
+    ? 'no_ship'
+    : mainShip.status === 'destroyed' || mainShip.spatial_state === 'destroyed'
+      ? 'destroyed'
+      : mainShip.status === 'traveling' ||
+          mainShip.spatial_state === 'in_transit' ||
+          mainShipFleet?.status === 'moving' ||
+          mainShipFleet?.status === 'returning' ||
+          mainShipSpaceMovement?.status === 'moving'
+        ? 'in_transit'
+        : 'eligible'
+  const canTarget = sm.enabled && eligibility === 'eligible'
+  // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a target tap; drags
+  // and multi-touch stay map pan. Tracked alongside (never replacing) the existing pan snapshot.
+  const tap = useRef<{ x: number; y: number; t: number; maxPointers: number } | null>(null)
+  const pointers = useRef<Set<number>>(new Set())
+
   const norm = useMemo(() => {
     const pts: Pt[] = locations.map((l) => ({ x: l.x, y: l.y }))
     if (base) pts.push({ x: base.x, y: base.y })
@@ -97,6 +123,8 @@ export function GalaxyMap({
   const onPointerDown = (e: RPointerEvent) => {
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
     drag.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }
+    pointers.current.add(e.pointerId)
+    tap.current = { x: e.clientX, y: e.clientY, t: e.timeStamp, maxPointers: pointers.current.size }
   }
   const onPointerMove = (e: RPointerEvent) => {
     // Capture the drag snapshot locally. The setView updater runs LATER (React render phase), and
@@ -105,11 +133,38 @@ export function GalaxyMap({
     // no error boundary blanked the page on pan. The captured `d` is guaranteed non-null here.
     const d = drag.current
     if (!d) return
+    if (tap.current) tap.current.maxPointers = Math.max(tap.current.maxPointers, pointers.current.size)
     const dx = toSvgUnits(e.clientX - d.x)
     const dy = toSvgUnits(e.clientY - d.y)
     setView((v) => ({ ...v, ...clampPan(d.tx + dx, d.ty + dy, v.k) }))
   }
-  const onPointerUp = () => { drag.current = null }
+  const onPointerUp = (e: RPointerEvent) => {
+    const t = tap.current
+    pointers.current.delete(e.pointerId)
+    drag.current = null
+    tap.current = null
+    // S6C: a single short near-stationary tap on EMPTY space (the <svg> itself — markers/backdrop don't
+    // hit here) selects a coordinate target. Only when the flag is on and the ship is eligible.
+    const svg = svgRef.current
+    if (!canTarget || !t || !svg || e.target !== svg) return
+    const travelPx = Math.hypot(e.clientX - t.x, e.clientY - t.y)
+    const durationMs = e.timeStamp - t.t
+    if (classifyPointerGesture({ travelPx, durationMs, maxPointers: t.maxPointers }) !== 'tap') return
+    const rect = svg.getBoundingClientRect()
+    sm.selectTarget(
+      screenToWorld(
+        { x: e.clientX - rect.left, y: e.clientY - rect.top },
+        { k: view.k, tx: view.tx, ty: view.ty },
+        { width: rect.width, height: rect.height },
+      ),
+    )
+  }
+  // pointerleave/cancel: end the pan and abandon any tap candidate (never a selection).
+  const onPointerLeave = (e: RPointerEvent) => {
+    pointers.current.delete(e.pointerId)
+    drag.current = null
+    tap.current = null
+  }
   const onWheel = (e: RWheelEvent) => {
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
     setView((v) => {
@@ -151,7 +206,8 @@ export function GalaxyMap({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
+        onPointerLeave={onPointerLeave}
+        onPointerCancel={onPointerLeave}
         onWheel={onWheel}
         onClick={() => onSelect(null)}
       >
@@ -227,6 +283,12 @@ export function GalaxyMap({
             />
           )}
 
+          {/* OSN-3 S6C — empty-space coordinate target preview (fixed-domain transform, pointer-transparent).
+              Mounted only when the flag is on, the ship is eligible, and a within-bounds target is chosen. */}
+          {canTarget && sm.state.target && sm.state.targetWithinBounds && (
+            <SpaceMoveTargetMarker target={sm.state.target} k={view.k} />
+          )}
+
           {/* OSN-3 S6B3 — DEVELOPMENT-ONLY, non-interactive fixed-space preview. Final visual child of the
               camera <g> (top z), pointer-transparent. `import.meta.env.DEV` is statically `false` in
               `vite build`, so this branch (and the imported module + its sentinel) is compile-time
@@ -235,6 +297,22 @@ export function GalaxyMap({
           {import.meta.env.DEV && <DevFixedSpacePreview k={view.k} />}
         </g>
       </svg>
+
+      {/* OSN-3 S6C — overlay controls. Mounted only when coordinate movement is enabled (dark = absent →
+          zero production change). Empty-space only; copy never implies docking at a named location. */}
+      {sm.enabled && mainShip && (
+        <SpaceMoveControls
+          enabled={sm.enabled}
+          eligibility={eligibility}
+          phase={sm.state.phase}
+          target={sm.state.target}
+          targetWithinBounds={sm.state.targetWithinBounds}
+          serverTarget={sm.state.serverTarget}
+          errorMessage={sm.state.errorMessage}
+          onConfirm={() => void sm.submit()}
+          onClear={sm.clear}
+        />
+      )}
 
       <div className="pointer-events-none absolute bottom-2 left-2 z-10 text-[10px] text-slate-500">
         {locations.length} locations · {movements.length} moving · drag to pan · scroll/buttons to zoom
