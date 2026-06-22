@@ -15,6 +15,13 @@ set -uo pipefail
 : "${DB_URL:?}" "${API_URL:?}" "${ANON_KEY:?}" "${SERVICE_ROLE_KEY:?}"
 command -v psql >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null; }
 
+# Proof setup: make the disposable stack's `service_role` match HOSTED Supabase (where service_role has
+# full table/function access by Supabase's bootstrap). The repo migrations grant the client roles
+# (anon/authenticated) and rely on the hosted defaults for service_role; a bare `supabase start` does not
+# replicate those, so the verifiers' service-role admin reads/RPCs would otherwise hit "permission denied".
+# This configures the throwaway stack only — it does NOT change the verifiers, migrations, or production.
+psql "$DB_URL" -q -c "grant usage on schema public to service_role; grant select on all tables in schema public to service_role; grant execute on all functions in schema public to service_role;" >/dev/null 2>&1 || true
+
 FAILED=0
 okay() { echo "  ✓ $*"; }
 fail() { echo "  ✗ $*"; FAILED=1; }
@@ -41,30 +48,6 @@ run_verifier() {
 
 echo "=== precondition: fresh disposable stack is clean ==="
 assert_clean "precondition"
-
-echo "=== DIAGNOSTIC: environment + ensure_main_ship_for_player (direct DB) ==="
-psql "$DB_URL" -c "select hull_type_id from main_ship_hull_types;" || true
-psql "$DB_URL" -c "select key, value, pg_typeof(value) from game_config where key like 'mainship%' or key in ('travel_scale','min_travel_seconds') order by key;" || true
-psql "$DB_URL" -v ON_ERROR_STOP=0 <<'SQL' || true
-do $$
-declare uid uuid := gen_random_uuid();
-begin
-  insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
-    values('00000000-0000-0000-0000-000000000000',uid,'authenticated','authenticated','diag.'||replace(uid::text,'-','')||'@example.com','',now(),now(),now(),'','','','');
-  raise notice 'DIAG after-signup: bases=% ships=%', (select count(*) from bases where player_id=uid), (select count(*) from main_ship_instances where player_id=uid);
-  perform ensure_main_ship_for_player(uid);
-  raise notice 'DIAG after-ensure: ships=%', (select count(*) from main_ship_instances where player_id=uid);
-  delete from auth.users where id=uid;
-exception when others then raise notice 'DIAG EXCEPTION: % / %', sqlstate, sqlerrm;
-end $$;
-SQL
-echo "--- DIAG REST: the exact service_role PostgREST path the verifiers use ---"
-DUID=$(psql "$DB_URL" -tA -c "insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change) values('00000000-0000-0000-0000-000000000000',gen_random_uuid(),'authenticated','authenticated','diagrest.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id;" | tr -d '[:space:]')
-echo "diag user: ${DUID:-<none>}"
-echo -n "REST game_config read -> "; curl -s "$API_URL/rest/v1/game_config?key=eq.mainship_send_enabled&select=value" -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY"; echo
-echo -n "REST ensure rpc -> "; curl -s -X POST "$API_URL/rest/v1/rpc/ensure_main_ship_for_player" -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "Content-Type: application/json" -d "{\"p_player\":\"$DUID\"}"; echo
-echo -n "ship after REST ensure -> "; psql "$DB_URL" -tA -c "select count(*) from main_ship_instances where player_id='$DUID';"
-psql "$DB_URL" -q -c "delete from auth.users where id='$DUID';" >/dev/null 2>&1 || true
 
 echo "=== CASE 1: send, original flag TRUE → remains TRUE; assertions pass; cleanup ==="
 setflag true
