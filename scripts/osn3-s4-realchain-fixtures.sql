@@ -43,9 +43,9 @@ declare
 begin
   select id into v_b from bases where player_id = v_u and status = 'active' order by created_at limit 1;
 
-  if kind = 'home_ship' then  -- a plain home ship to drive the real S3 writer
-    insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id)
-      values (v_u,'starter_frigate','home',null,500,500,50,10,2,3,v_s);
+  if kind = 'in_space' then  -- a stationary in_space ship to drive the real S3 writer (ANCHOR-1A: the only valid origin)
+    insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,space_x,space_y,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id)
+      values (v_u,'starter_frigate','stationary','in_space',10,10,500,500,50,10,2,3,v_s);
 
   elsif kind in ('in_transit_due','in_transit_future') then
     insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id)
@@ -183,7 +183,7 @@ end $$;
 do $$ declare s uuid; p uuid; req uuid := gen_random_uuid(); r jsonb; mv uuid; rcpt_before jsonb; n int;
 begin
   update game_config set value='true' where key='mainship_space_movement_enabled';   -- admit the new move
-  s := s4fix('home_ship'); select player_id into p from main_ship_instances where main_ship_id=s;
+  s := s4fix('in_space'); select player_id into p from main_ship_instances where main_ship_id=s;  -- ANCHOR-1A: drive from in_space (the only valid origin)
   r := mainship_space_begin_move(p, s, 120, -60, req);
   if (r->>'ok')::boolean is not true then raise exception 'A: begin_move failed: %', r; end if;
   mv := (r->>'movement_id')::uuid;

@@ -216,15 +216,18 @@ end $$;
 -- ════════ enable the writer ONLY in this disposable stack ════════
 update game_config set value = 'true' where key = 'mainship_space_movement_enabled';
 
--- ════════ SECTION 2 — positive moves from every supported stationary origin ════════
-do $$ declare s uuid;
+-- ════════ SECTION 2 — ANCHOR-1A: in_space is the ONLY anchored origin; home/location origins reject ════════
+do $$ declare s uuid; p uuid;
 begin
-  s := s3fix('legacy_home');    perform s3_run_ok(s, 100,  50, gen_random_uuid(), 'base');
-  s := s3fix('home');           perform s3_run_ok(s, -80,  40, gen_random_uuid(), 'base');
-  s := s3fix('legacy_present'); perform s3_run_ok(s,  60, -30, gen_random_uuid(), 'location');
-  s := s3fix('at_location');    perform s3_run_ok(s, -55, -25, gen_random_uuid(), 'location');
+  -- legacy base/location coordinates are NOT canonical OSN positions → origin_not_anchored, no mutation.
+  -- s3_reject proves the global state hash is unchanged → NO movement/fleet/receipt/presence written.
+  s := s3fix('legacy_home');    select player_id into p from main_ship_instances where main_ship_id=s; perform s3_reject(p, s, 100,  50, gen_random_uuid(), 'origin_not_anchored');
+  s := s3fix('home');           select player_id into p from main_ship_instances where main_ship_id=s; perform s3_reject(p, s, -80,  40, gen_random_uuid(), 'origin_not_anchored');
+  s := s3fix('legacy_present'); select player_id into p from main_ship_instances where main_ship_id=s; perform s3_reject(p, s,  60, -30, gen_random_uuid(), 'origin_not_anchored');
+  s := s3fix('at_location');    select player_id into p from main_ship_instances where main_ship_id=s; perform s3_reject(p, s, -55, -25, gen_random_uuid(), 'origin_not_anchored');
+  -- in_space remains a real positive: movement.origin == authoritative ship space_x/y; speed==resolver.
   s := s3fix('in_space');       perform s3_run_ok(s,  12,  34, gen_random_uuid(), 'space');
-  raise notice 'SECTION 2 ok: positive moves from all five origins (origin==resolved, speed==resolver)';
+  raise notice 'SECTION 2 ok: home/legacy_home/at_location/legacy_present → origin_not_anchored (no mutation); in_space positive (origin==resolved space coords)';
 end $$;
 
 -- ════════ SECTION 3 — rejection matrix (flag ON; each standalone + non-mutating + precondition-asserted) ════════
@@ -244,8 +247,9 @@ begin
   o := mainship_space_resolve_origin(s);
   if (o->>'ok')::boolean is not true or abs((o->>'origin_x')::double precision) <= 10000 then raise exception 'origin_oob precond not met: %', o; end if;
   perform s3_reject(p, s, 100, 50, gen_random_uuid(), 'origin_out_of_bounds');
-  -- zero_distance: derive the EXACT authoritative origin and use it as the target
-  s := s3fix('legacy_home'); select player_id into p from main_ship_instances where main_ship_id = s;
+  -- zero_distance: derive the EXACT authoritative origin and use it as the target. ANCHOR-1A: in_space is
+  -- the only origin resolve_origin still resolves, so the zero-distance path is reachable only from it.
+  s := s3fix('in_space'); select player_id into p from main_ship_instances where main_ship_id = s;
   o := mainship_space_resolve_origin(s);
   if (o->>'ok')::boolean is not true then raise exception 'zero_distance precond: resolve not ok: %', o; end if;
   ox := (o->>'origin_x')::double precision; oy := (o->>'origin_y')::double precision;
@@ -309,7 +313,7 @@ end $$;
 do $$ declare s uuid; p uuid; h1 text; h2 text; r jsonb; nf int; nm int; nr int;
 begin
   update game_config set value = '1' where key = 'max_coordinate_travel_seconds';   -- force the cap (min_travel_seconds=5 > 1)
-  s := s3fix('legacy_home'); select player_id into p from main_ship_instances where main_ship_id = s;
+  s := s3fix('in_space'); select player_id into p from main_ship_instances where main_ship_id = s;  -- ANCHOR-1A: cap exercised from the valid in_space origin
   h1 := s3_state_hash();
   r := mainship_space_begin_move(p, s, 100, 50, gen_random_uuid());
   if (r->>'ok')::boolean is distinct from false or (r->>'reason') <> 'travel_time_exceeds_limit' then raise exception 'expected travel_time_exceeds_limit, got %', r; end if;
@@ -319,7 +323,7 @@ begin
   select count(*) into nf from fleets where main_ship_id = s;                          if nf <> 0 then raise exception 'travel-time: a fleet was materialised (%)', nf; end if;
   select count(*) into nm from main_ship_space_movements where main_ship_id = s;       if nm <> 0 then raise exception 'travel-time: a movement was created (%)', nm; end if;
   select count(*) into nr from main_ship_space_command_receipts where main_ship_id = s; if nr <> 0 then raise exception 'travel-time: a receipt was created (%)', nr; end if;
-  perform 1 from main_ship_instances where main_ship_id = s and status = 'home' and spatial_state is null;
+  perform 1 from main_ship_instances where main_ship_id = s and status = 'stationary' and spatial_state = 'in_space';
   if not found then raise exception 'travel-time: ship was mutated'; end if;
   update game_config set value = '86400' where key = 'max_coordinate_travel_seconds'; -- restore
   raise notice 'SECTION 5 ok: travel_time_exceeds_limit → no fleet/movement/receipt/ship/pointer/presence change (cap restored to 86400)';
@@ -328,7 +332,7 @@ end $$;
 -- ════════ SECTION 6 — idempotency replay + payload conflict ════════
 do $$ declare s uuid; p uuid; req uuid := gen_random_uuid(); r1 jsonb; r2 jsonb; stored jsonb; n int;
 begin
-  s := s3fix('legacy_home'); select player_id into p from main_ship_instances where main_ship_id = s;
+  s := s3fix('in_space'); select player_id into p from main_ship_instances where main_ship_id = s;  -- ANCHOR-1A: replay exercised from the valid in_space origin
   r1 := mainship_space_begin_move(p, s, 70, 70, req);
   if (r1->>'ok')::boolean is not true then raise exception 'replay setup failed: %', r1; end if;
   select result_json into stored from main_ship_space_command_receipts where main_ship_id = s and request_id = req;

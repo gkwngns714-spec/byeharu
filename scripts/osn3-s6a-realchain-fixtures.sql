@@ -97,11 +97,11 @@ begin
   raise notice 'SECTION 1 ok: flag false → feature_disabled, no movement/receipt, ship unchanged (net player-visible effect: none)';
 end $$;
 
--- ════════ SECTION 2 — SUCCESS from home; canonical accepted target echoed; ship in_transit ════════
+-- ════════ SECTION 2 — SUCCESS from in_space (ANCHOR-1A: the only anchored origin); canonical target echoed ════════
 do $$ declare s uuid; p uuid; req uuid := gen_random_uuid(); r jsonb;
 begin
   update game_config set value='true' where key='mainship_space_movement_enabled';
-  s := s6fix('home_ship'); p := s6_player(s);
+  s := s6fix('in_space'); p := s6_player(s);   -- OSN-ANCHOR-1A: home/at_location origins now reject origin_not_anchored
   r := s6_cmd(p, 12.7, -3.2, req);
   if (r->>'ok')::boolean is not true then raise exception 'S2: expected ok, got %', r; end if;
   if (r->>'target_x')::numeric <> 13 or (r->>'target_y')::numeric <> -3 then raise exception 'S2: canonical target not echoed (got %, %)', r->>'target_x', r->>'target_y'; end if;
@@ -110,34 +110,54 @@ begin
   perform 1 from main_ship_space_movements where main_ship_id=s and status='moving' and target_x=13 and target_y=-3 and target_kind='space';
   if not found then raise exception 'S2: movement row target wrong'; end if;
   if not exists (select 1 from main_ship_space_command_receipts where main_ship_id=s and request_id=req and (result_json->>'ok')::boolean) then raise exception 'S2: success receipt missing'; end if;
-  raise notice 'SECTION 2 ok: home success → canonical (13,-3) accepted+echoed, ship in_transit, one movement, receipt written';
+  raise notice 'SECTION 2 ok: in_space success → canonical (13,-3) accepted+echoed, ship in_transit, one movement, receipt written';
+end $$;
+
+-- ════════ SECTION 2b — OSN-ANCHOR-1A: home/legacy_home/at_location are NOT anchored origins ════════
+do $$ declare s uuid; p uuid; r jsonb;
+begin
+  -- home alias: s6fix('home_ship') has spatial_state NULL → validate state legacy_home
+  s := s6fix('home_ship'); p := s6_player(s);
+  r := s6_cmd(p, 30, 30, gen_random_uuid());
+  if r->>'code' <> 'unavailable' then raise exception '2b: home/legacy_home expected unavailable (origin_not_anchored), got %', r; end if;
+  if s6_mv_count(s) <> 0 then raise exception '2b: a movement was created from an unanchored home origin'; end if;
+  if exists (select 1 from main_ship_space_command_receipts where main_ship_id=s) then raise exception '2b: a receipt was written for an unanchored home origin'; end if;
+  perform 1 from main_ship_instances where main_ship_id=s and status='home' and spatial_state is null;
+  if not found then raise exception '2b: home ship changed'; end if;
+  -- at_location alias
+  s := s6fix('at_location'); p := s6_player(s);
+  r := s6_cmd(p, 30, 30, gen_random_uuid());
+  if r->>'code' <> 'unavailable' then raise exception '2b: at_location expected unavailable (origin_not_anchored), got %', r; end if;
+  if s6_mv_count(s) <> 0 then raise exception '2b: a movement was created from an unanchored at_location origin'; end if;
+  if (mainship_space_validate_context(s)->>'state') <> 'at_location' then raise exception '2b: at_location ship changed'; end if;
+  raise notice 'SECTION 2b ok: home/legacy_home + at_location → origin_not_anchored (code unavailable), no movement, no receipt, ship unchanged';
 end $$;
 
 -- ════════ SECTION 3 — CANONICALIZATION ════════
 do $$ declare s uuid; p uuid; r jsonb;
 begin
-  -- 3a half-away-from-zero (positive ties)
-  s := s6fix('home_ship'); p := s6_player(s);
+  -- 3a half-away-from-zero (positive ties) — ANCHOR-1A: in_space is the only valid origin
+  s := s6fix('in_space'); p := s6_player(s);
   r := s6_cmd(p, 0.5, 2.5, gen_random_uuid());
   if (r->>'ok')::boolean is not true or (r->>'target_x')::numeric <> 1 or (r->>'target_y')::numeric <> 3 then raise exception '3a: (0.5,2.5) expected (1,3), got %', r; end if;
   -- 3b half-away-from-zero (negative ties)
-  s := s6fix('home_ship'); p := s6_player(s);
+  s := s6fix('in_space'); p := s6_player(s);
   r := s6_cmd(p, -0.5, -2.5, gen_random_uuid());
   if (r->>'ok')::boolean is not true or (r->>'target_x')::numeric <> -1 or (r->>'target_y')::numeric <> -3 then raise exception '3b: (-0.5,-2.5) expected (-1,-3), got %', r; end if;
   -- 3c near-edge inward snap (raw just inside ±10000.5 → snaps to the ±10000 boundary, accepted) — short hop
   s := s6fix('in_space_edge'); p := s6_player(s);
   r := s6_cmd(p, 9999.6, -9999.6, gen_random_uuid());
   if (r->>'ok')::boolean is not true or (r->>'target_x')::numeric <> 10000 or (r->>'target_y')::numeric <> -10000 then raise exception '3c: (9999.6,-9999.6) expected snap to (10000,-10000), got %', r; end if;
-  -- 3d out-of-bounds: canonical (10001,0) rejected, no movement
-  s := s6fix('home_ship'); p := s6_player(s);
+  -- 3d out-of-bounds: canonical (10001,0) rejected at input validation (before origin resolution), no movement
+  s := s6fix('in_space'); p := s6_player(s);
   r := s6_cmd(p, 10000.6, 0, gen_random_uuid());
   if r->>'code' <> 'out_of_bounds' then raise exception '3d: (10000.6,0) expected out_of_bounds, got %', r; end if;
   if s6_mv_count(s) <> 0 then raise exception '3d: a movement was written for an out-of-bounds target'; end if;
-  -- 3e non-finite rejected before the numeric cast, no movement
-  s := s6fix('home_ship'); p := s6_player(s);
+  -- 3e non-finite rejected before the numeric cast (before origin resolution), no movement
+  s := s6fix('in_space'); p := s6_player(s);
   r := s6_cmd(p, 'NaN'::double precision, 0, gen_random_uuid());
   if r->>'code' <> 'invalid_target' then raise exception '3e: NaN expected invalid_target, got %', r; end if;
-  s := s6fix('home_ship'); p := s6_player(s);
+  s := s6fix('in_space'); p := s6_player(s);
   r := s6_cmd(p, 'Infinity'::double precision, 5, gen_random_uuid());
   if r->>'code' <> 'invalid_target' then raise exception '3e: Infinity expected invalid_target, got %', r; end if;
   if s6_mv_count(s) <> 0 then raise exception '3e: a movement was written for a non-finite target'; end if;
@@ -157,7 +177,7 @@ end $$;
 -- ════════ SECTION 5 — IDEMPOTENCY (p_request_id is the key) ════════
 do $$ declare s uuid; p uuid; req uuid := gen_random_uuid(); r1 jsonb; r2 jsonb; r3 jsonb; r4 jsonb; mv uuid;
 begin
-  s := s6fix('home_ship'); p := s6_player(s);
+  s := s6fix('in_space'); p := s6_player(s);   -- ANCHOR-1A: idempotency exercised from the valid in_space origin
   r1 := s6_cmd(p, 12.7, 0, req);
   if (r1->>'ok')::boolean is not true or (r1->>'target_x')::numeric <> 13 then raise exception 'S5: first command failed: %', r1; end if;
   mv := (r1->>'movement_id')::uuid;
@@ -177,8 +197,8 @@ end $$;
 -- ════════ SECTION 6 — STATE matrix ════════
 do $$ declare s uuid; p uuid; r jsonb; lx double precision; ly double precision; lid uuid;
 begin
-  -- 6a in_transit → must_stop_first (start a move, then command again)
-  s := s6fix('home_ship'); p := s6_player(s);
+  -- 6a in_transit → must_stop_first (start a move from the valid in_space origin, then command again)
+  s := s6fix('in_space'); p := s6_player(s);
   r := s6_cmd(p, 40, 40, gen_random_uuid());
   if (r->>'ok')::boolean is not true then raise exception '6a: setup move failed: %', r; end if;
   r := s6_cmd(p, 80, 80, gen_random_uuid());
@@ -193,23 +213,13 @@ begin
   r := s6_cmd(p, 10, 10, gen_random_uuid());
   if r->>'code' <> 'busy_legacy' then raise exception '6c: legacy-busy expected busy_legacy, got %', r; end if;
   if exists (select 1 from main_ship_space_movements where main_ship_id=s) then raise exception '6c: a coordinate movement was created during legacy travel'; end if;
-  -- 6d at_location success (third origin kind) — only when a seed location sits within bounds
-  select id, x, y into lid, lx, ly from locations where x between -9000 and 9000 and y between -9000 and 9000 order by id limit 1;
-  if lid is not null then
-    s := s6fix('at_location'); p := s6_player(s);
-    -- the at_location fixture pins the FIRST location; resolve_origin uses ITS coords. Send to a nearby
-    -- in-bounds point. (If the first location is out of bounds, the writer would return origin_out_of_bounds
-    -- → 'unavailable'; we only assert success when origins are bounded, which the seed map satisfies.)
-    select x, y into lx, ly from locations where id = (select id from locations order by id limit 1);
-    if lx between -9990 and 9990 and ly between -9990 and 9990 then
-      r := s6_cmd(p, lx + 7, ly - 7, gen_random_uuid());
-      if (r->>'ok')::boolean is not true then raise exception '6d: at_location command failed: %', r; end if;
-      if (mainship_space_validate_context(s)->>'state') <> 'in_transit' then raise exception '6d: at_location ship not in_transit after command'; end if;
-      raise notice 'SECTION 6d ok: at_location → coordinate move accepted (origin = location coords), ship in_transit';
-    else
-      raise notice 'SECTION 6d skipped: first seed location out of the test envelope (origin-bounds is the writer''s concern; covered by home/in_space origins)';
-    end if;
-  end if;
+  -- 6d at_location → origin_not_anchored (ANCHOR-1A): wrapper returns 'unavailable', no movement, unchanged
+  s := s6fix('at_location'); p := s6_player(s);
+  r := s6_cmd(p, 25, 25, gen_random_uuid());
+  if r->>'code' <> 'unavailable' then raise exception '6d: at_location expected unavailable (origin_not_anchored), got %', r; end if;
+  if s6_mv_count(s) <> 0 then raise exception '6d: a movement was created from an unanchored at_location origin'; end if;
+  if (mainship_space_validate_context(s)->>'state') <> 'at_location' then raise exception '6d: at_location ship changed'; end if;
+  raise notice 'SECTION 6d ok: at_location → origin_not_anchored (code unavailable), no movement, ship unchanged';
   raise notice 'SECTION 6 ok: in_transit→must_stop_first, destroyed→ship_destroyed, legacy-busy→busy_legacy (no coordinate write)';
 end $$;
 
@@ -233,7 +243,7 @@ begin
   raise notice 'L1 ok: legacy send_main_ship_expedition rejects an in_space ship (%).', got;
 
   -- L2: a coordinate-domain (in_transit) ship is REJECTED by the legacy move RPC (status<>'present').
-  s := s6fix('home_ship'); p := s6_player(s);
+  s := s6fix('in_space'); p := s6_player(s);   -- ANCHOR-1A: drive in_transit from the valid in_space origin
   r := s6_cmd(p, 55, 55, gen_random_uuid());  -- → in_transit
   if (r->>'ok')::boolean is not true then raise exception 'L2: setup move failed: %', r; end if;
   select id into f from fleets where main_ship_id=s and status='moving' limit 1;
