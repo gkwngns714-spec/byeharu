@@ -1,0 +1,91 @@
+name: OSN-DOCK-0 — real-migration-chain proof (disposable Supabase)
+
+# Authoritative/gating proof for the explicit named-location ARRIVAL (docking) capability: the private
+# primitive public.mainship_space_dock_at_location() invoked by the re-created arrival processor
+# public.process_mainship_space_arrivals(). Boots a DISPOSABLE local Supabase stack via the CLI, applying the
+# ACTUAL chain 0001..0061 — real tables/CHECKs/indexes/RLS/grants/triggers/pg_cron and the real roles
+# anon/authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves the primitive's
+# permission/boundary (service_role-only, no client surface), the dock/terminal-failure fixture matrix
+# (dock once + idempotent; inactive/coordinate-mismatch/unsupported-activity terminal failures with no loop;
+# free-space arrival unchanged; zero fleet_movements dependency), runtime EXECUTE denial, and that both
+# production flags are left unchanged (send=true, space_movement=false). Runs on push to the OSN-3 branch(es).
+#
+# Regression note: pushing an 'osn3-**' branch also (re)runs the sibling proofs on this SAME chain incl. 0061
+# — osn3-s2/s3/s4/s5/s6a-realchain-proof + verify-osn-resolver/s6b — providing the S4/S5/S6A regression gate.
+
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0061)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: Permission / boundary proof (private docking primitive + processor + client surface)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-dock0-realchain-perm.sql
+
+      - name: Runtime SET ROLE EXECUTE denial (docking primitive + processor) + service_role success
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          for r in anon authenticated; do
+            out=$(psql "$DB_URL" -X -c "set role $r; select public.mainship_space_dock_at_location(gen_random_uuid(), gen_random_uuid());" 2>&1 || true)
+            echo "$out" | grep -qi "permission denied" && echo "ok: $r cannot EXECUTE the docking primitive" || { echo "FAIL: $r executed the docking primitive -> $out"; exit 1; }
+            out=$(psql "$DB_URL" -X -c "set role $r; select public.process_mainship_space_arrivals();" 2>&1 || true)
+            echo "$out" | grep -qi "permission denied" && echo "ok: $r cannot EXECUTE the processor" || { echo "FAIL: $r executed the processor -> $out"; exit 1; }
+          done
+          # service_role can call the primitive (no-op on a nonexistent movement → {ok:false}, NOT a permission error)
+          out=$(psql "$DB_URL" -X -c "set role service_role; select public.mainship_space_dock_at_location(gen_random_uuid(), gen_random_uuid()) as r;" 2>&1)
+          echo "$out" | grep -qi "permission denied" && { echo "FAIL: service_role denied -> $out"; exit 1; } || true
+          echo "$out" | grep -qi "movement_not_moving" && echo "ok: service_role can EXECUTE the primitive (returned ok:false/movement_not_moving)" || { echo "FAIL: service_role primitive -> $out"; exit 1; }
+
+      - name: Dock / terminal-failure fixture matrix (real chain)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-dock0-realchain-fixtures.sql
+
+      - name: Restore arrival cron + assert flags unchanged + no fixtures remain (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            # fixtures unscheduled the arrival cron for determinism — restore it (idempotent unschedule+schedule)
+            psql "$DB_URL" -X -c "do \$\$ begin perform cron.unschedule(jobid) from cron.job where jobname='process-mainship-space-arrivals'; exception when undefined_table then null; end \$\$; select cron.schedule('process-mainship-space-arrivals','30 seconds',\$cmd\$select public.process_mainship_space_arrivals();\$cmd\$);" || true
+            psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3dock0.%@example.com'; delete from locations where name like 'dock0-test-%';" || true
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare a text; b text; n int; jn int;
+            begin
+              select value::text into a from game_config where key='mainship_send_enabled';
+              select value::text into b from game_config where key='mainship_space_movement_enabled';
+              if a is distinct from 'true'  then raise exception 'send flag=%', a; end if;
+              if b is distinct from 'false' then raise exception 'space flag=%', b; end if;
+              select count(*) into n from auth.users where email like 'osn3dock0.%@example.com'; if n<>0 then raise exception '% fixture users remain', n; end if;
+              if exists (select 1 from main_ship_space_movements) then raise exception 'coordinate movements remain'; end if;
+              if exists (select 1 from locations where name like 'dock0-test-%') then raise exception 'dock0 test locations remain'; end if;
+              select count(*) into jn from cron.job where jobname='process-mainship-space-arrivals'; if jn<>1 then raise exception 'arrival cron jobs=%', jn; end if;
+              raise notice 'post-run ok: send=true space=false no-fixtures cron-restored-once';
+            end \$\$;" || exit 1
+          fi
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
