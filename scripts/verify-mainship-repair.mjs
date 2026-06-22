@@ -15,6 +15,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'node:fs'
+import { teardownVerifier } from './lib/verifier-teardown.mjs'
 
 function loadEnv(p) {
   const e = {}
@@ -50,16 +51,20 @@ async function newUser(tag) {
   const { data: su, error } = await c.auth.signUp({ email: `msrepairtest.${tag}.${Date.now()}@example.com`, password: 'Test123456!' })
   if (error) die(`signup failed: ${error.message}`)
   if (!su.session) die('no session — email confirmation still ON')
-  return { client: c, userId: su.user.id }
+  const userId = su.user.id
+  createdUserIds.push(userId)   // track immediately after creation for finally cleanup
+  return { client: c, userId }
 }
 
-let origScale, origMin, flagTouched = false
+let origScale, origMin, origSend, flagTouched = false
+const createdUserIds = []
 
 async function main() {
   console.log(`\nPhase 10F (main-ship repair/safelock) verification against ${url}\n`)
 
   origScale = await cfgVal('travel_scale')
   origMin   = await cfgVal('min_travel_seconds')
+  origSend  = await cfgVal('mainship_send_enabled')   // capture original BEFORE any flag write
   await setCfg('travel_scale', 0.001)
   await setCfg('min_travel_seconds', 2)
   await setCfg('mainship_send_enabled', true); flagTouched = true
@@ -144,9 +149,18 @@ async function main() {
 main()
   .catch((e) => { if (e instanceof Abort) bad('ABORTED', e.message); else bad('UNEXPECTED', e?.message ?? String(e)) })
   .finally(async () => {
-    try { if (flagTouched) await setCfg('mainship_send_enabled', false) } catch {}
-    try { if (origScale !== undefined) await setCfg('travel_scale', origScale) } catch {}
-    try { if (origMin !== undefined) await setCfg('min_travel_seconds', origMin) } catch {}
+    // Teardown (Legacy Main-Ship Verifier Safety Repair): delete verifier-created users (cascade)
+    // and restore the CAPTURED original send flag — never a hardcoded value.
+    const { failures } = await teardownVerifier({
+      admin, createdUserIds,
+      flag: { key: 'mainship_send_enabled', original: origSend, touched: flagTouched },
+    })
+    for (const [k, v] of [['travel_scale', origScale], ['min_travel_seconds', origMin]]) {
+      if (v === undefined) continue
+      try { const { error } = await setCfg(k, v); if (error) failures.push(`restore ${k}: ${error.message}`) }
+      catch (e) { failures.push(`restore ${k}: ${e?.message ?? String(e)}`) }
+    }
+    failures.forEach((f) => bad('TEARDOWN', f))
     console.log(`\nMain-ship repair: ${pass} passed, ${fail} failed\n`)
     process.exitCode = fail > 0 ? 1 : 0
   })
