@@ -1,0 +1,72 @@
+name: OSN-ANCHOR-1A — real-migration-chain proof (disposable Supabase)
+
+# Authoritative proof for the OSN-ANCHOR-1A truthful-origin guard (migration 0062). Boots a DISPOSABLE
+# local Supabase stack via the repository-supported CLI (supabase/config.toml), applying the ACTUAL
+# migration chain 0001..0062 — real tables, CHECKs, indexes, RLS, triggers, grants, auth schema, and the
+# real roles anon/authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves: home /
+# legacy_home / at_location / legacy_present → origin_not_anchored (no movement, no receipt, no legacy
+# coordinate copied into a movement origin); in_space → success with origin == ship space_x/y; rejected-
+# request idempotency (no receipt, same request_id valid later); resolver ACL/security/signature parity;
+# cross-domain exclusion + destruction/repair + DOCK-0 non-regression. Restores both flags to false. Runs
+# on push to the OSN-3 branch(es). No production deploy, no live verifier, no production DB.
+
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0062)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: ANCHOR-1A truthful-origin real-chain proof
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-anchor1a-realchain-fixtures.sql
+
+      - name: Restore flags + cleanup fixtures (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -c "update game_config set value='false' where key='mainship_space_movement_enabled';" || true
+            psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3anchor1a.%@example.com';" || true
+          fi
+
+      - name: Assert flags + no fixtures remain (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare a text; b text; n int;
+            begin
+              select value::text into a from game_config where key='mainship_send_enabled';
+              select value::text into b from game_config where key='mainship_space_movement_enabled';
+              if a is distinct from 'true'  then raise exception 'send flag=%', a; end if;
+              if b is distinct from 'false' then raise exception 'space flag=%', b; end if;
+              select count(*) into n from auth.users where email like 'osn3anchor1a.%@example.com'; if n<>0 then raise exception '% fixture users remain', n; end if;
+              raise notice 'post-run ok: send=true space=false no-fixture-users';
+            end \$\$;"
+          fi
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

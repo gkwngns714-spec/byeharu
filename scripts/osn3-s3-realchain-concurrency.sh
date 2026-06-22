@@ -45,9 +45,9 @@ PGAPPNAME=s3sessA psql "$DB_URL" -X -q < "$FIFOA" >/tmp/s3sessA.log 2>&1 & PA=$!
 PGAPPNAME=s3sessB psql "$DB_URL" -X -q < "$FIFOB" >/tmp/s3sessB.log 2>&1 & PB=$!
 exec 3>"$FIFOA" 4>"$FIFOB"
 
-# ── fixtures: enable the writer + two legacy_home ships (one per scenario). The auth.users insert
-#    auto-provisions this player's 'Home Base' at (0,0) via the on_auth_user_created_base trigger, so
-#    resolve_origin resolves a real base origin — no manual base is inserted. ──
+# ── fixtures: enable the writer + two in_space ships (one per scenario). OSN-ANCHOR-1A: in_space is the
+#    ONLY valid coordinate-movement origin (home/at_location reject origin_not_anchored), so resolve_origin
+#    returns each ship's authoritative space_x/y. The auto-provisioned Home Base is unused as an origin. ──
 q "update game_config set value='true' where key='mainship_space_movement_enabled';" >/dev/null
 # One ship per player (main_ship_instances has a one-ship-per-player unique), so use a distinct user
 # (each with its own auto-base) per scenario.
@@ -59,8 +59,8 @@ mkuser() { q "
   select id from u;"; }
 U1=$(mkuser); U2=$(mkuser)
 for u in "$U1" "$U2"; do [ -n "$(q "select id from bases where player_id='$u' and status='active' limit 1")" ] || { echo "FAIL: auto-base not provisioned for $u"; exit 1; }; done
-S1=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U1','starter_frigate','home',null,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
-S2=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U2','starter_frigate','home',null,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
+S1=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,space_x,space_y,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U1','starter_frigate','stationary','in_space',10,10,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
+S2=$(q "insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,space_x,space_y,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values ('$U2','starter_frigate','stationary','in_space',10,10,500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
 R1=$(q "select gen_random_uuid()"); R2=$(q "select gen_random_uuid()"); R3=$(q "select gen_random_uuid()")
 
 echo "=== Scenario 1: two DISTINCT commands for ship S1 — B waits on the lock, then rejects ==="

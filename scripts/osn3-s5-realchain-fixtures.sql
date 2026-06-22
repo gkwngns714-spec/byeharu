@@ -32,10 +32,7 @@ declare
 begin
   select id into v_b from bases where player_id = v_u and status='active' order by created_at limit 1;
 
-  if kind = 'home_ship' then  -- a home ship to drive the real S3 writer
-    insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id)
-      values (v_u,'starter_frigate','home',null,500,500,50,10,2,3,v_s);
-  elsif kind = 'in_space' then
+  if kind = 'in_space' then
     insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,space_x,space_y,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id)
       values (v_u,'starter_frigate','stationary','in_space',42,-17,500,500,50,10,2,3,v_s);
   elsif kind = 'at_location' then
@@ -156,7 +153,7 @@ end $$;
 do $$ declare s uuid; p uuid; req uuid := gen_random_uuid(); r jsonb; mv uuid; rcpt_before jsonb; n int; d jsonb;
 begin
   update game_config set value='true' where key='mainship_space_movement_enabled';
-  s := s5fix('home_ship'); p := s5_player(s);
+  s := s5fix('in_space'); p := s5_player(s);  -- ANCHOR-1A: drive in_transit from in_space (the only valid origin); the destruction behaviour under test is unchanged
   r := mainship_space_begin_move(p, s, 70, 30, req);
   if (r->>'ok')::boolean is not true then raise exception 'S1: begin_move failed: %', r; end if;
   mv := (r->>'movement_id')::uuid;
