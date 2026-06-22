@@ -22,6 +22,13 @@ command -v psql >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get ins
 # This configures the throwaway stack only — it does NOT change the verifiers, migrations, or production.
 psql "$DB_URL" -q -c "grant usage on schema public to service_role; grant select on all tables in schema public to service_role; grant execute on all functions in schema public to service_role;" >/dev/null 2>&1 || true
 
+# Determinism: the send verifier asserts the ship is "still returning" right before it invokes the
+# main-ship reconciler itself. On hosted that timing holds; on the fast disposable stack the 30s
+# `process-mainship-expeditions` reconciler cron can beat it. Unschedule ONLY that reconciler cron — the
+# movement-arrival cron (`process-fleet-movements`) stays, so arrivals still process. (Same determinism
+# pattern the OSN real-chain proofs use; configures the throwaway stack only.)
+psql "$DB_URL" -q -c "do \$\$ begin perform cron.unschedule(jobid) from cron.job where jobname='process-mainship-expeditions'; exception when undefined_table then null; end \$\$;" >/dev/null 2>&1 || true
+
 FAILED=0
 okay() { echo "  ✓ $*"; }
 fail() { echo "  ✗ $*"; FAILED=1; }
