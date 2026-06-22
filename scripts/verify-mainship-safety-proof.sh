@@ -58,6 +58,13 @@ begin
 exception when others then raise notice 'DIAG EXCEPTION: % / %', sqlstate, sqlerrm;
 end $$;
 SQL
+echo "--- DIAG REST: the exact service_role PostgREST path the verifiers use ---"
+DUID=$(psql "$DB_URL" -tA -c "insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change) values('00000000-0000-0000-0000-000000000000',gen_random_uuid(),'authenticated','authenticated','diagrest.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id;" | tr -d '[:space:]')
+echo "diag user: ${DUID:-<none>}"
+echo -n "REST game_config read -> "; curl -s "$API_URL/rest/v1/game_config?key=eq.mainship_send_enabled&select=value" -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY"; echo
+echo -n "REST ensure rpc -> "; curl -s -X POST "$API_URL/rest/v1/rpc/ensure_main_ship_for_player" -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "Content-Type: application/json" -d "{\"p_player\":\"$DUID\"}"; echo
+echo -n "ship after REST ensure -> "; psql "$DB_URL" -tA -c "select count(*) from main_ship_instances where player_id='$DUID';"
+psql "$DB_URL" -q -c "delete from auth.users where id='$DUID';" >/dev/null 2>&1 || true
 
 echo "=== CASE 1: send, original flag TRUE → remains TRUE; assertions pass; cleanup ==="
 setflag true
