@@ -1,5 +1,25 @@
 name: Deploy Supabase migrations
 
+# Production migration deploy — APPROVAL-GATED via the protected `production` GitHub Environment.
+# The deploy job is attached to `environment: production`, so GitHub HALTS the job for the required
+# reviewer's approval BEFORE checkout / link / db push run. The environment approval (recorded against
+# the environment deployment, with approver + commit) IS the production-deployment authorization record;
+# it is NOT implied by a PR merge.
+#
+# SAFETY SCOPE (GitHub-side only). This workflow prevents overlapping and accidental/unapproved deploys.
+# It does NOT make `supabase db push` itself transaction-atomic: database atomicity and partial-apply /
+# operator-cancellation recovery are a SEPARATE, unproven property of the CLI/DB path and must be
+# established by a controlled test — they are not assumed here.
+#
+# Enforced here:
+#   * approval gate before any step (environment: production)
+#   * single repo-wide concurrency group + cancel-in-progress: false (no overlap, no auto-cancel mid-deploy)
+#   * least-privilege GITHUB_TOKEN (contents: read)
+#   * checkout of the immutable triggering commit SHA (not a floating branch ref)
+#   * non-secret job summary: commit, run id, introduced migration files, pre/post migration-list, outcome
+# Production secrets live ONLY in the `production` Environment scope, so no ungated workflow can read them.
+# Secrets are GitHub-masked in logs; no step echoes a secret value, URL with credentials, or token.
+
 on:
   push:
     branches: [main]
@@ -7,11 +27,37 @@ on:
       - 'supabase/migrations/**'
       - '.github/workflows/deploy-migrations.yml'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-migrations-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout the immutable triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Migration target summary (pre-push, no secrets)
+        run: |
+          {
+            echo "### Production migration deploy"
+            echo ""
+            echo "- Triggering commit: \`${GITHUB_SHA}\`"
+            echo "- Run ID: \`${GITHUB_RUN_ID}\`"
+            echo "- Migrations introduced by this push:"
+            git diff --diff-filter=A --name-only "${{ github.event.before }}" "${GITHUB_SHA}" -- 'supabase/migrations/**' 2>/dev/null \
+              | sed 's/^/  - /' || echo "  - (unable to compute introduced files)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: supabase/setup-cli@v1
         with:
@@ -21,12 +67,44 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
-        # Set repo secrets/vars: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD
+
+      - name: Pre-push migration list (no secrets in output)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          {
+            echo ""
+            echo "<details><summary>Pre-push migration list</summary>"
+            echo ""
+            echo '```'
+            supabase migration list --password "$SUPABASE_DB_PASSWORD" 2>&1 || echo "(migration list unavailable)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Push migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: supabase db push --password "$SUPABASE_DB_PASSWORD"
-    env:
-      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+
+      - name: Post-push migration list (no secrets in output)
+        if: always()
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          {
+            echo ""
+            echo "<details><summary>Post-push migration list</summary>"
+            echo ""
+            echo '```'
+            supabase migration list --password "$SUPABASE_DB_PASSWORD" 2>&1 || echo "(migration list unavailable)"
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy outcome
+        if: always()
+        run: echo "- Final deploy outcome: **${{ job.status }}**" >> "$GITHUB_STEP_SUMMARY"
