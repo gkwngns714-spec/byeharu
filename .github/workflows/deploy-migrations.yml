@@ -107,4 +107,5 @@ jobs:
 
       - name: Deploy outcome
         if: always()
-        run: echo "- Final deploy outcome: **${{ job.status }}**" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "- Final deploy outcome: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
