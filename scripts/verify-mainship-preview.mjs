@@ -8,6 +8,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'node:fs'
+import { teardownVerifier } from './lib/verifier-teardown.mjs'
 
 function loadEnv(p) {
   const e = {}
@@ -33,9 +34,12 @@ async function newUser(tag) {
   const { data: su, error } = await c.auth.signUp({ email: `mspreviewtest.${tag}.${Date.now()}@example.com`, password: 'Test123456!' })
   if (error) die(`signup failed: ${error.message}`)
   if (!su.session) die('no session — email confirmation still ON')
-  return { client: c, userId: su.user.id }
+  const userId = su.user.id
+  createdUserIds.push(userId)   // track immediately after creation for finally cleanup
+  return { client: c, userId }
 }
 const preview = (client, loadout, activity = 'pirate_hunt') => client.rpc('get_my_expedition_preview', { p_loadout: loadout, p_activity_type: activity })
+const createdUserIds = []
 
 async function main() {
   console.log(`\nPhase 10B (main-ship preview) verification against ${url}\n`)
@@ -76,4 +80,11 @@ async function main() {
 
 main()
   .catch((e) => { if (e instanceof Abort) bad('ABORTED', e.message); else bad('UNEXPECTED', e?.message ?? String(e)) })
-  .finally(() => { console.log(`\nMain-ship preview: ${pass} passed, ${fail} failed\n`); process.exitCode = fail > 0 ? 1 : 0 })
+  .finally(async () => {
+    // Teardown (Legacy Main-Ship Verifier Safety Repair): delete verifier-created users (cascade
+    // removes their game data). Preview never touches a feature flag.
+    const { failures } = await teardownVerifier({ admin, createdUserIds })
+    failures.forEach((f) => bad('TEARDOWN', f))
+    console.log(`\nMain-ship preview: ${pass} passed, ${fail} failed\n`)
+    process.exitCode = fail > 0 ? 1 : 0
+  })

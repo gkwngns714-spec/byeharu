@@ -1,0 +1,54 @@
+name: Legacy Main-Ship Verifier Safety Repair — disposable proof
+
+# Disposable-stack integration proof for the repaired legacy main-ship verifiers. Boots a throwaway
+# local Supabase stack (real migration chain), runs the REPAIRED verifiers against it, and proves the
+# safety-repair charter: the original mainship_send_enabled value is captured and restored (TRUE→TRUE,
+# FALSE→FALSE), verifier-created users + cascaded game rows are removed, the mid-run failure path still
+# cleans up + restores, preview cleans both its users, and existing assertions still pass.
+# NEVER touches the shared/live DB and uses NO production credentials/secrets.
+
+on:
+  push:
+    branches:
+      - 'legacy-verifier-safety-repair'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Teardown helper unit proof (no DB)
+        run: node scripts/verify-mainship-teardown-unit.mjs
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies the real migration chain)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked by the runner)
+        run: supabase status -o env | tee /tmp/sbenv >/dev/null
+
+      - name: Run disposable-stack safety proof (repaired verifiers)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/verify-mainship-safety-proof.sh
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
