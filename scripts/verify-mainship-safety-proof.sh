@@ -42,6 +42,23 @@ run_verifier() {
 echo "=== precondition: fresh disposable stack is clean ==="
 assert_clean "precondition"
 
+echo "=== DIAGNOSTIC: environment + ensure_main_ship_for_player (direct DB) ==="
+psql "$DB_URL" -c "select hull_type_id from main_ship_hull_types;" || true
+psql "$DB_URL" -c "select key, value, pg_typeof(value) from game_config where key like 'mainship%' or key in ('travel_scale','min_travel_seconds') order by key;" || true
+psql "$DB_URL" -v ON_ERROR_STOP=0 <<'SQL' || true
+do $$
+declare uid uuid := gen_random_uuid();
+begin
+  insert into auth.users(instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values('00000000-0000-0000-0000-000000000000',uid,'authenticated','authenticated','diag.'||replace(uid::text,'-','')||'@example.com','',now(),now(),now(),'','','','');
+  raise notice 'DIAG after-signup: bases=% ships=%', (select count(*) from bases where player_id=uid), (select count(*) from main_ship_instances where player_id=uid);
+  perform ensure_main_ship_for_player(uid);
+  raise notice 'DIAG after-ensure: ships=%', (select count(*) from main_ship_instances where player_id=uid);
+  delete from auth.users where id=uid;
+exception when others then raise notice 'DIAG EXCEPTION: % / %', sqlstate, sqlerrm;
+end $$;
+SQL
+
 echo "=== CASE 1: send, original flag TRUE → remains TRUE; assertions pass; cleanup ==="
 setflag true
 run_verifier verify-mainship-send.mjs; rc=$?
