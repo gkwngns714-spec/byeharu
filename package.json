@@ -20,6 +20,7 @@
     "verify:osn:resolver": "playwright test resolveMainShipMarker.spec.ts",
     "verify:osn:s6b": "playwright test openSpaceTransform.spec.ts",
     "verify:osn:s6b3": "playwright test devFixedSpacePreview.spec.ts",
+    "verify:osn:s6c": "playwright test spaceMoveCommand.spec.ts spaceMoveTarget.spec.ts",
     "verify:osn2:distribution": "node scripts/osn2-spatial-distribution.mjs",
     "verify:osn3:s1": "node scripts/verify-osn3-s1.mjs",
     "verify:inventory": "node scripts/verify-inventory.mjs",

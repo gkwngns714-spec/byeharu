@@ -1,0 +1,41 @@
+name: Verify — OSN S6C coordinate command (unit)
+
+# Runner for the pure OSN-3 S6C unit tests (empty-space coordinate command surface): the framework-free
+# command logic/controller (spaceMoveCommand.spec.ts) and the hook-free presentational pieces
+# (spaceMoveTarget.spec.ts). Node-side Playwright unit tests — NO page/browser interaction, NO DB, NO
+# secrets, NO live verifier. It exists because the dev machine's local toolchain is unreliable (OneDrive
+# node_modules corruption), so these must run in CI. Mirrors verify-osn-s6b.yml: runs on its OWN
+# path-scoped pull requests so S6C is gated before merge, and is workflow_dispatch-able afterward. It is
+# deliberately NOT a gate on every unrelated push, and it touches no production/deploy/Environment state.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/features/map/spaceMoveCommand.ts'
+      - 'src/features/map/SpaceMoveTarget.tsx'
+      - 'src/features/map/useSpaceMoveCommand.ts'
+      - 'tests/spaceMoveCommand.spec.ts'
+      - 'tests/spaceMoveTarget.spec.ts'
+      - '.github/workflows/verify-osn-s6c.yml'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run OSN S6C coordinate-command unit tests
+        run: npm run verify:osn:s6c
