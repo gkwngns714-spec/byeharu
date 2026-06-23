@@ -5,6 +5,113 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-23 — MSP-0: Main Ship Progression ↔ Movement integration contract (design only)
+
+Read-only reconnaissance + integration contract answering where future main-ship progression stats must live
+so the current named-location route and future OSN movement consume **one** server-calculated result. **No
+code/migration/workflow/flag/branch change — design packet only.**
+
+- **Speed-truth trace.** Both routes derive main-ship speed solely from `main_ship_hull_types.base_speed`
+  (`starter_frigate=1.0`): legacy `send_main_ship_expedition`/`move_main_ship_to_location`/
+  `request_main_ship_return` → `resolve_fleet_movement_speed` → `movement_create` (LIVE); OSN
+  `mainship_space_begin_move` reads the hull inline + computes duration inline, with `resolve_fleet_movement_speed`
+  only as an equality assert (DARK). Speed + `arrive_at` are snapshotted once at departure, never recomputed at
+  arrival. Frontend submits **intent only** (no client speed/duration math; the one `previewTravelSeconds` is
+  dead code).
+- **Divergence to prevent (already nascent):** `calculate_expedition_stats` computes a support-craft speed
+  penalty that live movement ignores.
+- **Recommendation (Option B):** one private main-ship-keyed `mainship_effective_stats` resolver
+  (`effective_travel_speed` first; empty loadout ≡ raw hull base ⇒ current behavior byte-for-byte unchanged)
+  that both movement adapters consume. First slice = **module-first**, first effect = travel speed on the live
+  named-location route. Phases MSP-0..MSP-4 defined; module/captain schema is greenfield (only integer
+  `module_slots`/`captain_slots` counts exist today).
+
+**No implementation started.** Flags unchanged (`mainship_send_enabled=true`, `mainship_space_movement_enabled=false`);
+migrations end at **0063**. NEXT (needs approval): Option-B decision + **MSP-1** (additive, dark module-ownership
+schema only). ANCHOR-2 / seeding / resolver extension / S6B-PRES / coordinate enablement remain deferred.
+
+---
+
+## 2026-06-23 — OSN-ANCHOR-1B: empty canonical-anchor schema (`space_anchors`) — DEPLOYED & CLOSED (flag OFF)
+
+Additive, EMPTY, server-only canonical-anchor foundation (branch `osn3-anchor1b-space-anchors`, PR #18 merge
+**`7264f12`**, migration **`0063`**). `public.space_anchors`: closed `kind ∈ {base,location}` with **exactly
+one real typed owner FK** (`base_id`→`bases` ON DELETE CASCADE, `location_id`→`locations` ON DELETE RESTRICT;
+no ownerless / all-null / polymorphic `(kind, owner_uuid)`); coords NOT NULL + finite + within `[-10000,10000]²`
+(rejects NULL/NaN/±Inf/oob); partial-unique **one active anchor per base & per location** (no `(space_x,space_y)`
+unique — intentional co-location stays possible); BEFORE-UPDATE immutability guard (SECURITY INVOKER,
+`search_path=public`: active→retired only; kind/owner/x/y/created_at immutable; retired terminal; DELETE
+unguarded so base CASCADE works); private RLS (no policy) + explicit revoke from public/anon/authenticated +
+grant **service_role-only**.
+
+**Seeds NOTHING; copies nothing from `bases.x/y`/`locations.x/y`; NOT read by `mainship_space_resolve_origin`
+(resolver UNCHANGED → `home`/`at_location`/`legacy_*` still resolve `origin_not_anchored`); no flag/resolver/
+docking/movement/UI change.** Proof: disposable real-chain `osn3-anchor1b-realchain-proof.yml` (all 17 points —
+shape/types/RLS/indexes/checks/trigger, kinds/owners/coords/uniqueness/immutability, base-cascade, location-
+restrict, ACL, resolver-unchanged; asserts table empty) + S1–S6A / DOCK-0 / ANCHOR-1A non-regression + Build,
+all GREEN. (Three proofs first failed on a transient Docker-pull `502` at `supabase start` — proof step skipped,
+not a defect — and reran green with no code change.)
+
+**Deploy:** production-Environment-gated run **`28025760972`** (approved) applied exactly `0063` ("Finished
+supabase db push"); remote migration history now ends **`20260618000063`** (no `0064+`). Live confirm: anon REST
+`GET /space_anchors` → HTTP `401` `42501` permission-denied (table **exists** in prod, clients **denied**); flags
+`mainship_send_enabled=true`, `mainship_space_movement_enabled=false`. **OSN is now PAUSED at this boundary.**
+NEXT: **Main Ship Progression (MSP)** — not ANCHOR-2.
+
+---
+
+## 2026-06-23 — OSN-ANCHOR-1A: production catalog-parity verification — CLOSED
+
+Verified the deployed truthful-origin resolver `mainship_space_resolve_origin` (migration `0062`) is
+**byte-identical + semantically identical to source** in production, via a dedicated, strictly read-only
+catalog-parity spotcheck. Built across two PRs: **#16 (`2b11f28`)** added the `osn3-anchor1a-catalog-spotcheck`
+workflow + script capability; **#17 (`cb0219a`)** a CA-trust remediation after the first production run failed
+`sslmode=verify-full` against the shared IPv4 pooler — pinned the official **Supabase Root 2021 CA**
+(`scripts/supabase-prod-ca.crt`, cert SHA-256 `807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6cafa`)
++ used the **session pooler (port 5432)**; kept `verify-full`, **no TLS downgrade**.
+
+Production verification run **`28022976137`** (workflow_dispatch on `main`, production gate approved) PASSED: raw
+stored-body `prosrc` SHA-256 `7d4548e64e2fca60a944fe2875c0b8e3e381c85bb0960f14bb8670d71d6038b0` identical
+reference-vs-production (exact, no normalization); 17-field descriptor parity identical; invariants OK
+(plpgsql / owner=postgres / SECURITY DEFINER / `search_path=public` / service_role-only; anon/authenticated/PUBLIC
+denied); remote migration history ends exactly `0062`; read-only gate proven before any catalog query; **no
+production write**. Equality source = raw `p.prosrc` (version-stable), NOT `pg_get_functiondef`. Flags unchanged
+(send=true, space=false). No resolver/data/flag change.
+
+---
+
+## 2026-06-22 — OSN-ANCHOR-1A: truthful-origin guard (dark) — DEPLOYED & CLOSED (flag OFF)
+
+Migration **`0062`** (branch `osn3-anchor1a-truthful-origin`, PR #15 merge **`fb28481`**) re-creates
+`mainship_space_resolve_origin(uuid)` (CREATE OR REPLACE; signature / SECURITY DEFINER / `search_path=public` /
+service_role-only all preserved) so `home` / `legacy_home` / `at_location` / `legacy_present` now resolve
+**`{ok:false, reason:'origin_not_anchored'}`** instead of reading legacy `bases.x/y` / `locations.x/y` as a
+movement origin; `in_space` unchanged (origin = ship `space_x/space_y`); `in_transit`→`must_stop`;
+`destroyed`→`destroyed`. Closes the proven defect of legacy dynamic-map coordinates leaking into OSN movement
+origins. **NO anchor table, NO bases/locations column, NO seed/backfill, NO legacy fallback; both flags
+untouched** (send=true, space=false).
+
+Proof: real chain `0001..0062` (`osn3-anchor1a-realchain-proof.yml`) — the four legacy/home states →
+`origin_not_anchored` (no movement / receipt / legacy-origin written); `in_space` success with origin == ship
+coord; rejected-request idempotency; resolver ACL/security/signature parity; cross-domain / destruction / DOCK-0
+non-regression. Deployed via production-gated run **`27988863386`**; production catalog-parity verification
+followed separately (see the 2026-06-23 catalog-parity entry). Coordinate movement stays dark.
+
+---
+
+## 2026-06-22 — OSN-3 S6C: flag-dark empty-space coordinate command surface — CLOSED (flag OFF)
+
+Frontend-only coordinate-move command path (branch `osn3-s6c-empty-space-coordinate-command`, PR #14 merge
+**`9ce5567`**, **no migration / RPC / flag / server change**). Empty-space map tap → `screenToWorld` →
+canonicalized target → existing S6A wrapper `command_main_ship_space_move(p_target_x, p_target_y, p_request_id)`.
+Layered gating (feature flag `mainship_space_movement_enabled` read once; eligibility; controls/crosshair mount
+only when enabled + within bounds; tap qualifies only on empty SVG) → **production-dark**: flag false ⇒ wrapper
+returns `feature_disabled` and writes nothing. The client submits **intent only** (target coords + `request_id`);
+never a speed/duration/stat/ship-id. Build green; flags unchanged (send=true, space=false). NEXT then was the
+S6B presentation foundation + ANCHOR truthful-origin work.
+
+---
+
 ## 2026-06-22 — OSN-3 S6B: fixed-space frontend coordinate foundation — CLOSED (flag OFF, read-only)
 
 S6B closes the **read-only frontend coordinate-rendering foundation** for open space across four merged
