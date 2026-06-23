@@ -1,0 +1,70 @@
+name: OSN-ANCHOR-1B — real-migration-chain proof (disposable Supabase)
+
+# Authoritative proof for the OSN-ANCHOR-1B additive canonical-anchor schema (migration 0063). Boots a
+# DISPOSABLE local Supabase stack via the repository-supported CLI, applying the ACTUAL migration chain
+# 0001..0063 — real tables, CHECKs, indexes, RLS, triggers, grants, auth schema, and the real roles
+# anon/authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves the empty, server-only
+# public.space_anchors contract: closed {base,location} kinds, exactly-one typed owner, finite in-bounds
+# coordinates, one-active-anchor-per-owner, immutability (active->retired only; retired terminal), base
+# ON DELETE CASCADE + location ON DELETE RESTRICT, server-only ACL, and that mainship_space_resolve_origin
+# is UNCHANGED (legacy_home still origin_not_anchored). Seeds nothing; asserts the table empty at the end;
+# touches NO flags. Runs on push to the OSN-3 branch(es). No production deploy, no live verifier, no prod DB.
+
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0063)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: ANCHOR-1B canonical-anchor real-chain proof
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-anchor1b-realchain-fixtures.sql
+
+      - name: Cleanup fixtures (always; verifier already removes them)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3anchor1b.%@example.com';" || true
+          fi
+
+      - name: Assert space-movement flag still FALSE + no fixtures + no anchors seeded (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare b text; n int;
+            begin
+              select value::text into b from game_config where key='mainship_space_movement_enabled';
+              if b is distinct from 'false' then raise exception 'space-movement flag changed: %', b; end if;
+              select count(*) into n from auth.users where email like 'osn3anchor1b.%@example.com'; if n<>0 then raise exception '% fixture users remain', n; end if;
+              select count(*) into n from public.space_anchors; if n<>0 then raise exception '% anchor rows remain (no seed expected)', n; end if;
+              raise notice 'post-run ok: space_movement=false, no fixtures, space_anchors empty';
+            end \$\$;"
+          fi
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
