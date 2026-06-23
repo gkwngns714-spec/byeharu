@@ -1,0 +1,91 @@
+name: OSN-ANCHOR-1A — catalog-parity spotcheck (READ-ONLY)
+
+# Dedicated, strictly read-only catalog-parity verifier for the deployed truthful-origin resolver
+# public.mainship_space_resolve_origin(uuid) (migration 0062). Two clearly separated jobs:
+#
+#   local-proof   (branch-push ONLY) — boots a DISPOSABLE local Supabase stack (chain 0001..0062), runs the
+#                 spotcheck script in `local` mode to PROVE it can produce the raw catalog hash + validate the
+#                 resolver security posture + assert migrations end at 0062 + reject a synthetic mismatch.
+#                 Uses NO production environment, NO production secret, NO project ref, NO hosted DB credential.
+#
+#   production    (workflow_dispatch on main ONLY) — gated by the protected `production` Environment; computes
+#                 the disposable reference hash AND, inside an explicit READ ONLY transaction, reads the LIVE
+#                 resolver functiondef/descriptor/flags + remote migration history; passes only on exact
+#                 byte-identical raw-catalog hash equivalence + correct descriptor/flags/migration state.
+#
+# This workflow NEVER runs `supabase db push`, never mutates production, never calls a player RPC, never seeds.
+# It does not run on pull_request, merge, schedule, or workflow_run — the production job is manual-only.
+
+on:
+  push:
+    branches:
+      - 'osn3-anchor1a-catalog-spotcheck-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anchor1a-catalog-spotcheck-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── A. Disposable local proof (branch-push only; no production access whatsoever) ───────────────────────
+  local-proof:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # NO `environment:` — this job can never read the protected production secrets.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0062)
+        run: supabase start
+      - name: Export local stack DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Local catalog-parity proof (hash + descriptor + migrations + synthetic mismatch)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn3-anchor1a-catalog-spotcheck.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
+
+  # ── B. Production read-only equivalence (manual dispatch on main ONLY; production-Environment-gated) ────
+  production:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase for the reference chain (0001..0062)
+        run: supabase start
+      - name: Export disposable reference DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Link protected production project (read-only usage)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+      - name: Production read-only catalog-parity equivalence
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn3-anchor1a-catalog-spotcheck.sh production
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
