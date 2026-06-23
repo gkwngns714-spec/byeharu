@@ -4,23 +4,25 @@
 #
 #   local       Uses the disposable 0001..0062 stack ($DB_URL). Proves the script can produce the raw stored
 #               PL/pgSQL body hash, validate the resolver security posture (incl. language=plpgsql), assert
-#               migrations end exactly at 0062 (no 0063+), reject a synthetic mismatch WITHOUT normalization,
-#               and (self-tests) reject malformed/empty input + bad project refs + external target overrides +
-#               unbound pooler tenants. NO production env / secret / project / DB is referenced.
+#               migrations end exactly at 0062, reject a synthetic mismatch WITHOUT normalization, and
+#               (self-tests) reject malformed input / bad refs / target overrides / unbound pooler tenants /
+#               bad pooler ports / ambiguous Management-API shapes, build a full descriptor record, and detect
+#               an injected mismatch in EVERY descriptor field. NO production env / secret / project / DB.
 #
-#   production  Computes the REFERENCE hash from the disposable local chain ($DB_URL) AND, over the approved
-#               IPv4 pooler (tenant deterministically bound to the protected ref via user=postgres.<ref>) with
-#               hostname-verified TLS, inside ONE explicit READ ONLY transaction (gated BEFORE any catalog
-#               query), reads the LIVE stored body / descriptor / flags. Verifies the protected link-state,
-#               then `supabase migration list --linked`. Passes ONLY when the raw stored-body hashes are
-#               byte-identical AND descriptor/flags/migration state are exactly correct.
+#   production  Computes the REFERENCE descriptor + stored-body hash from the disposable local chain ($DB_URL)
+#               AND, over the approved IPv4 pooler (host from the Management API keyed by the protected ref;
+#               tenant bound via user=postgres.<ref>; sslmode=verify-full) inside ONE explicit READ ONLY
+#               transaction (gated BEFORE any catalog query), reads the LIVE descriptor + stored body + flags.
+#               Passes ONLY when the raw stored-body hashes are byte-identical, the full descriptor record is
+#               field-by-field identical local-vs-production, the fixed security invariants hold, and the
+#               migration/flag state is exactly correct.
 #
 # EQUALITY SOURCE = p.prosrc (the raw STORED PL/pgSQL body) — NOT pg_get_functiondef(), whose deparser output
-# is Postgres-version-sensitive. prosrc is the literal stored source and is version-stable.
+# is Postgres-version-sensitive. Descriptor fields are the separate semantic-wrapper comparison.
 #
 # HARD READ-ONLY: never writes, never runs db push / db reset / migration apply / RPC / fixtures, never prints
-# stored body / base64 / secrets / connection strings / DB URLs. Only SHA-256 hashes + safe boolean/short
-# descriptor metadata are emitted.
+# stored body / base64 / secrets / connection strings / DB URLs / raw API responses. Only SHA-256 hashes +
+# safe catalog descriptor metadata are emitted.
 set -euo pipefail
 
 MODE="${1:-}"
@@ -29,31 +31,44 @@ case "$MODE" in local|production) : ;; *) echo "usage: $0 <local|production>" >&
 
 EXPECT_ARGS='p_main_ship_id uuid'
 EXPECT_MIG='20260618000062'
+# Ordered descriptor field set compared local-vs-production (catalog-derived values, no OIDs).
+DESC_FIELDS="SCHEMA FNAME ARGS RET LANG PROKIND PROVOLATILE PROISSTRICT PROSECDEF PROLEAKPROOF PROPARALLEL PROCONFIG OWNER SRVX ANONX AUTHX PUBX"
 
 # ── Fail-closed validators ─────────────────────────────────────────────────────────────────────────────
 is_hex64() { printf '%s' "${1:-}" | grep -qE '^[0-9a-f]{64}$'; }
-# A Supabase project ref is exactly 20 lowercase alphanumeric chars.
 validate_ref() { printf '%s' "${1:-}" | grep -qE '^[a-z0-9]{20}$' || fail "invalid/empty project ref"; }
-# Reject any externally-supplied target-overriding env var (production mode) before connecting.
 reject_target_overrides() {
   local v
   for v in DATABASE_URL PGHOST PGPORT PGUSER PGDATABASE PGSSLMODE PGHOSTADDR PGSERVICE PGURI; do
     [ -z "${!v:-}" ] || fail "external target override $v is set — refusing to run in production mode"
   done
 }
-# Pooler target binding (Design change 2): host must be a pooler endpoint resolved from protected config; the
-# tenant user must be exactly postgres.<protected-ref>. Any missing/unbound field fails closed.
+# Strict pooler binding: host must be <label>.pooler.supabase.com; port exactly 5432 or 6543; tenant exactly
+# postgres.<protected-ref>. Any miss fails closed.
 require_pooler_binding() {
   local h="${1:-}" pt="${2:-}" u="${3:-}" r="${4:-}"
   validate_ref "$r"
   [ -n "$h" ] || fail "pooler host not resolved from protected configuration"
-  printf '%s' "$h" | grep -qE '\.pooler\.supabase\.com$' || fail "host '$h' is not a *.pooler.supabase.com endpoint"
-  [ -n "$pt" ] || fail "pooler port not resolved from protected configuration"
+  printf '%s' "$h" | grep -qE '^[a-z0-9][a-z0-9.-]*\.pooler\.supabase\.com$' || fail "host is not a <label>.pooler.supabase.com endpoint"
+  case "$pt" in 5432|6543) : ;; *) fail "pooler port '$pt' is not in the permitted set {5432,6543}";; esac
   [ "$u" = "postgres.${r}" ] || fail "pooler tenant user is not bound to the protected project ref"
 }
+# Parse EXACTLY ONE pooler endpoint from a Management API response. Accepts a single object {db_host,db_port}
+# OR a one-element array of it. Any other shape (malformed/missing/empty/0-or-multi-element/nested) errors.
+# Echoes 'host|port'. Never prints the raw response.
+parse_pooler_endpoint() {
+  printf '%s' "${1:-}" | jq -er '
+    ( if   type=="array"  then (if length==1 then .[0] else error("array length not exactly 1") end)
+      elif type=="object" then .
+      else error("unexpected top-level type") end ) as $e
+    | ($e.db_host // error("missing db_host")) as $h
+    | ($e.db_port // error("missing db_port")) as $p
+    | (if ($h|type)=="string" and ($h|length)>0 then . else error("empty/invalid db_host") end)
+    | "\($h)|\($p)"
+  ' 2>/dev/null
+}
 
-# ── Governed read-only SQL: the read-only gate runs BEFORE any resolver/ACL/flag query. Equality hash is
-#    the raw STORED body p.prosrc of the PL/pgSQL resolver (deparser-independent). ─────────────────────────
+# ── Governed read-only SQL: read-only gate BEFORE any catalog query; body hash from raw stored p.prosrc. ──
 governed_sql() {
   cat <<'SQL'
 \set ON_ERROR_STOP on
@@ -73,16 +88,24 @@ select 'HASHB64=' || translate(encode(convert_to(p.prosrc,'UTF8'),'base64'), E'\
   where n.nspname='public' and p.proname='mainship_space_resolve_origin'
     and pg_get_function_identity_arguments(p.oid)='p_main_ship_id uuid'
     and l.lanname='plpgsql';
-select 'ARGS=' || pg_get_function_identity_arguments(p.oid),
+select 'SCHEMA=' || n.nspname,
+       'FNAME=' || p.proname,
+       'ARGS=' || pg_get_function_identity_arguments(p.oid),
+       'RET=' || pg_get_function_result(p.oid),
        'LANG=' || l.lanname,
+       'PROKIND=' || p.prokind,
+       'PROVOLATILE=' || p.provolatile,
+       'PROISSTRICT=' || p.proisstrict::text,
+       'PROSECDEF=' || p.prosecdef::text,
+       'PROLEAKPROOF=' || p.proleakproof::text,
+       'PROPARALLEL=' || p.proparallel,
+       'PROCONFIG=' || coalesce(array_to_string(p.proconfig, ','), ''),
        'OWNER=' || pg_get_userbyid(p.proowner),
-       'SECDEF=' || p.prosecdef::text,
-       'SPPUB=' || (p.proconfig is not null and 'search_path=public' = any(p.proconfig))::text,
        'SRVX=' || has_function_privilege('service_role',p.oid,'EXECUTE')::text,
        'ANONX=' || has_function_privilege('anon',p.oid,'EXECUTE')::text,
        'AUTHX=' || has_function_privilege('authenticated',p.oid,'EXECUTE')::text,
-       'ACLNULL=' || (p.proacl is null)::text,
-       'PUBX=' || coalesce((select bool_or(a.grantee=0) from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.privilege_type='EXECUTE'), false)::text
+       'PUBX=' || coalesce((select bool_or(a.grantee=0) from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.privilege_type='EXECUTE'), false)::text,
+       'ACLNULL=' || (p.proacl is null)::text
   from pg_proc p
   join pg_namespace n on n.oid = p.pronamespace
   join pg_language  l on l.oid = p.prolang
@@ -96,7 +119,6 @@ SQL
 
 catalog_readonly() { governed_sql | PGCONNECT_TIMEOUT=20 psql "$1" -X -v ON_ERROR_STOP=1 -t -A; }
 
-# marker FROM raw output ('|' + newline split). Line-by-line (no pipe-to-early-exit); safe under pipefail.
 mval() {
   local all l; all="$(printf '%s' "${1:-}" | tr '|' '\n')"
   while IFS= read -r l; do
@@ -105,7 +127,6 @@ mval() {
   return 0
 }
 
-# Validated SHA-256 of the EXACT raw stored-body bytes from a base64 marker (fail-closed; hash only).
 compute_hash() {
   local b="${1:-}" raw h
   [ -n "$b" ] || fail "empty base64 catalog payload (resolver missing / not plpgsql / wrong signature?)"
@@ -116,26 +137,38 @@ compute_hash() {
   printf '%s' "$h"
 }
 
+is_true()  { [ "${1:-}" = "true" ]  || [ "${1:-}" = "t" ]; }
+is_false() { [ "${1:-}" = "false" ] || [ "${1:-}" = "f" ]; }
+
+# Fixed security INVARIANTS (each side must satisfy these regardless of the cross-comparison).
 assert_descriptor() {
-  local out="$1" label="$2" args lang owner secdef sppub srvx anonx authx aclnull pubx
-  args="$(mval "$out" ARGS)"; lang="$(mval "$out" LANG)"; owner="$(mval "$out" OWNER)"; secdef="$(mval "$out" SECDEF)"
-  sppub="$(mval "$out" SPPUB)"; srvx="$(mval "$out" SRVX)"; anonx="$(mval "$out" ANONX)"
-  authx="$(mval "$out" AUTHX)"; aclnull="$(mval "$out" ACLNULL)"; pubx="$(mval "$out" PUBX)"
-  echo "[$label] args='$args' lang=$lang owner=$owner secdef=$secdef search_path_public=$sppub service_role_x=$srvx anon_x=$anonx authenticated_x=$authx acl_is_null=$aclnull public_x=$pubx"
-  is_true()  { [ "${1:-}" = "true" ]  || [ "${1:-}" = "t" ]; }
-  is_false() { [ "${1:-}" = "false" ] || [ "${1:-}" = "f" ]; }
+  local out="$1" label="$2"
+  local args lang owner sd sp srvx anonx authx pubx aclnull
+  args="$(mval "$out" ARGS)"; lang="$(mval "$out" LANG)"; owner="$(mval "$out" OWNER)"
+  sd="$(mval "$out" PROSECDEF)"; sp="$(mval "$out" PROCONFIG)"; srvx="$(mval "$out" SRVX)"
+  anonx="$(mval "$out" ANONX)"; authx="$(mval "$out" AUTHX)"; pubx="$(mval "$out" PUBX)"; aclnull="$(mval "$out" ACLNULL)"
+  echo "[$label] args='$args' lang=$lang owner=$owner prosecdef=$sd proconfig='$sp' service_role_x=$srvx anon_x=$anonx authenticated_x=$authx public_x=$pubx acl_is_null=$aclnull"
   [ "$args" = "$EXPECT_ARGS" ] || fail "[$label] signature drift: '$args'"
   [ "$lang" = "plpgsql" ]      || fail "[$label] language=$lang (expected plpgsql)"
   [ "$owner" = "postgres" ]    || fail "[$label] owner=$owner (expected postgres)"
-  is_true  "$secdef"  || fail "[$label] not SECURITY DEFINER ($secdef)"
-  is_true  "$sppub"   || fail "[$label] search_path not pinned to public ($sppub)"
-  is_true  "$srvx"    || fail "[$label] service_role lacks execute ($srvx)"
-  is_false "$anonx"   || fail "[$label] anon HAS execute ($anonx)"
-  is_false "$authx"   || fail "[$label] authenticated HAS execute ($authx)"
-  # Effective PUBLIC over aclexplode(coalesce(proacl, acldefault('f',proowner))): a NULL ACL expands to the
-  # function default (PUBLIC EXECUTE) and is detected; acl_is_null reported for clarity.
-  is_false "$pubx"    || fail "[$label] PUBLIC has effective execute ($pubx; acl_is_null=$aclnull)"
-  echo "[$label] descriptor OK: plpgsql/signature/owner/SECDEF/search_path=public/service_role-only; anon,authenticated,PUBLIC denied (effective)"
+  is_true  "$sd"   || fail "[$label] not SECURITY DEFINER ($sd)"
+  printf '%s' "$sp" | grep -q 'search_path=public' || fail "[$label] search_path not pinned to public ('$sp')"
+  is_true  "$srvx" || fail "[$label] service_role lacks execute ($srvx)"
+  is_false "$anonx" || fail "[$label] anon HAS execute ($anonx)"
+  is_false "$authx" || fail "[$label] authenticated HAS execute ($authx)"
+  is_false "$pubx"  || fail "[$label] PUBLIC has effective execute ($pubx; acl_is_null=$aclnull)"
+  echo "[$label] invariants OK: plpgsql/args/owner=postgres/SECDEF/search_path=public/service_role-only; anon,authenticated,PUBLIC denied"
+}
+
+# Field-by-field local-vs-production descriptor difference (fails on ANY difference; prints only field +
+# safe local/production values — never prosrc/raw text).
+diff_descriptors() {
+  local rout="$1" pout="$2" f lv pv mismatch=0
+  for f in $DESC_FIELDS; do
+    lv="$(mval "$rout" "$f")"; pv="$(mval "$pout" "$f")"
+    if [ "$lv" != "$pv" ]; then echo "[descriptor-diff] FIELD=$f local='$lv' production='$pv'"; mismatch=1; fi
+  done
+  [ "$mismatch" = "0" ] || fail "descriptor field-by-field mismatch (see [descriptor-diff] lines)"
 }
 
 assert_repo_migrations_through_0062() {
@@ -154,21 +187,26 @@ hash_equal() { [ "$1" = "$2" ]; }
 # ── LOCAL DISPOSABLE PROOF + SELF-TESTS ────────────────────────────────────────────────────────────────
 if [ "$MODE" = "local" ]; then
   : "${DB_URL:?DB_URL (local disposable stack) required}"
-  echo "=== local: raw stored-body (prosrc) hash + descriptor from the disposable 0001..0062 chain ==="
+  echo "=== local: raw stored-body (prosrc) hash + full descriptor from the disposable 0001..0062 chain ==="
   out="$(catalog_readonly "$DB_URL")" || fail "local catalog read failed"
   [ "$(mval "$out" RO)" = "on" ] || fail "local read-only transaction not active"
   LOCAL_HASH="$(compute_hash "$(mval "$out" HASHB64)")"
   echo "[local] resolver raw stored-body SHA-256 = $LOCAL_HASH"
   assert_descriptor "$out" local
+  # complete descriptor record (item 9)
+  for f in $DESC_FIELDS; do
+    [ -n "$(mval "$out" "$f")" ] || [ "$f" = "PROCONFIG" ] || fail "[local] descriptor field $f is empty"
+  done
+  echo "[local] descriptor record produced for all 17 fields: $DESC_FIELDS"
   echo "=== local: migration history ends exactly at 0062 (repo) ==="
   assert_repo_migrations_through_0062
 
-  echo "=== local: synthetic mismatch is REJECTED without normalization ==="
+  echo "=== local: synthetic body-hash mismatch is REJECTED without normalization ==="
   if hash_equal "$LOCAL_HASH" "0000000000000000000000000000000000000000000000000000000000000000"; then fail "comparator ACCEPTED a synthetic mismatch"; fi
   hash_equal "$LOCAL_HASH" "$LOCAL_HASH" || fail "comparator rejected identical hashes"
-  echo "[local] OK: comparator rejects a deliberately mismatched hash and accepts an identical one (exact, no normalization)"
+  echo "[local] OK: body-hash comparator rejects a mismatch and accepts an identical one (exact, no normalization)"
 
-  echo "=== local self-tests: input/ref/override/pooler-binding fail-closed; equality source is prosrc ==="
+  echo "=== local self-tests ==="
   if ( compute_hash "" ) >/dev/null 2>&1; then fail "selftest: empty base64 not rejected"; fi
   echo "[selftest] OK: empty base64 rejected"
   if ( compute_hash "@@@not-base64@@@" ) >/dev/null 2>&1; then fail "selftest: malformed base64 not rejected"; fi
@@ -183,22 +221,40 @@ if [ "$MODE" = "local" ]; then
     if ( export "$v=override-attempt"; reject_target_overrides ) >/dev/null 2>&1; then fail "selftest: $v override not rejected"; fi
     echo "[selftest] OK: $v override rejected"
   done
-  # pooler binding fail-closed
-  if ( require_pooler_binding "" "6543" "postgres.aaaaaaaaaaaaaaaaaaaa" "aaaaaaaaaaaaaaaaaaaa" ) >/dev/null 2>&1; then fail "selftest: missing pooler host not rejected"; fi
-  echo "[selftest] OK: missing pooler host rejected"
+  # Management API response-shape parsing (Blocker 1)
+  R="$(parse_pooler_endpoint '{"db_host":"aws-0-x.pooler.supabase.com","db_port":6543}')" || fail "selftest: single object rejected"
+  [ "$R" = "aws-0-x.pooler.supabase.com|6543" ] || fail "selftest: single object parse wrong ($R)"
+  echo "[selftest] OK: single-object response accepted"
+  parse_pooler_endpoint '[{"db_host":"aws-0-x.pooler.supabase.com","db_port":5432}]' >/dev/null || fail "selftest: one-element array rejected"
+  echo "[selftest] OK: one-element array response accepted"
+  if ( parse_pooler_endpoint '[]' ) >/dev/null 2>&1; then fail "selftest: zero-candidate array not rejected"; fi
+  echo "[selftest] OK: zero-candidate array rejected"
+  if ( parse_pooler_endpoint '[{"db_host":"a.pooler.supabase.com","db_port":6543},{"db_host":"b.pooler.supabase.com","db_port":6543}]' ) >/dev/null 2>&1; then fail "selftest: multi-candidate array not rejected"; fi
+  echo "[selftest] OK: multi-candidate array rejected"
+  if ( parse_pooler_endpoint '{"db_port":6543}' ) >/dev/null 2>&1; then fail "selftest: missing host not rejected"; fi
+  echo "[selftest] OK: missing db_host rejected"
+  if ( parse_pooler_endpoint '{"db_host":"a.pooler.supabase.com"}' ) >/dev/null 2>&1; then fail "selftest: missing port not rejected"; fi
+  echo "[selftest] OK: missing db_port rejected"
+  if ( parse_pooler_endpoint 'not json' ) >/dev/null 2>&1; then fail "selftest: malformed JSON not rejected"; fi
+  echo "[selftest] OK: malformed JSON rejected"
+  # pooler binding: host suffix + port set + tenant
+  if ( require_pooler_binding "evil.example.com" "6543" "postgres.aaaaaaaaaaaaaaaaaaaa" "aaaaaaaaaaaaaaaaaaaa" ) >/dev/null 2>&1; then fail "selftest: bad host suffix not rejected"; fi
+  echo "[selftest] OK: unexpected host suffix rejected"
+  if ( require_pooler_binding "aws-0-x.pooler.supabase.com" "9999" "postgres.aaaaaaaaaaaaaaaaaaaa" "aaaaaaaaaaaaaaaaaaaa" ) >/dev/null 2>&1; then fail "selftest: bad port not rejected"; fi
+  echo "[selftest] OK: port outside {5432,6543} rejected"
   if ( require_pooler_binding "aws-0-x.pooler.supabase.com" "6543" "postgres.WRONGTENANTxxxxxxx" "aaaaaaaaaaaaaaaaaaaa" ) >/dev/null 2>&1; then fail "selftest: unbound tenant not rejected"; fi
   echo "[selftest] OK: tenant not bound to protected ref rejected"
-  require_pooler_binding "aws-0-x.pooler.supabase.com" "6543" "postgres.aaaaaaaaaaaaaaaaaaaa" "aaaaaaaaaaaaaaaaaaaa" || fail "selftest: valid ref-bound pooler binding wrongly rejected"
-  echo "[selftest] OK: valid ref-bound pooler binding accepted (host *.pooler.supabase.com + user=postgres.<ref>)"
+  require_pooler_binding "aws-0-x.pooler.supabase.com" "5432" "postgres.aaaaaaaaaaaaaaaaaaaa" "aaaaaaaaaaaaaaaaaaaa" || fail "selftest: valid binding (5432) rejected"
+  require_pooler_binding "aws-0-x.pooler.supabase.com" "6543" "postgres.aaaaaaaaaaaaaaaaaaaa" "aaaaaaaaaaaaaaaaaaaa" || fail "selftest: valid binding (6543) rejected"
+  echo "[selftest] OK: valid ref-bound pooler binding accepted (ports 5432/6543)"
   # equality source is p.prosrc, not pg_get_functiondef
   sql="$(governed_sql)"
   hb="$(printf '%s\n' "$sql" | grep 'HASHB64=' || true)"
   printf '%s' "$hb" | grep -q 'prosrc' || fail "selftest: equality hash source is not p.prosrc"
   if printf '%s' "$hb" | grep -q 'pg_get_functiondef'; then fail "selftest: equality hash source uses pg_get_functiondef"; fi
   echo "[selftest] OK: equality hash source is p.prosrc, NOT pg_get_functiondef"
-  # no direct per-project host CONSTRUCTION in the production path (only the protected pooler endpoint)
-  if grep -nE 'db\.\$\{|host=db\.' "$0" >/dev/null 2>&1; then fail "selftest: a direct per-project host construction (db.<ref>.<...>) is present"; fi
-  echo "[selftest] OK: no direct per-project host construction in the production path (pooler endpoint only)"
+  if grep -nE 'db\.\$\{|host=db\.' "$0" >/dev/null 2>&1; then fail "selftest: a direct per-project host construction is present"; fi
+  echo "[selftest] OK: no direct per-project host construction (pooler endpoint only)"
   # read-only gate precedes every catalog query
   gate_line="$(printf '%s\n' "$sql" | grep -nm1 'transaction_read_only' | cut -d: -f1 || true)"
   fn_line="$(printf '%s\n' "$sql" | grep -nm1 'prosrc' | cut -d: -f1 || true)"
@@ -208,6 +264,12 @@ if [ "$MODE" = "local" ]; then
   [ "$gate_line" -lt "$fn_line" ] && [ "$gate_line" -lt "$acl_line" ] && [ "$gate_line" -lt "$flag_line" ] \
     || fail "selftest: read-only gate (line $gate_line) is NOT before prosrc/$fn_line, acl/$acl_line, flags/$flag_line"
   echo "[selftest] OK: read-only gate (line $gate_line) precedes prosrc-hash ($fn_line), ACL ($acl_line), flags ($flag_line)"
+  # descriptor field-by-field: an injected mismatch in EVERY field is detected (item 10)
+  for f in $DESC_FIELDS; do
+    injected="$f=__INJECTED__"$'\n'"$out"   # mval returns the first occurrence → the injected value for $f
+    if ( diff_descriptors "$out" "$injected" ) >/dev/null 2>&1; then fail "selftest: injected mismatch in field $f NOT detected"; fi
+    echo "[selftest] OK: descriptor mismatch in $f detected"
+  done
 
   echo "OSN-ANCHOR-1A CATALOG SPOTCHECK (LOCAL DISPOSABLE PROOF): ALL PASSED"
   exit 0
@@ -235,15 +297,15 @@ linked_ref="$(cat supabase/.temp/project-ref 2>/dev/null || true)"
 [ "$linked_ref" = "$REF" ] || fail "linked project ref does NOT match the protected SUPABASE_PROJECT_ID"
 echo "[production] OK: linked project ref matches the protected SUPABASE_PROJECT_ID"
 
-# Design change 2: approved IPv4 pooler. Host resolved from protected configuration (Management API keyed by
-# the protected ref + token); tenant deterministically bound via user=postgres.<ref>; TLS verify-full. No
-# external target override; no direct per-project host endpoint.
-echo "=== production: resolve the protected IPv4 pooler endpoint (ref-bound tenant, verify-full TLS) ==="
+echo "=== production: resolve EXACTLY ONE protected IPv4 pooler endpoint (strict; fail before any DB connect) ==="
 command -v psql >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null; }
 command -v jq   >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq jq >/dev/null; }
-POOLER="$(curl -s -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/${REF}/config/database/pooler" || true)"
-PHOST="$(printf '%s' "$POOLER" | jq -r 'if type=="array" then .[0].db_host else .db_host end // empty' 2>/dev/null || true)"
-PPORT="$(printf '%s' "$POOLER" | jq -r 'if type=="array" then (.[0].db_port|tostring) else (.db_port|tostring) end // empty' 2>/dev/null || true)"
+POOLER="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 --connect-timeout 10 --max-time 30 \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  "https://api.supabase.com/v1/projects/${REF}/config/database/pooler")" \
+  || fail "Management API request failed (HTTP/TLS error)"
+ENDPOINT="$(parse_pooler_endpoint "$POOLER")" || fail "Management API response is not exactly one {db_host, db_port} endpoint"
+PHOST="${ENDPOINT%%|*}"; PPORT="${ENDPOINT##*|}"
 PUSER="postgres.${REF}"   # ref-bound tenant selector — derived ONLY from the protected project ref
 require_pooler_binding "$PHOST" "$PPORT" "$PUSER" "$REF"
 CONN="host=${PHOST} port=${PPORT} user=${PUSER} dbname=postgres sslmode=verify-full sslrootcert=system"
@@ -257,6 +319,10 @@ echo "[production] proven: the read-only gate passed before any catalog query (t
 PROD_HASH="$(compute_hash "$(mval "$prod_out" HASHB64)")"
 echo "[production] resolver raw stored-body SHA-256 = $PROD_HASH"
 assert_descriptor "$prod_out" production
+
+echo "=== production: descriptor parity (field-by-field local vs production) ==="
+diff_descriptors "$ref_out" "$prod_out"
+echo "[production] descriptor parity OK: all 17 fields identical local vs production ($DESC_FIELDS)"
 
 echo "=== production: flags (read-only, no mutation) ==="
 PSEND="$(mval "$prod_out" FLAG_SEND)"; PSPACE="$(mval "$prod_out" FLAG_SPACE)"
