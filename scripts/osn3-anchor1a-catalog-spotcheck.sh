@@ -2,37 +2,58 @@
 # OSN-ANCHOR-1A — dedicated, STRICTLY READ-ONLY catalog-parity spotcheck for the deployed truthful-origin
 # resolver public.mainship_space_resolve_origin(uuid) (migration 0062). Two modes:
 #
-#   local       Build nothing here (the workflow boots the disposable 0001..0062 stack and passes DB_URL).
-#               Proves the script can: produce the RAW catalog function hash; validate the resolver security
-#               posture; assert the migration chain ends exactly at 0062 with no 0063+; and REJECT a synthetic
-#               mismatched hash WITHOUT normalization. Touches NO production env / secret / project / DB.
+#   local       Uses the disposable 0001..0062 stack ($DB_URL). Proves the script can produce the RAW catalog
+#               function hash, validate the resolver security posture, assert migrations end exactly at 0062
+#               (no 0063+), reject a synthetic mismatched hash WITHOUT normalization, and (self-tests) reject
+#               malformed/empty hash input + bad project refs + external target overrides. NO production
+#               env / secret / project / DB is referenced.
 #
-#   production  Computes the REFERENCE hash from the disposable local chain ($DB_URL) AND, inside an explicit
-#               READ ONLY transaction, reads the LIVE resolver functiondef/descriptor/flags + remote migration
-#               history. Passes ONLY when the raw catalog hashes are byte-identical AND descriptor/flags/
+#   production  Computes the REFERENCE hash from the disposable local chain ($DB_URL) AND, over a direct,
+#               ref-derived, hostname-verified-TLS production connection inside ONE explicit READ ONLY
+#               transaction (gated BEFORE any catalog query), reads the LIVE resolver functiondef/descriptor/
+#               flags. Verifies the protected link-state, then `supabase migration list --linked` (CLI
+#               metadata). Passes ONLY when the raw catalog hashes are byte-identical AND descriptor/flags/
 #               migration state are exactly correct.
 #
-# HARD READ-ONLY: never writes, never runs a migration / db push / db reset, never calls a player RPC, never
-# seeds or creates fixtures, never prints raw function text / base64 / secrets / connection strings. Only
-# SHA-256 hashes + safe boolean/short descriptor metadata are emitted. Reuses the live-spotcheck pooler
-# connection-discovery pattern (scripts/osn3-s6a-live-check.sh); invents no new secret scheme.
-set -uo pipefail
+# HARD READ-ONLY: never writes, never runs db push / db reset / migration apply / RPC / fixtures, never prints
+# raw function text / base64 / secrets / connection strings / DB URLs. Only SHA-256 hashes + safe boolean/
+# short descriptor metadata are emitted.
+set -euo pipefail
 
 MODE="${1:-}"
-case "$MODE" in local|production) : ;; *) echo "usage: $0 <local|production>"; exit 2;; esac
-fail() { echo "FAIL: $1"; exit 1; }
+fail() { echo "FAIL: $1" >&2; exit 1; }
+case "$MODE" in local|production) : ;; *) echo "usage: $0 <local|production>" >&2; exit 2;; esac
 
 REGPROC="'public.mainship_space_resolve_origin(uuid)'::regprocedure"
 EXPECT_ARGS='p_main_ship_id uuid'
+EXPECT_MIG='20260618000062'
 
-# ── Single READ ONLY catalog read over a psql conninfo. Emits ONLY safe markers (hash is base64-of-raw,
-#    consumed locally then discarded — never printed). `-A` uses '|' as the column separator; the caller
-#    splits on '|' so the multi-column descriptor row parses cleanly. ──
-catalog_readonly() {
-  PGCONNECT_TIMEOUT=20 psql "$1" -X -t -A -v ON_ERROR_STOP=1 <<SQL
+# ── Fail-closed validators (Defect 1) ──────────────────────────────────────────────────────────────────
+is_hex64() { printf '%s' "${1:-}" | grep -qE '^[0-9a-f]{64}$'; }
+# A Supabase project ref is exactly 20 lowercase alphanumeric chars.
+validate_ref() { printf '%s' "${1:-}" | grep -qE '^[a-z0-9]{20}$' || fail "invalid/empty project ref"; }
+# Reject any externally-supplied target-overriding env var (production mode) before connecting (Defect 3).
+reject_target_overrides() {
+  local v
+  for v in DATABASE_URL PGHOST PGPORT PGUSER PGDATABASE PGSSLMODE PGHOSTADDR PGSERVICE PGURI; do
+    [ -z "${!v:-}" ] || fail "external target override $v is set — refusing to run in production mode"
+  done
+}
+
+# ── Governed read-only SQL (Defect 4): the read-only gate runs BEFORE any resolver/ACL/flag query. ─────
+governed_sql() {
+  cat <<SQL
+\\set ON_ERROR_STOP on
+\\pset pager off
 begin transaction read only;
+select current_setting('transaction_read_only') = 'on' as ro_ok \\gset
+\\if :ro_ok
+\\else
+\\echo 'ERROR: transaction is not read-only'
+\\quit 1
+\\endif
 select 'RO=' || current_setting('transaction_read_only');
-select 'HASHB64=' || translate(encode(convert_to(pg_get_functiondef(${REGPROC}),'UTF8'),'base64'), E'\n\r', '');
+select 'HASHB64=' || translate(encode(convert_to(pg_get_functiondef(${REGPROC}),'UTF8'),'base64'), E'\\n\\r', '');
 select 'ARGS=' || pg_get_function_identity_arguments(p.oid),
        'OWNER=' || pg_get_userbyid(p.proowner),
        'SECDEF=' || p.prosecdef::text,
@@ -41,7 +62,7 @@ select 'ARGS=' || pg_get_function_identity_arguments(p.oid),
        'ANONX=' || has_function_privilege('anon',p.oid,'EXECUTE')::text,
        'AUTHX=' || has_function_privilege('authenticated',p.oid,'EXECUTE')::text,
        'ACLNULL=' || (p.proacl is null)::text,
-       'PUBX=' || coalesce((select bool_or(a.grantee=0) from aclexplode(p.proacl) a where a.privilege_type='EXECUTE'), false)::text
+       'PUBX=' || coalesce((select bool_or(a.grantee=0) from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a where a.privilege_type='EXECUTE'), false)::text
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='public' and p.proname='mainship_space_resolve_origin'
     and pg_get_function_identity_arguments(p.oid)='p_main_ship_id uuid';
@@ -51,119 +72,145 @@ commit;
 SQL
 }
 
-# marker FROM raw-output: get the value of KEY= (first match) from a '|'-and-newline-split stream
-mval() { printf '%s' "$1" | tr '|' '\n' | sed -n "s/^$2=//p" | head -1; }
+# Run the governed session over a psql conninfo (the connection itself is the only reachability test).
+catalog_readonly() { governed_sql | PGCONNECT_TIMEOUT=20 psql "$1" -X -v ON_ERROR_STOP=1 -t -A; }
 
-# Compute SHA-256 of the EXACT raw function bytes from a base64 marker; emits the hash only.
-hash_from_b64() { printf '%s' "$1" | base64 -d | sha256sum | awk '{print $1}'; }
+# marker FROM raw output ('|' + newline split). Reads line-by-line (no pipe-to-early-exit) so it is safe
+# under `set -e -o pipefail`. Returns the value after the first "$2=" prefix.
+mval() {
+  local all l; all="$(printf '%s' "${1:-}" | tr '|' '\n')"
+  while IFS= read -r l; do
+    case "$l" in "$2="*) printf '%s' "${l#"$2"=}"; return 0;; esac
+  done <<< "$all"
+  return 0
+}
 
-# Validate the resolver descriptor markers against the required posture. Prints only safe metadata.
+# Compute a validated SHA-256 of the EXACT raw function bytes from a base64 marker (fail-closed; hash only).
+compute_hash() {
+  local b="${1:-}" raw h
+  [ -n "$b" ] || fail "empty base64 catalog payload"
+  raw="$(printf '%s' "$b" | base64 -d 2>/dev/null || true)"
+  [ -n "$raw" ] || fail "decoded catalog bytes are empty (corrupt/invalid base64)"
+  h="$(printf '%s' "$raw" | sha256sum | awk '{print $1}')"
+  is_hex64 "$h" || fail "computed SHA-256 is not 64 lowercase hex"
+  printf '%s' "$h"
+}
+
 assert_descriptor() {
-  local out="$1" label="$2"
-  local args owner secdef sppub srvx anonx authx aclnull pubx
+  local out="$1" label="$2" args owner secdef sppub srvx anonx authx aclnull pubx
   args="$(mval "$out" ARGS)"; owner="$(mval "$out" OWNER)"; secdef="$(mval "$out" SECDEF)"
   sppub="$(mval "$out" SPPUB)"; srvx="$(mval "$out" SRVX)"; anonx="$(mval "$out" ANONX)"
   authx="$(mval "$out" AUTHX)"; aclnull="$(mval "$out" ACLNULL)"; pubx="$(mval "$out" PUBX)"
   echo "[$label] args='$args' owner=$owner secdef=$secdef search_path_public=$sppub service_role_x=$srvx anon_x=$anonx authenticated_x=$authx acl_is_null=$aclnull public_x=$pubx"
   [ "$args" = "$EXPECT_ARGS" ] || fail "[$label] signature drift: '$args'"
   [ "$owner" = "postgres" ]    || fail "[$label] owner=$owner (expected postgres)"
-  [ "$secdef" = "t" ] || [ "$secdef" = "true" ] || fail "[$label] not SECURITY DEFINER ($secdef)"
-  [ "$sppub" = "t" ] || [ "$sppub" = "true" ] || fail "[$label] search_path not pinned to public ($sppub)"
-  [ "$srvx" = "t" ] || [ "$srvx" = "true" ] || fail "[$label] service_role lacks execute ($srvx)"
-  [ "$anonx" = "f" ] || [ "$anonx" = "false" ] || fail "[$label] anon HAS execute ($anonx)"
-  [ "$authx" = "f" ] || [ "$authx" = "false" ] || fail "[$label] authenticated HAS execute ($authx)"
-  # PUBLIC must not have execute: a NULL ACL means the default (PUBLIC EXECUTE) → unsafe; an explicit ACL
-  # must contain no grantee=0 EXECUTE. (anon/authenticated effective checks above also catch the null-ACL
-  # case, since both inherit PUBLIC — belt and suspenders.)
-  [ "$aclnull" = "f" ] || [ "$aclnull" = "false" ] || fail "[$label] proacl is NULL → PUBLIC has default execute"
-  [ "$pubx" = "f" ] || [ "$pubx" = "false" ] || fail "[$label] PUBLIC has an explicit execute grant ($pubx)"
-  echo "[$label] descriptor OK: signature/owner/SECDEF/search_path=public/service_role-only; anon,authenticated,PUBLIC denied"
+  [ "$secdef" = "t" ]   || fail "[$label] not SECURITY DEFINER ($secdef)"
+  [ "$sppub" = "t" ]    || fail "[$label] search_path not pinned to public ($sppub)"
+  [ "$srvx" = "t" ]     || fail "[$label] service_role lacks execute ($srvx)"
+  [ "$anonx" = "f" ]    || fail "[$label] anon HAS execute ($anonx)"
+  [ "$authx" = "f" ]    || fail "[$label] authenticated HAS execute ($authx)"
+  # Effective PUBLIC: PUBX is computed over aclexplode(coalesce(proacl, acldefault('f',proowner))) so a NULL
+  # ACL expands to the function default (PUBLIC EXECUTE) and is detected; acl_is_null reported for clarity.
+  [ "$pubx" = "f" ]     || fail "[$label] PUBLIC has effective execute ($pubx; acl_is_null=$aclnull)"
+  echo "[$label] descriptor OK: signature/owner/SECDEF/search_path=public/service_role-only; anon,authenticated,PUBLIC denied (effective)"
 }
 
-# Repository migration-history check: highest version == 0062, no 0063+.
 assert_repo_migrations_through_0062() {
   local high cnt_after
-  high="$(ls supabase/migrations/*.sql 2>/dev/null | sed 's#.*/##' | grep -oE '^[0-9]+' | sort | tail -1)"
+  high="$(ls supabase/migrations/*.sql 2>/dev/null | sed 's#.*/##' | grep -oE '^[0-9]+' | sort | tail -1 || true)"
   [ -n "$high" ] || fail "no migrations found in repo"
   echo "[repo] highest migration version = $high"
-  [ "$high" = "20260618000062" ] || fail "[repo] highest migration = $high (expected 20260618000062)"
-  cnt_after="$(ls supabase/migrations/*.sql 2>/dev/null | sed 's#.*/##' | grep -oE '^[0-9]+' | awk '$1 > 20260618000062' | wc -l | tr -d ' ')"
+  [ "$high" = "$EXPECT_MIG" ] || fail "[repo] highest migration = $high (expected $EXPECT_MIG)"
+  cnt_after="$(ls supabase/migrations/*.sql 2>/dev/null | sed 's#.*/##' | grep -oE '^[0-9]+' | awk -v e="$EXPECT_MIG" '$1+0 > e+0' | wc -l | tr -d ' ' || true)"
   [ "$cnt_after" = "0" ] || fail "[repo] found $cnt_after migration(s) after 0062 (no 0063+ allowed)"
   echo "[repo] OK: repository migration history ends exactly at 0062, no 0063+"
 }
 
-# Exact (no-normalization) hash comparator used for the synthetic mismatch proof + prod equivalence.
 hash_equal() { [ "$1" = "$2" ]; }
 
-# ── LOCAL DISPOSABLE PROOF ────────────────────────────────────────────────────────────────────────────
+# ── LOCAL DISPOSABLE PROOF + SELF-TESTS ────────────────────────────────────────────────────────────────
 if [ "$MODE" = "local" ]; then
   : "${DB_URL:?DB_URL (local disposable stack) required}"
-  echo "=== local: produce raw resolver hash + descriptor from the disposable 0001..0062 chain ==="
+  echo "=== local: raw resolver hash + descriptor from the disposable 0001..0062 chain ==="
   out="$(catalog_readonly "$DB_URL")" || fail "local catalog read failed"
-  [ "$(mval "$out" RO)" = "on" ] || fail "local read-only transaction not active (RO=$(mval "$out" RO))"
-  b64="$(mval "$out" HASHB64)"; [ -n "$b64" ] || fail "could not obtain resolver functiondef (is 0062 applied locally?)"
-  LOCAL_HASH="$(hash_from_b64 "$b64")"; unset b64
+  [ "$(mval "$out" RO)" = "on" ] || fail "local read-only transaction not active"
+  LOCAL_HASH="$(compute_hash "$(mval "$out" HASHB64)")"
   echo "[local] resolver raw catalog SHA-256 = $LOCAL_HASH"
   assert_descriptor "$out" local
-
   echo "=== local: migration history ends exactly at 0062 (repo) ==="
   assert_repo_migrations_through_0062
 
   echo "=== local: synthetic mismatch is REJECTED without normalization ==="
-  BOGUS="0000000000000000000000000000000000000000000000000000000000000000"
-  if hash_equal "$LOCAL_HASH" "$BOGUS"; then fail "comparator ACCEPTED a synthetic mismatch"; fi
-  echo "[local] OK: comparator rejected a deliberately mismatched hash (exact compare, no normalization)"
-  # also prove the comparator is exact: the same hash compares equal to itself
+  if hash_equal "$LOCAL_HASH" "0000000000000000000000000000000000000000000000000000000000000000"; then fail "comparator ACCEPTED a synthetic mismatch"; fi
   hash_equal "$LOCAL_HASH" "$LOCAL_HASH" || fail "comparator rejected identical hashes"
+  echo "[local] OK: comparator rejects a deliberately mismatched hash and accepts an identical one (exact, no normalization)"
+
+  echo "=== local self-tests: malformed/empty input + bad ref + target overrides all fail-closed ==="
+  if ( compute_hash "" ) >/dev/null 2>&1; then fail "selftest: empty base64 not rejected"; fi
+  echo "[selftest] OK: empty base64 rejected"
+  if ( compute_hash "@@@not-base64@@@" ) >/dev/null 2>&1; then fail "selftest: malformed base64 not rejected"; fi
+  echo "[selftest] OK: malformed base64 rejected"
+  if is_hex64 "deadbeef"; then fail "selftest: is_hex64 accepted a short hash"; fi
+  is_hex64 "$LOCAL_HASH" || fail "selftest: is_hex64 rejected a valid hash"
+  echo "[selftest] OK: SHA-256 must be exactly 64 lowercase hex"
+  if ( validate_ref "" ) >/dev/null 2>&1; then fail "selftest: empty ref not rejected"; fi
+  if ( validate_ref "TOO-SHORT" ) >/dev/null 2>&1; then fail "selftest: malformed ref not rejected"; fi
+  echo "[selftest] OK: empty/malformed project ref rejected"
+  for v in DATABASE_URL PGHOST PGPORT PGUSER PGDATABASE PGSSLMODE PGHOSTADDR; do
+    if ( export "$v=override-attempt"; reject_target_overrides ) >/dev/null 2>&1; then fail "selftest: $v override not rejected"; fi
+    echo "[selftest] OK: $v override rejected"
+  done
+  # the read-only gate must precede every catalog query in the generated SQL (Defect 4)
+  sql="$(governed_sql)"
+  gate_line="$(printf '%s\n' "$sql" | grep -nm1 'transaction_read_only' | cut -d: -f1 || true)"
+  fn_line="$(printf '%s\n' "$sql" | grep -nm1 'pg_get_functiondef' | cut -d: -f1 || true)"
+  acl_line="$(printf '%s\n' "$sql" | grep -nm1 'has_function_privilege' | cut -d: -f1 || true)"
+  flag_line="$(printf '%s\n' "$sql" | grep -nm1 'mainship_send_enabled' | cut -d: -f1 || true)"
+  [ -n "$gate_line" ] && [ -n "$fn_line" ] && [ -n "$acl_line" ] && [ -n "$flag_line" ] || fail "selftest: could not locate gate/query lines"
+  [ "$gate_line" -lt "$fn_line" ] && [ "$gate_line" -lt "$acl_line" ] && [ "$gate_line" -lt "$flag_line" ] \
+    || fail "selftest: read-only gate (line $gate_line) is NOT before functiondef/$fn_line, acl/$acl_line, flags/$flag_line"
+  echo "[selftest] OK: read-only gate (line $gate_line) precedes functiondef ($fn_line), ACL ($acl_line), flags ($flag_line)"
 
   echo "OSN-ANCHOR-1A CATALOG SPOTCHECK (LOCAL DISPOSABLE PROOF): ALL PASSED"
   exit 0
 fi
 
 # ── PRODUCTION READ-ONLY EQUIVALENCE ──────────────────────────────────────────────────────────────────
-# Required env (reused from the approved live-spotcheck infra): a local disposable DB_URL for the reference,
-# plus the production read-only access secrets.
 : "${DB_URL:?DB_URL (disposable reference stack) required}"
-: "${SUPABASE_DB_PASSWORD:?}" "${SUPABASE_ACCESS_TOKEN:?}" "${SUPABASE_PROJECT_ID:?}"
+: "${SUPABASE_DB_PASSWORD:?}" "${SUPABASE_PROJECT_ID:?}"
 REF="$SUPABASE_PROJECT_ID"
+
+# Defect 3: refuse any externally-supplied remote-target override; the production target is ref-derived only.
+reject_target_overrides
+validate_ref "$REF"
 
 echo "=== production: reference resolver hash + descriptor from the disposable 0001..0062 chain ==="
 ref_out="$(catalog_readonly "$DB_URL")" || fail "reference catalog read failed"
 [ "$(mval "$ref_out" RO)" = "on" ] || fail "reference read-only transaction not active"
-ref_b64="$(mval "$ref_out" HASHB64)"; [ -n "$ref_b64" ] || fail "reference resolver functiondef unavailable (0062 applied locally?)"
-REF_HASH="$(hash_from_b64 "$ref_b64")"; unset ref_b64
+REF_HASH="$(compute_hash "$(mval "$ref_out" HASHB64)")"
 echo "[reference] resolver raw catalog SHA-256 = $REF_HASH"
 assert_descriptor "$ref_out" reference
 assert_repo_migrations_through_0062
 
-echo "=== production: discover a READ-ONLY pooler connection (no credentials printed) ==="
-command -v psql >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null; }
-POOLER=$(curl -s -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects/$REF/config/database/pooler" || true)
-PHOST=$(echo "$POOLER" | jq -r 'if type=="array" then .[0].db_host else .db_host end // empty' 2>/dev/null || true)
-PPORT=$(echo "$POOLER" | jq -r 'if type=="array" then (.[0].db_port|tostring) else (.db_port|tostring) end // empty' 2>/dev/null || true)
-PUSER=$(echo "$POOLER" | jq -r 'if type=="array" then .[0].db_user else .db_user end // empty' 2>/dev/null || true)
-REGION=$(curl -s -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" "https://api.supabase.com/v1/projects" \
-         | jq -r --arg ref "$REF" '.[] | select(.id==$ref) | .region' 2>/dev/null || true)
-echo "[diag] pooler_host=${PHOST:-<none>} pooler_port=${PPORT:-<none>} region=${REGION:-<none>}"
-CANDS=()
-[ -n "${PHOST:-}" ] && CANDS+=("$PHOST|${PPORT:-6543}|${PUSER:-postgres.$REF}")
-if [ -n "${REGION:-}" ]; then for pre in aws-0 aws-1; do for prt in 6543 5432; do CANDS+=("$pre-$REGION.pooler.supabase.com|$prt|postgres.$REF"); done; done; fi
-CANDS+=("db.$REF.supabase.co|5432|postgres")
-CONN=""
-for c in "${CANDS[@]}"; do
-  IFS='|' read -r H P U <<<"$c"
-  if PGPASSWORD="$SUPABASE_DB_PASSWORD" PGCONNECT_TIMEOUT=12 psql "host=$H port=$P user=$U dbname=postgres sslmode=require" -X -t -A -c "select 1" >/dev/null 2>/dev/null; then
-    CONN="host=$H port=$P user=$U dbname=postgres sslmode=require"; echo "[diag] connected via $H:$P"; break
-  fi
-done
-[ -n "$CONN" ] || fail "could not establish a read-only connection to production"
+# Defect 2: the workflow ran `supabase link`; verify the local link-state ref equals the protected secret.
+echo "=== production: verify protected link-state (linked ref == SUPABASE_PROJECT_ID) ==="
+linked_ref="$(cat supabase/.temp/project-ref 2>/dev/null || true)"
+[ -n "$linked_ref" ] || fail "no linked project ref (supabase link did not run before this step)"
+[ "$linked_ref" = "$REF" ] || fail "linked project ref does NOT match the protected SUPABASE_PROJECT_ID"
+echo "[production] OK: linked project ref matches the protected SUPABASE_PROJECT_ID"
 
-echo "=== production: LIVE resolver hash + descriptor + flags inside BEGIN TRANSACTION READ ONLY ==="
-prod_out="$(PGPASSWORD="$SUPABASE_DB_PASSWORD" catalog_readonly "$CONN")" || fail "live catalog read failed"
-[ "$(mval "$prod_out" RO)" = "on" ] || fail "PRODUCTION read-only transaction was NOT active (RO=$(mval "$prod_out" RO))"
-echo "[production] proven: all production SQL ran after BEGIN TRANSACTION READ ONLY (transaction_read_only=on)"
-prod_b64="$(mval "$prod_out" HASHB64)"; [ -n "$prod_b64" ] || fail "live resolver functiondef unavailable"
-PROD_HASH="$(hash_from_b64 "$prod_b64")"; unset prod_b64
+# Defect 3: direct, ref-derived endpoint with hostname-verified TLS. No pooler, no weaker sslmode, no fallback.
+command -v psql >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null; }
+PHOST="db.${REF}.supabase.co"
+CONN="host=${PHOST} port=5432 user=postgres dbname=postgres sslmode=verify-full sslrootcert=system"
+echo "[diag] production target host (ref-derived, verify-full TLS) = ${PHOST}"
+
+echo "=== production: LIVE resolver hash + descriptor + flags inside one READ ONLY transaction ==="
+prod_out="$(PGPASSWORD="$SUPABASE_DB_PASSWORD" catalog_readonly "$CONN")" \
+  || fail "live catalog read failed over the direct endpoint ${PHOST} with verify-full (see connectivity note in the workflow/report)"
+[ "$(mval "$prod_out" RO)" = "on" ] || fail "PRODUCTION read-only gate did not report on"
+echo "[production] proven: the read-only gate passed before any catalog query (transaction_read_only=on)"
+PROD_HASH="$(compute_hash "$(mval "$prod_out" HASHB64)")"
 echo "[production] resolver raw catalog SHA-256 = $PROD_HASH"
 assert_descriptor "$prod_out" production
 
@@ -174,13 +221,14 @@ echo "[production] mainship_send_enabled=$PSEND mainship_space_movement_enabled=
 [ "$PSPACE" = "false" ] || fail "mainship_space_movement_enabled=$PSPACE (expected false)"
 
 echo "=== production: remote migration history ends exactly at 0062 (no 0063+) ==="
-supabase migration list --linked --password "$SUPABASE_DB_PASSWORD" 2>/dev/null | tee /tmp/anchor1a_migs >/dev/null || fail "migration list --linked failed"
-REMOTE_HIGH="$(awk -F'|' '{r=$2; gsub(/[^0-9]/,"",r); if (length(r)>0) print r}' /tmp/anchor1a_migs | sort | tail -1)"
-echo "[production] highest REMOTE migration version = ${REMOTE_HIGH:-<none>}"
-[ "$REMOTE_HIGH" = "20260618000062" ] || fail "remote highest migration = ${REMOTE_HIGH:-<none>} (expected 20260618000062)"
-if awk -F'|' '{r=$2; gsub(/[^0-9]/,"",r); if (length(r)>0 && r+0 > 20260618000062) print r}' /tmp/anchor1a_migs | grep -q .; then
-  fail "remote migration history contains a version after 0062 (no 0063+ allowed)"
-fi
+supabase migration list --linked --password "$SUPABASE_DB_PASSWORD" 2>/dev/null > /tmp/anchor1a_migs \
+  || fail "supabase migration list --linked failed (project not linked?)"
+REMOTE_HIGH="$(awk -F'|' '{r=$2; gsub(/[^0-9]/,"",r); if (length(r)>0) print r}' /tmp/anchor1a_migs | sort | tail -1 || true)"
+[ -n "$REMOTE_HIGH" ] || fail "could not parse a remote migration version (empty/malformed migration list)"
+echo "[production] highest REMOTE migration version = $REMOTE_HIGH"
+[ "$REMOTE_HIGH" = "$EXPECT_MIG" ] || fail "remote highest migration = $REMOTE_HIGH (expected $EXPECT_MIG)"
+LATER="$(awk -F'|' -v e="$EXPECT_MIG" '{r=$2; gsub(/[^0-9]/,"",r); if (length(r)>0 && r+0 > e+0) print r}' /tmp/anchor1a_migs || true)"
+[ -z "$LATER" ] || fail "remote migration history contains a version after 0062 (no 0063+ allowed): $LATER"
 echo "[production] OK: remote migration history ends exactly at 0062, no 0063+"
 
 echo "=== production: EXACT raw-catalog hash equivalence (no normalization) ==="
