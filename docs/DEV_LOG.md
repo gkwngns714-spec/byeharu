@@ -5,6 +5,48 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-23 — ANCHOR-2 P0-A census closed + PORT-CENTRIC direction (durable handoff; design/ops only)
+
+Cross-computer handoff record. **No code/schema/migration/anchor/resolver/flag/production change** — this entry
+makes the current direction recoverable from `main`.
+
+**1. ANCHOR-2 P0-A census — CLOSED.** One authorized, production-Environment-gated, **read-only** count-only
+census ran and succeeded — workflow `osn3-anchor2-p0a-homebase-census.yml`, **run `28061856879`**, source commit
+**`a12743f4829782530fc05015af509135886f8bf3`**, one `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`
+snapshot then **`ROLLBACK`** (no write). Result: `TOTAL_SHIPS=72`, `ELIGIBLE=72`, `UNRESOLVED=0`; the
+one-ship-per-owner invariant held (`72 = DISTINCT_NON_NULL_SHIP_OWNER_IDS`); zero null-owner/orphan/no-base/
+inactive-only/multi-base anomalies. This closes **only** the old-data ambiguity prerequisite (legacy base records
+are clean). **The census must not be rerun without explicit authorization.**
+
+**2. PORT-CENTRIC direction (supersedes the home-base P0 plan).** Byeharu is a **multi-port navigation world**,
+not a permanent-main-base game. A ship's meaningful normal location is its **current docked port**. Normal loop:
+`Dock at Port A → depart → travel/act → dock at Port B → depart from Port B`. The permanent
+`main_ship_instances.home_base_id` / ship-to-owner-base P0 plan is **CANCELLED** (no FK / NOT NULL / backfill /
+creation-path change). Legacy `bases` are **bootstrap / starter / registration / possible-recovery records only**,
+never operational homes. "Return home" is **not** ordinary navigation; emergency recovery is separate future work.
+
+**3. Technical boundary.** The existing dark `at_location` state (ship `spatial_state='at_location'` + the fleet's
+`current_location_id` + an active `location_presence`) is the **proto current-dock model**. `space_anchors`
+(migration 0063, empty/dark) remains the **future fixed-coordinate foundation**. Future port docking/departure must
+resolve through **location identity + the eligible port's canonical `space_anchors` (kind='location') coordinate** —
+not legacy `locations.x/y`. The current dark DOCK-0 exact-match against `locations.x/y` (migration 0061) is proto
+behavior only and **remains unchanged**.
+
+**4. Map-growth policy.** The open-space boundary stays **≈ `[-10000, 10000]²`** — a **temporary technical
+frontier**, not a permanent world/lore edge; no final map size is chosen. Future expansion grows **outward** and
+**preserves all existing coordinates** (do not remap/move existing ports, anchors, ships, or players); keep the
+initial central region **dense** and reserve outer space for later. **No map-size expansion is authorized now.**
+
+**5. Exact next project gate.** *Next work is a **port-centric product-decision packet**: port eligibility, dock
+identity, legacy-base/recovery role, recovery model, anchor-seeding scope, and initial central-region layout
+policy. No ANCHOR-2 implementation, anchor seeding, resolver change, map work, coordinate command work, migration,
+or flag change is authorized before those decisions.*
+
+Live baseline unchanged at this handoff: production migrations end at **0063**; `mainship_send_enabled=true`,
+`mainship_space_movement_enabled=false`; OSN paused.
+
+---
+
 ## 2026-06-23 — MSP-0: Main Ship Progression ↔ Movement integration contract (design only)
 
 Read-only reconnaissance + integration contract answering where future main-ship progression stats must live
