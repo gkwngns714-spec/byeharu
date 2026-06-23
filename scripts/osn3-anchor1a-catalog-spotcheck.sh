@@ -102,16 +102,19 @@ assert_descriptor() {
   sppub="$(mval "$out" SPPUB)"; srvx="$(mval "$out" SRVX)"; anonx="$(mval "$out" ANONX)"
   authx="$(mval "$out" AUTHX)"; aclnull="$(mval "$out" ACLNULL)"; pubx="$(mval "$out" PUBX)"
   echo "[$label] args='$args' owner=$owner secdef=$secdef search_path_public=$sppub service_role_x=$srvx anon_x=$anonx authenticated_x=$authx acl_is_null=$aclnull public_x=$pubx"
+  # boolean markers come from `::text` casts → the literals 'true'/'false' (accept 't'/'f' too defensively).
+  is_true()  { [ "${1:-}" = "true" ]  || [ "${1:-}" = "t" ]; }
+  is_false() { [ "${1:-}" = "false" ] || [ "${1:-}" = "f" ]; }
   [ "$args" = "$EXPECT_ARGS" ] || fail "[$label] signature drift: '$args'"
   [ "$owner" = "postgres" ]    || fail "[$label] owner=$owner (expected postgres)"
-  [ "$secdef" = "t" ]   || fail "[$label] not SECURITY DEFINER ($secdef)"
-  [ "$sppub" = "t" ]    || fail "[$label] search_path not pinned to public ($sppub)"
-  [ "$srvx" = "t" ]     || fail "[$label] service_role lacks execute ($srvx)"
-  [ "$anonx" = "f" ]    || fail "[$label] anon HAS execute ($anonx)"
-  [ "$authx" = "f" ]    || fail "[$label] authenticated HAS execute ($authx)"
+  is_true  "$secdef"  || fail "[$label] not SECURITY DEFINER ($secdef)"
+  is_true  "$sppub"   || fail "[$label] search_path not pinned to public ($sppub)"
+  is_true  "$srvx"    || fail "[$label] service_role lacks execute ($srvx)"
+  is_false "$anonx"   || fail "[$label] anon HAS execute ($anonx)"
+  is_false "$authx"   || fail "[$label] authenticated HAS execute ($authx)"
   # Effective PUBLIC: PUBX is computed over aclexplode(coalesce(proacl, acldefault('f',proowner))) so a NULL
   # ACL expands to the function default (PUBLIC EXECUTE) and is detected; acl_is_null reported for clarity.
-  [ "$pubx" = "f" ]     || fail "[$label] PUBLIC has effective execute ($pubx; acl_is_null=$aclnull)"
+  is_false "$pubx"    || fail "[$label] PUBLIC has effective execute ($pubx; acl_is_null=$aclnull)"
   echo "[$label] descriptor OK: signature/owner/SECDEF/search_path=public/service_role-only; anon,authenticated,PUBLIC denied (effective)"
 }
 
