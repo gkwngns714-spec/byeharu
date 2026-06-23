@@ -34,14 +34,45 @@ EXPECT_MIG='20260618000062'
 # Ordered descriptor field set compared local-vs-production (catalog-derived values, no OIDs).
 DESC_FIELDS="SCHEMA FNAME ARGS RET LANG PROKIND PROVOLATILE PROISSTRICT PROSECDEF PROLEAKPROOF PROPARALLEL PROCONFIG OWNER SRVX ANONX AUTHX PUBX"
 
+# ── Pinned CA trust material (official Supabase Server root CA; PUBLIC trust material, not a secret) ─────
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CA_FILE="$REPO_ROOT/scripts/supabase-prod-ca.crt"
+EXPECTED_CA_SHA256="807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6cafa"  # Supabase Root 2021 CA (prod-ca-2021.crt)
+
 # ── Fail-closed validators ─────────────────────────────────────────────────────────────────────────────
 is_hex64() { printf '%s' "${1:-}" | grep -qE '^[0-9a-f]{64}$'; }
 validate_ref() { printf '%s' "${1:-}" | grep -qE '^[a-z0-9]{20}$' || fail "invalid/empty project ref"; }
+# Ambient target/trust override variables that must NOT influence the production target or TLS config.
+OVERRIDE_VARS="DATABASE_URL PGHOST PGPORT PGUSER PGDATABASE PGHOSTADDR PGSERVICE PGURI PGSSLMODE PGSSLROOTCERT PGSSLCERT PGSSLKEY PGSSLCRL PGPASSWORD"
 reject_target_overrides() {
   local v
-  for v in DATABASE_URL PGHOST PGPORT PGUSER PGDATABASE PGSSLMODE PGHOSTADDR PGSERVICE PGURI; do
-    [ -z "${!v:-}" ] || fail "external target override $v is set — refusing to run in production mode"
+  for v in $OVERRIDE_VARS; do
+    [ -z "${!v:-}" ] || fail "external target/trust override $v is set — refusing to run in production mode"
   done
+}
+# Normalized SHA-256 of a PEM cert: 64 lowercase hex (strip 'sha256 Fingerprint=', remove colons).
+ca_fingerprint() { openssl x509 -in "$1" -noout -fingerprint -sha256 2>/dev/null | sed 's/^.*=//; s/://g' | tr 'A-Z' 'a-z'; }
+# Admit the pinned CA: exists, non-empty, exactly one cert, parses, not expired, fingerprint == pinned.
+# Logs ONLY fingerprint/subject/notAfter — never certificate contents.
+verify_ca() {
+  local f="$1" n fp
+  [ -f "$f" ] || fail "CA file not found: scripts/supabase-prod-ca.crt"
+  [ -s "$f" ] || fail "CA file is empty"
+  n="$(grep -c 'BEGIN CERTIFICATE' "$f" || true)"
+  [ "$n" = "1" ] || fail "CA file must contain exactly one certificate (found $n)"
+  openssl x509 -in "$f" -noout >/dev/null 2>&1 || fail "CA file is not a valid PEM certificate"
+  openssl x509 -in "$f" -noout -checkend 0 >/dev/null 2>&1 || fail "CA certificate is expired"
+  fp="$(ca_fingerprint "$f")"
+  is_hex64 "$fp" || fail "CA fingerprint is not 64 lowercase hex"
+  [ "$fp" = "$EXPECTED_CA_SHA256" ] || fail "CA fingerprint mismatch (pinned $EXPECTED_CA_SHA256, got $fp)"
+  echo "[ca] SHA-256 fingerprint = $fp"
+  echo "[ca] subject = $(openssl x509 -in "$f" -noout -subject 2>/dev/null | sed 's/^subject=//')"
+  echo "[ca] notAfter = $(openssl x509 -in "$f" -noout -enddate 2>/dev/null | sed 's/^notAfter=//')"
+}
+# Build the verifier connection. Port is FORCED to the SESSION pooler (5432); CA is the pinned tracked file;
+# verify-full is mandatory. The Management-API-returned port is NEVER used for the connection.
+build_verifier_conn() {  # $1=host $2=ref $3=ca_file
+  printf 'host=%s port=5432 user=postgres.%s dbname=postgres sslmode=verify-full sslrootcert=%s' "$1" "$2" "$3"
 }
 # Strict pooler binding: host must be <label>.pooler.supabase.com; port exactly 5432 or 6543; tenant exactly
 # postgres.<protected-ref>. Any miss fails closed.
@@ -187,6 +218,10 @@ hash_equal() { [ "$1" = "$2" ]; }
 # ── LOCAL DISPOSABLE PROOF + SELF-TESTS ────────────────────────────────────────────────────────────────
 if [ "$MODE" = "local" ]; then
   : "${DB_URL:?DB_URL (local disposable stack) required}"
+  echo "=== local: admit the pinned CA trust material (same checks the production path runs) ==="
+  verify_ca "$CA_FILE"
+  [ "$CA_FILE" = "$(git rev-parse --show-toplevel)/scripts/supabase-prod-ca.crt" ] || fail "CA path is not resolved from the git repo root"
+  echo "[local] OK: CA admitted + fingerprint pinned; path is repo-root-resolved (not \$(pwd))"
   echo "=== local: raw stored-body (prosrc) hash + full descriptor from the disposable 0001..0062 chain ==="
   out="$(catalog_readonly "$DB_URL")" || fail "local catalog read failed"
   [ "$(mval "$out" RO)" = "on" ] || fail "local read-only transaction not active"
@@ -217,7 +252,7 @@ if [ "$MODE" = "local" ]; then
   if ( validate_ref "" ) >/dev/null 2>&1; then fail "selftest: empty ref not rejected"; fi
   if ( validate_ref "TOO-SHORT" ) >/dev/null 2>&1; then fail "selftest: malformed ref not rejected"; fi
   echo "[selftest] OK: empty/malformed project ref rejected"
-  for v in DATABASE_URL PGHOST PGPORT PGUSER PGDATABASE PGSSLMODE PGHOSTADDR PGSERVICE PGURI; do
+  for v in $OVERRIDE_VARS; do
     if ( export "$v=override-attempt"; reject_target_overrides ) >/dev/null 2>&1; then fail "selftest: $v override not rejected"; fi
     echo "[selftest] OK: $v override rejected"
   done
@@ -264,6 +299,27 @@ if [ "$MODE" = "local" ]; then
   [ "$gate_line" -lt "$fn_line" ] && [ "$gate_line" -lt "$acl_line" ] && [ "$gate_line" -lt "$flag_line" ] \
     || fail "selftest: read-only gate (line $gate_line) is NOT before prosrc/$fn_line, acl/$acl_line, flags/$flag_line"
   echo "[selftest] OK: read-only gate (line $gate_line) precedes prosrc-hash ($fn_line), ACL ($acl_line), flags ($flag_line)"
+  # CA admission negatives (temp files in /tmp; untracked; cleaned up inline)
+  t="$(mktemp)"; if ( verify_ca "$t" ) >/dev/null 2>&1; then fail "selftest: empty CA not rejected"; fi; rm -f "$t"
+  echo "[selftest] OK: empty CA rejected"
+  t="$(mktemp)"; printf 'not a certificate\n' > "$t"; if ( verify_ca "$t" ) >/dev/null 2>&1; then fail "selftest: invalid PEM not rejected"; fi; rm -f "$t"
+  echo "[selftest] OK: invalid PEM rejected"
+  t="$(mktemp)"; cat "$CA_FILE" "$CA_FILE" > "$t"; if ( verify_ca "$t" ) >/dev/null 2>&1; then fail "selftest: multi-cert file not rejected"; fi; rm -f "$t"
+  echo "[selftest] OK: multiple-certificate file rejected"
+  t="$(mktemp)"; openssl req -x509 -newkey rsa:2048 -keyout /dev/null -out "$t" -days 1 -nodes -subj "/CN=selftest-anchor1a" >/dev/null 2>&1; if ( verify_ca "$t" ) >/dev/null 2>&1; then fail "selftest: fingerprint mismatch not rejected"; fi; rm -f "$t"
+  echo "[selftest] OK: a valid-but-wrong cert (fingerprint mismatch) rejected"
+  # verifier connection template: verify-full + pinned CA path + forced session port 5432; never 6543; never weaker TLS
+  ctmpl="$(build_verifier_conn "aws-0-x.pooler.supabase.com" "aaaaaaaaaaaaaaaaaaaa" "$CA_FILE")"
+  printf '%s' "$ctmpl" | grep -q 'sslmode=verify-full' || fail "selftest: conn template missing verify-full"
+  printf '%s' "$ctmpl" | grep -qF "sslrootcert=$CA_FILE" || fail "selftest: conn template missing pinned CA path"
+  printf '%s' "$ctmpl" | grep -q 'port=5432' || fail "selftest: conn template not on session port 5432"
+  if printf '%s' "$ctmpl" | grep -qE 'port=6543|sslmode=(require|prefer|allow|disable)|sslrootcert=system'; then fail "selftest: conn template uses 6543 or weaker TLS"; fi
+  echo "[selftest] OK: verifier conn template = verify-full + pinned CA + session port 5432 (no 6543, no weaker TLS)"
+  # an API endpoint on 6543 passes endpoint validation (metadata) but the verifier conn still forces 5432
+  require_pooler_binding "aws-0-x.pooler.supabase.com" "6543" "postgres.aaaaaaaaaaaaaaaaaaaa" "aaaaaaaaaaaaaaaaaaaa" || fail "selftest: API metadata port 6543 wrongly rejected"
+  printf '%s' "$(build_verifier_conn "aws-0-x.pooler.supabase.com" "aaaaaaaaaaaaaaaaaaaa" "$CA_FILE")" | grep -q 'port=5432' || fail "selftest: verifier did not force 5432"
+  echo "[selftest] OK: API port 6543 accepted as metadata but verifier connection forced to 5432"
+
   # descriptor field-by-field: an injected mismatch in EVERY field is detected (item 10)
   for f in $DESC_FIELDS; do
     injected="$f=__INJECTED__"$'\n'"$out"   # mval returns the first occurrence → the injected value for $f
@@ -282,6 +338,8 @@ REF="$SUPABASE_PROJECT_ID"
 
 reject_target_overrides
 validate_ref "$REF"
+echo "=== production: admit the pinned CA trust material (fail-closed BEFORE any Management API or psql action) ==="
+verify_ca "$CA_FILE"
 
 echo "=== production: reference stored-body hash + descriptor from the disposable 0001..0062 chain ==="
 ref_out="$(catalog_readonly "$DB_URL")" || fail "reference catalog read failed"
@@ -305,11 +363,12 @@ POOLER="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 --co
   "https://api.supabase.com/v1/projects/${REF}/config/database/pooler")" \
   || fail "Management API request failed (HTTP/TLS error)"
 ENDPOINT="$(parse_pooler_endpoint "$POOLER")" || fail "Management API response is not exactly one {db_host, db_port} endpoint"
-PHOST="${ENDPOINT%%|*}"; PPORT="${ENDPOINT##*|}"
+PHOST="${ENDPOINT%%|*}"; API_PORT="${ENDPOINT##*|}"
 PUSER="postgres.${REF}"   # ref-bound tenant selector — derived ONLY from the protected project ref
-require_pooler_binding "$PHOST" "$PPORT" "$PUSER" "$REF"
-CONN="host=${PHOST} port=${PPORT} user=${PUSER} dbname=postgres sslmode=verify-full sslrootcert=system"
-echo "[diag] production pooler endpoint (protected) = ${PHOST}:${PPORT} ; tenant = postgres.<ref> ; tls = verify-full"
+require_pooler_binding "$PHOST" "$API_PORT" "$PUSER" "$REF"   # API port validated as endpoint METADATA only (5432|6543)
+# Verifier session: SESSION pooler port 5432 + pinned CA + verify-full, regardless of the API-returned port.
+CONN="$(build_verifier_conn "$PHOST" "$REF" "$CA_FILE")"
+echo "[diag] API metadata=${PHOST}:${API_PORT} ; verifier=${PHOST}:5432 (session pooler) ; tenant=postgres.<ref> ; tls=verify-full ; sslrootcert=pinned CA"
 
 echo "=== production: LIVE stored-body hash + descriptor + flags inside one READ ONLY transaction ==="
 prod_out="$(PGPASSWORD="$SUPABASE_DB_PASSWORD" catalog_readonly "$CONN")" \
