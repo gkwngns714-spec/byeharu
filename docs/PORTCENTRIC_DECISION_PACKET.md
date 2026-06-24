@@ -101,13 +101,27 @@ There are **two separate concepts** and they must never be collapsed:
 
 ### Recommendation → **D-C: the ship row is canonical for dock identity; `location_presence` is a compatibility/activity-presence projection.**
 
-- **Canonical "docked-at" = `main_ship_instances.spatial_state='at_location'` +
-  `docked_anchor_id → space_anchors(id)`** (the anchor that represents the port), mirroring the
-  existing "`space_x/y` non-null iff `in_space`" invariant with "`docked_anchor_id` non-null iff
-  `at_location`."
-- **`location_presence` is downgraded to an activity-presence projection** — it continues to
-  represent "present here, exposed to this activity" (DOCK-0 already creates a `'none'` presence
-  on dock), but it is **not** the identity of record.
+The ship row owns dock truth, but dock identity is **two distinct fields with different
+lifetimes** — conflating them would break recovery, because a ship *ceases to be docked the
+moment it departs*:
+
+- **Current dock identity — `docked_anchor_id → space_anchors(id)`.** **Nullable; valid ONLY while
+  the ship is actually docked.** Non-null **iff** `spatial_state='at_location'` (mirroring
+  "`space_x/y` non-null iff `in_space`"). On departure it is **cleared to NULL** — a departed ship
+  has no current dock. This answers "where is the ship berthed *right now*."
+- **Last confirmed safe dock — `last_safe_dock_anchor_id → space_anchors(id)`.** **Retained across
+  departure** (not cleared when the ship leaves). It is **updated ONLY by a successful, verified
+  docking** (the same verified-dock event that sets `docked_anchor_id`), never by any other write.
+  This is the field the **recovery model (§4) reads** — "the last port we can prove the ship was
+  safely berthed at." A brand-new / never-docked ship has it NULL → recovery falls through to the
+  shared Haven Prime (§4).
+- **Recovery must NEVER infer the last dock from anything else.** Specifically it must not derive
+  the last dock from `location_presence`, from movement origin/target records, from legacy base
+  coordinates, or from any coordinate matching/proximity. Only an explicit successful verified
+  docking updates `last_safe_dock_anchor_id`; only that field (else Haven Prime) drives recovery.
+- **`location_presence` is downgraded to a compatibility / activity-presence projection** — it
+  represents "present here, exposed to this activity" (DOCK-0 creates a `'none'` presence on dock),
+  but it is **not** the identity of record and is **not** a recovery input.
 - **Consistency obligation (explicit):** the later cutover must **preserve or prove consistency
   with existing DOCK-0 behavior before any legacy behavior is retired.** Concretely: while both
   exist, the projection must agree with the ship row (a docked ship has exactly one active `'none'`
@@ -115,8 +129,10 @@ There are **two separate concepts** and they must never be collapsed:
   `at_location`) must be shown byte-equivalent or behavior-equivalent under the new anchor-based
   path *before* the exact-`x/y`-match path is removed. No legacy retirement without that proof.
 
-> Decision needed: accept the ship row (+ `docked_anchor_id`) as canonical dock identity, presence
-> as a derived projection, and "prove DOCK-0 consistency before retiring legacy" as a hard gate.
+> Decision needed: accept the ship row as canonical dock identity with **two fields** — current
+> `docked_anchor_id` (nullable, cleared on departure) and retained `last_safe_dock_anchor_id`
+> (updated only by verified docking, the sole recovery input) — presence as a derived projection,
+> and "prove DOCK-0 consistency before retiring legacy" as a hard gate.
 
 ---
 
@@ -130,9 +146,11 @@ There are **two separate concepts** and they must never be collapsed:
    starter units + starter resources stays the onboarding record.
 2. **Economy container (current).** `base_resources` / `base_units` remain the reward-landing /
    unit ledger as they exist today. (No economy redesign here.)
-3. **Recovery *region / entitlement* input only (see §4).** Legacy base data may *inform* which
-   recovery region or starting entitlement a player gets — but the base **itself** is never the
-   recovery port or anchor.
+3. **One-time starter / migration assignment input only (see §4).** Legacy base data may be read
+   **only** for a *one-time* starter or migration assignment (e.g. which region a player is seeded
+   into at account/migration time). **Normal repair/recovery must not read a player's legacy base
+   as an operational dependency.** The base **itself** is never the recovery port or anchor, and
+   recovery is driven by the last confirmed safe dock, else Haven Prime — never by the base.
 
 ### Bases are EXPLICITLY EXCLUDED from being:
 
@@ -153,8 +171,9 @@ There are **two separate concepts** and they must never be collapsed:
   we are freezing; rejected.
 
 ### Recommendation → **B-A.** Freeze `bases` schema; document the role as *bootstrap + economy
-container + recovery-region/entitlement input*, and codify all four exclusions. Bases never
-become ports, homes, anchors, or coordinate sources.
+container + one-time starter/migration assignment input*, and codify all four exclusions. Bases
+never become ports, homes, anchors, coordinate sources, or operational recovery dependencies;
+normal repair/recovery never reads a player's legacy base.
 
 ---
 
@@ -176,17 +195,23 @@ be permanently stuck" guaranteed — **without** turning a base into a port/anch
 
 A repaired or recovered ship returns, in this deterministic priority order:
 
-1. **Last valid docked port.** Return to the ship's most recent port whose `space_anchors` record
-   is still enabled/active. This is the natural, port-centric outcome and requires no base.
-2. **Deterministic shared recovery haven / starter port.** If the last docked port is unavailable
-   (retired/inactive) **or** no valid dock history exists (e.g. a brand-new or never-docked ship),
-   the ship returns to a single, deterministic, always-active **shared recovery haven** — a
-   curated starter port that is itself an ordinary enabled `space_anchors(kind='location')` port
-   (see §6). This is the universal floor and removes any softlock.
-3. **Legacy base data = region / entitlement input ONLY.** Legacy base data may *determine which*
-   recovery region a player is routed into, or a starting entitlement — but the base is **never**
-   the recovery port and **never** becomes an anchor. The recovery destination is always a real
-   port anchor (the last docked port, or the shared haven).
+1. **Last confirmed safe dock.** Return to the port recorded in the ship's
+   `last_safe_dock_anchor_id` (§2) — the retained, verified-docking-only field — provided that
+   anchor is still enabled/active. This is the natural, port-centric outcome and requires no base.
+   The last dock is **never inferred** from `location_presence`, movement origin/target records,
+   legacy base coordinates, or coordinate matching — only the explicitly recorded verified-dock
+   field counts.
+2. **Deterministic shared recovery haven / starter port (Haven Prime).** If `last_safe_dock_anchor_id`
+   is NULL (brand-new / never-docked ship) **or** its port is unavailable (retired/inactive), the
+   ship returns to a single, deterministic, always-active **shared recovery haven, Haven Prime** —
+   a curated starter port that is itself an ordinary enabled `space_anchors(kind='location')` port
+   at the central origin (see §6). This is the universal floor and removes any softlock.
+3. **Legacy base data = one-time starter/migration assignment ONLY.** Legacy base data may inform a
+   *one-time* starter or migration assignment (which region a player is seeded into at
+   account/migration time). **Normal repair/recovery must NOT read a player's legacy base as an
+   operational dependency.** The base is **never** the recovery port and **never** becomes an
+   anchor. Every recovery destination is a real port anchor (the last confirmed safe dock, else
+   Haven Prime).
 4. **Recovery is an explicit anti-softlock action, never ordinary navigation.** It is a distinct
    command/path (emergency recover / respawn), not a player travel order, and it never reads legacy
    `x/y` as a coordinate.
@@ -196,9 +221,10 @@ recovery destination* — guaranteed because the shared recovery haven is a perm
 anchor that any ship can fall back to regardless of history. Destroyed ships respawn at the
 resolved recovery destination (HP/cooldown balance TBD, out of scope).
 
-> Decision needed: approve "last valid docked port → else deterministic shared recovery haven;
-> base data informs region/entitlement only; recovery is explicit, never navigation." Confirm
-> **no base anchor is seeded.**
+> Decision needed: approve "last confirmed safe dock (`last_safe_dock_anchor_id`) → else Haven
+> Prime; last dock never inferred from presence/movement/legacy-base/coordinate-matching; legacy
+> base data = one-time starter/migration assignment only, never an operational recovery dependency;
+> recovery is explicit, never navigation." Confirm **no base anchor is seeded.**
 
 ---
 
@@ -294,13 +320,16 @@ values are a tunable to confirm at decision time.
    record; the `{trade_outpost, safe_zone, rally_point}` + `activity_type='none'` whitelist is a
    **gen-1 candidate-selection policy only** (E-B). A mutable `location_type` is never a dock
    identity by itself.
-2. **Dock identity of record** — `main_ship_instances.spatial_state='at_location'` +
-   `docked_anchor_id → space_anchors`; `location_presence` is a **compatibility/activity-presence
-   projection**; DOCK-0 consistency must be proven before any legacy retirement (D-C).
-3. **Bases** — bootstrap + economy container + recovery-region/entitlement input **only**; never a
-   home, port, anchor, or coordinate source (B-A).
-4. **Recovery** — last valid docked port → else a deterministic **shared recovery haven**; base
-   data informs region/entitlement only; explicit anti-softlock action, never navigation; **no base
+2. **Dock identity of record** — `main_ship_instances` owns two fields: current
+   `docked_anchor_id` (nullable, non-null IFF `at_location`, **cleared on departure**) and
+   `last_safe_dock_anchor_id` (**retained**, updated **only** by verified docking, the sole
+   recovery input); `location_presence` is a **compatibility/activity-presence projection**; DOCK-0
+   consistency must be proven before any legacy retirement (D-C).
+3. **Bases** — bootstrap + economy container + **one-time** starter/migration assignment input
+   **only**; never a home, port, anchor, coordinate source, or operational recovery dependency (B-A).
+4. **Recovery** — last confirmed safe dock (`last_safe_dock_anchor_id`) → else **Haven Prime**;
+   last dock **never inferred** from presence/movement/legacy-base/coordinate-matching; base data =
+   one-time starter/migration only; explicit anti-softlock action, never navigation; **no base
    anchor** (§4).
 5. **Seeding** — gen-1 = central-region candidate ports incl. the shared haven, **authored** coords,
    **no base anchors**; everything else unseeded; legacy `x/y` never copied (S-B).
@@ -318,11 +347,11 @@ values are a tunable to confirm at decision time.
 | --- | --- | --- | --- |
 | **S0** | Record decisions in `docs/SYSTEM_BOUNDARIES.md` + `DEV_LOG.md`. | docs only | approval of this packet |
 | **S1** | Eligibility/candidate helper (read-only) enumerating candidate ports from existing columns. | additive, read-only | S0 |
-| **S2** | Additive dark `main_ship_instances.docked_anchor_id → space_anchors`, invariant non-null IFF `at_location`; no backfill/writer. | additive schema | S1 |
+| **S2** | Additive dark dock-identity fields on `main_ship_instances`: current `docked_anchor_id → space_anchors` (non-null IFF `at_location`, cleared on departure) + retained `last_safe_dock_anchor_id → space_anchors` (set only by verified docking); no backfill/writer. | additive schema | S1 |
 | **S3** | Seed gen-1 *location* port anchors (incl. shared haven), authored coords, **no base anchors**; verify on disposable chain. | seed (dark) | S2 + explicit seed approval |
 | **S4** | Resolver extension: `at_location` resolves origin from `docked_anchor_id` anchor (anchored ports only). | resolver replace | S3 verified |
 | **S5** | DOCK-0 cutover to dock at canonical anchor coord; **prove consistency with current DOCK-0 before retiring exact-`x/y` path**. | docking primitive | S4 + §2 consistency proof |
-| **S6** | Explicit recovery path: last-docked-port → shared haven; enforces anti-softlock; never navigation. | additive RPC | S5 |
+| **S6** | Explicit recovery path: `last_safe_dock_anchor_id` → else Haven Prime; reads only the verified-dock field (never presence/movement/legacy-base/coords); enforces anti-softlock; never navigation. | additive RPC | S5 |
 | **S7** | **Enablement** — flip `mainship_space_movement_enabled` only after S1–S6 verified green and a recorded go/no-go. | flag flip | **separate go/no-go gate** |
 
 **Explicitly NOT authorized by this packet:** any flag flip, any migration `0064+`, any resolver
