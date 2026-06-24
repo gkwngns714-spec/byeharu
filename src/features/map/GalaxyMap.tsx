@@ -9,7 +9,10 @@ import { FleetMovementLine } from './FleetMovementLine'
 import { MainShipMarker } from './MainShipMarker'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { useSpaceMoveCommand } from './useSpaceMoveCommand'
+import { useSpaceStopCommand } from './useSpaceStopCommand'
 import { SpaceMoveTargetMarker, SpaceMoveControls, type SpaceMoveEligibility } from './SpaceMoveTarget'
+import { SpaceStopControls } from './SpaceStopControls'
+import { isActiveCoordinateTransit } from './spaceStopCommand'
 import { classifyPointerGesture } from './spaceMoveCommand'
 import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
@@ -61,6 +64,14 @@ export function GalaxyMap({
   // whole surface stays unmounted → zero production visual change. Coordinate-target taps are only
   // captured when the flag is on AND the ship is eligible. Camera behavior is unchanged either way.
   const sm = useSpaceMoveCommand()
+  // OSN-4 — Stop safety. The CTA mounts ONLY for a real active coordinate transit and is INDEPENDENT of the
+  // initiation flag (in-flight safety): an emergency flag disable must never strand an in-flight ship.
+  const stop = useSpaceStopCommand()
+  const inCoordinateTransit = isActiveCoordinateTransit({
+    spatialState: mainShip?.spatial_state,
+    spaceMovementStatus: mainShipSpaceMovement?.status,
+    spaceMovementTargetKind: mainShipSpaceMovement?.target_kind,
+  })
   const eligibility: SpaceMoveEligibility = !mainShip
     ? 'no_ship'
     : mainShip.status === 'destroyed' || mainShip.spatial_state === 'destroyed'
@@ -340,6 +351,18 @@ export function GalaxyMap({
           errorMessage={sm.state.errorMessage}
           onConfirm={() => void sm.submit()}
           onClear={sm.clear}
+        />
+      )}
+
+      {/* OSN-4 — Stop safety CTA. Mounted ONLY for a real active coordinate transit, INDEPENDENT of the
+          initiation flag (in-flight safety). Today this condition is unreachable (no coordinate moves exist
+          while the flag is false) → dark in production. Target selection / new-move stay flag-gated above. */}
+      {inCoordinateTransit && (
+        <SpaceStopControls
+          phase={stop.state.phase}
+          errorMessage={stop.state.errorMessage}
+          outcome={stop.state.outcome}
+          onStop={() => void stop.submit()}
         />
       )}
 

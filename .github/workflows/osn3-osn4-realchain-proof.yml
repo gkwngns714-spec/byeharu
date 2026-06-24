@@ -1,0 +1,66 @@
+name: OSN-4 — real-migration-chain proof (disposable Supabase)
+
+# Authoritative/gating OSN-4 proof for Stop-mid-travel (mainship_space_stop / command_main_ship_space_stop)
+# and the shared in-space arrival primitive. Boots a DISPOSABLE local Supabase stack via the CLI, applying
+# the ACTUAL chain 0001..0064 — real tables/CHECKs/indexes/RLS/grants/triggers/pg_cron and the real roles
+# anon/authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves the Stop permission/boundary,
+# the SECURITY-DEFINER attributes, the arrival cron survival, and the functional matrix (stop-before-arrive,
+# arrived-at/after-boundary, idempotency, in-flight-safety with the flag off, not-in-transit, and the
+# explicit non-space movement boundary). Runs on push to the OSN-3 branch(es) alongside the S1..S6A/DOCK-0/
+# ANCHOR proofs (which re-run on this branch over the chain INCLUDING 0064 → S4 non-regression).
+
+on:
+  push:
+    branches:
+      - 'osn3-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0064)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: Stop permission/boundary + SECURITY-DEFINER + cron proof (real chain)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-osn4-realchain-perm.sql
+
+      - name: Runtime SET ROLE EXECUTE denial + service_role success (Stop writer)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          for r in anon authenticated; do
+            out=$(psql "$DB_URL" -X -c "set role $r; select public.mainship_space_stop('00000000-0000-0000-0000-000000000000','00000000-0000-0000-0000-000000000000', gen_random_uuid());" 2>&1 || true)
+            echo "$out" | grep -qi "permission denied" && echo "ok: $r cannot EXECUTE the Stop writer" || { echo "FAIL: $r executed the Stop writer -> $out"; exit 1; }
+          done
+
+      - name: Functional Stop matrix (stop-before / arrived-at-boundary / idempotency / in-flight-safety / not-in-transit / non-space boundary)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn3-osn4-realchain-fixtures.sql
+
+      - name: Restore simulated dark config (always)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -c "update game_config set value='true'  where key='mainship_send_enabled';" || true
+            psql "$DB_URL" -X -c "update game_config set value='false' where key='mainship_space_movement_enabled';" || true
+            psql "$DB_URL" -X -c "delete from auth.users where email like 'osn4fix.%@example.com';" || true
+            psql "$DB_URL" -X -c "do \$\$ begin perform cron.unschedule(jobid) from cron.job where jobname='process-mainship-space-arrivals'; exception when undefined_table then null; end \$\$; select cron.schedule('process-mainship-space-arrivals','30 seconds',\$cmd\$select public.process_mainship_space_arrivals();\$cmd\$);" || true
+          fi
