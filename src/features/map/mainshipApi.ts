@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import { SPACE_MOVE_RPC, buildSpaceMoveRpcArgs, type SpaceMoveResult } from './spaceMoveCommand'
+import { SPACE_STOP_RPC, buildSpaceStopRpcArgs, type SpaceStopResult } from './spaceStopCommand'
 
 // Main-ship client API.
 //
@@ -233,4 +234,14 @@ export async function commandMainShipSpaceMove(targetX: number, targetY: number,
   const { data, error } = await supabase.rpc(SPACE_MOVE_RPC, buildSpaceMoveRpcArgs({ x: targetX, y: targetY }, requestId))
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceMoveResult
+}
+
+// OSN-4 — thin client wrapper over the public Stop boundary (command_main_ship_space_stop). It sends ONLY
+// an idempotency key (no coordinates — the server interpolates the current stop point and derives the ship
+// from auth.uid()). It writes no table directly. The server is the final authority; an in-flight ship can
+// stop even after an emergency flag disable, while a ship NOT in coordinate transit safely rejects.
+export async function commandMainShipSpaceStop(requestId: string): Promise<SpaceStopResult> {
+  const { data, error } = await supabase.rpc(SPACE_STOP_RPC, buildSpaceStopRpcArgs(requestId))
+  if (error) return { ok: false, code: 'unavailable', message: error.message }
+  return data as SpaceStopResult
 }
