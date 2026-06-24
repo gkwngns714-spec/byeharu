@@ -68,7 +68,7 @@ jobs:
             echo "$out"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          if echo "$out" | grep -q 'OVERALL_PASS=t'; then
+          if echo "$out" | grep -q 'OVERALL_PASS=true'; then
             echo "PREFLIGHT PASSED — GO FOR CONTROLLED ENABLEMENT (operator decision; this workflow does not enable)." >> "$GITHUB_STEP_SUMMARY"
             echo "PREFLIGHT PASSED"
           else

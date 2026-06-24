@@ -47,7 +47,7 @@ jobs:
           # production workflow, not against this disposable DB.
           out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -X -x -f scripts/osn-enablement-preflight.sql)"
           echo "$out"
-          echo "$out" | grep -q 'STRUCTURAL_PASS=t' || { echo "FAIL: OSN preflight structural checks did not pass on the real chain through 0064"; exit 1; }
+          echo "$out" | grep -q 'STRUCTURAL_PASS=true' || { echo "FAIL: OSN preflight structural checks did not pass on the real chain through 0064"; exit 1; }
           echo "ok: OSN enablement preflight executes cleanly and structural checks pass over the real chain"
 
       - name: Stop permission/boundary + SECURITY-DEFINER + cron proof (real chain)
