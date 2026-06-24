@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type PointerEvent as RPointerEvent, type WheelEvent as RWheelEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type WheelEvent as RWheelEvent } from 'react'
 import type { MapLocation } from './mapTypes'
 import type { Base } from '../base/baseTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
@@ -11,46 +11,18 @@ import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { useSpaceMoveCommand } from './useSpaceMoveCommand'
 import { SpaceMoveTargetMarker, SpaceMoveControls, type SpaceMoveEligibility } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
-import { screenToWorld } from './openSpaceTransform'
+import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
+import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
 
-// Read-only 2D galaxy map (plain SVG — no canvas/WebGL). World coordinates are normalized
-// once into a 0..1000 viewBox; a transform group provides pan (drag) + zoom (wheel/buttons).
-// Nothing here writes to the database.
+// Read-only 2D galaxy map (plain SVG — no canvas/WebGL). UNIFIED fixed-coordinate frame (S6B-PRES):
+// EVERY spatial object — named locations, base/home, movement lines, legacy + open-space ship states,
+// and coordinate targets — is positioned through the fixed `worldToViewBox` domain (openSpaceTransform).
+// `buildNormalizer` is gone: the dynamic auto-fit normalizer is no longer the player-facing spatial
+// truth. Camera math (zoom/pan limits + content-fit) lives in ./galaxyCamera and feeds ONLY the initial
+// view and explicit reset (frozen once the player pans/zooms). Nothing here writes to the database.
 
-const VIEW = 1000
-const PAD = 0.08
-
-interface Pt { x: number; y: number }
-
-function buildNormalizer(points: Pt[]): (p: Pt) => Pt {
-  const xs = points.map((p) => p.x)
-  const ys = points.map((p) => p.y)
-  const minX = points.length ? Math.min(...xs) : 0
-  const maxX = points.length ? Math.max(...xs) : 0
-  const minY = points.length ? Math.min(...ys) : 0
-  const maxY = points.length ? Math.max(...ys) : 0
-  const span = Math.max(maxX - minX, maxY - minY) || 1
-  const inner = VIEW * (1 - 2 * PAD)
-  const scale = inner / span
-  const offX = VIEW * PAD + (inner - (maxX - minX) * scale) / 2
-  const offY = VIEW * PAD + (inner - (maxY - minY) * scale) / 2
-  // Flip Y so larger world-y renders upward (screen y grows downward).
-  return (p: Pt) => ({ x: offX + (p.x - minX) * scale, y: VIEW - (offY + (p.y - minY) * scale) })
-}
-
-const clampK = (k: number) => Math.min(8, Math.max(0.4, k))
-
-// Camera pan bounds: keep the transformed content overlapping the 0..VIEW viewBox so the map can
-// never be dragged/zoomed completely off-screen (fixes the "black screen on pan" bug). When zoomed
-// in (content ≥ viewport) the viewport stays fully covered; when zoomed out, content stays inside.
-// This only bounds the camera — future gameplay overlays (trading/mining/combat/routes) should be
-// added as separate layers later, not folded into this clamp.
-function clampPan(tx: number, ty: number, k: number): { tx: number; ty: number } {
-  const content = k * VIEW
-  const [minT, maxT] = content >= VIEW ? [VIEW - content, 0] : [0, VIEW - content]
-  const cl = (t: number) => Math.min(maxT, Math.max(minT, t))
-  return { tx: cl(tx), ty: cl(ty) }
-}
+// The UNIFIED spatial transform: world → viewBox. Replaces the old dynamic `norm`. Pure; never clamps.
+const norm = (p: { x: number; y: number }): { x: number; y: number } => worldToViewBox(p)
 
 export function GalaxyMap({
   locations,
@@ -76,8 +48,13 @@ export function GalaxyMap({
   onSelect: (id: string | null) => void
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
-  const [view, setView] = useState({ k: 1, tx: 0, ty: 0 })
+  const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
+  // S6B-PRES camera policy: content-fit is applied for the initial view + explicit reset only; once the
+  // player pans/zooms (`userMovedRef`) the camera is frozen. `lastFitSig` makes the fit fire once per
+  // meaningful focus change rather than per animation frame.
+  const userMovedRef = useRef(false)
+  const lastFitSig = useRef<string | null>(null)
 
   // ── OSN-3 S6C — empty-space coordinate command surface (flag-dark by default) ──
   // The hook reads `mainship_space_movement_enabled` itself; while dark `sm.enabled` is false and the
@@ -101,15 +78,56 @@ export function GalaxyMap({
   const tap = useRef<{ x: number; y: number; t: number; maxPointers: number } | null>(null)
   const pointers = useRef<Set<number>>(new Set())
 
-  const norm = useMemo(() => {
-    const pts: Pt[] = locations.map((l) => ({ x: l.x, y: l.y }))
-    if (base) pts.push({ x: base.x, y: base.y })
-    for (const m of movements) {
-      pts.push({ x: m.origin_x, y: m.origin_y })
-      pts.push({ x: m.target_x, y: m.target_y })
+  // ── S6B-PRES content-fit camera (presentation only; never alters world/marker coordinates) ──
+  // Deterministic focus: open-space / in-transit ships and their active movement segment take focus
+  // priority so the player is always visible. Derived PURELY from ship state (no clock / interpolation),
+  // so it is render-pure and the focus signature stays stable per move (not per animation frame).
+  const focusInputs: FocusInputs = useMemo(() => {
+    const sx = mainShip?.space_x
+    const sy = mainShip?.space_y
+    const shipWorld: WorldCoord | null =
+      mainShip?.spatial_state === 'in_space' && typeof sx === 'number' && Number.isFinite(sx) && typeof sy === 'number' && Number.isFinite(sy)
+        ? { x: sx, y: sy }
+        : null
+    const seg: readonly [WorldCoord, WorldCoord] | null =
+      mainShipSpaceMovement && mainShipSpaceMovement.status === 'moving'
+        ? [
+            { x: mainShipSpaceMovement.origin_x, y: mainShipSpaceMovement.origin_y },
+            { x: mainShipSpaceMovement.target_x, y: mainShipSpaceMovement.target_y },
+          ]
+        : null
+    return {
+      shipWorld,
+      movementSegment: seg,
+      locations: locations.map((l) => ({ x: l.x, y: l.y })),
+      base: base ? { x: base.x, y: base.y } : null,
     }
-    return buildNormalizer(pts)
-  }, [locations, base, movements])
+  }, [mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations, base])
+
+  // Stable focus signature: changes only on a MEANINGFUL focus change (open-space mode / active
+  // movement id / parked point / named-content set), never per animation frame — so the fit is applied
+  // once per context. Uses the static space_x/space_y + movement id, never the live interpolated point.
+  const focusSignature = useMemo(() => {
+    if (focusInputs.shipWorld || focusInputs.movementSegment) {
+      const seg = mainShipSpaceMovement?.status === 'moving' ? mainShipSpaceMovement.id : 'noseg'
+      return `os:${mainShip?.spatial_state ?? 'n'}:${seg}:${mainShip?.space_x ?? 'n'},${mainShip?.space_y ?? 'n'}`
+    }
+    return `named:${locations.map((l) => l.id).join(',')}|${base ? `${base.x},${base.y}` : ''}`
+  }, [focusInputs, mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations, base])
+
+  // Apply the content-fit camera for the INITIAL view (once per focus change), never after the player
+  // has interacted. Explicit reset re-enables it.
+  useEffect(() => {
+    if (userMovedRef.current) return
+    if (lastFitSig.current === focusSignature) return
+    if (focusWorldPoints(focusInputs).length === 0) return
+    lastFitSig.current = focusSignature
+    // Intentional: one-time content-fit of the camera when async data / focus first arrives. Gated by
+    // refs (userMoved + lastFitSig) so it fires once per focus context, never continuously — the valid
+    // "derive initial view from external data" effect use, not a render-loop.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setView(focusCamera(focusInputs))
+  }, [focusSignature, focusInputs])
 
   const toSvgUnits = (dxPx: number) => {
     const rect = svgRef.current?.getBoundingClientRect()
@@ -136,6 +154,7 @@ export function GalaxyMap({
     if (tap.current) tap.current.maxPointers = Math.max(tap.current.maxPointers, pointers.current.size)
     const dx = toSvgUnits(e.clientX - d.x)
     const dy = toSvgUnits(e.clientY - d.y)
+    if (dx !== 0 || dy !== 0) userMovedRef.current = true // player took camera control → freeze auto-fit
     setView((v) => ({ ...v, ...clampPan(d.tx + dx, d.ty + dy, v.k) }))
   }
   const onPointerUp = (e: RPointerEvent) => {
@@ -166,6 +185,7 @@ export function GalaxyMap({
     tap.current = null
   }
   const onWheel = (e: RWheelEvent) => {
+    userMovedRef.current = true // player took camera control → freeze auto-fit
     const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
     setView((v) => {
       const k = clampK(v.k * factor)
@@ -176,7 +196,8 @@ export function GalaxyMap({
       return { k, ...clampPan(cx - (cx - v.tx) * ratio, cy - (cy - v.ty) * ratio, k) }
     })
   }
-  const zoomBtn = (factor: number) =>
+  const zoomBtn = (factor: number) => {
+    userMovedRef.current = true // player took camera control → freeze auto-fit
     setView((v) => {
       const k = clampK(v.k * factor)
       const ratio = k / v.k
@@ -184,8 +205,16 @@ export function GalaxyMap({
       const cy = VIEW / 2
       return { k, ...clampPan(cx - (cx - v.tx) * ratio, cy - (cy - v.ty) * ratio, k) }
     })
-  // Reset is already a safe state (k=1 → clampPan bounds force tx=ty=0).
-  const reset = () => setView({ k: 1, tx: 0, ty: 0 })
+  }
+  // Reset re-enables the deterministic content-fit camera (frames the player ship / active movement,
+  // else named content). NOT k=1/origin — at k=1 the fixed frame would show current seed content as a
+  // tiny central cluster.
+  const reset = () => {
+    userMovedRef.current = false
+    const pts = focusWorldPoints(focusInputs)
+    lastFitSig.current = focusSignature
+    setView(pts.length ? focusCamera(focusInputs) : { k: 1, tx: 0, ty: 0 })
+  }
 
   const homePt = base ? norm({ x: base.x, y: base.y }) : null
 
