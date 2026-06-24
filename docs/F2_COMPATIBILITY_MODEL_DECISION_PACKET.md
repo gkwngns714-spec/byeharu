@@ -5,6 +5,12 @@
 > recommended model; it authorizes **nothing**. No migration, schema, resolver, anchor seed, map
 > update, zone system, pirate spawn, flag change, or coordinate-bound change is approved by this
 > document. OSN remains **paused**. The post-F2 sequence (§7) is conditional and illustrative.
+>
+> **Amendment (this revision):** F2-1 (Option C) is **approved in principle** as the intended F2
+> direction. §**F2-1A** adds the binding **transitional / authority / activity / port-cardinality
+> boundaries** so the new `world_sites` layer is never quietly forced back into `locations` because
+> the deployed `space_anchors` support only typed owners `{base, location}`. This remains
+> design/product only — no implementation is authorized.
 
 **Evidence base:** the APPROVED architecture packet on `main`
 (`docs/PORTCENTRIC_DECISION_PACKET.md`, PR #22 / `bd927f3`) + the completed **F1 World Model
@@ -25,7 +31,7 @@ mining, exploration, zones, lifecycle, and future systems.
 
 | # | F2 decision | Recommended model (this packet) | Status |
 | --- | --- | --- | --- |
-| F2-1 | World-object identity | **Option C** — additive canonical world-site identity layer (working name `world_sites`) + a **strict 1:1 immutable bridge** from `locations`; new responsibilities attach to the new layer, `locations.id` stays as compatibility key | requested now |
+| F2-1 | World-object identity | **Option C** — additive canonical world-site identity layer (working name `world_sites`) + a **strict 1:1 immutable bridge** from `locations`; new responsibilities attach to the new layer, `locations.id` stays as compatibility key | **approved in principle** (boundaries → §F2-1A) |
 | F2-2 | Anchors | Keep `space_anchors` **closed `{base,location}`**; ports use **only `kind='location'`**; **no base anchors**; generalization deferred to an explicit later decision | requested now |
 | F2-3 | Port capability | **Port-first**, explicit capability/designation on a canonical location anchor; never inferred; legacy `activity_type` stays the combat/presence runtime truth | requested now |
 | F2-4 | Geographic zones | **New future layer**, separate from `zone_state`/`location_state`/pressure; owns geometry/policy only; pirate interception via an adapter **outside OSN** | direction now, design deferred |
@@ -111,6 +117,59 @@ slice 1.
 
 > **F2-1 decision requested:** approve **Option C** (additive `world_sites` identity + 1:1 immutable
 > bridge; `locations` frozen as legacy projection), with the universal-layer trigger as stated.
+
+---
+
+### F2-1A — Transitional compatibility & authority boundaries (Option C, approved in principle)
+
+Option C is approved in principle. The following narrow boundaries are **binding direction**. Their
+purpose is single and specific: prevent the new `world_sites` layer from being **quietly forced back
+into `locations`** simply because the deployed `space_anchors` currently support only typed owners
+`{base, location}`. They do **not** change the architecture goal and authorize no implementation.
+
+**Transitional boundary**
+1. `world_sites` is the future canonical stable identity for **point-like authored world content
+   only.** It does **not** replace zones, and **void space requires no `world_site`.**
+2. Every existing `locations.id` receives **exactly one** immutable bridge to **one** `world_site`.
+3. A `world_site` has **at most one** legacy `location` bridge.
+4. In the first compatibility transition, **any `world_site` that is active** in the existing map,
+   movement, docking, legacy activity, or current anchor infrastructure **must be location-backed
+   through that bridge.**
+5. During that first transition, **canonical placement for such sites remains a
+   `space_anchors(kind='location')` record.** New ports are therefore **location-backed world sites
+   with explicit port capability and an active location anchor.**
+6. A **non-location-backed `world_site` may exist only as draft/hidden design content** until a
+   **separately approved future anchor-generalization decision.** Active **independent** world sites
+   are **not supported by the currently deployed anchor schema** and must not be implied to be.
+7. This bridge is a **temporary compatibility adapter**, **not** a permanent requirement that all
+   future world content must live in `locations`.
+
+**Authority boundary**
+- **`world_sites` owns** new stable identity, lifecycle, and composable capability **truth.**
+- **`locations` remains a legacy compatibility/activity projection** while existing fleet, movement,
+  presence, combat, report, and legacy-map consumers still require `location_id`.
+- **Legacy `locations.x/y` remains compatibility input for old paths only** — it is **not** the
+  long-term identity relationship.
+- **No client, frontend component, or feature subsystem may independently dual-write `world_sites`
+  and `locations`.** Any bridge/projection synchronization must be **server-owned and explicitly
+  defined later.**
+
+**Activity boundary**
+- New capabilities **must never automatically collapse into one legacy `activity_type`.**
+- During transition, any mapping from a new capability to legacy activity behavior is **explicit,
+  server-owned, and limited to the particular legacy path being supported.**
+- A **multi-capability world site must not be forced to pretend it has one permanent universal
+  activity type** merely to satisfy future architecture.
+
+**Port cardinality (product/invariant requirement; final schema not chosen here)**
+- A **dockable-port capability has one canonical active dock anchor at a time.**
+- An **active anchor is not automatically a port.**
+- **Port identity is never inferred** from coordinates, legacy location type, activity type, display
+  name, or base identity.
+
+> **F2-1A recorded** as binding direction under the approved-in-principle Option C. It introduces no
+> schema and authorizes nothing; the anchor-generalization that would permit active non-location
+> world sites is a separate, future decision.
 
 ---
 
@@ -316,6 +375,17 @@ current **±10000 frontier remains unchanged.** No range decision is requested i
 10. **±10000 unchanged**; no range edits outside the separate World-Range Recon.
 11. **Recovery pointer is ship-row-held, verified-dock-only, never inferred/backfilled**; bases stay
     bootstrap/economy/one-time-assignment only.
+12. **The `locations`→`world_site` bridge is 1:1 and immutable** (one location ↔ one site); any
+    active site in map/movement/docking/legacy-activity/anchor infra is **location-backed**; a
+    **non-location-backed site exists only as draft/hidden** until a separate anchor-generalization
+    decision (deployed anchors are `{base,location}` only) — see §F2-1A.
+13. **No client / frontend / feature subsystem dual-writes `world_sites` and `locations`**; all
+    bridge/projection synchronization is **server-owned and defined later.**
+14. **A dockable-port capability has at most one canonical active dock anchor at a time; an active
+    anchor is not automatically a port; port identity is never inferred** (coords / location type /
+    activity type / name / base).
+15. **New capabilities never auto-collapse into one legacy `activity_type`**; any capability→legacy
+    mapping is explicit, server-owned, and scoped to the specific legacy path supported.
 
 ---
 
