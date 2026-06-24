@@ -1,16 +1,14 @@
-# Byeharu — F2 Compatibility / Model Decision Packet (DRAFT)
+# Byeharu — F2 Compatibility / Model Decision Packet (APPROVED COMPATIBILITY / WORLD-MODEL ARCHITECTURE)
 
-> **DRAFT — NO IMPLEMENTATION AUTHORIZATION.**
-> Design/product decision packet only. It presents bounded compatibility-model options and one
-> recommended model; it authorizes **nothing**. No migration, schema, resolver, anchor seed, map
-> update, zone system, pirate spawn, flag change, or coordinate-bound change is approved by this
-> document. OSN remains **paused**. The post-F2 sequence (§7) is conditional and illustrative.
->
-> **Amendment (this revision):** F2-1 (Option C) is **approved in principle** as the intended F2
-> direction. §**F2-1A** adds the binding **transitional / authority / activity / port-cardinality
-> boundaries** so the new `world_sites` layer is never quietly forced back into `locations` because
-> the deployed `space_anchors` support only typed owners `{base, location}`. This remains
-> design/product only — no implementation is authorized.
+> **APPROVED COMPATIBILITY / WORLD-MODEL ARCHITECTURE — NO IMPLEMENTATION AUTHORIZATION.**
+> This document **records the APPROVED compatibility / world-model architecture direction** for
+> Byeharu (Decision Ledger, §1). It authorizes **no implementation** (see §6). **This decision does
+> not authorize implementation, including migrations, schema changes, `world_sites` or bridge
+> creation, anchor seeding, resolver or DOCK-0 changes, OSN behavior changes, dock/recovery fields,
+> capability or geographic-zone systems, pirate/encounter behavior, map changes, coordinate-bound
+> changes, flag changes, census reruns, or changes to the protected dirty checkout.** OSN remains
+> **paused**. The post-F2 sequence (§7) is conditional and illustrative; the five listed product
+> decisions (§5) remain **open**.
 
 **Evidence base:** the APPROVED architecture packet on `main`
 (`docs/PORTCENTRIC_DECISION_PACKET.md`, PR #22 / `bd927f3`) + the completed **F1 World Model
@@ -31,17 +29,19 @@ mining, exploration, zones, lifecycle, and future systems.
 
 | # | F2 decision | Recommended model (this packet) | Status |
 | --- | --- | --- | --- |
-| F2-1 | World-object identity | **Option C** — additive canonical world-site identity layer (working name `world_sites`) + a **strict 1:1 immutable bridge** from `locations`; new responsibilities attach to the new layer, `locations.id` stays as compatibility key | **approved in principle** (boundaries → §F2-1A) |
-| F2-2 | Anchors | Keep `space_anchors` **closed `{base,location}`**; ports use **only `kind='location'`**; **no base anchors**; generalization deferred to an explicit later decision | requested now |
-| F2-3 | Port capability | **Port-first**, explicit capability/designation on a canonical location anchor; never inferred; legacy `activity_type` stays the combat/presence runtime truth | requested now |
-| F2-4 | Geographic zones | **New future layer**, separate from `zone_state`/`location_state`/pressure; owns geometry/policy only; pirate interception via an adapter **outside OSN** | direction now, design deferred |
-| F2-5 | Docking transition | **Dual-path + shadow verification**; DOCK-0 intact; future `docked_anchor_id` nullable + **asymmetric**; presence stays a projection | requested now (no cutover) |
-| F2-6 | Recovery | **Ship-row-held** `last_safe_dock_anchor_id` (survives departure + destruction); verified-dock-only; never inferred/backfilled; Haven Prime fallback | requested now (no impl) |
-| F2-7 | Lifecycle | Bounded product decision over `draft/active/hidden/retired/archived`; mandatory safety rules now; final schema deferred | direction now, schema deferred |
-| F2-8 | Coordinate range | **Defer** envelope enlargement to the separate World-Range Recon; **±10000 unchanged** | deferred |
+| F2-1 | World-object identity | **Option C** — additive canonical world-site identity layer (working name `world_sites`) + immutable legacy bridge; new responsibilities attach to the new layer, `locations.id` stays as compatibility key | ✅ **APPROVED architecture direction** |
+| F2-1A | Transitional / authority / activity / port boundaries | Bridge cardinality (per-direction 1:1 for bridged rows; unbridged only while draft/hidden, no active anchor, no live reference); `world_sites` owns new-layer truth while `locations` stays operationally authoritative during transition; no dual-write; capabilities never auto-collapse to one `activity_type`; one active dock anchor per port, anchor≠port, identity never inferred | ✅ **Binding APPROVED direction** |
+| F2-2 | Anchors | Keep `space_anchors` **closed `{base,location}`**, **location-backed anchors only**, **no base anchors** | ✅ **APPROVED initial transitional constraint** (later generalization separately gated) |
+| F2-3 | Port capability | **Port-first** explicit capability on a canonical location anchor; never inferred | ✅ **APPROVED direction** (legacy `activity_type` remains runtime truth during transition) |
+| F2-4 | Geographic zones | **New separate layer**, not `zone_state`/`location_state`; pirate interception via an adapter **outside OSN** | ✅ **APPROVED architecture direction** (geometry/crossing impl deferred) |
+| F2-5 | Docking transition | **Dual-path + shadow verification**; DOCK-0 intact; future `docked_anchor_id` nullable + **asymmetric**; presence stays a projection | ✅ **APPROVED transition strategy** (no implementation or cutover authorized) |
+| F2-6 | Recovery | **Ship-row-held** `last_safe_dock_anchor_id` + **Haven Prime fallback**; verified-dock-only; never inferred/backfilled | ✅ **APPROVED recovery direction** (no schema/implementation authorized) |
+| F2-7 | Lifecycle | Mandatory safety rules over `draft/active/hidden/retired/archived` | ✅ **APPROVED safety direction** (final vocabulary + port evacuation/diversion policy remain OPEN) |
+| F2-8 | Coordinate range | **Defer** envelope enlargement to the separate World-Range Recon; **±10000 unchanged** | ✅ **APPROVED deferral** (frontier unchanged pending World-Range Recon) |
 
 The centerpiece is **F2-1**. Its corrected framing (Option C) is what keeps every other decision
-additive and prevents both a big-bang FK rewrite **and** future capability/lifecycle spaghetti.
+additive and prevents both a big-bang FK rewrite **and** future capability/lifecycle spaghetti. The
+**five product decisions in §5 remain OPEN.**
 
 ---
 
@@ -424,14 +424,19 @@ current **±10000 frontier remains unchanged.** No range decision is requested i
 
 ---
 
-## 6. Explicit non-authorizations
+## 6. Explicit non-authorizations (durable; remain true after merge)
 
-This packet does **not** authorize, and nothing below is approved: any migration (`0064`+); any
-schema change; creating/altering `world_sites` or any table; the `locations`→`world_sites` bridge
-implementation; any `space_anchors` schema change or **anchor seeding**; any resolver / DOCK-0 / OSN
-movement behavior change; adding `docked_anchor_id` / `last_safe_dock_anchor_id`; any capability or
-geographic-zone system; any pirate spawning / route-crossing / encounter work; any map/UI change;
-any coordinate-bound change; any feature-flag change; any deployment; any census rerun; and any
+**This decision does not authorize implementation, including migrations, schema changes,
+`world_sites` or bridge creation, anchor seeding, resolver or DOCK-0 changes, OSN behavior changes,
+dock/recovery fields, capability or geographic-zone systems, pirate/encounter behavior, map changes,
+coordinate-bound changes, flag changes, census reruns, or changes to the protected dirty checkout.**
+
+Equivalently and specifically not approved: any migration (`0064`+); any schema change;
+creating/altering `world_sites`, the `locations`→`world_sites` bridge, or any table; any
+`space_anchors` schema change or **anchor seeding**; any resolver / DOCK-0 / OSN movement behavior
+change; adding `docked_anchor_id` / `last_safe_dock_anchor_id`; any capability or geographic-zone
+system; any pirate spawning / route-crossing / encounter work; any map/UI change; any
+coordinate-bound change; any feature-flag change; any deployment; any census rerun; and any
 modification of the protected dirty checkout (no stash/commit/delete/switch/fast-forward).
 
 ---
@@ -443,8 +448,8 @@ modification of the protected dirty checkout (no stash/commit/delete/switch/fast
 
 | # | Step (conditional) | Nature | Gate |
 | --- | --- | --- | --- |
-| G0 | Approve the F2 compatibility model (this packet) | decision | this packet |
-| G1 | Define the **minimal `world_sites` identity + 1:1 bridge contract** (design doc; names/schema TBD) | docs | G0 |
+| G0 | Approve the F2 compatibility model (this packet) | decision | ✅ **APPROVED** (this decision) |
+| G1 | **Separately chartered technical design/recon for the first additive transition slice** — the minimal `world_sites` identity + bridge contract (design doc; names/schema TBD). **This — not migration `0064` — is the next authorized task.** | docs/recon | G0 ✅ |
 | G2 | Define the **port capability** + `kind='location'` anchor association (design doc) | docs | G1 |
 | G3 | Additive, dark schema slice for `world_sites` + bridge (no FK rewrite), verified on the disposable chain | future impl | G2 + explicit approval |
 | G4 | Port anchor placement + **shadow** docking resolution (no cutover) | future impl | G3 verified |
@@ -455,6 +460,8 @@ modification of the protected dirty checkout (no stash/commit/delete/switch/fast
 
 ---
 
-*DRAFT — design/product only, no implementation authorization. Approve §2 (or amend per decision) to
-make **G0 → G1** eligible; everything beyond stays gated. Baseline holds: migration head 0063, both
-flags as-is, `space_anchors` dark, OSN paused.*
+*APPROVED COMPATIBILITY / WORLD-MODEL ARCHITECTURE — no implementation authorization. The §1 ledger
+is approved; the five §5 product decisions remain open. The only next authorized task is a
+**separately chartered technical design/recon for the first additive transition slice (G1)** — not
+migration `0064`. Everything beyond stays gated step-by-step; any flag enable is a separate go/no-go.
+Baseline holds: migration head 0063, both flags as-is, `space_anchors` dark, OSN paused.*
