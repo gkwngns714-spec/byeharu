@@ -1,0 +1,111 @@
+name: OSN Enablement Preflight
+
+# READ-ONLY production preflight for the OSN v1 enablement decision. It runs the frozen pre-enable checks
+# (scripts/osn-enablement-preflight.sql) against the live DB and FAILS CLOSED unless every check passes.
+# It performs NO flag write, NO migration, NO gameplay mutation, NO secret output, and has NO follow-up
+# action. A green run is evidence the operator may choose to enable; this workflow never enables anything.
+#
+# SAFETY (GitHub-side):
+#   * manual only (workflow_dispatch) with NO inputs — nothing to parameterize, so no arbitrary SQL.
+#   * environment: production — GitHub HALTS the job for the required reviewer's approval BEFORE any step,
+#     and the production DB secrets live ONLY in that environment scope (no ungated workflow can read them).
+#   * least-privilege GITHUB_TOKEN (contents: read); no repo write.
+#   * single concurrency group; checkout of the immutable triggering commit SHA.
+#
+# READ-ONLY (DB-side): the only SQL run is the static, committed scripts/osn-enablement-preflight.sql, which
+#   opens a READ-ONLY transaction (default_transaction_read_only = on) and contains no DDL/DML/grant/flag
+#   write.
+#
+# CONNECTIVITY = the repo's EXISTING proven production read-only path (identical to the passing production
+#   jobs in osn3-anchor1a-catalog-spotcheck.yml / osn3-anchor2-p0a-homebase-census.yml): after `supabase link`,
+#   resolve EXACTLY ONE session-pooler endpoint from the Supabase Management API keyed by the project ref,
+#   connect via psql to that <label>.pooler.supabase.com host on the SESSION pooler port 5432 as the
+#   ref-bound tenant user `postgres.<ref>`, over sslmode=verify-full pinned to the tracked Supabase root CA
+#   (scripts/supabase-prod-ca.crt). No direct per-project host is constructed; no new secret/host is added.
+#   Secrets reused verbatim: SUPABASE_PROJECT_ID + SUPABASE_ACCESS_TOKEN + SUPABASE_DB_PASSWORD.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-enablement-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    # Manual dispatch on main ONLY (mirrors the sibling production read-only spotcheck jobs).
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - name: Checkout the immutable triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link protected production project (read-only usage)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Run read-only preflight over the approved session pooler (verify-full, pinned CA) and fail closed
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          REF="$SUPABASE_PROJECT_ID"
+          CA_FILE="${GITHUB_WORKSPACE}/scripts/supabase-prod-ca.crt"
+          EXPECTED_CA_SHA256="807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6cafa"
+          command -v psql >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null; }
+          command -v jq   >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq jq >/dev/null; }
+          # Fail closed if `supabase link` did not bind the protected ref.
+          linked_ref="$(cat supabase/.temp/project-ref 2>/dev/null || true)"
+          [ "$linked_ref" = "$REF" ] || { echo "FAIL: linked project ref does not match SUPABASE_PROJECT_ID"; exit 1; }
+          # Admit the pinned Supabase root CA BEFORE any connection (fail closed on fingerprint mismatch).
+          fp="$(openssl x509 -in "$CA_FILE" -noout -fingerprint -sha256 2>/dev/null | sed 's/^.*=//; s/://g' | tr 'A-Z' 'a-z')"
+          [ "$fp" = "$EXPECTED_CA_SHA256" ] || { echo "FAIL: pinned CA fingerprint mismatch (expected $EXPECTED_CA_SHA256, got $fp)"; exit 1; }
+          # Resolve EXACTLY ONE session-pooler endpoint from the Management API keyed by the ref (host only).
+          POOLER="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 --connect-timeout 10 --max-time 30 \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/${REF}/config/database/pooler")" \
+            || { echo "FAIL: Supabase Management API request failed"; exit 1; }
+          PHOST="$(printf '%s' "$POOLER" | jq -er '
+            ( if type=="array" then (if length==1 then .[0] else error("not exactly one endpoint") end)
+              elif type=="object" then . else error("unexpected response shape") end )
+            | (.db_host // error("missing db_host"))
+            | if (type=="string" and length>0) then . else error("empty db_host") end')" \
+            || { echo "FAIL: Management API response is not exactly one pooler endpoint"; exit 1; }
+          printf '%s' "$PHOST" | grep -qE '^[a-z0-9][a-z0-9.-]*\.pooler\.supabase\.com$' \
+            || { echo "FAIL: resolved host is not a <label>.pooler.supabase.com endpoint"; exit 1; }
+          # Session pooler port FORCED to 5432; ref-bound tenant; verify-full pinned to the tracked CA.
+          CONN="host=${PHOST} port=5432 user=postgres.${REF} dbname=postgres sslmode=verify-full sslrootcert=${CA_FILE}"
+          echo "[diag] verifier=${PHOST}:5432 (session pooler); tenant=postgres.<ref>; tls=verify-full; sslrootcert=pinned CA"
+          out="$(PGPASSWORD="$SUPABASE_DB_PASSWORD" PGCONNECT_TIMEOUT=20 psql "$CONN" \
+            -v ON_ERROR_STOP=1 -X -x -f scripts/osn-enablement-preflight.sql)"
+          {
+            echo '### OSN enablement preflight (read-only)'
+            echo ''
+            echo '```'
+            echo "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if echo "$out" | grep -q 'OVERALL_PASS=true'; then
+            echo "PREFLIGHT PASSED — GO FOR CONTROLLED ENABLEMENT (operator decision; this workflow does not enable)." >> "$GITHUB_STEP_SUMMARY"
+            echo "PREFLIGHT PASSED"
+          else
+            echo "PREFLIGHT FAILED — ABORT BEFORE ENABLE. Leave the flag false; make no repair." >> "$GITHUB_STEP_SUMMARY"
+            echo "PREFLIGHT FAILED: at least one check did not pass (see summary)." >&2
+            exit 1
+          fi
