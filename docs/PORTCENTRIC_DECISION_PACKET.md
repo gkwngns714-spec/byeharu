@@ -1,11 +1,11 @@
-# Byeharu — Port-Centric + Modular World Content Architecture Decision Packet (DRAFT)
+# Byeharu — Port-Centric + Modular World Content Architecture Decision Packet (APPROVED ARCHITECTURE DECISION)
 
-> **DRAFT — NO IMPLEMENTATION AUTHORIZATION.**
-> Design/product only. This document recommends architectural direction and *requests* decisions;
-> it authorizes **nothing**. No code, schema, migration, seed, resolver, flag, map-behavior, or
-> OSN-implementation change is proposed *active* here. No migration number, seeding, resolver
-> extension, UI/map change, world-boundary change, or flag enablement in this packet is approved.
-> OSN remains **paused**; no OSN restart is authorized by this packet.
+> **APPROVED ARCHITECTURE DECISION — NO IMPLEMENTATION AUTHORIZATION.**
+> This document **records the APPROVED canonical architectural direction** (Part A / Decision
+> Ledger D1) and the separated world-content layers. It authorizes **no runtime implementation**
+> (see D5). **D2 (Generation-1 layout) remains a PROPOSAL only** — not an approved seed or
+> implementation plan; **D3 and D4 remain OPEN.** OSN remains **paused**; no OSN restart is
+> authorized by this decision.
 
 **Canonical basis (do not relitigate):** ANCHOR-2 P0-A census + PORT-CENTRIC pivot at
 **PR #21 / `dc58993`**. Census ran **once** (run `28061856879`, commit `a12743f`, read-only
@@ -255,25 +255,29 @@ docking/recovery — **never** the definition of the world. It does not constrai
 
 # PART D — Decision Ledger
 
-### D1. Approved architectural direction (requested for approval)
-- OSN is the **navigation foundation**; gameplay content sits **above** it via narrow contracts;
-  OSN owns only ship spatial-state / movement / docking-legality / recovery mechanics (A9).
-- **Identity ≠ coordinates ≠ type ≠ zone ≠ name** (A1); **anchor = placement only** (A2);
-  **capabilities are independent & composable**, port is an explicit capability (A3).
-- **Zones are real spatial areas**, membership independent of identity/anchor; geometry staged
-  bounded-first (A4). **Void is first-class** navigable space (A5).
-- **Lifecycle = retire/hide/archive, preserve history**; port retirement needs evacuation rules
-  (A6).
-- **Dock/recovery** per A7 incl. the **asymmetric** transitional invariant; **legacy bases** stay
-  bootstrap/economy/one-time-assignment only.
-- **Zone-entry / route-crossing** is a future contract OSN must *enable but not own* (A8).
-- **Four separated range concepts**; ±10000 frozen now (Part B).
+### D1. APPROVED canonical architectural direction
+Approved and recorded as the canonical architectural direction for Byeharu:
+- Byeharu uses **OSN as the shared navigation foundation**.
+- **World content is modular:** stable identity, anchor placement, composable capabilities, zones,
+  and lifecycle are **separate layers** (A1–A6, A9).
+- **Ports are explicit capabilities** — not universal location types and not automatic consequences
+  of anchors (A2/A3).
+- **Zones are real spatial areas** and may contain void, pirate activity, exploration, mining,
+  ports, and later content (A4/A5).
+- **Pirate / mining / exploration / trade systems remain above OSN** through narrow contracts (A8/A9).
+- **Existing coordinates remain stable;** the present **±10000 range remains only a temporary
+  technical frontier** (Part B).
+- **Legacy bases remain bootstrap / economy / one-time-assignment records only** (A7).
+- The **current dock / last-safe-dock / Haven Prime recovery direction is approved in principle,
+  subject to the later exact schema decision** (A7; exact constraints → D4).
 
-### D2. Proposed Generation-1 content decisions (requested for approval)
+### D2. Generation-1 content — PROPOSAL ONLY (not approved as a seed or implementation plan)
+**This is a proposed Generation-1 infrastructure layout only. It is NOT an approved seed or
+implementation plan**, confers no runtime dockability, and seeds nothing.
 - Gen-1 candidate policy `{trade_outpost, safe_zone, rally_point}` + `activity_type='none'`
   (temporary selection filter only).
 - 5-port dense plus-core in ≈ `[-2000,2000]²`, **Haven Prime** at origin as shared recovery/starter
-  port. **Design only — nothing seeded.**
+  port. **Design only — nothing seeded; remains subject to a separate future approval.**
 
 ### D3. Open PRODUCT decisions (need your input)
 1. Initial capability set to support first (which of port/safe-haven/pirate/mining/exploration/
@@ -298,12 +302,16 @@ docking/recovery — **never** the definition of the world. It does not constrai
 6. The eventual long-term technical coordinate envelope value + the single coordinated cutover
    (Part B) — **after** the World-Range Recon.
 
-### D5. Explicit NON-authorizations (in force)
-No merge of PR #22; no migration `0064`+; no `space_anchors` seed or schema change; no DOCK-0 /
-resolver / OSN movement behavior change; no zones / pirate spawning / route crossings / encounters;
-no map change; no coordinate-bound change; no flag change; no census rerun. **No** touching the
-dirty checkout, its stale untracked draft, or its worktree (no stash/commit/delete/switch/
-fast-forward).
+### D5. Explicit NON-authorizations (durable; remain true after merge)
+**This decision does not authorize runtime implementation, including migrations, schema changes,
+anchor seeding, resolver changes, OSN behavior changes, map changes, coordinate-bound changes,
+feature-flag changes, census reruns, or modification of the protected dirty checkout.**
+
+Equivalently, still in force: no migration `0064`+; no `space_anchors` seed or schema change; no
+DOCK-0 / resolver / OSN movement behavior change; no zones / pirate spawning / route crossings /
+encounters; no map change; no coordinate-bound change; no flag change; no census rerun; no touching
+the protected dirty checkout, its stale untracked draft, or its worktree (no
+stash/commit/delete/switch/fast-forward).
 
 ---
 
@@ -350,8 +358,8 @@ Each item is **read-only inspection** producing findings + compatibility require
 
 | # | Step (conditional) | Nature | Gate |
 | --- | --- | --- | --- |
-| **F0** | **Approve the broadened architecture** (Part A) + Gen-1 content direction (Part C). | decision | this packet |
-| **F1** | **Read-only World Model Recon** (Part E §1–10). | read-only | F0 |
+| **F0** | **Approve the broadened architecture** (Part A / D1). | decision | ✅ **APPROVED** (this decision) |
+| **F1** | **Read-only World Model Recon** (Part E §1–10) — **the only next authorized task.** | read-only | F0 ✅ |
 | **F2** | **Compatibility / model decision** — resolve D4 (identity, anchor, capabilities, zone geometry, dock fields) from F1 findings. | decision (docs) | F1 |
 | **F3** | **Separate World-Range Recon + decision** (Part E §11 / Part B) — only if/when a boundary change is wanted. | read-only + decision | independent |
 | **F4** | **Only then:** later **additive, dark** implementation + **Generation-1 seeding**, each step independently approved, verified on the disposable chain, flags untouched. | future work | F2 (+F3 if range) |
@@ -364,6 +372,7 @@ any touch of the dirty checkout / its stale draft / its worktree.
 
 ---
 
-*DRAFT — design/product only, no implementation authorization. Approve Part A (architecture) and
-Part C (Gen-1 direction), or amend per section, to make **F0 → F1 (recon)** eligible — everything
-beyond stays gated step-by-step. Baseline holds: migration head 0063, both flags as-is, OSN paused.*
+*APPROVED ARCHITECTURE DECISION — no runtime implementation authorization. Part A architecture (D1)
+is approved; **D2 remains a Generation-1 proposal; D3 and D4 remain open.** The only next authorized
+task is **F1 — the read-only World Model Recon** (Part E §1–10); everything beyond stays gated
+step-by-step. Baseline holds: migration head 0063, both flags as-is, OSN paused.*
