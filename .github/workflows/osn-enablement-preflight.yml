@@ -1,0 +1,78 @@
+name: OSN Enablement Preflight
+
+# READ-ONLY production preflight for the OSN v1 enablement decision. It runs the frozen pre-enable checks
+# (scripts/osn-enablement-preflight.sql) against the live DB and FAILS CLOSED unless every check passes.
+# It performs NO flag write, NO migration, NO gameplay mutation, NO secret output, and has NO follow-up
+# action. A green run is evidence the operator may choose to enable; this workflow never enables anything.
+#
+# SAFETY (GitHub-side):
+#   * manual only (workflow_dispatch) with NO inputs — nothing to parameterize, so no arbitrary SQL.
+#   * environment: production — GitHub HALTS the job for the required reviewer's approval BEFORE any step,
+#     and the production DB secrets live ONLY in that environment scope (no ungated workflow can read them).
+#   * least-privilege GITHUB_TOKEN (contents: read); no repo write.
+#   * single concurrency group; checkout of the immutable triggering commit SHA.
+#
+# READ-ONLY (DB-side): the only SQL run is the static, committed scripts/osn-enablement-preflight.sql, which
+#   opens a READ-ONLY transaction (default_transaction_read_only = on) and contains no DDL/DML/grant/flag
+#   write. Credentials/connectivity reuse the existing migration-deploy workflow's proven set
+#   (SUPABASE_PROJECT_ID + SUPABASE_ACCESS_TOKEN + SUPABASE_DB_PASSWORD); no new secret is introduced.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-enablement-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - name: Checkout the immutable triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link project (validates credentials; no secret printed)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Run read-only preflight and fail closed
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Connect to the SAME project DB the deploy reaches, using ONLY the existing deploy secrets.
+          # Host is derived from the project ref (db.<ref>.supabase.co); no new secret/pooler is introduced.
+          out="$(PGPASSWORD="$SUPABASE_DB_PASSWORD" psql \
+            -h "db.${SUPABASE_PROJECT_ID}.supabase.co" -p 5432 -U postgres -d postgres \
+            --set=sslmode=require -v ON_ERROR_STOP=1 -X -x \
+            -f scripts/osn-enablement-preflight.sql)"
+          {
+            echo '### OSN enablement preflight (read-only)'
+            echo ''
+            echo '```'
+            echo "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if echo "$out" | grep -q 'OVERALL_PASS=t'; then
+            echo "PREFLIGHT PASSED — GO FOR CONTROLLED ENABLEMENT (operator decision; this workflow does not enable)." >> "$GITHUB_STEP_SUMMARY"
+            echo "PREFLIGHT PASSED"
+          else
+            echo "PREFLIGHT FAILED — ABORT BEFORE ENABLE. Leave the flag false; make no repair." >> "$GITHUB_STEP_SUMMARY"
+            echo "PREFLIGHT FAILED: at least one check did not pass (see summary)." >&2
+            exit 1
+          fi
