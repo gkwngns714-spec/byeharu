@@ -51,11 +51,13 @@ begin
   raise notice 'ok: arrival processor EXECUTE = service_role only';
 end $$;
 
--- 4) the migration introduced NO new client-callable function: the authenticated/anon EXECUTE surface in
---    schema public is exactly the canonical 14-RPC inventory (no docking/coordinate writer among them).
+-- 4) the DOCK-0 migration introduced NO new client-callable function (its docking primitive is
+--    service_role-only). Over the FULL applied chain the authenticated/anon EXECUTE surface is the
+--    canonical inventory: the prior 14 RPCs PLUS the OSN-4 public Stop wrapper command_main_ship_space_stop
+--    (added by migration 0064 — the only other client RPC in the chain) → 15 canonical RPCs.
 do $$
 declare v_list text; v_expected text :=
-  'bootstrap_me,cancel_build_order,command_main_ship_space_move,get_combat_reports,get_my_expedition_preview,'
+  'bootstrap_me,cancel_build_order,command_main_ship_space_move,command_main_ship_space_stop,get_combat_reports,get_my_expedition_preview,'
   'get_world_map,move_main_ship_to_location,repair_main_ship,request_leave_location,request_main_ship_return,'
   'request_retreat,send_fleet_to_location,send_main_ship_expedition,train_units';
 begin
@@ -67,7 +69,7 @@ begin
   if v_list is distinct from v_expected then
     raise exception 'PERM FAIL: client-callable surface drifted. expected=[%] actual=[%]', v_expected, v_list;
   end if;
-  raise notice 'ok: client-callable surface unchanged (14 canonical RPCs); docking primitive absent from it';
+  raise notice 'ok: client-callable surface is the 15 canonical RPCs (14 + OSN-4 command_main_ship_space_stop); docking primitive absent from it';
 end $$;
 
 -- 5) the arrival cron job still exists exactly once @ "30 seconds".
