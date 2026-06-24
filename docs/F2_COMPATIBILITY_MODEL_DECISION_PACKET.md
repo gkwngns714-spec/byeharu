@@ -130,29 +130,43 @@ into `locations`** simply because the deployed `space_anchors` currently support
 **Transitional boundary**
 1. `world_sites` is the future canonical stable identity for **point-like authored world content
    only.** It does **not** replace zones, and **void space requires no `world_site`.**
-2. Every existing `locations.id` receives **exactly one** immutable bridge to **one** `world_site`.
-3. A `world_site` has **at most one** legacy `location` bridge.
-4. In the first compatibility transition, **any `world_site` that is active** in the existing map,
+2. **Bridge cardinality (precise — replaces any "exactly one each" phrasing):**
+   - Every existing legacy `locations` row has **exactly one** immutable bridge to **one**
+     `world_site`.
+   - Every **location-backed** `world_site` has **exactly one** immutable bridge to **one** legacy
+     `location`.
+   - A `world_site` may be **unbridged only while** it is `draft` or `hidden`, has **no active
+     anchor**, and is **not referenced by any live** map, movement, docking, legacy activity,
+     combat, presence, report, or other current runtime path.
+   - An **unbridged `world_site` cannot become active runtime content** until a separately approved
+     **anchor-generalization and compatibility decision** exists.
+3. In the first compatibility transition, **any `world_site` that is active** in the existing map,
    movement, docking, legacy activity, or current anchor infrastructure **must be location-backed
-   through that bridge.**
-5. During that first transition, **canonical placement for such sites remains a
+   through its bridge.**
+4. During that first transition, **canonical placement for such sites remains a
    `space_anchors(kind='location')` record.** New ports are therefore **location-backed world sites
    with explicit port capability and an active location anchor.**
-6. A **non-location-backed `world_site` may exist only as draft/hidden design content** until a
-   **separately approved future anchor-generalization decision.** Active **independent** world sites
-   are **not supported by the currently deployed anchor schema** and must not be implied to be.
-7. This bridge is a **temporary compatibility adapter**, **not** a permanent requirement that all
+5. Active **independent** (non-location-backed) world sites are **not supported by the currently
+   deployed anchor schema** and must not be implied to be; such sites may exist **only** as
+   `draft`/`hidden` design content until the separately approved anchor-generalization decision.
+6. This bridge is a **temporary compatibility adapter**, **not** a permanent requirement that all
    future world content must live in `locations`.
 
-**Authority boundary**
-- **`world_sites` owns** new stable identity, lifecycle, and composable capability **truth.**
-- **`locations` remains a legacy compatibility/activity projection** while existing fleet, movement,
-  presence, combat, report, and legacy-map consumers still require `location_id`.
+**Authority boundary (transition)**
+- **`world_sites` owns** new-layer stable identity, lifecycle, and composable capability **truth.**
+- **During the first transition, `locations` remains *operationally authoritative*** for existing
+  legacy status, `activity_type`, coordinates, and current runtime consumers (fleet, movement,
+  presence, combat, report, legacy-map) **until a later, explicitly approved, server-owned
+  projection or cutover.** `world_sites` owning new-layer truth does **not** transfer operational
+  authority over legacy runtime away from `locations` yet.
+- **New-layer lifecycle/capability state must not automatically alter legacy runtime behavior.**
 - **Legacy `locations.x/y` remains compatibility input for old paths only** — it is **not** the
   long-term identity relationship.
-- **No client, frontend component, or feature subsystem may independently dual-write `world_sites`
-  and `locations`.** Any bridge/projection synchronization must be **server-owned and explicitly
+- **No client, frontend component, or feature subsystem may dual-write or independently synchronize
+  these layers.** Any bridge/projection synchronization must be **server-owned and explicitly
   defined later.**
+- **"Freeze `locations`" means** no new world-feature semantics and no permanent feature columns; it
+  does **not** prohibit future safety, bug-fix, or compatibility maintenance.
 
 **Activity boundary**
 - New capabilities **must never automatically collapse into one legacy `activity_type`.**
@@ -344,7 +358,7 @@ current **±10000 frontier remains unchanged.** No range decision is requested i
 
 | Current artifact | Impact under the recommended model | Evidence (F1) |
 | --- | --- | --- |
-| `locations` | Frozen as **legacy compatibility/activity projection**; gains a 1:1 immutable bridge row to `world_sites`; **no new feature columns**; existing FKs untouched | `world_map.sql:48-72`; FK web in F1 §A |
+| `locations` | Frozen as **legacy compatibility/activity projection** (no new feature surface; still **operationally authoritative** for legacy runtime during transition); gains **exactly one** immutable bridge to a `world_site`; existing FKs untouched | `world_map.sql:48-72`; FK web in F1 §A |
 | `activity_type` | **Unchanged runtime truth** for combat/presence/dock gates during transition; not replaced by capabilities | `player_rpcs_combat.sql:42-44`, `presence_combat_hook.sql:13-19`, `worldstate_fns.sql:185` |
 | `location_presence` | Stays a **compatibility/activity projection**; never becomes dock identity or a recovery input; `'none'`-presence-on-dock behavior preserved | `presence_system.sql:17-41`, `dock0:138` |
 | `space_anchors` | **Untouched schema**; stays dark; only `kind='location'` used later for ports; no base anchors; no kind generalization | `0063` throughout |
@@ -361,7 +375,10 @@ current **±10000 frontier remains unchanged.** No range decision is requested i
 1. **Existing FKs keep pointing at `locations.id`** through the first transition — no FK rewrite.
 2. **The `locations`→`world_sites` bridge is the only identity-translation boundary** — unique,
    immutable after assignment; no translation via names, coordinates, `activity_type`, or FE logic.
-3. **No new feature-specific columns on `locations`.**
+3. **No new world-feature semantics or permanent feature columns on `locations`** ("freeze" = no
+   new feature surface; future safety / bug-fix / compatibility maintenance remains allowed). During
+   the transition `locations` stays **operationally authoritative** for legacy status/`activity_type`/
+   coordinates/runtime consumers until an explicitly approved server-owned projection or cutover.
 4. **`activity_type` remains the combat/presence runtime truth**; combat/presence behavior is not
    replaced in slice 1.
 5. **DOCK-0 stays behaviorally intact**; no anchor-docking writer cutover without a passed shadow
@@ -375,10 +392,12 @@ current **±10000 frontier remains unchanged.** No range decision is requested i
 10. **±10000 unchanged**; no range edits outside the separate World-Range Recon.
 11. **Recovery pointer is ship-row-held, verified-dock-only, never inferred/backfilled**; bases stay
     bootstrap/economy/one-time-assignment only.
-12. **The `locations`→`world_site` bridge is 1:1 and immutable** (one location ↔ one site); any
-    active site in map/movement/docking/legacy-activity/anchor infra is **location-backed**; a
-    **non-location-backed site exists only as draft/hidden** until a separate anchor-generalization
-    decision (deployed anchors are `{base,location}` only) — see §F2-1A.
+12. **The bridge is immutable and one-to-one per direction for bridged rows** — each legacy
+    `location` ↔ exactly one `world_site`, and each **location-backed** `world_site` ↔ exactly one
+    `location`; a site may be **unbridged only while `draft`/`hidden`, with no active anchor and no
+    live runtime reference**, and **cannot become active runtime content** until a separate
+    anchor-generalization + compatibility decision (deployed anchors are `{base,location}` only) —
+    see §F2-1A.
 13. **No client / frontend / feature subsystem dual-writes `world_sites` and `locations`**; all
     bridge/projection synchronization is **server-owned and defined later.**
 14. **A dockable-port capability has at most one canonical active dock anchor at a time; an active
