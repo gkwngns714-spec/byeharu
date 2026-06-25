@@ -105,20 +105,24 @@ do $$
 declare v_u uuid; v_zone uuid; v_loc uuid; n int;
 begin
   select id into v_zone from public.zones limit 1;
-  insert into public.locations (zone_id, name, location_type, x, y)
-    values (v_zone, 'worldhub1a-port-'||replace(gen_random_uuid()::text,'-',''), 'trade_outpost', 2.0, 2.0)
+  insert into public.locations (zone_id, name, location_type, x, y, physical_role)
+    values (v_zone, 'worldhub1a-port-'||replace(gen_random_uuid()::text,'-',''), 'trade_outpost', 2.0, 2.0, 'city')
     returning id into v_loc;
+  -- eligible under the 0066 trigger (active docking + one active anchor; parent zone/sector active)
+  insert into public.location_services (location_id, service, status) values (v_loc, 'docking', 'active');
+  insert into public.space_anchors (kind, location_id, space_x, space_y, status) values ('location', v_loc, 2.0, 2.0, 'active');
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1a.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_u;
 
   insert into public.player_home_port (player_id, location_id) values (v_u, v_loc);
   -- one per player (PK)
   begin insert into public.player_home_port (player_id, location_id) values (v_u, v_loc); raise exception 'second home port accepted'; exception when unique_violation then null; end;
-  -- location RESTRICT: cannot delete a location while it is a home port
-  begin delete from public.locations where id=v_loc; raise exception 'location deleted while referenced as home port'; exception when foreign_key_violation then null; end;
+  -- location RESTRICT: cannot delete a location while it is referenced (by the affiliation and/or its anchor)
+  begin delete from public.locations where id=v_loc; raise exception 'location deleted while referenced'; exception when foreign_key_violation then null; end;
   -- player CASCADE: deleting the user removes the affiliation
   delete from auth.users where id=v_u;
   select count(*) into n from public.player_home_port where player_id=v_u; if n<>0 then raise exception 'home port survived user delete'; end if;
+  delete from public.space_anchors where location_id=v_loc;  -- anchor FK is RESTRICT → drop before the location
   delete from public.locations where id=v_loc; -- now unreferenced
   raise notice 'player_home_port ok: PK one-per-player, FK location RESTRICT, FK player CASCADE';
 end $$;
