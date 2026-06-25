@@ -241,13 +241,20 @@ drop table if exists _wh1a_rls;
 do $$
 declare n int; v_sectors int;
 begin
-  select count(*) into n from public.location_services; if n<>0 then raise exception 'location_services not empty (%)', n; end if;
+  -- NOTE: WORLD-HUB-1B-A (migration 0066) intentionally seeds three HIDDEN city/port ports, each with one
+  -- active docking service + aligned anchor (full content proven by worldhub1b-a-realchain-proof.sql). This
+  -- block therefore no longer asserts global emptiness; it asserts only that NO UNEXPECTED reclassification
+  -- or service exists beyond that authorized seed, and player_home_port stays empty. (Holds both before
+  -- 0066 — all counts 0 — and after it.)
+  select count(*) into n from public.location_services where not (service='docking' and status='active');
+  if n<>0 then raise exception 'unexpected non-(docking,active) location_services row(s): %', n; end if;
   select count(*) into n from public.player_home_port;  if n<>0 then raise exception 'player_home_port not empty (%)', n; end if;
-  select count(*) into n from public.locations where physical_role<>'unclassified'; if n<>0 then raise exception 'a location was left reclassified'; end if;
+  select count(*) into n from public.locations where physical_role not in ('unclassified','city','port');
+  if n<>0 then raise exception 'unexpected physical_role reclassification (% rows)', n; end if;
   -- map read still works and returns the seeded world
   v_sectors := jsonb_array_length((public.get_world_map())->'sectors');
   if v_sectors < 1 then raise exception 'get_world_map regression (% sectors)', v_sectors; end if;
-  raise notice 'no seed + compatibility ok: new tables empty, all unclassified, get_world_map intact (% sectors)', v_sectors;
+  raise notice 'no UNEXPECTED data + compatibility ok: only docking/active services, no stray roles, player_home_port empty, get_world_map intact (% sectors)', v_sectors;
 end $$;
 
 \echo ''
