@@ -147,6 +147,84 @@ begin
 end $$;
 
 \echo ''
+\echo '================= runtime RLS: real auth.uid() owner / non-owner / anon enforcement ================='
+-- Runtime supplement to the grant-level checks above. Switches the SESSION ROLE to authenticated/anon (the
+-- owner/superuser bypasses RLS, so role-switching is REQUIRED to actually exercise the policy) and sets
+-- request.jwt.claims so auth.uid() resolves — the same auth path the deployed client uses (mirrors the
+-- repository's set_config('request.jwt.claims', ...) idiom in osn3-s6a / osn3-anchor1a). Fixture ids are
+-- captured via \gset and interpolated ONLY into plain set_config lines (never inside a dollar-quoted DO body).
+do $$
+declare v_zone uuid; v_loc uuid; v_a uuid; v_b uuid;
+begin
+  select id into v_zone from public.zones limit 1;
+  insert into public.locations (zone_id, name, location_type, x, y, physical_role)
+    values (v_zone, 'worldhub1a-rls-'||replace(gen_random_uuid()::text,'-',''), 'trade_outpost', 3.0, 3.0, 'city')
+    returning id into v_loc;
+  insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1a.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_a;
+  insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1a.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_b;
+  insert into public.player_home_port (player_id, location_id) values (v_a, v_loc);  -- A's affiliation (privileged setup)
+  insert into public.location_services (location_id, service) values (v_loc, 'docking');
+  create temp table _wh1a_rls(ua uuid, ub uuid, loc uuid);
+  insert into _wh1a_rls values (v_a, v_b, v_loc);
+end $$;
+
+select ua, ub, loc from _wh1a_rls \gset
+
+-- ── User A (owner): sees exactly own row; cannot write player_home_port; cannot read/write location_services ──
+set role authenticated;
+select set_config('request.jwt.claim.sub', :'ua', true), set_config('request.jwt.claims', json_build_object('sub', :'ua')::text, true);
+do $$
+begin
+  if (select count(*) from public.player_home_port) <> 1 then raise exception 'A: owner-read expected exactly 1 own row'; end if;
+  begin perform 1 from public.location_services limit 1; raise exception 'A: authenticated SELECT location_services ALLOWED'; exception when insufficient_privilege then null; end;
+  begin insert into public.player_home_port(player_id, location_id) values (auth.uid(), (select id from public.locations where physical_role='city' limit 1)); raise exception 'A: authenticated INSERT player_home_port ALLOWED'; exception when insufficient_privilege then null; end;
+  begin update public.player_home_port set affiliated_at = now(); raise exception 'A: authenticated UPDATE player_home_port ALLOWED'; exception when insufficient_privilege then null; end;
+  begin delete from public.player_home_port; raise exception 'A: authenticated DELETE player_home_port ALLOWED'; exception when insufficient_privilege then null; end;
+  begin insert into public.location_services(location_id, service) values ((select id from public.locations where physical_role='city' limit 1), 'market'); raise exception 'A: authenticated INSERT location_services ALLOWED'; exception when insufficient_privilege then null; end;
+  raise notice 'A ok: owner-read=1 row; player_home_port insert/update/delete denied; location_services read+write denied';
+end $$;
+
+-- ── User B (non-owner): RLS owner-scoping hides A's row ──
+reset role;
+select set_config('request.jwt.claim.sub', '', true), set_config('request.jwt.claims', '', true);
+set role authenticated;
+select set_config('request.jwt.claim.sub', :'ub', true), set_config('request.jwt.claims', json_build_object('sub', :'ub')::text, true);
+do $$
+begin
+  if (select count(*) from public.player_home_port) <> 0 then raise exception 'B: non-owner must see 0 rows (RLS owner-scoping failed)'; end if;
+  raise notice 'B ok: non-owner sees 0 rows';
+end $$;
+
+-- ── anon: no read or write of either table ──
+reset role;
+select set_config('request.jwt.claim.sub', '', true), set_config('request.jwt.claims', '', true);
+set role anon;
+do $$
+begin
+  begin perform 1 from public.player_home_port limit 1; raise exception 'anon SELECT player_home_port ALLOWED'; exception when insufficient_privilege then null; end;
+  begin insert into public.player_home_port(player_id, location_id) values (gen_random_uuid(), (select id from public.locations limit 1)); raise exception 'anon INSERT player_home_port ALLOWED'; exception when insufficient_privilege then null; end;
+  begin perform 1 from public.location_services limit 1; raise exception 'anon SELECT location_services ALLOWED'; exception when insufficient_privilege then null; end;
+  begin insert into public.location_services(location_id, service) values ((select id from public.locations limit 1), 'market'); raise exception 'anon INSERT location_services ALLOWED'; exception when insufficient_privilege then null; end;
+  raise notice 'anon ok: player_home_port + location_services read/write all denied';
+end $$;
+
+-- ── restore session role/claims BEFORE cleanup, then remove all fixtures ──
+reset role;
+select set_config('request.jwt.claim.sub', '', true), set_config('request.jwt.claims', '', true);
+do $$
+declare n int;
+begin
+  delete from auth.users where email like 'worldhub1a.%@example.com';  -- player FK CASCADE removes A's affiliation
+  delete from public.locations where name like 'worldhub1a-%';         -- location FK CASCADE removes service rows
+  select count(*) into n from auth.users where email like 'worldhub1a.%@example.com'; if n<>0 then raise exception 'fixture users remain (%)', n; end if;
+  select count(*) into n from public.locations where name like 'worldhub1a-%'; if n<>0 then raise exception 'fixture locations remain (%)', n; end if;
+  raise notice 'runtime RLS cleanup ok: fixture users + locations removed (affiliation/service rows cascaded)';
+end $$;
+drop table if exists _wh1a_rls;
+
+\echo ''
 \echo '================= no seed + compatibility ================='
 do $$
 declare n int; v_sectors int;
