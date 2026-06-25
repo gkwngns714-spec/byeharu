@@ -1,0 +1,43 @@
+name: WORLD-HUB-1B-A — real-migration-chain proof (disposable Supabase)
+
+# Authoritative proof for WORLD-HUB-1B-A (migration 0066): three HIDDEN starter-port locations + aligned
+# canonical anchors + active docking services, the six-part is_home_port_eligible() predicate, the narrow
+# privileged assign_home_port writer (FOR SHARE canonical lock order), and the player_home_port validity
+# trigger. Boots a DISPOSABLE local Supabase stack via the CLI applying the ACTUAL chain 0001..0066 — real
+# tables/CHECKs/RLS/grants/FKs/triggers and the real roles anon/authenticated/service_role. NOT a stub;
+# NEVER the live DB. Proves the ports stay hidden (absent from get_world_map), hidden ports are ineligible,
+# an active fixture is eligible only with all six terms, the trigger/function enforce eligibility, clients
+# cannot read/write/assign, and all fixtures are cleaned up. Seeds NO affiliation; changes NO flag. Runs on
+# push to worldhub branches. No production deploy, no live verifier, no prod DB.
+
+on:
+  push:
+    branches:
+      - 'worldhub*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0066)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: WORLD-HUB-1B-A real-chain proof (catalog / anchors / services / predicate / trigger / ACL)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldhub1b-a-realchain-proof.sql

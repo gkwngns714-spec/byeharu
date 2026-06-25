@@ -57,17 +57,23 @@ end $$;
 do $$
 declare n int; v_loc uuid;
 begin
-  select count(*) into n from public.locations where physical_role <> 'unclassified';
-  if n <> 0 then raise exception 'expected ALL existing locations unclassified, found % roled', n; end if;
+  -- STRICT ALLOWLIST: the ONLY non-'unclassified' locations are EXACTLY the three authorized 1B-A port IDs
+  -- (not a broad role filter — a 4th roled row, or any other id, fails). Holds before 0066 (0 rows) and after.
+  select count(*) into n from public.locations where physical_role <> 'unclassified'
+    and id not in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+  if n <> 0 then raise exception 'reclassified location outside the 3 authorized 1B-A port IDs (% extra)', n; end if;
+  select count(*) into n from public.locations where physical_role in ('city','port');
+  if n <> 0 and n <> 3 then raise exception 'expected 0 (pre-0066) or exactly 3 (post-0066) city/port ports, got %', n; end if;
 
-  select id into v_loc from public.locations limit 1;
+  -- exercise CHECK + revert on an ORIGINAL unclassified location (never a seeded port).
+  select id into v_loc from public.locations where physical_role = 'unclassified' limit 1;
   -- invalid role rejected
   begin update public.locations set physical_role='metropolis' where id=v_loc; raise exception 'invalid physical_role accepted'; exception when check_violation then null; end;
   -- valid role accepted, then reverted (no durable reclassification of seed data)
   update public.locations set physical_role='city' where id=v_loc;
   if (select physical_role from public.locations where id=v_loc) <> 'city' then raise exception 'valid role not applied'; end if;
   update public.locations set physical_role='unclassified' where id=v_loc;
-  raise notice 'physical_role ok: all unclassified; CHECK closed; valid role applies then reverts';
+  raise notice 'physical_role ok: no unexpected reclassification; CHECK closed; valid role applies then reverts';
 end $$;
 
 \echo ''
@@ -102,20 +108,24 @@ do $$
 declare v_u uuid; v_zone uuid; v_loc uuid; n int;
 begin
   select id into v_zone from public.zones limit 1;
-  insert into public.locations (zone_id, name, location_type, x, y)
-    values (v_zone, 'worldhub1a-port-'||replace(gen_random_uuid()::text,'-',''), 'trade_outpost', 2.0, 2.0)
+  insert into public.locations (zone_id, name, location_type, x, y, physical_role)
+    values (v_zone, 'worldhub1a-port-'||replace(gen_random_uuid()::text,'-',''), 'trade_outpost', 2.0, 2.0, 'city')
     returning id into v_loc;
+  -- eligible under the 0066 trigger (active docking + one active anchor; parent zone/sector active)
+  insert into public.location_services (location_id, service, status) values (v_loc, 'docking', 'active');
+  insert into public.space_anchors (kind, location_id, space_x, space_y, status) values ('location', v_loc, 2.0, 2.0, 'active');
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1a.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_u;
 
   insert into public.player_home_port (player_id, location_id) values (v_u, v_loc);
   -- one per player (PK)
   begin insert into public.player_home_port (player_id, location_id) values (v_u, v_loc); raise exception 'second home port accepted'; exception when unique_violation then null; end;
-  -- location RESTRICT: cannot delete a location while it is a home port
-  begin delete from public.locations where id=v_loc; raise exception 'location deleted while referenced as home port'; exception when foreign_key_violation then null; end;
+  -- location RESTRICT: cannot delete a location while it is referenced (by the affiliation and/or its anchor)
+  begin delete from public.locations where id=v_loc; raise exception 'location deleted while referenced'; exception when foreign_key_violation then null; end;
   -- player CASCADE: deleting the user removes the affiliation
   delete from auth.users where id=v_u;
   select count(*) into n from public.player_home_port where player_id=v_u; if n<>0 then raise exception 'home port survived user delete'; end if;
+  delete from public.space_anchors where location_id=v_loc;  -- anchor FK is RESTRICT → drop before the location
   delete from public.locations where id=v_loc; -- now unreferenced
   raise notice 'player_home_port ok: PK one-per-player, FK location RESTRICT, FK player CASCADE';
 end $$;
@@ -162,12 +172,15 @@ begin
   insert into public.locations (zone_id, name, location_type, x, y, physical_role)
     values (v_zone, 'worldhub1a-rls-'||replace(gen_random_uuid()::text,'-',''), 'trade_outpost', 3.0, 3.0, 'city')
     returning id into v_loc;
+  -- Make the fixture location home-port ELIGIBLE under the 0066 trigger (active docking + exactly one active
+  -- anchor; its parent zone/sector are active) BEFORE inserting the affiliation, so the trigger admits it.
+  insert into public.location_services (location_id, service, status) values (v_loc, 'docking', 'active');
+  insert into public.space_anchors (kind, location_id, space_x, space_y, status) values ('location', v_loc, 3.0, 3.0, 'active');
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1a.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_a;
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1a.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_b;
-  insert into public.player_home_port (player_id, location_id) values (v_a, v_loc);  -- A's affiliation (privileged setup, committed)
-  insert into public.location_services (location_id, service) values (v_loc, 'docking');
+  insert into public.player_home_port (player_id, location_id) values (v_a, v_loc);  -- A's affiliation (eligible; passes the 0066 trigger)
   create temp table _wh1a_rls(ua uuid, ub uuid, loc uuid);
   insert into _wh1a_rls values (v_a, v_b, v_loc);
 end $$;
@@ -229,6 +242,7 @@ do $$
 declare n int;
 begin
   delete from auth.users where email like 'worldhub1a.%@example.com';  -- player FK CASCADE removes A's affiliation
+  delete from public.space_anchors where location_id in (select id from public.locations where name like 'worldhub1a-%');  -- anchor FK is RESTRICT → drop before the location
   delete from public.locations where name like 'worldhub1a-%';         -- location FK CASCADE removes service rows
   select count(*) into n from auth.users where email like 'worldhub1a.%@example.com'; if n<>0 then raise exception 'fixture users remain (%)', n; end if;
   select count(*) into n from public.locations where name like 'worldhub1a-%'; if n<>0 then raise exception 'fixture locations remain (%)', n; end if;
@@ -241,13 +255,24 @@ drop table if exists _wh1a_rls;
 do $$
 declare n int; v_sectors int;
 begin
-  select count(*) into n from public.location_services; if n<>0 then raise exception 'location_services not empty (%)', n; end if;
+  -- STRICT ALLOWLIST (after fixture cleanup): the ONLY 1B-A data present is EXACTLY the three authorized ports
+  -- and their three fixed anchors + three fixed docking services (full content proven by the 1B-A proof). Any
+  -- row outside these exact fixed IDs fails — this is NOT a broad "no unexpected changes" filter. player_home_port
+  -- must hold no persistent affiliation. Holds before 0066 (all counts 0) and after.
+  select count(*) into n from public.location_services
+    where id not in ('b1a05001-0066-4a00-8a00-000000000051','b1a05002-0066-4a00-8a00-000000000052','b1a05003-0066-4a00-8a00-000000000053');
+  if n<>0 then raise exception 'location_services row outside the 3 authorized 1B-A service IDs (% extra)', n; end if;
+  select count(*) into n from public.space_anchors where kind='location' and status='active'
+    and id not in ('b1a0a001-0066-4a00-8a00-0000000000a1','b1a0a002-0066-4a00-8a00-0000000000a2','b1a0a003-0066-4a00-8a00-0000000000a3');
+  if n<>0 then raise exception 'active location anchor outside the 3 authorized 1B-A anchor IDs (% extra)', n; end if;
+  select count(*) into n from public.locations where physical_role <> 'unclassified'
+    and id not in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+  if n<>0 then raise exception 'reclassified location outside the 3 authorized 1B-A port IDs (% rows)', n; end if;
   select count(*) into n from public.player_home_port;  if n<>0 then raise exception 'player_home_port not empty (%)', n; end if;
-  select count(*) into n from public.locations where physical_role<>'unclassified'; if n<>0 then raise exception 'a location was left reclassified'; end if;
   -- map read still works and returns the seeded world
   v_sectors := jsonb_array_length((public.get_world_map())->'sectors');
   if v_sectors < 1 then raise exception 'get_world_map regression (% sectors)', v_sectors; end if;
-  raise notice 'no seed + compatibility ok: new tables empty, all unclassified, get_world_map intact (% sectors)', v_sectors;
+  raise notice 'strict allowlist ok: only the 3 authorized 1B-A ports/anchors/services exist, player_home_port empty, get_world_map intact (% sectors)', v_sectors;
 end $$;
 
 \echo ''
