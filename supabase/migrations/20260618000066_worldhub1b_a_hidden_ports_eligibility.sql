@@ -33,26 +33,31 @@ begin
   select id into v_zone_isr from public.zones where sector_id = v_sector_cn and name = 'Ion Storm Route' and status = 'active';
   if not found then raise exception 'WH1BA: Ion Storm Route missing or inactive'; end if;
 
-  -- Fail-closed seed: plain INSERT; unique(zone_id,name) makes any re-seed / name collision ABORT the
-  -- migration (NO ON CONFLICT DO NOTHING — never silently create ambiguous world data).
-  insert into public.locations (zone_id, name, location_type, x, y, activity_type, status, physical_role)
-    values (v_zone_wb,  'Haven Reach',         'trade_outpost', -50, -30, 'none', 'hidden', 'city') returning id into v_p1;
-  insert into public.locations (zone_id, name, location_type, x, y, activity_type, status, physical_role)
-    values (v_zone_isr, 'Slagworks Anchorage', 'trade_outpost',  70, -10, 'none', 'hidden', 'port') returning id into v_p2;
-  insert into public.locations (zone_id, name, location_type, x, y, activity_type, status, physical_role)
-    values (v_zone_isr, 'Driftmarch Waypost',  'trade_outpost',  10,  80, 'none', 'hidden', 'port') returning id into v_p3;
+  -- Fail-closed seed with STABLE LITERAL identity: each port/anchor/service row carries a fixed literal UUID
+  -- PK (the schema's id columns accept explicit values), so identity no longer depends on the mutable display
+  -- name. Plain INSERT — a duplicate PK OR the unique(zone_id,name) / one-active-anchor / one-per-kind
+  -- constraints ABORT the migration (NO ON CONFLICT DO NOTHING — never silently create ambiguous world data).
+  -- Fixed IDs (embed 0066, valid v4): location b1a000{01,02,03}-…, anchor b1a0a00{1,2,3}-…, service b1a0500{1,2,3}-….
+  v_p1 := 'b1a00001-0066-4a00-8a00-000000000001';  -- Haven Reach   (STARTER_PORT_1, starter-home)
+  v_p2 := 'b1a00002-0066-4a00-8a00-000000000002';  -- Slagworks Anchorage (STARTER_PORT_2)
+  v_p3 := 'b1a00003-0066-4a00-8a00-000000000003';  -- Driftmarch Waypost  (STARTER_PORT_3)
+
+  insert into public.locations (id, zone_id, name, location_type, x, y, activity_type, status, physical_role) values
+    (v_p1, v_zone_wb,  'Haven Reach',         'trade_outpost', -50, -30, 'none', 'hidden', 'city'),
+    (v_p2, v_zone_isr, 'Slagworks Anchorage', 'trade_outpost',  70, -10, 'none', 'hidden', 'port'),
+    (v_p3, v_zone_isr, 'Driftmarch Waypost',  'trade_outpost',  10,  80, 'none', 'hidden', 'port');
 
   -- Aligned canonical anchors: space_x/space_y EXACTLY equal locations.x/y (no marker-anchor mismatch).
-  insert into public.space_anchors (kind, location_id, space_x, space_y, status) values
-    ('location', v_p1, -50, -30, 'active'),
-    ('location', v_p2,  70, -10, 'active'),
-    ('location', v_p3,  10,  80, 'active');
+  insert into public.space_anchors (id, kind, location_id, space_x, space_y, status) values
+    ('b1a0a001-0066-4a00-8a00-0000000000a1', 'location', v_p1, -50, -30, 'active'),
+    ('b1a0a002-0066-4a00-8a00-0000000000a2', 'location', v_p2,  70, -10, 'active'),
+    ('b1a0a003-0066-4a00-8a00-0000000000a3', 'location', v_p3,  10,  80, 'active');
 
   -- One active docking service per port (dockability authority lives here, not in activity_type).
-  insert into public.location_services (location_id, service, status) values
-    (v_p1, 'docking', 'active'),
-    (v_p2, 'docking', 'active'),
-    (v_p3, 'docking', 'active');
+  insert into public.location_services (id, location_id, service, status) values
+    ('b1a05001-0066-4a00-8a00-000000000051', v_p1, 'docking', 'active'),
+    ('b1a05002-0066-4a00-8a00-000000000052', v_p2, 'docking', 'active'),
+    ('b1a05003-0066-4a00-8a00-000000000053', v_p3, 'docking', 'active');
 end $$;
 
 -- ── 2. Six-part eligibility predicate — the SINGLE shared definition (function + trigger both call it) ───

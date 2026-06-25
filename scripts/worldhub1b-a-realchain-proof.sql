@@ -22,27 +22,31 @@
 do $$
 declare r record; n int;
 begin
+  -- exact-content check, keyed on the FIXED LITERAL location UUIDs (identity, not the mutable name)
   for r in
     select * from (values
-      ('Haven Reach','city','Outer Haven',1,'Wreck Belt',-50::float8,-30::float8),
-      ('Slagworks Anchorage','port','Crimson Nebula',2,'Ion Storm Route',70::float8,-10::float8),
-      ('Driftmarch Waypost','port','Crimson Nebula',2,'Ion Storm Route',10::float8,80::float8)
-    ) as v(name, role, sector_name, sector_index, zone_name, x, y)
+      ('b1a00001-0066-4a00-8a00-000000000001'::uuid,'Haven Reach',        'city','Outer Haven',   1,'Wreck Belt',     -50::float8,-30::float8),
+      ('b1a00002-0066-4a00-8a00-000000000002'::uuid,'Slagworks Anchorage','port','Crimson Nebula',2,'Ion Storm Route', 70::float8,-10::float8),
+      ('b1a00003-0066-4a00-8a00-000000000003'::uuid,'Driftmarch Waypost', 'port','Crimson Nebula',2,'Ion Storm Route', 10::float8, 80::float8)
+    ) as v(id, name, role, sector_name, sector_index, zone_name, x, y)
   loop
     select count(*) into n
       from public.locations l
       join public.zones z   on z.id = l.zone_id
       join public.sectors s on s.id = z.sector_id
-      where l.name = r.name and l.physical_role = r.role and l.status = 'hidden'
+      where l.id = r.id and l.name = r.name and l.physical_role = r.role and l.status = 'hidden'
         and l.x = r.x and l.y = r.y
         and z.name = r.zone_name and z.status = 'active'
         and s.name = r.sector_name and s.sector_index = r.sector_index and s.status = 'active';
-    if n <> 1 then raise exception 'catalog: % not found with exact content/active hierarchy (got %)', r.name, n; end if;
+    if n <> 1 then raise exception 'catalog: % (id %) not found with exact content/active hierarchy (got %)', r.name, r.id, n; end if;
   end loop;
-  -- exactly three city/port-roled locations exist (no unexpected extra port)
+  -- STRICT ALLOWLIST: the ONLY city/port locations are EXACTLY the three fixed IDs (no concealed extra port)
+  select count(*) into n from public.locations where physical_role in ('city','port')
+    and id not in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+  if n <> 0 then raise exception 'unexpected city/port location outside the 3 fixed IDs (% extra)', n; end if;
   select count(*) into n from public.locations where physical_role in ('city','port');
   if n <> 3 then raise exception 'expected exactly 3 city/port locations, got %', n; end if;
-  raise notice 'catalog ok: 3 hidden ports with exact content + active parents';
+  raise notice 'catalog ok: exactly the 3 fixed-ID hidden ports with exact content + active parents';
 end $$;
 
 \echo ''
@@ -50,15 +54,27 @@ end $$;
 do $$
 declare r record; n int; ax float8; ay float8;
 begin
-  for r in select id, name, x, y from public.locations where physical_role in ('city','port') loop
+  -- each port: exactly one active location anchor with the FIXED anchor id and coords == location coords
+  for r in
+    select * from (values
+      ('b1a00001-0066-4a00-8a00-000000000001'::uuid,'b1a0a001-0066-4a00-8a00-0000000000a1'::uuid,-50::float8,-30::float8),
+      ('b1a00002-0066-4a00-8a00-000000000002'::uuid,'b1a0a002-0066-4a00-8a00-0000000000a2'::uuid, 70::float8,-10::float8),
+      ('b1a00003-0066-4a00-8a00-000000000003'::uuid,'b1a0a003-0066-4a00-8a00-0000000000a3'::uuid, 10::float8, 80::float8)
+    ) as v(loc_id, anchor_id, x, y)
+  loop
     select count(*) into n from public.space_anchors a
-      where a.location_id = r.id and a.kind = 'location' and a.status = 'active';
-    if n <> 1 then raise exception 'anchor: % must have exactly one active location anchor (got %)', r.name, n; end if;
+      where a.location_id = r.loc_id and a.kind = 'location' and a.status = 'active';
+    if n <> 1 then raise exception 'anchor: location % must have exactly one active anchor (got %)', r.loc_id, n; end if;
     select space_x, space_y into ax, ay from public.space_anchors
-      where location_id = r.id and kind = 'location' and status = 'active';
-    if ax <> r.x or ay <> r.y then raise exception 'anchor: % coords (%,%) != location (%,%)', r.name, ax, ay, r.x, r.y; end if;
+      where id = r.anchor_id and location_id = r.loc_id and kind = 'location' and status = 'active';
+    if not found then raise exception 'anchor id % not found for location %', r.anchor_id, r.loc_id; end if;
+    if ax <> r.x or ay <> r.y then raise exception 'anchor % coords (%,%) != location (%,%)', r.anchor_id, ax, ay, r.x, r.y; end if;
   end loop;
-  raise notice 'anchors ok: one active per port, coords == location coords';
+  -- STRICT ALLOWLIST: the ONLY active location-kind anchors are the three fixed anchor IDs
+  select count(*) into n from public.space_anchors where kind='location' and status='active'
+    and id not in ('b1a0a001-0066-4a00-8a00-0000000000a1','b1a0a002-0066-4a00-8a00-0000000000a2','b1a0a003-0066-4a00-8a00-0000000000a3');
+  if n <> 0 then raise exception 'unexpected active location anchor outside the 3 fixed IDs (% extra)', n; end if;
+  raise notice 'anchors ok: exactly the 3 fixed-ID active anchors, coords == location coords';
 end $$;
 
 \echo ''
@@ -66,12 +82,23 @@ end $$;
 do $$
 declare r record; n int;
 begin
-  for r in select id, name from public.locations where physical_role in ('city','port') loop
+  -- each port: exactly one active docking service with the FIXED service id
+  for r in
+    select * from (values
+      ('b1a00001-0066-4a00-8a00-000000000001'::uuid,'b1a05001-0066-4a00-8a00-000000000051'::uuid),
+      ('b1a00002-0066-4a00-8a00-000000000002'::uuid,'b1a05002-0066-4a00-8a00-000000000052'::uuid),
+      ('b1a00003-0066-4a00-8a00-000000000003'::uuid,'b1a05003-0066-4a00-8a00-000000000053'::uuid)
+    ) as v(loc_id, svc_id)
+  loop
     select count(*) into n from public.location_services
-      where location_id = r.id and service = 'docking' and status = 'active';
-    if n <> 1 then raise exception 'docking: % must have one active docking service (got %)', r.name, n; end if;
+      where id = r.svc_id and location_id = r.loc_id and service = 'docking' and status = 'active';
+    if n <> 1 then raise exception 'docking: service id % for location % not exactly one active (got %)', r.svc_id, r.loc_id, n; end if;
   end loop;
-  raise notice 'docking services ok';
+  -- STRICT ALLOWLIST: the ONLY location_services rows are the three fixed docking services
+  select count(*) into n from public.location_services
+    where id not in ('b1a05001-0066-4a00-8a00-000000000051','b1a05002-0066-4a00-8a00-000000000052','b1a05003-0066-4a00-8a00-000000000053');
+  if n <> 0 then raise exception 'unexpected location_services row outside the 3 fixed IDs (% extra)', n; end if;
+  raise notice 'docking services ok: exactly the 3 fixed-ID active docking services';
 end $$;
 
 \echo ''

@@ -57,10 +57,13 @@ end $$;
 do $$
 declare n int; v_loc uuid;
 begin
-  -- WORLD-HUB-1B-A (0066) seeds 3 city/port ports; assert only that NO UNEXPECTED role exists beyond the
-  -- approved {city,port} (everything else stays 'unclassified'). Holds before 0066 (all unclassified) and after.
-  select count(*) into n from public.locations where physical_role not in ('unclassified','city','port');
-  if n <> 0 then raise exception 'unexpected physical_role reclassification, found % roled outside {city,port}', n; end if;
+  -- STRICT ALLOWLIST: the ONLY non-'unclassified' locations are EXACTLY the three authorized 1B-A port IDs
+  -- (not a broad role filter — a 4th roled row, or any other id, fails). Holds before 0066 (0 rows) and after.
+  select count(*) into n from public.locations where physical_role <> 'unclassified'
+    and id not in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+  if n <> 0 then raise exception 'reclassified location outside the 3 authorized 1B-A port IDs (% extra)', n; end if;
+  select count(*) into n from public.locations where physical_role in ('city','port');
+  if n <> 0 and n <> 3 then raise exception 'expected 0 (pre-0066) or exactly 3 (post-0066) city/port ports, got %', n; end if;
 
   -- exercise CHECK + revert on an ORIGINAL unclassified location (never a seeded port).
   select id into v_loc from public.locations where physical_role = 'unclassified' limit 1;
@@ -252,20 +255,24 @@ drop table if exists _wh1a_rls;
 do $$
 declare n int; v_sectors int;
 begin
-  -- NOTE: WORLD-HUB-1B-A (migration 0066) intentionally seeds three HIDDEN city/port ports, each with one
-  -- active docking service + aligned anchor (full content proven by worldhub1b-a-realchain-proof.sql). This
-  -- block therefore no longer asserts global emptiness; it asserts only that NO UNEXPECTED reclassification
-  -- or service exists beyond that authorized seed, and player_home_port stays empty. (Holds both before
-  -- 0066 — all counts 0 — and after it.)
-  select count(*) into n from public.location_services where not (service='docking' and status='active');
-  if n<>0 then raise exception 'unexpected non-(docking,active) location_services row(s): %', n; end if;
+  -- STRICT ALLOWLIST (after fixture cleanup): the ONLY 1B-A data present is EXACTLY the three authorized ports
+  -- and their three fixed anchors + three fixed docking services (full content proven by the 1B-A proof). Any
+  -- row outside these exact fixed IDs fails — this is NOT a broad "no unexpected changes" filter. player_home_port
+  -- must hold no persistent affiliation. Holds before 0066 (all counts 0) and after.
+  select count(*) into n from public.location_services
+    where id not in ('b1a05001-0066-4a00-8a00-000000000051','b1a05002-0066-4a00-8a00-000000000052','b1a05003-0066-4a00-8a00-000000000053');
+  if n<>0 then raise exception 'location_services row outside the 3 authorized 1B-A service IDs (% extra)', n; end if;
+  select count(*) into n from public.space_anchors where kind='location' and status='active'
+    and id not in ('b1a0a001-0066-4a00-8a00-0000000000a1','b1a0a002-0066-4a00-8a00-0000000000a2','b1a0a003-0066-4a00-8a00-0000000000a3');
+  if n<>0 then raise exception 'active location anchor outside the 3 authorized 1B-A anchor IDs (% extra)', n; end if;
+  select count(*) into n from public.locations where physical_role <> 'unclassified'
+    and id not in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+  if n<>0 then raise exception 'reclassified location outside the 3 authorized 1B-A port IDs (% rows)', n; end if;
   select count(*) into n from public.player_home_port;  if n<>0 then raise exception 'player_home_port not empty (%)', n; end if;
-  select count(*) into n from public.locations where physical_role not in ('unclassified','city','port');
-  if n<>0 then raise exception 'unexpected physical_role reclassification (% rows)', n; end if;
   -- map read still works and returns the seeded world
   v_sectors := jsonb_array_length((public.get_world_map())->'sectors');
   if v_sectors < 1 then raise exception 'get_world_map regression (% sectors)', v_sectors; end if;
-  raise notice 'no UNEXPECTED data + compatibility ok: only docking/active services, no stray roles, player_home_port empty, get_world_map intact (% sectors)', v_sectors;
+  raise notice 'strict allowlist ok: only the 3 authorized 1B-A ports/anchors/services exist, player_home_port empty, get_world_map intact (% sectors)', v_sectors;
 end $$;
 
 \echo ''
