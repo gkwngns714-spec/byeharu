@@ -4,8 +4,8 @@ import type { ActiveSpaceRoute } from '../src/features/map/spaceRouteModel'
 import { worldToViewBox } from '../src/features/map/openSpaceTransform'
 
 // OSN-3 S6B-ROUTE — pure proofs for the presentational route. SpaceRoutePresentation is hook-free, so
-// calling it returns its React element tree for inspection (no browser/page/DB). Run alongside the model
-// spec via `npm run verify:osn:s6b-route`.
+// calling it returns its React element tree for inspection (no browser/page/DB). The route is one thing
+// (outbound open-space) — no returning/base styling. Run via `npm run verify:osn:s6b-route`.
 
 type El = { type: unknown; props: Record<string, unknown> }
 function* walk(node: unknown): Generator<El> {
@@ -37,7 +37,7 @@ function textOf(node: unknown): string {
 const ORIGIN = { x: 1000, y: 2000 }
 const TARGET = { x: 3000, y: -4000 }
 const route = (over: Partial<ActiveSpaceRoute> = {}): ActiveSpaceRoute => ({
-  origin: ORIGIN, target: TARGET, state: 'outbound', targetKind: 'space',
+  origin: ORIGIN, target: TARGET,
   departAt: '2026-01-01T00:00:00Z', arriveAt: '2999-01-01T00:00:00Z', ...over,
 })
 
@@ -50,7 +50,6 @@ test('endpoints project through the fixed worldToViewBox transform (co-register 
   expect(line.props.y1).toBeCloseTo(a.y, 9)
   expect(line.props.x2).toBeCloseTo(b.x, 9)
   expect(line.props.y2).toBeCloseTo(b.y, 9)
-  // destination ring sits exactly on the projected committed target (same transform the ship marker uses)
   const dest = findByTestId(tree, 'space-route-destination')!
   const ring = firstOfType(dest, 'circle')!
   expect(ring.props.cx).toBeCloseTo(b.x, 9)
@@ -68,9 +67,10 @@ test('committed destination is present and distinct from the S6C prospective-tar
   expect(findByTestId(tree, 's6c-space-move-target')).toBeUndefined()
 })
 
-test('outbound vs returning arrow', () => {
-  expect(textOf(SpaceRoutePresentation({ route: route({ state: 'outbound' }), k: 1 }))).toContain('→')
-  expect(textOf(SpaceRoutePresentation({ route: route({ state: 'returning' }), k: 1 }))).toContain('↩')
+test('outbound-only presentation: forward arrow, never a return arrow', () => {
+  const txt = textOf(SpaceRoutePresentation({ route: route(), k: 1 }))
+  expect(txt).toContain('→')
+  expect(txt).not.toContain('↩')
 })
 
 test('ETA shows a countdown for a future arrival', () => {

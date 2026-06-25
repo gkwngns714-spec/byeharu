@@ -3,8 +3,10 @@ import { resolveActiveSpaceRoute } from '../src/features/map/spaceRouteModel'
 import type { MarkerInputs } from '../src/features/map/resolveMainShipMarker'
 
 // OSN-3 S6B-ROUTE — pure unit proof for the active-coordinate-route render-model resolver. No browser/page.
-// The resolver defers ALL coherence to resolveMainShipMarker; these tests prove the route exists for one
-// coherent open-space coordinate transit and for NOTHING else. Run: `npm run verify:osn:s6b-route`.
+// The resolver defers coherence to resolveMainShipMarker AND restricts to the single coordinate kind the
+// deployed writer produces (target_kind='space'); it fails closed for every other kind. The route is one
+// thing only: an active OUTBOUND movement to a committed arbitrary open-space coordinate (no returning/base
+// presentation). Run: `npm run verify:osn:s6b-route`.
 
 const BASE = { x: 100, y: 200 }
 const LOC = { id: 'loc-A', x: 300, y: 400 }
@@ -36,7 +38,7 @@ const base = (over: Partial<MarkerInputs> = {}): MarkerInputs => ({
   base: BASE, locations: [LOC], ...over,
 })
 
-// A fully-coherent open-space coordinate transit (resolver §C → open_space_fixed outbound/returning).
+// A fully-coherent open-space coordinate transit (resolver §C → open_space_fixed), target_kind='space'.
 const coherentTransit = (over: Partial<SpaceMv> = {}): MarkerInputs =>
   base({
     mainShip: ship({ status: 'traveling', spatial_state: 'in_transit' }),
@@ -44,21 +46,30 @@ const coherentTransit = (over: Partial<SpaceMv> = {}): MarkerInputs =>
     spaceMovement: spaceMv(over),
   })
 
-test('route appears for one coherent active coordinate transit (outbound)', () => {
+test('route appears for one coherent active space-coordinate transit (outbound only)', () => {
   const r = resolveActiveSpaceRoute(coherentTransit(), midMs)
   expect(r).not.toBeNull()
-  expect(r!.state).toBe('outbound')
   expect(r!.origin).toEqual({ x: 1000, y: 2000 })
   expect(r!.target).toEqual({ x: 3000, y: -4000 })
-  expect(r!.targetKind).toBe('space')
   expect(r!.departAt).toBe(DEP)
   expect(r!.arriveAt).toBe(ARR)
+  // render model is geometry + timestamps only — no state/returning/targetKind semantics
+  expect(r).not.toHaveProperty('state')
+  expect(r).not.toHaveProperty('targetKind')
 })
 
-test('returning route when target_kind is base', () => {
-  const r = resolveActiveSpaceRoute(coherentTransit({ target_kind: 'base' }), midMs)
-  expect(r).not.toBeNull()
-  expect(r!.state).toBe('returning')
+test('fail closed: target_kind="location" (docking) renders no coordinate route', () => {
+  expect(resolveActiveSpaceRoute(coherentTransit({ target_kind: 'location' }), midMs)).toBeNull()
+})
+
+test('fail closed: target_kind="base" (would be a coordinate Return) renders nothing', () => {
+  expect(resolveActiveSpaceRoute(coherentTransit({ target_kind: 'base' }), midMs)).toBeNull()
+})
+
+test('fail closed: unknown/malformed target_kind renders nothing', () => {
+  expect(resolveActiveSpaceRoute(coherentTransit({ target_kind: 'wormhole' }), midMs)).toBeNull()
+  // deliberate cast: prove a value outside the typed union still fails closed
+  expect(resolveActiveSpaceRoute(coherentTransit({ target_kind: undefined as unknown as string }), midMs)).toBeNull()
 })
 
 test('no route: home', () => {
@@ -92,7 +103,7 @@ test('no route: legacy fleet movement (spatial_state NULL) is legacy_dynamic, no
 })
 
 test('no route: destroyed', () => {
-  expect(resolveActiveSpaceRoute(coherentTransit() && base({
+  expect(resolveActiveSpaceRoute(base({
     mainShip: ship({ status: 'destroyed', spatial_state: 'in_transit' }),
     mainShipFleet: fleet({ status: 'moving', active_space_movement_id: 'mv1' }),
     spaceMovement: spaceMv(),

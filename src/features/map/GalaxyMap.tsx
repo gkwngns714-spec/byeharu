@@ -6,8 +6,7 @@ import type { MainShipLite } from './useGalaxyMapData'
 import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
-import { MainShipMarker } from './MainShipMarker'
-import { SpaceRouteLine } from './SpaceRouteLine'
+import { shipLayer } from './SpaceRouteLine'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { useSpaceMoveCommand } from './useSpaceMoveCommand'
 import { useSpaceStopCommand } from './useSpaceStopCommand'
@@ -314,27 +313,18 @@ export function GalaxyMap({
             )
           })}
 
-          {/* OSN-3 S6B-ROUTE: read-only ACTIVE coordinate route (committed origin→target line + committed
-              destination marker + display-only ETA), drawn UNDER the ship marker, pointer-transparent.
-              Same data-dark gate as the marker (mainshipSendEnabled) — NOT bound to the space flag; it is
-              naturally empty in production because no coherent active coordinate movement can exist while
-              mainship_space_movement_enabled = false. Coherence comes solely from resolveActiveSpaceRoute. */}
-          {mainshipSendEnabled && (
-            <SpaceRouteLine
-              inputs={{ mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, base, locations }}
-              k={view.k}
-            />
-          )}
-
-          {/* OSN-1: local player's own main-ship marker — top of the transform group, pointer-transparent,
-              flag-gated. Read-only; position comes solely from resolveMainShipMarker. */}
-          {mainshipSendEnabled && (
-            <MainShipMarker
-              inputs={{ mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, base, locations }}
-              norm={norm}
-              k={view.k}
-            />
-          )}
+          {/* OSN-1 + OSN-3 S6B-ROUTE: the local player's own ship overlay layer, composed by the pure,
+              hook-free `shipLayer` helper (route UNDER the main-ship marker, in that order). Gated by the
+              existing `mainshipSendEnabled` data-dark gate — NOT the space-movement flag; both children are
+              naturally empty in production (no coherent active coordinate route can exist while
+              mainship_space_movement_enabled = false). Read-only; coherence comes solely from the resolvers.
+              The single helper is what the GalaxyMap-wiring unit test exercises (no duplicated wiring). */}
+          {shipLayer({
+            mainshipSendEnabled,
+            inputs: { mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, base, locations },
+            norm,
+            k: view.k,
+          })}
 
           {/* OSN-3 S6C — empty-space coordinate target preview (fixed-domain transform, pointer-transparent).
               Mounted only when the flag is on, the ship is eligible, and a within-bounds target is chosen. */}
