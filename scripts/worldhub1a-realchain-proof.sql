@@ -57,17 +57,20 @@ end $$;
 do $$
 declare n int; v_loc uuid;
 begin
-  select count(*) into n from public.locations where physical_role <> 'unclassified';
-  if n <> 0 then raise exception 'expected ALL existing locations unclassified, found % roled', n; end if;
+  -- WORLD-HUB-1B-A (0066) seeds 3 city/port ports; assert only that NO UNEXPECTED role exists beyond the
+  -- approved {city,port} (everything else stays 'unclassified'). Holds before 0066 (all unclassified) and after.
+  select count(*) into n from public.locations where physical_role not in ('unclassified','city','port');
+  if n <> 0 then raise exception 'unexpected physical_role reclassification, found % roled outside {city,port}', n; end if;
 
-  select id into v_loc from public.locations limit 1;
+  -- exercise CHECK + revert on an ORIGINAL unclassified location (never a seeded port).
+  select id into v_loc from public.locations where physical_role = 'unclassified' limit 1;
   -- invalid role rejected
   begin update public.locations set physical_role='metropolis' where id=v_loc; raise exception 'invalid physical_role accepted'; exception when check_violation then null; end;
   -- valid role accepted, then reverted (no durable reclassification of seed data)
   update public.locations set physical_role='city' where id=v_loc;
   if (select physical_role from public.locations where id=v_loc) <> 'city' then raise exception 'valid role not applied'; end if;
   update public.locations set physical_role='unclassified' where id=v_loc;
-  raise notice 'physical_role ok: all unclassified; CHECK closed; valid role applies then reverts';
+  raise notice 'physical_role ok: no unexpected reclassification; CHECK closed; valid role applies then reverts';
 end $$;
 
 \echo ''
