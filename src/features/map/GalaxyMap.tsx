@@ -7,6 +7,7 @@ import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './m
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { MainShipMarker } from './MainShipMarker'
+import { SpaceRouteLine } from './SpaceRouteLine'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { useSpaceMoveCommand } from './useSpaceMoveCommand'
 import { useSpaceStopCommand } from './useSpaceStopCommand'
@@ -312,6 +313,18 @@ export function GalaxyMap({
               />
             )
           })}
+
+          {/* OSN-3 S6B-ROUTE: read-only ACTIVE coordinate route (committed origin→target line + committed
+              destination marker + display-only ETA), drawn UNDER the ship marker, pointer-transparent.
+              Same data-dark gate as the marker (mainshipSendEnabled) — NOT bound to the space flag; it is
+              naturally empty in production because no coherent active coordinate movement can exist while
+              mainship_space_movement_enabled = false. Coherence comes solely from resolveActiveSpaceRoute. */}
+          {mainshipSendEnabled && (
+            <SpaceRouteLine
+              inputs={{ mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, base, locations }}
+              k={view.k}
+            />
+          )}
 
           {/* OSN-1: local player's own main-ship marker — top of the transform group, pointer-transparent,
               flag-gated. Read-only; position comes solely from resolveMainShipMarker. */}
