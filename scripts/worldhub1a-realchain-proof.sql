@@ -165,12 +165,15 @@ begin
   insert into public.locations (zone_id, name, location_type, x, y, physical_role)
     values (v_zone, 'worldhub1a-rls-'||replace(gen_random_uuid()::text,'-',''), 'trade_outpost', 3.0, 3.0, 'city')
     returning id into v_loc;
+  -- Make the fixture location home-port ELIGIBLE under the 0066 trigger (active docking + exactly one active
+  -- anchor; its parent zone/sector are active) BEFORE inserting the affiliation, so the trigger admits it.
+  insert into public.location_services (location_id, service, status) values (v_loc, 'docking', 'active');
+  insert into public.space_anchors (kind, location_id, space_x, space_y, status) values ('location', v_loc, 3.0, 3.0, 'active');
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1a.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_a;
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1a.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_b;
-  insert into public.player_home_port (player_id, location_id) values (v_a, v_loc);  -- A's affiliation (privileged setup, committed)
-  insert into public.location_services (location_id, service) values (v_loc, 'docking');
+  insert into public.player_home_port (player_id, location_id) values (v_a, v_loc);  -- A's affiliation (eligible; passes the 0066 trigger)
   create temp table _wh1a_rls(ua uuid, ub uuid, loc uuid);
   insert into _wh1a_rls values (v_a, v_b, v_loc);
 end $$;
@@ -232,6 +235,7 @@ do $$
 declare n int;
 begin
   delete from auth.users where email like 'worldhub1a.%@example.com';  -- player FK CASCADE removes A's affiliation
+  delete from public.space_anchors where location_id in (select id from public.locations where name like 'worldhub1a-%');  -- anchor FK is RESTRICT → drop before the location
   delete from public.locations where name like 'worldhub1a-%';         -- location FK CASCADE removes service rows
   select count(*) into n from auth.users where email like 'worldhub1a.%@example.com'; if n<>0 then raise exception 'fixture users remain (%)', n; end if;
   select count(*) into n from public.locations where name like 'worldhub1a-%'; if n<>0 then raise exception 'fixture locations remain (%)', n; end if;
