@@ -73,10 +73,10 @@ begin
   raise notice 'PERM ok: space_anchors/location_services have NO client privilege; movements stay authenticated-owner-read only (target_location_id never leaks to anon)';
 end $$;
 
--- 4) EXACT canonical authenticated surface — the prior 15 + the ONE new wrapper = exactly 16. Any missing
---    function, any UNEXPECTED authenticated-executable function, any overloaded/duplicate public callable
---    shape, or a count != 16 is a HARD FAILURE (no NOTICE-and-continue). This proves no additional
---    client-writable RPC has silently appeared — not merely that the new wrapper exists.
+-- 4) EXACT canonical authenticated surface — 17 over the full 0001..0068 chain (the OSN-HUB-1A wrapper PLUS
+--    the PORT-LAUNCH-1A read RPC get_osn_movement_readiness). Any missing function, any UNEXPECTED
+--    authenticated-executable function, any overloaded/duplicate public callable shape, or a count != 17 is a
+--    HARD FAILURE (no NOTICE-and-continue). This proves no additional client-writable RPC has silently appeared.
 do $$
 declare
   actual     text[];
@@ -84,7 +84,7 @@ declare
   n_distinct integer;
   expected   text[] := array[   -- MUST stay alphabetically sorted (matches array_agg order by proname)
     'bootstrap_me','cancel_build_order','command_main_ship_space_move','command_main_ship_space_move_to_location',
-    'command_main_ship_space_stop','get_combat_reports','get_my_expedition_preview','get_world_map',
+    'command_main_ship_space_stop','get_combat_reports','get_my_expedition_preview','get_osn_movement_readiness','get_world_map',
     'move_main_ship_to_location','repair_main_ship','request_leave_location','request_main_ship_return',
     'request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
 begin
@@ -104,13 +104,13 @@ begin
     raise exception 'PERM FAIL: UNEXPECTED authenticated-executable public function(s) — a new client-writable RPC appeared: %',
       (select array_agg(distinct x) from unnest(actual) x where not (x = any(expected)));
   end if;
-  -- exact count = 16, and no overloaded/duplicate public callable shape (total grants = distinct names = 16)
-  if n_total <> 16 then raise exception 'PERM FAIL: authenticated surface count = % (expected exactly 16): %', n_total, actual; end if;
-  if n_distinct <> 16 then raise exception 'PERM FAIL: an overloaded/duplicate authenticated callable exists (% grants across % distinct names): %', n_total, n_distinct, actual; end if;
+  -- exact count = 17, and no overloaded/duplicate public callable shape (total grants = distinct names = 17)
+  if n_total <> 17 then raise exception 'PERM FAIL: authenticated surface count = % (expected exactly 17): %', n_total, actual; end if;
+  if n_distinct <> 17 then raise exception 'PERM FAIL: an overloaded/duplicate authenticated callable exists (% grants across % distinct names): %', n_total, n_distinct, actual; end if;
   -- exact ordered array equality (belt-and-suspenders over the set checks above)
-  if actual is distinct from expected then raise exception 'PERM FAIL: authenticated surface != canonical 16. actual=%', actual; end if;
+  if actual is distinct from expected then raise exception 'PERM FAIL: authenticated surface != canonical 17. actual=%', actual; end if;
 
-  raise notice 'PERM ok: authenticated surface is EXACTLY the canonical 16 (15 + command_main_ship_space_move_to_location); no extras, none missing, no overloads, count=16';
+  raise notice 'PERM ok: authenticated surface is EXACTLY the canonical 17 (16 + get_osn_movement_readiness); no extras, none missing, no overloads, count=17';
 end $$;
 
 select 'OSN-HUB-1A REAL-CHAIN PERM/BOUNDARY: ALL PASSED' as result;
