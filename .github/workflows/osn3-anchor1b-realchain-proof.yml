@@ -2,13 +2,14 @@ name: OSN-ANCHOR-1B — real-migration-chain proof (disposable Supabase)
 
 # Authoritative proof for the OSN-ANCHOR-1B additive canonical-anchor schema (migration 0063). Boots a
 # DISPOSABLE local Supabase stack via the repository-supported CLI, applying the ACTUAL migration chain
-# 0001..0063 — real tables, CHECKs, indexes, RLS, triggers, grants, auth schema, and the real roles
-# anon/authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves the empty, server-only
+# 0001..0067 — real tables, CHECKs, indexes, RLS, triggers, grants, auth schema, and the real roles
+# anon/authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves the server-only
 # public.space_anchors contract: closed {base,location} kinds, exactly-one typed owner, finite in-bounds
 # coordinates, one-active-anchor-per-owner, immutability (active->retired only; retired terminal), base
 # ON DELETE CASCADE + location ON DELETE RESTRICT, server-only ACL, and that mainship_space_resolve_origin
-# is UNCHANGED (legacy_home still origin_not_anchored). Seeds nothing; asserts the table empty at the end;
-# touches NO flags. Runs on push to the OSN-3 branch(es). No production deploy, no live verifier, no prod DB.
+# is UNCHANGED (legacy_home still origin_not_anchored). Seeds nothing of its own; asserts the post-run table
+# equals EXACTLY the three WORLD-HUB-1B-A (migration 0066) baseline port anchors; touches NO flags. Runs on
+# push to the OSN-3 branch(es). No production deploy, no live verifier, no prod DB.
 
 on:
   push:
@@ -29,7 +30,7 @@ jobs:
         with:
           version: latest
 
-      - name: Start disposable local Supabase (applies migrations 0001..0063)
+      - name: Start disposable local Supabase (applies migrations 0001..0067)
         run: supabase start
 
       - name: Export local stack connection env (keys masked)
@@ -50,7 +51,7 @@ jobs:
             psql "$DB_URL" -X -c "delete from auth.users where email like 'osn3anchor1b.%@example.com';" || true
           fi
 
-      - name: Assert space-movement flag still FALSE + no fixtures + no anchors seeded (always)
+      - name: Assert space-movement flag still FALSE + no fixtures + space_anchors == exact 0067 WORLD-HUB baseline (always)
         if: always()
         run: |
           set -a; . /tmp/sbenv 2>/dev/null || true; set +a
@@ -60,8 +61,19 @@ jobs:
               select value::text into b from game_config where key='mainship_space_movement_enabled';
               if b is distinct from 'false' then raise exception 'space-movement flag changed: %', b; end if;
               select count(*) into n from auth.users where email like 'osn3anchor1b.%@example.com'; if n<>0 then raise exception '% fixture users remain', n; end if;
-              select count(*) into n from public.space_anchors; if n<>0 then raise exception '% anchor rows remain (no seed expected)', n; end if;
-              raise notice 'post-run ok: space_movement=false, no fixtures, space_anchors empty';
+              -- 0067 baseline (fail-closed, identity-based): public.space_anchors must hold EXACTLY the three
+              -- approved WORLD-HUB-1B-A canonical location anchors seeded by migration 0066 (fixed literal
+              -- identities; never matched on mutable display names) and NOTHING else. The ANCHOR-1B fixtures
+              -- must net-zero back to this baseline (no fixture-owned anchor rows remain).
+              select count(*) into n from public.space_anchors; if n<>3 then raise exception '0067 anchor baseline drift: % rows (expected exactly 3 WORLD-HUB-1B-A port anchors)', n; end if;
+              perform 1 from public.space_anchors where id='b1a0a001-0066-4a00-8a00-0000000000a1' and kind='location' and location_id='b1a00001-0066-4a00-8a00-000000000001' and base_id is null and space_x=-50 and space_y=-30 and status='active';
+              if not found then raise exception 'baseline anchor 1 (Haven Reach) missing or altered'; end if;
+              perform 1 from public.space_anchors where id='b1a0a002-0066-4a00-8a00-0000000000a2' and kind='location' and location_id='b1a00002-0066-4a00-8a00-000000000002' and base_id is null and space_x=70 and space_y=-10 and status='active';
+              if not found then raise exception 'baseline anchor 2 (Slagworks Anchorage) missing or altered'; end if;
+              perform 1 from public.space_anchors where id='b1a0a003-0066-4a00-8a00-0000000000a3' and kind='location' and location_id='b1a00003-0066-4a00-8a00-000000000003' and base_id is null and space_x=10 and space_y=80 and status='active';
+              if not found then raise exception 'baseline anchor 3 (Driftmarch Waypost) missing or altered'; end if;
+              select count(*) into n from public.space_anchors where id not in ('b1a0a001-0066-4a00-8a00-0000000000a1','b1a0a002-0066-4a00-8a00-0000000000a2','b1a0a003-0066-4a00-8a00-0000000000a3'); if n<>0 then raise exception '% unexpected anchor row(s) beyond the approved WORLD-HUB baseline', n; end if;
+              raise notice 'post-run ok: space_movement=false, no fixtures, space_anchors == exactly the 3 WORLD-HUB-1B-A baseline port anchors';
             end \$\$;"
           fi
 

@@ -1,6 +1,6 @@
 -- OSN-ANCHOR-1B — REAL-CHAIN proof for the additive canonical-anchor schema (migration 0063). Runs via psql
--- against a DISPOSABLE local Supabase stack whose schema is the ACTUAL migration chain 0001..0063 (NOT a stub,
--- NEVER the shared/live DB). Proves the empty, server-only public.space_anchors contract:
+-- against a DISPOSABLE local Supabase stack whose schema is the ACTUAL migration chain 0001..0067 (NOT a stub,
+-- NEVER the shared/live DB). Proves the server-only public.space_anchors contract:
 --   1  table/columns/types exist as intended; RLS on; partial-unique indexes + guard trigger present.
 --   2  only kind in {base, location} is accepted.
 --   3  each kind requires exactly its matching typed FK.
@@ -19,9 +19,12 @@
 --   17 mainship_space_resolve_origin is UNCHANGED: home/legacy_home still resolve origin_not_anchored, and the
 --      resolver descriptor (signature/SECDEF/search_path/owner/grants) is unchanged. (Item 16 — S1..S6A,
 --      DOCK-0, ANCHOR-1A non-regression — is proven by the sibling osn3-** real-chain proofs on the same push,
---      which boot the SAME 0001..0063 chain.)
+--      which boot the SAME 0001..0067 chain.)
 -- Seeds NO durable rows; fixtures use the 'osn3anchor1b.' email prefix and are removed at the end; the table is
--- asserted EMPTY at the end (no anchor seeded). Touches NO flags. NEVER touches the shared/live DB.
+-- asserted NET-ZERO against its pre-fixture baseline at the end (the fixture cleans up completely and leaves no
+-- rows of its own). The 3 permanent WORLD-HUB hidden-port location anchors seeded by migration 0066 are a
+-- separate WORLD-HUB baseline invariant (covered by the WORLD-HUB proof), NOT re-asserted here. Touches NO
+-- flags. NEVER touches the shared/live DB.
 
 \set ON_ERROR_STOP on
 
@@ -119,7 +122,7 @@ declare
   v_base1 uuid; v_base2 uuid; v_loc uuid;
   v_a_base1 uuid; v_a_base1b uuid; v_a_loc uuid;
   v_ship uuid;
-  v_ok boolean; v_state text; v_reason text; v_sqlstate text; n int;
+  v_ok boolean; v_state text; v_reason text; v_sqlstate text; n int; n_base0 int;
 begin
   -- ── fixtures ──────────────────────────────────────────────────────────────────────────────────────────
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -131,6 +134,10 @@ begin
   if v_base1 is null or v_base2 is null then raise exception 'fixture bases not auto-provisioned'; end if;
   select id into v_loc from locations where status='active' limit 1;
   if v_loc is null then raise exception 'no seeded active location for fixtures'; end if;
+  -- Pre-fixture baseline: on the full 0001..0067 chain this is the 3 permanent WORLD-HUB hidden-port location
+  -- anchors (migration 0066). The fixture must net-zero back to exactly this — it seeds nothing durable of its
+  -- own and must not disturb the baseline. (v_loc is an ACTIVE seeded location; the 0066 ports are status='hidden'.)
+  select count(*) into n_base0 from space_anchors;
 
   -- ── 6  coordinate domain rejections (base1 has no anchor yet → only the coord/not-null constraint can fail)
   begin v_ok:=true; insert into space_anchors(kind,base_id,space_x,space_y) values('base',v_base1,'NaN'::double precision,0); exception when others then v_sqlstate:=sqlstate; v_ok:=false; end;
@@ -209,12 +216,18 @@ begin
   v_reason := public.mainship_space_resolve_origin(v_ship)->>'reason';
   if v_reason <> 'origin_not_anchored' then raise exception 'resolver REGRESSION: legacy_home origin=% (expected origin_not_anchored)', v_reason; end if;
 
-  -- ── cleanup: remove the location anchor (location persists), then the fixture users (cascades bases →
-  --    base anchors, and the ship). Then prove the table is left EMPTY (no seed).
+  -- ── cleanup: remove the fixture's location anchor (location persists under ON DELETE RESTRICT), then the
+  --    fixture users (cascades bases → base anchors, and the ship). Then prove the fixture left NET-ZERO rows
+  --    of its own — the table returns to its pre-fixture baseline. (NOT a global-empty assertion: the 3
+  --    permanent WORLD-HUB hidden-port anchors from migration 0066 are a baseline invariant owned by the
+  --    WORLD-HUB proof and must remain untouched.)
   delete from space_anchors where location_id=v_loc;
   delete from auth.users where id in (v_u1, v_u2);
+  if exists (select 1 from space_anchors where location_id = v_loc or base_id in (v_base1, v_base2)) then
+    raise exception 'ANCHOR-1B cleanup incomplete: a fixture-owned anchor row (location/base) still remains';
+  end if;
   select count(*) into n from space_anchors;
-  if n<>0 then raise exception 'expected space_anchors empty after cleanup, got % rows', n; end if;
+  if n <> n_base0 then raise exception 'ANCHOR-1B cleanup: space_anchors=% rows, expected pre-fixture baseline % (fixture left net rows or disturbed the WORLD-HUB baseline)', n, n_base0; end if;
 
   raise notice 'behavioral contract ok: kinds/owners/coords/uniqueness/immutability/cascade/restrict/resolver';
 end $$;
