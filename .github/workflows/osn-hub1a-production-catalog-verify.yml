@@ -1,0 +1,84 @@
+name: OSN-HUB-1A — production catalog verify (READ-ONLY)
+
+# Manually-dispatched, production-Environment-gated, STRICTLY READ-ONLY verification that the deployed
+# OSN-HUB-1A catalog (migration head 0067) matches the approved dark state EXACTLY: head 0067, flags unchanged
+# (send=true, space=false), zero active/coherent coordinate movement, hidden ports still hidden/ineligible/
+# unassigned, no base anchor, no home-port assignment, the exact 16 authenticated RPCs (no extra/overload),
+# every OSN/World-HUB internal service_role-only, and the 7 functions 0067 changed/added byte-identical
+# (raw stored prosrc) + descriptor-identical to the disposable 0001..0067 reference chain.
+#
+# Reuses the established pinned-CA / sslmode=verify-full / Management-API session-pooler read-only pattern.
+# NEVER deploys, never runs db push / migration / DDL / DML / fixture / cleanup / write-capable RPC, never
+# changes a flag, never enables OSN. All live reads run inside ONE BEGIN ... REPEATABLE READ READ ONLY snapshot
+# that ROLLBACKs, emitting only PASS/FAIL booleans, small counts, the migration version, and non-sensitive
+# descriptor/hash labels. It does NOT touch the stale osn-enablement-preflight and is NOT ENABLEMENT-1.
+#
+# Trigger: workflow_dispatch ONLY (no push / pull_request / schedule / workflow_run). The production job is
+# pinned to main and gated by the protected `production` Environment, so a human must approve before any
+# production connection. A static-safety self-test (no DB, no secrets) gates the production job.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-hub1a-production-catalog-verify
+  cancel-in-progress: false
+
+jobs:
+  static_safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static safety self-test (NO database, no secrets)
+        run: bash scripts/osn-hub1a-production-catalog-verify.sh selftest
+
+  production_verify:
+    needs: static_safety
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase for the 0001..0067 reference chain (no secrets)
+        run: supabase start
+      - name: Export disposable reference DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Link protected production project (read-only usage)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+      - name: Production read-only catalog / ACL / configuration verification (PASS/FAIL + parity)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          VERIFY_SUMMARY_FILE: ${{ runner.temp }}/osn-hub1a-verify-summary.md
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-hub1a-production-catalog-verify.sh production
+      - name: Stop disposable reference stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
+      - name: Upload verification summary artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: osn-hub1a-production-catalog-verify
+          path: ${{ runner.temp }}/osn-hub1a-verify-summary.md
+          if-no-files-found: warn

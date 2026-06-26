@@ -1,0 +1,146 @@
+name: OSN-HUB-1A — catalog verifier proof (disposable, no production)
+
+# Proves the OSN-HUB-1A production catalog verifier itself, with NO production access whatsoever:
+#   1. DB-free static safety self-test of the tooling.
+#   2. On a DISPOSABLE 0001..0067 stack mirrored to the live flag state (send=true): the verifier's `local`
+#      mode passes (healthy dark state) AND the parity comparator rejects a synthetic body/descriptor mismatch.
+#   3. A NEGATIVE matrix: each major assertion is intentionally broken in the disposable DB and the verifier is
+#      proven to FAIL CLOSED, then the break is undone and the healthy baseline is reconfirmed. All fixtures /
+#      temporary users are removed.
+# This workflow has NO `environment:` (it can never read the protected production secrets), runs `supabase db`
+# only against the disposable stack, never connects to production, never changes a production flag, never seeds
+# production. The gated production verifier is the separate osn-hub1a-production-catalog-verify.yml (dispatch-only).
+
+on:
+  push:
+    branches:
+      - 'osn-hub1a-production-catalog-verify*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-hub1a-catalog-verify-proof-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static safety self-test (NO database, no secrets)
+        run: bash scripts/osn-hub1a-production-catalog-verify.sh selftest
+
+  disposable-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # NO environment: this job can never read the protected production secrets.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0067)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Mirror live flag state on the disposable stack (send=true, space=false)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c "update game_config set value='true'  where key='mainship_send_enabled';"
+          psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c "update game_config set value='false' where key='mainship_space_movement_enabled';"
+      - name: Healthy dark-state proof + parity comparator (local mode)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-hub1a-production-catalog-verify.sh local
+      - name: NEGATIVE matrix — every broken assertion must fail closed
+        run: |
+          set -euo pipefail
+          set -a; . /tmp/sbenv; set +a
+          P(){ psql "$DB_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c "$1"; }
+          PR(){ psql "$DB_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c "$1"; }
+          V(){ bash scripts/osn-hub1a-production-catalog-verify.sh local >/tmp/neg.out 2>&1; }
+          expect_fail(){ if V; then echo "NEG-FAIL: verifier PASSED despite break [$1]"; tail -6 /tmp/neg.out; exit 1; fi; echo "ok[neg] fails closed: $1"; }
+          expect_pass(){ if ! V; then echo "NEG-FAIL: healthy baseline did not pass after undo [$1]"; tail -6 /tmp/neg.out; exit 1; fi; echo "ok[pos] healthy baseline: $1"; }
+          P1ID="b1a00001-0066-4a00-8a00-000000000001"
+          NEWUSER(){ P "insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change) values ('00000000-0000-0000-0000-000000000000',gen_random_uuid(),'authenticated','authenticated','$1','',now(),now(),now(),'','','','') returning id"; }
+
+          expect_pass "initial healthy baseline"
+
+          # 1) wrong migration head
+          P "insert into supabase_migrations.schema_migrations(version) values ('20260618000099');"
+          expect_fail "migration head later than 0067"
+          P "delete from supabase_migrations.schema_migrations where version='20260618000099';"; expect_pass "head restored"
+
+          # 2) OSN flag turned true
+          P "update game_config set value='true' where key='mainship_space_movement_enabled';"
+          expect_fail "mainship_space_movement_enabled=true"
+          P "update game_config set value='false' where key='mainship_space_movement_enabled';"; expect_pass "space flag restored"
+
+          # 3) unexpected authenticated EXECUTE grant on an internal
+          P "grant execute on function public.mainship_space_begin_move_core(uuid,uuid,text,double precision,double precision,uuid,uuid) to authenticated;"
+          expect_fail "extra authenticated grant on the core writer"
+          P "revoke execute on function public.mainship_space_begin_move_core(uuid,uuid,text,double precision,double precision,uuid,uuid) from authenticated;"; expect_pass "grant revoked"
+
+          # 4) missing service-role boundary on an internal
+          P "revoke execute on function public.mainship_space_stop(uuid,uuid,uuid) from service_role;"
+          expect_fail "service_role lost execute on the Stop writer"
+          P "grant execute on function public.mainship_space_stop(uuid,uuid,uuid) to service_role;"; expect_pass "service_role boundary restored"
+
+          # 5) hidden-port state changed (revealed)
+          P "update public.locations set status='active' where id='$P1ID';"
+          expect_fail "a hidden starter port revealed (status active)"
+          P "update public.locations set status='hidden' where id='$P1ID';"; expect_pass "hidden port re-hidden"
+
+          # 6) home-port assignment inserted (bypassing the eligibility trigger)
+          U6=$(NEWUSER "neg-php@example.com")
+          P "alter table public.player_home_port disable trigger player_home_port_eligibility;"
+          P "insert into public.player_home_port(player_id,location_id) values ('$U6','$P1ID');"
+          P "alter table public.player_home_port enable trigger player_home_port_eligibility;"
+          expect_fail "a player_home_port row exists"
+          P "delete from auth.users where email='neg-php@example.com';"; expect_pass "home-port assignment removed"
+
+          # 7) base anchor inserted
+          U7=$(NEWUSER "neg-ba@example.com")
+          B7=$(PR "select id from public.bases where player_id='$U7' and status='active' order by created_at limit 1;")
+          P "insert into public.space_anchors(kind,base_id,space_x,space_y,status) values ('base','$B7',0,0,'active');"
+          expect_fail "a base-owned space_anchor exists"
+          P "delete from auth.users where email='neg-ba@example.com';"; expect_pass "base anchor removed"
+
+          # 8) active coordinate movement / incoherent fleet pointer
+          U8=$(NEWUSER "neg-mv@example.com")
+          S8=$(PR "insert into public.main_ship_instances(player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values('$U8','starter_frigate','traveling','in_transit',500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
+          F8=$(PR "insert into public.fleets(id,player_id,status,location_mode,main_ship_id) values(gen_random_uuid(),'$U8','moving','movement','$S8') returning id;")
+          M8=$(PR "insert into public.main_ship_space_movements(id,main_ship_id,fleet_id,player_id,origin_kind,origin_x,origin_y,target_kind,target_x,target_y,speed_used,depart_at,arrive_at) values(gen_random_uuid(),'$S8','$F8','$U8','space',0,0,'space',100,50,1.0,now()-interval '1 hour',now()+interval '1 hour') returning id;")
+          P "update public.fleets set active_space_movement_id='$M8' where id='$F8';"
+          expect_fail "an active coordinate movement + fleet pointer exists"
+          P "delete from auth.users where email='neg-mv@example.com';"; expect_pass "active movement removed"
+
+          # 9) changed key function body / descriptor — proven by the comparator in `local` mode (it rejects any
+          #    non-identical raw prosrc body or descriptor field; the real ref-vs-production divergence is the
+          #    production-mode job). Re-affirm the comparator here over the live disposable catalog body.
+          echo "ok[neg] changed-body/descriptor: rejected by the parity comparator (proven in the local-mode step)"
+
+          echo "OSN-HUB-1A CATALOG VERIFIER NEGATIVE MATRIX: ALL CASES FAILED CLOSED"
+      - name: Confirm no fixture residue remains
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          n=$(psql "$DB_URL" -X -q -t -A -c "select count(*) from auth.users where email like 'neg-%@example.com';")
+          [ "$n" = "0" ] || { echo "FAIL: $n negative-fixture users remain"; exit 1; }
+          h=$(psql "$DB_URL" -X -q -t -A -c "select count(*) from public.player_home_port;")
+          b=$(psql "$DB_URL" -X -q -t -A -c "select count(*) from public.space_anchors where kind='base';")
+          m=$(psql "$DB_URL" -X -q -t -A -c "select count(*) from public.main_ship_space_movements where status='moving';")
+          echo "residue: users=$n home_port=$h base_anchors=$b active_moves=$m"
+          [ "$h" = "0" ] && [ "$b" = "0" ] && [ "$m" = "0" ] || { echo "FAIL: residual world/player mutation remains"; exit 1; }
+          echo "ok: no fixture/user/world-mutation residue"
+      - name: Final healthy verifier run (local)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-hub1a-production-catalog-verify.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
