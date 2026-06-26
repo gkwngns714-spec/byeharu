@@ -455,7 +455,8 @@ begin
   perform process_mainship_space_arrivals();
   perform h1a_assert_terminal(s, 'undockable_inactive_location', 175, 175);
 
-  -- Dock-0 is reachable ONLY via the processor (no client/anon/auth EXECUTE — proven in the perm script).
+  -- Dock-0 has NO client call path (no anon/auth/PUBLIC EXECUTE — proven in the perm script); its only private
+  -- callers are the arrival processor (here) and mainship_space_stop at/after arrive_at (Section H).
   raise notice 'SECTION E ok: full arrival revalidation under target-hierarchy locks — anchor move/retire, service/zone/sector deactivation, activity change, and location deactivation each terminally fail (parked in_space at snapshot; no presence; no redirect; no loop)';
 end $$;
 

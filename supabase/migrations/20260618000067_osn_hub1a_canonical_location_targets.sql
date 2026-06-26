@@ -24,12 +24,16 @@
 --   • mainship_space_resolve_origin: a coherent DOCKED origin (at_location / legacy_present) now resolves from
 --     that location's one active canonical anchor; legacy/new-domain HOME stays fail-closed origin_not_anchored
 --     (port-centric: true home identity is a future docked home-port, NOT a base coordinate). in_space unchanged.
---   • mainship_space_dock_at_location (still the ONLY caller is the existing arrival processor): FULLY
---     revalidates dockability at ARRIVAL under deterministic target-hierarchy FOR SHARE locks (a route legal at
---     departure can become non-dockable in transit), re-running the SINGLE canonical legality rule AND requiring
---     the current canonical anchor to still match the movement's stored target snapshot. Any failed condition is
---     a deterministic terminal failure (ship parked in_space at the snapshot; no presence; never redirects/
---     teleports). locations.x/y is consulted NOWHERE; the canonical anchor is the sole coordinate authority.
+--   • mainship_space_dock_at_location — the ONE Dock-0 resolver. Permitted private callers: (1)
+--     process_mainship_space_arrivals() for a due location-target route, and (2) mainship_space_stop(...) ONLY
+--     when its captured boundary timestamp is at/after arrive_at. NO second resolver, NO second processor, NO
+--     generic reconciler, NO client call path. It FULLY revalidates dockability at ARRIVAL under deterministic
+--     target-hierarchy FOR SHARE locks (a route legal at departure can become non-dockable in transit),
+--     re-running the SINGLE canonical legality rule AND requiring the current canonical anchor to still match
+--     the movement's stored target snapshot. Any failed condition is a deterministic terminal failure (ship
+--     parked in_space at the snapshot; no presence; never redirects/teleports). It captures ONE clock_timestamp()
+--     settlement time (never now()/transaction-start) used for every resolved_at/updated_at and returned to the
+--     caller, so a route is never recorded as settled before its own arrive_at. locations.x/y is consulted NOWHERE.
 --   • mainship_space_location_target_legal(location): the SINGLE canonical target-legality rule (own purpose,
 --     own reasons; not the home-port predicate) — exists + active location/zone/sector + role ∈ {city,port} +
 --     activity_type='none' (Dock-0-supported) + exactly one active docking service + exactly one active location
@@ -499,13 +503,14 @@ security definer
 set search_path = public
 as $$
 declare
-  v_mv     main_ship_space_movements%rowtype;
-  v_fleet  fleets%rowtype;
-  v_loc    record;
-  v_legal  jsonb;
-  v_ax     double precision;
-  v_ay     double precision;
-  v_reason text;
+  v_mv         main_ship_space_movements%rowtype;
+  v_fleet      fleets%rowtype;
+  v_loc        record;
+  v_legal      jsonb;
+  v_ax         double precision;
+  v_ay         double precision;
+  v_reason     text;
+  v_settled_at timestamptz;   -- the ONE real settlement wall-clock (never now()/transaction-start)
 begin
   select * into v_mv from main_ship_space_movements
     where id = p_movement_id and main_ship_id = p_main_ship_id and status = 'moving';
@@ -568,29 +573,38 @@ begin
     end if;
   end if;
 
+  -- Capture the ONE real settlement timestamp AFTER the target-hierarchy locks + final dockability decision are
+  -- complete and IMMEDIATELY before the first settlement write. clock_timestamp() (current wall-clock), NOT
+  -- now()/transaction_timestamp(): a Stop txn can BEGIN before arrive_at, block on the S2 ship lock, cross
+  -- arrive_at, and correctly take the due path — its now() would be < arrive_at, so persisting now() could
+  -- record a settlement BEFORE the route's own arrival time. clock_timestamp() here is monotonically ≥ the
+  -- caller's at/after-arrival boundary check, so resolved_at is never earlier than arrive_at. The SAME value
+  -- drives every resolved_at / updated_at in BOTH the terminal-failure and the dock-success branch.
+  v_settled_at := clock_timestamp();
+
   if v_reason is not null then
     update main_ship_space_movements
-      set status = 'failed', resolved_at = now(), terminal_reason = v_reason
+      set status = 'failed', resolved_at = v_settled_at, terminal_reason = v_reason
       where id = v_mv.id and status = 'moving';
 
     update fleets
       set status = 'completed', location_mode = 'movement',
           active_space_movement_id = null, active_movement_id = null,
           current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
-          updated_at = now()
+          updated_at = v_settled_at
       where id = v_fleet.id;
 
     update main_ship_instances
       set status = 'stationary', spatial_state = 'in_space',
-          space_x = v_mv.target_x, space_y = v_mv.target_y, updated_at = now()
+          space_x = v_mv.target_x, space_y = v_mv.target_y, updated_at = v_settled_at
       where main_ship_id = p_main_ship_id;
 
-    return jsonb_build_object('ok', true, 'docked', false, 'reason', v_reason);
+    return jsonb_build_object('ok', true, 'docked', false, 'reason', v_reason, 'resolved_at', v_settled_at);
   end if;
 
   -- ── DOCK: settle the movement, dock the fleet at the location, create exactly one active presence ────────
   update main_ship_space_movements
-    set status = 'arrived', resolved_at = now(), terminal_reason = 'auto_arrival'
+    set status = 'arrived', resolved_at = v_settled_at, terminal_reason = 'auto_arrival'
     where id = v_mv.id and status = 'moving';
 
   update fleets
@@ -598,17 +612,17 @@ begin
         active_space_movement_id = null, active_movement_id = null,
         current_base_id = null,
         current_location_id = v_loc.id, current_zone_id = v_loc.zone_id, current_sector_id = v_loc.sector_id,
-        updated_at = now()
+        updated_at = v_settled_at
     where id = v_fleet.id;
 
   update main_ship_instances
     set status = 'stationary', spatial_state = 'at_location',
-        space_x = null, space_y = null, updated_at = now()
+        space_x = null, space_y = null, updated_at = v_settled_at
     where main_ship_id = p_main_ship_id;
 
   perform public.presence_create(v_mv.player_id, v_mv.fleet_id, v_loc.sector_id, v_loc.zone_id, v_loc.id, 'none');
 
-  return jsonb_build_object('ok', true, 'docked', true, 'location_id', v_loc.id);
+  return jsonb_build_object('ok', true, 'docked', true, 'location_id', v_loc.id, 'resolved_at', v_settled_at);
 end;
 $$;
 
@@ -642,7 +656,11 @@ declare
   v_state  text;
   v_mv     main_ship_space_movements%rowtype;
   v_fleet  fleets%rowtype;
-  v_now    timestamptz;
+  v_now    timestamptz;   -- BOUNDARY timestamp: one clock_timestamp() after S2 locks → decides before/after
+                          --   arrival + drives mid-flight interpolation.
+  v_completed timestamptz; -- COMPLETION timestamp persisted as the settlement time: = v_now for a space arrival
+                          --   or a mid-flight Stop; = Dock-0's returned resolved_at for a due location route, so
+                          --   the result, the receipt, and the movement row all agree on ONE settlement time.
   v_dur    double precision;
   v_t      double precision;
   v_stop_x double precision;
@@ -729,8 +747,11 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'invalid_movement_window');
   end if;
 
-  -- 10) ARRIVAL PRECEDENCE (Constraint B): capture ONE clock_timestamp() AFTER locks are held.
+  -- 10) ARRIVAL PRECEDENCE (Constraint B): capture ONE BOUNDARY clock_timestamp() AFTER locks are held. The
+  --     COMPLETION timestamp defaults to it (space arrival / mid-flight Stop) and is overridden below to
+  --     Dock-0's settlement timestamp for a due location route — so result/receipt/movement never disagree.
   v_now := clock_timestamp();
+  v_completed := v_now;
   if v_now >= v_mv.arrive_at then
     -- AT/AFTER arrival → settle the canonical ARRIVAL (never 'stopped' at the destination), per target kind:
     if v_mv.target_kind = 'space' then
@@ -751,12 +772,15 @@ begin
         -- only the defensive movement_not_moving / not_location_target paths land here (coherence was proven)
         return jsonb_build_object('ok', false, 'reason', coalesce(v_dock->>'reason', 'contradictory_state'));
       end if;
+      -- adopt Dock-0's settlement timestamp as THE completion time (it wrote the movement's resolved_at), so
+      -- the Stop result, the command receipt, and the persisted movement row all agree on one settlement time.
+      v_completed := coalesce((v_dock->>'resolved_at')::timestamptz, v_now);
       v_result := jsonb_build_object('ok', true, 'outcome', 'arrived',
         'movement_id', v_mv.id, 'main_ship_id', p_main_ship_id, 'fleet_id', v_fleet.id,
         'target_x', v_mv.target_x, 'target_y', v_mv.target_y,           -- the player's own destination snapshot
         'docked', (v_dock->>'docked')::boolean,
         'dock_reason', v_dock->>'reason',                              -- null on dock; an undockable_* string on terminal failure
-        'resolved_at', v_now, 'request_id', p_request_id);
+        'resolved_at', v_completed, 'request_id', p_request_id);
     end if;
   else
     -- STRICTLY BEFORE arrive_at → STOP at the interpolated current point (IDENTICAL for space and location:
@@ -789,13 +813,15 @@ begin
       'stop_x', v_stop_x, 'stop_y', v_stop_y, 'resolved_at', v_now, 'request_id', p_request_id);
   end if;
 
-  -- 11) finalise the idempotency receipt atomically with the settlement
+  -- 11) finalise the idempotency receipt atomically with the settlement. completed_at = v_completed, which
+  --     equals the persisted movement resolved_at in every branch (= v_now for space/mid-flight; = Dock-0's
+  --     settlement timestamp for a due location route) → result, receipt, and movement never disagree.
   insert into main_ship_space_command_receipts (
     main_ship_id, player_id, request_id, command_type, canonical_payload_hash,
     outcome_status, result_json, movement_id, completed_at)
   values (
     p_main_ship_id, p_player, p_request_id, c_cmd, v_hash,
-    'success', v_result, v_mv.id, v_now);
+    'success', v_result, v_mv.id, v_completed);
 
   return v_result;
 end;

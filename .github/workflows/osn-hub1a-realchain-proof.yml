@@ -12,8 +12,11 @@ name: OSN-HUB-1A — real-migration-chain proof (disposable Supabase)
 # travel each terminally fail safely — leak-safety, flag-off anti-probe, pointer/single-engine coherence); OSN-4
 # Stop COMPATIBILITY for location-target routes (mid-flight interpolated stop with no dock/presence; at/after
 # arrival a location route settles through the same canonical Dock-0 decision — dock OR a settled safe terminal
-# failure, never not_space_movement; flag-off recovery; idempotency); and a REAL concurrent-session race
-# proving Stop vs the arrival processor on one due location route settles EXACTLY once (no duplicate dock/presence).
+# failure, never not_space_movement; flag-off recovery; idempotency); and TWO REAL concurrent-session races —
+# (1) Stop vs the arrival processor on one due location route settles EXACTLY once (no duplicate dock/presence);
+# (2) a Stop tx that BEGINS before arrive_at and crosses it while blocked still settles with resolved_at >=
+# arrive_at and with the Stop result, the receipt, and the movement row all agreeing on ONE settlement time
+# (Dock-0 uses clock_timestamp(), never now()/transaction-start).
 #
 # THIS current-chain permission/boundary proof (scripts/osn-hub1a-realchain-perm.sql) is the AUTHORITATIVE
 # 0067-chain ACL evidence and is exact/strong enough to REPLACE the skipped historical ACL assertions: §2
@@ -83,6 +86,11 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           bash scripts/osn-hub1a-realchain-stop-race.sh
+
+      - name: Real timestamp-boundary race — Stop tx begins before arrive_at, crosses it blocked (resolved_at >= arrive_at)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-hub1a-realchain-stop-timestamp-race.sh
 
       # NON-REGRESSION NOTE: the existing per-slice proof scripts (osn3-s2..osn4 / dock0 perm) are NOT
       # re-executed here. They embed ERA-SPECIFIC live-state expectations — e.g. osn3-s2-realchain-perm.sql
