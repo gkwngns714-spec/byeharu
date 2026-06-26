@@ -36,6 +36,8 @@ declare
   v_proc    regprocedure := to_regprocedure('public.process_mainship_space_arrivals()');
   v_lock    regprocedure := to_regprocedure('public.mainship_space_lock_context(uuid,boolean)');
   v_valid   regprocedure := to_regprocedure('public.mainship_space_validate_context(uuid)');
+  v_excl    regprocedure := to_regprocedure('public.mainship_space_assert_cross_domain_exclusion(uuid)');
+  v_settle  regprocedure := to_regprocedure('public.mainship_space_settle_space_arrival(uuid,uuid,timestamptz)');
   v_stop    regprocedure := to_regprocedure('public.mainship_space_stop(uuid,uuid,uuid)');
 begin
   if v_wrapper is null or v_core is null or v_legal is null then raise exception 'PERM FAIL: a new function is not installed'; end if;
@@ -44,18 +46,17 @@ begin
   if not has_function_privilege('authenticated', v_wrapper, 'EXECUTE') then raise exception 'PERM FAIL: wrapper not executable by authenticated'; end if;
   if     has_function_privilege('anon',          v_wrapper, 'EXECUTE') then raise exception 'PERM FAIL: wrapper executable by anon'; end if;
 
-  -- core writer + legality predicate + every engine internal: service_role YES, anon/authenticated NO
-  if not has_function_privilege('service_role', v_core,  'EXECUTE') then raise exception 'PERM FAIL: core not service_role-executable'; end if;
-  if not has_function_privilege('service_role', v_legal, 'EXECUTE') then raise exception 'PERM FAIL: legality not service_role-executable'; end if;
-  declare server_only regprocedure[] := array[v_core,v_legal,v_begin,v_resolve,v_dock,v_proc,v_lock,v_valid,v_stop]; p regprocedure;
+  -- every required OSN engine internal: service_role MUST be able to execute it, anon AND authenticated MUST NOT.
+  declare server_only regprocedure[] := array[v_core,v_legal,v_begin,v_resolve,v_dock,v_proc,v_lock,v_valid,v_excl,v_settle,v_stop]; p regprocedure;
   begin
     foreach p in array server_only loop
-      if p is null then raise exception 'PERM FAIL: an engine function is missing'; end if;
-      if has_function_privilege('anon', p, 'EXECUTE')          then raise exception 'PERM FAIL: anon can execute %', p; end if;
-      if has_function_privilege('authenticated', p, 'EXECUTE') then raise exception 'PERM FAIL: authenticated can execute %', p; end if;
+      if p is null then raise exception 'PERM FAIL: a required engine internal is missing from the catalog'; end if;
+      if not has_function_privilege('service_role', p, 'EXECUTE') then raise exception 'PERM FAIL: service_role CANNOT execute % (required)', p; end if;
+      if has_function_privilege('anon', p, 'EXECUTE')          then raise exception 'PERM FAIL: anon can execute % (must be denied)', p; end if;
+      if has_function_privilege('authenticated', p, 'EXECUTE') then raise exception 'PERM FAIL: authenticated can execute % (must be denied)', p; end if;
     end loop;
   end;
-  raise notice 'PERM ok: wrapper authenticated-only; core+legality+begin_move+resolve+dock+processor+lock+validate+stop are service_role-only (anon/authenticated denied)';
+  raise notice 'PERM ok: wrapper authenticated-only; core+legality+begin_move+resolve+dock+processor+lock+validate+exclusion+settle+stop are service_role-executable AND anon/authenticated-denied';
 end $$;
 
 -- 3) No broadening of server-owned catalog tables: anon/authenticated have NO privilege on space_anchors /
@@ -72,29 +73,44 @@ begin
   raise notice 'PERM ok: space_anchors/location_services have NO client privilege; movements stay authenticated-owner-read only (target_location_id never leaks to anon)';
 end $$;
 
--- 4) Canonical authenticated surface = the prior 15 + the ONE new wrapper (extras only NOTICE; never silent).
+-- 4) EXACT canonical authenticated surface — the prior 15 + the ONE new wrapper = exactly 16. Any missing
+--    function, any UNEXPECTED authenticated-executable function, any overloaded/duplicate public callable
+--    shape, or a count != 16 is a HARD FAILURE (no NOTICE-and-continue). This proves no additional
+--    client-writable RPC has silently appeared — not merely that the new wrapper exists.
 do $$
-declare actual text[]; expected text[] := array[
-  'bootstrap_me','cancel_build_order','command_main_ship_space_move','command_main_ship_space_move_to_location',
-  'command_main_ship_space_stop','get_combat_reports','get_my_expedition_preview','get_world_map',
-  'move_main_ship_to_location','repair_main_ship','request_leave_location','request_main_ship_return',
-  'request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
+declare
+  actual     text[];
+  n_total    integer;
+  n_distinct integer;
+  expected   text[] := array[   -- MUST stay alphabetically sorted (matches array_agg order by proname)
+    'bootstrap_me','cancel_build_order','command_main_ship_space_move','command_main_ship_space_move_to_location',
+    'command_main_ship_space_stop','get_combat_reports','get_my_expedition_preview','get_world_map',
+    'move_main_ship_to_location','repair_main_ship','request_leave_location','request_main_ship_return',
+    'request_retreat','send_fleet_to_location','send_main_ship_expedition','train_units'];
 begin
-  select array_agg(p.proname order by p.proname) into actual
+  -- array_agg WITHOUT distinct: a duplicate proname (an overloaded authenticated callable) appears twice.
+  select array_agg(p.proname order by p.proname), count(*), count(distinct p.proname)
+    into actual, n_total, n_distinct
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='public' and p.prokind='f' and has_function_privilege('authenticated', p.oid, 'EXECUTE');
 
-  if not (actual @> array['command_main_ship_space_move_to_location']) then
-    raise exception 'PERM FAIL: the new wrapper is not in the authenticated surface'; end if;
-  if not (expected @> actual) then
-    raise notice 'NOTE: authenticated-executable public function(s) beyond the expected 16: %',
-      (select array_agg(x) from unnest(actual) x where not (x = any(expected)));
-  end if;
+  -- missing canonical RPC → hard fail
   if not (actual @> expected) then
-    raise exception 'PERM FAIL: a canonical authenticated RPC is missing: %',
+    raise exception 'PERM FAIL: canonical authenticated RPC(s) MISSING: %',
       (select array_agg(x) from unnest(expected) x where not (x = any(actual)));
   end if;
-  raise notice 'PERM ok: authenticated surface = the canonical 15 + command_main_ship_space_move_to_location (16); none removed';
+  -- any unexpected authenticated-executable function → hard fail (NOT a notice)
+  if not (expected @> actual) then
+    raise exception 'PERM FAIL: UNEXPECTED authenticated-executable public function(s) — a new client-writable RPC appeared: %',
+      (select array_agg(distinct x) from unnest(actual) x where not (x = any(expected)));
+  end if;
+  -- exact count = 16, and no overloaded/duplicate public callable shape (total grants = distinct names = 16)
+  if n_total <> 16 then raise exception 'PERM FAIL: authenticated surface count = % (expected exactly 16): %', n_total, actual; end if;
+  if n_distinct <> 16 then raise exception 'PERM FAIL: an overloaded/duplicate authenticated callable exists (% grants across % distinct names): %', n_total, n_distinct, actual; end if;
+  -- exact ordered array equality (belt-and-suspenders over the set checks above)
+  if actual is distinct from expected then raise exception 'PERM FAIL: authenticated surface != canonical 16. actual=%', actual; end if;
+
+  raise notice 'PERM ok: authenticated surface is EXACTLY the canonical 16 (15 + command_main_ship_space_move_to_location); no extras, none missing, no overloads, count=16';
 end $$;
 
 select 'OSN-HUB-1A REAL-CHAIN PERM/BOUNDARY: ALL PASSED' as result;

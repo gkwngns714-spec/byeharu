@@ -24,13 +24,16 @@
 --   • mainship_space_resolve_origin: a coherent DOCKED origin (at_location / legacy_present) now resolves from
 --     that location's one active canonical anchor; legacy/new-domain HOME stays fail-closed origin_not_anchored
 --     (port-centric: true home identity is a future docked home-port, NOT a base coordinate). in_space unchanged.
---   • mainship_space_dock_at_location (still the ONLY caller is the existing arrival processor): the dock
---     coordinate authority moves from locations.x/y to the destination location's one active canonical anchor;
---     it docks ONLY if that anchor still matches the movement's stored target snapshot, else terminal-fails
---     (never redirects/teleports). locations.x/y is consulted NOWHERE in the OSN target/dock path.
+--   • mainship_space_dock_at_location (still the ONLY caller is the existing arrival processor): FULLY
+--     revalidates dockability at ARRIVAL under deterministic target-hierarchy FOR SHARE locks (a route legal at
+--     departure can become non-dockable in transit), re-running the SINGLE canonical legality rule AND requiring
+--     the current canonical anchor to still match the movement's stored target snapshot. Any failed condition is
+--     a deterministic terminal failure (ship parked in_space at the snapshot; no presence; never redirects/
+--     teleports). locations.x/y is consulted NOWHERE; the canonical anchor is the sole coordinate authority.
 --   • mainship_space_location_target_legal(location): the SINGLE canonical target-legality rule (own purpose,
 --     own reasons; not the home-port predicate) — exists + active location/zone/sector + role ∈ {city,port} +
---     exactly one active docking service + exactly one active location anchor (finite, in-bounds) → anchor x/y.
+--     activity_type='none' (Dock-0-supported) + exactly one active docking service + exactly one active location
+--     anchor (finite, in-bounds) → anchor x/y. Used at BOTH departure (writer) and arrival (Dock-0).
 --   • NEW public authenticated wrapper command_main_ship_space_move_to_location(location, request_id): derives
 --     the caller + their own ship server-side, flag-gates BEFORE target resolution (so a disabled feature
 --     cannot probe whether a hidden UUID exists), delegates to the core, and maps every "not a legal target"
@@ -63,7 +66,8 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'target_not_found');
   end if;
 
-  select l.id as id, l.status as lstatus, l.physical_role as role, z.status as zstatus, se.status as sstatus
+  select l.id as id, l.status as lstatus, l.physical_role as role, l.activity_type as activity,
+         z.status as zstatus, se.status as sstatus
     into v_loc
     from public.locations l
     join public.zones   z  on z.id  = l.zone_id
@@ -74,6 +78,8 @@ begin
   if v_loc.zstatus <> 'active' then return jsonb_build_object('ok', false, 'reason', 'target_inactive_zone'); end if;
   if v_loc.sstatus <> 'active' then return jsonb_build_object('ok', false, 'reason', 'target_inactive_sector'); end if;
   if v_loc.role not in ('city', 'port') then return jsonb_build_object('ok', false, 'reason', 'target_unsupported_role'); end if;
+  -- Dock-0 settles ONLY activity_type='none' targets; reject here so we never launch a route Dock-0 must fail.
+  if v_loc.activity <> 'none' then return jsonb_build_object('ok', false, 'reason', 'target_unsupported_activity'); end if;
 
   select count(*) into v_svc from public.location_services svc
     where svc.location_id = p_location_id and svc.service = 'docking' and svc.status = 'active';
@@ -468,11 +474,16 @@ end;
 $$;
 
 -- ── E. Anchor-backed Dock-0 (still ONLY invoked by process_mainship_space_arrivals) ───────────────────────
--- The dock coordinate authority is now the destination location's one active canonical anchor — NOT
--- locations.x/y (which is consulted nowhere here). Dock decision = stored target location id + stored target
--- x/y snapshot + the CURRENT active canonical anchor for that location: dock ONLY if exactly one active anchor
--- still exactly matches the stored snapshot. A missing / ambiguous / retired / moved anchor is a deterministic
--- terminal failure (ship floats in_space at the stored target; NO presence; NO redirect/teleport; no loop).
+-- A route legal at DEPARTURE can become non-dockable in transit, so Dock-0 FULLY REVALIDATES at arrival under
+-- deterministic target-hierarchy FOR SHARE locks (sector → zone → location → anchor → docking service) before
+-- creating presence or marking the ship at_location. It docks ONLY when the SINGLE canonical legality rule
+-- (mainship_space_location_target_legal: active sector/zone/location + role city|port + activity 'none' + one
+-- active docking service + one active in-bounds anchor) STILL holds AND that anchor exactly matches the
+-- movement's stored target x/y snapshot. Any failed condition — inactive sector/zone/location, lost role,
+-- activity≠none, lost/duplicate docking service, missing/ambiguous/retired anchor (→ undockable_*), or a moved
+-- anchor (→ target_anchor_changed) — is a deterministic terminal failure: the ship floats in_space at the
+-- stored target, NO presence, NO redirect/teleport/retarget, no loop. The coordinate authority is the canonical
+-- anchor; locations.x/y is consulted NOWHERE. Single arrival processor + single dock resolver (no reconciler).
 create or replace function public.mainship_space_dock_at_location(p_main_ship_id uuid, p_movement_id uuid)
 returns jsonb
 language plpgsql
@@ -483,7 +494,7 @@ declare
   v_mv     main_ship_space_movements%rowtype;
   v_fleet  fleets%rowtype;
   v_loc    record;
-  v_anch   integer;
+  v_legal  jsonb;
   v_ax     double precision;
   v_ay     double precision;
   v_reason text;
@@ -499,33 +510,52 @@ begin
 
   select * into v_fleet from fleets where id = v_mv.fleet_id;
 
-  -- Resolve the target location + its zone/sector (for presence). locations.x/y is intentionally NOT selected.
-  select l.id as id, l.zone_id as zone_id, l.status as status, l.activity_type as activity_type, z.sector_id as sector_id
+  -- Resolve the target location's identity + zone/sector (for the FOR SHARE locks and, on success, presence).
+  -- locations.x/y is intentionally NOT selected: the canonical anchor is the sole coordinate authority.
+  select l.id as id, l.zone_id as zone_id, z.sector_id as sector_id
     into v_loc
     from locations l join zones z on z.id = l.zone_id
     where l.id = v_mv.target_location_id;
 
   -- ── Dock predicate → DOCK (v_reason NULL) vs deterministic TERMINAL FAILURE (v_reason set) ───────────────
   if v_loc.id is null then
-    v_reason := 'undockable_invalid_target';                 -- FK-prevented; defensive only
-  elsif v_loc.status <> 'active' then
-    v_reason := 'undockable_inactive_location';
-  elsif v_loc.activity_type <> 'none' then
-    v_reason := 'undockable_unsupported_activity';            -- DOCK-0 supports only activity_type='none'
+    v_reason := 'undockable_invalid_target';                   -- FK-prevented; defensive only
   else
-    select count(*) into v_anch from public.space_anchors a
-      where a.location_id = v_loc.id and a.kind = 'location' and a.status = 'active';
-    if v_anch = 0 then
-      v_reason := 'undockable_no_active_anchor';
-    elsif v_anch > 1 then
-      v_reason := 'undockable_anchor_not_unique';
+    -- Re-acquire the TARGET hierarchy under deterministic FOR SHARE locks (same order as the writer /
+    -- assign_home_port: sector → zone → location → anchor → docking service). FOR SHARE conflicts with the
+    -- FOR NO KEY UPDATE of a status disable/retire, so a concurrent de-activation/retirement serializes here.
+    perform 1 from public.sectors           where id = v_loc.sector_id for share;
+    perform 1 from public.zones             where id = v_loc.zone_id   for share;
+    perform 1 from public.locations         where id = v_loc.id        for share;
+    perform 1 from public.space_anchors     where location_id = v_loc.id and kind = 'location' and status = 'active' for share;
+    perform 1 from public.location_services where location_id = v_loc.id and service = 'docking' and status = 'active' for share;
+
+    -- FULL arrival-time revalidation through the SINGLE canonical legality rule (active sector/zone/location +
+    -- role city|port + activity 'none' + one active docking service + one active in-bounds anchor). A route
+    -- legal at departure that became non-dockable in transit terminally fails here — never docks on a partial.
+    v_legal := public.mainship_space_location_target_legal(v_loc.id);
+    if (v_legal->>'ok')::boolean is not true then
+      v_reason := case v_legal->>'reason'
+        when 'target_not_found'            then 'undockable_invalid_target'
+        when 'target_inactive_location'    then 'undockable_inactive_location'
+        when 'target_inactive_zone'        then 'undockable_inactive_zone'
+        when 'target_inactive_sector'      then 'undockable_inactive_sector'
+        when 'target_unsupported_role'     then 'undockable_unsupported_role'
+        when 'target_unsupported_activity' then 'undockable_unsupported_activity'
+        when 'target_no_docking_service'   then 'undockable_no_docking_service'
+        when 'target_anchor_not_unique'    then 'undockable_no_active_anchor'   -- >1 active is schema-impossible → count 0
+        when 'target_anchor_out_of_bounds' then 'undockable_anchor_out_of_bounds'
+        else 'undockable_target_illegal'
+      end;
     else
-      select a.space_x, a.space_y into v_ax, v_ay from public.space_anchors a
-        where a.location_id = v_loc.id and a.kind = 'location' and a.status = 'active';
+      -- The canonical anchor must STILL exactly match the movement's stored target snapshot (never redirect to
+      -- a moved anchor). The legality rule already proved exactly one active anchor and returned its coords.
+      v_ax := (v_legal->>'anchor_x')::double precision;
+      v_ay := (v_legal->>'anchor_y')::double precision;
       if v_ax is distinct from v_mv.target_x or v_ay is distinct from v_mv.target_y then
-        v_reason := 'target_anchor_changed';                 -- anchor moved/retired since departure: never redirect
+        v_reason := 'target_anchor_changed';
       else
-        v_reason := null;                                    -- dockable: anchor still matches the stored snapshot
+        v_reason := null;                                       -- fully dockable: legal AND anchor matches snapshot
       end if;
     end if;
   end if;
@@ -646,6 +676,7 @@ begin
       when 'target_inactive_zone'        then 'invalid_target'
       when 'target_inactive_sector'      then 'invalid_target'
       when 'target_unsupported_role'     then 'invalid_target'
+      when 'target_unsupported_activity' then 'invalid_target'
       when 'target_no_docking_service'   then 'invalid_target'
       when 'target_anchor_not_unique'    then 'invalid_target'
       when 'target_anchor_out_of_bounds' then 'invalid_target'
@@ -662,8 +693,8 @@ begin
       when v_reason = 'destroyed'                 then 'The ship must be repaired first.'
       when v_reason = 'active_legacy_movement'    then 'Finish the current expedition first.'
       when v_reason in ('target_not_found','target_inactive_location','target_inactive_zone','target_inactive_sector',
-                        'target_unsupported_role','target_no_docking_service','target_anchor_not_unique',
-                        'target_anchor_out_of_bounds','invalid_target_location','invalid_target_shape')
+                        'target_unsupported_role','target_unsupported_activity','target_no_docking_service',
+                        'target_anchor_not_unique','target_anchor_out_of_bounds','invalid_target_location','invalid_target_shape')
         then 'That destination is not available.'
       else 'The ship is not available to move right now.'
     end);

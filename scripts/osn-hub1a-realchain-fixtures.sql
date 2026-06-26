@@ -140,6 +140,27 @@ create or replace function h1a_ship_hash(p_ship uuid) returns text language sql 
   ) z;
 $$;
 
+-- Assert a deterministic Dock-0 terminal failure: movement failed/<reason>/resolved; ship coherently parked
+-- in_space at the STORED target snapshot (p_tx,p_ty) — never redirected/docked; fleet pointers cleared; NO
+-- presence; S2 validate = in_space; and a replay is a no-op (no loop). Used by the arrival-race matrix (E).
+create or replace function h1a_assert_terminal(p_ship uuid, p_reason text, p_tx double precision, p_ty double precision) returns void language plpgsql as $$
+declare v_fleet uuid; h1 text; h2 text;
+begin
+  if (select count(*) from main_ship_space_movements where main_ship_id=p_ship and status='moving') <> 0 then raise exception 'terminal(%): a moving movement remains (would loop)', p_reason; end if;
+  perform 1 from main_ship_space_movements m where m.main_ship_id=p_ship and m.status='failed' and m.resolved_at is not null and m.terminal_reason=p_reason;
+  if not found then raise exception 'terminal(%): wrong terminal row: %', p_reason, (select to_jsonb(m) from main_ship_space_movements m where m.main_ship_id=p_ship order by created_at desc limit 1); end if;
+  perform 1 from main_ship_instances m where m.main_ship_id=p_ship and m.status='stationary' and m.spatial_state='in_space' and m.space_x=p_tx and m.space_y=p_ty;
+  if not found then raise exception 'terminal(%): ship not parked in_space at the stored snapshot (%, %): %', p_reason, p_tx, p_ty, (select to_jsonb(m) from main_ship_instances m where m.main_ship_id=p_ship); end if;
+  select id into v_fleet from fleets where main_ship_id=p_ship;
+  perform 1 from fleets f where f.id=v_fleet and f.status='completed' and f.active_space_movement_id is null and f.active_movement_id is null
+     and f.current_location_id is null and f.current_zone_id is null and f.current_sector_id is null and f.current_base_id is null;
+  if not found then raise exception 'terminal(%): fleet not coherently cleared (half-docked?): %', p_reason, (select to_jsonb(f) from fleets f where f.id=v_fleet); end if;
+  if exists (select 1 from location_presence lp where lp.fleet_id=v_fleet) then raise exception 'terminal(%): a presence exists (must be none)', p_reason; end if;
+  if (mainship_space_validate_context(p_ship)->>'state') is distinct from 'in_space' then raise exception 'terminal(%): S2 validate != in_space', p_reason; end if;
+  h1 := h1a_ship_hash(p_ship); perform process_mainship_space_arrivals(); h2 := h1a_ship_hash(p_ship);
+  if h1 is distinct from h2 then raise exception 'terminal(%): cron replay re-processed a failed movement (loop)', p_reason; end if;
+end $$;
+
 -- ════════ SECTION B — location-target SUCCESS (core writer + public wrapper) ════════════════════════════════
 do $$
 declare u uuid; s uuid; port uuid; r jsonb; r2 jsonb; req uuid := gen_random_uuid(); n int;
@@ -292,6 +313,12 @@ begin
   r := public.mainship_space_begin_move_core(u, s, 'location', null, null, tgt, gen_random_uuid());
   if (r->>'reason') <> 'target_unsupported_role' then raise exception 'D role: %', r; end if;
 
+  -- unsupported activity: active sector/zone/location + role port + active docking service + one active anchor,
+  -- but activity_type<>'none' (a route Dock-0 would predictably reject) → rejected at DEPARTURE, no mutation.
+  tgt := h1a_loc(z_la,'port','active',219,10,'hunt_pirates'); perform h1a_service(tgt,'active'); perform h1a_anchor(tgt,219,10,'active');
+  r := public.mainship_space_begin_move_core(u, s, 'location', null, null, tgt, gen_random_uuid());
+  if (r->>'reason') <> 'target_unsupported_activity' then raise exception 'D activity: %', r; end if;
+
   -- no active docking service
   tgt := h1a_loc(z_la,'port','active',215,10,'none'); perform h1a_anchor(tgt,215,10,'active');  -- no service
   r := public.mainship_space_begin_move_core(u, s, 'location', null, null, tgt, gen_random_uuid());
@@ -374,28 +401,55 @@ begin
   -- mutate locations.x/y AFTER docking: docking never consulted it (above already docked on the anchor).
   raise notice 'E1 ok: docks when the live anchor matches the stored snapshot (anchor is the coordinate authority)';
 
-  -- E2: the anchor MOVES after departure → terminal failure target_anchor_changed (no redirect, no presence).
-  u := h1a_user(); port := h1a_eligible_port(70, 70); s := h1a_intransit_loc(u, port, 70, 70);
-  update space_anchors set status='retired' where location_id=port and kind='location' and status='active';  -- retire old
-  perform h1a_anchor(port, 71, 70, 'active');                                                                -- new active at different coords
-  n := process_mainship_space_arrivals();
-  perform 1 from main_ship_space_movements m where m.main_ship_id=s and m.status='failed' and m.terminal_reason='target_anchor_changed';
-  if not found then raise exception 'E2: expected terminal target_anchor_changed, got %', (select to_jsonb(m) from main_ship_space_movements m where m.main_ship_id=s order by created_at desc limit 1); end if;
-  perform 1 from main_ship_instances m where m.main_ship_id=s and m.spatial_state='in_space' and m.space_x=70 and m.space_y=70;  -- floats at stored target, NOT redirected to 71
-  if not found then raise exception 'E2: ship not left in_space at the stored target (redirected?)'; end if;
-  if exists (select 1 from location_presence lp join fleets f on f.id=lp.fleet_id where f.main_ship_id=s) then raise exception 'E2: a presence was created on anchor-change failure'; end if;
-  h1 := h1a_ship_hash(s); perform process_mainship_space_arrivals(); h2 := h1a_ship_hash(s);
-  if h1 is distinct from h2 then raise exception 'E2: failed movement re-processed (loop)'; end if;
+  -- ── Arrival-race matrix: each route is DOCKABLE at departure (snapshot = the live anchor), then ONE
+  --    dockability condition is broken DURING travel. Dock-0 must FULLY revalidate at arrival and terminally
+  --    fail (ship parked in_space at the stored snapshot, no presence, no redirect, no loop) — never dock. ──
 
-  -- E3: the anchor RETIRES with no replacement → undockable_no_active_anchor (no redirect).
+  -- E2: the anchor MOVES after departure → target_anchor_changed (ship floats at the stored target, NOT 71).
+  u := h1a_user(); port := h1a_eligible_port(70, 70); s := h1a_intransit_loc(u, port, 70, 70);
+  update space_anchors set status='retired' where location_id=port and kind='location' and status='active';
+  perform h1a_anchor(port, 71, 70, 'active');                       -- new active anchor at DIFFERENT coords
+  perform process_mainship_space_arrivals();
+  perform h1a_assert_terminal(s, 'target_anchor_changed', 70, 70);
+
+  -- E3: the anchor RETIRES with no replacement → undockable_no_active_anchor.
   u := h1a_user(); port := h1a_eligible_port(-90, 40); s := h1a_intransit_loc(u, port, -90, 40);
   update space_anchors set status='retired' where location_id=port and kind='location' and status='active';
   perform process_mainship_space_arrivals();
-  perform 1 from main_ship_space_movements m where m.main_ship_id=s and m.status='failed' and m.terminal_reason='undockable_no_active_anchor';
-  if not found then raise exception 'E3: expected undockable_no_active_anchor'; end if;
+  perform h1a_assert_terminal(s, 'undockable_no_active_anchor', -90, 40);
 
-  -- E4: Dock-0 is reachable ONLY via the processor (no client/anon/auth EXECUTE — proven in the perm script).
-  raise notice 'SECTION E ok: docks on anchor match; a moved/retired anchor terminally fails with NO redirect/teleport/presence and NO loop';
+  -- E4: the DOCKING SERVICE becomes inactive after departure → undockable_no_docking_service.
+  u := h1a_user(); port := h1a_eligible_port(160, -20); s := h1a_intransit_loc(u, port, 160, -20);
+  update location_services set status='disabled' where location_id=port and service='docking';
+  perform process_mainship_space_arrivals();
+  perform h1a_assert_terminal(s, 'undockable_no_docking_service', 160, -20);
+
+  -- E5: the target ZONE becomes inactive after departure → undockable_inactive_zone.
+  u := h1a_user(); port := h1a_eligible_port(-160, 20); s := h1a_intransit_loc(u, port, -160, 20);
+  update zones set status='locked' where id = (select zone_id from locations where id=port);
+  perform process_mainship_space_arrivals();
+  perform h1a_assert_terminal(s, 'undockable_inactive_zone', -160, 20);
+
+  -- E6: the target SECTOR becomes inactive after departure → undockable_inactive_sector.
+  u := h1a_user(); port := h1a_eligible_port(40, 160); s := h1a_intransit_loc(u, port, 40, 160);
+  update sectors set status='locked' where id = (select z.sector_id from locations l join zones z on z.id=l.zone_id where l.id=port);
+  perform process_mainship_space_arrivals();
+  perform h1a_assert_terminal(s, 'undockable_inactive_sector', 40, 160);
+
+  -- E7: the target LOCATION ACTIVITY becomes non-'none' after departure → undockable_unsupported_activity.
+  u := h1a_user(); port := h1a_eligible_port(-40, -160); s := h1a_intransit_loc(u, port, -40, -160);
+  update locations set activity_type='hunt_pirates' where id=port;
+  perform process_mainship_space_arrivals();
+  perform h1a_assert_terminal(s, 'undockable_unsupported_activity', -40, -160);
+
+  -- E8: the target LOCATION becomes inactive after departure → undockable_inactive_location.
+  u := h1a_user(); port := h1a_eligible_port(175, 175); s := h1a_intransit_loc(u, port, 175, 175);
+  update locations set status='locked' where id=port;
+  perform process_mainship_space_arrivals();
+  perform h1a_assert_terminal(s, 'undockable_inactive_location', 175, 175);
+
+  -- Dock-0 is reachable ONLY via the processor (no client/anon/auth EXECUTE — proven in the perm script).
+  raise notice 'SECTION E ok: full arrival revalidation under target-hierarchy locks — anchor move/retire, service/zone/sector deactivation, activity change, and location deactivation each terminally fail (parked in_space at snapshot; no presence; no redirect; no loop)';
 end $$;
 
 -- ════════ SECTION G — pointer coherence / single engine (no concurrent OSN move; one processor/dock/core) ═══
@@ -419,7 +473,7 @@ begin
   if (select count(*) from pg_proc p join pg_namespace nn on nn.oid=p.pronamespace where nn.nspname='public' and p.proname='process_mainship_space_arrivals') <> 1 then raise exception 'G: not exactly one arrival processor'; end if;
   if (select count(*) from pg_proc p join pg_namespace nn on nn.oid=p.pronamespace where nn.nspname='public' and p.proname='mainship_space_dock_at_location') <> 1 then raise exception 'G: not exactly one dock resolver'; end if;
   if (select count(*) from pg_proc p join pg_namespace nn on nn.oid=p.pronamespace where nn.nspname='public' and p.proname='mainship_space_begin_move_core') <> 1 then raise exception 'G: not exactly one core writer'; end if;
-  raise notice 'SECTION G ok: a moving ship cannot start a second OSN move (one-active-per-ship); one processor + one dock resolver + one core writer (no second engine). Legacy↔OSN exclusion is re-proven by the re-run S2/S3 perm checks.';
+  raise notice 'SECTION G ok: a moving ship cannot start a second OSN move (one-active-per-ship, pointer-coherent); exactly one arrival processor + one dock resolver + one core writer (no second engine). Legacy↔OSN cross-domain exclusion is enforced by the unchanged S2 assert_cross_domain_exclusion the core composes.';
 end $$;
 
 -- ════════ cleanup (delete users → cascade ships/fleets/movements/receipts/presence; then world scaffold) ════
@@ -439,6 +493,7 @@ begin
   raise notice 'ok cleanup: no OSN-HUB-1A fixture rows remain';
 end $$;
 
+drop function if exists h1a_assert_terminal(uuid,text,double precision,double precision);
 drop function if exists h1a_intransit_loc(uuid,uuid,double precision,double precision);
 drop function if exists h1a_ship_at_location(uuid,uuid);
 drop function if exists h1a_ship_home(uuid);

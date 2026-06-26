@@ -1,19 +1,29 @@
 name: OSN-HUB-1A — real-migration-chain proof (disposable Supabase)
 
-# Authoritative/gating proof for OSN-HUB-1A (canonical location-target navigation foundation). Boots a
+# Authoritative current-chain proof for OSN-HUB-1A (canonical location-target navigation foundation). Boots a
 # DISPOSABLE local Supabase stack via the CLI, applying the ACTUAL chain 0001..0067 — real tables / CHECKs /
 # indexes / RLS / grants / triggers / pg_cron and the real roles anon/authenticated/service_role. NOT a stub;
-# NEVER the shared/live DB. Proves: the full chain applies; the new permission surface (wrapper authenticated-
-# only; core writer + target-legality predicate + every engine internal service_role-only; no client access to
-# space_anchors/location_services); the functional matrix (anchored origin + location-target success via the
-# core AND the public wrapper, idempotency, the full target rejection matrix with no orphans, anchor-backed
-# docking + anchor-change race, leak-safety, flag-off anti-probe, pointer/single-engine coherence); and OSN
-# S2/S3/S4/S5/S6A/DOCK-0/OSN-4 service_role-only NON-REGRESSION (their ACL perm scripts re-run over 0067).
+# NEVER the shared/live DB. Proves: the full chain applies; the EXACT-16 authenticated RPC surface boundary
+# (wrapper authenticated-only; core writer + target-legality predicate + every engine internal service_role-
+# executable AND anon/authenticated-denied; no client access to space_anchors/location_services); the
+# functional matrix (anchored origins, location-target success via the core AND the public wrapper, idempotency,
+# the full DEPARTURE target-rejection matrix with no orphans, anchor-backed docking with FULL ARRIVAL
+# revalidation under target-hierarchy locks — anchor/service/zone/sector/activity/location transitions during
+# travel each terminally fail safely — leak-safety, flag-off anti-probe, pointer/single-engine coherence).
 #
-# NOTE: the OSN enablement preflight (scripts/osn-enablement-preflight.sql) is intentionally NOT run here — it
-# hard-pins the migration head to 0064 and the authenticated surface to 15, both of which change with 0065/0066
-# (already deployed) and this migration. Re-pinning that gate is ENABLEMENT-1 (a separate, owner-gated step),
-# explicitly out of scope for OSN-HUB-1A. This workflow performs NO flag write, NO production access.
+# THIS current-chain permission/boundary proof (scripts/osn-hub1a-realchain-perm.sql) is the AUTHORITATIVE
+# 0067-chain ACL evidence and is exact/strong enough to REPLACE the skipped historical ACL assertions: §2
+# asserts every OSN engine internal (begin_move / core / legality / resolve_origin / dock / processor / lock /
+# validate / exclusion / settle / stop) is service_role-executable and anon/authenticated-denied over 0067, and
+# §4 hard-fails on ANY surface drift (exact 16, no extras/missing/overloads).
+#
+# The historical per-slice proof scripts (osn3-s2..osn4 / dock0 perm, the enablement preflight) are ERA-SPECIFIC
+# artifacts and are intentionally NOT re-executed here: they hard-pin a then-current migration head / flag state
+# / exact client-RPC allowlist (e.g. osn3-s2 asserts mainship_send_enabled=false; dock0 pins an exact 15-RPC
+# list; the preflight pins head=0064 + surface=15) that changed with 0065/0066 and this migration. A green run
+# on their OWN osn3-**/worldhub* branch over their pinned chain is NOT current-chain evidence; re-pinning them
+# (and the enablement preflight → head 0067 / surface 16) is ENABLEMENT-1 / per-slice maintenance, owner-gated
+# and out of scope here. This workflow performs NO flag write and NO production access.
 
 on:
   push:
