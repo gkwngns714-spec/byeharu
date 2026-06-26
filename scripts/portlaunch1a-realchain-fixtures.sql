@@ -56,7 +56,9 @@ declare u uuid := (select id from pl1a_id where k='u2');
 begin
   select l.zone_id, z.sector_id into v_zone, v_sector from public.locations l join public.zones z on z.id=l.zone_id where l.id=p;
   select id into v_b from public.bases where player_id=u and status='active' order by created_at limit 1;
-  update public.main_ship_instances set status='stationary', spatial_state=null, space_x=null, space_y=null where main_ship_id=s;
+  -- legacy_present = spatial_state NULL + one PRESENT fleet + active presence; ship status stays a legacy
+  -- value ('stationary' is reserved for the new in_space/at_location domain by a CHECK constraint).
+  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null where main_ship_id=s;
   insert into public.fleets (id,player_id,origin_base_id,status,location_mode,current_base_id,current_location_id,current_zone_id,current_sector_id,main_ship_id)
     values (v_fleet,u,v_b,'present','location',null,p,v_zone,v_sector,s);
   insert into public.location_presence (player_id,fleet_id,sector_id,zone_id,location_id,activity_type,status,last_tick_at)

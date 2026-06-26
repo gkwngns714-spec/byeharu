@@ -73,17 +73,17 @@ jobs:
         run: |
           set -a; . /tmp/sbenv 2>/dev/null || true; set +a
           if [ -n "${DB_URL:-}" ]; then
-            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare a text; b text; n int;
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare b text; n int;
             begin
-              select value::text into a from game_config where key='mainship_send_enabled';
-              if a is distinct from 'true'  then raise exception 'send flag=%', a; end if;
+              -- the space-movement flag is the dark gate this slice must never disturb (the send flag is
+              -- seeded false on the disposable chain — production activates it operationally, not via migration).
               select value::text into b from game_config where key='mainship_space_movement_enabled';
               if b is distinct from 'false' then raise exception 'space-movement flag=%', b; end if;
               select count(*) into n from public.locations where id in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003') and status<>'hidden';
               if n<>0 then raise exception '% starter port(s) left non-hidden', n; end if;
               select count(*) into n from auth.users where email like 'pl1afix.%@example.com';
               if n<>0 then raise exception '% fixture users remain', n; end if;
-              raise notice 'post-run ok: send=true space=false; 3 ports hidden; no fixtures';
+              raise notice 'post-run ok: space=false; 3 ports hidden; no fixtures';
             end \$\$;"
           fi
 
