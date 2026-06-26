@@ -5,6 +5,63 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-26 — Session wrap-up + FORWARD PLAN (notes/design only; nothing started)
+
+Closing-session record. **No product code / migration / workflow / verifier / flag / production change** in
+this entry. Captures where things stand after OSN-HUB-1A and the deliberately-gated next steps, so the next
+session can resume without re-deriving.
+
+**State at this wrap (all on `main`):** product/production migration head **`0067`**; `main` is the
+OSN-HUB-1A closure + verifier-tooling line (PRs #31 product, #32/#33 read-only verifier tooling, #34 closure
+record). **OSN is DARK** and stays dark: `mainship_send_enabled = true` (legacy named-location travel LIVE),
+`mainship_space_movement_enabled = false`. Hidden starter ports remain hidden/ineligible/unassigned; no
+home-port assigned; no base anchor; no public OSN enablement. OSN-HUB-1A was merged → deployed (`0067`) →
+read-only verified (production catalog verifier run `28229418325` = `OVERALL_PASS=true`) → formally closed
+(prior entry). The legacy `bases.x/y` / `locations.x/y` coordinate path is frozen; the OSN coordinate domain
+resolves origins/targets through canonical `space_anchors`.
+
+**Reusable asset created this line of work:** a dispatch-only, production-`environment`-gated, **strictly
+read-only** production catalog/ACL/configuration verifier (`scripts/osn-hub1a-production-catalog-verify.{sql,sh}`
++ `.github/workflows/osn-hub1a-production-catalog-verify.yml`, disposable proof `…-proof.yml`). It answers
+"does production still match the approved dark state at head 0067?" via one `REPEATABLE READ READ ONLY`
+snapshot + rollback (pinned CA / `verify-full` / session-pooler). Model future "is prod still in the approved
+known state?" checks on it. **Lesson encoded in it:** Supabase hosted **default privileges** grant
+`EXECUTE`-to-`service_role` on `public` functions that a migration doesn't explicitly revoke for `service_role`
+— so a public RPC granted only `to authenticated` still has `service_role` EXECUTE on prod but not on the
+disposable local stack; assert such platform-default ACLs as an **explicit production policy**, not
+reference-vs-local parity (this was PR #33 "correction A").
+
+**FORWARD PLAN — NOT STARTED. Each item needs its own separately-approved owner charter; do not begin on your
+own. No flag flip / port reveal / home-port assignment / anchor seed as a side effect.** Ordered by readiness:
+
+1. **ENABLEMENT-1 (tooling/gate maintenance — no gameplay, no flag flip).** Re-pin
+   `scripts/osn-enablement-preflight.sql` from migration head `0064`→`0067` and the authenticated client-RPC
+   surface `15`→`16` (it currently fails-closed on the new head/surface — *that is why it was deferred*).
+   Update the **DOCK-0 perm allowlist** (`scripts/osn3-dock0-realchain-perm.sql`, exact-15 client-RPC list) to
+   add `command_main_ship_space_move_to_location` (the same maintenance OSN-4 did for its Stop wrapper).
+   Preserve the read-only / fail-closed / `verify-full` / pinned-CA contract. This unblocks a *green*
+   enablement preflight; it does NOT enable anything.
+2. **OSN flag-enable go/no-go (the first player-facing OSN change).** Only after ENABLEMENT-1 + a green
+   production enablement preflight + an explicit owner decision: flip `mainship_space_movement_enabled=true`
+   via the controlled `dev-mainship-space-movement-flag.yml` workflow. Reversible (single config key).
+3. **Port-centric world build-out (heavy, charter-gated).** Reveal/seed real ports; seed canonical
+   `space_anchors` for reachable locations; assign home-ports (`assign_home_port`); per the **F2 Option C**
+   packet add the canonical `world_sites` identity layer (G1+) with the strict 1:1 immutable `locations`
+   bridge; geographic-zones layer; possibly the **World Workbench** authoring plane first
+   (`PORTCENTRIC_DECISION_PACKET.md` / `F2_COMPATIBILITY_MODEL_DECISION_PACKET.md` are the approved sources).
+4. **Baseline activities & beyond (depend on OSN live + ports).** Exploration / Mining / Trading → Online
+   Presence v1 → player interaction; Repair & Recovery (replace the instant-Home safelock); main-ship combat;
+   captains / modules / rankings. Long-order rationale: `docs/BYEHARU_PROJECT_GUIDE.md` §10–11 and
+   `docs/ROADMAP.md`.
+
+**Ship discipline that produced this line (keep using it):** one owner-authorized step per message
+(build → disposable CI proof → PR → pre-merge integrity review → admin-override no-ff merge → deploy →
+read-only verify); the human owner approves every `environment: production` gate; never flip a flag / reveal a
+port / dispatch or approve a workflow as a side effect; work in a throwaway worktree off `origin/main` and
+never touch the stale `osn3-dock0-location-arrival` checkout.
+
+---
+
 ## 2026-06-26 — OSN-HUB-1A FORMALLY CLOSED — dark canonical location-target navigation, deployed + verified (flag OFF)
 
 Administrative closure record (notes only; **no product code / migration / workflow / verifier / flag /
