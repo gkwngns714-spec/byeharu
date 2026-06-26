@@ -114,6 +114,11 @@ export interface MainShipSpaceMovement {
   target_x: number
   target_y: number
   target_kind: string // 'space' | 'location' | 'base'
+  // OSN-HUB-1A: the destination identity for a named-location target (target_kind='location'); NULL for a
+  // raw open-space target. Owner-read only (RLS on main_ship_space_movements). The client resolves a NAME for
+  // it solely from the public get_world_map() result; if it is not in that public map (e.g. a hidden port),
+  // presentation FAILS CLOSED — no route, no id/coords/name leak (see spaceRouteModel / mainshipStatusLabel).
+  target_location_id?: string | null
   status: string // 'moving' (only active rows are fetched)
   depart_at: string
   arrive_at: string
@@ -126,7 +131,7 @@ export interface MainShipSpaceMovement {
 export async function fetchActiveMainShipSpaceMovement(mainShipId: string): Promise<MainShipSpaceMovement | null> {
   const { data, error } = await supabase
     .from('main_ship_space_movements')
-    .select('id, main_ship_id, fleet_id, origin_x, origin_y, target_x, target_y, target_kind, status, depart_at, arrive_at')
+    .select('id, main_ship_id, fleet_id, origin_x, origin_y, target_x, target_y, target_kind, target_location_id, status, depart_at, arrive_at')
     .eq('main_ship_id', mainShipId)
     .eq('status', 'moving')
     .limit(1)
@@ -244,4 +249,23 @@ export async function commandMainShipSpaceStop(requestId: string): Promise<Space
   const { data, error } = await supabase.rpc(SPACE_STOP_RPC, buildSpaceStopRpcArgs(requestId))
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceStopResult
+}
+
+// OSN-HUB-1A — thin client wrapper over the public canonical location-target boundary
+// (command_main_ship_space_move_to_location). It sends ONLY a destination LOCATION id + an idempotency key —
+// never a coordinate, ship/player id, or target_kind. The server derives the ship from auth.uid(), resolves
+// the destination coordinate from the location's canonical anchor, and is the sole authority. While the
+// feature flag is dark it returns {ok:false, code:'feature_disabled'} BEFORE resolving the target (so a hidden
+// port's existence can never be probed). NOT wired to any UI control while the flag is off (no command issued).
+export type SpaceMoveToLocationResult =
+  | { ok: true; movement_id: string; main_ship_id: string; target_location_id: string; target_x: number; target_y: number; depart_at: string; arrive_at: string }
+  | { ok: false; code: string; message: string }
+
+export async function commandMainShipSpaceMoveToLocation(locationId: string, requestId: string): Promise<SpaceMoveToLocationResult> {
+  const { data, error } = await supabase.rpc('command_main_ship_space_move_to_location', {
+    p_location: locationId,
+    p_request_id: requestId,
+  })
+  if (error) return { ok: false, code: 'unavailable', message: error.message }
+  return data as SpaceMoveToLocationResult
 }
