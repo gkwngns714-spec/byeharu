@@ -35,6 +35,13 @@ EXPECT_AUTH_SURFACE="bootstrap_me,cancel_build_order,command_main_ship_space_mov
 PARITY_TAGS="legal core begin resolve dock stop cmd"
 INTERNAL_TAGS="lock validate resolve excl legal core begin proc settle dock stop elig assign"
 DESC_FIELDS="LANG OWNER SECDEF SP ARGS SRVX ANONX AUTHX PUBX"
+# The public wrapper command_main_ship_space_move_to_location is granted only TO authenticated in 0067; its
+# service_role EXECUTE is governed by Supabase hosted DEFAULT PRIVILEGES (allowed) which the disposable
+# 0001..0067 reference does not reproduce. So for THIS wrapper, service_role EXECUTE (SRVX) is asserted as an
+# EXPLICIT, testable hosted-production policy (= allowed) — NOT as ref-vs-production parity, and NOT suppressed.
+# Strict ref-vs-prod SRVX parity is preserved for every other (explicitly service_role-granted) function.
+WRAPPER_TAG="cmd"
+WRAPPER_PROD_SRVX_EXPECTED="true"
 
 # ── proven connection/trust helpers (identical to the established WORLD-HUB / ANCHOR verifiers) ──────────────
 is_hex64() { printf '%s' "${1:-}" | grep -qE '^[0-9a-f]{64}$'; }
@@ -146,12 +153,31 @@ parity() {  # $1=reference OUT  $2=production OUT ; sets PPASS + PROWS
   local R="$1" P="$2" tag f rh ph rv pv
   PPASS=1; PROWS=""
   for tag in $PARITY_TAGS; do
-    local ok=1 why=""
+    local ok=1 why="" note="body+descriptor byte-identical"
     rh="$(hash_of "$(mval "$R" "HB_${tag}")" || true)"; ph="$(hash_of "$(mval "$P" "HB_${tag}")" || true)"
     if [ -z "$rh" ] || [ -z "$ph" ]; then ok=0; why="missing-body"; elif [ "$rh" != "$ph" ]; then ok=0; why="body-hash-differs"; fi
-    for f in $DESC_FIELDS; do rv="$(mval "$R" "D_${tag}_${f}")"; pv="$(mval "$P" "D_${tag}_${f}")"; if [ "$rv" != "$pv" ]; then ok=0; why="${why} ${f}-differs"; fi; done
-    if [ "$ok" = "1" ]; then PROWS="${PROWS}| ${tag} | PASS | body+descriptor byte-identical |\n"; else PROWS="${PROWS}| ${tag} | **FAIL** | ${why} |\n"; PPASS=0; fi
+    for f in $DESC_FIELDS; do
+      # The wrapper's service_role EXECUTE is a hosted-platform default the reference can't reproduce → it is
+      # NOT a ref-vs-prod parity field for the wrapper (asserted explicitly by check_wrapper_srvx). SRVX parity
+      # stays STRICT for every other function. anon/authenticated/PUBLIC + body + all else stay strict for ALL.
+      if [ "$tag" = "$WRAPPER_TAG" ] && [ "$f" = "SRVX" ]; then note="body+descriptor byte-identical (service_role via explicit production policy)"; continue; fi
+      rv="$(mval "$R" "D_${tag}_${f}")"; pv="$(mval "$P" "D_${tag}_${f}")"; if [ "$rv" != "$pv" ]; then ok=0; why="${why} ${f}-differs"; fi
+    done
+    if [ "$ok" = "1" ]; then PROWS="${PROWS}| ${tag} | PASS | ${note} |\n"; else PROWS="${PROWS}| ${tag} | **FAIL** | ${why} |\n"; PPASS=0; fi
   done
+}
+
+# Explicit, testable hosted-production ACL CONTRACT for the public wrapper's service_role EXECUTE (NOT a
+# tolerated mismatch, NOT ref-vs-prod parity): production MUST report service_role EXECUTE = allowed. Sets
+# WSPASS + WROW. Applied ONLY against the genuine production output (the disposable reference lacks the
+# platform default, so this is not asserted in local mode's healthy path).
+check_wrapper_srvx() {  # $1 = the PRODUCTION output
+  local v; v="$(mval "$1" "D_${WRAPPER_TAG}_SRVX")"
+  if [ "$v" = "$WRAPPER_PROD_SRVX_EXPECTED" ]; then
+    WSPASS=1; WROW="| cmd service_role execute | PASS | expected hosted production policy = allowed (=${v}) |\n"
+  else
+    WSPASS=0; WROW="| cmd service_role execute | **FAIL** | expected hosted production policy = allowed (true), got '${v:-<absent>}' |\n"
+  fi
 }
 
 emit_report() {  # $1=title $2=table-header $3=rows $4=verdict
@@ -225,13 +251,25 @@ if [ "$MODE" = "local" ]; then
   emit_report "OSN-HUB-1A — LOCAL disposable dark-state proof (0001..0067)" "| group | result | detail |
 | --- | --- | --- |" "$ROWS" "$([ "$PASS" = "1" ] && echo true || echo false)"
   [ "$PASS" = "1" ] || fail "local dark-state reconcile did not pass on the healthy disposable chain"
-  # parity comparator: identical reference accepts; a synthetic body/descriptor mismatch is rejected.
+  # parity comparator: identical reference accepts (wrapper SRVX excluded from parity); synthetic mismatches reject.
   parity "$OUT" "$OUT"; [ "$PPASS" = "1" ] || fail "parity rejected an identical reference"
-  local_bad="$(printf '%s\n' "$OUT" | sed 's/^HB_legal=.*/HB_legal=Y29ycnVwdA==/')"   # corrupt one body
-  parity "$OUT" "$local_bad"; [ "$PPASS" = "0" ] || fail "parity ACCEPTED a synthetic body mismatch"
-  local_bad2="$(printf '%s\n' "$OUT" | sed 's/^D_core_SECDEF=.*/D_core_SECDEF=false/')" # flip one descriptor
-  parity "$OUT" "$local_bad2"; [ "$PPASS" = "0" ] || fail "parity ACCEPTED a synthetic descriptor mismatch"
-  echo "[local] OK: parity accepts identical, rejects synthetic body + descriptor mismatch (no normalization)"
+  bad(){ printf '%s\n' "$OUT" | sed "$1"; }
+  parity "$OUT" "$(bad 's/^HB_legal=.*/HB_legal=Y29ycnVwdA==/')";  [ "$PPASS" = "0" ] || fail "parity ACCEPTED a synthetic body mismatch (internal)"
+  parity "$OUT" "$(bad 's/^HB_cmd=.*/HB_cmd=Y29ycnVwdA==/')";      [ "$PPASS" = "0" ] || fail "parity ACCEPTED a synthetic wrapper-BODY mismatch"
+  parity "$OUT" "$(bad 's/^D_core_SECDEF=.*/D_core_SECDEF=false/')"; [ "$PPASS" = "0" ] || fail "parity ACCEPTED a synthetic descriptor mismatch (internal)"
+  # the WRAPPER keeps STRICT ref-vs-prod parity for anon / authenticated / PUBLIC / body / args — only SRVX is exempt.
+  parity "$OUT" "$(bad 's/^D_cmd_ANONX=.*/D_cmd_ANONX=true/')";    [ "$PPASS" = "0" ] || fail "parity ACCEPTED a wrapper anon-grant change"
+  parity "$OUT" "$(bad 's/^D_cmd_AUTHX=.*/D_cmd_AUTHX=false/')";   [ "$PPASS" = "0" ] || fail "parity ACCEPTED a wrapper authenticated-grant change"
+  parity "$OUT" "$(bad 's/^D_cmd_PUBX=.*/D_cmd_PUBX=true/')";      [ "$PPASS" = "0" ] || fail "parity ACCEPTED a wrapper PUBLIC-grant change"
+  # internal service_role parity stays STRICT: flipping an internal SRVX must fail closed.
+  parity "$OUT" "$(bad 's/^D_stop_SRVX=.*/D_stop_SRVX=false/')";   [ "$PPASS" = "0" ] || fail "parity ACCEPTED an internal service_role-grant change"
+  # the wrapper's SRVX is exempt from ref-vs-prod parity (the local reference value naturally differs from hosted).
+  parity "$OUT" "$(bad 's/^D_cmd_SRVX=.*/D_cmd_SRVX=true/')";      [ "$PPASS" = "1" ] || fail "wrapper SRVX wrongly subjected to ref-vs-prod parity"
+  echo "[local] OK: parity rejects internal body/descriptor/SRVX + wrapper body/anon/auth/PUBLIC mismatches; wrapper SRVX exempt from ref-vs-prod parity"
+  # explicit wrapper service_role PRODUCTION-policy contract: allowed(true) → PASS; denied(false) → FAIL CLOSED.
+  check_wrapper_srvx "$(bad 's/^D_cmd_SRVX=.*/D_cmd_SRVX=true/')";  [ "$WSPASS" = "1" ] || fail "explicit wrapper service_role policy rejected the allowed (true) value"
+  check_wrapper_srvx "$(bad 's/^D_cmd_SRVX=.*/D_cmd_SRVX=false/')"; [ "$WSPASS" = "0" ] || fail "explicit wrapper service_role policy ACCEPTED a denied (false) value"
+  echo "[local] OK: explicit wrapper service_role production-policy contract PASSes on allowed(true) and FAILs CLOSED on denied(false)"
   echo "OSN-HUB-1A PRODUCTION CATALOG VERIFY (LOCAL DISPOSABLE PROOF): ALL PASSED"
   exit 0
 fi
@@ -267,10 +305,11 @@ PRODOUT="$(env -i PATH="$PATH" HOME="${RUNNER_TEMP:-/tmp}" PGPASSWORD="$SUPABASE
 echo "[production] read-only gate passed before any catalog query"
 
 reconcile "$PRODOUT"
-parity "$REFOUT" "$PRODOUT"
-OVERALL="$([ "$PASS" = "1" ] && [ "$PPASS" = "1" ] && echo true || echo false)"
+parity "$REFOUT" "$PRODOUT"                  # ref↔prod body + descriptors (wrapper SRVX exempt, asserted below)
+check_wrapper_srvx "$PRODOUT"                # explicit hosted-production policy: wrapper service_role EXECUTE = allowed
+OVERALL="$([ "$PASS" = "1" ] && [ "$PPASS" = "1" ] && [ "$WSPASS" = "1" ] && echo true || echo false)"
 emit_report "OSN-HUB-1A — production catalog / ACL / configuration verification (head 0067)" "| check | result | detail |
-| --- | --- | --- |" "${ROWS}| PARITY (7 changed fns, ref↔prod) | $([ "$PPASS" = "1" ] && echo PASS || echo '**FAIL**') | byte-identical prosrc + descriptors |\n" "$OVERALL"
+| --- | --- | --- |" "${ROWS}| PARITY (7 changed fns, ref↔prod; wrapper SRVX exempt) | $([ "$PPASS" = "1" ] && echo PASS || echo '**FAIL**') | byte-identical prosrc + descriptors |\n${WROW}" "$OVERALL"
 printf "%b" "$PROWS" >> "${VERIFY_SUMMARY_FILE:-/dev/null}" 2>/dev/null || true
 
 if [ "$OVERALL" = "true" ]; then
