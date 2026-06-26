@@ -178,17 +178,19 @@ begin
   update public.locations set status='hidden' where id in (select id from pl1a_id where k in ('p2','p3'));
 end $$;
 
--- R4: broken invariant (anchor de-activated) on a coherent hidden set → abort with NO status write.
+-- R4: broken invariant (docking service de-activated) on a coherent hidden set → abort with NO status write.
+--     Uses a REVERSIBLE break: location_services has no immutability guard, whereas a retired space_anchors
+--     row is terminal/immutable (active->retired only) and could not be restored within the fixture.
 do $$
-declare ok boolean := false;
+declare ok boolean := false; c_s1 uuid := 'b1a05001-0066-4a00-8a00-000000000051';  -- p1's docking service
 begin
-  update public.space_anchors set status='retired' where id=(select id from pl1a_id where k='a1');  -- break p1's anchor
+  update public.location_services set status='disabled' where id = c_s1;            -- break p1's docking service
   begin perform public.reveal_starter_ports(); exception when others then ok := true; end;
-  if not ok then raise exception 'R4 FAIL: broken-anchor invariant did not abort'; end if;
+  if not ok then raise exception 'R4 FAIL: broken docking-service invariant did not abort'; end if;
   if (select count(*) from public.locations where id in (select id from pl1a_id where k in ('p1','p2','p3')) and status='hidden') <> 3 then
     raise exception 'R4 FAIL: a port status changed despite the invariant abort'; end if;
-  raise notice 'R4 ok: broken-anchor invariant rejected, no status write';
-  update public.space_anchors set status='active' where id=(select id from pl1a_id where k='a1');  -- restore
+  raise notice 'R4 ok: broken docking-service invariant rejected, no status write';
+  update public.location_services set status='active' where id = c_s1;              -- restore (mutable)
 end $$;
 
 -- ════════ readiness with ports REVEALED — anchored origin yields the OTHER ports as destinations ════════
