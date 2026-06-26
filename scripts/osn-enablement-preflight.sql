@@ -2,7 +2,7 @@
 --
 -- Single source of truth for the frozen pre-enable checks. Run by:
 --   * .github/workflows/osn-enablement-preflight.yml  → against PRODUCTION (manual, gated); GO/ABORT.
---   * .github/workflows/osn3-osn4-realchain-proof.yml → against the DISPOSABLE full chain (0001..0064);
+--   * .github/workflows/osn3-osn4-realchain-proof.yml → against the DISPOSABLE full chain (0001..0067);
 --       validates that this script executes cleanly and that the STRUCTURAL checks pass.
 --
 -- HARD CONTRACT:
@@ -15,9 +15,9 @@
 --     emitted sentinels: STRUCTURAL_PASS=<t|f> (head/ACL/surface/cron, deployment-shape facts) and
 --     OVERALL_PASS=<t|f> (every check, the production GO gate).
 --
--- Everything below is rebuilt from the deployed schema + migration 0064:
+-- Everything below is rebuilt from the deployed schema + migration 0067:
 --   game_config.value is JSONB; the flag is read by cfg_bool() as (value #>> '{}')::boolean.
---   Exact OSN routine signatures and the canonical authenticated RPC surface are taken from 0064 §E.
+--   Exact OSN routine signatures and the canonical authenticated RPC surface are taken from 0067 §G.
 
 \set ON_ERROR_STOP on
 set default_transaction_read_only = on;
@@ -68,10 +68,10 @@ checks as (
     (flag.as_bool is false)                                                       as chk1_flag_is_false,
     flag.storage_type                                                             as chk1_flag_storage_type,
     (flag.storage_type = 'jsonb')                                                 as chk1_flag_storage_type_is_jsonb,
-    -- [2] migration head is exactly 0064
+    -- [2] migration head is exactly 0067
     mig.head                                                                      as chk2_migration_head,
-    (mig.head = '20260618000064')                                                 as chk2_migration_head_is_0064,
-    -- [3] exact OSN RPC permission surface (deployed 0064 signatures)
+    (mig.head = '20260618000067')                                                 as chk2_migration_head_is_0067,
+    -- [3] exact OSN RPC permission surface (deployed 0067 signatures)
     coalesce(rpc.move_wrapper is not null
              and has_function_privilege('authenticated', rpc.move_wrapper::oid, 'EXECUTE'), false)        as chk3_move_wrapper_auth,
     coalesce(rpc.stop_wrapper is not null
@@ -92,38 +92,38 @@ checks as (
              and has_function_privilege('service_role', rpc.arrival_primitive::oid, 'EXECUTE'), false)    as chk3_primitive_service_role,
     coalesce(rpc.arrival_processor is not null
              and has_function_privilege('service_role', rpc.arrival_processor::oid, 'EXECUTE'), false)    as chk3_processor_service_role,
-    -- [3b] authenticated public function surface equals the canonical set
+    -- [3b] authenticated public function surface equals the canonical set (exactly 16 at head 0067)
     coalesce(
-      surface.names = 'bootstrap_me,cancel_build_order,command_main_ship_space_move,command_main_ship_space_stop,get_combat_reports,get_my_expedition_preview,get_world_map,move_main_ship_to_location,repair_main_ship,request_leave_location,request_main_ship_return,request_retreat,send_fleet_to_location,send_main_ship_expedition,train_units',
+      surface.names = 'bootstrap_me,cancel_build_order,command_main_ship_space_move,command_main_ship_space_move_to_location,command_main_ship_space_stop,get_combat_reports,get_my_expedition_preview,get_world_map,move_main_ship_to_location,repair_main_ship,request_leave_location,request_main_ship_return,request_retreat,send_fleet_to_location,send_main_ship_expedition,train_units',
       false
-    )                                                                             as chk3b_client_surface_is_canonical_15,
-    -- [4] zero active open-space movements while dark
+    )                                                                             as chk3b_client_surface_is_canonical_16,
+    -- [4] zero active coordinate movements (space + location target kinds) while dark
     (not exists (
        select 1 from public.main_ship_space_movements m
-       where m.status = 'moving' and m.target_kind = 'space'
-     ))                                                                           as chk4_zero_active_space_moves,
+       where m.status = 'moving' and m.target_kind in ('space', 'location')
+     ))                                                                           as chk4_zero_active_coordinate_moves,
     -- [5] arrival cron exists once and is active at 30 seconds
     (cronj.n = 1)                                                                 as chk5_cron_exactly_one_job,
     cronj.all_active                                                              as chk5_cron_job_active,
     cronj.all_30s                                                                 as chk5_cron_schedule_30s,
-    -- [6] coherence — ACTIVE SPACE MOVEMENTS ONLY (does NOT require in_transit ships to have a space move)
+    -- [6] coherence — ACTIVE COORDINATE MOVEMENTS ONLY, space + location (does NOT require in_transit ships to have a coordinate move)
     (not exists (
        select 1 from public.main_ship_space_movements m
-       where m.status = 'moving' and m.target_kind = 'space'
+       where m.status = 'moving' and m.target_kind in ('space', 'location')
          and not exists (
            select 1 from public.main_ship_instances s
            where s.main_ship_id = m.main_ship_id and s.spatial_state = 'in_transit'
          )
-     ))                                                                           as chk6_i_every_space_move_on_in_transit_ship,
+     ))                                                                           as chk6_i_every_coord_move_on_in_transit_ship,
     (not exists (
        select 1 from public.main_ship_space_movements m
-       where m.status = 'moving' and m.target_kind = 'space'
+       where m.status = 'moving' and m.target_kind in ('space', 'location')
        group by m.main_ship_id
        having count(*) > 1
-     ))                                                                           as chk6_ii_no_ship_more_than_one_space_move,
+     ))                                                                           as chk6_ii_no_ship_more_than_one_coord_move,
     (not exists (
        select 1 from public.main_ship_space_movements m
-       where m.status = 'moving' and m.target_kind = 'space'
+       where m.status = 'moving' and m.target_kind in ('space', 'location')
          and (m.origin_x is null or m.origin_y is null
               or m.target_x is null or m.target_y is null
               or m.depart_at is null or m.arrive_at is null
@@ -134,27 +134,27 @@ checks as (
 result as (
   select
     c.*,
-    ( c.chk2_migration_head_is_0064
+    ( c.chk2_migration_head_is_0067
       and c.chk3_move_wrapper_auth and c.chk3_stop_wrapper_auth
       and c.chk3_writer_auth_denied and c.chk3_writer_anon_denied
       and c.chk3_primitive_auth_denied and c.chk3_primitive_anon_denied
       and c.chk3_processor_auth_denied
       and c.chk3_writer_service_role and c.chk3_primitive_service_role and c.chk3_processor_service_role
-      and c.chk3b_client_surface_is_canonical_15
+      and c.chk3b_client_surface_is_canonical_16
       and c.chk5_cron_exactly_one_job and c.chk5_cron_job_active and c.chk5_cron_schedule_30s
     ) as structural_pass,
     ( c.chk1_flag_one_row and c.chk1_flag_is_false and c.chk1_flag_storage_type_is_jsonb
-      and c.chk2_migration_head_is_0064
+      and c.chk2_migration_head_is_0067
       and c.chk3_move_wrapper_auth and c.chk3_stop_wrapper_auth
       and c.chk3_writer_auth_denied and c.chk3_writer_anon_denied
       and c.chk3_primitive_auth_denied and c.chk3_primitive_anon_denied
       and c.chk3_processor_auth_denied
       and c.chk3_writer_service_role and c.chk3_primitive_service_role and c.chk3_processor_service_role
-      and c.chk3b_client_surface_is_canonical_15
-      and c.chk4_zero_active_space_moves
+      and c.chk3b_client_surface_is_canonical_16
+      and c.chk4_zero_active_coordinate_moves
       and c.chk5_cron_exactly_one_job and c.chk5_cron_job_active and c.chk5_cron_schedule_30s
-      and c.chk6_i_every_space_move_on_in_transit_ship
-      and c.chk6_ii_no_ship_more_than_one_space_move
+      and c.chk6_i_every_coord_move_on_in_transit_ship
+      and c.chk6_ii_no_ship_more_than_one_coord_move
       and c.chk6_iii_valid_origin_target_timing
     ) as overall_pass
   from checks c
