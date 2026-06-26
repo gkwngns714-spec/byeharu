@@ -58,8 +58,40 @@ test('route appears for one coherent active space-coordinate transit (outbound o
   expect(r).not.toHaveProperty('targetKind')
 })
 
-test('fail closed: target_kind="location" (docking) renders no coordinate route', () => {
+test('fail closed: target_kind="location" with NO destination identity renders no route', () => {
+  // OSN-HUB-1A: a location target needs a target_location_id resolvable in the PUBLIC map; absent → null.
   expect(resolveActiveSpaceRoute(coherentTransit({ target_kind: 'location' }), midMs)).toBeNull()
+})
+
+test('OSN-HUB-1A: location target to a VISIBLE public location renders a route carrying its identity', () => {
+  // LOC ('loc-A') is in the public locations list → the location route renders to that public marker.
+  const r = resolveActiveSpaceRoute(
+    coherentTransit({ target_kind: 'location', target_location_id: 'loc-A', target_x: 300, target_y: 400 }),
+    midMs,
+  )
+  expect(r).not.toBeNull()
+  expect(r!.destinationLocationId).toBe('loc-A')
+  expect(r!.target).toEqual({ x: 300, y: 400 })
+})
+
+test('OSN-HUB-1A: location target to a HIDDEN/unknown destination fails closed (no route, no leak)', () => {
+  // target_location_id absent from the public locations list ([LOC]=loc-A) → null (no route/id/coord/name leak).
+  expect(
+    resolveActiveSpaceRoute(
+      coherentTransit({ target_kind: 'location', target_location_id: 'hidden-port-x', target_x: -50, target_y: -30 }),
+      midMs,
+    ),
+  ).toBeNull()
+})
+
+test('OSN-HUB-1A: location target with explicit null destination id fails closed', () => {
+  expect(resolveActiveSpaceRoute(coherentTransit({ target_kind: 'location', target_location_id: null }), midMs)).toBeNull()
+})
+
+test('OSN-HUB-1A: a space route carries NO destination identity', () => {
+  const r = resolveActiveSpaceRoute(coherentTransit(), midMs)
+  expect(r).not.toBeNull()
+  expect(r).not.toHaveProperty('destinationLocationId')
 })
 
 test('fail closed: target_kind="base" (would be a coordinate Return) renders nothing', () => {

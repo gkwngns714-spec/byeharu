@@ -1,22 +1,24 @@
 import { resolveMainShipMarker, type MarkerInputs } from './resolveMainShipMarker'
 
-// OSN-3 S6B-ROUTE — the SINGLE, pure, read-only authority for whether an ACTIVE coordinate route may be
-// drawn, and with what endpoints. It does NOT re-interpret movement state: it defers entirely to
+// OSN-3 S6B-ROUTE (+ OSN-HUB-1A) — the SINGLE, pure, read-only authority for whether an ACTIVE coordinate
+// route may be drawn, and with what endpoints. It does NOT re-interpret movement state: it defers entirely to
 // `resolveMainShipMarker` (the established marker/state resolver) for coordinate-transit coherence, then
-// applies ONE additional domain restriction — the route renders only for the single coordinate movement
-// kind the deployed writer actually produces:
+// applies a target-kind domain policy:
 //
-//     target_kind === 'space'   (an arbitrary committed open-space coordinate)
+//     target_kind === 'space'     → an arbitrary committed open-space coordinate (geometry + timestamps only).
+//     target_kind === 'location'  → a named-location (port/city) destination — renders ONLY when its
+//                                    target_location_id is VISIBLE in the public get_world_map() result the
+//                                    client holds; a hidden/unknown destination FAILS CLOSED (null: no route,
+//                                    no id/coord/name leak). Carries `destinationLocationId` so the view can
+//                                    safely resolve a name for a publicly-visible destination.
+//     target_kind === 'base'/other → no presentation (a coordinate Return is not an authorized feature).
 //
-// The only writer of main_ship_space_movements (mainship_space_begin_move) hardcodes target_kind='space';
-// 'location' (future docking) and 'base' (a coordinate Return — NOT an authorized feature) are never
-// produced today and have no S6B-ROUTE presentation. This model therefore FAILS CLOSED for every other
-// target_kind. A future location-docking route is a separate product + visual contract; do not infer it
-// from defensive backend support.
+// 'base'/unknown fail closed. A location route is dark-by-data in production today (the flag is off and the
+// only anchored locations are HIDDEN starter ports, which are absent from the public map → never rendered).
 //
-// The route is semantically ONE thing: an active OUTBOUND movement to a committed arbitrary open-space
-// coordinate. There is intentionally no `state`/`returning`/`targetKind` in the render model — it carries
-// only the geometry + timestamps the view needs.
+// The route is semantically an active OUTBOUND movement to a committed destination. There is intentionally no
+// `state`/`returning`/`targetKind` in the render model — only the geometry + timestamps the view needs, plus
+// the optional public destination identity.
 //
 // PURE: no React/SVG/DOM/fetch/state/writes. No clamping. No new state machine. Timestamps pass through
 // verbatim for the view to format a display-only ETA (never an arrival).
@@ -29,6 +31,13 @@ export interface ActiveSpaceRoute {
   /** persisted route timestamps (server truth); the view derives a display-only ETA, never an arrival. */
   departAt: string
   arriveAt: string
+  /**
+   * OSN-HUB-1A: for a named-location target (target_kind='location'), the destination location id — present
+   * ONLY when that location is VISIBLE in the public get_world_map() result the client holds. Absent for a
+   * raw open-space ('space') target. A hidden/unknown destination never produces a route at all (fail closed),
+   * so this id can only ever reference a publicly-visible location — the view may safely resolve its name.
+   */
+  destinationLocationId?: string
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
@@ -51,15 +60,30 @@ export function resolveActiveSpaceRoute(inputs: MarkerInputs, nowMs: number): Ac
 
   const mv = inputs.spaceMovement
   if (!mv || mv.status !== 'moving') return null
-  // Domain restriction (S6B-ROUTE): render ONLY the one kind the writer produces. 'location'/'base'/unknown
-  // fail closed here — a docking or base-directed coordinate route is not an authorized presentation.
-  if (mv.target_kind !== 'space') return null
   if (!finite(mv.origin_x) || !finite(mv.origin_y) || !finite(mv.target_x) || !finite(mv.target_y)) return null
 
-  return {
+  const geom = {
     origin: { x: mv.origin_x, y: mv.origin_y },
     target: { x: mv.target_x, y: mv.target_y },
     departAt: mv.depart_at,
     arriveAt: mv.arrive_at,
   }
+
+  // 'space' — an arbitrary committed open-space coordinate (the deployed writer's original kind). Geometry +
+  // timestamps only (no destination identity).
+  if (mv.target_kind === 'space') return geom
+
+  // OSN-HUB-1A 'location' — a named-location (port/city) destination. It renders ONLY when its
+  // target_location_id is a destination that is VISIBLE in the public map the client holds. A hidden/unknown
+  // destination (e.g. a dark starter port absent from get_world_map) FAILS CLOSED → null: no route line, no
+  // destination marker, and no id/coord/name leak through the render model.
+  if (mv.target_kind === 'location') {
+    const id = mv.target_location_id
+    if (!id) return null
+    if (!inputs.locations.some((l) => l.id === id)) return null
+    return { ...geom, destinationLocationId: id }
+  }
+
+  // 'base' (a coordinate Return — not an authorized feature) / unknown → no presentation.
+  return null
 }
