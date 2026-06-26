@@ -119,16 +119,23 @@ end $$;
 
 -- Directly build a coherent in_transit ship with a single DUE 'moving' location-target movement whose stored
 -- target snapshot is (p_tx,p_ty). Mirrors the DOCK-0 fixture builder (independent of the flag/core). Returns ship.
-create or replace function h1a_intransit_loc(u uuid, p_loc uuid, p_tx double precision, p_ty double precision) returns uuid language plpgsql as $$
+-- Window variant: origin (0,0) → location target (p_tx,p_ty) with an EXPLICIT depart/arrive window (so a test
+-- can place the route's arrive_at in the future, for a mid-flight Stop, or the past, for a due Stop).
+create or replace function h1a_intransit_loc_window(u uuid, p_loc uuid, p_tx double precision, p_ty double precision, p_depart timestamptz, p_arrive timestamptz) returns uuid language plpgsql as $$
 declare v_s uuid := gen_random_uuid(); v_f uuid := gen_random_uuid(); v_m uuid := gen_random_uuid();
 begin
   insert into main_ship_instances (player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id)
     values (u,'starter_frigate','traveling','in_transit',500,500,50,10,2,3,v_s);
   insert into fleets (id,player_id,status,location_mode,main_ship_id) values (v_f,u,'moving','movement',v_s);
   insert into main_ship_space_movements (id,main_ship_id,fleet_id,player_id,origin_kind,origin_x,origin_y,target_kind,target_x,target_y,target_location_id,speed_used,depart_at,arrive_at)
-    values (v_m,v_s,v_f,u,'space',0,0,'location',p_tx,p_ty,p_loc,1.0, now()-interval '2 hour', now()-interval '1 hour');
+    values (v_m,v_s,v_f,u,'space',0,0,'location',p_tx,p_ty,p_loc,1.0, p_depart, p_arrive);
   update fleets set active_space_movement_id = v_m where id = v_f;
   return v_s;
+end $$;
+
+create or replace function h1a_intransit_loc(u uuid, p_loc uuid, p_tx double precision, p_ty double precision) returns uuid language plpgsql as $$
+begin
+  return h1a_intransit_loc_window(u, p_loc, p_tx, p_ty, now()-interval '2 hour', now()-interval '1 hour');  -- due
 end $$;
 
 create or replace function h1a_ship_hash(p_ship uuid) returns text language sql stable as $$
@@ -476,6 +483,120 @@ begin
   raise notice 'SECTION G ok: a moving ship cannot start a second OSN move (one-active-per-ship, pointer-coherent); exactly one arrival processor + one dock resolver + one core writer (no second engine). Legacy↔OSN cross-domain exclusion is enforced by the unchanged S2 assert_cross_domain_exclusion the core composes.';
 end $$;
 
+-- ════════ SECTION H — OSN-4 Stop compatibility for location-target routes ═══════════════════════════════════
+-- Before arrival → interpolated 'stopped' (in_space; never docks/presence; identical to space). At/after
+-- arrival → the SAME canonical Dock-0 decision (dock OR a SETTLED safe terminal failure; never
+-- not_space_movement). Stop is recovery → works with the OSN flag false. The arrival cron stays unscheduled.
+do $$
+declare u uuid; s uuid; port uuid; r jsonb; r2 jsonb; req uuid; n int; v_fleet uuid; h1 text; h2 text;
+begin
+  -- H-A — MID-FLIGHT location Stop (arrive in the FUTURE) → interpolated 'stopped'; in_space; no dock/presence.
+  u := h1a_user(); port := h1a_eligible_port(200, 100);
+  s := h1a_intransit_loc_window(u, port, 200, 100, now()-interval '30 min', now()+interval '30 min');
+  req := gen_random_uuid();
+  r := public.mainship_space_stop(u, s, req);
+  if (r->>'ok')::boolean is not true or (r->>'outcome') <> 'stopped' then raise exception 'H-A: expected stopped, got %', r; end if;
+  perform 1 from main_ship_space_movements m where m.main_ship_id=s and m.status='stopped' and m.terminal_reason='player_stop' and m.target_kind='location' and m.target_location_id=port;
+  if not found then raise exception 'H-A: movement not stopped/player_stop with the location snapshot preserved: %', (select to_jsonb(m) from main_ship_space_movements m where m.main_ship_id=s); end if;
+  perform 1 from main_ship_instances m where m.main_ship_id=s and m.status='stationary' and m.spatial_state='in_space' and m.space_x>0 and m.space_x<200;  -- INTERPOLATED, not the destination
+  if not found then raise exception 'H-A: ship not in_space at an interpolated point: %', (select to_jsonb(m) from main_ship_instances m where m.main_ship_id=s); end if;
+  select id into v_fleet from fleets where main_ship_id=s;
+  perform 1 from fleets f where f.id=v_fleet and f.status='completed' and f.active_space_movement_id is null and f.current_location_id is null;
+  if not found then raise exception 'H-A: fleet coordinate pointer not cleared'; end if;
+  if exists (select 1 from location_presence lp where lp.fleet_id=v_fleet) then raise exception 'H-A: a mid-flight Stop created a presence'; end if;
+  if (mainship_space_validate_context(s)->>'state') <> 'in_space' then raise exception 'H-A: S2 != in_space'; end if;
+  r2 := public.mainship_space_stop(u, s, req);
+  if r2 is distinct from r then raise exception 'H-A: replay not idempotent'; end if;
+  if (select count(*) from main_ship_space_movements where main_ship_id=s) <> 1 then raise exception 'H-A: duplicate movement'; end if;
+  if (select count(*) from main_ship_space_command_receipts where main_ship_id=s) <> 1 then raise exception 'H-A: duplicate receipt'; end if;
+  raise notice 'H-A ok: mid-flight location Stop → interpolated in_space; no dock/presence; snapshot preserved; idempotent';
+
+  -- H-B — DUE location Stop → canonical Dock-0 docking (arrived/at_location/one presence); processor no-dup.
+  u := h1a_user(); port := h1a_eligible_port(140, -60);
+  s := h1a_intransit_loc_window(u, port, 140, -60, now()-interval '2 hour', now()-interval '1 minute');
+  req := gen_random_uuid();
+  r := public.mainship_space_stop(u, s, req);
+  if (r->>'ok')::boolean is not true or (r->>'outcome') <> 'arrived' or (r->>'docked')::boolean is not true then raise exception 'H-B: expected arrived+docked, got %', r; end if;
+  perform 1 from main_ship_space_movements m where m.main_ship_id=s and m.status='arrived' and m.terminal_reason='auto_arrival';
+  if not found then raise exception 'H-B: movement not arrived'; end if;
+  perform 1 from main_ship_instances m where m.main_ship_id=s and m.status='stationary' and m.spatial_state='at_location';
+  if not found then raise exception 'H-B: ship not at_location'; end if;
+  select id into v_fleet from fleets where main_ship_id=s;
+  perform 1 from fleets f where f.id=v_fleet and f.status='present' and f.location_mode='location' and f.current_location_id=port;
+  if not found then raise exception 'H-B: fleet not present at the port'; end if;
+  if (select count(*) from location_presence lp where lp.fleet_id=v_fleet and lp.status='active') <> 1 then raise exception 'H-B: not exactly one active presence'; end if;
+  r2 := public.mainship_space_stop(u, s, req);
+  if r2 is distinct from r then raise exception 'H-B: replay not idempotent'; end if;
+  h1 := h1a_ship_hash(s); perform process_mainship_space_arrivals(); h2 := h1a_ship_hash(s);
+  if h1 is distinct from h2 then raise exception 'H-B: the arrival processor created a duplicate settlement/presence'; end if;
+  raise notice 'H-B ok: due location Stop docks via Dock-0 (one presence); idempotent; processor no-dup';
+
+  -- H-C — DUE location Stop with a target broken in transit → SETTLED safe Dock-0 terminal failure
+  --        (outcome='arrived', docked=false, dock_reason=undockable_*/anchor_changed) — never not_space_movement.
+  u := h1a_user(); port := h1a_eligible_port(90, 90);
+  s := h1a_intransit_loc_window(u, port, 90, 90, now()-interval '2 hour', now()-interval '1 minute');
+  update space_anchors set status='retired' where location_id=port and kind='location' and status='active';
+  perform h1a_anchor(port, 91, 90, 'active');                                   -- anchor moved
+  req := gen_random_uuid(); r := public.mainship_space_stop(u, s, req);
+  if (r->>'ok')::boolean is not true or (r->>'outcome') <> 'arrived' or (r->>'docked')::boolean is not false or (r->>'dock_reason') <> 'target_anchor_changed' then raise exception 'H-C1 (anchor changed): %', r; end if;
+  perform h1a_assert_terminal(s, 'target_anchor_changed', 90, 90);
+  r2 := public.mainship_space_stop(u, s, req); if r2 is distinct from r then raise exception 'H-C1: replay not idempotent'; end if;
+
+  u := h1a_user(); port := h1a_eligible_port(-90, 90);
+  s := h1a_intransit_loc_window(u, port, -90, 90, now()-interval '2 hour', now()-interval '1 minute');
+  update space_anchors set status='retired' where location_id=port and kind='location' and status='active';  -- anchor retired
+  req := gen_random_uuid(); r := public.mainship_space_stop(u, s, req);
+  if (r->>'outcome') <> 'arrived' or (r->>'docked')::boolean is not false or (r->>'dock_reason') <> 'undockable_no_active_anchor' then raise exception 'H-C2 (anchor retired): %', r; end if;
+  perform h1a_assert_terminal(s, 'undockable_no_active_anchor', -90, 90);
+
+  u := h1a_user(); port := h1a_eligible_port(120, 30);
+  s := h1a_intransit_loc_window(u, port, 120, 30, now()-interval '2 hour', now()-interval '1 minute');
+  update location_services set status='disabled' where location_id=port and service='docking';            -- service inactive
+  req := gen_random_uuid(); r := public.mainship_space_stop(u, s, req);
+  if (r->>'outcome') <> 'arrived' or (r->>'docked')::boolean is not false or (r->>'dock_reason') <> 'undockable_no_docking_service' then raise exception 'H-C3 (service inactive): %', r; end if;
+  perform h1a_assert_terminal(s, 'undockable_no_docking_service', 120, 30);
+
+  u := h1a_user(); port := h1a_eligible_port(-120, -30);
+  s := h1a_intransit_loc_window(u, port, -120, -30, now()-interval '2 hour', now()-interval '1 minute');
+  update locations set activity_type='hunt_pirates' where id=port;                                         -- activity ≠ none
+  req := gen_random_uuid(); r := public.mainship_space_stop(u, s, req);
+  if (r->>'outcome') <> 'arrived' or (r->>'docked')::boolean is not false or (r->>'dock_reason') <> 'undockable_unsupported_activity' then raise exception 'H-C4 (activity): %', r; end if;
+  perform h1a_assert_terminal(s, 'undockable_unsupported_activity', -120, -30);
+  raise notice 'H-C ok: due location Stop with a broken target → SETTLED arrived+undocked via Dock-0 (anchor change/retire, service inactive, activity≠none); in_space at snapshot; no presence; idempotent; no loop';
+
+  -- H-D — flag-off RECOVERY: an already-active in-transit location route still Stops with the OSN flag false.
+  u := h1a_user(); port := h1a_eligible_port(60, -120);
+  s := h1a_intransit_loc_window(u, port, 60, -120, now()-interval '30 min', now()+interval '30 min');
+  update game_config set value='false' where key='mainship_space_movement_enabled';  -- already false; explicit
+  req := gen_random_uuid(); r := public.mainship_space_stop(u, s, req);
+  if (r->>'ok')::boolean is not true or (r->>'outcome') <> 'stopped' then raise exception 'H-D: flag-off recovery Stop failed: %', r; end if;
+  raise notice 'H-D ok: flag-off recovery — an active in-transit location route still Stops (the flag blocks creation, not recovery)';
+
+  -- H-E — Stop vs arrival-processor, deterministic BOTH orderings → exactly one settlement, identical final
+  --        state, one presence, no active pointer. (A true concurrent-session race is in
+  --        scripts/osn-hub1a-realchain-stop-race.sh.) The shared ship lock serializes them; the loser no-ops.
+  -- E-i: processor settles first → late Stop sees no moving movement (state at_location) → coherent no-op.
+  u := h1a_user(); port := h1a_eligible_port(150, 150);
+  s := h1a_intransit_loc_window(u, port, 150, 150, now()-interval '2 hour', now()-interval '1 minute');
+  perform process_mainship_space_arrivals();
+  perform 1 from main_ship_instances m where m.main_ship_id=s and m.spatial_state='at_location'; if not found then raise exception 'E-i precond: processor did not dock'; end if;
+  select id into v_fleet from fleets where main_ship_id=s;
+  if (select count(*) from location_presence lp where lp.fleet_id=v_fleet and lp.status='active') <> 1 then raise exception 'E-i: not one presence after processor'; end if;
+  r := public.mainship_space_stop(u, s, gen_random_uuid());
+  if (r->>'ok')::boolean is not false or (r->>'reason') not in ('not_in_transit','feature_disabled') then raise exception 'E-i: late Stop not a coherent no-op: %', r; end if;
+  if (select count(*) from location_presence lp where lp.fleet_id=v_fleet and lp.status='active') <> 1 then raise exception 'E-i: late Stop created a duplicate presence'; end if;
+  -- E-ii: Stop settles first → processor sees no moving movement → no second settlement / duplicate presence.
+  u := h1a_user(); port := h1a_eligible_port(-150, -150);
+  s := h1a_intransit_loc_window(u, port, -150, -150, now()-interval '2 hour', now()-interval '1 minute');
+  r := public.mainship_space_stop(u, s, gen_random_uuid());
+  if (r->>'outcome') <> 'arrived' or (r->>'docked')::boolean is not true then raise exception 'E-ii precond: Stop did not dock: %', r; end if;
+  select id into v_fleet from fleets where main_ship_id=s;
+  n := process_mainship_space_arrivals();
+  if (select count(*) from location_presence lp where lp.fleet_id=v_fleet and lp.status='active') <> 1 then raise exception 'E-ii: processor created a duplicate presence'; end if;
+  perform 1 from main_ship_instances m where m.main_ship_id=s and m.spatial_state='at_location'; if not found then raise exception 'E-ii: final state not at_location'; end if;
+  raise notice 'H-E ok: Stop vs processor (both orderings) → exactly one terminal settlement, identical final state, one presence, no active coordinate pointer';
+end $$;
+
 -- ════════ cleanup (delete users → cascade ships/fleets/movements/receipts/presence; then world scaffold) ════
 delete from auth.users where email like 'osn3hub1a.%@example.com';
 delete from space_anchors a using locations l where a.location_id=l.id and l.name like 'hub1a-loc-%';
@@ -495,6 +616,7 @@ end $$;
 
 drop function if exists h1a_assert_terminal(uuid,text,double precision,double precision);
 drop function if exists h1a_intransit_loc(uuid,uuid,double precision,double precision);
+drop function if exists h1a_intransit_loc_window(uuid,uuid,double precision,double precision,timestamptz,timestamptz);
 drop function if exists h1a_ship_at_location(uuid,uuid);
 drop function if exists h1a_ship_home(uuid);
 drop function if exists h1a_ship_in_space(uuid,double precision,double precision);

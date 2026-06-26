@@ -38,6 +38,11 @@
 --     the caller + their own ship server-side, flag-gates BEFORE target resolution (so a disabled feature
 --     cannot probe whether a hidden UUID exists), delegates to the core, and maps every "not a legal target"
 --     reason to ONE generic code so a hidden-port UUID guess is indistinguishable from a nonexistent location.
+--   • mainship_space_stop re-created for OSN-4 Stop COMPATIBILITY with location-target routes: before arrive_at
+--     it stops at the interpolated point (identical for space/location — never docks, no presence); at/after
+--     arrive_at a SPACE route still settles via the strict space-only primitive (unchanged), while a LOCATION
+--     route settles through the SAME canonical Dock-0 decision (dock OR a deterministic terminal failure that
+--     counts as a SETTLED Stop, never not_space_movement). No new public RPC; the surface stays at 16.
 --
 -- Lock order: the S2 canonical ship context FIRST (ship → fleets → main_ship_space_movements →
 -- location_presence), THEN the target hierarchy FOR SHARE (sector → zone → location → active location anchor →
@@ -473,7 +478,10 @@ begin
 end;
 $$;
 
--- ── E. Anchor-backed Dock-0 (still ONLY invoked by process_mainship_space_arrivals) ───────────────────────
+-- ── E. Anchor-backed Dock-0 — the ONE dock resolver (no second docking resolver, no second arrival processor,
+--      no generic reconciler). Its ONLY permitted private callers are (1) process_mainship_space_arrivals() for
+--      due location-target routes, and (2) mainship_space_stop(...) when its captured timestamp is at/after the
+--      location route's arrive_at. NO client call path to Dock-0 exists.
 -- A route legal at DEPARTURE can become non-dockable in transit, so Dock-0 FULLY REVALIDATES at arrival under
 -- deterministic target-hierarchy FOR SHARE locks (sector → zone → location → anchor → docking service) before
 -- creating presence or marking the ship at_location. It docks ONLY when the SINGLE canonical legality rule
@@ -483,7 +491,7 @@ $$;
 -- activity≠none, lost/duplicate docking service, missing/ambiguous/retired anchor (→ undockable_*), or a moved
 -- anchor (→ target_anchor_changed) — is a deterministic terminal failure: the ship floats in_space at the
 -- stored target, NO presence, NO redirect/teleport/retarget, no loop. The coordinate authority is the canonical
--- anchor; locations.x/y is consulted NOWHERE. Single arrival processor + single dock resolver (no reconciler).
+-- anchor; locations.x/y is consulted NOWHERE.
 create or replace function public.mainship_space_dock_at_location(p_main_ship_id uuid, p_movement_id uuid)
 returns jsonb
 language plpgsql
@@ -601,6 +609,195 @@ begin
   perform public.presence_create(v_mv.player_id, v_mv.fleet_id, v_loc.sector_id, v_loc.zone_id, v_loc.id, 'none');
 
   return jsonb_build_object('ok', true, 'docked', true, 'location_id', v_loc.id);
+end;
+$$;
+
+-- ── E2. OSN-4 Stop compatibility for location-target movements (re-create the PRIVATE Stop writer) ─────────
+-- OSN-HUB-1A creates target_kind='location' movements, but the deployed OSN-4 Stop writer rejected any
+-- non-space movement with not_space_movement. This re-creates ONLY mainship_space_stop to safely settle BOTH
+-- legal coordinate target kinds. The space path is byte-for-byte the deployed behavior (still settled by the
+-- strict space-only primitive mainship_space_settle_space_arrival, which is UNCHANGED and NOT broadened). The
+-- shared S2 lock/validate frame, the single captured-timestamp interpolation, and the receipt/idempotency are
+-- all unchanged. NO new public RPC (the existing authenticated wrapper command_main_ship_space_stop is reused
+-- as-is). At/after a LOCATION route's arrive_at, Stop does NOT call the space primitive — it settles through
+-- the SAME canonical Dock-0 decision the arrival processor uses (dock OR deterministic terminal failure), and
+-- a Dock-0 terminal failure is a SUCCESSFULLY SETTLED Stop (outcome='arrived'), never an internal error.
+create or replace function public.mainship_space_stop(
+  p_player       uuid,
+  p_main_ship_id uuid,
+  p_request_id   uuid
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c_cmd    constant text := 'space_stop';
+  v_lock   jsonb;
+  v_status text;
+  v_owner  uuid;
+  v_hash   text;
+  v_rcpt   main_ship_space_command_receipts%rowtype;
+  v_val    jsonb;
+  v_state  text;
+  v_mv     main_ship_space_movements%rowtype;
+  v_fleet  fleets%rowtype;
+  v_now    timestamptz;
+  v_dur    double precision;
+  v_t      double precision;
+  v_stop_x double precision;
+  v_stop_y double precision;
+  v_settle jsonb;
+  v_dock   jsonb;
+  v_result jsonb;
+begin
+  -- 1) basic input validation (pure)
+  if p_request_id is null then
+    return jsonb_build_object('ok', false, 'reason', 'invalid_request_id');
+  end if;
+
+  -- 2) S2 canonical lock context (blocking; ship → fleet → coordinate movement → presence)
+  v_lock := public.mainship_space_lock_context(p_main_ship_id, false);
+  v_status := v_lock->>'status';
+  if v_status = 'not_found' then
+    return jsonb_build_object('ok', false, 'reason', 'missing_ship');
+  elsif v_status <> 'locked' then
+    return jsonb_build_object('ok', false, 'reason', coalesce(v_status, 'lock_failed'));
+  end if;
+
+  -- 3) ownership from the LOCKED snapshot (never from the client)
+  v_owner := (v_lock->'ship'->>'player_id')::uuid;
+  if v_owner is distinct from p_player then
+    return jsonb_build_object('ok', false, 'reason', 'not_owned');
+  end if;
+
+  -- 4) canonical immutable command payload + hash. Stop carries NO coordinate/target body (kind-agnostic).
+  v_hash := md5(jsonb_build_object('command_type', c_cmd)::text);
+
+  -- 5) idempotency receipt lookup AFTER the ship lock + ownership check
+  select * into v_rcpt from main_ship_space_command_receipts
+    where main_ship_id = p_main_ship_id and request_id = p_request_id;
+  if found then
+    if v_rcpt.command_type = c_cmd and v_rcpt.canonical_payload_hash = v_hash then
+      return v_rcpt.result_json;                       -- idempotent replay of the first commit
+    else
+      return jsonb_build_object('ok', false, 'reason', 'request_id_payload_conflict');
+    end if;
+  end if;
+
+  -- 6) coherent-state validation under the locks
+  v_val := public.mainship_space_validate_context(p_main_ship_id);
+  if (v_val->>'ok')::boolean is not true then
+    return jsonb_build_object('ok', false, 'reason', coalesce(v_val->>'reason', 'contradictory_state'));
+  end if;
+  v_state := v_val->>'state';
+
+  -- 7) IN-FLIGHT SAFETY (Constraint 1): Stop is recovery, NOT initiation. Only when there is NO active
+  --    coordinate transit do we branch on the flag. A real in_transit coordinate move (space OR location)
+  --    proceeds regardless of mainship_space_movement_enabled (the flag blocks creation, never recovery).
+  if v_state <> 'in_transit' then
+    if v_state in ('in_space', 'at_location', 'home', 'legacy_home', 'legacy_present') then
+      if not public.cfg_bool('mainship_space_movement_enabled') then
+        return jsonb_build_object('ok', false, 'reason', 'feature_disabled');
+      end if;
+      return jsonb_build_object('ok', false, 'reason', 'not_in_transit');
+    elsif v_state = 'legacy_transit' then
+      return jsonb_build_object('ok', false, 'reason', 'legacy_transit_not_stoppable');
+    elsif v_state = 'destroyed' then
+      return jsonb_build_object('ok', false, 'reason', 'destroyed');
+    else
+      return jsonb_build_object('ok', false, 'reason', 'contradictory_state');
+    end if;
+  end if;
+
+  -- 8) re-read the active coordinate movement + fleet UNDER LOCK (validate proved coherence already).
+  select * into v_mv from main_ship_space_movements
+    where main_ship_id = p_main_ship_id and status = 'moving';
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'movement_not_moving');
+  end if;
+  select * into v_fleet from fleets where id = v_mv.fleet_id;
+
+  -- 9) MOVEMENT BOUNDARY: stop both legal coordinate target kinds (space, location). 'base'/other never created.
+  if v_mv.target_kind not in ('space', 'location') then
+    return jsonb_build_object('ok', false, 'reason', 'not_space_movement');
+  end if;
+  if v_mv.status <> 'moving' then
+    return jsonb_build_object('ok', false, 'reason', 'movement_not_moving');
+  end if;
+  if not (v_mv.arrive_at > v_mv.depart_at) then
+    return jsonb_build_object('ok', false, 'reason', 'invalid_movement_window');
+  end if;
+
+  -- 10) ARRIVAL PRECEDENCE (Constraint B): capture ONE clock_timestamp() AFTER locks are held.
+  v_now := clock_timestamp();
+  if v_now >= v_mv.arrive_at then
+    -- AT/AFTER arrival → settle the canonical ARRIVAL (never 'stopped' at the destination), per target kind:
+    if v_mv.target_kind = 'space' then
+      -- byte-for-byte the deployed OSN-4 behavior: the strict space-only settlement primitive.
+      v_settle := public.mainship_space_settle_space_arrival(p_main_ship_id, v_mv.id, v_now);
+      if (v_settle->>'ok')::boolean is not true then
+        return jsonb_build_object('ok', false, 'reason', coalesce(v_settle->>'reason', 'contradictory_state'));
+      end if;
+      v_result := jsonb_build_object('ok', true, 'outcome', 'arrived',
+        'movement_id', v_mv.id, 'main_ship_id', p_main_ship_id, 'fleet_id', v_fleet.id,
+        'target_x', v_mv.target_x, 'target_y', v_mv.target_y, 'resolved_at', v_now, 'request_id', p_request_id);
+    else
+      -- LOCATION: settle through the SAME canonical Dock-0 decision the arrival processor uses (dock OR a
+      -- deterministic terminal failure). A Dock-0 terminal failure is a SETTLED Stop (outcome='arrived'),
+      -- NOT a not_space_movement error: the route is terminal and coherent even when it cannot dock.
+      v_dock := public.mainship_space_dock_at_location(p_main_ship_id, v_mv.id);
+      if (v_dock->>'ok')::boolean is not true then
+        -- only the defensive movement_not_moving / not_location_target paths land here (coherence was proven)
+        return jsonb_build_object('ok', false, 'reason', coalesce(v_dock->>'reason', 'contradictory_state'));
+      end if;
+      v_result := jsonb_build_object('ok', true, 'outcome', 'arrived',
+        'movement_id', v_mv.id, 'main_ship_id', p_main_ship_id, 'fleet_id', v_fleet.id,
+        'target_x', v_mv.target_x, 'target_y', v_mv.target_y,           -- the player's own destination snapshot
+        'docked', (v_dock->>'docked')::boolean,
+        'dock_reason', v_dock->>'reason',                              -- null on dock; an undockable_* string on terminal failure
+        'resolved_at', v_now, 'request_id', p_request_id);
+    end if;
+  else
+    -- STRICTLY BEFORE arrive_at → STOP at the interpolated current point (IDENTICAL for space and location:
+    -- never docks, never creates presence, never reaches the destination unless interpolation genuinely does).
+    -- SAME single interpolation + captured v_now as the deployed space Stop. The location target snapshot
+    -- (target_location_id / target_x / target_y) is preserved on the now-terminal 'stopped' movement row.
+    v_dur := extract(epoch from (v_mv.arrive_at - v_mv.depart_at));
+    v_t   := greatest(0, least(1, extract(epoch from (v_now - v_mv.depart_at)) / v_dur));
+    v_stop_x := v_mv.origin_x + v_t * (v_mv.target_x - v_mv.origin_x);
+    v_stop_y := v_mv.origin_y + v_t * (v_mv.target_y - v_mv.origin_y);
+
+    update main_ship_space_movements
+      set status = 'stopped', resolved_at = v_now, terminal_reason = 'player_stop'
+      where id = v_mv.id and status = 'moving';
+
+    update fleets
+      set status = 'completed', location_mode = 'movement',
+          active_space_movement_id = null, active_movement_id = null,
+          current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+          updated_at = v_now
+      where id = v_fleet.id;
+
+    update main_ship_instances
+      set status = 'stationary', spatial_state = 'in_space',
+          space_x = v_stop_x, space_y = v_stop_y, updated_at = v_now
+      where main_ship_id = p_main_ship_id;
+
+    v_result := jsonb_build_object('ok', true, 'outcome', 'stopped',
+      'movement_id', v_mv.id, 'main_ship_id', p_main_ship_id, 'fleet_id', v_fleet.id,
+      'stop_x', v_stop_x, 'stop_y', v_stop_y, 'resolved_at', v_now, 'request_id', p_request_id);
+  end if;
+
+  -- 11) finalise the idempotency receipt atomically with the settlement
+  insert into main_ship_space_command_receipts (
+    main_ship_id, player_id, request_id, command_type, canonical_payload_hash,
+    outcome_status, result_json, movement_id, completed_at)
+  values (
+    p_main_ship_id, p_player, p_request_id, c_cmd, v_hash,
+    'success', v_result, v_mv.id, v_now);
+
+  return v_result;
 end;
 $$;
 

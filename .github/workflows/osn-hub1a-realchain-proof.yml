@@ -9,7 +9,11 @@ name: OSN-HUB-1A — real-migration-chain proof (disposable Supabase)
 # functional matrix (anchored origins, location-target success via the core AND the public wrapper, idempotency,
 # the full DEPARTURE target-rejection matrix with no orphans, anchor-backed docking with FULL ARRIVAL
 # revalidation under target-hierarchy locks — anchor/service/zone/sector/activity/location transitions during
-# travel each terminally fail safely — leak-safety, flag-off anti-probe, pointer/single-engine coherence).
+# travel each terminally fail safely — leak-safety, flag-off anti-probe, pointer/single-engine coherence); OSN-4
+# Stop COMPATIBILITY for location-target routes (mid-flight interpolated stop with no dock/presence; at/after
+# arrival a location route settles through the same canonical Dock-0 decision — dock OR a settled safe terminal
+# failure, never not_space_movement; flag-off recovery; idempotency); and a REAL concurrent-session race
+# proving Stop vs the arrival processor on one due location route settles EXACTLY once (no duplicate dock/presence).
 #
 # THIS current-chain permission/boundary proof (scripts/osn-hub1a-realchain-perm.sql) is the AUTHORITATIVE
 # 0067-chain ACL evidence and is exact/strong enough to REPLACE the skipped historical ACL assertions: §2
@@ -70,10 +74,15 @@ jobs:
           out=$(psql "$DB_URL" -X -c "set role anon; select public.command_main_ship_space_move_to_location('$ZERO', gen_random_uuid());" 2>&1 || true)
           echo "$out" | grep -qi "permission denied" && echo "ok: anon cannot EXECUTE the public wrapper" || { echo "FAIL: anon executed the public wrapper -> $out"; exit 1; }
 
-      - name: Functional fixture matrix (origins / success / rejection / docking+anchor-change / leak / coherence)
+      - name: Functional fixture matrix (origins / success / rejection / docking+arrival-revalidation / leak / coherence / Stop)
         run: |
           set -a; . /tmp/sbenv; set +a
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn-hub1a-realchain-fixtures.sql
+
+      - name: Real concurrent-session race — Stop vs arrival-processor on a due location route (settled once)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-hub1a-realchain-stop-race.sh
 
       # NON-REGRESSION NOTE: the existing per-slice proof scripts (osn3-s2..osn4 / dock0 perm) are NOT
       # re-executed here. They embed ERA-SPECIFIC live-state expectations — e.g. osn3-s2-realchain-perm.sql
