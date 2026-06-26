@@ -1,11 +1,12 @@
 -- OSN-DOCK-0 — REAL-CHAIN fixture matrix for public.mainship_space_dock_at_location() via
--- public.process_mainship_space_arrivals(). Builds states on the ACTUAL migration chain (through 0061) and
+-- public.process_mainship_space_arrivals(). Builds states on the ACTUAL migration chain (through 0067) and
 -- proves, with mainship_space_movement_enabled = FALSE (production-dark) throughout:
---   • a due, coherent in_transit movement that EXPLICITLY targets an active 'none'-activity location, whose
---     target_x/y match the location, DOCKS exactly once → ship stationary/at_location/(NULL,NULL); one active
---     presence; no activity; no fleet_movements; S2 validate = at_location; idempotent on replay;
+--   • a due, coherent in_transit movement that EXPLICITLY targets an active 'none'-activity PORT location with
+--     one active docking service and one active canonical anchor, whose target_x/y match that anchor, DOCKS
+--     exactly once → ship stationary/at_location/(NULL,NULL); one active presence; no activity; no
+--     fleet_movements; S2 validate = at_location; idempotent on replay;
 --   • an inactive (status<>'active') location target → terminal failure 'undockable_inactive_location';
---   • a coordinate-mismatched location target → terminal failure 'undockable_coordinate_mismatch';
+--   • a location target whose movement coordinate != its active canonical anchor → terminal failure 'target_anchor_changed';
 --   • an unsupported-activity ('hunt_pirates') location target → terminal failure
 --     'undockable_unsupported_activity' (NO presence, NO activity_start raise, processor returns normally);
 --     every terminal failure: movement failed/<reason>/resolved_at; ship stationary/in_space/(target_x,y);
@@ -43,13 +44,23 @@ end $$;
 -- Insert a dedicated DOCK-0 test location (never disturbs seeded locations); returns its id.
 create or replace function dock0_loc(p_x double precision, p_y double precision, p_status text, p_activity text)
 returns uuid language plpgsql as $$
-declare v_id uuid; v_zone uuid := (select id from zones order by id limit 1);
+declare v_id uuid;
+        v_zone uuid := (select z.id from zones z join sectors se on se.id = z.sector_id
+                          where z.status = 'active' and se.status = 'active' order by z.id limit 1);
 begin
-  insert into locations (zone_id, name, location_type, x, y, activity_type, status)
+  -- Post-0067 Dock-0 resolves the target through its canonical space_anchors location anchor (NOT locations.x/y)
+  -- and revalidates the full legality rule (active sector/zone/location + role city|port + activity 'none' +
+  -- exactly one active docking service + exactly one active location anchor). Build a PORT location with those
+  -- preconditions so an ACTIVE 'none' target is genuinely dockable; the negative sections then violate exactly
+  -- ONE term (inactive status / unsupported activity / coordinate divergence). The active anchor is seeded at
+  -- the location's own (p_x,p_y): a coordinate-matched movement docks, a divergent one fails 'target_anchor_changed'.
+  insert into locations (zone_id, name, location_type, x, y, activity_type, status, physical_role)
     values (v_zone, 'dock0-test-'||replace(gen_random_uuid()::text,'-',''),
             case when p_activity = 'none' then 'safe_zone' else 'pirate_hunt' end,
-            p_x, p_y, p_activity, p_status)
+            p_x, p_y, p_activity, p_status, 'port')
     returning id into v_id;
+  insert into location_services (location_id, service, status) values (v_id, 'docking', 'active');
+  insert into space_anchors (kind, location_id, space_x, space_y, status) values ('location', v_id, p_x, p_y, 'active');
   return v_id;
 end $$;
 
@@ -173,13 +184,13 @@ end $$;
 -- ════════ SECTION C — coordinate-mismatched location target → deterministic terminal failure ════════════
 do $$ declare l uuid; s uuid; h1 text; h2 text;
 begin
-  l := dock0_loc(300, 300, 'active', 'none');
-  s := dock0_fix(l, 301, 300);   -- target_x (301) != location.x (300) → explicit-target integrity failure
+  l := dock0_loc(300, 300, 'active', 'none');   -- eligible; canonical anchor seeded at (300,300)
+  s := dock0_fix(l, 301, 300);   -- movement target_x (301) != the active canonical anchor (300) → no redirect
   perform process_mainship_space_arrivals();
-  perform dock0_assert_failed(s, 'undockable_coordinate_mismatch', 301, 300);
+  perform dock0_assert_failed(s, 'target_anchor_changed', 301, 300);
   h1 := dock0_ship_hash(s); perform process_mainship_space_arrivals(); h2 := dock0_ship_hash(s);
   if h1 is distinct from h2 then raise exception 'C: cron replay retried a failed movement (loop)'; end if;
-  raise notice 'SECTION C ok: coordinate-mismatched location target → terminal failure (no proximity docking)';
+  raise notice 'SECTION C ok: movement target != canonical active anchor → terminal failure (never docks on a moved anchor)';
 end $$;
 
 -- ════════ SECTION D — unsupported activity ('hunt_pirates') → terminal failure; NO presence/activity ════
@@ -223,6 +234,10 @@ end $$;
 
 -- ════════ cleanup (delete users first → cascades ships/fleets/movements/presence, freeing the loc FK) ════
 delete from auth.users where email like 'osn3dock0.%@example.com';
+-- space_anchors.location_id is ON DELETE RESTRICT → drop the fixture's location anchors BEFORE their locations
+-- (location_services is ON DELETE CASCADE and goes with the location). If any dock0 anchor leaked, the
+-- locations delete below would raise under ON_ERROR_STOP — so a clean completion also proves no anchor remained.
+delete from space_anchors a using locations l where a.location_id = l.id and l.name like 'dock0-test-%';
 delete from locations where name like 'dock0-test-%';
 do $$ declare n int;
 begin
