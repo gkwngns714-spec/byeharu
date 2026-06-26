@@ -5,6 +5,56 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-26 — OSN-HUB-1A FORMALLY CLOSED — dark canonical location-target navigation, deployed + verified (flag OFF)
+
+Administrative closure record (notes only; **no product code / migration / workflow / verifier / flag /
+production change** in this entry). **OSN-HUB-1A is formally closed.**
+
+- **What shipped (PR #31, merge `09f8ba6`, migration `0067`).** The dark, additive **canonical location-target
+  navigation** foundation: the OSN coordinate domain now resolves a docked **origin** and a named-location
+  **target** through canonical `space_anchors` (NOT legacy `locations.x/y` / `bases.x/y`). One discriminated
+  core writer `mainship_space_begin_move_core` (the deployed 5-arg `mainship_space_begin_move` preserved as a
+  space-only delegate); the single canonical target-legality rule `mainship_space_location_target_legal`
+  (active sector/zone/location + role city|port + `activity_type='none'` + one active docking service + one
+  active in-bounds anchor); anchored origin resolution (HOME stays fail-closed `origin_not_anchored`, no base
+  anchor); Dock-0 (`mainship_space_dock_at_location`) re-pointed from `locations.x/y` to the canonical anchor
+  with **full arrival-time revalidation** under target-hierarchy `FOR SHARE` locks and a `clock_timestamp()`
+  settlement time (`resolved_at >= arrive_at`); OSN-4 **Stop compatibility** for location routes (mid-flight
+  interpolated stop / at-or-after-arrival settles via the SAME Dock-0 decision; `mainship_space_settle_space_arrival`
+  stays strict space-only); and the one new public authenticated wrapper
+  `command_main_ship_space_move_to_location(uuid, uuid)` (flag-gated before target resolution; hidden-port
+  UUID ≡ nonexistent → generic `invalid_target`; **authenticated surface stays exactly 16**). Frontend is
+  read-only/dark (`target_location_id` read-model; location routes render only to VISIBLE destinations).
+
+- **Deployed.** Production migration head **`0067`** (`Deploy Supabase migrations` run `28219980298`, approved
+  production gate). OSN remains **DARK**: `mainship_send_enabled = true`, `mainship_space_movement_enabled =
+  false`. **No port reveal, no home-port assignment, no base anchor, no flag flip, no player/world mutation.**
+
+- **Verified (read-only).** Final corrected production catalog/ACL/configuration verifier run **`28229418325`**
+  → **`OVERALL_PASS=true`** at verified main **`30e5a36`** (verifier tooling commits; product head `0067`
+  unchanged). One `REPEATABLE READ READ ONLY` snapshot + `ROLLBACK`; **no production write**. All assertions
+  passed: dark-state (head 0067, flags dark, zero active coordinate movement, no incoherent pointer, empty
+  `player_home_port`, no base anchor); hidden-world (3 hidden ports hidden/ineligible/absent from
+  `get_world_map`, one anchor + one docking service each, original five intact); RPC surface **exactly 16** +
+  anon limited to `get_world_map`; the **13 internals service_role-only** + catalog tables locked down; **6/7
+  function bodies + descriptors byte-identical** ref↔prod; and the public wrapper's explicit hosted-production
+  **`service_role EXECUTE = true`** policy.
+
+- **Verifier tooling PRs.** **PR #32** (merge `09f8ba6`→… on `main`) added the dispatch-only, production-gated,
+  strictly read-only verifier. **PR #33** (merge `30e5a36`) was a **verifier-only correction**: the public
+  wrapper is granted only `TO authenticated` in `0067`, so its `service_role EXECUTE` is governed by Supabase
+  hosted DEFAULT PRIVILEGES (allowed) which the disposable reference does not reproduce; PR #33 replaced that
+  accidental local-reference dependence with an **explicit, testable hosted-production `service_role EXECUTE =
+  true` contract** (strict parity preserved for the body hash + args + lang + owner + SECDEF + search_path +
+  anon/authenticated/PUBLIC, and full SRVX parity for the six internals). Both PRs were **verifier tooling
+  only** — no migration, no production data/ACL change.
+
+**NEXT:** the next product step (e.g. ENABLEMENT-1 / the OSN enablement preflight re-pin to head `0067` +
+surface 16, the DOCK-0 perm allowlist update, then any controlled OSN flag-enable go/no-go) requires a
+**separately approved charter**. None is started. OSN remains dark.
+
+---
+
 ## 2026-06-23 — ANCHOR-2 P0-A census closed + PORT-CENTRIC direction (durable handoff; design/ops only)
 
 Cross-computer handoff record. **No code/schema/migration/anchor/resolver/flag/production change** — this entry
