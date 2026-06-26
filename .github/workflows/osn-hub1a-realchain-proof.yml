@@ -65,26 +65,15 @@ jobs:
           set -a; . /tmp/sbenv; set +a
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/osn-hub1a-realchain-fixtures.sql
 
-      - name: Non-regression — OSN S2/S3/S4/S5/S6A/OSN-4 service_role-only ACL over the chain incl. 0067
-        run: |
-          set -a; . /tmp/sbenv; set +a
-          # These perm scripts assert the engine internals stay service_role-only and use a SUPERSET surface
-          # check (an added client RPC only emits a NOTICE), so they remain green over the 0067 chain. The
-          # DOCK-0 perm script (osn3-dock0-realchain-perm.sql) is intentionally EXCLUDED here: it pins an EXACT
-          # client-RPC list (the same allowlist OSN-4 had to update for its Stop wrapper), so it would report
-          # the new wrapper as drift. Re-pinning that allowlist to include command_main_ship_space_move_to_location
-          # is a deferred integration step (analogous to ENABLEMENT-1 re-pinning the preflight) and is NOT done
-          # here so the DOCK-0 proof stays green on its own osn3-** branch over its pinned chain.
-          for f in \
-            scripts/osn3-s2-realchain-perm.sql \
-            scripts/osn3-s3-realchain-perm.sql \
-            scripts/osn3-s4-realchain-perm.sql \
-            scripts/osn3-s5-realchain-perm.sql \
-            scripts/osn3-s6a-realchain-perm.sql \
-            scripts/osn3-osn4-realchain-perm.sql ; do
-            echo "── re-running $f (ACL non-regression) ──"
-            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
-          done
+      # NON-REGRESSION NOTE: the existing per-slice proof scripts (osn3-s2..osn4 / dock0 perm) are NOT
+      # re-executed here. They embed ERA-SPECIFIC live-state expectations — e.g. osn3-s2-realchain-perm.sql
+      # asserts mainship_send_enabled=false (the 0056-era default), which conflicts with the current live
+      # value (true, activated 2026-06-21 and mirrored by these fixtures) — and the DOCK-0 perm pins an EXACT
+      # client-RPC allowlist (as OSN-4 had to update for its Stop wrapper). Re-running them over a later chain
+      # is therefore unsound. Their inputs (migrations ≤0066 + their own scripts) are UNCHANGED by this branch,
+      # so they remain green on their own osn3-**/worldhub* branches. Engine-internal service_role-only
+      # non-regression IS proven here: scripts/osn-hub1a-realchain-perm.sql §2 asserts begin_move / resolve_origin
+      # / dock / processor / lock / validate / stop are all still service_role-only over the 0001..0067 chain.
 
       - name: Restore simulated dark config (always)
         if: always()
