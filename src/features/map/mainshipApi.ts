@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase'
 import { SPACE_MOVE_RPC, buildSpaceMoveRpcArgs, type SpaceMoveResult } from './spaceMoveCommand'
 import { SPACE_STOP_RPC, buildSpaceStopRpcArgs, type SpaceStopResult } from './spaceStopCommand'
+import { parseOsnReadiness, OSN_NOT_ACTIONABLE, type OsnReadiness } from './osnReadiness'
 
 // Main-ship client API.
 //
@@ -268,4 +269,21 @@ export async function commandMainShipSpaceMoveToLocation(locationId: string, req
   })
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceMoveToLocationResult
+}
+
+// PORT-LAUNCH-1B — typed, read-only integration of the authenticated readiness projection
+// (get_osn_movement_readiness()). Sends NO arguments beyond the authenticated session context (the server
+// derives the player from auth.uid()) — no ship/player/anchor/coordinate/location input. The returned
+// jsonb is validated at THIS boundary (parseOsnReadiness): only the documented generic categories are
+// accepted, and any malformed / incomplete / failed response collapses to OSN_NOT_ACTIONABLE so a raw
+// RPC/DB error is never surfaced to the player and the client never reconstructs anchor legality. While
+// production is dark the server returns osn_available=false; the client renders nothing actionable.
+export async function fetchOsnMovementReadiness(): Promise<OsnReadiness> {
+  try {
+    const { data, error } = await supabase.rpc('get_osn_movement_readiness', {})
+    if (error) return OSN_NOT_ACTIONABLE
+    return parseOsnReadiness(data)
+  } catch {
+    return OSN_NOT_ACTIONABLE
+  }
 }

@@ -5,6 +5,7 @@ import { GalaxyMap } from './GalaxyMap'
 import { ExpeditionCommand } from './ExpeditionCommand'
 import { MainShipPreview } from './MainShipPreview'
 import { MainShipCommand } from './MainShipCommand'
+import { PortNavPanel } from './PortNavPanel'
 
 // Read-only Galaxy Map screen (Phase 9A). Shows the world, the player's home/ship, and
 // active fleet movements. Selecting a location opens a read-only detail panel. NO writes,
@@ -71,18 +72,30 @@ export function GalaxyMapScreen() {
             </div>
           )}
           {!loading && !error && locations.length > 0 && (
-            <GalaxyMap
-              locations={locations}
-              base={base}
-              mainShip={mainShip}
-              mainShipFleet={mainShipFleet}
-              mainShipPresence={mainShipPresence}
-              mainShipSpaceMovement={mainShipSpaceMovement}
-              mainshipSendEnabled={mainshipSendEnabled}
-              movements={movements}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-            />
+            <>
+              <GalaxyMap
+                locations={locations}
+                base={base}
+                mainShip={mainShip}
+                mainShipFleet={mainShipFleet}
+                mainShipPresence={mainShipPresence}
+                mainShipSpaceMovement={mainShipSpaceMovement}
+                mainshipSendEnabled={mainshipSendEnabled}
+                movements={movements}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
+              {/* PORT-LAUNCH-1B — dark port-to-port navigation. Server-gated (osn_available + anchored): it
+                  renders nothing while production is dark, so today's player experience is unchanged. */}
+              <PortNavPanel
+                visibleLocations={locations}
+                shipStatus={mainShip?.status}
+                shipSpatialState={mainShip?.spatial_state}
+                spaceMovement={mainShipSpaceMovement}
+                currentDockedLocationId={mainShipPresence?.location_id}
+                onCommitted={refresh}
+              />
+            </>
           )}
         </div>
 
