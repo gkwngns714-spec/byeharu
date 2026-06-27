@@ -53,6 +53,21 @@ SELECT 'N_BASE_ANCHOR=' || count(*) FROM public.space_anchors WHERE kind='base';
 SELECT 'N_ARRIVAL_CRON='     || count(*)                           FROM cron.job WHERE jobname='process-mainship-space-arrivals';
 SELECT 'ARRIVAL_CRON_SCHED=' || coalesce(max(schedule),'none')      FROM cron.job WHERE jobname='process-mainship-space-arrivals';
 
+-- PORT-LAUNCH-2B pre-reveal precondition: NO current state references any of the three fixed starter ports
+-- in a way that would make a future reveal/recovery unsafe. Each count MUST be 0 (the ports are dark and
+-- un-interacted). Exact precondition for the fixed three ports only — NOT generic world cleanup.
+SELECT 'STP_PRESENCE='  || count(*) FROM public.location_presence WHERE status='active'
+  AND location_id IN ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+SELECT 'STP_FLEET='     || count(*) FROM public.fleets WHERE status IN ('idle','moving','present','returning')
+  AND current_location_id IN ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+SELECT 'STP_LEGACY_MV=' || count(*) FROM public.fleet_movements WHERE status='moving'
+  AND (target_location_id IN ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003')
+       OR origin_location_id IN ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003'));
+SELECT 'STP_OSN_MV='    || count(*) FROM public.main_ship_space_movements WHERE status='moving' AND target_kind='location'
+  AND target_location_id IN ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+SELECT 'STP_HOMEPORT='  || count(*) FROM public.player_home_port
+  WHERE location_id IN ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
+
 -- ── B. Hidden-port / world-state protection (no names/IDs/coords in OUTPUT — only booleans/counts) ────────
 -- Fixed identities are from migration 0066 (still on main); the shell fail-closes unless each literal is
 -- present verbatim in the checked-out 0066 migration, so the verifier can never drift from the catalog.

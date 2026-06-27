@@ -125,6 +125,34 @@ jobs:
           #    production-mode job). Re-affirm the comparator here over the live disposable catalog body.
           echo "ok[neg] changed-body/descriptor: rejected by the parity comparator (proven in the local-mode step)"
 
+          # ── PORT-LAUNCH-2B pre-reveal A9: any interaction state referencing a fixed starter port fails closed.
+          # (home_port at a port is already exercised by case 6 via A6/A9 STP_HOMEPORT.)
+          Z1=$(PR "select zone_id from public.locations where id='$P1ID';")
+          SE1=$(PR "select sector_id from public.zones where id='$Z1';")
+
+          # 10) a fleet PRESENT + active location_presence at a starter port (STP_FLEET + STP_PRESENCE)
+          U10=$(NEWUSER "neg-stp-pres@example.com")
+          F10=$(PR "insert into public.fleets(id,player_id,status,location_mode,current_location_id,current_zone_id,current_sector_id) values(gen_random_uuid(),'$U10','present','location','$P1ID','$Z1','$SE1') returning id;")
+          P "insert into public.location_presence(player_id,fleet_id,sector_id,zone_id,location_id,activity_type,status,last_tick_at) values('$U10','$F10','$SE1','$Z1','$P1ID','none','active',now());"
+          expect_fail "a fleet is present + has active presence at a starter port"
+          P "delete from auth.users where email='neg-stp-pres@example.com';"; expect_pass "starter-port presence removed"
+
+          # 11) an active LEGACY movement targeting a starter port (STP_LEGACY_MV)
+          U11=$(NEWUSER "neg-stp-mv@example.com")
+          B11=$(PR "select id from public.bases where player_id='$U11' and status='active' order by created_at limit 1;")
+          F11=$(PR "insert into public.fleets(id,player_id,origin_base_id,status,location_mode,current_base_id) values(gen_random_uuid(),'$U11','$B11','moving','movement','$B11') returning id;")
+          P "insert into public.fleet_movements(player_id,fleet_id,origin_type,origin_x,origin_y,target_type,target_location_id,target_x,target_y,mission_type,status,arrive_at,travel_distance,travel_seconds,speed_used) values('$U11','$F11','base',0,0,'location','$P1ID',-50,-30,'rally','moving',now()+interval '1 hour',58,58,1);"
+          expect_fail "an active legacy movement targets a starter port"
+          P "delete from auth.users where email='neg-stp-mv@example.com';"; expect_pass "starter-port legacy movement removed"
+
+          # 12) an active OSN LOCATION-target movement to a starter port (STP_OSN_MV)
+          U12=$(NEWUSER "neg-stp-osn@example.com")
+          S12=$(PR "insert into public.main_ship_instances(player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id) values('$U12','starter_frigate','traveling','in_transit',500,500,50,10,2,3,gen_random_uuid()) returning main_ship_id;")
+          F12=$(PR "insert into public.fleets(id,player_id,status,location_mode,main_ship_id) values(gen_random_uuid(),'$U12','moving','movement','$S12') returning id;")
+          P "insert into public.main_ship_space_movements(id,main_ship_id,fleet_id,player_id,origin_kind,origin_x,origin_y,target_kind,target_location_id,target_x,target_y,speed_used,depart_at,arrive_at) values(gen_random_uuid(),'$S12','$F12','$U12','space',0,0,'location','$P1ID',-50,-30,1.0,now()-interval '1 hour',now()+interval '1 hour');"
+          expect_fail "an OSN location-target movement targets a starter port"
+          P "delete from auth.users where email='neg-stp-osn@example.com';"; expect_pass "OSN location movement removed"
+
           echo "OSN-HUB-1A CATALOG VERIFIER NEGATIVE MATRIX: ALL CASES FAILED CLOSED"
       - name: Confirm no fixture residue remains
         run: |

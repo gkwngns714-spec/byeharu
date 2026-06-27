@@ -130,6 +130,8 @@ reconcile() {
   chk "A6 player_home_port empty"  "$(eq "$(mval "$OUT" N_HOMEPORT)" 0)" "rows=$(mval "$OUT" N_HOMEPORT)"
   chk "A7 no base anchor"          "$(eq "$(mval "$OUT" N_BASE_ANCHOR)" 0)" "base_anchors=$(mval "$OUT" N_BASE_ANCHOR)"
   chk "A8 one 30s arrival cron"    "$([ "$(mval "$OUT" N_ARRIVAL_CRON)" = "1" ] && [ "$(mval "$OUT" ARRIVAL_CRON_SCHED)" = "30 seconds" ] && echo 1 || echo 0)" "n=$(mval "$OUT" N_ARRIVAL_CRON) sched=$(mval "$OUT" ARRIVAL_CRON_SCHED)"
+  # A9 (PORT-LAUNCH-2B) — pre-reveal: NO current state references a fixed starter port (reveal/recovery-safe).
+  chk "A9 no starter-port interaction state" "$([ "$(mval "$OUT" STP_PRESENCE)" = "0" ] && [ "$(mval "$OUT" STP_FLEET)" = "0" ] && [ "$(mval "$OUT" STP_LEGACY_MV)" = "0" ] && [ "$(mval "$OUT" STP_OSN_MV)" = "0" ] && [ "$(mval "$OUT" STP_HOMEPORT)" = "0" ] && echo 1 || echo 0)" "presence=$(mval "$OUT" STP_PRESENCE) fleet=$(mval "$OUT" STP_FLEET) legacy_mv=$(mval "$OUT" STP_LEGACY_MV) osn_mv=$(mval "$OUT" STP_OSN_MV) homeport=$(mval "$OUT" STP_HOMEPORT)"
 
   # B — hidden-port / world-state protection
   chk "B1 three hidden ports exact" "$([ "$(mval "$OUT" P1_OK)" = "1" ] && [ "$(mval "$OUT" P2_OK)" = "1" ] && [ "$(mval "$OUT" P3_OK)" = "1" ] && [ "$(mval "$OUT" N_ROLED)" = "3" ] && [ "$(mval "$OUT" N_ROLED_UNEXP)" = "0" ] && echo 1 || echo 0)" "p=$(mval "$OUT" P1_OK)$(mval "$OUT" P2_OK)$(mval "$OUT" P3_OK) roled=$(mval "$OUT" N_ROLED) unexp=$(mval "$OUT" N_ROLED_UNEXP)"
