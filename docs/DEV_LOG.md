@@ -5,6 +5,71 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-27 — PORT-LAUNCH: public port launch (foundation → reveal → independent verification)
+
+The OSN-HUB-1A line (head `0067`, prior entry) advanced through the full **PORT-LAUNCH** epic: the dark
+public-launch back end + front end were built and production-verified, then the three starter ports were
+**revealed** in a single controlled, human-gated operation, and the result was **independently, read-only
+verified** against production. Net production change: migration head **`0067` → `0068`**; authenticated
+client-RPC surface **16 → 17**; the three starter ports **hidden → active/public**. **OSN port-to-port
+movement stays dark** — `mainship_send_enabled = true`, `mainship_space_movement_enabled = false`,
+`OSN_COORDINATE_TRAVEL_ENABLED = false` (frontend) — all unchanged by this epic.
+
+**Requests / work done (in order):**
+- **ENABLEMENT-1 (PR #36 → `3b5e6ce`).** Re-pinned `scripts/osn-enablement-preflight.sql` to head `0067` /
+  surface `16`, widened space|location target checks, mirrored the function inventory into the DOCK-0 / HUB-1A
+  allowlists. Tooling/gate only — no gameplay, no flag flip.
+- **Fixture maintenance (PR #37 → `83d44e6`).** Replaced a global "anchors empty" assumption with an exact
+  identity baseline (the three 0066 starter-port anchors). Housekeeping; depended on #36 landing first.
+- **Enablement preflight (run `28253259301`).** Read-only production check → `OVERALL_PASS=true` at 0067/16.
+- **PORT-LAUNCH-1A (PR #38 → `122374f`, migration `20260618000068`).** Added `reveal_starter_ports()`
+  (service-role-only, one-way, all-or-nothing, never auto-invoked; locks the full sector→zone→location→anchor
+  →service hierarchy before validating) and `get_osn_movement_readiness()` (authenticated, read-only; reports
+  `osn_available=false` while the flag is off). Surface 16→17.
+- **Deploy 0068 (run `28281667811`).** Human-gated deploy; head `0067`→`0068`; functions + surface re-lock
+  only, **zero data change** (no reveal, no flag, no row touched).
+- **Catalog-verifier refresh (PR #39 → `27df8e8`) + production verify (run `28288983383`, `OVERALL_PASS=true`).**
+  Re-aimed the read-only catalog verifier at 0068/17; proved production still dark (ports hidden, flags off).
+- **PORT-LAUNCH-1B (PR #40 → `ab07f14`).** Dark port-to-port travel UI (PortNavPanel / osnReadiness /
+  portMoveCommand / osnReleaseGates); shows nothing while the flag is off; in-transit keeps route/ETA/Stop.
+- **PORT-LAUNCH-2A (assessment) + 2B (PR #41 → `589abb9`).** Read-only onboarding-readiness recon, then a
+  disposable full-chain proof: reveal → real `send_main_ship_expedition` accepts Haven Reach → real arrival
+  settles → resolver returns anchored → readiness `anchored` (flag off) → world reverted. Added the verifier's
+  A9 `STP_*` fail-closed pre-reveal checks.
+- **PORT-LAUNCH-2C (PR #42 → `33af7e8`).** The controlled one-shot reveal workflow: `workflow_dispatch` only,
+  `main`-only, typed `REVEAL_THREE_STARTER_PORTS` confirmation before any DB connection, `production`
+  environment gate, pinned-CA verify-full, one transaction (lock → preconditions → reveal ×1 → postconditions
+  incl. an **identity-level non-canonical digest** → commit-only-on-pass), rerun/uncertain fail-closed, no
+  retry. Disposable proof `ok[1..6]`.
+- **PORT-LAUNCH-2D (run `28294311791`).** Dispatched + approved; reveal executed once:
+  `REVEAL_FUNCTION_CALLS=1 · STARTER_PORTS_ACTIVE_AFTER=3 · FLAGS_UNCHANGED=true · REVEAL_OPERATION_PASS=true`.
+  Three ports hidden → active. One-way.
+- **PORT-LAUNCH-2E (PR #43 → `00dfdd2`, run `28295627367`).** New independent read-only post-reveal verifier
+  (`scripts/postreveal-verify.{sql,sh}` + `.github/workflows/postreveal-verify*.yml`) — leaves the dark-state
+  verifier untouched; checks the server catalog **and** the authenticated `get_world_map()` boundary. Live run
+  returned `MIGRATION_HEAD=0068 · CANONICAL_PORTS_ACTIVE=3 · CANONICAL_PORTS_HIDDEN=0 ·
+  UNEXPECTED_PORT_STATE_CHANGES=0 · AUTHENTICATED_MAP_PORTS_VISIBLE=3 · MAINSHIP_SEND_ENABLED=true ·
+  MAINSHIP_SPACE_MOVEMENT_ENABLED=false · OVERALL_PASS=true`.
+
+**Bugs / fixes:**
+- **1A lock-order TOCTOU** — reveal first locked only the three port rows; hardened to lock the full hierarchy
+  (sector→zone→location→anchor→service) in a fixed order before validating; proven with concurrent psql sessions.
+- **1A duplicate-insert proof premise** — the real block is a synchronous unique-constraint violation, not an
+  FK lock-wait; proof corrected to assert the actual mechanism.
+- **2B forced arrival** — back-dating only `arrive_at` violated `fleet_movements (arrive_at > depart_at)`;
+  fixed by moving the whole travel window into the past.
+- **2C postcondition** — net "+3 active" could be fooled by an offsetting change; added an `md5` digest of every
+  non-canonical `(id,status)` to prove identity-level invariance.
+- **2E test-harness** — a `emit_markers | grep -qx` happy-path assertion was fragile under `pipefail`; switched
+  to reconcile + direct `mval` spot-checks (verifier logic itself was correct on first run).
+
+**State after this epic (all on `main`, head `00dfdd2`):** production head **`0068`**, surface **17**, three
+starter ports **active/public** (independently verified), flags unchanged (send `true`, space `false`). The
+in-game OSN travel panel is built but dark. The only remaining arc item is the separate, optional, future OSN
+flag-enable decision (`mainship_space_movement_enabled = true`) — **not started, not needed, not urgent.**
+
+---
+
 ## 2026-06-26 — Session wrap-up + FORWARD PLAN (notes/design only; nothing started)
 
 Closing-session record. **No product code / migration / workflow / verifier / flag / production change** in

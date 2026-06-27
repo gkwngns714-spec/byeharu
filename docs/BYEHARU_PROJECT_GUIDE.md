@@ -39,6 +39,15 @@ the **Glossary** (§12).
 
 ## 2. Current project snapshot
 
+> **2026-06-27 update (PORT-LAUNCH).** Production migration head is now **`0068`**; authenticated client-RPC
+> surface is **17**. The three starter ports (Haven Reach, Slagworks Anchorage, Driftmarch Waypost) are
+> **active/public** — revealed via the controlled one-shot reveal (PORT-LAUNCH-2D, run `28294311791`) and
+> independently read-only verified against production (PORT-LAUNCH-2E, run `28295627367`, `OVERALL_PASS=true`).
+> Flags are unchanged: `mainship_send_enabled = true`, `mainship_space_movement_enabled = false`
+> (port-to-port OSN movement stays dark; `OSN_COORDINATE_TRAVEL_ENABLED = false` on the frontend). `main` head
+> is `00dfdd2`. The older baseline figures below predate this and are kept for history — see `DEV_LOG.md`
+> (2026-06-27 entry) for the authoritative current state.
+
 **As of this writing:**
 
 - **Branch / commit:** `main` equals `origin/main` (nothing unpushed), working tree clean. The last
