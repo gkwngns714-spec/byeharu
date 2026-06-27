@@ -2,7 +2,7 @@ name: OSN-HUB-1A — catalog verifier proof (disposable, no production)
 
 # Proves the OSN-HUB-1A production catalog verifier itself, with NO production access whatsoever:
 #   1. DB-free static safety self-test of the tooling.
-#   2. On a DISPOSABLE 0001..0067 stack mirrored to the live flag state (send=true): the verifier's `local`
+#   2. On a DISPOSABLE 0001..0068 stack mirrored to the live flag state (send=true): the verifier's `local`
 #      mode passes (healthy dark state) AND the parity comparator rejects a synthetic body/descriptor mismatch.
 #   3. A NEGATIVE matrix: each major assertion is intentionally broken in the disposable DB and the verifier is
 #      proven to FAIL CLOSED, then the break is undone and the healthy baseline is reconfirmed. All fixtures /
@@ -42,7 +42,7 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - name: Start disposable local Supabase (applies migrations 0001..0067)
+      - name: Start disposable local Supabase (applies migrations 0001..0068)
         run: supabase start
       - name: Export disposable DB_URL (no secrets)
         run: |
@@ -73,7 +73,7 @@ jobs:
 
           # 1) wrong migration head
           P "insert into supabase_migrations.schema_migrations(version) values ('20260618000099');"
-          expect_fail "migration head later than 0067"
+          expect_fail "migration head later than 0068"
           P "delete from supabase_migrations.schema_migrations where version='20260618000099';"; expect_pass "head restored"
 
           # 2) OSN flag turned true

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# OSN-HUB-1A — STRICTLY READ-ONLY production catalog / ACL / configuration verifier (migration head 0067).
+# OSN-HUB-1A / PORT-LAUNCH-1A — STRICTLY READ-ONLY production catalog / ACL / configuration verifier (head 0068).
 #
-# Answers ONLY: "Does production exactly match the approved OSN-HUB-1A dark state at migration head 0067?"
+# Answers ONLY: "Does production exactly match the approved dark state at migration head 0068 (PORT-LAUNCH-1A)?"
 # It proves production is still dark, coherent, locked down, and world/player-unchanged — and that the seven
-# functions 0067 materially changed/added are byte-identical (raw stored prosrc) + descriptor-identical to the
-# disposable 0001..0067 reference chain. It NEVER enables OSN, mutates data, invokes a game command, creates a
+# functions 0067 materially changed/added PLUS the two functions 0068 added (reveal_starter_ports,
+# get_osn_movement_readiness) are byte-identical (raw stored prosrc) + descriptor-identical to the
+# disposable 0001..0068 reference chain. It NEVER enables OSN, mutates data, invokes a game command, creates a
 # user/fixture, reveals a port, calls a write-capable RPC, uses a direct DB host, or prints rows/UUIDs/coords/
 # player data/function bodies/secrets/connection strings. All production reads run inside ONE
 # BEGIN ... ISOLATION LEVEL REPEATABLE READ READ ONLY snapshot (scripts/osn-hub1a-production-catalog-verify.sql)
@@ -13,10 +14,10 @@
 # Modes:
 #   selftest    DB-free static safety proof of THIS tooling (SQL allowlist, read-only gate, no-write, conn
 #               template, pinned CA, pooler binding, override rejection, migration-literal binding). No secrets.
-#   local       Disposable $DB_URL (chain 0001..0067): reconcile the dark-state matrix → OVERALL_PASS=true,
+#   local       Disposable $DB_URL (chain 0001..0068): reconcile the dark-state matrix → OVERALL_PASS=true,
 #               and prove the parity comparator (identical accepted; synthetic body/descriptor mismatch rejected).
 #   production  Gated, read-only: reference (disposable $DB_URL) + LIVE (pooler) → reconcile production dark-state
-#               + byte-identical 7-function parity; final OVERALL_PASS.
+#               + byte-identical 9-function parity; final OVERALL_PASS.
 set -uo pipefail
 
 MODE="${1:-}"
@@ -28,20 +29,28 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CA_FILE="$REPO_ROOT/scripts/supabase-prod-ca.crt"
 EXPECTED_CA_SHA256="807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6cafa"  # Supabase Root 2021 CA
 SQL_FILE="$REPO_ROOT/scripts/osn-hub1a-production-catalog-verify.sql"
+MIG68="$REPO_ROOT/supabase/migrations/20260618000068_portlaunch1a_reveal_readiness.sql"
 MIG67="$REPO_ROOT/supabase/migrations/20260618000067_osn_hub1a_canonical_location_targets.sql"
 MIG66="$REPO_ROOT/supabase/migrations/20260618000066_worldhub1b_a_hidden_ports_eligibility.sql"
-EXPECT_MIG="20260618000067"
-EXPECT_AUTH_SURFACE="bootstrap_me,cancel_build_order,command_main_ship_space_move,command_main_ship_space_move_to_location,command_main_ship_space_stop,get_combat_reports,get_my_expedition_preview,get_world_map,move_main_ship_to_location,repair_main_ship,request_leave_location,request_main_ship_return,request_retreat,send_fleet_to_location,send_main_ship_expedition,train_units"
-PARITY_TAGS="legal core begin resolve dock stop cmd"
+EXPECT_MIG="20260618000068"
+EXPECT_AUTH_SURFACE="bootstrap_me,cancel_build_order,command_main_ship_space_move,command_main_ship_space_move_to_location,command_main_ship_space_stop,get_combat_reports,get_my_expedition_preview,get_osn_movement_readiness,get_world_map,move_main_ship_to_location,repair_main_ship,request_leave_location,request_main_ship_return,request_retreat,send_fleet_to_location,send_main_ship_expedition,train_units"
+PARITY_TAGS="legal core begin resolve dock stop cmd reveal readiness"
 INTERNAL_TAGS="lock validate resolve excl legal core begin proc settle dock stop elig assign"
 DESC_FIELDS="LANG OWNER SECDEF SP ARGS SRVX ANONX AUTHX PUBX"
-# The public wrapper command_main_ship_space_move_to_location is granted only TO authenticated in 0067; its
-# service_role EXECUTE is governed by Supabase hosted DEFAULT PRIVILEGES (allowed) which the disposable
-# 0001..0067 reference does not reproduce. So for THIS wrapper, service_role EXECUTE (SRVX) is asserted as an
-# EXPLICIT, testable hosted-production policy (= allowed) — NOT as ref-vs-production parity, and NOT suppressed.
-# Strict ref-vs-prod SRVX parity is preserved for every other (explicitly service_role-granted) function.
+# Two public functions are granted only to a non-service role in their migration; their service_role EXECUTE is
+# governed by Supabase hosted DEFAULT PRIVILEGES (allowed) which the disposable reference chain does not
+# reproduce. So SRVX is EXEMPT from ref-vs-prod parity for these tags:
+#   • cmd       (command_main_ship_space_move_to_location, 0067) — authenticated; SRVX asserted as an EXPLICIT,
+#                testable hosted-production policy (= allowed) via check_wrapper_srvx (NOT parity, NOT suppressed).
+#   • readiness (get_osn_movement_readiness, 0068)             — authenticated; per the established hosted-default
+#                lesson its service_role EXECUTE is INTENTIONALLY NOT asserted (the parity would be unreliable);
+#                its security is proven by exact-17 surface membership + authenticated=yes / anon=no / PUBLIC=no.
+# Strict ref-vs-prod SRVX parity is preserved for every other (explicitly service_role-granted) function,
+# INCLUDING reveal_starter_ports (0068), which is explicitly granted to service_role (SRVX=true on both sides).
 WRAPPER_TAG="cmd"
 WRAPPER_PROD_SRVX_EXPECTED="true"
+SRVX_EXEMPT_TAGS="cmd readiness"   # tags whose SRVX is exempt from ref-vs-prod parity (hosted-default reliance)
+is_srvx_exempt() { case " $SRVX_EXEMPT_TAGS " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 # ── proven connection/trust helpers (identical to the established WORLD-HUB / ANCHOR verifiers) ──────────────
 is_hex64() { printf '%s' "${1:-}" | grep -qE '^[0-9a-f]{64}$'; }
@@ -78,9 +87,17 @@ is_true()  { [ "${1:-}" = "true" ]  || [ "${1:-}" = "t" ]; }
 
 # ── migration binding: the verifier's expected literals MUST be present verbatim in the checked-out migrations.
 assert_migration() {
+  [ -f "$MIG68" ] || fail "migration 0068 not found in checkout"
   [ -f "$MIG67" ] || fail "migration 0067 not found in checkout"
   [ -f "$MIG66" ] || fail "migration 0066 not found in checkout"
   local lit
+  for lit in "reveal_starter_ports" "get_osn_movement_readiness"; do
+    grep -qF "$lit" "$MIG68" || fail "expected literal absent from migration 0068: $lit"
+  done
+  grep -qE "grant execute on function public.get_osn_movement_readiness\(\) +to authenticated" "$MIG68" \
+    || fail "0068 does not grant get_osn_movement_readiness to authenticated"
+  grep -qE "grant execute on function public.reveal_starter_ports\(\) +to service_role" "$MIG68" \
+    || fail "0068 does not grant reveal_starter_ports to service_role"
   for lit in "b1a00001-0066-4a00-8a00-000000000001" "Haven Reach" "b1a00002-0066-4a00-8a00-000000000002" "Slagworks Anchorage" \
              "b1a00003-0066-4a00-8a00-000000000003" "Driftmarch Waypost" "b1a0a001-0066-4a00-8a00-0000000000a1" \
              "b1a05001-0066-4a00-8a00-000000000051" "is_home_port_eligible" "assign_home_port"; do
@@ -105,13 +122,14 @@ reconcile() {
   eq() { [ "$1" = "$2" ] && echo 1 || echo 0; }
 
   # A — deployment + dark state
-  chk "A1 migration head 0067"  "$([ "$(mval "$OUT" HEAD)" = "$EXPECT_MIG" ] && [ "$(mval "$OUT" N_AFTER)" = "0" ] && echo 1 || echo 0)" "head=$(mval "$OUT" HEAD) after=$(mval "$OUT" N_AFTER)"
+  chk "A1 migration head 0068"  "$([ "$(mval "$OUT" HEAD)" = "$EXPECT_MIG" ] && [ "$(mval "$OUT" N_AFTER)" = "0" ] && echo 1 || echo 0)" "head=$(mval "$OUT" HEAD) after=$(mval "$OUT" N_AFTER)"
   chk "A2 send flag (true,1×,jsonb)"  "$([ "$(mval "$OUT" FLAG_SEND_N)" = "1" ] && [ "$(mval "$OUT" FLAG_SEND_TYPE)" = "jsonb" ] && [ "$(mval "$OUT" FLAG_SEND)" = "1" ] && echo 1 || echo 0)" "n=$(mval "$OUT" FLAG_SEND_N) type=$(mval "$OUT" FLAG_SEND_TYPE) val=$(mval "$OUT" FLAG_SEND)"
   chk "A3 space flag (false,1×,jsonb)" "$([ "$(mval "$OUT" FLAG_SPACE_N)" = "1" ] && [ "$(mval "$OUT" FLAG_SPACE_TYPE)" = "jsonb" ] && [ "$(mval "$OUT" FLAG_SPACE)" = "0" ] && echo 1 || echo 0)" "n=$(mval "$OUT" FLAG_SPACE_N) type=$(mval "$OUT" FLAG_SPACE_TYPE) val=$(mval "$OUT" FLAG_SPACE)"
   chk "A4 zero active coord movements" "$(eq "$(mval "$OUT" N_ACTIVE_MOVES)" 0)" "active=$(mval "$OUT" N_ACTIVE_MOVES)"
   chk "A5 no incoherent fleet pointer" "$([ "$(mval "$OUT" N_FLEET_SPACE_PTR)" = "0" ] && [ "$(mval "$OUT" N_PTR_INCOHERENT)" = "0" ] && [ "$(mval "$OUT" N_MOVE_UNPTR)" = "0" ] && echo 1 || echo 0)" "fleet_ptr=$(mval "$OUT" N_FLEET_SPACE_PTR) incoherent=$(mval "$OUT" N_PTR_INCOHERENT) unptr=$(mval "$OUT" N_MOVE_UNPTR)"
   chk "A6 player_home_port empty"  "$(eq "$(mval "$OUT" N_HOMEPORT)" 0)" "rows=$(mval "$OUT" N_HOMEPORT)"
   chk "A7 no base anchor"          "$(eq "$(mval "$OUT" N_BASE_ANCHOR)" 0)" "base_anchors=$(mval "$OUT" N_BASE_ANCHOR)"
+  chk "A8 one 30s arrival cron"    "$([ "$(mval "$OUT" N_ARRIVAL_CRON)" = "1" ] && [ "$(mval "$OUT" ARRIVAL_CRON_SCHED)" = "30 seconds" ] && echo 1 || echo 0)" "n=$(mval "$OUT" N_ARRIVAL_CRON) sched=$(mval "$OUT" ARRIVAL_CRON_SCHED)"
 
   # B — hidden-port / world-state protection
   chk "B1 three hidden ports exact" "$([ "$(mval "$OUT" P1_OK)" = "1" ] && [ "$(mval "$OUT" P2_OK)" = "1" ] && [ "$(mval "$OUT" P3_OK)" = "1" ] && [ "$(mval "$OUT" N_ROLED)" = "3" ] && [ "$(mval "$OUT" N_ROLED_UNEXP)" = "0" ] && echo 1 || echo 0)" "p=$(mval "$OUT" P1_OK)$(mval "$OUT" P2_OK)$(mval "$OUT" P3_OK) roled=$(mval "$OUT" N_ROLED) unexp=$(mval "$OUT" N_ROLED_UNEXP)"
@@ -121,9 +139,10 @@ reconcile() {
   chk "B5 ports hidden from get_world_map" "$([ "$(mval "$OUT" MAP_LEAK)" = "0" ] && [ "$(mval "$OUT" MAP_LEAK_ID)" = "0" ] && echo 1 || echo 0)" "name_leak=$(mval "$OUT" MAP_LEAK) id_leak=$(mval "$OUT" MAP_LEAK_ID)"
   chk "B6 ports home-port ineligible" "$([ "$(mval "$OUT" ELIG1)" = "0" ] && [ "$(mval "$OUT" ELIG2)" = "0" ] && [ "$(mval "$OUT" ELIG3)" = "0" ] && echo 1 || echo 0)" "elig=$(mval "$OUT" ELIG1)$(mval "$OUT" ELIG2)$(mval "$OUT" ELIG3)"
 
-  # C — public authenticated RPC surface (exact 16, no overload, anon limited to get_world_map)
-  chk "C1 authenticated surface == 16" "$([ "$(mval "$OUT" AUTH_SURFACE)" = "$EXPECT_AUTH_SURFACE" ] && [ "$(mval "$OUT" N_AUTH)" = "16" ] && [ "$(mval "$OUT" N_AUTH_DISTINCT)" = "16" ] && echo 1 || echo 0)" "n=$(mval "$OUT" N_AUTH) distinct=$(mval "$OUT" N_AUTH_DISTINCT) set_match=$([ "$(mval "$OUT" AUTH_SURFACE)" = "$EXPECT_AUTH_SURFACE" ] && echo 1 || echo 0)"
-  chk "C2 anon limited to get_world_map" "$([ "$(mval "$OUT" ANON_ON_16)" = "get_world_map" ] && [ "$(mval "$OUT" GWM_ANON)" = "1" ] && [ "$(mval "$OUT" GWM_AUTH)" = "1" ] && echo 1 || echo 0)" "anon_on_16='$(mval "$OUT" ANON_ON_16)' gwm_anon=$(mval "$OUT" GWM_ANON) gwm_auth=$(mval "$OUT" GWM_AUTH)"
+  # C — public authenticated RPC surface (exact 17, no overload, anon limited to get_world_map)
+  chk "C1 authenticated surface == 17" "$([ "$(mval "$OUT" AUTH_SURFACE)" = "$EXPECT_AUTH_SURFACE" ] && [ "$(mval "$OUT" N_AUTH)" = "17" ] && [ "$(mval "$OUT" N_AUTH_DISTINCT)" = "17" ] && echo 1 || echo 0)" "n=$(mval "$OUT" N_AUTH) distinct=$(mval "$OUT" N_AUTH_DISTINCT) set_match=$([ "$(mval "$OUT" AUTH_SURFACE)" = "$EXPECT_AUTH_SURFACE" ] && echo 1 || echo 0)"
+  chk "C1b new RPC is get_osn_movement_readiness only" "$([ "$(mval "$OUT" EXIST_readiness)" = "1" ] && [ "$(mval "$OUT" D_readiness_AUTHX)" = "true" ] && [ "$(mval "$OUT" D_readiness_ANONX)" = "false" ] && [ "$(mval "$OUT" D_readiness_PUBX)" = "false" ] && [ "$(mval "$OUT" D_readiness_ARGS)" = "" ] && echo 1 || echo 0)" "exist=$(mval "$OUT" EXIST_readiness) auth=$(mval "$OUT" D_readiness_AUTHX) anon=$(mval "$OUT" D_readiness_ANONX) pub=$(mval "$OUT" D_readiness_PUBX) args='$(mval "$OUT" D_readiness_ARGS)'"
+  chk "C2 anon limited to get_world_map" "$([ "$(mval "$OUT" ANON_ON_17)" = "get_world_map" ] && [ "$(mval "$OUT" GWM_ANON)" = "1" ] && [ "$(mval "$OUT" GWM_AUTH)" = "1" ] && echo 1 || echo 0)" "anon_on_17='$(mval "$OUT" ANON_ON_17)' gwm_anon=$(mval "$OUT" GWM_ANON) gwm_auth=$(mval "$OUT" GWM_AUTH)"
 
   # D — internal ACL boundaries (every internal: exists, service_role-only, anon+auth denied)
   local dpass=1 detail=""
@@ -134,9 +153,11 @@ reconcile() {
   chk "D2 catalog tables locked down" "$([ "$(mval "$OUT" SA_CLIENT)" = "0" ] && [ "$(mval "$OUT" LS_CLIENT)" = "0" ] && [ "$(mval "$OUT" PHP_AUTH_WRITE)" = "0" ] && [ "$(mval "$OUT" PHP_ANON)" = "0" ] && [ "$(mval "$OUT" PHP_AUTH_SELECT)" = "1" ] && [ "$(mval "$OUT" PHP_RLS)" = "1" ] && echo 1 || echo 0)" "sa_client=$(mval "$OUT" SA_CLIENT) ls_client=$(mval "$OUT" LS_CLIENT) php_write=$(mval "$OUT" PHP_AUTH_WRITE) php_anon=$(mval "$OUT" PHP_ANON) php_sel=$(mval "$OUT" PHP_AUTH_SELECT) php_rls=$(mval "$OUT" PHP_RLS)"
 
   # E invariants (per parity tag): exists, plpgsql, owner=postgres, SECDEF, search_path=public, anon/PUBLIC denied.
+  # The two authenticated public functions (cmd wrapper 0067, readiness 0068) require AUTHX=true; every other tag
+  # — including reveal_starter_ports (service_role-only) — requires AUTHX=false.
   local epass=1 edet=""
   for tag in $PARITY_TAGS; do
-    local want_auth="false"; [ "$tag" = "cmd" ] && want_auth="true"   # only the public wrapper is authenticated
+    local want_auth="false"; case "$tag" in cmd|readiness) want_auth="true";; esac
     if [ "$(mval "$OUT" "EXIST_${tag}")" = "1" ] \
        && [ "$(mval "$OUT" "D_${tag}_LANG")" = "plpgsql" ] && [ "$(mval "$OUT" "D_${tag}_OWNER")" = "postgres" ] \
        && is_true "$(mval "$OUT" "D_${tag}_SECDEF")" \
@@ -144,7 +165,7 @@ reconcile() {
        && [ "$(mval "$OUT" "D_${tag}_ANONX")" = "false" ] && [ "$(mval "$OUT" "D_${tag}_PUBX")" = "false" ] \
        && [ "$(mval "$OUT" "D_${tag}_AUTHX")" = "$want_auth" ]; then :; else epass=0; edet="${edet}${tag}!"; fi
   done
-  chk "E0 7 changed fns secure shape" "$epass" "${edet:-all 7 plpgsql/owner=postgres/SECDEF/search_path=public/anon+PUBLIC-denied; only cmd authenticated}"
+  chk "E0 9 fns secure shape (7×0067 + reveal/readiness×0068)" "$epass" "${edet:-all 9 plpgsql/owner=postgres/SECDEF/search_path=public/anon+PUBLIC-denied; only cmd+readiness authenticated}"
 }
 
 # ── parity: raw stored-body hash + descriptor field-by-field, reference vs production (no body/raw printed) ──
@@ -157,10 +178,12 @@ parity() {  # $1=reference OUT  $2=production OUT ; sets PPASS + PROWS
     rh="$(hash_of "$(mval "$R" "HB_${tag}")" || true)"; ph="$(hash_of "$(mval "$P" "HB_${tag}")" || true)"
     if [ -z "$rh" ] || [ -z "$ph" ]; then ok=0; why="missing-body"; elif [ "$rh" != "$ph" ]; then ok=0; why="body-hash-differs"; fi
     for f in $DESC_FIELDS; do
-      # The wrapper's service_role EXECUTE is a hosted-platform default the reference can't reproduce → it is
-      # NOT a ref-vs-prod parity field for the wrapper (asserted explicitly by check_wrapper_srvx). SRVX parity
-      # stays STRICT for every other function. anon/authenticated/PUBLIC + body + all else stay strict for ALL.
-      if [ "$tag" = "$WRAPPER_TAG" ] && [ "$f" = "SRVX" ]; then note="body+descriptor byte-identical (service_role via explicit production policy)"; continue; fi
+      # For SRVX-exempt tags (cmd 0067, readiness 0068) service_role EXECUTE is a hosted-platform default the
+      # reference can't reproduce → it is NOT a ref-vs-prod parity field for them (cmd is asserted explicitly by
+      # check_wrapper_srvx; readiness is intentionally not asserted per the hosted-default lesson). SRVX parity
+      # stays STRICT for every other function (incl. reveal_starter_ports). anon/authenticated/PUBLIC + body +
+      # all else stay strict for ALL tags.
+      if is_srvx_exempt "$tag" && [ "$f" = "SRVX" ]; then note="body+descriptor byte-identical (service_role SRVX exempt: hosted default)"; continue; fi
       rv="$(mval "$R" "D_${tag}_${f}")"; pv="$(mval "$P" "D_${tag}_${f}")"; if [ "$rv" != "$pv" ]; then ok=0; why="${why} ${f}-differs"; fi
     done
     if [ "$ok" = "1" ]; then PROWS="${PROWS}| ${tag} | PASS | ${note} |\n"; else PROWS="${PROWS}| ${tag} | **FAIL** | ${why} |\n"; PPASS=0; fi
@@ -190,7 +213,7 @@ emit_report() {  # $1=title $2=table-header $3=rows $4=verdict
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL_FILE" ] || fail "SQL snapshot not found"
   assert_migration
-  echo "[selftest] OK: expected port literals present in 0066; the 7 function names + clock_timestamp + wrapper grant present in 0067"
+  echo "[selftest] OK: port literals present in 0066; 0067's 7 function names + clock_timestamp + wrapper grant present; reveal/readiness + their grants present in 0068"
   # Comment- and \meta-stripped SQL body for static scanning (statements may span multiple lines).
   CLEAN="$(sed -E 's/--.*//' "$SQL_FILE" | grep -vE '^[[:space:]]*\\')"
   # Allowlist: every ';'-terminated statement begins with an allowed keyword (no ';' appears inside our literals).
@@ -242,13 +265,13 @@ fi
 
 # ══════════════════════════════ LOCAL (disposable proof) ══════════════════════════════
 if [ "$MODE" = "local" ]; then
-  : "${DB_URL:?DB_URL (disposable 0001..0067 stack) required}"
+  : "${DB_URL:?DB_URL (disposable 0001..0068 stack) required}"
   assert_migration
   verify_ca "$CA_FILE"
   OUT="$(run_sql "$DB_URL")" || fail "local catalog read failed"
   [ "$(mval "$OUT" RO)" = "on" ] || fail "local read-only transaction not active"
   reconcile "$OUT"
-  emit_report "OSN-HUB-1A — LOCAL disposable dark-state proof (0001..0067)" "| group | result | detail |
+  emit_report "OSN-HUB-1A / PORT-LAUNCH-1A — LOCAL disposable dark-state proof (0001..0068)" "| group | result | detail |
 | --- | --- | --- |" "$ROWS" "$([ "$PASS" = "1" ] && echo true || echo false)"
   [ "$PASS" = "1" ] || fail "local dark-state reconcile did not pass on the healthy disposable chain"
   # parity comparator: identical reference accepts (wrapper SRVX excluded from parity); synthetic mismatches reject.
@@ -265,7 +288,16 @@ if [ "$MODE" = "local" ]; then
   parity "$OUT" "$(bad 's/^D_stop_SRVX=.*/D_stop_SRVX=false/')";   [ "$PPASS" = "0" ] || fail "parity ACCEPTED an internal service_role-grant change"
   # the wrapper's SRVX is exempt from ref-vs-prod parity (the local reference value naturally differs from hosted).
   parity "$OUT" "$(bad 's/^D_cmd_SRVX=.*/D_cmd_SRVX=true/')";      [ "$PPASS" = "1" ] || fail "wrapper SRVX wrongly subjected to ref-vs-prod parity"
-  echo "[local] OK: parity rejects internal body/descriptor/SRVX + wrapper body/anon/auth/PUBLIC mismatches; wrapper SRVX exempt from ref-vs-prod parity"
+  # reveal_starter_ports (0068) is in the STRICT parity set: body + every descriptor INCLUDING SRVX must match.
+  parity "$OUT" "$(bad 's/^HB_reveal=.*/HB_reveal=Y29ycnVwdA==/')";  [ "$PPASS" = "0" ] || fail "parity ACCEPTED a reveal body mismatch"
+  parity "$OUT" "$(bad 's/^D_reveal_SRVX=.*/D_reveal_SRVX=false/')"; [ "$PPASS" = "0" ] || fail "parity ACCEPTED a reveal service_role-grant change (reveal SRVX must stay strict)"
+  parity "$OUT" "$(bad 's/^D_reveal_AUTHX=.*/D_reveal_AUTHX=true/')"; [ "$PPASS" = "0" ] || fail "parity ACCEPTED a reveal authenticated-grant change"
+  # readiness (0068) STRICT for body/anon/auth/PUBLIC; SRVX EXEMPT (hosted default differs ref-vs-prod).
+  parity "$OUT" "$(bad 's/^HB_readiness=.*/HB_readiness=Y29ycnVwdA==/')"; [ "$PPASS" = "0" ] || fail "parity ACCEPTED a readiness body mismatch"
+  parity "$OUT" "$(bad 's/^D_readiness_AUTHX=.*/D_readiness_AUTHX=false/')"; [ "$PPASS" = "0" ] || fail "parity ACCEPTED a readiness authenticated-grant change"
+  parity "$OUT" "$(bad 's/^D_readiness_ANONX=.*/D_readiness_ANONX=true/')"; [ "$PPASS" = "0" ] || fail "parity ACCEPTED a readiness anon-grant change"
+  parity "$OUT" "$(bad 's/^D_readiness_SRVX=.*/D_readiness_SRVX=true/')"; [ "$PPASS" = "1" ] || fail "readiness SRVX wrongly subjected to ref-vs-prod parity (must be hosted-default exempt)"
+  echo "[local] OK: parity rejects internal+reveal body/descriptor/SRVX + wrapper/readiness body/anon/auth/PUBLIC mismatches; cmd+readiness SRVX exempt from ref-vs-prod parity"
   # explicit wrapper service_role PRODUCTION-policy contract: allowed(true) → PASS; denied(false) → FAIL CLOSED.
   check_wrapper_srvx "$(bad 's/^D_cmd_SRVX=.*/D_cmd_SRVX=true/')";  [ "$WSPASS" = "1" ] || fail "explicit wrapper service_role policy rejected the allowed (true) value"
   check_wrapper_srvx "$(bad 's/^D_cmd_SRVX=.*/D_cmd_SRVX=false/')"; [ "$WSPASS" = "0" ] || fail "explicit wrapper service_role policy ACCEPTED a denied (false) value"
@@ -282,7 +314,7 @@ assert_migration
 for t in curl jq psql openssl base64 sha256sum; do command -v "$t" >/dev/null 2>&1 || { echo "RESULT: BLOCKED — required read-only tooling missing ($t)"; exit 5; }; done
 verify_ca "$CA_FILE"
 
-# Reference: disposable 0001..0067 chain.
+# Reference: disposable 0001..0068 chain.
 REFOUT="$(run_sql "$DB_URL")" || fail "reference catalog read failed"
 [ "$(mval "$REFOUT" RO)" = "on" ] || fail "reference read-only transaction not active"
 
@@ -308,12 +340,12 @@ reconcile "$PRODOUT"
 parity "$REFOUT" "$PRODOUT"                  # ref↔prod body + descriptors (wrapper SRVX exempt, asserted below)
 check_wrapper_srvx "$PRODOUT"                # explicit hosted-production policy: wrapper service_role EXECUTE = allowed
 OVERALL="$([ "$PASS" = "1" ] && [ "$PPASS" = "1" ] && [ "$WSPASS" = "1" ] && echo true || echo false)"
-emit_report "OSN-HUB-1A — production catalog / ACL / configuration verification (head 0067)" "| check | result | detail |
-| --- | --- | --- |" "${ROWS}| PARITY (7 changed fns, ref↔prod; wrapper SRVX exempt) | $([ "$PPASS" = "1" ] && echo PASS || echo '**FAIL**') | byte-identical prosrc + descriptors |\n${WROW}" "$OVERALL"
+emit_report "OSN-HUB-1A / PORT-LAUNCH-1A — production catalog / ACL / configuration verification (head 0068)" "| check | result | detail |
+| --- | --- | --- |" "${ROWS}| PARITY (9 fns: 7×0067 + reveal/readiness×0068, ref↔prod; cmd+readiness SRVX exempt) | $([ "$PPASS" = "1" ] && echo PASS || echo '**FAIL**') | byte-identical prosrc + descriptors |\n${WROW}" "$OVERALL"
 printf "%b" "$PROWS" >> "${VERIFY_SUMMARY_FILE:-/dev/null}" 2>/dev/null || true
 
 if [ "$OVERALL" = "true" ]; then
-  echo "RESULT: PASS — production exactly matches the approved OSN-HUB-1A dark state at head 0067"
+  echo "RESULT: PASS — production exactly matches the approved OSN-HUB-1A / PORT-LAUNCH-1A dark state at head 0068"
   exit 0
 else
   echo "RESULT: FAIL — production does not match the approved OSN-HUB-1A dark state (see summary)"
