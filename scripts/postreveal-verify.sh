@@ -157,10 +157,11 @@ if [ "$MODE" = "local" ]; then
   # 1) EXPECTED POST-REVEAL ACTIVE STATE passes
   set_active
   OUT="$(run_sql)"; reconcile "$OUT"
-  [ "$RECON_PASS" = 1 ] || { emit_markers "$OUT"; fail "happy post-reveal state did not pass"; }
-  emit_markers "$OUT" | grep -qx 'OVERALL_PASS=true' || fail "happy path OVERALL_PASS!=true"
-  emit_markers "$OUT" | grep -qx 'CANONICAL_PORTS_ACTIVE=3' || fail "happy path active!=3"
-  emit_markers "$OUT" | grep -qx 'AUTHENTICATED_MAP_PORTS_VISIBLE=3' || fail "happy path map visible!=3"
+  MK="$(emit_markers "$OUT")"; printf '%s\n' "$MK"   # print the required markers for the log
+  [ "$RECON_PASS" = 1 ] || fail "happy post-reveal state did not pass reconcile"
+  printf '%s\n' "$MK" | grep -qx 'OVERALL_PASS=true' || fail "happy path OVERALL_PASS!=true"
+  [ "$(mval "$OUT" CANON_ACTIVE)" = "3" ] || fail "happy path canonical active != 3"
+  [ "$(mval "$OUT" MAP_CANON_VISIBLE)" = "3" ] || fail "happy path map-visible != 3"
   echo "ok[1] expected post-reveal active state passes (OVERALL_PASS=true; 3 active; map shows 3; flags off)"
 
   # 2) A HIDDEN canonical port fails (CANON_HIDDEN / identity)
