@@ -16,6 +16,7 @@ import { isActiveCoordinateTransit } from './spaceStopCommand'
 import { classifyPointerGesture } from './spaceMoveCommand'
 import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
+import { OSN_COORDINATE_TRAVEL_ENABLED } from './osnReleaseGates'
 
 // Read-only 2D galaxy map (plain SVG — no canvas/WebGL). UNIFIED fixed-coordinate frame (S6B-PRES):
 // EVERY spatial object — named locations, base/home, movement lines, legacy + open-space ship states,
@@ -83,7 +84,9 @@ export function GalaxyMap({
           mainShipSpaceMovement?.status === 'moving'
         ? 'in_transit'
         : 'eligible'
-  const canTarget = sm.enabled && eligibility === 'eligible'
+  // S6C is suppressed for PORT-LAUNCH-1B: a coordinate target can never be selected by a player, even if
+  // the server flag is on. (sm.enabled / eligibility stay computed so the dormant code path is unchanged.)
+  const canTarget = OSN_COORDINATE_TRAVEL_ENABLED && sm.enabled && eligibility === 'eligible'
   // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a target tap; drags
   // and multi-touch stay map pan. Tracked alongside (never replacing) the existing pan snapshot.
   const tap = useRef<{ x: number; y: number; t: number; maxPointers: number } | null>(null)
@@ -341,9 +344,10 @@ export function GalaxyMap({
         </g>
       </svg>
 
-      {/* OSN-3 S6C — overlay controls. Mounted only when coordinate movement is enabled (dark = absent →
-          zero production change). Empty-space only; copy never implies docking at a named location. */}
-      {sm.enabled && mainShip && (
+      {/* OSN-3 S6C — overlay controls. PORT-LAUNCH-1B suppresses this player-facing empty-space command
+          surface entirely (OSN_COORDINATE_TRAVEL_ENABLED=false) so it never mounts even with the flag on;
+          port-to-port travel is the only release surface (PortNavPanel, mounted by the screen). */}
+      {OSN_COORDINATE_TRAVEL_ENABLED && sm.enabled && mainShip && (
         <SpaceMoveControls
           enabled={sm.enabled}
           eligibility={eligibility}
