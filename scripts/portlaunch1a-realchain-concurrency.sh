@@ -52,16 +52,51 @@ race() {
   sleep 0.3
 }
 
+# ── Category 1: existing-row mutation of a validated dependency BLOCKS until A ends ───────────────────────
 race "update space_anchors    set status='retired'  where id='$A1';"      "update"
 race "update location_services set status='disabled' where id='$S1';"      "update"
 race "update zones            set status='locked'   where id='$ZONE1';"    "update"
 
-# verify NO net change: ports hidden; the canonical anchor/service/zone untouched.
+# ── Category 2: phantom duplicate INSERT — a second valid-looking ACTIVE child for a fixed port. While A holds
+#    the reveal locks, B's child INSERT must take a FOR KEY SHARE lock on the FOR-UPDATE-held parent locations
+#    row → it BLOCKS; after A ends, the insert proceeds and FAILS on the existing-active uniqueness (the port's
+#    canonical anchor/service persist regardless of port status), so no duplicate active child can survive.
+insert_race() {
+  local stmt="$1" want_err="$2" desc="$3"
+  echo "=== A holds reveal locks; B phantom-insert ($desc) must BLOCK then FAIL on $want_err ==="
+  echo "begin; select public.reveal_starter_ports();" >&3
+  wait_idletx plA reveal_starter_ports                       # A holds FOR UPDATE on the 3 ports + FOR SHARE deps
+  echo "begin; $stmt" >&4                                    # B child INSERT → FK FOR KEY SHARE on the parent loc
+  wait_blocked plB                                           # PROVEN: B blocks on A's parent-row FOR UPDATE
+  echo "  ok: B blocked (wait_event_type=Lock) on the parent locations FOR UPDATE while A holds reveal locks"
+  echo "rollback;" >&3                                       # A ends (reveal UNDONE → ports hidden) → B unblocks
+  for _ in $(seq 1 150); do grep -qiE "$want_err" /tmp/plB.log && break; sleep 0.2; done
+  grep -qiE "$want_err" /tmp/plB.log || { echo "FAIL: B's insert did not fail on $want_err"; cat /tmp/plB.log; exit 1; }
+  echo "  ok: B's blocked insert did NOT commit — it failed on $want_err (existing-active uniqueness, not malformed/unrelated)"
+  echo "rollback;" >&4                                       # discard B's aborted txn
+  sleep 0.3
+}
+
+# fresh non-fixed UUIDs; valid-looking ACTIVE rows for Haven Reach (p1) satisfying every NOT NULL / type /
+# owner / in-bounds-coord precondition, so the ONLY thing each violates is the existing-active uniqueness.
+insert_race "insert into space_anchors (id,kind,location_id,space_x,space_y,status) values (gen_random_uuid(),'location','$P1',1,1,'active');" \
+            "space_anchors_one_active_per_location" "2nd active anchor for Haven Reach"
+insert_race "insert into location_services (id,location_id,service,status) values (gen_random_uuid(),'$P1','docking','active');" \
+            "location_services_one_per_kind" "2nd active docking service for Haven Reach"
+
+# verify NO net change + phantom protection held: ports hidden; canonical rows intact; EXACTLY one active anchor
+# and one active docking service per starter port; NO phantom child row survived (rows == only the 3 fixed ids).
+A2='b1a0a002-0066-4a00-8a00-0000000000a2'; A3='b1a0a003-0066-4a00-8a00-0000000000a3'
+S2='b1a05002-0066-4a00-8a00-000000000052'; S3='b1a05003-0066-4a00-8a00-000000000053'
 do_check=$(q "select (select count(*) from locations where id in ('$P1','$P2','$P3') and status<>'hidden')
-            + (select count(*) from space_anchors where id='$A1' and status<>'active')
+            + (select count(*) from space_anchors     where id='$A1' and status<>'active')
             + (select count(*) from location_services where id='$S1' and status<>'active')
-            + (select count(*) from zones where id='$ZONE1' and status<>'active')")
-[ "$do_check" = "0" ] || { echo "FAIL: net change detected after concurrency scenarios ($do_check)"; exit 1; }
-echo "  ok: no net world change (ports hidden; anchor/service/zone unchanged)"
+            + (select count(*) from zones             where id='$ZONE1' and status<>'active')
+            + (select count(*) from (select location_id from space_anchors where kind='location' and status='active' and location_id in ('$P1','$P2','$P3') group by location_id having count(*)<>1) ax)
+            + (select count(*) from (select location_id from location_services where service='docking' and status='active' and location_id in ('$P1','$P2','$P3') group by location_id having count(*)<>1) sx)
+            + (select count(*) from space_anchors     where location_id in ('$P1','$P2','$P3') and id not in ('$A1','$A2','$A3'))
+            + (select count(*) from location_services where location_id in ('$P1','$P2','$P3') and id not in ('$S1','$S2','$S3'))")
+[ "$do_check" = "0" ] || { echo "FAIL: net change / phantom survivor detected after concurrency scenarios ($do_check)"; exit 1; }
+echo "  ok: dark baseline intact (3 ports hidden; exactly one active anchor + one docking service per port; no phantom child survived)"
 
 echo "PORT-LAUNCH-1A DYNAMIC CONCURRENCY PROOF: ALL PASSED"
