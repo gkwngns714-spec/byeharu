@@ -60,6 +60,11 @@ jobs:
           set -a; . /tmp/sbenv; set +a
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/portlaunch1a-realchain-fixtures.sql
 
+      - name: Dynamic concurrency proof (reveal lock-order TOCTOU; B blocks on A's held dependency locks)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/portlaunch1a-realchain-concurrency.sh
+
       - name: OSN enablement preflight script — structural validation over the real chain (0001..0068)
         run: |
           set -a; . /tmp/sbenv; set +a

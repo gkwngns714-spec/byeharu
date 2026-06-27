@@ -46,8 +46,26 @@ declare
   v_hidden int;
   v_active int;
 begin
-  -- Serialize against any concurrent status disable/enable on the three rows (fixed id order).
-  perform 1 from public.locations where id = any(v_ports) order by id for update;
+  -- Acquire the FULL target hierarchy in the canonical deterministic order BEFORE any read / validation /
+  -- decision / write, so no privileged concurrent mutation can alter a validated hierarchy, anchor, or
+  -- service between validation and the reveal update (TOCTOU-closed). Order = sector → zone → location →
+  -- anchor → docking service (same order as mainship_space_dock_at_location / assign_home_port), and within
+  -- each class the rows are locked in ascending id order (deadlock-free).
+  --   • read-only dependencies (sectors, zones, anchors, services) → FOR SHARE: a SHARE row lock conflicts
+  --     with the FOR NO KEY UPDATE a concurrent status disable/retire takes, so a validated row cannot change
+  --     while this function holds its locks;
+  --   • the three target locations → FOR UPDATE, because their status is what this function mutates.
+  perform 1 from public.sectors se
+    where se.id in (select distinct z.sector_id
+                      from public.locations l join public.zones z on z.id = l.zone_id
+                      where l.id = any(v_ports))
+    order by se.id for share;
+  perform 1 from public.zones z
+    where z.id in (select distinct l.zone_id from public.locations l where l.id = any(v_ports))
+    order by z.id for share;
+  perform 1 from public.locations     where id = any(v_ports)    order by id for update;
+  perform 1 from public.space_anchors  where id = any(v_anchors)  order by id for share;
+  perform 1 from public.location_services where id = any(v_services) order by id for share;
 
   if (select count(*) from public.locations where id = any(v_ports)) <> 3 then
     raise exception 'reveal_starter_ports: expected exactly the 3 fixed starter-port locations';
