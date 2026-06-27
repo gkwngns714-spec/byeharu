@@ -68,11 +68,11 @@ begin
   if v_count_canonical <> 3 then
     raise exception 'PRECOND FAIL: canonical starter-port set is not exactly 3 rows (got %)', v_count_canonical;
   end if;
+  if v_active_before <> 0 then
+    raise exception 'PRECOND FAIL: a canonical starter port is already ACTIVE (active=%) — not the all-hidden pre-reveal baseline; reveal NOT called (already revealed / rerun)', v_active_before;
+  end if;
   if v_hidden_before <> 3 then
     raise exception 'PRECOND FAIL: expected exactly 3 HIDDEN canonical starter ports (hidden=%, active=%)', v_hidden_before, v_active_before;
-  end if;
-  if v_active_before <> 0 then
-    raise exception 'PRECOND FAIL: a canonical starter port is already ACTIVE (active=%) — already revealed / rerun; reveal NOT called', v_active_before;
   end if;
   if coalesce(public.cfg_bool('mainship_send_enabled'), false) <> true then
     raise exception 'PRECOND FAIL: mainship_send_enabled is not true';

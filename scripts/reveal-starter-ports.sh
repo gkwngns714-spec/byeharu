@@ -168,22 +168,27 @@ if [ "$MODE" = "local" ]; then
   run_op >/dev/null; [ "$(active_n)" = "3" ] || fail "rerun setup: first reveal did not activate 3"
   out="$(run_op)"; rc=$?
   [ "$rc" != "0" ] || fail "rerun after success was accepted (must fail closed)"
-  echo "$out" | grep -qiE 'already (revealed|active)|already ACTIVE' || { echo "$out"; fail "rerun did not report already-revealed"; }
+  echo "$out" | grep -qF 'PRECOND FAIL' || { echo "$out"; fail "rerun did not fail closed at the precondition"; }
+  echo "$out" | grep -qiF 'already ACTIVE' || { echo "$out"; fail "rerun did not report already-active"; }
   echo "$out" | grep -qF 'REVEAL_FUNCTION_CALLS=1' && fail "reveal was called a second time on rerun" || true
   [ "$(active_n)" = "3" ] || fail "rerun changed the active count"
-  echo "ok[3] rerun after success: fail-closed at precondition, reveal NOT called again, no change"
+  echo "ok[3] rerun after success: fail-closed at precondition (already ACTIVE), reveal NOT called again, no change"
   ensure_hidden
 
-  # 4) FLAG TAMPER -> fail closed before reveal; restore
+  # 4) FLAG TAMPER -> fail closed before reveal; restore. assert_fail_closed checks: nonzero rc, a PRECOND
+  #    FAIL message, and that reveal was NOT called.
+  assert_fail_closed() {  # $1=output  $2=rc  $3=case label
+    [ "$2" != "0" ] || { echo "$1"; fail "$3: pre-state was accepted (expected fail-closed)"; }
+    echo "$1" | grep -qF 'PRECOND FAIL' || { echo "$1"; fail "$3: did not raise PRECOND FAIL"; }
+    echo "$1" | grep -qF 'REVEAL_FUNCTION_CALLS=1' && fail "$3: reveal was called" || true
+  }
   q "update public.game_config set value='true' where key='mainship_space_movement_enabled';" >/dev/null
-  out="$(run_op)"; rc=$?
-  [ "$rc" != "0" ] && echo "$out" | grep -qF 'PRECOND FAIL' && { echo "$out" | grep -qF 'REVEAL_FUNCTION_CALLS=1' && fail "reveal called with OSN flag on" || true; } || { echo "$out"; fail "OSN-flag-on pre-state was accepted"; }
-  [ "$(hidden_n)" = "3" ] || fail "flag-tamper case revealed ports"
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "OSN flag on"
+  [ "$(hidden_n)" = "3" ] || fail "flag-tamper (space=true) case revealed ports"
   q "update public.game_config set value='false' where key='mainship_space_movement_enabled';" >/dev/null
   q "update public.game_config set value='false' where key='mainship_send_enabled';" >/dev/null
-  out="$(run_op)"; rc=$?
-  [ "$rc" != "0" ] && echo "$out" | grep -qF 'PRECOND FAIL' || { echo "$out"; fail "send=false pre-state was accepted"; }
-  [ "$(hidden_n)" = "3" ] || fail "send-flag case revealed ports"
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "send flag off"
+  [ "$(hidden_n)" = "3" ] || fail "send-flag (send=false) case revealed ports"
   q "update public.game_config set value='true' where key='mainship_send_enabled';" >/dev/null
   echo "ok[4] flag tamper (space=true / send=false): fail-closed before reveal, ports unchanged"
   ensure_hidden
