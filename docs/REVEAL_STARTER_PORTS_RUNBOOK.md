@@ -83,12 +83,25 @@ ports, or run onboarding. The authoritative post-reveal check is the **separate,
 production catalog verifier (`osn-hub1a-production-catalog-verify.yml`), whose `A9` block already proves the
 pre-reveal preconditions and which, after a reveal, would confirm the three ports active + flags still off.
 
-## 8. Sequence (each step separately, explicitly approved)
+## 8. Status & rules (authoritative)
+
+- **PORT-LAUNCH-2C creates the workflow only.**
+- **The production workflow has never been dispatched in this phase** (no run; no production approval).
+- The **approved pre-reveal check is this workflow's own fixed precondition assertions**, executed immediately
+  before the reveal call **in the same transaction** — there is **no separate new pre-reveal workflow to
+  build**. (The existing read-only catalog verifier may *optionally* be run for extra assurance, but it is not
+  a required gate; the just-in-time same-transaction preconditions are the mandatory pre-reveal safety check.)
+- **A successful reveal is intentionally one-way operationally** (no un-reveal; recovery is fix-forward).
+- **A rerun after a successful reveal fails closed** at the precondition and never re-invokes the reveal.
+- **Any uncertain result requires a separate read-only post-reveal verification before any follow-up action**
+  (no automatic retry).
+
+## 9. Sequence (each step separately, explicitly approved)
 
 1. (this PR) merge the operational path — changes no production state.
-2. Separate human-gated **read-only pre-reveal** production catalog verification.
-3. Separate human-gated **reveal** (this workflow) — one-way.
-4. Immediately after: separate human-gated **read-only post-reveal** verification.
-5. Much later, fully separate: the OSN flag-enable decision (`mainship_space_movement_enabled = true`).
+2. Separate human-gated **reveal** (this workflow) — its own same-transaction preconditions are the
+   just-in-time pre-reveal check; one-way.
+3. Immediately after: separate human-gated **read-only post-reveal** verification.
+4. Much later, fully separate: the OSN flag-enable decision (`mainship_space_movement_enabled = true`).
 
 Throughout reveal and early onboarding: **`mainship_space_movement_enabled = false`**.

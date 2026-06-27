@@ -142,7 +142,13 @@ if [ "$MODE" = "local" ]; then
   q "update public.game_config set value='true'  where key='mainship_send_enabled';" >/dev/null
   q "update public.game_config set value='false' where key='mainship_space_movement_enabled';" >/dev/null
 
-  # 1) HAPPY PATH
+  assert_fail_closed() {  # $1=output  $2=rc  $3=case label — nonzero rc, a PRECOND FAIL, reveal NOT called
+    [ "$2" != "0" ] || { echo "$1"; fail "$3: pre-state was accepted (expected fail-closed)"; }
+    echo "$1" | grep -qF 'PRECOND FAIL' || { echo "$1"; fail "$3: did not raise PRECOND FAIL"; }
+    echo "$1" | grep -qF 'REVEAL_FUNCTION_CALLS=1' && fail "$3: reveal was called" || true
+  }
+
+  # 1) CLEAN FIXTURE / HAPPY PATH
   ensure_hidden
   out="$(run_op)"; rc=$?
   [ "$rc" = "0" ] || { echo "$out"; fail "happy path did not succeed"; }
@@ -151,69 +157,83 @@ if [ "$MODE" = "local" ]; then
   done
   [ "$(active_n)" = "3" ] || fail "happy path did not leave 3 ports active"
   [ "$(q "select count(*) from public.game_config where key='mainship_space_movement_enabled' and value='false'::jsonb;")" = "1" ] || fail "OSN flag changed during happy path"
-  echo "ok[1] happy path: 3 hidden -> reveal once -> 3 active, flags unchanged, all markers present"
+  echo "ok[1] clean fixture / happy path: 3 hidden -> reveal once -> 3 active, flags unchanged, all markers present"
   ensure_hidden
 
-  # 2) WRONG PRE-STATE (only 2 hidden / one already active) -> fail closed, no reveal call, no change
-  set_status "$P1" active
-  out="$(run_op)"; rc=$?
-  [ "$rc" != "0" ] || fail "wrong pre-state was accepted"
-  echo "$out" | grep -qF 'PRECOND FAIL' || { echo "$out"; fail "wrong pre-state did not raise PRECOND FAIL"; }
-  echo "$out" | grep -qF 'REVEAL_FUNCTION_CALLS=1' && fail "reveal was called despite a wrong pre-state" || true
-  [ "$(q "select status from public.locations where id='$P1';")" = "active" ] && [ "$(q "select count(*) from public.locations where id in ('$P2','$P3') and status='hidden';")" = "2" ] || fail "wrong pre-state altered port state (should be no change)"
-  echo "ok[2] wrong pre-state (2 hidden/1 active): fail-closed, reveal not called, no change"
-  ensure_hidden
+  # 2) WRONG TYPED CONFIRMATION (and non-main ref) reject BEFORE any database access or mutation
+  ( assert_confirm "WRONG_TOKEN" ) 2>/dev/null && fail "wrong confirmation token was accepted" || true
+  ( assert_confirm "" )           2>/dev/null && fail "empty confirmation token was accepted" || true
+  ( assert_main_only "refs/heads/feature" ) 2>/dev/null && fail "a non-main ref was accepted" || true
+  [ "$(hidden_n)" = "3" ] || fail "confirmation/ref gate touched the DB (ports changed)"
+  echo "ok[2] wrong typed confirmation / non-main ref: rejected before any DB access or mutation; ports untouched"
 
-  # 3) RERUN AFTER SUCCESS -> the second run fails closed at the precondition and never calls reveal again
-  run_op >/dev/null; [ "$(active_n)" = "3" ] || fail "rerun setup: first reveal did not activate 3"
-  out="$(run_op)"; rc=$?
-  [ "$rc" != "0" ] || fail "rerun after success was accepted (must fail closed)"
-  echo "$out" | grep -qF 'PRECOND FAIL' || { echo "$out"; fail "rerun did not fail closed at the precondition"; }
-  echo "$out" | grep -qiF 'already ACTIVE' || { echo "$out"; fail "rerun did not report already-active"; }
-  echo "$out" | grep -qF 'REVEAL_FUNCTION_CALLS=1' && fail "reveal was called a second time on rerun" || true
-  [ "$(active_n)" = "3" ] || fail "rerun changed the active count"
-  echo "ok[3] rerun after success: fail-closed at precondition (already ACTIVE), reveal NOT called again, no change"
+  # 3) INVALID PRE-STATE (wrong canonical count, or wrong flag state) -> fail closed, reveal not called, no change
+  set_status "$P1" active   # 2 hidden / 1 active
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "wrong canonical pre-state"
+  [ "$(q "select status from public.locations where id='$P1';")" = "active" ] && [ "$(q "select count(*) from public.locations where id in ('$P2','$P3') and status='hidden';")" = "2" ] || fail "wrong pre-state altered port state"
   ensure_hidden
-
-  # 4) FLAG TAMPER -> fail closed before reveal; restore. assert_fail_closed checks: nonzero rc, a PRECOND
-  #    FAIL message, and that reveal was NOT called.
-  assert_fail_closed() {  # $1=output  $2=rc  $3=case label
-    [ "$2" != "0" ] || { echo "$1"; fail "$3: pre-state was accepted (expected fail-closed)"; }
-    echo "$1" | grep -qF 'PRECOND FAIL' || { echo "$1"; fail "$3: did not raise PRECOND FAIL"; }
-    echo "$1" | grep -qF 'REVEAL_FUNCTION_CALLS=1' && fail "$3: reveal was called" || true
-  }
   q "update public.game_config set value='true' where key='mainship_space_movement_enabled';" >/dev/null
-  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "OSN flag on"
-  [ "$(hidden_n)" = "3" ] || fail "flag-tamper (space=true) case revealed ports"
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "OSN flag on pre-state"
+  [ "$(hidden_n)" = "3" ] || fail "OSN-flag-on pre-state revealed ports"
   q "update public.game_config set value='false' where key='mainship_space_movement_enabled';" >/dev/null
   q "update public.game_config set value='false' where key='mainship_send_enabled';" >/dev/null
-  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "send flag off"
-  [ "$(hidden_n)" = "3" ] || fail "send-flag (send=false) case revealed ports"
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "send flag off pre-state"
+  [ "$(hidden_n)" = "3" ] || fail "send-flag-off pre-state revealed ports"
   q "update public.game_config set value='true' where key='mainship_send_enabled';" >/dev/null
-  echo "ok[4] flag tamper (space=true / send=false): fail-closed before reveal, ports unchanged"
+  echo "ok[3] invalid pre-state (wrong canonical count / wrong flag state): fail-closed, reveal not called, no change"
   ensure_hidden
 
-  # 5) UNEXPECTED-MUTATION DETECTORS fail closed AND roll back (the operation's two safety nets)
-  #   5a) flag-change detector: snapshot -> change flag -> the unchanged-assertion raises -> ROLLBACK restores it
+  # 4) ALREADY-ACTIVE / RERUN -> fails BEFORE invoking the reveal function again
+  run_op >/dev/null; [ "$(active_n)" = "3" ] || fail "rerun setup: first reveal did not activate 3"
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "rerun after success"
+  echo "$out" | grep -qiF 'already ACTIVE' || { echo "$out"; fail "rerun did not report already-active"; }
+  [ "$(active_n)" = "3" ] || fail "rerun changed the active count"
+  echo "ok[4] already-active / rerun: fail-closed at precondition (already ACTIVE), reveal NOT called again, no change"
+  ensure_hidden
+
+  # 5) UNEXPECTED-MUTATION DETECTION fails closed AND rolls back — both required sub-cases:
+  #   5a) an unexpected FEATURE-FLAG change
   q "do \$\$ declare b jsonb; begin
        select value into b from public.game_config where key='mainship_space_movement_enabled';
        update public.game_config set value='true' where key='mainship_space_movement_enabled';
        if (select value from public.game_config where key='mainship_space_movement_enabled') is distinct from b then
          raise exception 'detector: a feature flag changed'; end if;
-     end \$\$;" >/tmp/det_a 2>&1 && fail "5a flag-change detector did not raise"
+     end \$\$;" >/dev/null 2>&1 && fail "5a flag-change detector did not raise"
   [ "$(q "select count(*) from public.game_config where key='mainship_space_movement_enabled' and value='false'::jsonb;")" = "1" ] || fail "5a flag-change was NOT rolled back"
-  #   5b) unexpected extra-active detector: reveal +3 but also flip an extra non-canonical location -> net<>+3 -> raise -> ROLLBACK
-  XLOC="$(q "select id from public.locations where id not in ('$P1','$P2','$P3') and status='active' limit 1;")"
+  #   5b) an unexpected EXTRA port activation/state change caught by the net cross-check
+  XLOC="$(q "select id from public.locations where id not in ('$P1','$P2','$P3') and status='active' order by id limit 1;")"
   q "do \$\$ declare before int; after int; begin
        select count(*) into before from public.locations where status='active';
        perform public.reveal_starter_ports();
-       update public.locations set status='hidden' where id='$XLOC';   -- an UNEXPECTED extra change
+       update public.locations set status='hidden' where id='$XLOC';
        select count(*) into after from public.locations where status='active';
-       if after <> before + 3 then raise exception 'detector: net active change % (expected +3) — unexpected mutation', after-before; end if;
-     end \$\$;" >/tmp/det_b 2>&1 && fail "5b extra-mutation detector did not raise"
+       if after <> before + 3 then raise exception 'detector: net active change % (expected +3)', after-before; end if;
+     end \$\$;" >/dev/null 2>&1 && fail "5b extra-mutation detector did not raise"
   [ "$(hidden_n)" = "3" ] || fail "5b reveal was NOT rolled back"
   [ "$(q "select status from public.locations where id='$XLOC';")" = "active" ] || fail "5b unexpected change was NOT rolled back"
-  echo "ok[5] unexpected-mutation detectors (flag-change, extra active): fail-closed and rolled back"
+  #   5c) an OFFSETTING identity change — net stays exactly +3, so the net cross-check PASSES, but the
+  #       identity-level non-canonical digest CATCHES it. Proves +3 is not the sole evidence.
+  A="$(q "select id from public.locations where id not in ('$P1','$P2','$P3') and status='active' order by id limit 1;")"
+  B="$(q "select id from public.locations where id not in ('$P1','$P2','$P3','$A') and status='active' order by id limit 1;")"
+  [ -n "$A" ] && [ -n "$B" ] || fail "5c needs two non-canonical active locations"
+  set_status "$B" hidden   # setup so the harness can flip B active (+1) to offset A active->hidden (-1)
+  out="$(q "do \$\$ declare dbefore text; dafter text; tbefore int; tafter int; begin
+       select md5(coalesce(string_agg(id::text||'='||status,',' order by id),'')) into dbefore from public.locations where id not in ('$P1','$P2','$P3');
+       select count(*) into tbefore from public.locations where status='active';
+       perform public.reveal_starter_ports();                                   -- +3 canonical
+       update public.locations set status='active' where id='$B';               -- +1 non-canonical
+       update public.locations set status='hidden' where id='$A';               -- -1 non-canonical => net +3
+       select count(*) into tafter from public.locations where status='active';
+       if tafter <> tbefore + 3 then raise exception 'NET would catch (delta=%)', tafter-tbefore; end if;
+       select md5(coalesce(string_agg(id::text||'='||status,',' order by id),'')) into dafter from public.locations where id not in ('$P1','$P2','$P3');
+       if dafter is distinct from dbefore then raise exception 'DIGEST detector: non-canonical identity changed while net stayed +3'; end if;
+     end \$\$;" 2>&1)"
+  echo "$out" | grep -qF 'DIGEST detector' || { echo "$out"; fail "5c offsetting change was NOT caught by the identity digest"; }
+  echo "$out" | grep -qF 'NET would catch' && fail "5c offsetting was caught by the net check (must be the digest — net stays +3)" || true
+  [ "$(hidden_n)" = "3" ] || fail "5c reveal was NOT rolled back"
+  [ "$(q "select status from public.locations where id='$A';")" = "active" ] || fail "5c offsetting change to A was NOT rolled back"
+  set_status "$B" active   # restore B (the harness rolled back, leaving B at the setup 'hidden')
+  echo "ok[5] unexpected-mutation detection — flag-change + extra-port + offsetting-identity: fail-closed and rolled back"
   ensure_hidden
 
   # restore the disposable stack to the dark baseline

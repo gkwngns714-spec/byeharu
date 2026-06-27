@@ -45,6 +45,11 @@ declare
   v_total_active_before int;
   v_total_active_after  int;
   v_active_after      int;
+  -- identity-level digest of EVERY non-canonical location's (id,status). Compared before/after so the
+  -- postcondition proves the ONLY rows that changed are the three canonical ports — an offsetting change
+  -- (one location going inactive while another goes active, keeping the net count at +3) flips this digest.
+  v_other_digest_before text;
+  v_other_digest_after  text;
   v_send_before  jsonb;
   v_space_before jsonb;
   v_send_after   jsonb;
@@ -61,6 +66,8 @@ begin
     into v_count_canonical, v_hidden_before, v_active_before
     from public.locations where id = any(v_ports);
   select count(*) into v_total_active_before from public.locations where status = 'active';
+  select md5(coalesce(string_agg(id::text || '=' || status, ',' order by id), ''))
+    into v_other_digest_before from public.locations where id <> all(v_ports);
   select value into v_send_before  from public.game_config where key = 'mainship_send_enabled';
   select value into v_space_before from public.game_config where key = 'mainship_space_movement_enabled';
 
@@ -100,17 +107,27 @@ begin
   end if;
   raise notice 'STARTER_PORTS_ACTIVE_AFTER=%', v_active_after;
 
-  -- exactly 3 × hidden→active and nothing else moved (net active-location change must be exactly +3).
+  -- IDENTITY-LEVEL transition: each of the three canonical ports was hidden before (guaranteed by the
+  -- precondition: count=3, active=0 ⇒ all 3 hidden) and is active now (v_active_after=3 over the fixed set),
+  -- and NO canonical port is left in an unexpected (non-active) state.
   if v_hidden_before <> 3 or v_active_after <> 3 then
     raise exception 'POSTCOND FAIL: transition is not exactly 3 hidden->active';
   end if;
+  if (select count(*) from public.locations where id = any(v_ports) and status <> 'active') <> 0 then
+    raise exception 'POSTCOND FAIL: a canonical starter port is not active after reveal';
+  end if;
+  -- OFFSETTING-PROOF: every NON-canonical location is byte-identical to the pre-op snapshot. This is the
+  -- authoritative "nothing else changed" guarantee — the net +3 below is only a supplemental cross-check and
+  -- could not, on its own, distinguish an offsetting mutation (one inactive + one active) from a clean reveal.
+  select md5(coalesce(string_agg(id::text || '=' || status, ',' order by id), ''))
+    into v_other_digest_after from public.locations where id <> all(v_ports);
+  if v_other_digest_after is distinct from v_other_digest_before then
+    raise exception 'POSTCOND FAIL: a non-canonical location changed status (identity-level invariance broken) — unexpected/offsetting mutation';
+  end if;
+  -- supplemental cross-check: net active-location change is exactly +3.
   select count(*) into v_total_active_after from public.locations where status = 'active';
   if v_total_active_after <> v_total_active_before + 3 then
     raise exception 'POSTCOND FAIL: net active-location change = % (expected exactly +3) — unexpected mutation', v_total_active_after - v_total_active_before;
-  end if;
-  -- no canonical port left in an unexpected (non-active) state.
-  if (select count(*) from public.locations where id = any(v_ports) and status <> 'active') <> 0 then
-    raise exception 'POSTCOND FAIL: a canonical starter port is not active after reveal';
   end if;
 
   -- both flags byte-for-byte unchanged from the pre-op snapshot.

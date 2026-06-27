@@ -44,9 +44,9 @@ jobs:
           base="$(git merge-base origin/main HEAD || echo origin/main)"
           changed="$(git diff --name-only "$base" HEAD)"
           echo "changed files vs main:"; echo "$changed"
-          if echo "$changed" | grep -qE '^supabase/migrations/|^src/'; then
-            echo "FAIL: PORT-LAUNCH-2C must not change migrations or frontend source"; exit 1; fi
-          echo "ok: no migration/frontend change — operational-control only"
+          if echo "$changed" | grep -qE '^supabase/migrations/|^src/|(^|/)package(-lock)?\.json$'; then
+            echo "FAIL: PORT-LAUNCH-2C must not change migrations, frontend source, or packages"; exit 1; fi
+          echo "ok[6] scope guard: no migration / frontend / flag-default / home-port / onboarding / OSN-enable change — operational-control only"
 
   disposable-proof:
     runs-on: ubuntu-latest
