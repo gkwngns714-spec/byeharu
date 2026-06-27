@@ -1,0 +1,97 @@
+name: PORT-LAUNCH-1A — real-migration-chain proof (disposable Supabase)
+
+# Authoritative/gating proof for the PORT-LAUNCH-1A dark backend/readiness boundaries (migration 0068):
+# the one-way service_role-only reveal primitive reveal_starter_ports() and the authenticated read-only
+# projection get_osn_movement_readiness(). Boots a DISPOSABLE local Supabase stack via the CLI, applying the
+# ACTUAL chain 0001..0068 — real tables/CHECKs/RLS/grants/triggers/pg_cron and the real roles
+# anon/authenticated/service_role. NOT a stub; NEVER the shared/live DB. Proves ACL/boundary posture, the
+# exact 17-RPC authenticated surface, reveal atomicity/idempotency/fail-closed rejection, and the readiness
+# categories (incl. no hidden-port leak and osn_available=false while the flag is dark). The fixtures REVERT
+# the world to fully hidden — no net world/player change, no fixtures left, no flag write.
+
+on:
+  push:
+    branches:
+      - 'port-launch-1a-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies migrations 0001..0068)
+        run: supabase start
+
+      - name: Export local stack connection env (keys masked)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^(API_URL|DB_URL)=' /tmp/sbenv || true
+
+      - name: Permission / boundary proof (reveal primitive + readiness RPC + exact 17 surface)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/portlaunch1a-realchain-perm.sql
+
+      - name: Runtime SET ROLE EXECUTE denial (reveal = service_role only) + readiness authenticated-callable
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          for r in anon authenticated; do
+            out=$(psql "$DB_URL" -X -c "set role $r; select public.reveal_starter_ports();" 2>&1 || true)
+            echo "$out" | grep -qi "permission denied" && echo "ok: $r cannot EXECUTE reveal_starter_ports" || { echo "FAIL: $r executed reveal_starter_ports -> $out"; exit 1; }
+          done
+          # authenticated may call the readiness RPC (no permission error); with no JWT it reports no_ship.
+          out=$(psql "$DB_URL" -X -c "set role authenticated; select public.get_osn_movement_readiness();" 2>&1 || true)
+          echo "$out" | grep -qi "permission denied" && { echo "FAIL: authenticated denied readiness -> $out"; exit 1; } || true
+          echo "$out" | grep -qi "no_ship" && echo "ok: authenticated can EXECUTE readiness (no JWT -> no_ship)" || { echo "FAIL: readiness output -> $out"; exit 1; }
+          out=$(psql "$DB_URL" -X -c "set role anon; select public.get_osn_movement_readiness();" 2>&1 || true)
+          echo "$out" | grep -qi "permission denied" && echo "ok: anon cannot EXECUTE readiness" || { echo "FAIL: anon executed readiness -> $out"; exit 1; }
+
+      - name: Functional fixture matrix (reveal atomicity/idempotency/rejection + readiness categories + revert)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/portlaunch1a-realchain-fixtures.sql
+
+      - name: Dynamic concurrency proof (reveal TOCTOU — existing-row mutation blocks on locks + phantom duplicate insert fails on existing-active uniqueness)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/portlaunch1a-realchain-concurrency.sh
+
+      - name: OSN enablement preflight script — structural validation over the real chain (0001..0068)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -X -x -f scripts/osn-enablement-preflight.sql)"
+          echo "$out"
+          echo "$out" | grep -q 'STRUCTURAL_PASS=true' || { echo "FAIL: preflight structural checks did not pass on the 0068 chain"; exit 1; }
+          echo "ok: enablement preflight executes cleanly and structural checks pass at head 0068 / surface 17"
+
+      - name: Assert dark invariants unchanged (flags + ports hidden; no net world/player state)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -X -c "do \$\$ declare b text; n int;
+            begin
+              -- the space-movement flag is the dark gate this slice must never disturb (the send flag is
+              -- seeded false on the disposable chain — production activates it operationally, not via migration).
+              select value::text into b from game_config where key='mainship_space_movement_enabled';
+              if b is distinct from 'false' then raise exception 'space-movement flag=%', b; end if;
+              select count(*) into n from public.locations where id in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003') and status<>'hidden';
+              if n<>0 then raise exception '% starter port(s) left non-hidden', n; end if;
+              select count(*) into n from auth.users where email like 'pl1afix.%@example.com';
+              if n<>0 then raise exception '% fixture users remain', n; end if;
+              raise notice 'post-run ok: space=false; 3 ports hidden; no fixtures';
+            end \$\$;"
+          fi
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
