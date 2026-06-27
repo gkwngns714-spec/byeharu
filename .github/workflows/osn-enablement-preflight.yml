@@ -49,6 +49,16 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      - name: Assert free-coordinate travel stays suppressed in the checked-out source (frontend const)
+        run: |
+          set -euo pipefail
+          GATES="src/features/map/osnReleaseGates.ts"
+          if grep -qE 'OSN_COORDINATE_TRAVEL_ENABLED[[:space:]]*=[[:space:]]*true' "$GATES"; then
+            echo "ABORT: OSN_COORDINATE_TRAVEL_ENABLED is true (free-coordinate travel exposed)"; exit 1; fi
+          grep -qE 'OSN_COORDINATE_TRAVEL_ENABLED[[:space:]]*=[[:space:]]*false' "$GATES" \
+            || { echo "ABORT: OSN_COORDINATE_TRAVEL_ENABLED const not found as false"; exit 1; }
+          echo "OSN_COORDINATE_TRAVEL_ENABLED=false" | tee -a "$GITHUB_STEP_SUMMARY"
+
       - uses: supabase/setup-cli@v1
         with:
           version: latest
