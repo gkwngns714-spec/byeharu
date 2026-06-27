@@ -61,6 +61,54 @@ cronj as (
   from cron.job
   where jobname = 'process-mainship-space-arrivals'
 ),
+-- POST-REVEAL CURRENT STATE (OSN-ENABLEMENT-1A): the three canonical starter ports are now active/public.
+-- These are RUNTIME-state checks; they live in OVERALL_PASS only (NOT STRUCTURAL_PASS) so the disposable
+-- structural realchain proof — which seeds the ports HIDDEN — keeps passing on STRUCTURAL_PASS.
+ports as (
+  select
+    count(*) filter (where id in ('b1a00001-0066-4a00-8a00-000000000001',
+                                  'b1a00002-0066-4a00-8a00-000000000002',
+                                  'b1a00003-0066-4a00-8a00-000000000003'))                       as canon_n,
+    count(*) filter (where id in ('b1a00001-0066-4a00-8a00-000000000001',
+                                  'b1a00002-0066-4a00-8a00-000000000002',
+                                  'b1a00003-0066-4a00-8a00-000000000003') and status = 'active') as canon_active,
+    count(*) filter (where id in ('b1a00001-0066-4a00-8a00-000000000001',
+                                  'b1a00002-0066-4a00-8a00-000000000002',
+                                  'b1a00003-0066-4a00-8a00-000000000003') and status = 'hidden') as canon_hidden
+  from public.locations
+),
+wmap as (
+  select count(*) as visible
+  from jsonb_path_query(public.get_world_map(), '$.sectors[*].zones[*].locations[*]') as loc
+  where (loc->>'id') in ('b1a00001-0066-4a00-8a00-000000000001',
+                         'b1a00002-0066-4a00-8a00-000000000002',
+                         'b1a00003-0066-4a00-8a00-000000000003')
+),
+sendflag as (
+  select count(*) as n,
+         (select (value #>> '{}')::boolean from public.game_config where key = 'mainship_send_enabled') as as_bool
+  from public.game_config where key = 'mainship_send_enabled'
+),
+-- OSN-SAFETY STRUCTURE (deployment-shape facts → STRUCTURAL_PASS): the invariants a future flag-enable relies on.
+struct as (
+  select
+    (select count(*) from pg_constraint c join pg_class t on t.oid = c.conrelid
+       join pg_namespace nn on nn.oid = t.relnamespace
+      where nn.nspname = 'public' and t.relname = 'fleets' and c.contype = 'c'
+        and pg_get_constraintdef(c.oid) ilike '%active_movement_id%'
+        and pg_get_constraintdef(c.oid) ilike '%active_space_movement_id%')               as fleet_excl_check,
+    (select count(*) from pg_indexes where schemaname = 'public'
+       and indexname = 'main_ship_space_movements_one_active_per_ship')                    as idx_per_ship,
+    (select count(*) from pg_indexes where schemaname = 'public'
+       and indexname = 'main_ship_space_movements_one_active_per_fleet')                   as idx_per_fleet,
+    (select count(*) from pg_constraint c join pg_class t on t.oid = c.conrelid
+       join pg_namespace nn on nn.oid = t.relnamespace
+      where nn.nspname = 'public' and t.relname = 'main_ship_space_command_receipts' and c.contype = 'u'
+        and pg_get_constraintdef(c.oid) ilike '%request_id%')                             as receipt_unique,
+    to_regprocedure('public.mainship_space_dock_at_location(uuid,uuid)')                  as dock_fn,
+    to_regprocedure('public.command_main_ship_space_move_to_location(uuid,uuid)')         as move_to_loc_wrapper,
+    to_regprocedure('public.get_osn_movement_readiness()')                               as readiness_fn
+),
 checks as (
   select
     -- [1] flag row exists exactly once, reads false, stored as jsonb
@@ -128,8 +176,34 @@ checks as (
               or m.target_x is null or m.target_y is null
               or m.depart_at is null or m.arrive_at is null
               or m.arrive_at <= m.depart_at)
-     ))                                                                           as chk6_iii_valid_origin_target_timing
-  from flag, mig, rpc, surface, cronj
+     ))                                                                           as chk6_iii_valid_origin_target_timing,
+    -- [7] POST-REVEAL current state (runtime → OVERALL only): exactly the three canonical ports active/public
+    ports.canon_n                                                                as chk7_canonical_ports_n,
+    (ports.canon_n = 3)                                                          as chk7_canonical_ports_expected_3,
+    ports.canon_active                                                          as chk7_canonical_ports_active_n,
+    (ports.canon_active = 3)                                                     as chk7_canonical_ports_active_3,
+    ports.canon_hidden                                                          as chk7_canonical_ports_hidden_n,
+    (ports.canon_hidden = 0)                                                     as chk7_canonical_ports_none_hidden,
+    wmap.visible                                                                as chk7_map_visible_n,
+    (wmap.visible = 3)                                                           as chk7_map_ports_visible_3,
+    -- [8] legacy named-location travel remains live (send flag true)
+    (sendflag.n = 1 and sendflag.as_bool is true)                              as chk8_send_flag_true,
+    -- [9] OSN-safety structure (deployment-shape → STRUCTURAL): exclusivity, idempotency, settlement, boundary
+    (struct.fleet_excl_check >= 1)                                             as chk9_fleet_movement_exclusivity,
+    (struct.idx_per_ship = 1)                                                   as chk9_one_active_move_per_ship,
+    (struct.idx_per_fleet = 1)                                                  as chk9_one_active_move_per_fleet,
+    (struct.receipt_unique >= 1)                                               as chk9_receipt_idempotency_unique,
+    coalesce(struct.dock_fn is not null
+             and not has_function_privilege('authenticated', struct.dock_fn::oid, 'EXECUTE')
+             and has_function_privilege('service_role', struct.dock_fn::oid, 'EXECUTE'), false)
+                                                                                as chk9_dock_fn_service_role_only,
+    coalesce(struct.move_to_loc_wrapper is not null
+             and has_function_privilege('authenticated', struct.move_to_loc_wrapper::oid, 'EXECUTE'), false)
+                                                                                as chk9_move_to_loc_authenticated,
+    coalesce(struct.readiness_fn is not null
+             and has_function_privilege('authenticated', struct.readiness_fn::oid, 'EXECUTE'), false)
+                                                                                as chk9_readiness_authenticated
+  from flag, mig, rpc, surface, cronj, ports, wmap, sendflag, struct
 ),
 result as (
   select
@@ -142,6 +216,12 @@ result as (
       and c.chk3_writer_service_role and c.chk3_primitive_service_role and c.chk3_processor_service_role
       and c.chk3b_client_surface_is_canonical_17
       and c.chk5_cron_exactly_one_job and c.chk5_cron_job_active and c.chk5_cron_schedule_30s
+      -- OSN-safety structure (deployment-shape): exclusivity, idempotency, settlement, boundary
+      and c.chk9_fleet_movement_exclusivity
+      and c.chk9_one_active_move_per_ship and c.chk9_one_active_move_per_fleet
+      and c.chk9_receipt_idempotency_unique
+      and c.chk9_dock_fn_service_role_only and c.chk9_move_to_loc_authenticated
+      and c.chk9_readiness_authenticated
     ) as structural_pass,
     ( c.chk1_flag_one_row and c.chk1_flag_is_false and c.chk1_flag_storage_type_is_jsonb
       and c.chk2_migration_head_is_0068
@@ -156,11 +236,30 @@ result as (
       and c.chk6_i_every_coord_move_on_in_transit_ship
       and c.chk6_ii_no_ship_more_than_one_coord_move
       and c.chk6_iii_valid_origin_target_timing
+      -- POST-REVEAL current state (runtime): exactly three canonical ports active/public + legacy travel live
+      and c.chk7_canonical_ports_expected_3 and c.chk7_canonical_ports_active_3
+      and c.chk7_canonical_ports_none_hidden and c.chk7_map_ports_visible_3
+      and c.chk8_send_flag_true
+      -- OSN-safety structure (also gates OVERALL)
+      and c.chk9_fleet_movement_exclusivity
+      and c.chk9_one_active_move_per_ship and c.chk9_one_active_move_per_fleet
+      and c.chk9_receipt_idempotency_unique
+      and c.chk9_dock_fn_service_role_only and c.chk9_move_to_loc_authenticated
+      and c.chk9_readiness_authenticated
     ) as overall_pass
   from checks c
 )
 select
   r.*,
+  -- Named current-state sentinels (OSN-ENABLEMENT-1A). OSN_COORDINATE_TRAVEL_ENABLED is a frontend
+  -- compile-time const (not in the DB); the calling workflow asserts it = false from the checked-out source.
+  'MIGRATION_HEAD='                  || right(r.chk2_migration_head, 4)        as s_migration_head,
+  'CANONICAL_STARTER_PORTS_EXPECTED=3'                                         as s_ports_expected,
+  'CANONICAL_STARTER_PORTS_ACTIVE='  || r.chk7_canonical_ports_active_n::text  as s_ports_active,
+  'CANONICAL_STARTER_PORTS_HIDDEN='  || r.chk7_canonical_ports_hidden_n::text  as s_ports_hidden,
+  'AUTHENTICATED_MAP_PORTS_VISIBLE=' || r.chk7_map_visible_n::text             as s_map_visible,
+  'MAINSHIP_SEND_ENABLED='           || (r.chk8_send_flag_true)::text          as s_send_flag,
+  'MAINSHIP_SPACE_MOVEMENT_ENABLED=' || (not r.chk1_flag_is_false)::text       as s_space_flag,
   'STRUCTURAL_PASS=' || r.structural_pass::text as structural_status,
   'OVERALL_PASS='    || r.overall_pass::text    as overall_status
 from result r;
