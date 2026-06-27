@@ -143,8 +143,10 @@ begin
      or (select count(*) from public.space_anchors where kind='base' and base_id in (select id from public.bases where player_id=u)) <> 0 then
     raise exception '(3) SEND FAIL: send created a home-port or base anchor (must not)'; end if;
 
-  -- (3.3) standard legacy movement/arrival processing reaches Haven Reach (force the due time, run the engine)
-  update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_move;
+  -- (3.3) standard legacy movement/arrival processing reaches Haven Reach. Make the movement DUE by moving
+  -- its whole window into the past (preserving the arrive_at > depart_at table check), then run the real engine.
+  update public.fleet_movements
+    set depart_at = now() - interval '2 hours', arrive_at = now() - interval '1 hour' where id = v_move;
   perform public.process_fleet_movements();
 
   -- (3.4) coherent legacy-present state
