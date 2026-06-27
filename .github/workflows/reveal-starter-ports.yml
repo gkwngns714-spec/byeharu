@@ -1,0 +1,62 @@
+name: Reveal starter ports (PRODUCTION — gated, one-shot)
+
+# Manually-dispatched, production-Environment-gated, ONE-SHOT operation that reveals the three canonical
+# starter ports EXACTLY ONCE via the existing public.reveal_starter_ports() function. It is deliberately
+# narrow and fail-closed:
+#   * workflow_dispatch ONLY — no push / pull_request / schedule / workflow_call / automatic trigger;
+#   * runs ONLY from refs/heads/main (checked before checkout AND inside the operation script);
+#   * requires the exact typed confirmation REVEAL_THREE_STARTER_PORTS, checked BEFORE any DB connection;
+#   * gated by the protected `production` GitHub Environment, so a human must approve before it runs;
+#   * accepts NO operator-supplied SQL / port list / flag / environment / host / ref — the operation is
+#     hard-coded to public.reveal_starter_ports() and the three canonical port ids;
+#   * connection = the proven Supabase Management-API session-pooler + pinned CA + sslmode=verify-full;
+#   * single transaction with precondition + postcondition assertions; NO retry — an uncertain result fails
+#     closed and a human must run a separate read-only post-reveal verification before any follow-up;
+#   * least-privilege token (contents: read); secrets are never printed (shell tracing is disabled).
+# This workflow does NOT change feature flags, does NOT enable OSN, and reveals ONLY (one-way; recovery is
+# fix-forward, never un-reveal).
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type REVEAL_THREE_STARTER_PORTS to confirm the ONE-WAY reveal of the three starter ports"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: starter-port-reveal-production
+  cancel-in-progress: false
+
+jobs:
+  reveal:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - name: Refuse any ref other than main + validate typed confirmation (before any connection)
+        env:
+          REVEAL_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set +x
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "BLOCKED: this operation may run ONLY from refs/heads/main (got $GITHUB_REF)"; exit 1; }
+          [ "$REVEAL_CONFIRM" = "REVEAL_THREE_STARTER_PORTS" ] || { echo "BLOCKED: confirmation token mismatch"; exit 1; }
+          echo "ok: main-only + confirmation accepted (gated production approval required before this job ran)"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Run the one-shot reveal operation (pinned-CA verify-full session pooler; no retry)
+        env:
+          REVEAL_CONFIRM: ${{ inputs.confirm }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set +x
+          bash scripts/reveal-starter-ports.sh production
