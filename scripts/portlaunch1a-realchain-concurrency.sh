@@ -57,31 +57,32 @@ race "update space_anchors    set status='retired'  where id='$A1';"      "updat
 race "update location_services set status='disabled' where id='$S1';"      "update"
 race "update zones            set status='locked'   where id='$ZONE1';"    "update"
 
-# ── Category 2: phantom duplicate INSERT — a second valid-looking ACTIVE child for a fixed port. While A holds
-#    the reveal locks, B's child INSERT must take a FOR KEY SHARE lock on the FOR-UPDATE-held parent locations
-#    row → it BLOCKS; after A ends, the insert proceeds and FAILS on the existing-active uniqueness (the port's
-#    canonical anchor/service persist regardless of port status), so no duplicate active child can survive.
-insert_race() {
+# ── Category 2: phantom duplicate INSERT — a second valid-looking ACTIVE child for a fixed port, attempted by
+#    an independent session WHILE A holds the reveal locks. The port's CANONICAL active anchor/service is
+#    already COMMITTED (migration 0066), so B's unique / partial-unique index conflict fires SYNCHRONOUSLY
+#    during index insertion — BEFORE the FK after-trigger that would take FOR KEY SHARE on the FOR-UPDATE-held
+#    parent — so B FAILS IMMEDIATELY rather than waiting on a lock. This is a STRONGER guarantee than a lock
+#    wait: a duplicate active child is rejected with a zero interleave window, B never commits, no duplicate
+#    survives, and A's reveal is unaffected. (The FK-FOR-KEY-SHARE-vs-FOR-UPDATE block is independently
+#    exercised by the Category-1 existing-row mutation tests above.)
+phantom_insert_test() {
   local stmt="$1" want_err="$2" desc="$3"
-  echo "=== A holds reveal locks; B phantom-insert ($desc) must BLOCK then FAIL on $want_err ==="
+  echo "=== A holds reveal locks; B phantom-insert ($desc) must FAIL on $want_err (no duplicate, no commit) ==="
   echo "begin; select public.reveal_starter_ports();" >&3
   wait_idletx plA reveal_starter_ports                       # A holds FOR UPDATE on the 3 ports + FOR SHARE deps
-  echo "begin; $stmt" >&4                                    # B child INSERT → FK FOR KEY SHARE on the parent loc
-  wait_blocked plB                                           # PROVEN: B blocks on A's parent-row FOR UPDATE
-  echo "  ok: B blocked (wait_event_type=Lock) on the parent locations FOR UPDATE while A holds reveal locks"
-  echo "rollback;" >&3                                       # A ends (reveal UNDONE → ports hidden) → B unblocks
-  for _ in $(seq 1 150); do grep -qiE "$want_err" /tmp/plB.log && break; sleep 0.2; done
-  grep -qiE "$want_err" /tmp/plB.log || { echo "FAIL: B's insert did not fail on $want_err"; cat /tmp/plB.log; exit 1; }
-  echo "  ok: B's blocked insert did NOT commit — it failed on $want_err (existing-active uniqueness, not malformed/unrelated)"
-  echo "rollback;" >&4                                       # discard B's aborted txn
+  local out
+  out=$(PGAPPNAME=plBx psql "$DB_URL" -X -q -v ON_ERROR_STOP=1 -c "$stmt" 2>&1 || true)   # independent session B
+  echo "$out" | grep -qiE "$want_err" || { echo "FAIL: phantom insert did not fail on the expected uniqueness '$want_err' (malformed/unrelated?): $out"; echo "rollback;" >&3; exit 1; }
+  echo "  ok: B's phantom insert FAILED on $want_err (committed canonical child → synchronous uniqueness rejection); never committed"
+  echo "rollback;" >&3                                       # A ends → reveal undone (ports hidden); A unaffected by B
   sleep 0.3
 }
 
 # fresh non-fixed UUIDs; valid-looking ACTIVE rows for Haven Reach (p1) satisfying every NOT NULL / type /
 # owner / in-bounds-coord precondition, so the ONLY thing each violates is the existing-active uniqueness.
-insert_race "insert into space_anchors (id,kind,location_id,space_x,space_y,status) values (gen_random_uuid(),'location','$P1',1,1,'active');" \
+phantom_insert_test "insert into space_anchors (id,kind,location_id,space_x,space_y,status) values (gen_random_uuid(),'location','$P1',1,1,'active');" \
             "space_anchors_one_active_per_location" "2nd active anchor for Haven Reach"
-insert_race "insert into location_services (id,location_id,service,status) values (gen_random_uuid(),'$P1','docking','active');" \
+phantom_insert_test "insert into location_services (id,location_id,service,status) values (gen_random_uuid(),'$P1','docking','active');" \
             "location_services_one_per_kind" "2nd active docking service for Haven Reach"
 
 # verify NO net change + phantom protection held: ports hidden; canonical rows intact; EXACTLY one active anchor
