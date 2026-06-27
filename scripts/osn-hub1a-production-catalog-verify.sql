@@ -1,4 +1,4 @@
--- OSN-HUB-1A — STRICTLY READ-ONLY production catalog snapshot (migration head 0067).
+-- OSN-HUB-1A / PORT-LAUNCH-1A — STRICTLY READ-ONLY production catalog snapshot (migration head 0068).
 --
 -- One read-only REPEATABLE READ snapshot that emits ONLY `KEY=value` lines (PASS/FAIL booleans, small
 -- aggregate counts, the migration version, per-function descriptor metadata, and base64 of the raw stored
@@ -22,7 +22,7 @@ SELECT 'RO=' || current_setting('transaction_read_only');
 
 -- ── A. Deployment + dark state ───────────────────────────────────────────────────────────────────────────
 SELECT 'HEAD='    || coalesce(max(version),'none') FROM supabase_migrations.schema_migrations;
-SELECT 'N_AFTER=' || count(*) FROM supabase_migrations.schema_migrations WHERE version > '20260618000067';
+SELECT 'N_AFTER=' || count(*) FROM supabase_migrations.schema_migrations WHERE version > '20260618000068';
 
 SELECT 'FLAG_SEND_N='     || count(*)                              FROM public.game_config WHERE key='mainship_send_enabled';
 SELECT 'FLAG_SEND_TYPE='  || coalesce((SELECT pg_typeof(value)::text FROM public.game_config WHERE key='mainship_send_enabled'),'none');
@@ -49,6 +49,10 @@ SELECT 'N_MOVE_UNPTR='    || count(*)
 SELECT 'N_HOMEPORT='    || count(*) FROM public.player_home_port;
 SELECT 'N_BASE_ANCHOR=' || count(*) FROM public.space_anchors WHERE kind='base';
 
+-- arrival-cron coherence (OSN engine heartbeat unchanged by the dark 0068 deploy): exactly one job @ 30 seconds
+SELECT 'N_ARRIVAL_CRON='     || count(*)                           FROM cron.job WHERE jobname='process-mainship-space-arrivals';
+SELECT 'ARRIVAL_CRON_SCHED=' || coalesce(max(schedule),'none')      FROM cron.job WHERE jobname='process-mainship-space-arrivals';
+
 -- ── B. Hidden-port / world-state protection (no names/IDs/coords in OUTPUT — only booleans/counts) ────────
 -- Fixed identities are from migration 0066 (still on main); the shell fail-closes unless each literal is
 -- present verbatim in the checked-out 0066 migration, so the verifier can never drift from the catalog.
@@ -73,13 +77,13 @@ SELECT 'ELIG1=' || public.is_home_port_eligible('b1a00001-0066-4a00-8a00-0000000
 SELECT 'ELIG2=' || public.is_home_port_eligible('b1a00002-0066-4a00-8a00-000000000002')::int;
 SELECT 'ELIG3=' || public.is_home_port_eligible('b1a00003-0066-4a00-8a00-000000000003')::int;
 
--- ── C. Public authenticated RPC surface (exact 16, with overload detection) ──────────────────────────────
+-- ── C. Public authenticated RPC surface (exact 17, with overload detection) ──────────────────────────────
 SELECT 'AUTH_SURFACE='   || coalesce(string_agg(proname, ',' ORDER BY proname), '') FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND has_function_privilege('authenticated',p.oid,'EXECUTE')) q;
 SELECT 'N_AUTH='         || count(*)                  FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND has_function_privilege('authenticated',p.oid,'EXECUTE')) q;
 SELECT 'N_AUTH_DISTINCT='|| count(DISTINCT proname)   FROM (SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f' AND has_function_privilege('authenticated',p.oid,'EXECUTE')) q;
--- which of the canonical 16 does anon hold (must be exactly get_world_map)
-SELECT 'ANON_ON_16='     || coalesce(string_agg(v.name, ',' ORDER BY v.name), '')
-  FROM (VALUES ('bootstrap_me'),('cancel_build_order'),('command_main_ship_space_move'),('command_main_ship_space_move_to_location'),('command_main_ship_space_stop'),('get_combat_reports'),('get_my_expedition_preview'),('get_world_map'),('move_main_ship_to_location'),('repair_main_ship'),('request_leave_location'),('request_main_ship_return'),('request_retreat'),('send_fleet_to_location'),('send_main_ship_expedition'),('train_units')) v(name)
+-- which of the canonical 17 does anon hold (must be exactly get_world_map)
+SELECT 'ANON_ON_17='     || coalesce(string_agg(v.name, ',' ORDER BY v.name), '')
+  FROM (VALUES ('bootstrap_me'),('cancel_build_order'),('command_main_ship_space_move'),('command_main_ship_space_move_to_location'),('command_main_ship_space_stop'),('get_combat_reports'),('get_my_expedition_preview'),('get_osn_movement_readiness'),('get_world_map'),('move_main_ship_to_location'),('repair_main_ship'),('request_leave_location'),('request_main_ship_return'),('request_retreat'),('send_fleet_to_location'),('send_main_ship_expedition'),('train_units')) v(name)
   JOIN pg_proc p ON p.proname=v.name JOIN pg_namespace n ON n.oid=p.pronamespace AND n.nspname='public'
   WHERE has_function_privilege('anon', p.oid, 'EXECUTE');
 SELECT 'GWM_ANON=' || has_function_privilege('anon','public.get_world_map()','EXECUTE')::int;
@@ -120,9 +124,11 @@ SELECT 'PHP_AUTH_WRITE='  || (has_table_privilege('authenticated','public.player
 SELECT 'PHP_ANON='        || (has_table_privilege('anon','public.player_home_port','SELECT') OR has_table_privilege('anon','public.player_home_port','INSERT'))::int;
 SELECT 'PHP_RLS=' || (SELECT relrowsecurity::int FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='player_home_port');
 
--- ── E. Catalog parity for the 7 functions materially changed/added by 0067 ──────────────────────────────
+-- ── E. Catalog parity for the 7 functions 0067 changed/added + the 2 functions 0068 added ───────────────
 -- HB_<tag> = base64 of raw stored prosrc; D_<tag>_<field> = descriptor. The shell hashes HB_* and compares
--- reference (disposable 0001..0067) vs production; descriptors are compared field-by-field.
+-- reference (disposable 0001..0068) vs production; descriptors are compared field-by-field. The two 0068
+-- additions are reveal (public.reveal_starter_ports, service_role-only) and readiness
+-- (public.get_osn_movement_readiness, authenticated read-only).
 SELECT 'EXIST_'||tag||'='||(to_regprocedure(sig) IS NOT NULL)::int FROM (VALUES
   ('legal','public.mainship_space_location_target_legal(uuid)'),
   ('core','public.mainship_space_begin_move_core(uuid,uuid,text,double precision,double precision,uuid,uuid)'),
@@ -130,7 +136,9 @@ SELECT 'EXIST_'||tag||'='||(to_regprocedure(sig) IS NOT NULL)::int FROM (VALUES
   ('resolve','public.mainship_space_resolve_origin(uuid)'),
   ('dock','public.mainship_space_dock_at_location(uuid,uuid)'),
   ('stop','public.mainship_space_stop(uuid,uuid,uuid)'),
-  ('cmd','public.command_main_ship_space_move_to_location(uuid,uuid)')
+  ('cmd','public.command_main_ship_space_move_to_location(uuid,uuid)'),
+  ('reveal','public.reveal_starter_ports()'),
+  ('readiness','public.get_osn_movement_readiness()')
 ) v(tag,sig);
 SELECT kv FROM (VALUES
   ('legal','public.mainship_space_location_target_legal(uuid)'),
@@ -139,7 +147,9 @@ SELECT kv FROM (VALUES
   ('resolve','public.mainship_space_resolve_origin(uuid)'),
   ('dock','public.mainship_space_dock_at_location(uuid,uuid)'),
   ('stop','public.mainship_space_stop(uuid,uuid,uuid)'),
-  ('cmd','public.command_main_ship_space_move_to_location(uuid,uuid)')
+  ('cmd','public.command_main_ship_space_move_to_location(uuid,uuid)'),
+  ('reveal','public.reveal_starter_ports()'),
+  ('readiness','public.get_osn_movement_readiness()')
 ) v(tag,sig)
 JOIN pg_proc p   ON p.oid = to_regprocedure(v.sig)
 JOIN pg_namespace n ON n.oid = p.pronamespace
