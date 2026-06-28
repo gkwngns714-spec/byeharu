@@ -18,7 +18,19 @@ function Harness() {
   const s = w.__state
   // lifecycleKey changes when the injected dock state changes, so the panel's fetcher re-reads it.
   const key = `${s.dock.state}|${s.dock.locationId ?? 'n'}|${s.dock.services.join(',')}`
-  return <DockServicesPanel lifecycleKey={key} deps={{ fetcher: async () => w.__state.dock }} />
+  return (
+    <DockServicesPanel
+      lifecycleKey={key}
+      deps={{
+        // a `__fail` flag makes the injected fetcher REJECT, to prove safe failure (panel stays hidden).
+        fetcher: async () => {
+          const d = w.__state.dock as DockServices & { __fail?: boolean }
+          if (d && d.__fail) throw new Error('simulated fetch failure')
+          return d
+        },
+      }}
+    />
+  )
 }
 
 createRoot(document.getElementById('root')!).render(<Harness />)

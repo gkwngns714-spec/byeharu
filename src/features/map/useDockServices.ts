@@ -16,9 +16,19 @@ export function useDockServices(
 
   useEffect(() => {
     let active = true
-    void fetcher().then((d) => {
-      if (active) setDock(d)
-    })
+    // STALE-DATA PROTECTION: clear the previous dock IMMEDIATELY on any main-ship lifecycle change (e.g.
+    // movement begins) so a previously-docked port/service list can never linger while the refetch is in
+    // flight. The panel re-appears only if the fresh server answer is still at_location.
+    setDock(DOCK_NOT_DOCKED)
+    void fetcher()
+      .then((d) => {
+        if (active) setDock(d)
+      })
+      .catch(() => {
+        // Safe failure: any fetch error leaves the surface at the no-dock default (panel hidden); the rest
+        // of the map/OSN UI is unaffected. (The real API layer already collapses errors, but this is defensive.)
+        if (active) setDock(DOCK_NOT_DOCKED)
+      })
     return () => {
       active = false
     }

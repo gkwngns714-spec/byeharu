@@ -8,9 +8,9 @@ import { MainShipCommand } from './MainShipCommand'
 import { PortNavPanel } from './PortNavPanel'
 import { DockServicesPanel } from './DockServicesPanel'
 
-// Read-only Galaxy Map screen (Phase 9A). Shows the world, the player's home/ship, and
-// active fleet movements. Selecting a location opens a read-only detail panel. NO writes,
-// NO expedition commands — those arrive in Phase 9B.
+// Galaxy Map screen. Shows the world, the player's main ship, ports, and active movements; selecting a
+// location opens its detail panel + the main-ship expedition/move surface. When the main ship is docked at a
+// port, the read-only DockServicesPanel shows that port's active services.
 
 export function GalaxyMapScreen() {
   const {
@@ -29,7 +29,7 @@ export function GalaxyMapScreen() {
       <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
         <div>
           <h1 className="text-lg font-semibold">Galaxy Map</h1>
-          <p className="text-xs text-slate-400">Read-only view · expeditions coming in Phase 9B</p>
+          <p className="text-xs text-slate-400">Your main ship, ports, and expeditions</p>
         </div>
         <nav className="flex items-center gap-3 text-sm">
           <button

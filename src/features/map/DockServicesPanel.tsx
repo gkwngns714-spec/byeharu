@@ -33,9 +33,11 @@ export function DockServicesPanel({
   return (
     <div
       data-testid="dock-services-panel"
-      className="pointer-events-auto absolute right-2 top-2 z-10 w-56 rounded-lg border border-emerald-500/30 bg-slate-900/90 p-2 text-slate-100"
+      // Top-right; capped to under half the viewport so it never overlaps the top-left OSN PortNav panel on
+      // narrow mobile widths (both can show at once while docked). Name truncates rather than overflowing.
+      className="pointer-events-auto absolute right-2 top-2 z-10 w-56 max-w-[calc(50vw-0.75rem)] rounded-lg border border-emerald-500/30 bg-slate-900/90 p-2 text-slate-100"
     >
-      <p data-testid="dock-services-title" className="text-[11px] font-medium text-emerald-300">
+      <p data-testid="dock-services-title" className="truncate text-[11px] font-medium text-emerald-300">
         Main ship docked at {dock.locationName ?? 'this port'}
       </p>
       {dock.services.length > 0 ? (

@@ -64,8 +64,8 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ck() { if [ "${1:-}" != "$2" ]; then echo "  CHECK FAIL: $3 (got '${1:-}', want '$2')"; RECON_PASS=0; fi; }
   ge() { if [ "$(( ${1:-0} ))" -lt "$2" ] 2>/dev/null; then echo "  CHECK FAIL: $3 (got '${1:-}', want >=$2)"; RECON_PASS=0; fi; }
   ck "$(mval "$OUT" RO)" on "read-only transaction active"
-  ck "$(mval "$OUT" HEAD)" 20260618000068 "migration head 0068"
-  ck "$(mval "$OUT" N_AFTER)" 0 "no migration after 0068"
+  ck "$(mval "$OUT" HEAD)" 20260618000069 "migration head 0069"
+  ck "$(mval "$OUT" N_AFTER)" 0 "no migration after 0069"
   ck "$(mval "$OUT" FLAG_SEND)" 1 "mainship_send_enabled true"
   ck "$(mval "$OUT" FLAG_SPACE)" 1 "mainship_space_movement_enabled TRUE (post-enable)"
   ck "$(mval "$OUT" CONFIG_DEVIATIONS)" 0 "no tracked-flag config deviation"
@@ -83,6 +83,8 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ck "$(mval "$OUT" ACL_ARRIVAL_SVC_ONLY)" 1 "arrival processor service-role-only"
   ck "$(mval "$OUT" ACL_READINESS_AUTH)" 1 "readiness authenticated"
   ck "$(mval "$OUT" ACL_READINESS_ANON_DENIED)" 1 "readiness anon-denied"
+  ck "$(mval "$OUT" ACL_DOCK_AUTH)" 1 "dock-services read surface authenticated"
+  ck "$(mval "$OUT" ACL_DOCK_ANON_DENIED)" 1 "dock-services read surface anon/PUBLIC denied"
   ge "$(mval "$OUT" STRUCT_EXCL)" 1 "fleet movement-owner exclusivity CHECK"
   ck "$(mval "$OUT" STRUCT_IDX_SHIP)" 1 "one-active-move-per-ship index"; ck "$(mval "$OUT" STRUCT_IDX_FLEET)" 1 "one-active-move-per-fleet index"
   ge "$(mval "$OUT" STRUCT_RECEIPT)" 1 "receipt idempotency unique"
@@ -90,7 +92,7 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ge "$(mval "$OUT" ELIGIBLE_ACTIVE_PORTS)" 2 "an anchored player has >=1 eligible destination (>=2 active ports)"
 }
 emit_markers() { local OUT="$1"
-  echo "MIGRATION_HEAD=$( [ "$(mval "$OUT" HEAD)" = 20260618000068 ] && echo 0068 || mval "$OUT" HEAD )"
+  echo "MIGRATION_HEAD=$( [ "$(mval "$OUT" HEAD)" = 20260618000069 ] && echo 0069 || mval "$OUT" HEAD )"
   echo "CANONICAL_STARTER_PORTS_EXPECTED=3"
   echo "CANONICAL_STARTER_PORTS_ACTIVE=$(mval "$OUT" CANON_ACTIVE)"
   echo "CANONICAL_STARTER_PORTS_HIDDEN=$(mval "$OUT" CANON_HIDDEN)"
@@ -108,6 +110,10 @@ emit_markers() { local OUT="$1"
   echo "PRODUCTION_OSN_DOCK_ARRIVAL_CONTRACT=$( [ "$(mval "$OUT" ACL_DOCK_SVC_ONLY)" = 1 ] && [ "$(mval "$OUT" ACL_ARRIVAL_SVC_ONLY)" = 1 ] && echo true || echo false )"
   echo "PRODUCTION_OSN_NO_LEGACY_OVERLAP=$( [ "$(mval "$OUT" LEGACY_OSN_OVERLAP)" = 0 ] && echo true || echo false )"
   echo "PRODUCTION_OSN_PLAYER_READINESS_BEHAVIOR_PROVEN_BY_1B=true"
+  # PHASE 9 (head 0069) — the docked-port READ surface ACL, and the read-only guarantee of this verifier.
+  echo "DOCK_SERVICES_READ_SURFACE_AUTHENTICATED_ONLY=$( [ "$(mval "$OUT" ACL_DOCK_AUTH)" = 1 ] && [ "$(mval "$OUT" ACL_DOCK_ANON_DENIED)" = 1 ] && echo true || echo false )"
+  echo "DOCK_SERVICES_READ_SURFACE_PUBLIC_DENIED=$( [ "$(mval "$OUT" ACL_DOCK_ANON_DENIED)" = 1 ] && echo true || echo false )"
+  echo "NO_PRODUCTION_WRITE_PERFORMED=true"
   echo "OVERALL_PASS=$( [ "$RECON_PASS" = 1 ] && echo true || echo false )"
 }
 
@@ -154,11 +160,14 @@ if [ "$MODE" = "local" ]; then
   OUT="$(runv)"; reconcile "$OUT"; MK="$(emit_markers "$OUT")"; printf '%s\n' "$MK"
   [ "$RECON_PASS" = 1 ] || fail "expected post-enable structural state did not pass"
   printf '%s\n' "$MK" | grep -qx 'MAINSHIP_SPACE_MOVEMENT_ENABLED=true' || fail "space flag not true in markers"
+  printf '%s\n' "$MK" | grep -qx 'MIGRATION_HEAD=0069' || fail "migration head not 0069 in markers"
   printf '%s\n' "$MK" | grep -qx 'OVERALL_PASS=true' || fail "OVERALL_PASS!=true"
   for m in PRODUCTION_OSN_READINESS_BOUNDARY_AUTHENTICATED_ONLY=true PRODUCTION_OSN_WRITER_SERVICE_ROLE_ONLY=true \
            PRODUCTION_OSN_OWNER_EXCLUSIVITY=true PRODUCTION_OSN_RECEIPT_IDEMPOTENCY=true \
            PRODUCTION_OSN_DOCK_ARRIVAL_CONTRACT=true PRODUCTION_OSN_NO_LEGACY_OVERLAP=true \
-           PRODUCTION_OSN_PLAYER_READINESS_BEHAVIOR_PROVEN_BY_1B=true; do
+           PRODUCTION_OSN_PLAYER_READINESS_BEHAVIOR_PROVEN_BY_1B=true \
+           DOCK_SERVICES_READ_SURFACE_AUTHENTICATED_ONLY=true DOCK_SERVICES_READ_SURFACE_PUBLIC_DENIED=true \
+           NO_PRODUCTION_WRITE_PERFORMED=true; do
     printf '%s\n' "$MK" | grep -qx "$m" || fail "structural marker missing/false: $m"
   done
   printf '%s\n' "$MK" | grep -q 'AUTHENTICATED_OSN_AVAILABLE' && fail "verifier emits a misleading live-player availability marker" || true
