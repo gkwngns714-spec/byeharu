@@ -6,6 +6,7 @@ import { ExpeditionCommand } from './ExpeditionCommand'
 import { MainShipPreview } from './MainShipPreview'
 import { MainShipCommand } from './MainShipCommand'
 import { PortNavPanel } from './PortNavPanel'
+import { DockServicesPanel } from './DockServicesPanel'
 
 // Read-only Galaxy Map screen (Phase 9A). Shows the world, the player's home/ship, and
 // active fleet movements. Selecting a location opens a read-only detail panel. NO writes,
@@ -94,6 +95,12 @@ export function GalaxyMapScreen() {
                 spaceMovement={mainShipSpaceMovement}
                 currentDockedLocationId={mainShipPresence?.location_id}
                 onCommitted={refresh}
+              />
+              {/* PHASE 9 — read-only docked-port context for the main ship. Renders only when the server
+                  reports the ship is docked (at_location); shows the port + its active services (today:
+                  Docking). No buy/sell/repair actions; no home-port. */}
+              <DockServicesPanel
+                lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
               />
             </>
           )}
