@@ -1,0 +1,50 @@
+name: OSN post-enable verify (PRODUCTION — gated, read-only)
+
+# Manually-dispatched, production-Environment-gated, STRICTLY READ-ONLY verification that production matches
+# the approved POST-ENABLE state (OSN port-to-port ENABLED: mainship_space_movement_enabled=true; ports
+# active; ACL + exclusivity structure intact; coordinate travel still suppressed). It is the independent
+# counterpart to the enable operation, and is distinct from every pre-enable verifier (which assert the flag
+# false). It NEVER writes, never issues a movement command, never enables/disables a flag, never creates a
+# player. workflow_dispatch ONLY; runs only from main; a DB-free static self-test gates the production job.
+# NOT dispatched during OSN-ENABLEMENT-2E; dispatch is a separate, explicitly-authorized step after merge.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-postenable-verify-production
+  cancel-in-progress: false
+
+jobs:
+  static_safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: DB-free static safety self-test (no secrets, no DB)
+        run: bash scripts/osn-postenable-verify.sh selftest
+
+  postenable_verify:
+    needs: static_safety
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - name: Refuse any ref other than main
+        run: |
+          set +x
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "BLOCKED: runs only from refs/heads/main (got $GITHUB_REF)"; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Read-only post-enable production verification (pinned-CA verify-full session pooler)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set +x
+          bash scripts/osn-postenable-verify.sh production
