@@ -5,6 +5,84 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-29 — OSN enabled → Phase 9 docked-port surface → coordinate-gate hardening → Phase 10 Trading design (head `0068` → `0070`)
+
+Since the PORT-LAUNCH entry below (head `0068`, ports public, OSN still dark) the project advanced through OSN
+enablement, a first player-facing port surface, a coordinate-travel security fix, and a full Trading V1 design
+pass. **Net production change:** migration head **`0068` → `0070`**; **OSN port-to-port travel is now ENABLED**;
+**free arbitrary-coordinate travel is server-disabled by default.** Current live flags: `mainship_send_enabled =
+true`, `mainship_space_movement_enabled = true` (port-to-port ON), `OSN_COORDINATE_TRAVEL_ENABLED = false`
+(frontend) + `mainship_coordinate_travel_enabled = false` (server, new in `0070`). `main` head `6e2a091`.
+
+**Work done (in order):**
+
+- **OSN enablement (config-only; head stays `0068`).** The dark OSN port-to-port path was turned on via the
+  controlled one-shot enable operation (`mainship_space_movement_enabled` false→true), independently read-only
+  verified against production, and a disposable authenticated port-to-port journey (depart → arrive → dock
+  `at_location`) confirmed live behavior. A ship docked at a port can now travel port-to-port; arbitrary
+  coordinate travel stayed off.
+
+- **Phase 9 — docked-port read surface (PR #49 → migration `0069`, deployed).** `get_my_current_dock_services()`
+  (authenticated, read-only, zero-arg, `SECURITY DEFINER`): derives player → own ship → validated dock, and
+  ONLY for the `at_location` state returns the port + its ACTIVE `location_services` (today: Docking). Frontend
+  `DockServicesPanel` shows "Main ship docked at &lt;port&gt;" + service chips only when docked. No buy/sell/market.
+  Proven (disposable RPC matrix + rendered UI), deployed `0068`→`0069`, read-only verified live (`OVERALL_PASS=true`).
+
+- **Phase 9 closeout (PR #50, frontend/tooling only — no migration).** Dock-context hardening (stale-data
+  protection on a lifecycle change, safe-failure, mobile width cap), the one stale player-facing string fixed,
+  and the current-state verifier `osn-postenable-verify` repinned head `0068`→`0069` + dock-surface ACL
+  assertions; the historical pre-enable verifiers were left untouched.
+
+- **OSN-COORD-GATE-1 (PR #51 → migration `0070`, deployed).** Closed a real gap: the public raw coordinate
+  command `command_main_ship_space_move` was guarded only by `mainship_space_movement_enabled` (true for the
+  enabled port-to-port path), while the "free coordinate travel OFF" control was **frontend-only** — so a direct
+  authenticated API caller could request arbitrary coordinates. Fix: a server-owned key
+  `mainship_coordinate_travel_enabled` (default **false**); the raw command now returns `coordinate_travel_disabled`
+  BEFORE any ship read / lock / writer call (no side effect) while the key is false. The location-target command
+  `command_main_ship_space_move_to_location` is **unchanged** (still governed by `mainship_space_movement_enabled`;
+  port-to-port unaffected). Disposable matrix `ok[1..7]` green; deployed `0069`→`0070`. Gate ships **false**.
+
+- **Phase 10 Trading V1 — design & calibration (DESIGN ONLY; nothing built).** A full pass produced the Trading
+  V1 contract: free-port model (trade eligibility = own ship's validated current dock + active `market`
+  capability), a **HYBRID cargo** model (account loot stays in `player_inventory`; a per-ship trade-hold carries
+  trade goods), a **lazy player wallet** (currency separate from items), server-owned **`market_offers`**
+  (price/availability, never in `location_services`), **`trade_receipts`** whole-trade idempotency, a per-offer
+  **purchase-allowance** throttle, 7 proposed original commodities + a capacity-accurate 3-port matrix, and a
+  route/balance simulation (no same-port profit; no unbounded reinvestment). Two hard findings: (1) a brand-new
+  player has **no main ship** today (`bootstrap_me` makes only a base; `ensure_main_ship_for_player` is
+  service-role-only with no player path) — so **main-ship provisioning** is the gating prerequisite; (2) trading
+  needs the OSN `at_location` state, which neither `repair_main_ship` (→`home`) nor the legacy
+  `send_main_ship_expedition` (→`legacy_present`) produces, while `command_main_ship_space_move_to_location`
+  refuses a `home` origin by design — so a canonical **port-entry transition** is needed. Cargo-loss-on-destruction
+  is deferred (free instant repair makes any recovery grant farmable). **No migration / seed / RPC / wallet /
+  market / UI was created.**
+
+**Bugs / fixes**
+- Phase-9 dock proof: the in_transit fixture inserted the movement before its fleet (FK order) — fixed.
+- Coord-gate proof: the disposable chain defaults `mainship_space_movement_enabled=false` (production's `true`
+  is runtime, not a migration), so the first gate fired before the new gate — the proof now enables the
+  movement domain on the disposable stack.
+
+**FORWARD PLAN (approved direction; not started):**
+1. **Main-ship provisioning — the prerequisite that gates all of Trading.** A one-time authenticated "Commission
+   Your First Ship" claim that atomically creates ship + fleet + presence + an `at_location` dock at one
+   designated **starting port** (a spawn placement, **not** a home port; `player_home_port` stays unused), plus
+   a canonical OSN **port-entry transition** so existing `home`/`legacy_present` ships can reach a tradeable
+   `at_location` state.
+2. **Trading V1 implementation** (only after the open decisions below are approved): read model
+   (`trade_goods` / `market_offers` / `player_wallet` / `ship_trade_cargo` / `trade_receipts` / allowance) →
+   market capability + catalog seed → atomic idempotent buy/sell write path → Market UI from the Phase-9 dock
+   seam → disposable proofs → gated deploy → read-only verifier.
+3. **Then** Exploration (Phase 11) → Mining (Phase 12) → Modules/Captains (13–16) → Ranking (17) → economy/polish (18–20).
+4. **Cross-cutting, deferred:** the `world_sites` canonical identity layer (build only when its F2 trigger
+   fires), Online Presence & Visibility, main-ship combat, and a cargo-loss / repair-cost redesign.
+
+**Open product decisions (need user approval before any Trading build):** cargo model (hybrid), currency (lazy
+wallet, start 0), first commodities + price matrix, per-offer allowance + reset window, starting spawn port,
+first-voyage starter cargo, and credit purpose (proof loop accumulating toward a future ship/captain/module sink).
+
+---
+
 ## 2026-06-27 — PORT-LAUNCH: public port launch (foundation → reveal → independent verification)
 
 The OSN-HUB-1A line (head `0067`, prior entry) advanced through the full **PORT-LAUNCH** epic: the dark

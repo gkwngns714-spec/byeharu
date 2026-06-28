@@ -39,14 +39,26 @@ the **Glossary** (§12).
 
 ## 2. Current project snapshot
 
-> **2026-06-27 update (PORT-LAUNCH).** Production migration head is now **`0068`**; authenticated client-RPC
-> surface is **17**. The three starter ports (Haven Reach, Slagworks Anchorage, Driftmarch Waypost) are
-> **active/public** — revealed via the controlled one-shot reveal (PORT-LAUNCH-2D, run `28294311791`) and
-> independently read-only verified against production (PORT-LAUNCH-2E, run `28295627367`, `OVERALL_PASS=true`).
-> Flags are unchanged: `mainship_send_enabled = true`, `mainship_space_movement_enabled = false`
-> (port-to-port OSN movement stays dark; `OSN_COORDINATE_TRAVEL_ENABLED = false` on the frontend). `main` head
-> is `00dfdd2`. The older baseline figures below predate this and are kept for history — see `DEV_LOG.md`
-> (2026-06-27 entry) for the authoritative current state.
+> **2026-06-29 update.** Production migration head is now **`0070`**. **OSN port-to-port travel is ENABLED**
+> (`mainship_space_movement_enabled = true`) — a ship docked at a port can travel port-to-port. **Free
+> arbitrary-coordinate travel is server-disabled by default** via the new server-owned key
+> `mainship_coordinate_travel_enabled = false` (**OSN-COORD-GATE-1 / migration `0070`**, PR #51); the raw
+> coordinate command now rejects with `coordinate_travel_disabled` while the key is false. `mainship_send_enabled
+> = true`; `OSN_COORDINATE_TRAVEL_ENABLED = false` (frontend). The three starter ports (Haven Reach, Slagworks
+> Anchorage, Driftmarch Waypost) are **active/public**. **Phase 9** — the docked-port read surface
+> `get_my_current_dock_services()` + frontend `DockServicesPanel` (migration `0069`, PR #49/#50) — is
+> **[Implemented]** and deployed (shows the current port + its active services only when the ship is
+> `at_location`; today only **Docking** is seeded). **Phase 10 Trading V1** is **fully designed/calibrated but
+> NOT built**; its gating prerequisite is **main-ship provisioning** (a brand-new player has no ship today) plus
+> a canonical OSN **port-entry transition** to a tradeable `at_location` state. `main` head is `6e2a091`. The
+> detailed bullets below predate this and are kept for history — see `DEV_LOG.md` (**2026-06-29 entry**) for the
+> authoritative current state and the **forward plan**.
+>
+> **Immediate next steps (approved direction, not started):** (1) main-ship provisioning + canonical port-entry
+> transition (the Trading prerequisite); (2) Trading V1 implementation (read model → catalog seed → atomic
+> buy/sell write path → Market UI → gated deploy) after the open product decisions are approved; then (3)
+> Exploration → Mining → Modules/Captains → Ranking. `world_sites`, Online Presence, main-ship combat, and a
+> cargo-loss/repair-cost redesign remain deferred.
 
 **As of this writing:**
 
