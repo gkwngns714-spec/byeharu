@@ -1,31 +1,39 @@
-# Runbook — independent post-enable verification (OSN-ENABLEMENT-2E)
+# Runbook — independent CURRENT-STATE production verification (post-enable, head 0069)
 
-**Status:** verifier built and proved on a disposable stack. **Not run against production** during this phase;
-dispatching it is a separate, explicitly-authorized step after merge (it stops at the protected production
-gate).
+**Status / classification:** this is **THE current-state, read-only production verifier**. Repinned to
+production **migration head `0069`** (Phase-9 docked-port read surface live). Dispatching it against production
+is a separate, explicitly-authorized read-only step (it stops at the protected production gate).
 
-The independent, **read-only** confirmation that live production matches the approved **post-enable** baseline
-(OSN port-to-port travel is ON), separate from the enable operation's own transaction log.
+The independent, **read-only** confirmation that live production matches the approved current state (OSN
+port-to-port ON + the Phase-9 dock-services read surface), separate from any operation's own transaction log.
 
-## Why a new verifier (not a reused one)
-Every pre-enable verifier — `osn-enablement-preflight.*`, `postreveal-verify.*`, `osn-hub1a-production-catalog-verify.*`
-— asserts `mainship_space_movement_enabled = false` and now **fails by design**. They are historical /
-pre-enable evidence and are left unchanged. OSN-ENABLEMENT-2E adds an explicitly **post-enable** verifier
-asserting the flag is **true**.
+## Verifier classification (so operators don't run the wrong one)
+- **CURRENT-STATE (run this):** `osn-postenable-verify.*` — expects head **0069**, ports active,
+  `mainship_send_enabled=true`, `mainship_space_movement_enabled=true`, `OSN_COORDINATE_TRAVEL_ENABLED=false`,
+  and the dock-services read surface authenticated-only / PUBLIC-denied.
+- **HISTORICAL PROOFS (do NOT run as current truth; left unaltered):**
+  `osn-enablement-preflight.*` and `postreveal-verify.*` assert `mainship_space_movement_enabled = false`
+  (the pre-enable state) and pin head `0068`; `osn-hub1a-production-catalog-verify.*` asserts the ports
+  **hidden** (pre-reveal). All three **fail by design** against today's production and are intentionally
+  preserved as historical pre-enable / pre-reveal evidence — their flag/state assertions must NOT be inverted
+  or repinned to make them pass.
 
 ## What it asserts (read-only)
 One `BEGIN … REPEATABLE READ READ ONLY` + `SET LOCAL default_transaction_read_only = on` snapshot that emits
 `KEY=value` lines and `ROLLBACK`s. Two layers:
-- **Catalog/config:** head `0068`; `mainship_send_enabled=true`; `mainship_space_movement_enabled=TRUE`; zero
+- **Catalog/config:** head `0069`; `mainship_send_enabled=true`; `mainship_space_movement_enabled=TRUE`; zero
   tracked-flag config deviation; exactly three canonical ports active (approved identity), 0 hidden; the OSN
   command surface ACL (move-to-location authenticated; the writer + dock primitive service-role-only with
   auth/anon denied; readiness authenticated); the movement-owner exclusivity CHECK + one-active-move indexes
-  + receipt idempotency constraint; no fleet holding both a legacy and an OSN movement.
+  + receipt idempotency constraint; no fleet holding both a legacy and an OSN movement; **the Phase-9
+  docked-port read surface `get_my_current_dock_services()` is authenticated-only + PUBLIC/anon denied.**
 - **Authenticated boundary:** `get_world_map()` exposes exactly the three active ports (no hidden / unexpected
   starter id; only active locations); and OSN readiness is structurally available (flag on + readiness
   present + ≥2 active ports, so an anchored player resolves `osn_available=true` with the current port excluded).
 
-Emitted sentinels: `MIGRATION_HEAD=0068`, `CANONICAL_STARTER_PORTS_EXPECTED/ACTIVE/HIDDEN`,
+Emitted sentinels: `MIGRATION_HEAD=0069`, `DOCK_SERVICES_READ_SURFACE_AUTHENTICATED_ONLY`,
+`DOCK_SERVICES_READ_SURFACE_PUBLIC_DENIED`, `NO_PRODUCTION_WRITE_PERFORMED`,
+`CANONICAL_STARTER_PORTS_EXPECTED/ACTIVE/HIDDEN`,
 `AUTHENTICATED_MAP_PORTS_EXPECTED/VISIBLE`, `MAINSHIP_SEND_ENABLED=true`, `MAINSHIP_SPACE_MOVEMENT_ENABLED=true`,
 `OSN_COORDINATE_TRAVEL_ENABLED=false`, `UNEXPECTED_CONFIG_CHANGES=0`, plus the structural OSN markers
 `PRODUCTION_OSN_READINESS_BOUNDARY_AUTHENTICATED_ONLY`, `PRODUCTION_OSN_WRITER_SERVICE_ROLE_ONLY`,

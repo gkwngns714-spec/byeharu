@@ -33,3 +33,37 @@ test('dock-services UI: docked shows port + active services; every non-docked st
   await page.evaluate((d) => (window as unknown as { __set: (x: unknown) => void }).__set({ dock: d }), docked(['docking']))
   await expect(page.getByTestId('dock-services-panel')).toBeVisible()
 })
+
+test('stale-data protection: a previously-docked port never lingers after a lifecycle change', async ({ page }) => {
+  await boot(page, docked(['docking']))
+  await expect(page.getByTestId('dock-services-title')).toContainText('Haven Reach')
+  // movement begins → not docked → the prior port must NOT remain visible
+  await page.evaluate((d) => (window as unknown as { __set: (x: unknown) => void }).__set({ dock: d }), notDocked('in_transit'))
+  await expect(page.getByTestId('dock-services-panel')).toHaveCount(0)
+  // dock at a DIFFERENT port → shows the new port only, never the stale one
+  const slag = { state: 'at_location', docked: true, locationId: 'b1a00002-0066-4a00-8a00-000000000002', locationName: 'Slagworks Anchorage', services: ['docking'] }
+  await page.evaluate((d) => (window as unknown as { __set: (x: unknown) => void }).__set({ dock: d }), slag)
+  await expect(page.getByTestId('dock-services-title')).toContainText('Slagworks Anchorage')
+  await expect(page.getByTestId('dock-services-title')).not.toContainText('Haven Reach')
+})
+
+test('safe failure: a dock fetch error degrades to no panel', async ({ page }) => {
+  await boot(page, { state: 'at_location', docked: true, locationId: 'b1a00001-0066-4a00-8a00-000000000001', locationName: 'Haven Reach', services: ['docking'], __fail: true })
+  await expect(page.getByTestId('dock-services-panel')).toHaveCount(0)
+})
+
+test('narrow mobile-width layout: panel stays within its half and does not overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 720 })
+  await boot(page, docked(['docking']))
+  const panel = page.getByTestId('dock-services-panel')
+  await expect(panel).toBeVisible()
+  const box = await panel.boundingBox()
+  expect(box).not.toBeNull()
+  if (box) {
+    // Harness-honest layout check (the bare harness compiles no Tailwind): the panel renders within the
+    // narrow viewport with no horizontal overflow. The half-width cap that prevents overlap with the left OSN
+    // panel is the component's `max-w-[calc(50vw-0.75rem)]` class, compiled in the production build.
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(360)
+  }
+})

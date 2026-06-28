@@ -7,7 +7,8 @@
 -- cannot execute anything). It never creates a player, never prints rows/uuids/coords/secrets. All reads run
 -- inside ONE BEGIN ... REPEATABLE READ READ ONLY snapshot that ROLLBACKs.
 --
--- It asserts the EXPECTED POST-ENABLE state STRUCTURALLY: head 0068; three canonical ports active/public;
+-- It asserts the EXPECTED CURRENT state STRUCTURALLY: head 0069 (Phase-9 docked-port read surface live);
+-- three canonical ports active/public;
 -- send=true; mainship_space_movement_enabled=TRUE (the inverse of every pre-enable verifier); the
 -- authenticated map boundary exposes exactly the three active ports; the OSN command/readiness surface is
 -- authenticated-only + ownership-safe (writers/arrival service-role-only, anon denied); the movement-owner
@@ -32,7 +33,7 @@ SELECT 'RO=' || current_setting('transaction_read_only');
 
 -- ── A. Deployment + flags (POST-ENABLE: space flag is now TRUE) ─────────────────────────────────────────
 SELECT 'HEAD='        || coalesce(max(version),'none') FROM supabase_migrations.schema_migrations;
-SELECT 'N_AFTER='     || count(*) FROM supabase_migrations.schema_migrations WHERE version > '20260618000068';
+SELECT 'N_AFTER='     || count(*) FROM supabase_migrations.schema_migrations WHERE version > '20260618000069';
 SELECT 'FLAG_SEND='   || coalesce(public.cfg_bool('mainship_send_enabled')::int::text,'x');
 SELECT 'FLAG_SPACE='  || coalesce(public.cfg_bool('mainship_space_movement_enabled')::int::text,'x');
 SELECT 'CONFIG_DEVIATIONS=' || ((CASE WHEN public.cfg_bool('mainship_send_enabled') THEN 0 ELSE 1 END)
@@ -75,6 +76,11 @@ SELECT 'ACL_ARRIVAL_SVC_ONLY=' || coalesce((to_regprocedure('public.process_main
    AND NOT has_function_privilege('authenticated', to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE')
    AND NOT has_function_privilege('anon',          to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE')
    AND has_function_privilege('service_role',      to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE'))::int::text,'x');
+-- PHASE 9 (head 0069): the docked-port READ surface is authenticated-only + PUBLIC/anon denied.
+SELECT 'ACL_DOCK_AUTH=' || coalesce((to_regprocedure('public.get_my_current_dock_services()') is not null
+   AND has_function_privilege('authenticated', to_regprocedure('public.get_my_current_dock_services()')::oid, 'EXECUTE'))::int::text,'x');
+SELECT 'ACL_DOCK_ANON_DENIED=' || coalesce((to_regprocedure('public.get_my_current_dock_services()') is not null
+   AND NOT has_function_privilege('anon', to_regprocedure('public.get_my_current_dock_services()')::oid, 'EXECUTE'))::int::text,'x');
 
 -- ── E. Movement-owner exclusivity / idempotency structure (must stay intact once OSN is live) ───────────
 SELECT 'STRUCT_EXCL=' || (SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace nn ON nn.oid=t.relnamespace
