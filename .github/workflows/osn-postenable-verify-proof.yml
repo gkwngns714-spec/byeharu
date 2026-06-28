@@ -1,0 +1,80 @@
+name: OSN post-enable verify — disposable proof (no production)
+
+# Proves the OSN-ENABLEMENT-2E read-only post-enable verifier WITHOUT any production access:
+#   1. DB-free self-test (read-only safe; no callable reveal/movement function; conn template; coord gate);
+#   2. a disposable local Supabase (chain 0001..0068) matrix that runs the ACTUAL verifier SQL — expected
+#      post-enable state passes (incl. behavioral readiness for a disposable anchored player), and every
+#      fail-closed case (OSN flag false, coord-travel true, wrong port state, map mismatch, config change,
+#      write-capable verifier) fails. The post-enable state is set by direct game_config/status updates on the
+#      throwaway stack; no movement command is issued;
+#   3. a scope guard. No `environment:` on any job — none can read production secrets.
+
+on:
+  push:
+    branches:
+      - 'osn-enablement-2e-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-postenable-verify-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/osn-postenable-verify.sh selftest
+
+  scope-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Confirm OSN-ENABLEMENT-2E is verifier-only
+        run: |
+          set +x
+          git fetch origin main 2>/dev/null || true
+          base="$(git merge-base origin/main HEAD || echo origin/main)"
+          changed="$(git diff --name-only "$base" HEAD)"
+          echo "changed files vs main:"; echo "$changed"
+          if echo "$changed" | grep -qE '^supabase/migrations/|^src/|(^|/)package(-lock)?\.json$'; then
+            echo "FAIL: OSN-ENABLEMENT-2E must not change migrations, frontend source, or packages"; exit 1; fi
+          echo "ok[8] scope guard: no migration / frontend / gameplay / onboarding / flag-default change — verifier-only"
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0068)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Post-enable verifier matrix ok[1]..ok[7] on the disposable stack
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-postenable-verify.sh local
+      - name: Assert the disposable stack ends at the dark baseline (OSN flag false; 3 ports hidden)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -v ON_ERROR_STOP=1 -c "do \$\$ begin
+              if (select value from public.game_config where key='mainship_space_movement_enabled') is distinct from 'false'::jsonb then raise exception 'OSN flag not false'; end if;
+              if (select count(*) from public.locations where id in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003') and status<>'hidden') <> 0 then raise exception 'ports not hidden'; end if;
+              raise notice 'post-run ok: OSN flag false; 3 ports hidden';
+            end \$\$;"
+          fi
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
