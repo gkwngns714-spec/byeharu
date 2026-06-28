@@ -7,13 +7,20 @@
 -- cannot execute anything). It never creates a player, never prints rows/uuids/coords/secrets. All reads run
 -- inside ONE BEGIN ... REPEATABLE READ READ ONLY snapshot that ROLLBACKs.
 --
--- It asserts the EXPECTED POST-ENABLE state: head 0068; three canonical ports active/public; send=true;
--- mainship_space_movement_enabled=TRUE (the inverse of every pre-enable verifier); the authenticated map
--- boundary exposes exactly the three active ports; the OSN command surface is authenticated-only +
--- ownership-safe; the movement-owner exclusivity / idempotency structure is intact; no fleet holds both a
--- legacy and an OSN movement; and an anchored player would get OSN availability (flag on + readiness present +
--- eligible active destinations). It tests BOTH (1) canonical catalog/config state AND (2) the authenticated
--- read boundary (get_world_map + the readiness function's ACL).
+-- It asserts the EXPECTED POST-ENABLE state STRUCTURALLY: head 0068; three canonical ports active/public;
+-- send=true; mainship_space_movement_enabled=TRUE (the inverse of every pre-enable verifier); the
+-- authenticated map boundary exposes exactly the three active ports; the OSN command/readiness surface is
+-- authenticated-only + ownership-safe (writers/arrival service-role-only, anon denied); the movement-owner
+-- exclusivity / idempotency / dock-arrival structure is intact; no fleet holds both a legacy and an OSN
+-- movement; and the readiness boundary is present + authenticated with >=2 active destination ports.
+--
+-- This is a STRUCTURAL / CONFIGURATION proof ONLY. It does NOT prove a concrete live player's
+-- osn_available=true (that needs an anchored authenticated session, which a read-only verifier cannot create
+-- safely). The live player-journey behavior — readiness osn_available=true, current-port exclusion, eligible
+-- destinations, command dispatch, in-transit UI, arrival/dock — is proven by OSN-ENABLEMENT-1B (disposable
+-- authenticated journey + rendered PortNavPanel). The two phases together are the complete evidence.
+-- It tests BOTH (1) canonical catalog/config state AND (2) the authenticated read boundary (get_world_map +
+-- the readiness/command function ACLs).
 
 \set ON_ERROR_STOP on
 \pset pager off
@@ -61,6 +68,13 @@ SELECT 'ACL_DOCK_SVC_ONLY=' || coalesce((to_regprocedure('public.mainship_space_
    AND has_function_privilege('service_role',      to_regprocedure('public.mainship_space_dock_at_location(uuid,uuid)')::oid, 'EXECUTE'))::int::text,'x');
 SELECT 'ACL_READINESS_AUTH=' || coalesce((to_regprocedure('public.get_osn_movement_readiness()') is not null
    AND has_function_privilege('authenticated', to_regprocedure('public.get_osn_movement_readiness()')::oid, 'EXECUTE'))::int::text,'x');
+SELECT 'ACL_READINESS_ANON_DENIED=' || coalesce((to_regprocedure('public.get_osn_movement_readiness()') is not null
+   AND NOT has_function_privilege('anon', to_regprocedure('public.get_osn_movement_readiness()')::oid, 'EXECUTE'))::int::text,'x');
+-- dock/arrival structural contract: the arrival processor is service-role-only (auth+anon denied).
+SELECT 'ACL_ARRIVAL_SVC_ONLY=' || coalesce((to_regprocedure('public.process_mainship_space_arrivals()') is not null
+   AND NOT has_function_privilege('authenticated', to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE')
+   AND NOT has_function_privilege('anon',          to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE')
+   AND has_function_privilege('service_role',      to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE'))::int::text,'x');
 
 -- ── E. Movement-owner exclusivity / idempotency structure (must stay intact once OSN is live) ───────────
 SELECT 'STRUCT_EXCL=' || (SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace nn ON nn.oid=t.relnamespace
@@ -74,8 +88,9 @@ SELECT 'STRUCT_RECEIPT='   || (SELECT count(*) FROM pg_constraint c JOIN pg_clas
 -- ── F. No conflicting legacy/OSN movement ownership currently present ────────────────────────────────────
 SELECT 'LEGACY_OSN_OVERLAP=' || (SELECT count(*) FROM public.fleets WHERE active_movement_id IS NOT NULL AND active_space_movement_id IS NOT NULL);
 
--- ── G. Readiness availability (structural): flag on + readiness present + >=2 active canonical ports, so an
---       anchored player resolves osn_available=true with at least one eligible destination (current excluded).
+-- ── G. Readiness boundary STRUCTURAL fact: >=2 active canonical destination ports exist (so the eligibility
+--       computation has destinations). This is a structural count, NOT a live player's osn_available result —
+--       the player-journey behavior is proven by OSN-ENABLEMENT-1B.
 SELECT 'ELIGIBLE_ACTIVE_PORTS=' || (SELECT count(*) FROM public.locations WHERE id IN ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003') AND status='active');
 
 ROLLBACK;

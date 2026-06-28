@@ -27,13 +27,23 @@ One `BEGIN … REPEATABLE READ READ ONLY` + `SET LOCAL default_transaction_read_
 
 Emitted sentinels: `MIGRATION_HEAD=0068`, `CANONICAL_STARTER_PORTS_EXPECTED/ACTIVE/HIDDEN`,
 `AUTHENTICATED_MAP_PORTS_EXPECTED/VISIBLE`, `MAINSHIP_SEND_ENABLED=true`, `MAINSHIP_SPACE_MOVEMENT_ENABLED=true`,
-`OSN_COORDINATE_TRAVEL_ENABLED=false` (workflow-side, from the frontend const), `UNEXPECTED_CONFIG_CHANGES=0`,
-`OVERALL_PASS`.
+`OSN_COORDINATE_TRAVEL_ENABLED=false`, `UNEXPECTED_CONFIG_CHANGES=0`, plus the structural OSN markers
+`PRODUCTION_OSN_READINESS_BOUNDARY_AUTHENTICATED_ONLY`, `PRODUCTION_OSN_WRITER_SERVICE_ROLE_ONLY`,
+`PRODUCTION_OSN_OWNER_EXCLUSIVITY`, `PRODUCTION_OSN_RECEIPT_IDEMPOTENCY`, `PRODUCTION_OSN_DOCK_ARRIVAL_CONTRACT`,
+`PRODUCTION_OSN_NO_LEGACY_OVERLAP`, `PRODUCTION_OSN_PLAYER_READINESS_BEHAVIOR_PROVEN_BY_1B=true`, and `OVERALL_PASS`.
 
-The **behavioral** readiness assertion (an anchored player gets `osn_available=true`, current port excluded,
-active destinations eligible) is proved in the **disposable** matrix with a throwaway anchored test user
-(readiness is a read; no movement command is issued; the user is deleted). Production verification is
-structural only — it never creates a player and issues no command.
+### This is a STRUCTURAL / CONFIGURATION proof only — behavioral split
+
+This verifier does **NOT** prove a concrete live player's `osn_available=true`: that needs an anchored
+authenticated session, and a read-only verifier cannot safely create or impersonate one (no safe existing
+anchored authenticated verification identity exists, and creating/forging one is prohibited). It therefore
+**never** emits a `AUTHENTICATED_OSN_AVAILABLE=true`-style marker.
+
+The **live player-journey behavior** — readiness `osn_available=true`, current-port exclusion, eligible
+destinations, command dispatch, in-transit UI, arrival/dock — is proven by **OSN-ENABLEMENT-1B** (the disposable
+authenticated journey through the real public RPC + the rendered PortNavPanel, against active/public port
+semantics). 1B (disposable behavioral) and 2E (live structural/config) are **both required, together**; neither
+replaces or weakens the other. 2E's disposable proof creates no test user and issues no movement command.
 
 ## Read-only / safety enforcement
 The DB-free self-test rejects write/DDL and any **callable** reference to `reveal_starter_ports`,
@@ -43,10 +53,11 @@ execute). Connection = pinned-CA + `verify-full` + Management-API session pooler
 CA / target overrides rejected.
 
 ## Disposable proof
-`ok[1]` expected post-enable state passes (+ anchored-player readiness available) · `ok[2]` OSN flag false
-fails · `ok[3]` coordinate-travel flag true fails · `ok[4]` wrong active/hidden port state fails · `ok[5]`
-authenticated map mismatch fails · `ok[6]` unexpected configuration change fails · `ok[7]` write-capable
-verifier content is rejected · `ok[8]` scope guard.
+`ok[1]` expected post-enable **structural/config** state passes (flag true; map=3; ACL authenticated-only;
+writers/arrival service-role-only; exclusivity/idempotency/dock-arrival intact; no legacy overlap; behavior
+attributed to 1B) · `ok[2]` OSN flag false fails · `ok[3]` coordinate-travel flag true fails · `ok[4]` wrong
+active/hidden port state fails · `ok[5]` authenticated map mismatch fails · `ok[6]` unexpected configuration
+change fails · `ok[7]` write-capable verifier content is rejected · `ok[8]` scope guard.
 
 ## Workflows
 - `osn-postenable-verify.yml` — `workflow_dispatch` only, main-only, `environment: production` (human-gated),

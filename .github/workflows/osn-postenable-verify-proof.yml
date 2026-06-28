@@ -64,7 +64,7 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           bash scripts/osn-postenable-verify.sh local
-      - name: Assert the disposable stack ends at the dark baseline (OSN flag false; 3 ports hidden; no fixtures)
+      - name: Assert the disposable stack ends at the dark baseline (OSN flag false; 3 ports hidden)
         if: always()
         run: |
           set -a; . /tmp/sbenv 2>/dev/null || true; set +a
@@ -72,8 +72,7 @@ jobs:
             psql "$DB_URL" -X -v ON_ERROR_STOP=1 -c "do \$\$ begin
               if (select value from public.game_config where key='mainship_space_movement_enabled') is distinct from 'false'::jsonb then raise exception 'OSN flag not false'; end if;
               if (select count(*) from public.locations where id in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003') and status<>'hidden') <> 0 then raise exception 'ports not hidden'; end if;
-              if (select count(*) from auth.users where email like 'osn2everify.%@example.com') <> 0 then raise exception 'verify fixture users remain'; end if;
-              raise notice 'post-run ok: OSN flag false; 3 ports hidden; no fixtures';
+              raise notice 'post-run ok: OSN flag false; 3 ports hidden';
             end \$\$;"
           fi
       - name: Stop disposable stack (always)

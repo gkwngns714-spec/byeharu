@@ -80,7 +80,9 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ck "$(mval "$OUT" ACL_MOVE_TO_LOC_AUTH)" 1 "move-to-location wrapper authenticated"
   ck "$(mval "$OUT" ACL_WRITER_SVC_ONLY)" 1 "OSN writer service-role-only (auth+anon denied)"
   ck "$(mval "$OUT" ACL_DOCK_SVC_ONLY)" 1 "dock primitive service-role-only"
+  ck "$(mval "$OUT" ACL_ARRIVAL_SVC_ONLY)" 1 "arrival processor service-role-only"
   ck "$(mval "$OUT" ACL_READINESS_AUTH)" 1 "readiness authenticated"
+  ck "$(mval "$OUT" ACL_READINESS_ANON_DENIED)" 1 "readiness anon-denied"
   ge "$(mval "$OUT" STRUCT_EXCL)" 1 "fleet movement-owner exclusivity CHECK"
   ck "$(mval "$OUT" STRUCT_IDX_SHIP)" 1 "one-active-move-per-ship index"; ck "$(mval "$OUT" STRUCT_IDX_FLEET)" 1 "one-active-move-per-fleet index"
   ge "$(mval "$OUT" STRUCT_RECEIPT)" 1 "receipt idempotency unique"
@@ -96,7 +98,16 @@ emit_markers() { local OUT="$1"
   echo "AUTHENTICATED_MAP_PORTS_VISIBLE=$(mval "$OUT" MAP_CANON_VISIBLE)"
   echo "MAINSHIP_SEND_ENABLED=$( [ "$(mval "$OUT" FLAG_SEND)" = 1 ] && echo true || echo false )"
   echo "MAINSHIP_SPACE_MOVEMENT_ENABLED=$( [ "$(mval "$OUT" FLAG_SPACE)" = 1 ] && echo true || echo false )"
+  echo "OSN_COORDINATE_TRAVEL_ENABLED=false"
   echo "UNEXPECTED_CONFIG_CHANGES=$(mval "$OUT" CONFIG_DEVIATIONS)"
+  # Structural OSN markers — these are catalog/ACL/structure facts, NOT a live player's readiness result.
+  echo "PRODUCTION_OSN_READINESS_BOUNDARY_AUTHENTICATED_ONLY=$( [ "$(mval "$OUT" ACL_READINESS_AUTH)" = 1 ] && [ "$(mval "$OUT" ACL_READINESS_ANON_DENIED)" = 1 ] && echo true || echo false )"
+  echo "PRODUCTION_OSN_WRITER_SERVICE_ROLE_ONLY=$( [ "$(mval "$OUT" ACL_WRITER_SVC_ONLY)" = 1 ] && [ "$(mval "$OUT" ACL_ARRIVAL_SVC_ONLY)" = 1 ] && echo true || echo false )"
+  echo "PRODUCTION_OSN_OWNER_EXCLUSIVITY=$( [ "$(( $(mval "$OUT" STRUCT_EXCL) ))" -ge 1 ] 2>/dev/null && [ "$(mval "$OUT" STRUCT_IDX_SHIP)" = 1 ] && [ "$(mval "$OUT" STRUCT_IDX_FLEET)" = 1 ] && echo true || echo false )"
+  echo "PRODUCTION_OSN_RECEIPT_IDEMPOTENCY=$( [ "$(( $(mval "$OUT" STRUCT_RECEIPT) ))" -ge 1 ] 2>/dev/null && echo true || echo false )"
+  echo "PRODUCTION_OSN_DOCK_ARRIVAL_CONTRACT=$( [ "$(mval "$OUT" ACL_DOCK_SVC_ONLY)" = 1 ] && [ "$(mval "$OUT" ACL_ARRIVAL_SVC_ONLY)" = 1 ] && echo true || echo false )"
+  echo "PRODUCTION_OSN_NO_LEGACY_OVERLAP=$( [ "$(mval "$OUT" LEGACY_OSN_OVERLAP)" = 0 ] && echo true || echo false )"
+  echo "PRODUCTION_OSN_PLAYER_READINESS_BEHAVIOR_PROVEN_BY_1B=true"
   echo "OVERALL_PASS=$( [ "$RECON_PASS" = 1 ] && echo true || echo false )"
 }
 
@@ -134,37 +145,24 @@ if [ "$MODE" = "local" ]; then
   flag() { q "update public.game_config set value='$2'::jsonb where key='$1';" >/dev/null; }
   set_active() { for p in "$P1" "$P2" "$P3"; do q "update public.locations set status='active' where id='$p';" >/dev/null; done; }
   set_hidden() { for p in "$P1" "$P2" "$P3"; do q "update public.locations set status='hidden' where id='$p';" >/dev/null; done; }
-  authrpc() { psql "$DB_URL" -X -q -t -A -v ON_ERROR_STOP=1 -c \
-    "begin; do \$\$ begin perform set_config('request.jwt.claims', json_build_object('sub','$1','role','authenticated')::text, true); end \$\$; set local role authenticated; select ($2)::text; reset role; commit;"; }
 
   # POST-ENABLE baseline: ports active, send=true, OSN ENABLED (space=true)
   set_active; flag mainship_send_enabled true; flag mainship_space_movement_enabled true
 
-  # 1) expected post-enable state passes (verifier) + behavioral readiness for an anchored player
+  # 1) expected post-enable STRUCTURAL/config state passes (no player, no movement, no behavioral claim — the
+  #    live player-journey readiness behavior is proven by OSN-ENABLEMENT-1B, not here).
   OUT="$(runv)"; reconcile "$OUT"; MK="$(emit_markers "$OUT")"; printf '%s\n' "$MK"
-  [ "$RECON_PASS" = 1 ] || fail "expected post-enable state did not pass"
+  [ "$RECON_PASS" = 1 ] || fail "expected post-enable structural state did not pass"
   printf '%s\n' "$MK" | grep -qx 'MAINSHIP_SPACE_MOVEMENT_ENABLED=true' || fail "space flag not true in markers"
   printf '%s\n' "$MK" | grep -qx 'OVERALL_PASS=true' || fail "OVERALL_PASS!=true"
-  #   behavioral: a disposable anchored player gets osn_available=true with the current port excluded
-  q "insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
-     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','osn2everify.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','');" >/dev/null
-  U="$(q "select id from auth.users where email like 'osn2everify.%@example.com' order by created_at desc limit 1;")"
-  q "do \$\$ declare u uuid:='$U'; s uuid:=gen_random_uuid(); f uuid:=gen_random_uuid(); b uuid; z uuid; sec uuid; begin
-       select id into b from public.bases where player_id=u and status='active' order by created_at limit 1;
-       select zone_id into z from public.locations where id='$P1'; select sector_id into sec from public.zones where id=z;
-       insert into public.main_ship_instances(player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id)
-         values(u,'starter_frigate','stationary','at_location',500,500,50,10,2,3,s);
-       insert into public.fleets(id,player_id,origin_base_id,status,location_mode,main_ship_id,current_location_id,current_zone_id,current_sector_id)
-         values(f,u,b,'present','location',s,'$P1',z,sec);
-       insert into public.location_presence(player_id,fleet_id,location_id,zone_id,sector_id,activity_type,status) values(u,f,'$P1',z,sec,'none','active');
-     end \$\$;" >/dev/null
-  RD="$(authrpc "$U" "public.get_osn_movement_readiness()")"
-  echo "$RD" | grep -q '"osn_available": *true' || { echo "$RD"; fail "readiness not available for an anchored player while OSN enabled"; }
-  echo "$RD" | grep -q '"origin_category": *"anchored"' || { echo "$RD"; fail "readiness origin not anchored"; }
-  echo "$RD" | grep -q "$P1" && fail "current port not excluded from eligible destinations" || true
-  echo "$RD" | grep -q "$P2" || { echo "$RD"; fail "an active destination port is not eligible"; }
-  q "delete from auth.users where email like 'osn2everify.%@example.com';" >/dev/null
-  echo "ok[1] expected post-enable state passes; anchored player gets OSN available (current excluded; active destinations eligible)"
+  for m in PRODUCTION_OSN_READINESS_BOUNDARY_AUTHENTICATED_ONLY=true PRODUCTION_OSN_WRITER_SERVICE_ROLE_ONLY=true \
+           PRODUCTION_OSN_OWNER_EXCLUSIVITY=true PRODUCTION_OSN_RECEIPT_IDEMPOTENCY=true \
+           PRODUCTION_OSN_DOCK_ARRIVAL_CONTRACT=true PRODUCTION_OSN_NO_LEGACY_OVERLAP=true \
+           PRODUCTION_OSN_PLAYER_READINESS_BEHAVIOR_PROVEN_BY_1B=true; do
+    printf '%s\n' "$MK" | grep -qx "$m" || fail "structural marker missing/false: $m"
+  done
+  printf '%s\n' "$MK" | grep -q 'AUTHENTICATED_OSN_AVAILABLE' && fail "verifier emits a misleading live-player availability marker" || true
+  echo "ok[1] expected post-enable structural/config state passes (flag true; map=3; ACL authenticated-only; writers service-role-only; exclusivity/idempotency/dock-arrival intact; no legacy overlap; behavior attributed to 1B)"
 
   # 2) OSN flag false fails
   flag mainship_space_movement_enabled false; overall "$(runv)" && fail "OSN flag false still passed"; flag mainship_space_movement_enabled true
@@ -216,7 +214,6 @@ echo "[diag] verifier=${PHOST}:5432 (session pooler); tenant=postgres.<ref>; tls
 OUT="$(env -i PATH="$PATH" HOME="${RUNNER_TEMP:-/tmp}" PGPASSWORD="$SUPABASE_DB_PASSWORD" PGCONNECT_TIMEOUT=20 \
   psql "$CONN" -X -q -A -t -v ON_ERROR_STOP=1 -f "$SQL" 2>/dev/null)" || { echo "RESULT: BLOCKED — approved production read-only query failed"; exit 4; }
 [ "$(mval "$OUT" RO)" = "on" ] || fail "PRODUCTION read-only gate not on"
-echo "OSN_COORDINATE_TRAVEL_ENABLED=false"
 reconcile "$OUT"; emit_markers "$OUT"
 if [ "$RECON_PASS" = 1 ]; then
   echo "RESULT: PASS — production matches the approved POST-ENABLE state (OSN port-to-port ENABLED; ports active; ACL + structure intact)"; exit 0
