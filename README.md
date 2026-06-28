@@ -9,6 +9,18 @@ ranking points and grow stronger. Server-authoritative, web-first.
 > become stronger.* The current engine (movement → combat → retreat → return → reward)
 > is the **expedition engine**; the forward direction is in **`docs/ROADMAP.md`**.
 
+## Current status (2026-06-29)
+
+- **Production migration head: `0070`.** Three starter ports (Haven Reach, Slagworks Anchorage, Driftmarch
+  Waypost) are **active/public**.
+- **OSN port-to-port travel is enabled** — a ship docked at a port can travel port-to-port. **Free
+  arbitrary-coordinate travel is server-disabled by default** (`mainship_coordinate_travel_enabled = false`).
+- **Phase 9 is live:** a read-only **docked-port surface** (`get_my_current_dock_services()` + `DockServicesPanel`)
+  shows the current port + its active services when the ship is docked (today: **Docking**).
+- **Phase 10 Trading V1 is designed but not built.** Its prerequisite is **main-ship provisioning** (a brand-new
+  player has no ship yet) + a canonical port-entry transition. See `docs/DEV_LOG.md` (2026-06-29 entry) for the
+  authoritative state and the **forward plan**, and `docs/ROADMAP.md` for the phase plan.
+
 ## Stack
 
 - **Frontend:** React + TypeScript + Vite
