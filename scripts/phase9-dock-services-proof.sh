@@ -100,10 +100,11 @@ q "do \$\$ declare u uuid:='$U2'; s uuid:=gen_random_uuid(); f uuid:=gen_random_
      select id into b from public.bases where player_id=u and status='active' limit 1;
      insert into public.main_ship_instances(player_id,hull_type_id,status,spatial_state,hp,max_hp,cargo_capacity,support_capacity,captain_slots,module_slots,main_ship_id)
        values(u,'starter_frigate','traveling','in_transit',500,500,50,10,2,3,s);
-     insert into public.main_ship_space_movements(id,main_ship_id,fleet_id,player_id,origin_kind,origin_x,origin_y,target_kind,target_x,target_y,target_location_id,speed_used,depart_at,arrive_at)
-       values(m,s,f,u,'location',-50,-30,'location',70,-10,'$P2',1.0, now()-interval '2 hour', now()+interval '1 hour');
-     insert into public.fleets(id,player_id,origin_base_id,status,location_mode,main_ship_id,active_space_movement_id)
-       values(f,u,b,'moving','movement',s,m);
+     insert into public.fleets(id,player_id,origin_base_id,status,location_mode,main_ship_id)  -- fleet FIRST (movement FK references it)
+       values(f,u,b,'moving','movement',s);
+     insert into public.main_ship_space_movements(id,main_ship_id,fleet_id,player_id,origin_kind,origin_x,origin_y,target_kind,target_x,target_y,target_location_id,status,speed_used,depart_at,arrive_at)
+       values(m,s,f,u,'location',-50,-30,'location',70,-10,'$P2','moving',1.0, now()-interval '2 hour', now()+interval '1 hour');
+     update public.fleets set active_space_movement_id = m where id = f;  -- link (validate_context in_transit requires this)
    end \$\$;" >/dev/null
 [ "$(st "$(authrpc "$U2")")" = "in_transit" ] || { echo "$(authrpc "$U2")"; fail "ok[3] in_transit"; }
 U3="$(mkuser)"; mkship_simple "$U3" stationary in_space 123 456
