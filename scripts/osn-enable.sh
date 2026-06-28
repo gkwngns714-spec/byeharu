@@ -103,11 +103,11 @@ if [ "$MODE" = "local" ]; then
   set_flag() { q "update public.game_config set value='$2'::jsonb where key='$1';" >/dev/null; }
   set_ports_active() { for p in "$P1" "$P2" "$P3"; do q "update public.locations set status='active' where id='$p';" >/dev/null; done; }
   set_ports_hidden() { for p in "$P1" "$P2" "$P3"; do q "update public.locations set status='hidden' where id='$p';" >/dev/null; done; }
-  assert_fail_closed() {  # $1=out $2=rc $3=label — nonzero rc + PRECOND FAIL + flip NOT performed
+  assert_fail_closed() {  # $1=out $2=rc $3=label $4=expected-flag-value — nonzero rc + PRECOND FAIL + flip NOT performed + flag UNCHANGED
     [ "$2" != "0" ] || { echo "$1"; fail "$3: pre-state accepted (expected fail-closed)"; }
     echo "$1" | grep -qF 'PRECOND FAIL' || { echo "$1"; fail "$3: did not raise PRECOND FAIL"; }
     echo "$1" | grep -qF 'OSN_FLAG_WRITES=1' && fail "$3: the flag was written" || true
-    [ "$(flag_is "$FLAG")" = "false" ] || fail "$3: OSN flag is not false after a fail-closed case"
+    [ "$(flag_is "$FLAG")" = "$4" ] || fail "$3: OSN flag changed (expected it to stay $4 after a fail-closed case)"
   }
   # post-reveal production-like baseline: ports active, send=true, OSN false
   set_ports_active; set_flag mainship_send_enabled true; set_flag "$FLAG" false
@@ -130,12 +130,12 @@ if [ "$MODE" = "local" ]; then
   echo "ok[2] wrong confirmation / non-main ref: rejected before any DB access; flag untouched"
 
   # 3) INVALID PRE-STATE -> fail-closed, flip not performed
-  set_flag "$FLAG" true   # already enabled
-  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "already-enabled"; set_flag "$FLAG" false
+  set_flag "$FLAG" true   # already enabled (flag stays true through the fail-closed)
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "already-enabled" true; set_flag "$FLAG" false
   set_flag mainship_send_enabled false
-  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "send flag off"; set_flag mainship_send_enabled true
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "send flag off" false; set_flag mainship_send_enabled true
   q "update public.locations set status='hidden' where id='$P1';" >/dev/null
-  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "a canonical port not active"; set_ports_active
+  out="$(run_op)"; rc=$?; assert_fail_closed "$out" "$rc" "a canonical port not active" false; set_ports_active
   echo "ok[3] invalid pre-state (already enabled / send off / port not active): fail-closed, flip not performed"
 
   # 4) RERUN AFTER SUCCESS -> refuses to re-enable
