@@ -53,6 +53,13 @@ echo "ok[1] server coordinate gate defaults false"
 [ "$(q "select has_function_privilege('authenticated','public.command_main_ship_space_move(double precision, double precision, uuid)','EXECUTE');")" = "t" ] || fail "authenticated cannot execute the raw command"
 echo "ok[6] anonymous access denied (authenticated retained)"
 
+# Mirror PRODUCTION: the port-to-port movement domain is ENABLED (true) while FREE coordinate travel stays OFF.
+# (A fresh disposable chain defaults mainship_space_movement_enabled='false' from migration 0055; production's
+# true value was set at runtime by the OSN-enable operation, not a migration. We set it here so the test
+# exercises the NEW coordinate gate rather than the older movement-domain gate.)
+q "update public.game_config set value='true' where key='mainship_space_movement_enabled';" >/dev/null
+[ "$(q "select value from public.game_config where key='mainship_coordinate_travel_enabled';")" = "false" ] || fail "coordinate gate not false after enabling movement domain"
+
 # Set up an OSN-eligible (in_space) ship so a denial can be checked for side effects.
 U1="$(mkuser)"; mkship_in_space "$U1"
 
