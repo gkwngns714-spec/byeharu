@@ -102,7 +102,7 @@ echo "ok[4] same request id + different payload rejected (code=request_conflict;
 # ok[5] ship enters in_transit and settles correctly
 su "select 1 from public.main_ship_instances where main_ship_id='$S' and spatial_state='in_transit';" | grep -q 1 || fail "ok[5]: ship not in_transit after the command"
 su "select 1 from public.fleets where main_ship_id='$S' and status='moving' and active_space_movement_id='$MID' and active_movement_id is null;" | grep -q 1 || fail "ok[5]: fleet not coherently moving on the OSN movement"
-su "update public.main_ship_space_movements set arrive_at=now()-interval '1 second' where id='$MID';" >/dev/null   # advance time only
+su "update public.main_ship_space_movements set depart_at=now()-interval '2 hours', arrive_at=now()-interval '1 hour' where id='$MID';" >/dev/null   # advance simulated time: whole window in the past, keeps arrive_at>depart_at
 N="$(su "select public.process_mainship_space_arrivals();")"; [ "${N:-0}" -ge 1 ] || fail "ok[5]: processor settled 0"
 echo "ok[5] ship entered in_transit then the real arrival processor settled it"
 
