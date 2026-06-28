@@ -1,0 +1,79 @@
+name: OSN-ENABLEMENT-1B — authenticated port-to-port journey (disposable, no production)
+
+# Proves ONE real authenticated port-to-port OSN journey on a throwaway local Supabase (chain 0001..0068),
+# with mainship_space_movement_enabled temporarily TRUE on the disposable stack only. The movement is issued
+# through the actual public command boundary (command_main_ship_space_move_to_location) as role authenticated
+# with auth.uid()=the test user — never a direct movement-row insert. It restores the flag to false and deletes
+# all fixtures at the end. No `environment:` on any job — none can read production secrets; no production access.
+
+on:
+  push:
+    branches:
+      - 'osn-enablement-1b-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-enablement-1b-journey-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/osn-enablement-1b-journey.sh selftest
+
+  scope-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Confirm OSN-ENABLEMENT-1B is test/proof-only (no migration / frontend / production write)
+        run: |
+          set +x
+          git fetch origin main 2>/dev/null || true
+          base="$(git merge-base origin/main HEAD || echo origin/main)"
+          changed="$(git diff --name-only "$base" HEAD)"
+          echo "changed files vs main:"; echo "$changed"
+          if echo "$changed" | grep -qE '^supabase/migrations/|^src/|(^|/)package(-lock)?\.json$'; then
+            echo "FAIL: OSN-ENABLEMENT-1B must not change migrations, frontend source, or packages"; exit 1; fi
+          echo "ok[10] scope guard: no migration / production write / frontend feature change / permanent flag-default change — test/proof only"
+
+  journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0068)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Run the authenticated port-to-port journey ok[1]..ok[9] on the disposable stack
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-enablement-1b-journey.sh local
+      - name: Assert the disposable stack ends at the dark baseline (3 ports hidden; OSN flag false; no fixtures)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -v ON_ERROR_STOP=1 -c "do \$\$ declare n int; begin
+              select count(*) into n from public.locations where id in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003') and status<>'hidden';
+              if n<>0 then raise exception '% starter port(s) left non-hidden', n; end if;
+              if (select value from public.game_config where key='mainship_space_movement_enabled') is distinct from 'false'::jsonb then raise exception 'OSN flag not false'; end if;
+              if (select count(*) from auth.users where email like 'osn1bjourney.%@example.com') <> 0 then raise exception 'fixture users remain'; end if;
+              raise notice 'post-run ok: 3 ports hidden; OSN flag false; no journey fixtures';
+            end \$\$;"
+          fi
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

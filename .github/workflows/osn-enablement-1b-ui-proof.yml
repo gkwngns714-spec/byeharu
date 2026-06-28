@@ -1,0 +1,36 @@
+name: OSN-ENABLEMENT-1B — rendered PortNav UI proof (no production)
+
+# Renders the REAL src/features/map/PortNavPanel in a browser (via the tests/harness Vite server) and drives
+# the player-facing OSN command surface end-to-end with Playwright, modelling the post-reveal active-port
+# server state (mainship_space_movement_enabled=true). Injected deps record the dispatch; nothing connects to
+# any database and there is no production access. Test/proof only — no product behavior change.
+
+on:
+  push:
+    branches:
+      - 'osn-enablement-1b-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-enablement-1b-ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install app + test deps
+        run: npm ci
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+      - name: Render real PortNavPanel and drive the OSN command-surface journey
+        run: npx playwright test --config playwright.osnui.config.ts
