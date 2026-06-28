@@ -2,6 +2,7 @@ import { supabase } from '../../lib/supabase'
 import { SPACE_MOVE_RPC, buildSpaceMoveRpcArgs, type SpaceMoveResult } from './spaceMoveCommand'
 import { SPACE_STOP_RPC, buildSpaceStopRpcArgs, type SpaceStopResult } from './spaceStopCommand'
 import { parseOsnReadiness, OSN_NOT_ACTIONABLE, type OsnReadiness } from './osnReadiness'
+import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockServices'
 
 // Main-ship client API.
 //
@@ -178,6 +179,14 @@ export function deriveMainShipStatus(fleet: { status: string } | null): MainShip
   if (fleet.status === 'present') return 'present'
   if (fleet.status === 'returning') return 'returning'
   return 'traveling' // 'moving'
+}
+
+// PHASE 9 — read the player's current docked-port surface (zero-arg authenticated RPC; everything derived
+// server-side from auth.uid()). Errors / pre-deploy collapse to the no-dock default so nothing renders.
+export async function fetchMyCurrentDockServices(): Promise<DockServices> {
+  const { data, error } = await supabase.rpc('get_my_current_dock_services')
+  if (error) return DOCK_NOT_DOCKED
+  return parseDockServices(data)
 }
 
 export interface MainShipSendResult {

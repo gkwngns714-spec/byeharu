@@ -1,0 +1,51 @@
+name: PHASE 9 — dock-services disposable proof (no production)
+
+# Proves public.get_my_current_dock_services() WITHOUT any production access:
+#   1. DB-free self-test (zero-arg, SECURITY DEFINER + search_path, auth.uid()-derived, authenticated-only,
+#      no write/seed/home-port/world_sites);
+#   2. a disposable local Supabase (chain 0001..0069) matrix that calls the RPC through the REAL authenticated
+#      boundary across every ship state (no_main_ship / at_location / in_transit / in_space / destroyed /
+#      incoherent) and proves anon-denied, no-arg, active-services-only, no cross-player leak, and no write.
+# No `environment:` on any job — none can read production secrets.
+
+on:
+  push:
+    branches:
+      - 'phase9-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase9-dock-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/phase9-dock-services-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0069 incl. the new RPC)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Dock-services RPC matrix ok[1]..ok[7] + ok[10] on the disposable stack
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/phase9-dock-services-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
