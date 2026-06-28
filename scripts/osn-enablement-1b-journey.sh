@@ -45,6 +45,12 @@ echo "── setup: activate the three canonical ports (direct status update; re
 for p in "$P1" "$P2" "$P3"; do su "update public.locations set status='active' where id='$p';" >/dev/null; done
 flag mainship_send_enabled true
 flag mainship_space_movement_enabled false
+# POST-REVEAL SEMANTICS: the journey runs against ACTIVE/public ports exactly like production — the target
+# port is active AND exposed by the authenticated map boundary (get_world_map). The eligible-destination
+# semantics below are therefore the post-reveal ones, not hidden-port behavior.
+[ "$(su "select count(*) from public.locations where id in ('$P1','$P2','$P3') and status='active';")" = "3" ] || fail "setup: 3 canonical ports not active"
+[ "$(su "select (public.get_world_map()::text ~ '$P1') and (public.get_world_map()::text ~ '$P2') and (public.get_world_map()::text ~ '$P3');")" = "t" ] || fail "setup: active ports not exposed by get_world_map (post-reveal semantics)"
+echo "   post-reveal semantics confirmed: 3 ports active + visible via get_world_map (mirrors production); target $P2 is active"
 # unschedule the arrival cron for deterministic settlement (mirrors the dock-0 proof)
 su "select cron.unschedule(jobid) from cron.job where jobname='process-mainship-space-arrivals';" >/dev/null 2>&1 || true
 
