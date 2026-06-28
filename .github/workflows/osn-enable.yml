@@ -1,0 +1,55 @@
+name: Enable OSN port-to-port (PRODUCTION — gated, one-shot)
+
+# Manually-dispatched, production-Environment-gated, ONE-SHOT operation that flips
+# game_config.mainship_space_movement_enabled false→true (turns ON port-to-port OSN travel for players),
+# guarded by preconditions/postconditions in a single transaction. workflow_dispatch ONLY; runs ONLY from
+# refs/heads/main; requires the exact typed confirmation ENABLE_OSN_PORT_TO_PORT before any DB connection;
+# uses the proven pinned-CA + sslmode=verify-full session-pooler path. No retry — a failed/uncertain result
+# fails closed (transaction rolled back) and a separate read-only verification must follow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type ENABLE_OSN_PORT_TO_PORT to confirm enabling OSN port-to-port travel for players"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-enable-production
+  cancel-in-progress: false
+
+jobs:
+  enable:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - name: Pre-flight guards (main-only + exact confirmation) before checkout/connection
+        env:
+          OSN_ENABLE_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set +x
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "BLOCKED: runs ONLY from refs/heads/main (got $GITHUB_REF)"; exit 1; }
+          [ "$OSN_ENABLE_CONFIRM" = "ENABLE_OSN_PORT_TO_PORT" ] || { echo "BLOCKED: confirmation token mismatch"; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Run the gated one-shot OSN enable over the approved session pooler (verify-full, pinned CA)
+        env:
+          OSN_ENABLE_CONFIRM: ${{ inputs.confirm }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set +x
+          bash scripts/osn-enable.sh production

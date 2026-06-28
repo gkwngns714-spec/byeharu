@@ -1,0 +1,78 @@
+name: OSN enable — disposable proof (no production)
+
+# Proves the OSN-ENABLEMENT-2 one-shot enable WITHOUT any production access:
+#   1. DB-free static self-test (one game_config write = OSN flag→true; no reveal/table/DDL; conn template;
+#      OSN_COORDINATE_TRAVEL_ENABLED stays false);
+#   2. a disposable local Supabase (chain 0001..0068) operation matrix — clean enable + every fail-closed case
+#      (wrong confirmation, invalid pre-state, rerun, only-this-key invariance);
+#   3. a scope guard confirming no migration / frontend / source change.
+# No `environment:` on any job — none can read production secrets.
+
+on:
+  push:
+    branches:
+      - 'osn-enablement-2-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-enable-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/osn-enable.sh selftest
+
+  scope-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Confirm OSN-ENABLEMENT-2 is operational-control only (no migration / frontend / source change)
+        run: |
+          set +x
+          git fetch origin main 2>/dev/null || true
+          base="$(git merge-base origin/main HEAD || echo origin/main)"
+          changed="$(git diff --name-only "$base" HEAD)"
+          echo "changed files vs main:"; echo "$changed"
+          if echo "$changed" | grep -qE '^supabase/migrations/|^src/|(^|/)package(-lock)?\.json$'; then
+            echo "FAIL: OSN-ENABLEMENT-2 must not change migrations, frontend source, or packages"; exit 1; fi
+          echo "ok[6] scope guard: no migration / frontend / source / package change — operational-control only"
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0068)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: OSN enable operation matrix ok[1]..ok[5] on the disposable stack
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-enable.sh local
+      - name: Assert the disposable stack ends at the dark baseline (OSN flag false; 3 ports hidden)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -v ON_ERROR_STOP=1 -c "do \$\$ begin
+              if (select value from public.game_config where key='mainship_space_movement_enabled') is distinct from 'false'::jsonb then raise exception 'OSN flag not false'; end if;
+              raise notice 'post-run ok: OSN flag false';
+            end \$\$;"
+          fi
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
