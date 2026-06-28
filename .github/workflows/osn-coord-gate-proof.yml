@@ -1,0 +1,51 @@
+name: OSN-COORD-GATE-1 — coordinate-gate disposable proof (no production)
+
+# Proves the server-authoritative coordinate-travel gate (migration 0070) WITHOUT any production access:
+#   1. DB-free self-test (gate seeded false; raw command gated before the ship read; delegation preserved;
+#      location-target + other flags/systems untouched);
+#   2. a disposable local Supabase (chain 0001..0070) matrix exercising the REAL authenticated boundary:
+#      gate defaults false, raw command rejected while false with no side effect, location-target unaffected,
+#      raw move works only after enabling the gate locally, idempotency intact, anon denied.
+# No `environment:` on any job — none can read production secrets.
+
+on:
+  push:
+    branches:
+      - 'osn-coord-gate-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-coord-gate-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/osn-coord-gate-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0070)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Coordinate-gate matrix ok[1]..ok[7] on the disposable stack
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-coord-gate-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
