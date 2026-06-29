@@ -237,8 +237,8 @@ begin
   if n <> 0 then raise exception 'CLEANUP: % orphan main ships remain', n; end if;
   select value into co from public.game_config where key='mainship_coordinate_travel_enabled';
   select value into mv from public.game_config where key='mainship_space_movement_enabled';
-  if co <> (select value from ce1b_flag0 where key='mainship_coordinate_travel_enabled')
-     or mv <> (select value from ce1b_flag0 where key='mainship_space_movement_enabled') then
+  if co <> (select value::text from ce1b_flag0 where key='mainship_coordinate_travel_enabled')
+     or mv <> (select value::text from ce1b_flag0 where key='mainship_space_movement_enabled') then
     raise exception 'CLEANUP: flags not restored (movement=%, coordinate=%)', mv, co; end if;
   raise notice 'cleanup ok: no fixtures, ports hidden, flags restored to pre-test values';
 end $$;
