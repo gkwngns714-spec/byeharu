@@ -39,11 +39,16 @@ One `BEGIN … REPEATABLE READ READ ONLY` + `SET LOCAL default_transaction_read_
   from the approved baseline is reported verbatim (`COORD_RAW`) and **fails** (never normalized or repaired).
 - **Approved current baseline:** `mainship_send_enabled=true`; `mainship_space_movement_enabled=true`;
   **`mainship_coordinate_travel_enabled=false`**; zero tracked-flag config deviation.
-- **Arbitrary-coordinate command surface (OSN-COORD-GATE-1):** `command_main_ship_space_move(double precision,
-  double precision, uuid)` is authenticated-only (anon/PUBLIC denied); its raw coordinate writers
-  (`mainship_space_begin_move`, `mainship_space_begin_move_core`) are service-role-only (auth+anon denied);
-  and it is the **only** public function with identity args `(double precision, double precision, uuid)`
-  executable by `authenticated` (no sibling raw-coordinate wrapper).
+- **Arbitrary-coordinate command surface (OSN-COORD-GATE-1) — asserted from the catalog by OID/type, not by
+  any display string (OSN-COORD-VERIFY-2):** `command_main_ship_space_move(double precision, double precision,
+  uuid)` (1) resolves non-null via `to_regprocedure`, (2)+(3) is exactly one `pg_proc` row in schema `public`,
+  (4) is executable by `authenticated`, **not** by `anon`, and **not** by `PUBLIC` (read directly from
+  `proacl` via `aclexplode`, treating a NULL ACL as the PUBLIC-default-EXECUTE failure case); its raw
+  coordinate writers (`mainship_space_begin_move`, `mainship_space_begin_move_core`) are service-role-only
+  (auth+anon denied); and (5) it is the **only** authenticated-executable normal public function whose three
+  input arg-type OIDs are exactly `(float8, float8, uuid)` — matched on `pg_proc.proargtypes` element OIDs
+  (`'double precision'::regtype`, `'uuid'::regtype`), never on a formatted argument string. The location-target
+  command is `(uuid, uuid)` and the writers carry longer signatures, so all are excluded by arg-type identity.
 - **Catalog/ACL/structure (unchanged):** exactly three canonical ports active (approved identity), 0 hidden;
   the OSN command surface ACL (move-to-location authenticated; writer + dock primitive + arrival processor
   service-role-only with auth/anon denied; readiness authenticated/anon-denied); the movement-owner
