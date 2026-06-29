@@ -1,0 +1,56 @@
+name: OSN-COORD-ENABLE-1B — readiness-capability disposable proof (no production)
+
+# Proves the additive coordinate-travel readiness capability (migration 0071) WITHOUT any production access:
+#   1. DB-free self-test (additive field; osn_available∧coordinate-gate derivation; SECURITY DEFINER + auth.uid()
+#      + authenticated-only ACL preserved; no writes / no flag seed / no out-of-scope object touched);
+#   2. a disposable local Supabase (chain 0001..0071) that runs:
+#        a. the EXISTING PORT-LAUNCH-1A readiness regression matrix (proves existing categories still pass), then
+#        b. the new OSN-COORD-ENABLE-1B real-chain proof: the 2×2 truth table, the unanchored-with-both-flags-true
+#           security case, port-readiness intact, strict-boolean contract, ACL, and read-only (no writes).
+# No `environment:` on any job — none can read production secrets; nothing is deployed or enabled.
+
+on:
+  push:
+    branches:
+      - 'osn-coord-enable-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-coord-enable-1b-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/osn-coord-enable-1b-readiness-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0071)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Existing readiness regression (PORT-LAUNCH-1A fixture matrix) on the 0071 chain
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f scripts/portlaunch1a-realchain-fixtures.sql
+      - name: OSN-COORD-ENABLE-1B readiness proof on the disposable stack
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-coord-enable-1b-readiness-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
