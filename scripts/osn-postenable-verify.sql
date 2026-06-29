@@ -7,11 +7,15 @@
 -- cannot execute anything). It never creates a player, never prints rows/uuids/coords/secrets. All reads run
 -- inside ONE BEGIN ... REPEATABLE READ READ ONLY snapshot that ROLLBACKs.
 --
--- It asserts the EXPECTED CURRENT state STRUCTURALLY: head 0069 (Phase-9 docked-port read surface live);
--- three canonical ports active/public;
--- send=true; mainship_space_movement_enabled=TRUE (the inverse of every pre-enable verifier); the
--- authenticated map boundary exposes exactly the three active ports; the OSN command/readiness surface is
--- authenticated-only + ownership-safe (writers/arrival service-role-only, anon denied); the movement-owner
+-- It asserts the EXPECTED CURRENT state STRUCTURALLY: head 0070 (OSN-COORD-GATE-1 deployed; the Phase-9
+-- docked-port read surface remains live); three canonical ports active/public;
+-- send=true; mainship_space_movement_enabled=TRUE (the inverse of every pre-enable verifier);
+-- mainship_coordinate_travel_enabled=FALSE — read from the authoritative DB, with a fail-closed integrity
+-- guard (the row must exist EXACTLY once and parse as a JSON boolean; cfg_bool() alone would mask a missing
+-- row as false); the authenticated map boundary exposes exactly the three active ports; the OSN
+-- command/readiness surface is authenticated-only + ownership-safe (writers/arrival service-role-only, anon
+-- denied); the arbitrary-coordinate command (command_main_ship_space_move) is the ONLY public raw-coordinate
+-- entry point and is authenticated-only with its raw coordinate writers service-role-only; the movement-owner
 -- exclusivity / idempotency / dock-arrival structure is intact; no fleet holds both a legacy and an OSN
 -- movement; and the readiness boundary is present + authenticated with >=2 active destination ports.
 --
@@ -31,13 +35,36 @@ SET LOCAL default_transaction_read_only = on;
 
 SELECT 'RO=' || current_setting('transaction_read_only');
 
--- ── A. Deployment + flags (POST-ENABLE: space flag is now TRUE) ─────────────────────────────────────────
+-- ── A. Deployment head (now 0070 — OSN-COORD-GATE-1) + fail-closed tracked-flag integrity ───────────────
 SELECT 'HEAD='        || coalesce(max(version),'none') FROM supabase_migrations.schema_migrations;
-SELECT 'N_AFTER='     || count(*) FROM supabase_migrations.schema_migrations WHERE version > '20260618000069';
-SELECT 'FLAG_SEND='   || coalesce(public.cfg_bool('mainship_send_enabled')::int::text,'x');
-SELECT 'FLAG_SPACE='  || coalesce(public.cfg_bool('mainship_space_movement_enabled')::int::text,'x');
-SELECT 'CONFIG_DEVIATIONS=' || ((CASE WHEN public.cfg_bool('mainship_send_enabled') THEN 0 ELSE 1 END)
-                              +  (CASE WHEN public.cfg_bool('mainship_space_movement_enabled') THEN 0 ELSE 1 END));
+SELECT 'N_AFTER='     || count(*) FROM supabase_migrations.schema_migrations WHERE version > '20260618000070';
+
+-- A1. Fail-closed flag INTEGRITY. game_config.key is a PRIMARY KEY, so each key is present 0 or 1 times; we
+--     require EXACTLY ONE row whose jsonb value extracts to a literal boolean ('true'/'false'). cfg_bool()
+--     alone is INSUFFICIENT here: it coalesces a MISSING row to false, masking absence — these guards close
+--     that, so a deleted/duplicated/non-boolean row fails the verification instead of reading as a silent false.
+SELECT 'SEND_ROWS='  || count(*) FROM public.game_config WHERE key='mainship_send_enabled';
+SELECT 'SPACE_ROWS=' || count(*) FROM public.game_config WHERE key='mainship_space_movement_enabled';
+SELECT 'COORD_ROWS=' || count(*) FROM public.game_config WHERE key='mainship_coordinate_travel_enabled';
+SELECT 'SEND_BOOL='  || coalesce((SELECT ((value #>> '{}') IN ('true','false'))::int::text FROM public.game_config WHERE key='mainship_send_enabled'),'0');
+SELECT 'SPACE_BOOL=' || coalesce((SELECT ((value #>> '{}') IN ('true','false'))::int::text FROM public.game_config WHERE key='mainship_space_movement_enabled'),'0');
+SELECT 'COORD_BOOL=' || coalesce((SELECT ((value #>> '{}') IN ('true','false'))::int::text FROM public.game_config WHERE key='mainship_coordinate_travel_enabled'),'0');
+
+-- A2. Actual stored LIVE values, read from the authoritative DB ONLY (never inferred from migration text /
+--     workflow logs / source code / defaults / the frontend constant). Extracted WITHOUT a throwing cast:
+--     only a real boolean literal yields 1/0; a missing or non-boolean value yields 'x' (→ fail-closed below).
+SELECT 'FLAG_SEND='  || coalesce((SELECT CASE WHEN (value #>> '{}') IN ('true','false') THEN ((value #>> '{}')::boolean)::int::text ELSE 'x' END FROM public.game_config WHERE key='mainship_send_enabled'),'x');
+SELECT 'FLAG_SPACE=' || coalesce((SELECT CASE WHEN (value #>> '{}') IN ('true','false') THEN ((value #>> '{}')::boolean)::int::text ELSE 'x' END FROM public.game_config WHERE key='mainship_space_movement_enabled'),'x');
+SELECT 'FLAG_COORD=' || coalesce((SELECT CASE WHEN (value #>> '{}') IN ('true','false') THEN ((value #>> '{}')::boolean)::int::text ELSE 'x' END FROM public.game_config WHERE key='mainship_coordinate_travel_enabled'),'x');
+-- Raw observed coordinate-gate value, printed VERBATIM so any deviation is reported exactly, never normalized.
+SELECT 'COORD_RAW='  || coalesce((SELECT value::text FROM public.game_config WHERE key='mainship_coordinate_travel_enabled'),'<<MISSING>>');
+
+-- A3. Deviations from the approved CURRENT dark baseline: send=true, space=true, coordinate=FALSE. A missing
+--     or non-'true'/'false' value counts as a deviation (compared against the exact expected literal).
+SELECT 'CONFIG_DEVIATIONS=' || (
+    (CASE WHEN (SELECT value #>> '{}' FROM public.game_config WHERE key='mainship_send_enabled')              = 'true'  THEN 0 ELSE 1 END)
+  + (CASE WHEN (SELECT value #>> '{}' FROM public.game_config WHERE key='mainship_space_movement_enabled')    = 'true'  THEN 0 ELSE 1 END)
+  + (CASE WHEN (SELECT value #>> '{}' FROM public.game_config WHERE key='mainship_coordinate_travel_enabled') = 'false' THEN 0 ELSE 1 END));
 
 -- ── B. Canonical starter-port catalog state (the three are ACTIVE) ──────────────────────────────────────
 SELECT 'CANON_EXIST='  || count(*) FROM public.locations WHERE id IN ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003');
@@ -76,11 +103,35 @@ SELECT 'ACL_ARRIVAL_SVC_ONLY=' || coalesce((to_regprocedure('public.process_main
    AND NOT has_function_privilege('authenticated', to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE')
    AND NOT has_function_privilege('anon',          to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE')
    AND has_function_privilege('service_role',      to_regprocedure('public.process_mainship_space_arrivals()')::oid, 'EXECUTE'))::int::text,'x');
--- PHASE 9 (head 0069): the docked-port READ surface is authenticated-only + PUBLIC/anon denied.
+-- PHASE 9 (live since head 0069): the docked-port READ surface is authenticated-only + PUBLIC/anon denied.
 SELECT 'ACL_DOCK_AUTH=' || coalesce((to_regprocedure('public.get_my_current_dock_services()') is not null
    AND has_function_privilege('authenticated', to_regprocedure('public.get_my_current_dock_services()')::oid, 'EXECUTE'))::int::text,'x');
 SELECT 'ACL_DOCK_ANON_DENIED=' || coalesce((to_regprocedure('public.get_my_current_dock_services()') is not null
    AND NOT has_function_privilege('anon', to_regprocedure('public.get_my_current_dock_services()')::oid, 'EXECUTE'))::int::text,'x');
+
+-- ── D2. OSN-COORD-GATE-1 (head 0070): the arbitrary-coordinate command surface. command_main_ship_space_move
+--        is the ONLY public raw-coordinate entry point — authenticated-only (anon denied; PUBLIC-denied is
+--        implied by anon-denied, since a PUBLIC EXECUTE grant would also let anon execute). Its raw coordinate
+--        writers stay service-role-only (auth+anon denied). Forbidden names appear ONLY inside single-quoted
+--        to_regprocedure() lookups (oid resolution; they cannot execute the function). ────────────────────────
+SELECT 'ACL_COORD_CMD_AUTH=' || coalesce((to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)') is not null
+   AND has_function_privilege('authenticated', to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)')::oid, 'EXECUTE'))::int::text,'x');
+SELECT 'ACL_COORD_CMD_ANON_DENIED=' || coalesce((to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)') is not null
+   AND NOT has_function_privilege('anon', to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)')::oid, 'EXECUTE'))::int::text,'x');
+SELECT 'ACL_COORD_WRITER_SVC_ONLY=' || coalesce((to_regprocedure('public.mainship_space_begin_move(uuid, uuid, double precision, double precision, uuid)') is not null
+   AND NOT has_function_privilege('authenticated', to_regprocedure('public.mainship_space_begin_move(uuid, uuid, double precision, double precision, uuid)')::oid, 'EXECUTE')
+   AND NOT has_function_privilege('anon',          to_regprocedure('public.mainship_space_begin_move(uuid, uuid, double precision, double precision, uuid)')::oid, 'EXECUTE')
+   AND has_function_privilege('service_role',      to_regprocedure('public.mainship_space_begin_move(uuid, uuid, double precision, double precision, uuid)')::oid, 'EXECUTE'))::int::text,'x');
+SELECT 'ACL_COORD_CORE_SVC_ONLY=' || coalesce((to_regprocedure('public.mainship_space_begin_move_core(uuid, uuid, text, double precision, double precision, uuid, uuid)') is not null
+   AND NOT has_function_privilege('authenticated', to_regprocedure('public.mainship_space_begin_move_core(uuid, uuid, text, double precision, double precision, uuid, uuid)')::oid, 'EXECUTE')
+   AND NOT has_function_privilege('anon',          to_regprocedure('public.mainship_space_begin_move_core(uuid, uuid, text, double precision, double precision, uuid, uuid)')::oid, 'EXECUTE')
+   AND has_function_privilege('service_role',      to_regprocedure('public.mainship_space_begin_move_core(uuid, uuid, text, double precision, double precision, uuid, uuid)')::oid, 'EXECUTE'))::int::text,'x');
+-- "still ONLY this one" — exactly ONE public function with identity args (double precision, double precision,
+--  uuid) is EXECUTE-able by authenticated, i.e. no sibling raw-coordinate wrapper was added beside it.
+SELECT 'COORD_SURFACE_COUNT=' || (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public'
+     AND pg_get_function_identity_arguments(p.oid) = 'double precision, double precision, uuid'
+     AND has_function_privilege('authenticated', p.oid, 'EXECUTE'));
 
 -- ── E. Movement-owner exclusivity / idempotency structure (must stay intact once OSN is live) ───────────
 SELECT 'STRUCT_EXCL=' || (SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace nn ON nn.oid=t.relnamespace
