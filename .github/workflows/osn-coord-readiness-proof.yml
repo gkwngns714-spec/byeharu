@@ -1,0 +1,89 @@
+name: OSN-COORD-ENABLE-1B — readiness-capability disposable proof (no production)
+
+# Proves the additive coordinate-travel capability on the OSN readiness read-model (migration 0071,
+# get_osn_movement_readiness().coordinate_travel_available) WITHOUT any production access:
+#   1. DB-free self-test (additive field; strict osn_available∧coord-gate derivation; existing fields +
+#      SECURITY DEFINER + authenticated-only ACL preserved; no command change / no write / no flag set);
+#   2. a disposable local Supabase (all migrations through 0071) matrix exercising the REAL authenticated
+#      boundary: the required 4-case truth table, the unanchored anti-spoof case, field-type/ACL checks, and
+#      a no-write guard;
+#   3. a regression run of the existing coordinate-gate proof through 0071 on a FRESH stack, confirming the
+#      additive migration did not change command_main_ship_space_move behavior.
+# No `environment:` on any job — none can read production secrets. Triggered by push to osn-coord-readiness-*
+# branches (repo CI-proof convention) or manual dispatch.
+
+on:
+  push:
+    branches:
+      - 'osn-coord-readiness-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osn-coord-readiness-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/osn-coord-readiness-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies all migrations through 0071)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Readiness-capability matrix ok[1]..ok[9] on the disposable stack
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-coord-readiness-proof.sh local
+      - name: Assert the disposable stack ends at the dark baseline (both flags false; 3 ports hidden)
+        if: always()
+        run: |
+          set -a; . /tmp/sbenv 2>/dev/null || true; set +a
+          if [ -n "${DB_URL:-}" ]; then
+            psql "$DB_URL" -X -v ON_ERROR_STOP=1 -c "do \$\$ begin
+              if (select value from public.game_config where key='mainship_space_movement_enabled') is distinct from 'false'::jsonb then raise exception 'movement flag not false'; end if;
+              if (select value from public.game_config where key='mainship_coordinate_travel_enabled') is distinct from 'false'::jsonb then raise exception 'coordinate flag not false'; end if;
+              if (select count(*) from public.locations where id in ('b1a00001-0066-4a00-8a00-000000000001','b1a00002-0066-4a00-8a00-000000000002','b1a00003-0066-4a00-8a00-000000000003') and status<>'hidden') <> 0 then raise exception 'ports not hidden'; end if;
+              raise notice 'post-run ok: both flags false; 3 ports hidden';
+            end \$\$;"
+          fi
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
+
+  regression-coord-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start a FRESH disposable local Supabase (all migrations through 0071)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Regression — existing coordinate-gate proof still green through 0071
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/osn-coord-gate-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
