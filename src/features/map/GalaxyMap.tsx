@@ -16,7 +16,8 @@ import { isActiveCoordinateTransit } from './spaceStopCommand'
 import { classifyPointerGesture } from './spaceMoveCommand'
 import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
-import { OSN_COORDINATE_TRAVEL_ENABLED } from './osnReleaseGates'
+import { useOsnReadiness } from './useOsnReadiness'
+import { isCoordinateTargetingActionable, type OsnReadiness } from './osnReadiness'
 
 // Read-only 2D galaxy map (plain SVG — no canvas/WebGL). UNIFIED fixed-coordinate frame (S6B-PRES):
 // EVERY spatial object — named locations, base/home, movement lines, legacy + open-space ship states,
@@ -39,6 +40,7 @@ export function GalaxyMap({
   movements,
   selectedId,
   onSelect,
+  deps,
 }: {
   locations: MapLocation[]
   base: Base | null
@@ -50,6 +52,11 @@ export function GalaxyMap({
   movements: FleetMovement[]
   selectedId: string | null
   onSelect: (id: string | null) => void
+  // Test/integration injection seam; defaults to the real server readiness + movement-flag reads.
+  deps?: {
+    readinessFetcher?: () => Promise<OsnReadiness>
+    spaceMoveEnabled?: boolean
+  }
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
@@ -84,9 +91,15 @@ export function GalaxyMap({
           mainShipSpaceMovement?.status === 'moving'
         ? 'in_transit'
         : 'eligible'
-  // S6C is suppressed for PORT-LAUNCH-1B: a coordinate target can never be selected by a player, even if
-  // the server flag is on. (sm.enabled / eligibility stay computed so the dormant code path is unchanged.)
-  const canTarget = OSN_COORDINATE_TRAVEL_ENABLED && sm.enabled && eligibility === 'eligible'
+  // OSN-COORD-ENABLE-1C — runtime coordinate capability. The empty-space command surface is driven SOLELY by
+  // the server-derived readiness projection (coordinate_travel_available), NOT the retired compile-time const.
+  // Readiness re-validates on mount, on any main-ship/movement lifecycle change, and on a manual refresh after
+  // a coordinate command completes. While production stays dark (mainship_coordinate_travel_enabled=false) the
+  // server returns coordinate_travel_available=false → canTarget is false → the whole surface stays unmounted.
+  const readinessLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
+  const { readiness, refresh: refreshReadiness } = useOsnReadiness(readinessLifecycleKey, { fetcher: deps?.readinessFetcher })
+  const spaceMoveEnabled = deps?.spaceMoveEnabled ?? sm.enabled
+  const canTarget = isCoordinateTargetingActionable(readiness, spaceMoveEnabled, eligibility)
   // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a target tap; drags
   // and multi-touch stay map pan. Tracked alongside (never replacing) the existing pan snapshot.
   const tap = useRef<{ x: number; y: number; t: number; maxPointers: number } | null>(null)
@@ -344,19 +357,20 @@ export function GalaxyMap({
         </g>
       </svg>
 
-      {/* OSN-3 S6C — overlay controls. PORT-LAUNCH-1B suppresses this player-facing empty-space command
-          surface entirely (OSN_COORDINATE_TRAVEL_ENABLED=false) so it never mounts even with the flag on;
-          port-to-port travel is the only release surface (PortNavPanel, mounted by the screen). */}
-      {OSN_COORDINATE_TRAVEL_ENABLED && sm.enabled && mainShip && (
+      {/* OSN-3 S6C / OSN-COORD-ENABLE-1C — overlay controls. Mounts ONLY when the SERVER readiness capability
+          is true AND the movement domain is enabled AND the ship is eligible (canTarget). While production is
+          dark (coordinate_travel_available=false) it never mounts; a non-'eligible' ship also keeps it hidden.
+          Port-to-port travel is a separate release surface (PortNavPanel, mounted by the screen). */}
+      {canTarget && (
         <SpaceMoveControls
-          enabled={sm.enabled}
+          enabled={spaceMoveEnabled}
           eligibility={eligibility}
           phase={sm.state.phase}
           target={sm.state.target}
           targetWithinBounds={sm.state.targetWithinBounds}
           serverTarget={sm.state.serverTarget}
           errorMessage={sm.state.errorMessage}
-          onConfirm={() => void sm.submit()}
+          onConfirm={() => void sm.submit().finally(() => refreshReadiness())}
           onClear={sm.clear}
         />
       )}
