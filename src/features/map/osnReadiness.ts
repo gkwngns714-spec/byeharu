@@ -19,11 +19,16 @@ export type OsnOriginCategory = (typeof OSN_ORIGIN_CATEGORIES)[number]
 
 // The sanitized, client-trusted readiness projection. `eligibleDestinationIds` are raw server ids that must
 // STILL be intersected with the visible world map before any are shown (selectableDestinationIds).
+// `coordinateTravelAvailable` is the SERVER-derived runtime capability for the empty-space coordinate command
+// surface (OSN-COORD-ENABLE-1B, migration 0071): server-side it equals osn_available AND the coordinate gate,
+// so it is true ONLY for an anchored caller while mainship_coordinate_travel_enabled is on. It is the SOLE
+// authority for showing coordinate targeting; it replaces the retired compile-time OSN_COORDINATE_TRAVEL_ENABLED.
 export interface OsnReadiness {
   osnAvailable: boolean
   originCategory: OsnOriginCategory | null
   reason: string | null
   eligibleDestinationIds: string[]
+  coordinateTravelAvailable: boolean
 }
 
 // The safe default for loading / error / malformed / unavailable: nothing is actionable, nothing renders.
@@ -32,6 +37,7 @@ export const OSN_NOT_ACTIONABLE: OsnReadiness = {
   originCategory: null,
   reason: null,
   eligibleDestinationIds: [],
+  coordinateTravelAvailable: false,
 }
 
 function isOriginCategory(v: unknown): v is OsnOriginCategory {
@@ -52,12 +58,36 @@ export function parseOsnReadiness(raw: unknown): OsnReadiness {
   const ids = Array.isArray(o.eligible_destination_ids)
     ? o.eligible_destination_ids.filter((x): x is string => typeof x === 'string' && x.length > 0)
     : []
+  // STRICT boolean: only a literal `true` enables the capability. Missing / null / non-boolean / 'true'
+  // string / 1 → false (fail-closed). Old payloads that predate the field parse as false, staying compatible.
+  const coordinateTravelAvailable = o.coordinate_travel_available === true
   return {
     osnAvailable: o.osn_available,
     originCategory: o.origin_category,
     reason,
     eligibleDestinationIds: ids,
+    coordinateTravelAvailable,
   }
+}
+
+/**
+ * Runtime render gate for the empty-space COORDINATE command surface (tap-to-target, the preview crosshair,
+ * and SpaceMoveControls). Replaces the RETIRED compile-time OSN_COORDINATE_TRAVEL_ENABLED constant: coordinate
+ * targeting is actionable ONLY when the SERVER readiness projection confirms the capability AND the existing
+ * movement domain is enabled AND the ship's existing eligibility is 'eligible'. Fail-closed by construction —
+ * a loading / malformed / fetch-failure readiness (coordinateTravelAvailable=false), a disabled movement
+ * domain, or any non-'eligible' ship (no_ship / destroyed / in_transit) all yield false. Pure; no React/DOM.
+ */
+export function isCoordinateTargetingActionable(
+  readiness: OsnReadiness,
+  spaceMovementEnabled: boolean,
+  eligibility: string,
+): boolean {
+  return (
+    readiness.coordinateTravelAvailable === true &&
+    spaceMovementEnabled === true &&
+    eligibility === 'eligible'
+  )
 }
 
 /**

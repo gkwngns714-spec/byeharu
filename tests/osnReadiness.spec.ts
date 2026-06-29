@@ -4,25 +4,26 @@ import {
   selectableDestinationIds,
   isPortNavActionable,
   isActiveLocationTargetTransit,
+  isCoordinateTargetingActionable,
   OSN_NOT_ACTIONABLE,
   type OsnReadiness,
 } from '../src/features/map/osnReadiness'
-import { OSN_COORDINATE_TRAVEL_ENABLED } from '../src/features/map/osnReleaseGates'
 
-// PORT-LAUNCH-1B — pure proofs for the dark port-to-port readiness/selection boundary. No browser/DB/network.
-// Run: `npm run verify:osn:port`.
+// PORT-LAUNCH-1B + OSN-COORD-ENABLE-1C — pure proofs for the dark port-to-port readiness/selection boundary
+// AND the runtime coordinate-capability gate. No browser/DB/network. Run: `npm run verify:osn:port`.
 
-const anchored = (eligible: string[]): OsnReadiness => ({
+const anchored = (eligible: string[], coordinateTravelAvailable = false): OsnReadiness => ({
   osnAvailable: true,
   originCategory: 'anchored',
   reason: 'none',
   eligibleDestinationIds: eligible,
+  coordinateTravelAvailable,
 })
 
 // ── A. boundary validation: only the documented shape is actionable ────────────────────────────────────
 test('parse: a well-formed anchored response is accepted verbatim', () => {
   const r = parseOsnReadiness({ origin_category: 'anchored', osn_available: true, reason: 'none', eligible_destination_ids: ['a', 'b'] })
-  expect(r).toEqual({ osnAvailable: true, originCategory: 'anchored', reason: 'none', eligibleDestinationIds: ['a', 'b'] })
+  expect(r).toEqual({ osnAvailable: true, originCategory: 'anchored', reason: 'none', eligibleDestinationIds: ['a', 'b'], coordinateTravelAvailable: false })
 })
 
 test('parse: each documented category is accepted; unknown categories collapse to NOT_ACTIONABLE', () => {
@@ -68,9 +69,9 @@ test('actionable: true only when available + anchored + selectable>0', () => {
 
 test('actionable: false while loading / malformed / unavailable / not-anchored / no eligible (F1)', () => {
   expect(isPortNavActionable(OSN_NOT_ACTIONABLE, 0)).toBe(false) // loading/malformed default
-  expect(isPortNavActionable({ osnAvailable: false, originCategory: 'anchored', reason: 'feature_disabled', eligibleDestinationIds: ['p1'] }, 1)).toBe(false) // flag dark
-  expect(isPortNavActionable({ osnAvailable: true, originCategory: 'not_anchored', reason: 'travel_to_port', eligibleDestinationIds: [] }, 0)).toBe(false)
-  expect(isPortNavActionable({ osnAvailable: true, originCategory: 'in_transit', reason: 'in_transit', eligibleDestinationIds: [] }, 0)).toBe(false)
+  expect(isPortNavActionable({ osnAvailable: false, originCategory: 'anchored', reason: 'feature_disabled', eligibleDestinationIds: ['p1'], coordinateTravelAvailable: false }, 1)).toBe(false) // flag dark
+  expect(isPortNavActionable({ osnAvailable: true, originCategory: 'not_anchored', reason: 'travel_to_port', eligibleDestinationIds: [], coordinateTravelAvailable: false }, 0)).toBe(false)
+  expect(isPortNavActionable({ osnAvailable: true, originCategory: 'in_transit', reason: 'in_transit', eligibleDestinationIds: [], coordinateTravelAvailable: false }, 0)).toBe(false)
   expect(isPortNavActionable(anchored(['p1']), 0)).toBe(false) // anchored but none visible-eligible
 })
 
@@ -82,7 +83,50 @@ test('location-target transit: true ONLY for an active location move (not space 
   expect(isActiveLocationTargetTransit({ spatialState: 'in_transit', spaceMovementStatus: 'arrived', spaceMovementTargetKind: 'location' })).toBe(false)
 })
 
-// ── E. coordinate travel stays suppressed (F2) ─────────────────────────────────────────────────────────
-test('coordinate travel is release-gated OFF for this slice', () => {
-  expect(OSN_COORDINATE_TRAVEL_ENABLED).toBe(false)
+// ── E. OSN-COORD-ENABLE-1C — coordinate capability parsing (strict boolean, fail-closed) ─────────────────
+test('parse: coordinate_travel_available=true parses as true', () => {
+  const r = parseOsnReadiness({ origin_category: 'anchored', osn_available: true, reason: 'none', eligible_destination_ids: [], coordinate_travel_available: true })
+  expect(r.coordinateTravelAvailable).toBe(true)
+})
+
+test('parse: missing / null / non-boolean coordinate_travel_available is fail-closed false (strict boolean only)', () => {
+  // a well-formed payload that simply omits or mis-types the field → capability false, other fields intact
+  for (const v of [undefined, null, 'true', 1, 0, 'false', {}, []]) {
+    const raw: Record<string, unknown> = { origin_category: 'anchored', osn_available: true, reason: 'none', eligible_destination_ids: ['p1'] }
+    if (v !== undefined) raw.coordinate_travel_available = v
+    const r = parseOsnReadiness(raw)
+    expect(r.coordinateTravelAvailable).toBe(false)
+    expect(r.originCategory).toBe('anchored') // existing fields remain compatible / unaffected
+    expect(r.eligibleDestinationIds).toEqual(['p1'])
+  }
+})
+
+test('parse: an old payload predating the field stays compatible (capability false, nothing crashes)', () => {
+  const r = parseOsnReadiness({ origin_category: 'not_anchored', osn_available: false, reason: 'travel_to_port', eligible_destination_ids: [] })
+  expect(r).toEqual({ osnAvailable: false, originCategory: 'not_anchored', reason: 'travel_to_port', eligibleDestinationIds: [], coordinateTravelAvailable: false })
+})
+
+test('parse: a fully malformed payload fails closed (capability false via OSN_NOT_ACTIONABLE)', () => {
+  expect(parseOsnReadiness({ osn_available: 'yes', coordinate_travel_available: true }).coordinateTravelAvailable).toBe(false)
+  expect(parseOsnReadiness(null).coordinateTravelAvailable).toBe(false)
+})
+
+// ── F. runtime coordinate-target render gate — replaces the retired OSN_COORDINATE_TRAVEL_ENABLED const ───
+test('coordinate gate: actionable ONLY when capability true AND movement enabled AND ship eligible', () => {
+  expect(isCoordinateTargetingActionable(anchored([], true), true, 'eligible')).toBe(true)
+})
+
+test('coordinate gate: hidden when capability is false (even if enabled + eligible)', () => {
+  expect(isCoordinateTargetingActionable(anchored([], false), true, 'eligible')).toBe(false)
+  expect(isCoordinateTargetingActionable(OSN_NOT_ACTIONABLE, true, 'eligible')).toBe(false) // loading/fetch-failure default
+})
+
+test('coordinate gate: hidden when the movement domain is disabled (even if capability + eligible)', () => {
+  expect(isCoordinateTargetingActionable(anchored([], true), false, 'eligible')).toBe(false)
+})
+
+test('coordinate gate: hidden for any non-eligible ship even if capability is true', () => {
+  for (const e of ['no_ship', 'destroyed', 'in_transit', 'something_else']) {
+    expect(isCoordinateTargetingActionable(anchored([], true), true, e)).toBe(false)
+  }
 })

@@ -1,12 +1,16 @@
-// PORT-LAUNCH-1B — release gates for the OSN navigation surfaces (PURE, framework-free constants).
+// PORT-LAUNCH-1B / OSN-COORD-ENABLE-1C — release gates for the OSN navigation surfaces (PURE constants).
 //
-// These are COMPILE-TIME constants, NOT runtime/game_config feature flags and NOT production-visible
-// escape hatches — `vite build` const-folds any gated branch out of the bundle. They exist so a single
-// tested source of truth controls which OSN command surfaces a player can reach.
+// These are COMPILE-TIME constants, NOT runtime/game_config feature flags.
 
-// The first OSN release is PORT-TO-PORT location travel ONLY. The player-facing empty-space coordinate
-// command surface (tap-to-coordinate target + SpaceMoveControls, calling command_main_ship_space_move)
-// stays UNMOUNTED even after `mainship_space_movement_enabled` flips on. Re-enabling coordinate travel
-// requires a separate future charter tied to exploration/mining/combat gameplay. The underlying coordinate
-// transform / route / Stop / resolver code is untouched and stays dark.
+// RETIRED as a UI authority (OSN-COORD-ENABLE-1C). Coordinate targeting is no longer gated by this constant;
+// it is now driven SOLELY by the server-derived runtime capability `coordinate_travel_available` from
+// get_osn_movement_readiness() (see osnReadiness.isCoordinateTargetingActionable + GalaxyMap). No component
+// imports this constant anymore — keeping it referenced would re-introduce a second, contradictory frontend
+// gate, which is exactly what 1C removes.
+//
+// It is retained at `false` for ONE narrow, non-UI purpose: the strictly read-only production verifier
+// (scripts/osn-postenable-verify.* → assert_coord_suppressed + the OSN_COORDINATE_TRAVEL_ENABLED_FRONTEND
+// marker) greps THIS file to confirm there is no compile-time coordinate escape hatch in the bundle. It must
+// never be flipped to `true` and must never re-enter the render path; a future cleanup may remove it together
+// with that verifier assertion.
 export const OSN_COORDINATE_TRAVEL_ENABLED = false as const
