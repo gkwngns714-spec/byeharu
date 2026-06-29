@@ -64,8 +64,8 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ck() { if [ "${1:-}" != "$2" ]; then echo "  CHECK FAIL: $3 (got '${1:-}', want '$2')"; RECON_PASS=0; fi; }
   ge() { if [ "$(( ${1:-0} ))" -lt "$2" ] 2>/dev/null; then echo "  CHECK FAIL: $3 (got '${1:-}', want >=$2)"; RECON_PASS=0; fi; }
   ck "$(mval "$OUT" RO)" on "read-only transaction active"
-  ck "$(mval "$OUT" HEAD)" 20260618000070 "migration head 0070 (OSN-COORD-GATE-1)"
-  ck "$(mval "$OUT" N_AFTER)" 0 "no migration after 0070"
+  ck "$(mval "$OUT" HEAD)" 20260618000071 "migration head 0071 (OSN-COORD-ENABLE-1B readiness capability)"
+  ck "$(mval "$OUT" N_AFTER)" 0 "no migration after 0071"
   # fail-closed flag integrity: each tracked key present EXACTLY once and parseable as a JSON boolean
   ck "$(mval "$OUT" SEND_ROWS)" 1 "mainship_send_enabled present exactly once"
   ck "$(mval "$OUT" SPACE_ROWS)" 1 "mainship_space_movement_enabled present exactly once"
@@ -101,6 +101,15 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ck "$(mval "$OUT" ACL_ARRIVAL_SVC_ONLY)" 1 "arrival processor service-role-only"
   ck "$(mval "$OUT" ACL_READINESS_AUTH)" 1 "readiness authenticated"
   ck "$(mval "$OUT" ACL_READINESS_ANON_DENIED)" 1 "readiness anon-denied"
+  # OSN-COORD-ENABLE-1B (head 0071): readiness response contract + function attributes (live, single RPC call)
+  ck "$(mval "$OUT" RDN_RESOLVED)" 1 "readiness function resolves canonically"
+  ck "$(mval "$OUT" RDN_RETTYPE_JSONB)" 1 "readiness return type is jsonb"
+  ck "$(mval "$OUT" RDN_SECDEF)" 1 "readiness is SECURITY DEFINER"
+  ck "$(mval "$OUT" RDN_SEARCHPATH)" 1 "readiness has hardened search_path=public"
+  ck "$(mval "$OUT" RDN_PUBLIC_DENIED)" 1 "readiness PUBLIC execute denied (from proacl)"
+  ck "$(mval "$OUT" RDN_HAS_COORD)" 1 "readiness response contains coordinate_travel_available"
+  ck "$(mval "$OUT" RDN_COORD_TYPE)" boolean "coordinate_travel_available is a JSON boolean"
+  ck "$(mval "$OUT" RDN_COORD_VALUE)" false "coordinate_travel_available is false on the no-auth path"
   ck "$(mval "$OUT" ACL_DOCK_AUTH)" 1 "dock-services read surface authenticated"
   ck "$(mval "$OUT" ACL_DOCK_ANON_DENIED)" 1 "dock-services read surface anon/PUBLIC denied"
   ge "$(mval "$OUT" STRUCT_EXCL)" 1 "fleet movement-owner exclusivity CHECK"
@@ -110,7 +119,7 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ge "$(mval "$OUT" ELIGIBLE_ACTIVE_PORTS)" 2 "an anchored player has >=1 eligible destination (>=2 active ports)"
 }
 emit_markers() { local OUT="$1"
-  echo "MIGRATION_HEAD=$( [ "$(mval "$OUT" HEAD)" = 20260618000070 ] && echo 0070 || mval "$OUT" HEAD )"
+  echo "MIGRATION_HEAD=$( [ "$(mval "$OUT" HEAD)" = 20260618000071 ] && echo 0071 || mval "$OUT" HEAD )"
   echo "CANONICAL_STARTER_PORTS_EXPECTED=3"
   echo "CANONICAL_STARTER_PORTS_ACTIVE=$(mval "$OUT" CANON_ACTIVE)"
   echo "CANONICAL_STARTER_PORTS_HIDDEN=$(mval "$OUT" CANON_HIDDEN)"
@@ -134,6 +143,16 @@ emit_markers() { local OUT="$1"
   echo "PRODUCTION_OSN_DOCK_ARRIVAL_CONTRACT=$( [ "$(mval "$OUT" ACL_DOCK_SVC_ONLY)" = 1 ] && [ "$(mval "$OUT" ACL_ARRIVAL_SVC_ONLY)" = 1 ] && echo true || echo false )"
   echo "PRODUCTION_OSN_NO_LEGACY_OVERLAP=$( [ "$(mval "$OUT" LEGACY_OSN_OVERLAP)" = 0 ] && echo true || echo false )"
   echo "PRODUCTION_OSN_PLAYER_READINESS_BEHAVIOR_PROVEN_BY_1B=true"
+  # OSN-COORD-ENABLE-1B (head 0071): the readiness coordinate-capability CONTRACT, from the single live RPC call
+  # + catalog. AUTHENTICATED_ONLY = auth allowed AND anon denied AND PUBLIC denied. FIELD_PRESENT/TYPE/NO_AUTH_VALUE
+  # come from the one no-auth RPC return (no-ship path). DARK_BY_CONFIG is true ONLY when the server gate is false
+  # AND the field exists AND is a JSON boolean AND the no-auth return is false — it asserts dark-by-configuration,
+  # NOT a claim about an anchored player's runtime value.
+  echo "READINESS_RPC_AUTHENTICATED_ONLY=$( [ "$(mval "$OUT" ACL_READINESS_AUTH)" = 1 ] && [ "$(mval "$OUT" ACL_READINESS_ANON_DENIED)" = 1 ] && [ "$(mval "$OUT" RDN_PUBLIC_DENIED)" = 1 ] && echo true || echo false )"
+  echo "READINESS_COORDINATE_CAPABILITY_FIELD_PRESENT=$( [ "$(mval "$OUT" RDN_HAS_COORD)" = 1 ] && echo true || echo false )"
+  echo "READINESS_COORDINATE_CAPABILITY_FIELD_TYPE=$(mval "$OUT" RDN_COORD_TYPE)"
+  echo "READINESS_COORDINATE_CAPABILITY_NO_AUTH_VALUE=$(mval "$OUT" RDN_COORD_VALUE)"
+  echo "READINESS_COORDINATE_CAPABILITY_DARK_BY_CONFIG=$( [ "$(mval "$OUT" FLAG_COORD)" = 0 ] && [ "$(mval "$OUT" RDN_HAS_COORD)" = 1 ] && [ "$(mval "$OUT" RDN_COORD_TYPE)" = boolean ] && [ "$(mval "$OUT" RDN_COORD_VALUE)" = false ] && echo true || echo false )"
   # PHASE 9 (head 0069) — the docked-port READ surface ACL, and the read-only guarantee of this verifier.
   echo "DOCK_SERVICES_READ_SURFACE_AUTHENTICATED_ONLY=$( [ "$(mval "$OUT" ACL_DOCK_AUTH)" = 1 ] && [ "$(mval "$OUT" ACL_DOCK_ANON_DENIED)" = 1 ] && echo true || echo false )"
   echo "DOCK_SERVICES_READ_SURFACE_PUBLIC_DENIED=$( [ "$(mval "$OUT" ACL_DOCK_ANON_DENIED)" = 1 ] && echo true || echo false )"
@@ -159,7 +178,18 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "pg_get_function_identity_arguments" "$SQL" && fail "coordinate-surface census still uses a brittle identity-arguments display string" || true
   grep -q 'get_world_map' "$SQL" || fail "verifier does not test the authenticated map boundary"
   grep -q "to_regprocedure('public.get_osn_movement_readiness" "$SQL" || fail "verifier does not check the readiness ACL"
-  echo "[selftest] OK: asserts head 0070, the live DB flag values (send/space/coordinate) with fail-closed integrity, the map boundary, and the OSN + arbitrary-coordinate command ACL"
+  # OSN-COORD-ENABLE-1B: readiness response-contract probe (single evaluation) + function attributes
+  grep -q 'WITH r AS MATERIALIZED' "$SQL" || fail "verifier does not single-evaluate the readiness RPC probe (no MATERIALIZED CTE)"
+  grep -q 'public.get_osn_movement_readiness() AS j' "$SQL" || fail "verifier does not call the readiness RPC once for the contract probe"
+  [ "$(grep -cE 'get_osn_movement_readiness\(\)[^'\'']' "$SQL")" = 1 ] || fail "readiness RPC is executed other than exactly once (must be a single call)"
+  grep -q "'RDN_HAS_COORD='"   "$SQL" || fail "verifier does not assert coordinate_travel_available presence"
+  grep -q "'RDN_COORD_TYPE='"  "$SQL" || fail "verifier does not assert coordinate field type"
+  grep -q "'RDN_COORD_VALUE='" "$SQL" || fail "verifier does not assert the no-auth coordinate value"
+  grep -q "'RDN_RETTYPE_JSONB='" "$SQL" || fail "verifier does not assert jsonb return type"
+  grep -q "'RDN_SECDEF='"      "$SQL" || fail "verifier does not assert SECURITY DEFINER"
+  grep -q "'RDN_SEARCHPATH='"  "$SQL" || fail "verifier does not assert hardened search_path"
+  grep -q "'RDN_PUBLIC_DENIED='" "$SQL" || fail "verifier does not assert readiness PUBLIC-denied from proacl"
+  echo "[selftest] OK: asserts head 0071, the live DB flag values (send/space/coordinate) with fail-closed integrity, the map boundary, the OSN + arbitrary-coordinate command ACL, and the readiness coordinate-capability contract (single RPC probe + secdef/search_path/jsonb/ACL)"
   c="$(build_conn aws-0-x.pooler.supabase.com aaaaaaaaaaaaaaaaaaaa "$CA_FILE")"
   printf '%s' "$c" | grep -q 'sslmode=verify-full' || fail "conn missing verify-full"
   printf '%s' "$c" | grep -q 'port=5432' || fail "conn not session 5432"
@@ -199,7 +229,14 @@ if [ "$MODE" = "local" ]; then
   printf '%s\n' "$MK" | grep -qx 'MAINSHIP_COORDINATE_TRAVEL_ENABLED=false' || fail "coordinate gate not false in markers"
   printf '%s\n' "$MK" | grep -qx 'COORDINATE_COMMAND_PUBLIC_SURFACE=authenticated_only' || fail "coordinate command surface not authenticated_only in markers"
   printf '%s\n' "$MK" | grep -qx 'COORDINATE_RAW_WRITERS_SERVICE_ROLE_ONLY=true' || fail "coordinate raw writers not service-role-only in markers"
-  printf '%s\n' "$MK" | grep -qx 'MIGRATION_HEAD=0070' || fail "migration head not 0070 in markers"
+  printf '%s\n' "$MK" | grep -qx 'MIGRATION_HEAD=0071' || fail "migration head not 0071 in markers"
+  # OSN-COORD-ENABLE-1B readiness coordinate-capability contract markers must all reconcile in the baseline
+  for m in READINESS_RPC_AUTHENTICATED_ONLY=true READINESS_COORDINATE_CAPABILITY_FIELD_PRESENT=true \
+           READINESS_COORDINATE_CAPABILITY_FIELD_TYPE=boolean READINESS_COORDINATE_CAPABILITY_NO_AUTH_VALUE=false \
+           READINESS_COORDINATE_CAPABILITY_DARK_BY_CONFIG=true; do
+    printf '%s\n' "$MK" | grep -qx "$m" || fail "readiness contract marker missing/false: $m"
+  done
+  printf '%s\n' "$MK" | grep -q 'READINESS_COORDINATE_CAPABILITY_DARK=' && fail "emits the disallowed READINESS_COORDINATE_CAPABILITY_DARK marker" || true
   printf '%s\n' "$MK" | grep -qx 'OVERALL_PASS=true' || fail "OVERALL_PASS!=true"
   for m in PRODUCTION_OSN_READINESS_BOUNDARY_AUTHENTICATED_ONLY=true PRODUCTION_OSN_WRITER_SERVICE_ROLE_ONLY=true \
            PRODUCTION_OSN_OWNER_EXCLUSIVITY=true PRODUCTION_OSN_RECEIPT_IDEMPOTENCY=true \

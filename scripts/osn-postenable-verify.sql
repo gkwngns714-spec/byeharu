@@ -35,9 +35,9 @@ SET LOCAL default_transaction_read_only = on;
 
 SELECT 'RO=' || current_setting('transaction_read_only');
 
--- ── A. Deployment head (now 0070 — OSN-COORD-GATE-1) + fail-closed tracked-flag integrity ───────────────
+-- ── A. Deployment head (now 0071 — OSN-COORD-ENABLE-1B readiness capability) + fail-closed flag integrity ──
 SELECT 'HEAD='        || coalesce(max(version),'none') FROM supabase_migrations.schema_migrations;
-SELECT 'N_AFTER='     || count(*) FROM supabase_migrations.schema_migrations WHERE version > '20260618000070';
+SELECT 'N_AFTER='     || count(*) FROM supabase_migrations.schema_migrations WHERE version > '20260618000071';
 
 -- A1. Fail-closed flag INTEGRITY. game_config.key is a PRIMARY KEY, so each key is present 0 or 1 times; we
 --     require EXACTLY ONE row whose jsonb value extracts to a literal boolean ('true'/'false'). cfg_bool()
@@ -108,6 +108,31 @@ SELECT 'ACL_DOCK_AUTH=' || coalesce((to_regprocedure('public.get_my_current_dock
    AND has_function_privilege('authenticated', to_regprocedure('public.get_my_current_dock_services()')::oid, 'EXECUTE'))::int::text,'x');
 SELECT 'ACL_DOCK_ANON_DENIED=' || coalesce((to_regprocedure('public.get_my_current_dock_services()') is not null
    AND NOT has_function_privilege('anon', to_regprocedure('public.get_my_current_dock_services()')::oid, 'EXECUTE'))::int::text,'x');
+
+-- ── D1b. OSN-COORD-ENABLE-1B (head 0071): the readiness response CONTRACT + function attributes, proven from
+--        LIVE production, NOT from migration text. The single executed RPC call (no JWT in this verifier session,
+--        so auth.uid() is NULL) takes the no-ship/no-auth early return, which by construction carries the
+--        coordinate_travel_available field — this proves the field is PRESENT, a strict JSON boolean, and false
+--        on the NO-AUTH path ONLY. It does NOT claim an anchored player's runtime value (that derivation —
+--        field = osn_available AND the server gate — is proven by the PR #57 disposable 2x2 proof). The function
+--        is read-only and the enclosing transaction is READ ONLY, so the call cannot write. The RPC is called
+--        EXACTLY ONCE: a MATERIALIZED CTE forces single evaluation, and all three contract facts derive from it.
+WITH r AS MATERIALIZED (SELECT public.get_osn_movement_readiness() AS j)
+SELECT 'RDN_HAS_COORD='   || (j ? 'coordinate_travel_available')::int::text                                      FROM r
+UNION ALL
+SELECT 'RDN_COORD_TYPE='  || coalesce(jsonb_typeof(j->'coordinate_travel_available'), '<<absent>>')             FROM r
+UNION ALL
+SELECT 'RDN_COORD_VALUE=' || coalesce((j->>'coordinate_travel_available'), '<<absent>>')                        FROM r;
+-- readiness function catalog attributes (by OID identity; forbidden names never appear — readiness is not one):
+SELECT 'RDN_RESOLVED='     || (to_regprocedure('public.get_osn_movement_readiness()') is not null)::int::text;
+SELECT 'RDN_RETTYPE_JSONB=' || coalesce((SELECT (p.prorettype = 'jsonb'::regtype)::int::text FROM pg_proc p WHERE p.oid = to_regprocedure('public.get_osn_movement_readiness()')),'x');
+SELECT 'RDN_SECDEF='       || coalesce((SELECT p.prosecdef::int::text FROM pg_proc p WHERE p.oid = to_regprocedure('public.get_osn_movement_readiness()')),'x');
+SELECT 'RDN_SEARCHPATH='   || coalesce((SELECT (p.proconfig @> array['search_path=public'])::int::text FROM pg_proc p WHERE p.oid = to_regprocedure('public.get_osn_movement_readiness()')),'x');
+-- PUBLIC EXECUTE denied — read from proacl directly (PUBLIC = grantee oid 0). A NULL proacl means the built-in
+-- default applies, under which PUBLIC HAS EXECUTE on functions → that is a FAIL.
+SELECT 'RDN_PUBLIC_DENIED=' || coalesce((SELECT (NOT (p.proacl IS NULL OR EXISTS (
+       SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE')))::int::text
+   FROM pg_proc p WHERE p.oid = to_regprocedure('public.get_osn_movement_readiness()')),'x');
 
 -- ── D2. OSN-COORD-GATE-1 (head 0070): the arbitrary-coordinate command surface, asserted from the CATALOG by
 --        OID/type identity — NOT by any display-string formatting (OSN-COORD-VERIFY-2 replaced a brittle
