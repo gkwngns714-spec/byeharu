@@ -64,11 +64,26 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ck() { if [ "${1:-}" != "$2" ]; then echo "  CHECK FAIL: $3 (got '${1:-}', want '$2')"; RECON_PASS=0; fi; }
   ge() { if [ "$(( ${1:-0} ))" -lt "$2" ] 2>/dev/null; then echo "  CHECK FAIL: $3 (got '${1:-}', want >=$2)"; RECON_PASS=0; fi; }
   ck "$(mval "$OUT" RO)" on "read-only transaction active"
-  ck "$(mval "$OUT" HEAD)" 20260618000069 "migration head 0069"
-  ck "$(mval "$OUT" N_AFTER)" 0 "no migration after 0069"
+  ck "$(mval "$OUT" HEAD)" 20260618000070 "migration head 0070 (OSN-COORD-GATE-1)"
+  ck "$(mval "$OUT" N_AFTER)" 0 "no migration after 0070"
+  # fail-closed flag integrity: each tracked key present EXACTLY once and parseable as a JSON boolean
+  ck "$(mval "$OUT" SEND_ROWS)" 1 "mainship_send_enabled present exactly once"
+  ck "$(mval "$OUT" SPACE_ROWS)" 1 "mainship_space_movement_enabled present exactly once"
+  ck "$(mval "$OUT" COORD_ROWS)" 1 "mainship_coordinate_travel_enabled present exactly once"
+  ck "$(mval "$OUT" SEND_BOOL)" 1 "mainship_send_enabled parses as boolean"
+  ck "$(mval "$OUT" SPACE_BOOL)" 1 "mainship_space_movement_enabled parses as boolean"
+  ck "$(mval "$OUT" COORD_BOOL)" 1 "mainship_coordinate_travel_enabled parses as boolean"
+  # actual stored live values vs the approved CURRENT dark baseline (send=true, space=true, coordinate=FALSE)
   ck "$(mval "$OUT" FLAG_SEND)" 1 "mainship_send_enabled true"
-  ck "$(mval "$OUT" FLAG_SPACE)" 1 "mainship_space_movement_enabled TRUE (post-enable)"
+  ck "$(mval "$OUT" FLAG_SPACE)" 1 "mainship_space_movement_enabled TRUE (port-to-port enabled)"
+  ck "$(mval "$OUT" FLAG_COORD)" 0 "mainship_coordinate_travel_enabled FALSE (free coordinate travel still gated off; observed raw='$(mval "$OUT" COORD_RAW)')"
   ck "$(mval "$OUT" CONFIG_DEVIATIONS)" 0 "no tracked-flag config deviation"
+  # OSN-COORD-GATE-1 catalog: the arbitrary-coordinate command surface is authenticated-only and singular
+  ck "$(mval "$OUT" ACL_COORD_CMD_AUTH)" 1 "command_main_ship_space_move authenticated"
+  ck "$(mval "$OUT" ACL_COORD_CMD_ANON_DENIED)" 1 "command_main_ship_space_move anon/PUBLIC denied"
+  ck "$(mval "$OUT" ACL_COORD_WRITER_SVC_ONLY)" 1 "raw coordinate writer (begin_move) service-role-only"
+  ck "$(mval "$OUT" ACL_COORD_CORE_SVC_ONLY)" 1 "raw coordinate writer (begin_move_core) service-role-only"
+  ck "$(mval "$OUT" COORD_SURFACE_COUNT)" 1 "exactly one authenticated raw-coordinate command surface"
   ck "$(mval "$OUT" CANON_EXIST)" 3 "3 canonical ports exist"
   ck "$(mval "$OUT" CANON_ACTIVE)" 3 "3 canonical ports active"
   ck "$(mval "$OUT" CANON_HIDDEN)" 0 "0 canonical ports hidden"
@@ -92,7 +107,7 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ge "$(mval "$OUT" ELIGIBLE_ACTIVE_PORTS)" 2 "an anchored player has >=1 eligible destination (>=2 active ports)"
 }
 emit_markers() { local OUT="$1"
-  echo "MIGRATION_HEAD=$( [ "$(mval "$OUT" HEAD)" = 20260618000069 ] && echo 0069 || mval "$OUT" HEAD )"
+  echo "MIGRATION_HEAD=$( [ "$(mval "$OUT" HEAD)" = 20260618000070 ] && echo 0070 || mval "$OUT" HEAD )"
   echo "CANONICAL_STARTER_PORTS_EXPECTED=3"
   echo "CANONICAL_STARTER_PORTS_ACTIVE=$(mval "$OUT" CANON_ACTIVE)"
   echo "CANONICAL_STARTER_PORTS_HIDDEN=$(mval "$OUT" CANON_HIDDEN)"
@@ -100,7 +115,13 @@ emit_markers() { local OUT="$1"
   echo "AUTHENTICATED_MAP_PORTS_VISIBLE=$(mval "$OUT" MAP_CANON_VISIBLE)"
   echo "MAINSHIP_SEND_ENABLED=$( [ "$(mval "$OUT" FLAG_SEND)" = 1 ] && echo true || echo false )"
   echo "MAINSHIP_SPACE_MOVEMENT_ENABLED=$( [ "$(mval "$OUT" FLAG_SPACE)" = 1 ] && echo true || echo false )"
-  echo "OSN_COORDINATE_TRAVEL_ENABLED=false"
+  # Server-side coordinate gate — the ACTUAL live game_config value read from the DB (1=true/0=false/x=unparseable).
+  echo "MAINSHIP_COORDINATE_TRAVEL_ENABLED=$( case "$(mval "$OUT" FLAG_COORD)" in 1) echo true;; 0) echo false;; *) echo "UNPARSEABLE(raw=$(mval "$OUT" COORD_RAW))";; esac )"
+  # Frontend compile-time gate (separately checked against osnReleaseGates.ts via assert_coord_suppressed).
+  echo "OSN_COORDINATE_TRAVEL_ENABLED_FRONTEND=false"
+  # Is the public arbitrary-coordinate command surface still exactly one, authenticated-only?
+  echo "COORDINATE_COMMAND_PUBLIC_SURFACE=$( [ "$(mval "$OUT" ACL_COORD_CMD_AUTH)" = 1 ] && [ "$(mval "$OUT" ACL_COORD_CMD_ANON_DENIED)" = 1 ] && [ "$(mval "$OUT" COORD_SURFACE_COUNT)" = 1 ] && echo authenticated_only || echo UNEXPECTED )"
+  echo "COORDINATE_RAW_WRITERS_SERVICE_ROLE_ONLY=$( [ "$(mval "$OUT" ACL_COORD_WRITER_SVC_ONLY)" = 1 ] && [ "$(mval "$OUT" ACL_COORD_CORE_SVC_ONLY)" = 1 ] && echo true || echo false )"
   echo "UNEXPECTED_CONFIG_CHANGES=$(mval "$OUT" CONFIG_DEVIATIONS)"
   # Structural OSN markers — these are catalog/ACL/structure facts, NOT a live player's readiness result.
   echo "PRODUCTION_OSN_READINESS_BOUNDARY_AUTHENTICATED_ONLY=$( [ "$(mval "$OUT" ACL_READINESS_AUTH)" = 1 ] && [ "$(mval "$OUT" ACL_READINESS_ANON_DENIED)" = 1 ] && echo true || echo false )"
@@ -122,10 +143,16 @@ if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "verifier SQL not found"
   sql_is_readonly_safe "$SQL" || fail "verifier SQL is not read-only safe (write/DDL or an executable movement/reveal reference)"
   echo "[selftest] OK: verifier is read-only (REPEATABLE READ READ ONLY + ROLLBACK; no write/DDL); no reveal/movement function is callable (forbidden names appear only inside quoted catalog lookups)"
-  grep -q "cfg_bool('mainship_space_movement_enabled')" "$SQL" || fail "verifier does not read the OSN flag"
+  grep -q "key='mainship_space_movement_enabled'" "$SQL" || fail "verifier does not read the OSN movement flag"
+  grep -q "key='mainship_coordinate_travel_enabled'" "$SQL" || fail "verifier does not read the coordinate-travel server flag from the DB"
+  grep -q "'FLAG_COORD='" "$SQL" || fail "verifier does not emit the live coordinate-gate value"
+  grep -q "'COORD_ROWS='" "$SQL" || fail "verifier lacks the fail-closed coordinate-flag row-existence guard"
+  grep -q "'COORD_BOOL='" "$SQL" || fail "verifier lacks the fail-closed coordinate-flag boolean-parse guard"
+  grep -q "to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)')" "$SQL" || fail "verifier does not check the arbitrary-coordinate command ACL"
+  grep -q "'COORD_SURFACE_COUNT='" "$SQL" || fail "verifier does not assert a singular arbitrary-coordinate surface"
   grep -q 'get_world_map' "$SQL" || fail "verifier does not test the authenticated map boundary"
   grep -q "to_regprocedure('public.get_osn_movement_readiness" "$SQL" || fail "verifier does not check the readiness ACL"
-  echo "[selftest] OK: asserts the POST-ENABLE flag + map boundary + OSN command ACL"
+  echo "[selftest] OK: asserts head 0070, the live DB flag values (send/space/coordinate) with fail-closed integrity, the map boundary, and the OSN + arbitrary-coordinate command ACL"
   c="$(build_conn aws-0-x.pooler.supabase.com aaaaaaaaaaaaaaaaaaaa "$CA_FILE")"
   printf '%s' "$c" | grep -q 'sslmode=verify-full' || fail "conn missing verify-full"
   printf '%s' "$c" | grep -q 'port=5432' || fail "conn not session 5432"
@@ -152,15 +179,20 @@ if [ "$MODE" = "local" ]; then
   set_active() { for p in "$P1" "$P2" "$P3"; do q "update public.locations set status='active' where id='$p';" >/dev/null; done; }
   set_hidden() { for p in "$P1" "$P2" "$P3"; do q "update public.locations set status='hidden' where id='$p';" >/dev/null; done; }
 
-  # POST-ENABLE baseline: ports active, send=true, OSN ENABLED (space=true)
-  set_active; flag mainship_send_enabled true; flag mainship_space_movement_enabled true
+  # CURRENT baseline (head 0070): ports active, send=true, OSN port-to-port ENABLED (space=true), free
+  # coordinate travel still gated OFF (coordinate=false). The disposable stack boots through 0070 so the
+  # coordinate key already exists false; we set it explicitly for clarity.
+  set_active; flag mainship_send_enabled true; flag mainship_space_movement_enabled true; flag mainship_coordinate_travel_enabled false
 
   # 1) expected post-enable STRUCTURAL/config state passes (no player, no movement, no behavioral claim — the
   #    live player-journey readiness behavior is proven by OSN-ENABLEMENT-1B, not here).
   OUT="$(runv)"; reconcile "$OUT"; MK="$(emit_markers "$OUT")"; printf '%s\n' "$MK"
   [ "$RECON_PASS" = 1 ] || fail "expected post-enable structural state did not pass"
   printf '%s\n' "$MK" | grep -qx 'MAINSHIP_SPACE_MOVEMENT_ENABLED=true' || fail "space flag not true in markers"
-  printf '%s\n' "$MK" | grep -qx 'MIGRATION_HEAD=0069' || fail "migration head not 0069 in markers"
+  printf '%s\n' "$MK" | grep -qx 'MAINSHIP_COORDINATE_TRAVEL_ENABLED=false' || fail "coordinate gate not false in markers"
+  printf '%s\n' "$MK" | grep -qx 'COORDINATE_COMMAND_PUBLIC_SURFACE=authenticated_only' || fail "coordinate command surface not authenticated_only in markers"
+  printf '%s\n' "$MK" | grep -qx 'COORDINATE_RAW_WRITERS_SERVICE_ROLE_ONLY=true' || fail "coordinate raw writers not service-role-only in markers"
+  printf '%s\n' "$MK" | grep -qx 'MIGRATION_HEAD=0070' || fail "migration head not 0070 in markers"
   printf '%s\n' "$MK" | grep -qx 'OVERALL_PASS=true' || fail "OVERALL_PASS!=true"
   for m in PRODUCTION_OSN_READINESS_BOUNDARY_AUTHENTICATED_ONLY=true PRODUCTION_OSN_WRITER_SERVICE_ROLE_ONLY=true \
            PRODUCTION_OSN_OWNER_EXCLUSIVITY=true PRODUCTION_OSN_RECEIPT_IDEMPOTENCY=true \
@@ -176,10 +208,10 @@ if [ "$MODE" = "local" ]; then
   # 2) OSN flag false fails
   flag mainship_space_movement_enabled false; overall "$(runv)" && fail "OSN flag false still passed"; flag mainship_space_movement_enabled true
   echo "ok[2] OSN flag false: fail-closed"
-  # 3) coordinate-travel flag true fails
+  # 3) FRONTEND coordinate-travel gate true is detected (compile-time const exposure)
   tmp="$(mktemp)"; echo 'export const OSN_COORDINATE_TRAVEL_ENABLED = true as const' > "$tmp"
   assert_coord_suppressed "$tmp" && { rm -f "$tmp"; fail "coord-travel exposure not detected"; }; rm -f "$tmp"
-  echo "ok[3] coordinate-travel flag true: detected and fails"
+  echo "ok[3] frontend coordinate-travel gate true: detected and fails"
   # 4) wrong active/hidden port state fails
   set_active; q "update public.locations set status='hidden' where id='$P1';" >/dev/null
   overall "$(runv)" && fail "a hidden canonical port still passed"; set_active
@@ -198,9 +230,19 @@ if [ "$MODE" = "local" ]; then
   tmp="$(mktemp)"; cp "$SQL" "$tmp"; printf "\nupdate public.game_config set value='false'::jsonb where key='mainship_space_movement_enabled';\n" >> "$tmp"
   sql_is_readonly_safe "$tmp" && { rm -f "$tmp"; fail "a write-capable verifier was accepted"; }; rm -f "$tmp"
   echo "ok[7] write-capable verifier content: rejected by the read-only scan"
+  # 8) SERVER coordinate-travel flag unexpectedly TRUE fails (the live gate must be false in the dark baseline)
+  flag mainship_coordinate_travel_enabled true; overall "$(runv)" && fail "server coordinate flag true still passed"; flag mainship_coordinate_travel_enabled false
+  echo "ok[8] server coordinate-travel flag true: fail-closed"
+  # 9) coordinate-flag integrity: a MISSING row and a NON-boolean value each fail-closed (cfg_bool would mask
+  #    the missing row as a silent false; the row-existence + boolean-parse guards prevent that).
+  q "delete from public.game_config where key='mainship_coordinate_travel_enabled';" >/dev/null
+  overall "$(runv)" && fail "missing coordinate flag row still passed"
+  q "insert into public.game_config(key,value,description) values('mainship_coordinate_travel_enabled','false'::jsonb,'restore') on conflict (key) do update set value='false'::jsonb;" >/dev/null
+  flag mainship_coordinate_travel_enabled '"nope"'; overall "$(runv)" && fail "non-boolean coordinate flag still passed"; flag mainship_coordinate_travel_enabled false
+  echo "ok[9] coordinate-flag integrity (missing row + non-boolean value): fail-closed"
 
   # restore disposable dark baseline
-  flag mainship_space_movement_enabled false; set_hidden
+  flag mainship_space_movement_enabled false; flag mainship_coordinate_travel_enabled false; set_hidden
   echo "OSN-POSTENABLE-VERIFY LOCAL MATRIX: ALL PASSED"
   exit 0
 fi

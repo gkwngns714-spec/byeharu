@@ -1,12 +1,14 @@
 name: OSN post-enable verify (PRODUCTION — gated, read-only)
 
 # Manually-dispatched, production-Environment-gated, STRICTLY READ-ONLY verification that production matches
-# the approved POST-ENABLE state (OSN port-to-port ENABLED: mainship_space_movement_enabled=true; ports
-# active; ACL + exclusivity structure intact; coordinate travel still suppressed). It is the independent
-# counterpart to the enable operation, and is distinct from every pre-enable verifier (which assert the flag
-# false). It NEVER writes, never issues a movement command, never enables/disables a flag, never creates a
-# player. workflow_dispatch ONLY; runs only from main; a DB-free static self-test gates the production job.
-# NOT dispatched during OSN-ENABLEMENT-2E; dispatch is a separate, explicitly-authorized step after merge.
+# the approved CURRENT state (head 0070 / OSN-COORD-GATE-1): OSN port-to-port ENABLED
+# (mainship_space_movement_enabled=true); FREE coordinate travel still gated OFF — the live
+# mainship_coordinate_travel_enabled value is READ FROM THE DB (not inferred) with a fail-closed integrity
+# guard, and must be false; the arbitrary-coordinate command surface (command_main_ship_space_move) is the
+# only public raw-coordinate entry point, authenticated-only, with its raw writers service-role-only; ports
+# active; ACL + exclusivity structure intact. It NEVER writes, never issues a movement command, never
+# enables/disables a flag, never creates a player. workflow_dispatch ONLY; runs only from main; a DB-free
+# static self-test gates the production job. Dispatch is a separate, explicitly-authorized read-only step.
 
 on:
   workflow_dispatch:
