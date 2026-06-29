@@ -109,15 +109,33 @@ SELECT 'ACL_DOCK_AUTH=' || coalesce((to_regprocedure('public.get_my_current_dock
 SELECT 'ACL_DOCK_ANON_DENIED=' || coalesce((to_regprocedure('public.get_my_current_dock_services()') is not null
    AND NOT has_function_privilege('anon', to_regprocedure('public.get_my_current_dock_services()')::oid, 'EXECUTE'))::int::text,'x');
 
--- ── D2. OSN-COORD-GATE-1 (head 0070): the arbitrary-coordinate command surface. command_main_ship_space_move
---        is the ONLY public raw-coordinate entry point — authenticated-only (anon denied; PUBLIC-denied is
---        implied by anon-denied, since a PUBLIC EXECUTE grant would also let anon execute). Its raw coordinate
---        writers stay service-role-only (auth+anon denied). Forbidden names appear ONLY inside single-quoted
---        to_regprocedure() lookups (oid resolution; they cannot execute the function). ────────────────────────
-SELECT 'ACL_COORD_CMD_AUTH=' || coalesce((to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)') is not null
-   AND has_function_privilege('authenticated', to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)')::oid, 'EXECUTE'))::int::text,'x');
-SELECT 'ACL_COORD_CMD_ANON_DENIED=' || coalesce((to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)') is not null
-   AND NOT has_function_privilege('anon', to_regprocedure('public.command_main_ship_space_move(double precision, double precision, uuid)')::oid, 'EXECUTE'))::int::text,'x');
+-- ── D2. OSN-COORD-GATE-1 (head 0070): the arbitrary-coordinate command surface, asserted from the CATALOG by
+--        OID/type identity — NOT by any display-string formatting (OSN-COORD-VERIFY-2 replaced a brittle
+--        identity-arguments display-string text compare that false-negatived in production). The canonical
+--        raw-coordinate command public.command_main_ship_space_move(double precision,double precision,uuid):
+--        (1) resolves non-null; (2)+(3) is exactly one pg_proc row in namespace public; (4) authenticated may
+--        execute, anon may NOT, PUBLIC may NOT (checked from proacl, not inferred); (5) is the ONLY
+--        authenticated-executable public function whose INPUT ARG TYPE OIDS are exactly (float8,float8,uuid) —
+--        the caller-supplied raw-coordinate shape. The location-target command is (uuid,uuid) and the raw
+--        writers are service-role-only with longer signatures, so all are excluded by arg-type OIDs, not text.
+--        Forbidden names appear ONLY inside single-quoted to_regprocedure() lookups (cannot execute). ─────────
+-- (1) resolved canonical procedure is non-null
+SELECT 'COORD_CMD_RESOLVED=' || (to_regprocedure('public.command_main_ship_space_move(double precision,double precision,uuid)') is not null)::int::text;
+-- (2)+(3) resolves to EXACTLY ONE pg_proc row whose schema is public
+SELECT 'COORD_CMD_PROC_ROWS=' || (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE p.oid = to_regprocedure('public.command_main_ship_space_move(double precision,double precision,uuid)') AND n.nspname='public');
+-- (4a) executable by authenticated
+SELECT 'ACL_COORD_CMD_AUTH=' || coalesce((SELECT has_function_privilege('authenticated', o, 'EXECUTE')::int::text
+   FROM (SELECT to_regprocedure('public.command_main_ship_space_move(double precision,double precision,uuid)')::oid AS o) s WHERE o IS NOT NULL),'x');
+-- (4b) NOT executable by anon
+SELECT 'ACL_COORD_CMD_ANON_DENIED=' || coalesce((SELECT (NOT has_function_privilege('anon', o, 'EXECUTE'))::int::text
+   FROM (SELECT to_regprocedure('public.command_main_ship_space_move(double precision,double precision,uuid)')::oid AS o) s WHERE o IS NOT NULL),'x');
+-- (4c) NOT executable by PUBLIC — read from proacl directly (PUBLIC = grantee oid 0 in aclexplode). A NULL
+--      proacl means the built-in default applies, under which PUBLIC HAS EXECUTE on functions → that is a FAIL.
+SELECT 'COORD_CMD_PUBLIC_DENIED=' || coalesce((SELECT (NOT (p.proacl IS NULL OR EXISTS (
+       SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE')))::int::text
+   FROM pg_proc p WHERE p.oid = to_regprocedure('public.command_main_ship_space_move(double precision,double precision,uuid)')),'x');
+-- raw coordinate writers remain service-role-only (auth+anon denied) — by their own canonical signatures
 SELECT 'ACL_COORD_WRITER_SVC_ONLY=' || coalesce((to_regprocedure('public.mainship_space_begin_move(uuid, uuid, double precision, double precision, uuid)') is not null
    AND NOT has_function_privilege('authenticated', to_regprocedure('public.mainship_space_begin_move(uuid, uuid, double precision, double precision, uuid)')::oid, 'EXECUTE')
    AND NOT has_function_privilege('anon',          to_regprocedure('public.mainship_space_begin_move(uuid, uuid, double precision, double precision, uuid)')::oid, 'EXECUTE')
@@ -126,11 +144,15 @@ SELECT 'ACL_COORD_CORE_SVC_ONLY=' || coalesce((to_regprocedure('public.mainship_
    AND NOT has_function_privilege('authenticated', to_regprocedure('public.mainship_space_begin_move_core(uuid, uuid, text, double precision, double precision, uuid, uuid)')::oid, 'EXECUTE')
    AND NOT has_function_privilege('anon',          to_regprocedure('public.mainship_space_begin_move_core(uuid, uuid, text, double precision, double precision, uuid, uuid)')::oid, 'EXECUTE')
    AND has_function_privilege('service_role',      to_regprocedure('public.mainship_space_begin_move_core(uuid, uuid, text, double precision, double precision, uuid, uuid)')::oid, 'EXECUTE'))::int::text,'x');
--- "still ONLY this one" — exactly ONE public function with identity args (double precision, double precision,
---  uuid) is EXECUTE-able by authenticated, i.e. no sibling raw-coordinate wrapper was added beside it.
+-- (5) census by ARG-TYPE OIDS (no display string): exactly ONE public, authenticated-executable, normal
+--     function whose 3 input arg type OIDs are float8,float8,uuid (pg_proc.proargtypes is a 0-based oidvector;
+--     'double precision'::regtype / 'uuid'::regtype resolve the canonical type OIDs). location-target=(uuid,uuid)
+--     and the service-role-only writers have other signatures, so none is counted.
 SELECT 'COORD_SURFACE_COUNT=' || (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-   WHERE n.nspname='public'
-     AND pg_get_function_identity_arguments(p.oid) = 'double precision, double precision, uuid'
+   WHERE n.nspname='public' AND p.prokind='f' AND p.pronargs=3
+     AND p.proargtypes[0] = 'double precision'::regtype::oid
+     AND p.proargtypes[1] = 'double precision'::regtype::oid
+     AND p.proargtypes[2] = 'uuid'::regtype::oid
      AND has_function_privilege('authenticated', p.oid, 'EXECUTE'));
 
 -- ── E. Movement-owner exclusivity / idempotency structure (must stay intact once OSN is live) ───────────
