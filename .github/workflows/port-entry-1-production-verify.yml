@@ -1,0 +1,51 @@
+name: PORT-ENTRY-1 production verify (PRODUCTION — gated, read-only)
+
+# Manually-dispatched, production-Environment-gated, STRICTLY READ-ONLY verification that production contains the
+# deployed PORT-ENTRY-1 surface (migration 0072): exactly the three functions with expected signatures, return
+# type, language, owner, SECURITY DEFINER, search_path=public, raw pg_proc.prosrc identity (md5 vs the
+# migration-derived hash), and ACLs (writer service_role-only; both public RPCs authenticated-only); no
+# unexpected public RPC; no PORT-ENTRY table; flags send=true/space=true/coordinate=FALSE; readiness no-auth
+# coordinate_travel_available=false. It NEVER writes, never creates a player, never invokes a PORT-ENTRY mutation
+# RPC. workflow_dispatch ONLY; runs only from main; a DB-free static self-test gates the production job. Dispatch
+# is a separate, explicitly-authorized read-only step.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: port-entry-1-production-verify
+  cancel-in-progress: false
+
+jobs:
+  static_safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: DB-free static safety self-test (no secrets, no DB)
+        run: bash scripts/port-entry-1-production-verify.sh selftest
+
+  production_verify:
+    needs: static_safety
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - name: Refuse any ref other than main
+        run: |
+          set +x
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "BLOCKED: runs only from refs/heads/main (got $GITHUB_REF)"; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Read-only PORT-ENTRY-1 production verification (pinned-CA verify-full session pooler)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set +x
+          bash scripts/port-entry-1-production-verify.sh production
