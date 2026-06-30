@@ -5,6 +5,68 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-29 — OSN-COORD-ENABLE: coordinate-travel readiness capability + runtime frontend (head `0070` → `0071`, all DARK)
+
+Built the coordinate-travel capability **end-to-end and left it standing DARK** — a server readiness field, an
+updated production verifier, and a runtime-driven frontend — without enabling anything. **Net production change:**
+migration head **`0070` → `0071`**; the GitHub Pages frontend was redeployed. **No flag changed:**
+`mainship_coordinate_travel_enabled` stays **`false`**, so `coordinate_travel_available` is **`false`** for every
+caller, the coordinate UI stays hidden, and the raw coordinate command stays server-rejected. Port-to-port travel
+is untouched and still enabled. `main` head `1376282`.
+
+**Work done (in order):**
+
+- **OSN-COORD-ENABLE-1B — server readiness capability (PR #57 → migration `0071`, deployed DARK).** Extended the
+  authenticated read-model RPC `get_osn_movement_readiness()` with one additive boolean
+  `coordinate_travel_available = osn_available AND cfg_bool('mainship_coordinate_travel_enabled')` — derived from
+  the existing anchored-origin readiness decision, NOT a loose duplicate of the global flags, so a non-actionable /
+  unanchored / in_transit / destroyed / no_ship origin can never receive `true`. Additive, read-only, writes no
+  config; `SECURITY DEFINER` + `auth.uid()` + authenticated-only ACL preserved; the field is a strict JSON boolean
+  present in every return path. The real security boundary stays the `0070` server gate inside
+  `command_main_ship_space_move`. Disposable real-Postgres 2×2 truth-table proof (incl. the unanchored-with-both-
+  flags-true fail-closed case); deployed `0070`→`0071` via the gated `deploy-migrations` workflow.
+
+- **OSN-COORD-ENABLE-1B-VERIFY — production verifier extension (PR #58).** Repinned the strictly read-only
+  post-enable verifier (`scripts/osn-postenable-verify.{sql,sh}`) to head `0071` and added the readiness
+  coordinate-capability contract: a **single** `MATERIALIZED`-CTE RPC probe (no-auth ⇒ the no-ship early return,
+  which carries the field) proving field-present / strict-boolean / no-auth-false, plus catalog attribute checks
+  (jsonb return type, `SECURITY DEFINER`, hardened `search_path`, authenticated/anon/PUBLIC ACL). New markers
+  `READINESS_COORDINATE_CAPABILITY_{FIELD_PRESENT,FIELD_TYPE,NO_AUTH_VALUE,DARK_BY_CONFIG}` +
+  `READINESS_RPC_AUTHENTICATED_ONLY`. Gated production read-only run `28384971844`: **`OVERALL_PASS=true`** (head
+  `0071`, coord gate `false`, capability dark).
+
+- **OSN-COORD-ENABLE-1C — runtime frontend integration (PR #59, merged `1376282`, Pages-deployed).** The empty-space
+  coordinate command surface (tap-to-target, the preview crosshair, and `SpaceMoveControls`) is now driven SOLELY
+  by the server-derived `coordinate_travel_available` via a strict fail-closed parser
+  (`coordinateTravelAvailable = o.coordinate_travel_available === true`) + a pure predicate
+  `isCoordinateTargetingActionable(readiness, movementEnabled, eligibility)`. `GalaxyMap` consumes
+  `useOsnReadiness` (lifecycle-keyed, no new polling) and the surface mounts only when capability ∧ movement-enabled
+  ∧ `eligibility==='eligible'`. The compile-time `OSN_COORDINATE_TRAVEL_ENABLED` constant was **retired as the UI
+  authority** (no component imports it; kept at `false` only for the verifier's `assert_coord_suppressed` grep).
+  In-flight Stop CTA stays flag-independent; `PortNavPanel` / location-target travel untouched. Rendered UI proof
+  mounts the REAL `GalaxyMap` (capability/eligibility/fetch-failure mount-unmount) + parser/predicate unit specs.
+
+- **OSN-COORD-ENABLE-1C-VERIFY — live dark frontend verification (read-only).** Confirmed Pages run `28387964743`
+  deployed `1376282` (latest, not superseded) and the **live JS bundle** contains `coordinate_travel_available`
+  and NOT the old constant — i.e. the deployed artifact is the runtime-capability build, dark by the verified
+  backend capability=false. Port-to-port command path present in the bundle.
+
+**Process note:** every privileged click in this arc — the PR admin-merges (#57/#58/#59), the `0071` production-gate
+approval, and the read-only verifier gate approval — was **run by the human** via the `!` prefix. The Claude Code
+auto-mode classifier hard-blocks agent self-approval, admin-merge, production-gate approval, and any self-edit of
+its own permission settings, regardless of in-chat authorization.
+
+**Current authoritative state (HELD as baseline):** `mainship_coordinate_travel_enabled=false`,
+`coordinate_travel_available=false`, coordinate UI hidden, raw coordinate command server-rejected, port-to-port
+enabled/unchanged. Coordinate travel is built end-to-end and **standing DARK**.
+
+**NOT done — reserved for the separately-authorized ACTIVATION phase (do not start unprompted):** (1) flip
+`mainship_coordinate_travel_enabled` → `true`; (2) BEFORE that, update `scripts/osn-postenable-verify.{sql,sh}`
+dark-state assertions (`MAINSHIP_COORDINATE_TRAVEL_ENABLED` false→true, `DARK_BY_CONFIG` / `NO_AUTH_VALUE`). The
+retired `OSN_COORDINATE_TRAVEL_ENABLED` const stays `false` permanently.
+
+---
+
 ## 2026-06-29 — OSN enabled → Phase 9 docked-port surface → coordinate-gate hardening → Phase 10 Trading design (head `0068` → `0070`)
 
 Since the PORT-LAUNCH entry below (head `0068`, ports public, OSN still dark) the project advanced through OSN
