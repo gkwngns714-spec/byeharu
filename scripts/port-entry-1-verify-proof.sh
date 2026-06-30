@@ -23,6 +23,12 @@ bash "$VERIFY" local >/dev/null || fail "verifier did not PASS on the expected P
 echo "ok[1] verifier PASSES on the expected PORT-ENTRY-1 catalog"
 
 expect_fail() { if bash "$VERIFY" local >/dev/null 2>&1; then fail "verifier PASSED under mutation: $1"; fi; echo "ok fail-closed: $1"; }
+# run the verifier (which emits markers even on failure), require OVERALL_PASS=false + each named marker present.
+assert_markers_fail() { local label="$1"; shift; local out m
+  out="$(bash "$VERIFY" local 2>&1 || true)"
+  echo "$out" | grep -q 'OVERALL_PASS=false' || { echo "$out"; fail "$label: OVERALL_PASS not false"; }
+  for m in "$@"; do echo "$out" | grep -q "$m" || { echo "$out"; fail "$label: expected marker '$m' not observed"; }; done
+  echo "ok fail-closed (markers): $label"; }
 
 # A) wrong function body / prosrc hash
 q "create or replace function public.commission_first_main_ship() returns jsonb language plpgsql security definer set search_path = public as \$x\$ begin return jsonb_build_object('tampered', true); end \$x\$;"
@@ -43,7 +49,23 @@ expect_fail "migration head beyond 0072"; q "delete from supabase_migrations.sch
 q "update public.game_config set value='true'::jsonb where key='mainship_coordinate_travel_enabled';"
 expect_fail "coordinate flag enabled"; q "update public.game_config set value='false'::jsonb where key='mainship_coordinate_travel_enabled';"
 
+# G) FULL-INVENTORY: an unexpected authenticated-executable public function whose name does NOT begin port_entry_
+q "create function public.zz_unexpected_auth_rpc() returns int language sql as 'select 1';"
+q "grant execute on function public.zz_unexpected_auth_rpc() to authenticated;"
+assert_markers_fail "unexpected non-prefixed authenticated RPC" 'AUTHENTICATED_CLIENT_RPC_INVENTORY_EXACT=false'
+q "revoke execute on function public.zz_unexpected_auth_rpc() from authenticated;"
+q "drop function public.zz_unexpected_auth_rpc();"
+bash "$VERIFY" local >/dev/null || fail "no clean re-pass after removing the unexpected authenticated RPC"
+echo "ok: clean re-pass after removing the unexpected authenticated RPC"
+
+# H) FULL-INVENTORY: an EXPECTED public RPC loses its authenticated EXECUTE
+q "revoke execute on function public.commission_first_main_ship() from authenticated;"
+assert_markers_fail "expected RPC missing authenticated EXECUTE (commission)" 'AUTHENTICATED_CLIENT_RPC_INVENTORY_EXACT=false'
+revert_fns   # re-applies migration 0072 → restores the exact authenticated grant
+bash "$VERIFY" local >/dev/null || fail "no clean re-pass after restoring commission authenticated EXECUTE"
+echo "ok: clean re-pass after restoring commission authenticated EXECUTE"
+
 # restore + final re-pass
 revert_fns
 bash "$VERIFY" local >/dev/null || fail "verifier did not re-PASS after reverts"
-echo "PORT-ENTRY-1-VERIFY PROOF: ALL PASSED (expected catalog passes; 6/6 fail-closed mutations rejected; clean re-pass)"
+echo "PORT-ENTRY-1-VERIFY PROOF: ALL PASSED (expected catalog + full RPC inventory passes; 8/8 fail-closed cases rejected; clean re-pass)"

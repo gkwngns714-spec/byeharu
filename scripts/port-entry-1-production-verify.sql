@@ -80,6 +80,49 @@ SELECT 'PE_AUTH_EXEC_COUNT=' || (SELECT count(*) FROM pg_proc p JOIN pg_namespac
    WHERE n.nspname='public' AND p.proname IN ('port_entry_commission_writer','commission_first_main_ship','normalize_main_ship_dock')
      AND has_function_privilege('authenticated', p.oid, 'EXECUTE'));
 
+-- ── D2. FULL canonical authenticated client-RPC inventory — the COMPLETE set of authenticated-executable public
+--        functions must EQUAL the approved set EXACTLY (a missing expected RPC, an expected RPC without
+--        authenticated EXECUTE, OR an unexpected authenticated-executable public function under ANY name all
+--        fail). Comparison is by OID (robust); identity-argument strings are emitted for SAFE LOGGING only.
+--        The mutation-RPC names appear here ONLY as single-quoted expected signatures (the read-only safety scan
+--        strips quoted strings, so they are not treated as executable references).
+WITH expected(sig) AS (VALUES
+  ('public.get_world_map()'),
+  ('public.bootstrap_me()'),
+  ('public.send_fleet_to_location(uuid, uuid, jsonb)'),
+  ('public.request_leave_location(uuid)'),
+  ('public.request_retreat(uuid)'),
+  ('public.get_combat_reports()'),
+  ('public.train_units(uuid, text, integer)'),
+  ('public.cancel_build_order(uuid)'),
+  ('public.get_my_expedition_preview(jsonb, text)'),
+  ('public.get_osn_movement_readiness()'),
+  ('public.send_main_ship_expedition(jsonb, uuid)'),
+  ('public.request_main_ship_return(uuid)'),
+  ('public.repair_main_ship()'),
+  ('public.move_main_ship_to_location(uuid, uuid)'),
+  ('public.command_main_ship_space_move(double precision, double precision, uuid)'),
+  ('public.command_main_ship_space_stop(uuid)'),
+  ('public.command_main_ship_space_move_to_location(uuid, uuid)'),
+  ('public.get_my_current_dock_services()'),
+  ('public.commission_first_main_ship()'),
+  ('public.normalize_main_ship_dock()')
+),
+exp_oid AS (SELECT sig, to_regprocedure(sig)::oid AS oid FROM expected),
+obs AS (SELECT p.oid, (n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')') AS ident
+        FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname='public' AND p.prokind='f' AND has_function_privilege('authenticated', p.oid, 'EXECUTE'))
+SELECT m FROM (
+  SELECT 1 AS ord, 'INV_EXPECTED_N=' || (SELECT count(*) FROM expected) AS m
+  UNION ALL SELECT 2, 'INV_UNRESOLVED=' || (SELECT count(*) FROM exp_oid WHERE oid IS NULL)
+  UNION ALL SELECT 3, 'INV_OBSERVED_N=' || (SELECT count(*) FROM obs)
+  UNION ALL SELECT 4, 'INV_MISSING=' || (SELECT count(*) FROM exp_oid e WHERE e.oid IS NULL OR NOT EXISTS (SELECT 1 FROM obs o WHERE o.oid=e.oid))
+  UNION ALL SELECT 5, 'INV_EXTRA=' || (SELECT count(*) FROM obs o WHERE NOT EXISTS (SELECT 1 FROM exp_oid e WHERE e.oid=o.oid))
+  UNION ALL SELECT 6, 'INV_MISSING_LIST=' || coalesce((SELECT string_agg(e.sig, ',' ORDER BY e.sig) FROM exp_oid e WHERE e.oid IS NULL OR NOT EXISTS (SELECT 1 FROM obs o WHERE o.oid=e.oid)),'<none>')
+  UNION ALL SELECT 7, 'INV_EXTRA_LIST=' || coalesce((SELECT string_agg(o.ident, ',' ORDER BY o.ident) FROM obs o WHERE NOT EXISTS (SELECT 1 FROM exp_oid e WHERE e.oid=o.oid)),'<none>')
+  UNION ALL SELECT 8, 'INV_OBSERVED_LIST=' || coalesce((SELECT string_agg(o.ident, ',' ORDER BY o.ident) FROM obs o),'<none>')
+) s ORDER BY ord;
+
 -- ── E. No PORT-ENTRY-specific NEW TABLE introduced by 0072 (it is function-only) ─────────────────────────────
 SELECT 'PE_TABLE_COUNT=' || (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
    WHERE n.nspname='public' AND c.relkind='r' AND (c.relname LIKE 'port_entry%' OR c.relname LIKE 'commission%'));

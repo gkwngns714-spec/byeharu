@@ -23,20 +23,25 @@ EXPECTED_CA_SHA256="807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6
 # Extracts a function's raw body (the exact dollar-quoted text Postgres stores as pg_proc.prosrc) between its
 # `create or replace function <start>` line and the matching `$$;`, and md5s it. The disposable proof asserts
 # this equals the catalog md5(prosrc) on the real chain, validating the extraction byte-for-byte.
-extract_prosrc_md5() { awk -v start="$2" '
-    { sub(/\r$/, "") }                                  # normalize CRLF→LF so the hash matches the LF-applied catalog
+# Extract a function's raw body to a temp file (CRLF-normalized), FAIL CLOSED if empty/malformed (start not
+# matched or no captured body), then md5 the exact bytes (file md5 == stdin md5; trailing newline preserved).
+extract_prosrc_md5() { local f="$1" start="$2" tmp; tmp="$(mktemp)"
+  awk -v start="$start" '
+    { sub(/\r$/, "") }
     index($0,start)==1 {inf=1}
     inf && $0=="as $$" {cap=1; printf "\n"; next}
     inf && cap && $0=="$$;" {exit}
     inf && cap {print}
-  ' "$1" | md5sum | cut -d" " -f1; }
+  ' "$f" > "$tmp"
+  if [ ! -s "$tmp" ]; then rm -f "$tmp"; return 1; fi      # empty body → malformed/ambiguous extraction → fail closed
+  md5sum "$tmp" | cut -d" " -f1; rm -f "$tmp"; }
 derive_hashes() {
-  EXP_W="$(extract_prosrc_md5 "$MIG" 'create or replace function public.port_entry_commission_writer(p_player uuid)')"
-  EXP_C="$(extract_prosrc_md5 "$MIG" 'create or replace function public.commission_first_main_ship()')"
-  EXP_N="$(extract_prosrc_md5 "$MIG" 'create or replace function public.normalize_main_ship_dock()')"
-  printf '%s' "$EXP_W" | grep -qE '^[0-9a-f]{32}$' || fail "could not derive writer prosrc md5"
-  printf '%s' "$EXP_C" | grep -qE '^[0-9a-f]{32}$' || fail "could not derive commission prosrc md5"
-  printf '%s' "$EXP_N" | grep -qE '^[0-9a-f]{32}$' || fail "could not derive normalize prosrc md5"
+  EXP_W="$(extract_prosrc_md5 "$MIG" 'create or replace function public.port_entry_commission_writer(p_player uuid)')" || fail "writer body extraction empty/malformed"
+  EXP_C="$(extract_prosrc_md5 "$MIG" 'create or replace function public.commission_first_main_ship()')" || fail "commission body extraction empty/malformed"
+  EXP_N="$(extract_prosrc_md5 "$MIG" 'create or replace function public.normalize_main_ship_dock()')" || fail "normalize body extraction empty/malformed"
+  printf '%s' "$EXP_W" | grep -qE '^[0-9a-f]{32}$' || fail "writer prosrc md5 malformed"
+  printf '%s' "$EXP_C" | grep -qE '^[0-9a-f]{32}$' || fail "commission prosrc md5 malformed"
+  printf '%s' "$EXP_N" | grep -qE '^[0-9a-f]{32}$' || fail "normalize prosrc md5 malformed"
 }
 
 # ── proven connection / trust helpers (same pattern as osn-postenable-verify.sh) ─────────────────────────────
@@ -108,6 +113,10 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ck "$(mval "$OUT" PE_FN_COUNT)" 3 "exactly 3 PORT-ENTRY functions"
   ck "$(mval "$OUT" PE_FN_UNEXPECTED)" 0 "no unexpected PORT-ENTRY-prefixed function"
   ck "$(mval "$OUT" PE_AUTH_EXEC_COUNT)" 2 "exactly 2 authenticated-executable PORT-ENTRY RPCs"
+  # FULL canonical authenticated client-RPC inventory must match EXACTLY (missing / lost-grant / any unexpected)
+  ck "$(mval "$OUT" INV_UNRESOLVED)" 0 "every expected client RPC resolves"
+  ck "$(mval "$OUT" INV_MISSING)" 0 "no expected authenticated client RPC missing (got missing='$(mval "$OUT" INV_MISSING_LIST)')"
+  ck "$(mval "$OUT" INV_EXTRA)" 0 "no unexpected authenticated-executable public function (got extra='$(mval "$OUT" INV_EXTRA_LIST)')"
   ck "$(mval "$OUT" PE_TABLE_COUNT)" 0 "no PORT-ENTRY-specific table"
   ck "$(mval "$OUT" SEND_ROWS)" 1 "send flag present once"
   ck "$(mval "$OUT" SPACE_ROWS)" 1 "space flag present once"
@@ -128,6 +137,12 @@ emit_markers() { local OUT="$1"
   echo "PUBLIC_RPCS_AUTHENTICATED_ONLY=$( [ "$(mval "$OUT" ACL_C_PUBLIC_DENIED)" = 1 ] && [ "$(mval "$OUT" ACL_C_ANON_DENIED)" = 1 ] && [ "$(mval "$OUT" ACL_C_AUTH_ALLOWED)" = 1 ] && [ "$(mval "$OUT" ACL_N_PUBLIC_DENIED)" = 1 ] && [ "$(mval "$OUT" ACL_N_ANON_DENIED)" = 1 ] && [ "$(mval "$OUT" ACL_N_AUTH_ALLOWED)" = 1 ] && echo true || echo false )"
   echo "PUBLIC_RPC_SERVICE_ROLE_EXEC=commission=$(mval "$OUT" ACL_C_SVC),normalize=$(mval "$OUT" ACL_N_SVC) (descriptive — hosted policy, not gated)"
   echo "NO_UNEXPECTED_PORT_ENTRY_SURFACE=$( [ "$(mval "$OUT" PE_FN_UNEXPECTED)" = 0 ] && [ "$(mval "$OUT" PE_AUTH_EXEC_COUNT)" = 2 ] && echo true || echo false )"
+  echo "AUTHENTICATED_CLIENT_RPC_INVENTORY_EXACT=$( [ "$(mval "$OUT" INV_UNRESOLVED)" = 0 ] && [ "$(mval "$OUT" INV_MISSING)" = 0 ] && [ "$(mval "$OUT" INV_EXTRA)" = 0 ] && echo true || echo false )"
+  echo "AUTHENTICATED_CLIENT_RPC_EXPECTED_N=$(mval "$OUT" INV_EXPECTED_N)"
+  echo "AUTHENTICATED_CLIENT_RPC_OBSERVED_N=$(mval "$OUT" INV_OBSERVED_N)"
+  echo "AUTHENTICATED_CLIENT_RPC_MISSING=$(mval "$OUT" INV_MISSING_LIST)"
+  echo "AUTHENTICATED_CLIENT_RPC_EXTRA=$(mval "$OUT" INV_EXTRA_LIST)"
+  echo "AUTHENTICATED_CLIENT_RPC_OBSERVED=$(mval "$OUT" INV_OBSERVED_LIST)"
   echo "NO_PORT_ENTRY_TABLE=$( [ "$(mval "$OUT" PE_TABLE_COUNT)" = 0 ] && echo true || echo false )"
   echo "MAINSHIP_SEND_ENABLED=$( [ "$(mval "$OUT" FLAG_SEND)" = 1 ] && echo true || echo false )"
   echo "MAINSHIP_SPACE_MOVEMENT_ENABLED=$( [ "$(mval "$OUT" FLAG_SPACE)" = 1 ] && echo true || echo false )"
@@ -148,6 +163,13 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "md5(p.prosrc)=:'exp_commission'" "$SQL" || fail "SQL does not compare commission prosrc md5"
   grep -q "md5(p.prosrc)=:'exp_normalize'" "$SQL" || fail "SQL does not compare normalize prosrc md5"
   grep -q "pg_get_functiondef" "$SQL" && fail "must NOT use pg_get_functiondef for body identity" || true
+  # FULL authenticated client-RPC inventory assertion present, includes the two public PORT-ENTRY RPCs, EXCLUDES the writer
+  grep -q "'INV_MISSING='" "$SQL" || fail "SQL missing INV_MISSING inventory marker"
+  grep -q "'INV_EXTRA='" "$SQL" || fail "SQL missing INV_EXTRA inventory marker"
+  grep -q "has_function_privilege('authenticated', p.oid, 'EXECUTE')" "$SQL" || fail "inventory does not enumerate authenticated-executable functions"
+  grep -q "('public.commission_first_main_ship()')" "$SQL" || fail "inventory expected set omits commission RPC"
+  grep -q "('public.normalize_main_ship_dock()')" "$SQL" || fail "inventory expected set omits normalize RPC"
+  grep -qE "^  \('public\.port_entry_commission_writer" "$SQL" && fail "private writer must NOT be in the authenticated client-RPC inventory" || true
   for m in HEAD W_SECDEF C_SECDEF N_SECDEF ACL_W_SVC_ALLOWED ACL_C_AUTH_ALLOWED FLAG_COORD RDN_COORD_NOAUTH; do
     grep -q "'$m=" "$SQL" || fail "SQL missing marker $m"; done
   derive_hashes
