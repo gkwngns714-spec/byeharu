@@ -48,6 +48,10 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           bash scripts/port-entry-1-proof.sh local
+      - name: PORT-ENTRY-1 real external-concurrency proof (two overlapping sessions)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/port-entry-1-concurrency.sh
       - name: Stop disposable stack (always)
         if: always()
         run: supabase stop --no-backup || true

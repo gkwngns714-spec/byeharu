@@ -42,7 +42,14 @@ if [ "$MODE" = "selftest" ]; then
   printf '%s' "$CLEAN" | grep -qiE "drop function|drop table|alter table|drop trigger" && fail "migration alters/drops existing objects (must be additive)" || true
   # only at_location is set by the writer (no home-port / no coordinate write)
   printf '%s' "$CLEAN" | grep -q "space_x = null, space_y = null" >/dev/null 2>&1 || grep -q "null, null" "$MIG" || fail "writer does not null coordinates"
-  echo "PORT-ENTRY-1 SELFTEST: ALL PASSED (3 functions; direct at_location insert, no ensure_main_ship_for_player; Haven-fixed; auth.uid(); SECURITY DEFINER; at_location assertion; no resolve_origin; ACLs; no flag/home-port/trading/world_sites/DDL)"
+  # real external-concurrency proof exists and uses two independent sessions + a blocked-wait observation
+  CONC="$REPO_ROOT/scripts/port-entry-1-concurrency.sh"
+  [ -f "$CONC" ] || fail "real-concurrency proof script missing"
+  grep -q "commission_first_main_ship" "$CONC" || fail "concurrency proof does not exercise the public commission RPC"
+  grep -q "pg_blocking_pids" "$CONC" || fail "concurrency proof does not verify a real blocked-by-another-txn wait"
+  grep -q "B_RESULT' before A commit\|COMPLETED before A committed" "$CONC" || fail "concurrency proof does not assert the loser is blocked until the winner commits"
+  grep -q "mainship_space_validate_context" "$CONC" || fail "concurrency proof does not assert final at_location invariant"
+  echo "PORT-ENTRY-1 SELFTEST: ALL PASSED (3 functions; direct at_location insert, no ensure_main_ship_for_player; Haven-fixed; auth.uid(); SECURITY DEFINER; at_location assertion; no resolve_origin; ACLs; no flag/home-port/trading/world_sites/DDL; real two-session concurrency proof present)"
   exit 0
 fi
 

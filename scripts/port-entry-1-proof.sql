@@ -97,15 +97,17 @@ begin
   raise notice 'B ok: retry idempotent, no write, still docked at Haven';
 end $$;
 
--- in-transaction double-call (serialization outcome): writer on-conflict yields exactly one ship/fleet/presence.
+-- IDEMPOTENCY / REPLAY (in-transaction repeat — NOT a concurrency proof). The real cross-session race is proven
+-- separately by scripts/port-entry-1-concurrency.sh (two independent overlapping sessions). Here a repeated
+-- writer call on-conflict yields exactly one ship/fleet/presence (the second invocation creates/writes nothing).
 do $$
 declare r1 jsonb; r2 jsonb; u uuid := (select v from pe1 where k='u2');
 begin
   r1 := public.port_entry_commission_writer(u);
   r2 := public.port_entry_commission_writer(u);   -- second call must NOT create / write
-  if (r1->>'created')::boolean is not true or (r2->>'created')::boolean is not false then raise exception 'CONCURRENCY FAIL: %, %', r1, r2; end if;
-  perform pg_temp.assert_docked(u, (select v from pe1 where k='haven'), 'CONCURRENCY');
-  raise notice 'concurrency ok: double writer call → exactly one ship/fleet/presence (loser wrote nothing)';
+  if (r1->>'created')::boolean is not true or (r2->>'created')::boolean is not false then raise exception 'IDEMPOTENCY FAIL: %, %', r1, r2; end if;
+  perform pg_temp.assert_docked(u, (select v from pe1 where k='haven'), 'IDEMPOTENCY');
+  raise notice 'idempotency/replay ok: repeated writer call → exactly one ship/fleet/presence (repeat wrote nothing; real concurrency in port-entry-1-concurrency.sh)';
 end $$;
 
 -- ════════ cross-user isolation: u2 ops left u1 untouched ════════
