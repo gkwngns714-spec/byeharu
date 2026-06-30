@@ -1,0 +1,57 @@
+name: PORT-ENTRY-1 — commissioning + normalization disposable proof (no production)
+
+# Proves migration 0072 (first-ship commissioning + same-location dock normalization) WITHOUT production access:
+#   1. DB-free self-test (function shapes, direct at_location insert, no ensure_main_ship_for_player, Haven-fixed,
+#      auth.uid(), SECURITY DEFINER, no resolve_origin, ACLs, no flag/home-port/trading/world_sites/DDL);
+#   2. a disposable local Supabase (chain 0001..0072) running the real-chain matrix: new-account commission,
+#      idempotent retry, double-call serialization, cross-user isolation, at_location-elsewhere already_provisioned,
+#      legacy_present normalize (fleet/presence reuse), replay, legacy_home/destroyed/ineligible-port fail-closed,
+#      compat route, coordinate no-regression, ACL/secdef/search_path.
+# No `environment:` on any job — none can read production secrets.
+
+on:
+  push:
+    branches:
+      - 'port-entry-1-**'
+      - 'port-entry-proof-**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: port-entry-1-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/port-entry-1-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0072)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: PORT-ENTRY-1 real-chain matrix
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/port-entry-1-proof.sh local
+      - name: PORT-ENTRY-1 real external-concurrency proof (two overlapping sessions)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/port-entry-1-concurrency.sh
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
