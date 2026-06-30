@@ -11,7 +11,7 @@ Since the entry below (head `0070`, OSN port-to-port live, coordinate travel ser
 coordinate-travel capability **end-to-end and left it DARK**, then shipped the **first-ship / port-entry** backend
 (the Trading prerequisite), then added a dedicated production verifier for it. **Net production change:** migration
 head **`0070` → `0072`**; **no flag flipped** — `mainship_coordinate_travel_enabled` stays **false**, coordinate UI
-hidden, raw coordinate command server-rejected, port-to-port unchanged/enabled. `main` head `946cdc9`.
+hidden, raw coordinate command server-rejected, port-to-port unchanged/enabled. `main` head `a947c8d`.
 
 **Work done (in order):**
 

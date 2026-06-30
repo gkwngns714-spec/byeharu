@@ -39,7 +39,7 @@ the **Glossary** (§12).
 
 ## 2. Current project snapshot
 
-> **2026-06-30 update.** Production migration head is now **`0072`**; `main` head is **`946cdc9`**. **OSN port-to-port
+> **2026-06-30 update.** Production migration head is now **`0072`**; `main` head is **`a947c8d`**. **OSN port-to-port
 > travel is ENABLED** (`mainship_space_movement_enabled = true`). **Free arbitrary-coordinate travel is built but
 > DARK**: `mainship_coordinate_travel_enabled = false` (server gate, **OSN-COORD-GATE-1 / `0070`**) so the raw
 > coordinate command rejects and the server-derived **`coordinate_travel_available = false`** for every caller. The
