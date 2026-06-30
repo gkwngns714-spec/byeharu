@@ -5,6 +5,46 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-06-30 — OSN-COORD-ENABLE (dark) → PORT-ENTRY-1 first-ship commission/normalize → production verifier (head `0070` → `0072`)
+
+Since the entry below (head `0070`, OSN port-to-port live, coordinate travel server-disabled) the project built the
+coordinate-travel capability **end-to-end and left it DARK**, then shipped the **first-ship / port-entry** backend
+(the Trading prerequisite), then added a dedicated production verifier for it. **Net production change:** migration
+head **`0070` → `0072`**; **no flag flipped** — `mainship_coordinate_travel_enabled` stays **false**, coordinate UI
+hidden, raw coordinate command server-rejected, port-to-port unchanged/enabled. `main` head `946cdc9`.
+
+**Work done (in order):**
+
+- **OSN-COORD-ENABLE-1B (migration `0071`, PR #57, deployed DARK).** Extended the authenticated read-model
+  `get_osn_movement_readiness()` with one additive boolean `coordinate_travel_available = osn_available AND
+  cfg_bool('mainship_coordinate_travel_enabled')` — derived from the existing anchored-origin decision, false for
+  every caller while the gate is false. Disposable 2×2 truth-table proof; gated deploy.
+- **OSN-COORD-ENABLE-1B-VERIFY (PR #58).** Repinned the read-only post-enable verifier to head `0071` + a
+  single-RPC readiness-capability contract probe. Production read-only run: `OVERALL_PASS=true`.
+- **OSN-COORD-ENABLE-1C (PR #59, Pages-deployed).** The frontend empty-space coordinate UI is now driven SOLELY by
+  the server-derived `coordinate_travel_available` (strict fail-closed parser + `isCoordinateTargetingActionable`);
+  the compile-time `OSN_COORDINATE_TRAVEL_ENABLED` constant is retired as the UI authority. **Effect:** when the
+  server flag is later flipped true, the coordinate UI lights up with no redeploy; until then it stays dark.
+  Live bundle independently verified dark.
+- **PORT-ENTRY-1 (migration `0072`, PR #61, deployed).** First-ship commissioning + same-location dock
+  normalization — the Trading prerequisite. `port_entry_commission_writer(uuid)` (service-role-only) inserts a new
+  player's ship DIRECTLY into canonical `at_location` at Haven Reach; `commission_first_main_ship()` (authenticated,
+  zero-arg) outcome matrix A–F; `normalize_main_ship_dock()` (authenticated) upgrades a coherent `legacy_present`
+  ship in place. Two-phase lock protocol; proven with a real two-session concurrency race (B blocks on the
+  `player_id` unique conflict until A commits). Additive function-only; no flag/data/coordinate change. **No
+  player-facing UI yet.**
+- **PORT-ENTRY-1-VERIFY-1 (PR #62, merged — tooling only).** A dedicated, dispatch-only, production-gated
+  read-only verifier proving production contains exactly the three PORT-ENTRY functions (signatures, bodies via raw
+  `pg_proc.prosrc` md5, `SECURITY DEFINER`, `search_path`, ACLs) AND the **complete** authenticated client-RPC
+  inventory (exact 20-RPC set by OID). Disposable proof passes + fails closed for 8 mutation cases. **Not yet run
+  against production** (the gated run is the next human-approved checkpoint).
+
+**Current authoritative state (HELD):** head `0072`; `mainship_send_enabled=true`, `mainship_space_movement_enabled=true`
+(port-to-port enabled), `mainship_coordinate_travel_enabled=false`, `coordinate_travel_available=false`. Coordinate
+travel and Trading V1 are **not** started; PORT-ENTRY player UI is the next active development.
+
+---
+
 ## 2026-06-29 — OSN enabled → Phase 9 docked-port surface → coordinate-gate hardening → Phase 10 Trading design (head `0068` → `0070`)
 
 Since the PORT-LAUNCH entry below (head `0068`, ports public, OSN still dark) the project advanced through OSN

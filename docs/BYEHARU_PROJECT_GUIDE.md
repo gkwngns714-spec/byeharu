@@ -39,20 +39,22 @@ the **Glossary** (§12).
 
 ## 2. Current project snapshot
 
-> **2026-06-29 update.** Production migration head is now **`0070`**. **OSN port-to-port travel is ENABLED**
-> (`mainship_space_movement_enabled = true`) — a ship docked at a port can travel port-to-port. **Free
-> arbitrary-coordinate travel is server-disabled by default** via the new server-owned key
-> `mainship_coordinate_travel_enabled = false` (**OSN-COORD-GATE-1 / migration `0070`**, PR #51); the raw
-> coordinate command now rejects with `coordinate_travel_disabled` while the key is false. `mainship_send_enabled
-> = true`; `OSN_COORDINATE_TRAVEL_ENABLED = false` (frontend). The three starter ports (Haven Reach, Slagworks
-> Anchorage, Driftmarch Waypost) are **active/public**. **Phase 9** — the docked-port read surface
-> `get_my_current_dock_services()` + frontend `DockServicesPanel` (migration `0069`, PR #49/#50) — is
-> **[Implemented]** and deployed (shows the current port + its active services only when the ship is
-> `at_location`; today only **Docking** is seeded). **Phase 10 Trading V1** is **fully designed/calibrated but
-> NOT built**; its gating prerequisite is **main-ship provisioning** (a brand-new player has no ship today) plus
-> a canonical OSN **port-entry transition** to a tradeable `at_location` state. `main` head is `6e2a091`. The
-> detailed bullets below predate this and are kept for history — see `DEV_LOG.md` (**2026-06-29 entry**) for the
-> authoritative current state and the **forward plan**.
+> **2026-06-30 update.** Production migration head is now **`0072`**; `main` head is **`946cdc9`**. **OSN port-to-port
+> travel is ENABLED** (`mainship_space_movement_enabled = true`). **Free arbitrary-coordinate travel is built but
+> DARK**: `mainship_coordinate_travel_enabled = false` (server gate, **OSN-COORD-GATE-1 / `0070`**) so the raw
+> coordinate command rejects and the server-derived **`coordinate_travel_available = false`** for every caller. The
+> frontend coordinate UI is now driven SOLELY by that runtime capability (**OSN-COORD-ENABLE-1B/1C**, migrations
+> `0071`, PRs #57–#59) — the old `OSN_COORDINATE_TRAVEL_ENABLED` compile-time const is retired, so flipping the
+> server flag later lights up the UI with **no redeploy**; until then it stays hidden. `mainship_send_enabled = true`.
+> The three starter ports (Haven Reach, Slagworks Anchorage, Driftmarch Waypost) are **active/public**; **Phase 9**
+> dock-service read surface (`get_my_current_dock_services()` + `DockServicesPanel`, `0069`) is **[Implemented]**.
+> **PORT-ENTRY-1 (migration `0072`, PR #61) is DEPLOYED** — first-ship commissioning (`commission_first_main_ship()`,
+> docked at Haven Reach), same-location normalization (`normalize_main_ship_dock()`), and the service-role-only
+> `port_entry_commission_writer(uuid)`; additive function-only, concurrency-proven, **no player-facing UI yet**. A
+> dedicated read-only production verifier (**PORT-ENTRY-1-VERIFY-1**, PR #62) is **merged but not yet run**. **Phase 10
+> Trading V1** is **fully designed/calibrated but NOT built**. Immediate next work: the player-facing **Claim First
+> Ship** + **Finish Docking (normalize)** UI, then **Trading V1**. The detailed bullets below predate this — see
+> `DEV_LOG.md` (**newest 2026-06-30 entry**) for the authoritative current state and forward plan.
 >
 > **Immediate next steps (approved direction, not started):** (1) main-ship provisioning + canonical port-entry
 > transition (the Trading prerequisite); (2) Trading V1 implementation (read model → catalog seed → atomic
