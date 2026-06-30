@@ -43,6 +43,16 @@ begin
   raise notice 'precond ok: 6 fresh players, base present, zero main ships';
 end $$;
 
+-- Mirror PRODUCTION: the three starter ports are ACTIVE/public (revealed). A fresh disposable chain boots them
+-- HIDDEN (migration 0066), so reveal them here exactly as production did (reverted to hidden at cleanup).
+do $$
+declare r jsonb;
+begin
+  r := public.reveal_starter_ports();
+  if (r->>'ok')::boolean is not true then raise exception 'SETUP FAIL: reveal_starter_ports %', r; end if;
+  raise notice 'setup ok: starter ports active (mirrors production)';
+end $$;
+
 -- helper assertion: the player is in canonical at_location at the expected port (exactly 1 ship/fleet/presence).
 create or replace function pg_temp.assert_docked(p_player uuid, p_loc uuid, p_label text) returns void language plpgsql as $$
 declare v_ship uuid; v_ctx text; n int; v_fleet uuid;
@@ -275,6 +285,8 @@ end $$;
 -- ════════ cleanup — remove all fixtures; assert no leftover; restore service ════════
 update public.location_services set status='active' where id=(select v from pe1 where k='slag_svc');
 delete from auth.users where email like 'pe1fix.%@example.com';   -- cascades ships/fleets/presence/bases/units
+update public.locations set status='hidden'                        -- revert the reveal (test-only direct revert)
+  where id in (select v from pe1 where k in ('haven','slag')) or id='b1a00003-0066-4a00-8a00-000000000003';
 do $$
 declare n int;
 begin
