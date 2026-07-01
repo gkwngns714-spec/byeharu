@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useGameState } from './useGameState'
 import { BasePanel } from '../base/BasePanel'
+import { PortEntryPanel } from '../portentry/PortEntryPanel'
 import { MainShipPanel } from './MainShipPanel'
 import { TrainShipsPanel } from '../production/TrainShipsPanel'
 import { BuildQueuePanel } from '../production/BuildQueuePanel'
@@ -77,6 +78,9 @@ export function Dashboard() {
             resources={game.resources}
             unitTypes={game.unitTypes}
           />
+          {/* PORT-ENTRY: onboarding claim + finish-docking. Self-hides unless the caller's own ship state
+              needs an action (server-authoritative; not flag-gated). Refreshes the command center on success. */}
+          <PortEntryPanel deps={{ onChanged: game.refresh }} />
           {/* Phase 10H: main-ship status in Command Center, gated by the master flag (hidden until launch). */}
           {game.mainshipSendEnabled && (
             <MainShipPanel

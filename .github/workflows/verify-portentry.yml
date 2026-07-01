@@ -1,0 +1,38 @@
+name: Verify — PORT-ENTRY player UI (unit)
+
+# Runner for the pure PORT-ENTRY player-UI unit tests: the fail-closed RPC-result parsers, the affordance
+# classifier (eligibility rendering), the player-facing copy, and the framework-free one-shot action
+# controller (single-in-flight duplicate-click guard, successful-refresh hook, failure/network handling).
+# Node-side Playwright unit tests — NO page/browser interaction, NO DB, NO secrets, NO live verifier, NO
+# production/deploy/Environment state. It exists because the dev machine's local toolchain is unreliable, so
+# these must run in CI. Mirrors verify-osn-s6c.yml: runs on its OWN path-scoped pull requests so PORT-ENTRY
+# is gated before merge, and is workflow_dispatch-able afterward. Not a gate on every unrelated push.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/features/portentry/**'
+      - 'tests/portEntry.spec.ts'
+      - '.github/workflows/verify-portentry.yml'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run PORT-ENTRY player-UI unit tests
+        run: npm run verify:portentry
