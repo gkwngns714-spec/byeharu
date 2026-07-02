@@ -64,3 +64,27 @@ export function resolveMainShipStatusLabel(inp: MainShipStatusLabelInputs): stri
       return null
   }
 }
+
+// TRADE-UI-1 — sibling pure helper for the RAW main_ship_instances.status enum (migration 0043:
+// 'home'|'traveling'|'hunting'|'trading'|'exploring'|'mining'|'retreating'|'returning'|'repairing'|'destroyed').
+// Distinct from resolveMainShipStatusLabel above (which labels a leak-safe LOCATION marker): a ship-list row
+// carries only this activity-status string, so labeling lives here to keep ALL main-ship status labels in one
+// module. Pure (no marker/movement/location inputs), and it exposes no location name — nothing to leak.
+const INSTANCE_STATUS_LABELS: Record<string, string> = {
+  home: 'At home base',
+  traveling: 'Traveling',
+  hunting: 'Hunting',
+  trading: 'Trading',
+  exploring: 'Exploring',
+  mining: 'Mining',
+  retreating: 'Retreating',
+  returning: 'Returning',
+  repairing: 'Repairing',
+  destroyed: 'Disabled',
+}
+
+/** A short human label for a raw main_ship_instances.status; falls back to the raw value so an unmapped/future
+ *  status degrades readably rather than blank (mirrors the DockServicesPanel SERVICE_LABELS `?? s` idiom). */
+export function mainShipInstanceStatusLabel(status: string): string {
+  return INSTANCE_STATUS_LABELS[status] ?? status
+}

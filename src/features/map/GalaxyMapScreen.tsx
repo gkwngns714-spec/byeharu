@@ -8,6 +8,7 @@ import { MainShipCommand } from './MainShipCommand'
 import { PortNavPanel } from './PortNavPanel'
 import { DockServicesPanel } from './DockServicesPanel'
 import { MarketPanel } from './MarketPanel'
+import { ShipSwitcher } from './ShipSwitcher'
 import { useMainShipSelection } from './useMainShipSelection'
 import { TRADE_MARKET_ENABLED } from './osnReleaseGates'
 
@@ -54,11 +55,19 @@ export function GalaxyMapScreen() {
       {showPreview && (
         <div className="border-b border-slate-800 bg-slate-900/95 p-3">
           <MainShipPreview sendEnabled={mainshipSendEnabled} fleet={mainShipFleet} onChanged={refresh} />
-          {/* TRADE-UI-1 — read-only market view for the selected ship. DARK: renders ONLY behind the
-              TRADE_MARKET_ENABLED gate (false), and the server rejects the trade reads while trade_market_enabled
-              is false — double fail-closed. Wired for when a human flips both the gate and the server flag. */}
+          {/* TRADE-UI-1 — ship-switcher (selection only) + read-only market view for the selected ship, sharing
+              the ONE shipSelection hook instance so switching updates which ship MarketPanel displays. DARK:
+              renders ONLY behind the TRADE_MARKET_ENABLED gate (false), and the server rejects the trade reads
+              while trade_market_enabled is false — double fail-closed. Wired for when a human flips both. */}
           {TRADE_MARKET_ENABLED && (
-            <MarketPanel key={shipSelection.selectedShipId ?? 'none'} selectedShip={shipSelection.selectedShip} />
+            <>
+              <ShipSwitcher
+                ships={shipSelection.ships}
+                selectedShipId={shipSelection.selectedShipId}
+                selectShip={shipSelection.selectShip}
+              />
+              <MarketPanel key={shipSelection.selectedShipId ?? 'none'} selectedShip={shipSelection.selectedShip} />
+            </>
           )}
         </div>
       )}

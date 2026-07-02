@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { resolveMainShipStatusLabel } from '../src/features/map/mainshipStatusLabel'
+import { resolveMainShipStatusLabel, mainShipInstanceStatusLabel } from '../src/features/map/mainshipStatusLabel'
 import type { ShipMarker, MainShipMarkerState } from '../src/features/map/resolveMainShipMarker'
 import type { MainShipSpaceMovement } from '../src/features/map/mainshipApi'
 
@@ -75,4 +75,20 @@ test('traveling to an open-space coordinate → "Traveling to open space"', () =
 test('home → "At home base"', () => {
   expect(resolveMainShipStatusLabel({ marker: marker('home'), spaceMovement: null, publicLocations: PUBLIC }))
     .toBe('At home base')
+})
+
+// TRADE-UI-1 — the raw main_ship_instances.status enum labeler consumed by the ship-switcher (migration 0043).
+test('instance status: every enum value maps to a non-raw human label', () => {
+  const cases: Record<string, string> = {
+    home: 'At home base', traveling: 'Traveling', hunting: 'Hunting', trading: 'Trading',
+    exploring: 'Exploring', mining: 'Mining', retreating: 'Retreating', returning: 'Returning',
+    repairing: 'Repairing', destroyed: 'Disabled',
+  }
+  for (const [status, label] of Object.entries(cases)) {
+    expect(mainShipInstanceStatusLabel(status)).toBe(label)
+  }
+})
+
+test('instance status: an unmapped/future value falls back to the raw string (never blank)', () => {
+  expect(mainShipInstanceStatusLabel('some_future_status')).toBe('some_future_status')
 })
