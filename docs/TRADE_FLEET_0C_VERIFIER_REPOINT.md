@@ -160,6 +160,32 @@ md5 pins are invalidated against a 0C-applied DB and must be **re-derived at the
 
 ---
 
+## Abstract cargo columns — NOT dropped in 0C (defer to TRADE-UI-1)
+
+**Design decision (planner authority, refines §2.3).** The abstract cargo columns are **not physically
+dropped in 0C.** The frontend still `SELECT`s and displays `cargo_capacity` (instance) and
+`base_cargo_capacity` (hull) — `src/features/map/mainshipApi.ts:29/40/51/62`,
+`src/features/…/MainShipPreview.tsx:130/192`, `useGalaxyMapData.ts:26/66` — so dropping them would break
+live ship/galaxy reads, and the fix touches `src/` (TRADE-UI-1 scope; 0C must not touch `src/`). Therefore
+in 0C the **volume model** (`cargo_capacity_m3`, `ship_cargo_lots` lot-sum) is the **authoritative** capacity
+source for new trade paths, while the abstract `cargo_capacity` / `base_cargo_capacity` / `cargo_used`
+columns **remain as coexisting legacy** (still populated, still read by the current UI). The physical column
+drop + frontend swap to the volume model land **together in TRADE-UI-1.**
+
+## New TRADE-FLEET-0C proof harness (§2.7)
+
+`scripts/trade-fleet-0c-proof.{sql,sh}` — a write-then-**ROLLBACK** real-chain proof (house idiom of
+`port-entry-1-proof.{sql,sh}`), with a DB-free `selftest`. It proves the **0C-established** subset of the
+§2.7 eight properties: provisioning via the real RPCs + the dark/cap/flag gate;
+**(1)** N-ship coexistence; **(2)** independent per-ship movement (explicit `p_main_ship_id`, per-ship receipt
+scoping); **(7)** legacy one-ship shim validity (+ multi-ship ambiguity fails closed). It enables
+`mainship_additional_commission_enabled` **only inside the rolled-back txn** (production flag stays false).
+The **two trade-enforcement properties** — volume-capacity-check-on-write and docked-trade-while-in-transit
+concurrency — are **DEFERRED to TRADE-MARKET-1's verifier** (no buy/sell RPC exists yet). The live/ephemeral
+run is the CI/human gate; the DB-free selftest runs in-loop. It is invoked directly
+(`bash scripts/trade-fleet-0c-proof.sh selftest`), matching the house convention for `.sh` proofs (not wired
+into `package.json` or any auto-run/CI dispatch — dispatch stays a human gate).
+
 ## §2.5 command-signature conversion — **COMPLETE**
 
 Six active sites converted to a trailing `p_main_ship_id uuid default null` via the shared
