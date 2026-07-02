@@ -5,6 +5,49 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — TRADE-UI-1 landed DARK + PR-ready (ship-switcher + buy/sell + §2.5 sole-ship shim retirement)
+
+**Request.** Complete **TRADE-UI-1** on `autopilot/20260703-064048`: the client trading surface (ship switcher,
+market buy/sell) and the **§2.5 sole-ship shim retirement** (the UI passes an explicit `p_main_ship_id`). Additive,
+gated **OFF**, behavior-preserving; no migration/DB/verifier/workflow/flag change; `main` untouched.
+
+**Work done**
+- **Client trade surface (DARK).** Selected-ship model `useMainShipSelection` (owner-reads `main_ship_instances`,
+  auto-selects the sole ship, N-ship-ready); `ShipSwitcher` (selection-only; a single ship renders as a
+  non-interactive sole entry); `MarketPanel` read view (wallet, occupied cargo m³ vs capacity, station offers)
+  **plus per-offer buy/sell** wired to `market_buy` / `market_sell` — each intentional click is one idempotent
+  command keyed by a fresh `crypto.randomUUID()`, a **synchronous in-flight ref** guards against double-submit, and
+  a success re-reads wallet/cargo/offers via `refresh()`. Fail-closed server reasons map through the pure
+  `tradeReasonMessage`. Everything mounts only behind `TRADE_MARKET_ENABLED = false` and is **double fail-closed**
+  against the server `trade_market_enabled` flag (also false — the trade RPCs reject before any ship read).
+- **§2.5 sole-ship shim retirement.** The client now sends an explicit `p_main_ship_id` at ⑤ port
+  move-to-location, ④ space-stop, ③ movement-readiness, ② dock-services, ① repair, and ⑦ normalize-dock. Each is
+  behavior-preserving: with one ship the sourced id equals the shim-derived sole ship; a transitional `null` still
+  resolves via the server `count = 1` shim; ownership is server-asserted, so an explicit id can only ever act on the
+  caller's own ship. ⑥ `command_main_ship_space_move` is **deferred by design** — its RPC intentionally never took
+  `p_main_ship_id` in TRADE-FLEET-0C (it rejects at the coordinate gate before any ship read).
+- Delivered as six small, independently-reviewable commits (map hooks/panels; plus `dashboard/MainShipPanel.tsx`
+  for repair and `portentry/` for normalize under a deliberately-widened frontend scope, id-threading only).
+
+**State.** Migration head **unchanged at `0091`** — TRADE-UI-1 touched **no** migration/DB/verifier/workflow. The
+feature is **DARK and PR-ready** on `autopilot/20260703-064048`: buildable, **not deployed, not verified in
+production**. All trade / add-ship gates + flags remain **OFF**: `TRADE_MARKET_ENABLED`,
+`MAINSHIP_ADDITIONAL_ENABLED`, `trade_market_enabled`, `mainship_additional_commission_enabled`,
+`mainship_coordinate_travel_enabled`.
+
+**Human-gated follow-ups (NOT done, by design)**
+- **Activate trading:** flip `trade_market_enabled` + `TRADE_MARKET_ENABLED` (and, for the multi-ship add-ship
+  path, `mainship_additional_commission_enabled` + `MAINSHIP_ADDITIONAL_ENABLED`).
+- **Server-side removal of the sole-ship shim** — a future migration, only once the UI-explicit-id path is merged.
+- **Run the rendered `.uispec.ts` suites in CI** — this sandbox lacks the browser binary (`chrome-headless-shell`).
+- **Small `react-hooks` lint-debt cleanup** — documented pre-existing suppressions in `usePortEntry.ts` and
+  `useDockServices.ts` (a `useState`-initializer refactor; out of scope for the id-threading commits).
+
+**Bugs / fixes**
+- _(none — additive dark UI + behavior-preserving id threading; no production code path changed.)_
+
+---
+
 ## 2026-07-03 — Repo/docs sync + PORT-ENTRY player UI landing recorded (no new build)
 
 **Request.** Pull `main` current on the local machine and bring the project docs (log, guide, PDFs) up to date.
