@@ -181,10 +181,12 @@ export function deriveMainShipStatus(fleet: { status: string } | null): MainShip
   return 'traveling' // 'moving'
 }
 
-// PHASE 9 — read the player's current docked-port surface (zero-arg authenticated RPC; everything derived
-// server-side from auth.uid()). Errors / pre-deploy collapse to the no-dock default so nothing renders.
-export async function fetchMyCurrentDockServices(): Promise<DockServices> {
-  const { data, error } = await supabase.rpc('get_my_current_dock_services')
+// PHASE 9 / TRADE-FLEET-0C §2.5 — read the current docked-port surface for the EXPLICIT selected/sole main
+// ship (p_main_ship_id; null → server sole-ship shim → behavior-identical while every player has exactly one
+// ship). The player is still derived from auth.uid(); no other input is sent. Errors / pre-deploy collapse to
+// the no-dock default so nothing renders (unchanged).
+export async function fetchMyCurrentDockServices(mainShipId?: string | null): Promise<DockServices> {
+  const { data, error } = await supabase.rpc('get_my_current_dock_services', { p_main_ship_id: mainShipId ?? null })
   if (error) return DOCK_NOT_DOCKED
   return parseDockServices(data)
 }

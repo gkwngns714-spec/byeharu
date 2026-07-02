@@ -18,14 +18,18 @@ const SERVICE_LABELS: Record<string, string> = {
 
 export function DockServicesPanel({
   lifecycleKey,
+  mainShipId = null,
   deps,
 }: {
   // Re-validates the dock surface whenever the main-ship lifecycle changes.
   lifecycleKey: string
+  // TRADE-FLEET-0C §2.5: the current/sole main-ship id, threaded to the dock read as an explicit
+  // p_main_ship_id. Optional (defaults null → server sole-ship shim → behavior-identical while single-ship).
+  mainShipId?: string | null
   // Injection seam for tests; defaults to the real authenticated server read.
   deps?: { fetcher?: () => Promise<DockServices> }
 }) {
-  const dock = useDockServices(lifecycleKey, { fetcher: deps?.fetcher })
+  const dock = useDockServices(lifecycleKey, { mainShipId, fetcher: deps?.fetcher })
 
   // Not docked (in transit / in space / destroyed / no ship / home / legacy / contradictory) → no port surface.
   if (!isDocked(dock)) return null

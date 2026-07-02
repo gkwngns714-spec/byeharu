@@ -123,6 +123,7 @@ export function GalaxyMapScreen() {
                   Docking). No buy/sell/repair actions; no home-port. */}
               <DockServicesPanel
                 lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
+                mainShipId={mainShip?.main_ship_id ?? null}
               />
             </>
           )}
