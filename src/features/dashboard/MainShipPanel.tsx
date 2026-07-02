@@ -42,7 +42,7 @@ export function MainShipPanel({
     setRepairing(true)
     setRepairError(null)
     try {
-      await repairMainShip() // 10F recovery RPC (ungated; auth.uid()-scoped, own ship only)
+      await repairMainShip(mainShip?.ship?.main_ship_id ?? null) // §2.5: explicit ship id; server asserts ownership (own ship only); null → shim
       onChanged()
     } catch (e) {
       setRepairError(e instanceof Error ? e.message : String(e))

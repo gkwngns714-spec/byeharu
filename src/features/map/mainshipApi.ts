@@ -22,6 +22,7 @@ import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockSer
 export type SpatialState = 'home' | 'at_location' | 'in_transit' | 'in_space' | 'destroyed'
 
 export interface MainShipRow {
+  main_ship_id: string
   name: string
   status: string
   hp: number
@@ -59,7 +60,7 @@ async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
 export async function fetchMyMainShip(): Promise<MainShipView> {
   const { data: ship, error } = await supabase
     .from('main_ship_instances')
-    .select('name, status, hp, max_hp, cargo_capacity, captain_slots, module_slots, hull_type_id')
+    .select('main_ship_id, name, status, hp, max_hp, cargo_capacity, captain_slots, module_slots, hull_type_id')
     .maybeSingle() // owner-read RLS → the caller's single ship, or null
   if (error) throw new Error(error.message)
 
@@ -232,11 +233,13 @@ export async function moveMainShipToLocation(fleetId: string, locationId: string
   return data as MainShipMoveResult
 }
 
-// Phase 10F — repair a disabled main ship (status='destroyed' = disabled/needs-repair for a
-// PERSISTENT ship; never deletion). The only normal player recovery path; instant + free, restores
-// hp=max_hp and status='home'. Not routed through any legacy fleet API.
-export async function repairMainShip(): Promise<{ main_ship_id: string; status: string; hp: number; max_hp: number }> {
-  const { data, error } = await supabase.rpc('repair_main_ship', {})
+// Phase 10F / TRADE-FLEET-0C §2.5 — repair a disabled main ship (status='destroyed' = disabled/needs-repair
+// for a PERSISTENT ship; never deletion). The only normal player recovery path; instant + free, restores
+// hp=max_hp and status='home'. Not routed through any legacy fleet API. Passes the EXPLICIT selected/sole
+// main-ship id (p_main_ship_id); the server asserts ownership (so it can only ever repair the caller's own
+// ship), and a null id preserves the sole-ship shim (behavior-identical while every player has exactly one).
+export async function repairMainShip(mainShipId?: string | null): Promise<{ main_ship_id: string; status: string; hp: number; max_hp: number }> {
+  const { data, error } = await supabase.rpc('repair_main_ship', { p_main_ship_id: mainShipId ?? null })
   if (error) throw new Error(error.message)
   return data as { main_ship_id: string; status: string; hp: number; max_hp: number }
 }

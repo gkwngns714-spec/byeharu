@@ -94,7 +94,7 @@ export function MainShipPreview({
     setRepairing(true)
     setRepairError(null)
     try {
-      await repairMainShip() // 10F recovery RPC (auth.uid()-scoped; own ship only)
+      await repairMainShip(ship?.main_ship_id ?? null) // §2.5: explicit ship id; server asserts ownership (own ship only); null → shim
       if (onChanged) await onChanged()
       await load() // refresh this panel's own view → home + full hp
     } catch (e) {
