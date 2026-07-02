@@ -186,6 +186,104 @@ run is the CI/human gate; the DB-free selftest runs in-loop. It is invoked direc
 (`bash scripts/trade-fleet-0c-proof.sh selftest`), matching the house convention for `.sh` proofs (not wired
 into `package.json` or any auto-run/CI dispatch — dispatch stays a human gate).
 
+## §2.7 "other verifiers" audit — all PASS UNCHANGED (inspection-based; no local DB)
+
+Audited each named `.mjs` verifier/helper against the exact 0C deltas: (a) `player_id UNIQUE` dropped;
+(b) new NOT NULL `>0` `cargo_capacity_m3`/`base_cargo_capacity_m3`; (c) abstract `cargo_used`/`cargo_capacity`/
+`base_cargo_capacity` **kept**; (d) six commands now take a trailing `p_main_ship_id uuid default null`
+(zero-arg/positional calls resolve via the sole-ship shim); (e) `ensure_main_ship_for_player` + commission
+writers now populate `cargo_capacity_m3`. A verifier BREAKS only if it asserts the dropped UNIQUE, hard-pins a
+converted zero-arg signature (`::regprocedure`/`pronargs`), **service-role**-inserts a ship/hull row without the
+new NOT NULL columns, or depends on removed behavior. **None do.**
+
+| verifier / helper | provisioning / relevant surface | verdict | reason |
+|---|---|---|---|
+| `verify-phase7.mjs` | `admin.rpc('ensure_main_ship_for_player')`; reads `cargo_capacity`/`cargo_used` (abstract, kept); two **client** inserts of ship/hull rows | **PASSES unchanged** | ensure now populates `cargo_capacity_m3`; abstract cols kept & read; the two direct inserts are **client** (authenticated) writes that are permission/RLS-denied **before** any NOT NULL check — and the test only asserts denial / no-mutation (`void ci`), not the specific error. No UNIQUE/regproc pin. |
+| `verify-phase8.mjs` | `ensure_main_ship_for_player`; `calculate_expedition_stats(p_main_ship_id,…)` (already ship-addressed, [N]); reads abstract `cargo_capacity` | **PASSES unchanged** | ensure populates volume col; abstract cols kept & read; stat adapter unchanged and already takes `p_main_ship_id`. No direct insert. |
+| `verify-mainship-move.mjs` | `ensure_main_ship_for_player`; `move_main_ship_to_location`/`send_main_ship_expedition`/`request_main_ship_return` ([N], unchanged); `dev_set_main_ship_destroyed` | **PASSES unchanged** | all provisioning/commands via unchanged/[N] RPCs by name; no direct ship insert; no UNIQUE/regproc. |
+| `verify-mainship-preview.mjs` | `ensure_main_ship_for_player`; `calculate_expedition_stats` (ship-addressed) | **PASSES unchanged** | ensure populates volume col; adapter ship-addressed; no direct insert. |
+| `verify-mainship-repair.mjs` | `ensure_main_ship_for_player`; `rpc('repair_main_ship', {})` (name-based, empty args) | **PASSES unchanged** | `repair_main_ship({})` resolves to the new `repair_main_ship(p_main_ship_id default null)` via all-defaults + the sole-ship shim (player has exactly one ship). Backward compatible. |
+| `verify-mainship-send.mjs` | `ensure_main_ship_for_player`; `send_main_ship_expedition`/`request_main_ship_return`/`process_mainship_expeditions` ([N]) | **PASSES unchanged** | unchanged/[N] RPCs by name; abstract-col reads intact; no direct insert. |
+| `verify-mainship-teardown-unit.mjs` | **mock-admin unit test** (no DB); tests teardown/flag-restore logic | **PASSES unchanged** | pure in-process unit test; touches no ship schema at all. |
+| `dev-commission-mainship.mjs` | `rpc('ensure_main_ship_for_player')` + GET display | **PASSES unchanged** | provisions via ensure (populates volume col). *(Non-breaking observation: a header comment still says "player_id is UNIQUE with on-conflict-do-nothing" — now stale after 0C's advisory-lock reframe; left untouched as it is a comment, not an assertion, and does not affect behavior.)* |
+| `dev-grant-ships.mjs` | grants **`base_units`** (scout/corvette/frigate) | **PASSES unchanged** | despite the name, it never touches `main_ship_instances`/`main_ship_hull_types`; unaffected by 0C. |
+| `dev-destroy-mainship.mjs` | `rpc('dev_set_main_ship_destroyed')` + GET display | **PASSES unchanged** | canonical destroy RPC (unchanged); no ship insert. |
+| `dev-clean-test-users.mjs` | deletes `auth.users` (FK cascade) | **PASSES unchanged** | deletes users only; no ship schema dependency. |
+| `cleanup-m45-orphans.mjs`, `db-cleanup.mjs`, `verify-cleanup.mjs` | combat/movement runtime retention cleanup | **PASSES unchanged** | no `main_ship_*` insert, no UNIQUE/regproc pin; unrelated to 0C schema. |
+| `dev-mainship-flag.mjs`, `dev-mainship-space-movement-flag.mjs` | `game_config` flag toggles | **PASSES unchanged** | flag helpers; no ship insert; do not touch the additional-commission flag's committed value. |
+
+**Why they stay green:** the 0C design is deliberately **backward-compatible** — abstract columns are **kept**
+(so legacy reads keep working), the six commands gained **defaulted trailing params** (so name-based / positional
+`rpc()` calls resolve via the sole-ship shim), and `ensure_main_ship_for_player` + the commission writers now
+**populate `cargo_capacity_m3`** (so RPC-based provisioning satisfies the new NOT NULL column). Verified within
+the **audited named set** (the `.mjs` verifiers/helpers listed above): the only direct `main_ship_*` table inserts
+among them are the two **client** RLS-deny probes in `verify-phase7.mjs` (lines 67, 91 — authenticated role, denied
+before the NOT NULL check), so none of the audited verifiers/helpers hit the new constraint. **No verifier or
+helper was edited.**
+
+> **Scope note (do not over-read):** this "audited named set" is the §2.7 clause's scope only. It is **not** the
+> whole `scripts/` tree — the dispatch-only realchain/proof fixtures **do** contain direct
+> `main_ship_instances` inserts that omit `cargo_capacity_m3`; that separate break-class is tracked in the next
+> section for the deploy-time gate.
+
+The deeper 0C-specific assertions — the **volume shape** (`cargo_capacity_m3` populated/authoritative), **selected-ship**
+targeting (explicit `p_main_ship_id`), and **N-ship** coexistence/cap — are proven by the new
+`scripts/trade-fleet-0c-proof.{sql,sh}` harness (which self-provisions N ships), **not** by retrofitting every legacy
+single-ship verifier. The live-DB runs of all these verifiers remain the human/CI gate.
+
+## NOT-NULL direct-insert break-class — dispatch-only realchain/proof fixtures (deploy-time repoint)
+
+Beyond the signature-pin repoints above, 0C introduces a **second, distinct break-class** for the frozen
+dispatch-only fixtures: migration **0076/0077** added `main_ship_instances.cargo_capacity_m3` as **NOT NULL `> 0`**.
+Many realchain/proof fixtures **service-role / SQL-context insert `main_ship_instances` rows directly** with an
+explicit column list that predates 0C and therefore **omits `cargo_capacity_m3`**. Against a full `0001..0084`
+chain, **every such insert violates the new NOT NULL constraint** — a different mechanism from the `::regprocedure`
+signature pins (this is a column-list break, not a signature break).
+
+**Sweep result (verified across the whole `scripts/` tree):** **100** direct `main_ship_instances` inserts omit
+`cargo_capacity_m3`, across **22 files**. (There are **no** service-role `main_ship_hull_types` inserts in
+`scripts/` — the only hull insert is the client RLS-deny probe in `verify-phase7.mjs:67-68` — so the
+`base_cargo_capacity_m3` NOT NULL break-class does **not** arise here; only `cargo_capacity_m3`.)
+
+**Repoint at the deploy-time human gate:** add `cargo_capacity_m3` (e.g. the hull's `base_cargo_capacity_m3`, or a
+literal such as `50.0` matching the co-inserted abstract `cargo_capacity`) to each insert's column + value lists.
+These files are **frozen dispatch-only gates — NOT edited by this loop** (same policy as the signature-pin
+repoints). Captured here so no fixture is lost at the gate.
+
+| file | # inserts to repoint |
+|---|---|
+| `scripts/osn3-s3-realchain-fixtures.sql` | 15 |
+| `scripts/osn3-s2-realchain-fixtures.sql` | 13 |
+| `scripts/osn3-s5-realchain-fixtures.sql` | 10 |
+| `scripts/osn3-s4-realchain-fixtures.sql` | 9 |
+| `scripts/osn3-s2-transition-core-proof.sql` | 9 |
+| `scripts/osn3-s6a-realchain-fixtures.sql` | 6 |
+| `scripts/osn3-anchor1a-realchain-fixtures.sql` | 6 |
+| `scripts/port-entry-1-proof.sql` | 5 |
+| `scripts/osn-hub1a-realchain-fixtures.sql` | 5 |
+| `scripts/osn3-s1-trigger-proof.sql` | 4 |
+| `scripts/phase9-dock-services-proof.sh` | 3 |
+| `scripts/osn3-osn4-realchain-fixtures.sql` | 3 |
+| `scripts/osn3-s3-realchain-concurrency.sh` | 2 |
+| `scripts/osn3-dock0-realchain-fixtures.sql` | 2 |
+| `scripts/osn3-s5-realchain-concurrency.sh` | 1 |
+| `scripts/osn3-s4-realchain-concurrency.sh` | 1 |
+| `scripts/osn3-s2-realchain-lockorder.sh` | 1 |
+| `scripts/osn3-s1-schema-proof.sql` | 1 |
+| `scripts/osn-hub1a-realchain-stop-timestamp-race.sh` | 1 |
+| `scripts/osn-hub1a-realchain-stop-race.sh` | 1 |
+| `scripts/osn-enablement-1b-journey.sh` | 1 |
+| `scripts/osn-coord-gate-proof.sh` | 1 |
+
+**Per-file caveat for the gate owner:** most of these inserts already supply the abstract `cargo_capacity` (e.g. `50`)
+and only need `cargo_capacity_m3` added. A subset — `osn3-s1-schema-proof.sql`, `osn3-s1-trigger-proof.sql`,
+`osn3-s2-transition-core-proof.sql` — use **minimal/partial** column lists (e.g. `(player_id, status, spatial_state)`
+or `(main_ship_id, player_id, status, spatial_state)`) that exercise the spatial-state constraints/triggers; the gate
+owner should confirm each proof's chain context and add `cargo_capacity_m3` (and any other now-required column)
+per file. Note these same fixtures may also depend on the dropped `player_id UNIQUE` (some insert two ships for one
+player) — assess alongside the repoint. **The `trade-fleet-0c-proof` harness deliberately provisions via the real
+RPCs precisely to avoid this direct-insert fragility.**
+
 ## §2.5 command-signature conversion — **COMPLETE**
 
 Six active sites converted to a trailing `p_main_ship_id uuid default null` via the shared
