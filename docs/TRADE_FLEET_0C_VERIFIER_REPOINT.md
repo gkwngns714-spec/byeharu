@@ -284,6 +284,24 @@ per file. Note these same fixtures may also depend on the dropped `player_id UNI
 player) — assess alongside the repoint. **The `trade-fleet-0c-proof` harness deliberately provisions via the real
 RPCs precisely to avoid this direct-insert fragility.**
 
+## TRADE-MARKET-1 proof harness
+
+`scripts/trade-market-1-proof.{sql,sh}` — a write-then-**ROLLBACK** real-chain proof (same house idiom as
+`trade-fleet-0c-proof.{sql,sh}`), with a DB-free `selftest`. It proves the atomic trade surface + the priced
+add-ship debit across nine properties: **P0** dark gate (offers/buy/sell reject `trade_market_disabled`, zero
+writes), **P1** `get_market_offers` (docked → 6 Haven offers; in-transit → `not_docked`), **P2** buy atomic
+(one lot + one receipt + wallet debit), **P3** buy idempotency, **P4** volume check (`insufficient_volume`),
+**P5** credit check (`insufficient_credits`), **P6** sell FIFO margin (oldest-lot-first, `realized_margin =
+total_price − cost_basis_consumed`), **P7** sell idempotency + `insufficient_cargo`, **P8** priced add-ship §1b
+(funded debits `main_ship_price`; too-poor → `insufficient_credits` with no ship/debit; first ship free). It
+enables `trade_market_enabled` + `mainship_additional_commission_enabled` (and mirrors `reveal_starter_ports` +
+`mainship_space_movement_enabled`, and transiently perturbs an offer price for the FIFO test) **only inside the
+rolled-back txn** — the committed/production flag values stay false, and it persists no wallet/lot/receipt/ship/
+flag flip. Wallets are funded by a direct owner `insert into player_wallet` (rolled back). Invoked directly
+(`bash scripts/trade-market-1-proof.sh selftest`), matching the house convention for `.sh` proofs — **not** wired
+into `package.json` or any auto-run/CI dispatch (dispatch stays a human gate). The live/ephemeral run is the CI
+gate; the DB-free selftest runs in-loop.
+
 ## §2.5 command-signature conversion — **COMPLETE**
 
 Six active sites converted to a trailing `p_main_ship_id uuid default null` via the shared
