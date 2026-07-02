@@ -95,15 +95,47 @@ migration files `osn-coord-enable-1b-readiness-proof.sh:19,29,30` (0071 `$MIG`),
 `osn-enablement-preflight.sql:145`, `osn-hub1a-production-catalog-verify.{sql:101,sh:36}`,
 `osn-hub1a-realchain-perm.sql:87`, `osn3-dock0-realchain-perm.sql:60`, `portlaunch1a-realchain-perm.sql:52`.*
 
+### #2 `command_main_ship_space_stop(uuid)` → `command_main_ship_space_stop(uuid, uuid)`  *(converted in migration 0083)*
+
+| file:line | pinned expression | repoint to |
+|---|---|---|
+| `scripts/port-entry-1-production-verify.sql:105` | `('public.command_main_ship_space_stop(uuid)')` (D2 exact-RPC inventory) | `('public.command_main_ship_space_stop(uuid, uuid)')` |
+| `scripts/osn-enablement-preflight.sql:43` | `to_regprocedure('public.command_main_ship_space_stop(uuid)')` (stop_wrapper) | `…command_main_ship_space_stop(uuid,uuid)…` |
+| `scripts/osn3-osn4-realchain-perm.sql:13` | `has_function_privilege('authenticated','public.command_main_ship_space_stop(uuid)','EXECUTE')` | `…command_main_ship_space_stop(uuid,uuid)…` |
+
+### #3 `command_main_ship_space_move_to_location(uuid, uuid)` → `(uuid, uuid, uuid)`  *(converted in migration 0083)*
+
+| file:line | pinned expression | repoint to |
+|---|---|---|
+| `scripts/port-entry-1-production-verify.sql:106` | `('public.command_main_ship_space_move_to_location(uuid, uuid)')` (D2 exact-RPC inventory) | `('public.command_main_ship_space_move_to_location(uuid, uuid, uuid)')` |
+| `scripts/osn-enable-operation.sql:71` | `to_regprocedure('public.command_main_ship_space_move_to_location(uuid,uuid)') is not null` | `…(uuid,uuid,uuid)…` |
+| `scripts/osn-enablement-preflight.sql:109` | `to_regprocedure('public.command_main_ship_space_move_to_location(uuid,uuid)')` (move_to_loc_wrapper) | `…(uuid,uuid,uuid)…` |
+| `scripts/osn-hub1a-production-catalog-verify.sql:154,165` | `('cmd','public.command_main_ship_space_move_to_location(uuid,uuid)')` (regprocedure descriptor + prosrc-identity) | `…(uuid,uuid,uuid)…` |
+| `scripts/osn-hub1a-realchain-perm.sql:30` | `to_regprocedure('public.command_main_ship_space_move_to_location(uuid,uuid)')` (v_wrapper) | `…(uuid,uuid,uuid)…` |
+| `scripts/osn-postenable-verify.sql:88,89` | `to_regprocedure('public.command_main_ship_space_move_to_location(uuid,uuid)')` (ACL_MOVE_TO_LOC_AUTH) | `…(uuid,uuid,uuid)…` |
+
+*Not invalidated (recorded): zero-arg-shape calls resolve by arg types and still match the leading params via
+default — but the pins above resolve the EXACT arg list and must repoint. Live CALLs like
+`osn-coord-gate-proof.sh:82` / `osn-enablement-1b-journey.sh:79…` pass `(location, request_id)` positionally
+→ still resolve via the trailing default; NOT invalidated. Name-only lists
+(`osn-hub1a-production-catalog-verify.sql:101`, `EXPECT_AUTH_SURFACE`) unchanged.*
+
+### #1 `command_main_ship_space_move(double precision, double precision, uuid)` — **NOT converted in 0C**
+
+**Deferred (dark coordinate command; §2.5 [C] row).** It rejects at `…0070…:57`
+(`mainship_coordinate_travel_enabled = false`) before its ship read, so its single-ship derivation is
+unreachable while dark. **Its signature is unchanged → no pin for it breaks → no repoint needed.** The
+future coordinate-enable slice owns ship-scoping it. Pins that remain valid (recorded for completeness):
+`port-entry-1-production-verify.sql:104,141`, `osn-postenable-verify.sh:84-86`,
+`osn-enablement-preflight.sql:42`, `osn-coord-gate-proof.sh:52,53`.
+
 ---
 
 ## Pending sites (not yet converted — will append their pins as each lands)
 
-- #1 `command_main_ship_space_move(double precision, double precision, uuid)` → `+ uuid`
-- #2 `command_main_ship_space_stop(uuid)` → `+ uuid`
-- #3 `command_main_ship_space_move_to_location(uuid, uuid)` → `+ uuid`
-- #7 `normalize_main_ship_dock()` → `+ uuid`
+- #7 `normalize_main_ship_dock()` → `+ uuid` (next commit)
 
-Each will add a `regprocedure`/`has_function_privilege`/descriptor pin repoint list here in the commit that
-converts it. The PORT-ENTRY D2 inventory (`scripts/port-entry-1-production-verify.sql:96-113`) lists all
-of these by zero-/current-arg signature; it stays frozen and is repointed wholesale at the deploy gate.
+The remaining site adds its `regprocedure`/`has_function_privilege`/descriptor pin repoint list here in the
+commit that converts it. The PORT-ENTRY D2 inventory (`scripts/port-entry-1-production-verify.sql:96-113`)
+lists all of these by zero-/current-arg signature; it stays frozen and is repointed wholesale at the deploy
+gate.
