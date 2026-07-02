@@ -35,6 +35,13 @@ become stronger."*
 
 1. **Main-ship centered.** The main ship is a unique INSTANCE (not stackable), the emotional
    center; usually returns damaged / needs repair rather than being deleted.
+   > **AMENDMENT (2026-07-02, user-directed — see `DEV_LOG.md` 2026-07-02):** a player may own
+   > **multiple** persistent main ships. Each ship remains a distinct, non-stackable, individually
+   > addressed INSTANCE (the emotional-center framing is unchanged) — "not stackable" means ships
+   > are never fungible counts, **not** "one per player." Multi-ship ownership is a **Trading V1
+   > foundation (TRADE-FLEET-0)**, not a later feature. Trade cargo is **ship-bound** and measured
+   > **by volume only (m³)** — no account/fleet-pooled cargo, no kilograms/mass in V1 (mass is
+   > future-only).
 2. **Support craft are capacity-limited loadout choices, NOT additive power.** Each consumes
    `support_capacity`; specialized roles with opposing tradeoffs (combat↔cargo, safety↔speed,
    scouting↔fighting, repair↔damage, mining↔protection, heavy-trade↔low-risk). More support
@@ -75,7 +82,7 @@ become stronger."*
 | **7** ✅ | `main_ship_hull_types` + `main_ship_instances` (one per player; hull base stats; ensure/get/rename) | server-authoritative; sits `home`; doesn't drive expeditions yet |
 | **8** ✅ | `calculate_expedition_stats()` (read/compute adapter; capacity hard-cap + tradeoffs, not a sum) | old fleet-stack path still owns combat; not live-wired yet |
 | **9** ✅ | Expedition UI reframe + **docked-port read surface** (`get_my_current_dock_services()` + `DockServicesPanel`, migration `0069`) | done & deployed; main-ship/expedition wording reconciled; dock surface shows the current port + active services only at `at_location` (today: Docking). OSN port-to-port is **enabled**; free coordinate travel is **server-gated off** (`mainship_coordinate_travel_enabled=false`, migration `0070`) |
-| 10 ⏳ | Trading (buy low / travel / sell high; cargo, route danger) | **fully designed/calibrated, NOT built** (see `DEV_LOG.md` 2026-06-29 + the Phase-10 design packets). Free-port model; HYBRID ship trade-hold + account loot; lazy wallet; server-owned `market_offers`; `trade_receipts` idempotency; per-offer allowance. **Prerequisite (blocks Trading): main-ship provisioning** — a new player has no ship today — + a canonical OSN **port-entry transition** to `at_location`. Open product decisions pending user approval |
+| 10 ⏳ | Trading (buy low / travel / sell high; **volume-only (m³)** ship-bound cargo, route danger) | **designed, NOT built.** **FIXED product direction 2026-07-02** (see `DEV_LOG.md` 2026-07-02 + `TRADE_FLEET_0A_IMPACT_AUDIT.md`): **volume-only per-ship cargo (m³ canonical; NO kilograms/mass/dual-cap in V1), ship-bound cargo (never pooled), multiple persistent main ships as a Trading V1 foundation, commodities with fixed canonical m³ denominations, every market action targets one selected docked ship (atomic volume check), ships as first credit sink.** Out of V1 scope: pooled cargo, account trade inventory, remote market, **ship-to-ship transfer**, warehouses, auto-routes, P2P trade, dynamic supply/demand, cargo loss/insurance, mass/fuel mechanics. Retained: free-port eligibility, server-owned `market_offers`, lazy wallet, `trade_receipts` idempotency, per-offer allowance (re-scoped to a selected ship). **Sequence:** PORT-ENTRY (done, mig `0072`) → **TRADE-FLEET-0A** (read-only impact audit) → **TRADE-FLEET-0B** (explicit user-approved multi-ship + volume-cargo contract) → **TRADE-FLEET-0C** (coherent implementation slice) → **TRADE-MARKET-1** (server-authoritative market) → **TRADE-UI-1** (selected-ship market + fleet UI) |
 | 11 | Exploration (scan/discover → data/shards/blueprints) | pending discovery rewards; scan in **OSN** proximity of unexplored coordinates where applicable |
 | 12 | Mining (extract → ore/crystal/cores) | pending resource rewards; navigate via **OSN**, extract within proximity where applicable |
 | 13 | Module instances + crafting | instances, not stack-only |

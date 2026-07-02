@@ -5,6 +5,70 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-02 — Trading V1 design record — FIXED product direction (volume-only per-ship cargo + multi-ship foundation) + TRADE-FLEET-0A read-only audit (DESIGN RECORD ONLY; nothing built)
+
+**Request.** Do **not** begin Trading implementation. Fix the Trading V1 product direction (below) as binding for
+design, and produce **TRADE-FLEET-0A** — a strict read-only impact audit for introducing **multiple persistent main
+ships** and **ship-bound, volume-based cargo**. No branch, PR, migration, code, seed, workflow, deployment, or
+production-state change; PORT-ENTRY, coordinate-travel, flags, and movement are untouched
+(`mainship_coordinate_travel_enabled` stays **false**). Migration head remains **`0072`**.
+
+> **Supersession note.** This direction **replaces** the earlier same-day draft that used **kilograms + cubic
+> metres (dual mass+volume caps)** and allowed **same-port ship-to-ship transfer**. The FIXED model is
+> **volume-only (m³)**, and **cargo transfer between ships is OUT of Trading V1 scope.** Mass / density / fuel /
+> acceleration / handling are **future-only**, not part of this foundation.
+
+**Fixed direction (binding for design):**
+
+1. **Multi-ship from the start.** Multiple persistent main ships are a **Trading foundation**, not a later
+   module/captain feature. A player may eventually own and operate several main ships **concurrently** (one docked
+   & trading while another travels or docks elsewhere).
+2. **Cargo is ship-bound.** Trade cargo is physically assigned to **one** ship; it moves only when that ship moves;
+   it is **never pooled** across a player's ships. **No** account-level trade inventory. **No** remote buy/sell and
+   **no** cargo teleportation.
+3. **Volume-only capacity (m³).** Canonical storage + validation unit is **cubic metres**. Player-facing display may
+   use m³ (and litres for small amounts). **No** abstract cargo units. **No** kilograms / mass / density / dual
+   mass+volume in Trading V1 (those are explicitly future-only).
+4. **Commodities have a defined physical volume.** Trade denominations (crate / pallet / tank / container / bundle…)
+   each resolve to a **fixed canonical m³**; the capacity rule is **occupied volume only**.
+5. **Every market action targets one selected ship** — owned by the player, physically **docked** at the relevant
+   port, in an eligible state; buy/sell operate only on **that ship's** cargo.
+6. **Coordinate travel stays dark.** Existing **port-to-port** travel is sufficient for the first economy; no
+   coordinate-travel activation, change, or dependency is recommended.
+7. **Out of V1 scope:** pooled fleet cargo; account-level trade inventory; remote market actions; **cargo transfer
+   between ships**; port warehouses; automated trade routes; player-to-player trading; dynamic supply/demand;
+   cargo loss / piracy / insurance / destruction economics; mass / density / fuel / acceleration / handling.
+
+**Implementation sequence (design-level; unchanged ordering, cargo model corrected to volume-only):**
+
+```
+PORT-ENTRY (complete, mig 0072)
+  → TRADE-FLEET-0A  read-only impact audit (this entry — design record only)
+  → TRADE-FLEET-0B  explicit user-approved multi-ship + volume-cargo contract (design/approval only)
+  → TRADE-FLEET-0C  coherent implementation slice (multi-ship + ship-bound volume-only m³ cargo, one slice)
+  → TRADE-MARKET-1  server-authoritative market (offers, wallet, atomic volume-checked buy/sell vs a selected ship)
+  → TRADE-UI-1      selected-ship market + fleet interface
+```
+
+**TRADE-FLEET-0A audit (read-only).** The full impact audit — every current one-main-ship assumption
+(DB / backend / frontend / verifier / onboarding) classified mandatory / compatibility-sensitive / optional /
+not-affected; cargo-locality guarantees; a minimal design-level data boundary; multi-ship concurrency & safety;
+compatibility/migration risks across all ship states; affected frontend surfaces; verifier implications; blockers;
+open decisions; and a recommended slice order — is recorded in
+[`docs/TRADE_FLEET_0A_IMPACT_AUDIT.md`](TRADE_FLEET_0A_IMPACT_AUDIT.md). Key finding: the locking/idempotency
+substrate is **already ship-scoped** (`mainship_space_lock_context(main_ship_id)`, no advisory/player lock;
+idempotency keyed `(main_ship_id, request_id)`); the only hard single-ship blockers are the
+`main_ship_instances.player_id UNIQUE` constraint and the uniform `where player_id = v_player` ship derivation.
+
+**Work done**
+- DEV_LOG (this entry) + ROADMAP Phase 10 row and Standing Law #1 annotated with the FIXED (volume-only) direction.
+- New read-only audit doc `docs/TRADE_FLEET_0A_IMPACT_AUDIT.md` (replaces the superseded kg+m³ draft audit).
+
+**Bugs / fixes**
+- _(none — design record only; no code path touched)_
+
+---
+
 ## 2026-06-30 — OSN-COORD-ENABLE (dark) → PORT-ENTRY-1 first-ship commission/normalize → production verifier (head `0070` → `0072`)
 
 Since the entry below (head `0070`, OSN port-to-port live, coordinate travel server-disabled) the project built the
