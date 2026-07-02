@@ -23,7 +23,9 @@ export interface PortEntryCommandState {
 
 export interface PortEntryCommandDeps {
   commission: () => Promise<CommissionResult>
-  normalize: () => Promise<NormalizeResult>
+  // TRADE-FLEET-0C §2.5: normalize receives the explicit selected/sole main-ship id (p_main_ship_id); null →
+  // server sole-ship shim. A zero-arg injected normalize still satisfies this (the arg is simply ignored).
+  normalize: (mainShipId?: string | null) => Promise<NormalizeResult>
   // Re-read authoritative state after a successful action (re-fetch + parent refresh). Called at most once
   // per successful submit. Any rejection here is swallowed — it must never turn a real success into an error.
   onSettled: () => Promise<void> | void
@@ -32,7 +34,7 @@ export interface PortEntryCommandDeps {
 export interface PortEntryCommandController {
   getState: () => PortEntryCommandState
   subscribe: (fn: () => void) => () => void
-  submit: (kind: PortEntryActionKind) => Promise<void>
+  submit: (kind: PortEntryActionKind, mainShipId?: string | null) => Promise<void>
   reset: () => void
 }
 
@@ -61,12 +63,12 @@ export function createPortEntryController(deps: PortEntryCommandDeps): PortEntry
     }
   }
 
-  async function submit(kind: PortEntryActionKind): Promise<void> {
+  async function submit(kind: PortEntryActionKind, mainShipId?: string | null): Promise<void> {
     if (state.phase === 'submitting') return // duplicate-submit guard: exactly one in-flight action
     set({ phase: 'submitting', kind, message: null })
     try {
       if (kind === 'commission') {
-        const res = await deps.commission()
+        const res = await deps.commission() // first-ship claim: no ship id exists yet (mainShipId unused here)
         if (res.ok) {
           set({ phase: 'success', kind, message: res.created ? COMMISSION_SUCCESS_COPY : COMMISSION_ALREADY_COPY })
           await runSettle()
@@ -74,7 +76,7 @@ export function createPortEntryController(deps: PortEntryCommandDeps): PortEntry
           set({ phase: 'error', kind, message: commissionReasonMessage(res.reason) })
         }
       } else {
-        const res = await deps.normalize()
+        const res = await deps.normalize(mainShipId) // §2.5: normalize the EXPLICIT owned ship (null → shim)
         if (res.ok) {
           set({ phase: 'success', kind, message: res.normalized ? NORMALIZE_SUCCESS_COPY : NORMALIZE_ALREADY_COPY })
           await runSettle()

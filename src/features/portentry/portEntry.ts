@@ -8,7 +8,9 @@
 //       show; it never performs or fabricates a state transition;
 //   (3) stable player-facing copy for every server outcome / reason.
 //
-// HARD BOUNDARY: both RPCs are zero-arg and auth.uid()-scoped — the client sends NO player/ship/port id,
+// HARD BOUNDARY: commission_first_main_ship is zero-arg; normalize_main_ship_dock takes the explicit
+// selected/sole main-ship id (TRADE-FLEET-0C §2.5: p_main_ship_id, null → server sole-ship shim, ownership
+// server-asserted). Both are auth.uid()-scoped — aside from that ship id the client sends NO player/port id,
 // coordinates, status, or lifecycle data. Nothing here touches coordinate travel, its dark flag/gate, the
 // coordinate command, port-to-port travel, migrations, or production data. Server-authoritative only.
 
@@ -90,6 +92,7 @@ export function parseNormalizeResult(raw: unknown): NormalizeResult {
 // A DISPLAY-only summary; every field is server-sourced. `null` for the whole object means "not loaded yet".
 export interface PortEntryShipState {
   hasShip: boolean
+  main_ship_id?: string | null // TRADE-FLEET-0C §2.5: the caller's ship id, threaded to normalize (null when no ship)
   spatialState: SpatialState | null // NULL ⇒ legacy ship (position from fleet/presence)
   shipStatus: string | null // main_ship_instances.status
   fleetStatus: string | null // active linked fleet: 'present' | 'moving' | 'returning' | null
