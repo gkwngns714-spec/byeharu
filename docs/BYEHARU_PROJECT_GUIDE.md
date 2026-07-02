@@ -39,6 +39,16 @@ the **Glossary** (§12).
 
 ## 2. Current project snapshot
 
+> **2026-07-03 update.** Local `main` synced to head **`f48bc53`** (22 commits pulled). **PORT-ENTRY player UI
+> (PR #65, `cb0d4fe`) is MERGED** — the player-facing **Claim First Ship** + **Finish Docking (normalize)** panel
+> (`src/features/portentry/PortEntryPanel.tsx` + hooks) now exists, **frontend-only**, calling the migration-`0072`
+> RPCs (no new migration). **Trading V1 direction is FIXED** to **volume-only (m³) cargo + multi-ship-from-the-start**
+> (kilograms/mass and same-port ship-to-ship transfer dropped from V1), with the read-only **TRADE-FLEET-0A** impact
+> audit recorded in `docs/TRADE_FLEET_0A_IMPACT_AUDIT.md` (PR #66). Migration head is **unchanged at `0072`**;
+> coordinate travel stays **DARK** (`mainship_coordinate_travel_enabled = false`). Next: **TRADE-FLEET-0B** (explicit
+> user-approved multi-ship + volume-cargo contract — design/approval only); nothing further built yet. See
+> `DEV_LOG.md` (**newest 2026-07-02 entry**) for the authoritative direction.
+>
 > **2026-06-30 update.** Production migration head is now **`0072`**; `main` head is **`a947c8d`**. **OSN port-to-port
 > travel is ENABLED** (`mainship_space_movement_enabled = true`). **Free arbitrary-coordinate travel is built but
 > DARK**: `mainship_coordinate_travel_enabled = false` (server gate, **OSN-COORD-GATE-1 / `0070`**) so the raw

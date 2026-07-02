@@ -5,6 +5,27 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — Repo/docs sync + PORT-ENTRY player UI landing recorded (no new build)
+
+**Request.** Pull `main` current on the local machine and bring the project docs (log, guide, PDFs) up to date.
+
+**Work done**
+- Synced local `main` (fast-forward **22 commits → `f48bc53`**). No code written this session.
+- Recorded that the **PORT-ENTRY player UI** (PR #65, `cb0d4fe`) is **merged** — the player-facing **Claim First
+  Ship** + **Finish Docking (normalize)** panel (`src/features/portentry/PortEntryPanel.tsx` + hooks) now exists,
+  **frontend-only**, calling the migration-`0072` RPCs; no new migration.
+- Refreshed the guide **Current project snapshot** with a 2026-07-03 note (`main` head → `f48bc53`, PORT-ENTRY UI
+  merged, Trading V1 FIXED to volume-only, TRADE-FLEET-0A audit recorded via PR #66).
+
+**State.** Migration head **unchanged at `0072`**; coordinate travel stays **DARK**
+(`mainship_coordinate_travel_enabled = false`). Next planned: **TRADE-FLEET-0B** (user-approved multi-ship +
+volume-cargo contract — design/approval only). Trading V1 not started.
+
+**Bugs / fixes**
+- _(none — docs/sync only; no code path touched.)_
+
+---
+
 ## 2026-07-02 — Trading V1 design record — FIXED product direction (volume-only per-ship cargo + multi-ship foundation) + TRADE-FLEET-0A read-only audit (DESIGN RECORD ONLY; nothing built)
 
 **Request.** Do **not** begin Trading implementation. Fix the Trading V1 product direction (below) as binding for
