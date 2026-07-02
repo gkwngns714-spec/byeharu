@@ -97,7 +97,7 @@ export function GalaxyMap({
   // a coordinate command completes. While production stays dark (mainship_coordinate_travel_enabled=false) the
   // server returns coordinate_travel_available=false → canTarget is false → the whole surface stays unmounted.
   const readinessLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
-  const { readiness, refresh: refreshReadiness } = useOsnReadiness(readinessLifecycleKey, { fetcher: deps?.readinessFetcher })
+  const { readiness, refresh: refreshReadiness } = useOsnReadiness(readinessLifecycleKey, { mainShipId: mainShip?.main_ship_id ?? null, fetcher: deps?.readinessFetcher })
   const spaceMoveEnabled = deps?.spaceMoveEnabled ?? sm.enabled
   const canTarget = isCoordinateTargetingActionable(readiness, spaceMoveEnabled, eligibility)
   // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a target tap; drags

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchOsnMovementReadiness } from './mainshipApi'
 import { OSN_NOT_ACTIONABLE, type OsnReadiness } from './osnReadiness'
 
@@ -20,11 +20,20 @@ export interface UseOsnReadiness {
 
 export function useOsnReadiness(
   lifecycleKey: string,
-  overrides?: { fetcher?: () => Promise<OsnReadiness> },
+  overrides?: { fetcher?: () => Promise<OsnReadiness>; mainShipId?: string | null },
 ): UseOsnReadiness {
   const [readiness, setReadiness] = useState<OsnReadiness>(OSN_NOT_ACTIONABLE)
   const [tick, setTick] = useState(0)
-  const fetcher = overrides?.fetcher ?? fetchOsnMovementReadiness
+  const mainShipId = overrides?.mainShipId ?? null
+  const overrideFetcher = overrides?.fetcher
+  // TRADE-FLEET-0C §2.5: the default fetcher requests readiness for the EXPLICIT commanded ship (p_main_ship_id;
+  // null → server sole-ship shim → behavior-identical while single-ship). Memoized so its identity is STABLE
+  // across renders — otherwise the effect's [fetcher] dep would refetch every render. It changes only when the
+  // commanded ship (or an injected test fetcher) changes; a test-injected fetcher overrides it wholesale.
+  const fetcher = useMemo(
+    () => overrideFetcher ?? (() => fetchOsnMovementReadiness(mainShipId)),
+    [overrideFetcher, mainShipId],
+  )
 
   const refresh = useCallback(() => setTick((t) => t + 1), [])
 

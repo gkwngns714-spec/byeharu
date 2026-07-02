@@ -289,16 +289,18 @@ export async function commandMainShipSpaceMoveToLocation(
   return data as SpaceMoveToLocationResult
 }
 
-// PORT-LAUNCH-1B — typed, read-only integration of the authenticated readiness projection
-// (get_osn_movement_readiness()). Sends NO arguments beyond the authenticated session context (the server
-// derives the player from auth.uid()) — no ship/player/anchor/coordinate/location input. The returned
-// jsonb is validated at THIS boundary (parseOsnReadiness): only the documented generic categories are
-// accepted, and any malformed / incomplete / failed response collapses to OSN_NOT_ACTIONABLE so a raw
-// RPC/DB error is never surfaced to the player and the client never reconstructs anchor legality. While
-// production is dark the server returns osn_available=false; the client renders nothing actionable.
-export async function fetchOsnMovementReadiness(): Promise<OsnReadiness> {
+// PORT-LAUNCH-1B / TRADE-FLEET-0C §2.5 — typed, read-only integration of the authenticated readiness
+// projection (get_osn_movement_readiness). Sends the EXPLICIT selected/sole main-ship id (p_main_ship_id) so
+// the projection is scoped to that OWNED ship (null → server sole-ship shim → behavior-identical while every
+// player has exactly one ship); the player still comes from auth.uid(), and NO anchor/coordinate/location
+// input is sent. The returned jsonb is validated at THIS boundary (parseOsnReadiness): only the documented
+// generic categories are accepted, and any malformed / incomplete / failed response collapses to
+// OSN_NOT_ACTIONABLE so a raw RPC/DB error is never surfaced to the player and the client never reconstructs
+// anchor legality. While production is dark the server returns osn_available=false (unchanged); the client
+// renders nothing actionable.
+export async function fetchOsnMovementReadiness(mainShipId?: string | null): Promise<OsnReadiness> {
   try {
-    const { data, error } = await supabase.rpc('get_osn_movement_readiness', {})
+    const { data, error } = await supabase.rpc('get_osn_movement_readiness', { p_main_ship_id: mainShipId ?? null })
     if (error) return OSN_NOT_ACTIONABLE
     return parseOsnReadiness(data)
   } catch {

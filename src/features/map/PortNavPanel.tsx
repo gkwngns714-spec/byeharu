@@ -57,7 +57,7 @@ export function PortNavPanel({
 }) {
   // Lifecycle key: any main-ship/movement lifecycle change re-validates server readiness (B/A refetch).
   const lifecycleKey = `${shipStatus ?? 'n'}|${shipSpatialState ?? 'n'}|${spaceMovement?.id ?? 'none'}|${spaceMovement?.status ?? 'none'}`
-  const { readiness, refresh: refreshReadiness } = useOsnReadiness(lifecycleKey, { fetcher: deps?.readinessFetcher })
+  const { readiness, refresh: refreshReadiness } = useOsnReadiness(lifecycleKey, { mainShipId, fetcher: deps?.readinessFetcher })
   const port = usePortMoveCommand({ mainShipId, rpc: deps?.portRpc, genRequestId: deps?.genRequestId })
   const stop = useSpaceStopCommand({ mainShipId, rpc: deps?.stopRpc, genRequestId: deps?.genRequestId })
 
