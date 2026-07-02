@@ -115,6 +115,7 @@ export function GalaxyMapScreen() {
                 shipSpatialState={mainShip?.spatial_state}
                 spaceMovement={mainShipSpaceMovement}
                 currentDockedLocationId={mainShipPresence?.location_id}
+                mainShipId={mainShip?.main_ship_id ?? null}
                 onCommitted={refresh}
               />
               {/* PHASE 9 — read-only docked-port context for the main ship. Renders only when the server

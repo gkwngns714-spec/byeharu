@@ -34,6 +34,7 @@ export function PortNavPanel({
   shipSpatialState,
   spaceMovement,
   currentDockedLocationId,
+  mainShipId = null,
   onCommitted,
   deps,
 }: {
@@ -42,6 +43,9 @@ export function PortNavPanel({
   shipSpatialState: string | null | undefined
   spaceMovement: MainShipSpaceMovement | null
   currentDockedLocationId: string | null | undefined
+  // TRADE-FLEET-0C §2.5: the current/sole main-ship id, threaded to the port-move command as an explicit
+  // p_main_ship_id. Optional (defaults null → server sole-ship shim → behavior-identical while single-ship).
+  mainShipId?: string | null
   onCommitted: () => void
   // Injection seam for tests / integration; defaults call the real server readiness + command path.
   deps?: {
@@ -54,7 +58,7 @@ export function PortNavPanel({
   // Lifecycle key: any main-ship/movement lifecycle change re-validates server readiness (B/A refetch).
   const lifecycleKey = `${shipStatus ?? 'n'}|${shipSpatialState ?? 'n'}|${spaceMovement?.id ?? 'none'}|${spaceMovement?.status ?? 'none'}`
   const { readiness, refresh: refreshReadiness } = useOsnReadiness(lifecycleKey, { fetcher: deps?.readinessFetcher })
-  const port = usePortMoveCommand({ rpc: deps?.portRpc, genRequestId: deps?.genRequestId })
+  const port = usePortMoveCommand({ mainShipId, rpc: deps?.portRpc, genRequestId: deps?.genRequestId })
   const stop = useSpaceStopCommand({ rpc: deps?.stopRpc, genRequestId: deps?.genRequestId })
 
   const visibleIds = useMemo(() => new Set(visibleLocations.map((l) => l.id)), [visibleLocations])

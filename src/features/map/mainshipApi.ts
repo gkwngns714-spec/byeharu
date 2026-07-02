@@ -261,20 +261,27 @@ export async function commandMainShipSpaceStop(requestId: string): Promise<Space
   return data as SpaceStopResult
 }
 
-// OSN-HUB-1A — thin client wrapper over the public canonical location-target boundary
-// (command_main_ship_space_move_to_location). It sends ONLY a destination LOCATION id + an idempotency key —
-// never a coordinate, ship/player id, or target_kind. The server derives the ship from auth.uid(), resolves
-// the destination coordinate from the location's canonical anchor, and is the sole authority. While the
-// feature flag is dark it returns {ok:false, code:'feature_disabled'} BEFORE resolving the target (so a hidden
-// port's existence can never be probed). NOT wired to any UI control while the flag is off (no command issued).
+// OSN-HUB-1A / TRADE-FLEET-0C §2.5 — thin client wrapper over the public canonical location-target boundary
+// (command_main_ship_space_move_to_location). It sends a destination LOCATION id, an idempotency key, and the
+// EXPLICIT selected/sole main-ship id (p_main_ship_id) — never a coordinate, player id, or target_kind. The
+// server asserts ownership of that ship (UI selection is never trusted) and resolves the destination coordinate
+// from the location's canonical anchor; it remains the sole authority. A null id preserves the sole-ship shim
+// (behavior-identical while every player has exactly one ship). While the feature flag is dark it returns
+// {ok:false, code:'feature_disabled'} BEFORE resolving the target (so a hidden port's existence can never be
+// probed). NOT wired to any UI control while the flag is off (no command issued).
 export type SpaceMoveToLocationResult =
   | { ok: true; movement_id: string; main_ship_id: string; target_location_id: string; target_x: number; target_y: number; depart_at: string; arrive_at: string }
   | { ok: false; code: string; message: string }
 
-export async function commandMainShipSpaceMoveToLocation(locationId: string, requestId: string): Promise<SpaceMoveToLocationResult> {
+export async function commandMainShipSpaceMoveToLocation(
+  locationId: string,
+  requestId: string,
+  mainShipId?: string | null,
+): Promise<SpaceMoveToLocationResult> {
   const { data, error } = await supabase.rpc('command_main_ship_space_move_to_location', {
     p_location: locationId,
     p_request_id: requestId,
+    p_main_ship_id: mainShipId ?? null,
   })
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceMoveToLocationResult
