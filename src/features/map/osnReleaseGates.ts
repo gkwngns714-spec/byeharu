@@ -14,3 +14,13 @@
 // never be flipped to `true` and must never re-enter the render path; a future cleanup may remove it together
 // with that verifier assertion.
 export const OSN_COORDINATE_TRAVEL_ENABLED = false as const
+
+// ── TRADE-UI-1 — trading surface release gates (compile-time; UI fail-closed control). ──
+// These MIRROR the server game_config flags: TRADE_MARKET_ENABLED ↔ `trade_market_enabled`,
+// MAINSHIP_ADDITIONAL_ENABLED ↔ `mainship_additional_commission_enabled`. The server already rejects every
+// trade / add-ship RPC while those flags are false; the frontend ALSO fails closed behind these constants so
+// the trading + ship-switcher UI is invisible until a HUMAN flips BOTH (server flag + this gate). Default OFF
+// (DARK). Do NOT set true here — a human owns activation. Double fail-closed: even if a gate were flipped, the
+// server still rejects until its own flag is on.
+export const TRADE_MARKET_ENABLED = false as const
+export const MAINSHIP_ADDITIONAL_ENABLED = false as const
