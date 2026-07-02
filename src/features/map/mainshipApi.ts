@@ -251,12 +251,14 @@ export async function commandMainShipSpaceMove(targetX: number, targetY: number,
   return data as SpaceMoveResult
 }
 
-// OSN-4 — thin client wrapper over the public Stop boundary (command_main_ship_space_stop). It sends ONLY
-// an idempotency key (no coordinates — the server interpolates the current stop point and derives the ship
-// from auth.uid()). It writes no table directly. The server is the final authority; an in-flight ship can
-// stop even after an emergency flag disable, while a ship NOT in coordinate transit safely rejects.
-export async function commandMainShipSpaceStop(requestId: string): Promise<SpaceStopResult> {
-  const { data, error } = await supabase.rpc(SPACE_STOP_RPC, buildSpaceStopRpcArgs(requestId))
+// OSN-4 / TRADE-FLEET-0C §2.5 — thin client wrapper over the public Stop boundary (command_main_ship_space_stop).
+// It sends an idempotency key AND the explicit selected/sole main-ship id (p_main_ship_id) — no coordinates (the
+// server interpolates the current stop point). The server asserts ownership of that ship (UI selection is never
+// trusted); a null id preserves the sole-ship shim (behavior-identical while every player has exactly one ship).
+// It writes no table directly. The server is the final authority; an in-flight ship can stop even after an
+// emergency flag disable, while a ship NOT in coordinate transit safely rejects.
+export async function commandMainShipSpaceStop(requestId: string, mainShipId?: string | null): Promise<SpaceStopResult> {
+  const { data, error } = await supabase.rpc(SPACE_STOP_RPC, { ...buildSpaceStopRpcArgs(requestId), p_main_ship_id: mainShipId ?? null })
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceStopResult
 }

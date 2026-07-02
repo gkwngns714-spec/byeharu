@@ -59,7 +59,7 @@ export function PortNavPanel({
   const lifecycleKey = `${shipStatus ?? 'n'}|${shipSpatialState ?? 'n'}|${spaceMovement?.id ?? 'none'}|${spaceMovement?.status ?? 'none'}`
   const { readiness, refresh: refreshReadiness } = useOsnReadiness(lifecycleKey, { fetcher: deps?.readinessFetcher })
   const port = usePortMoveCommand({ mainShipId, rpc: deps?.portRpc, genRequestId: deps?.genRequestId })
-  const stop = useSpaceStopCommand({ rpc: deps?.stopRpc, genRequestId: deps?.genRequestId })
+  const stop = useSpaceStopCommand({ mainShipId, rpc: deps?.stopRpc, genRequestId: deps?.genRequestId })
 
   const visibleIds = useMemo(() => new Set(visibleLocations.map((l) => l.id)), [visibleLocations])
   const selectable = useMemo(() => {

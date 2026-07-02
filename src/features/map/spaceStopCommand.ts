@@ -13,8 +13,9 @@
 
 export const SPACE_STOP_RPC = 'command_main_ship_space_stop' as const
 
-// Exact RPC args: the idempotency key ONLY. No coordinate/ship/player id — the server derives the ship
-// from auth.uid() and computes the stop point itself.
+// The idempotency-key portion of the RPC args — this pure builder's ONLY responsibility (no coordinates; the
+// server computes the stop point itself). TRADE-FLEET-0C §2.5: the explicit p_main_ship_id is added at the
+// wrapper boundary (commandMainShipSpaceStop), not in this builder, so the builder + its unit test stay intact.
 export interface SpaceStopRpcArgs {
   p_request_id: string
 }

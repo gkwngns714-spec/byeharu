@@ -74,7 +74,7 @@ export function GalaxyMap({
   const sm = useSpaceMoveCommand()
   // OSN-4 — Stop safety. The CTA mounts ONLY for a real active coordinate transit and is INDEPENDENT of the
   // initiation flag (in-flight safety): an emergency flag disable must never strand an in-flight ship.
-  const stop = useSpaceStopCommand()
+  const stop = useSpaceStopCommand({ mainShipId: mainShip?.main_ship_id ?? null })
   const inCoordinateTransit = isActiveCoordinateTransit({
     spatialState: mainShip?.spatial_state,
     spaceMovementStatus: mainShipSpaceMovement?.status,

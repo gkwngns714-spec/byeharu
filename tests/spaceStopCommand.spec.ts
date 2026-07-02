@@ -10,8 +10,9 @@ import {
 
 // OSN-4 — pure proofs for the Stop-mid-travel client surface. No browser/page/DB.
 
-// ── RPC arg shape: idempotency key ONLY (no coordinates / ship / player id) ──────────────────────────
-test('OSN-4: Stop RPC carries ONLY the request id (no coordinates)', () => {
+// ── Stop arg BUILDER shape: idempotency key ONLY (no coordinates). TRADE-FLEET-0C §2.5 adds the explicit
+//    p_main_ship_id at the wrapper (commandMainShipSpaceStop), NOT in this pure builder, so it stays intact. ─
+test('OSN-4: the Stop arg builder carries only the request id (no coordinates)', () => {
   expect(SPACE_STOP_RPC).toBe('command_main_ship_space_stop')
   const args = buildSpaceStopRpcArgs('req-1')
   expect(Object.keys(args).sort()).toEqual(['p_request_id'])
