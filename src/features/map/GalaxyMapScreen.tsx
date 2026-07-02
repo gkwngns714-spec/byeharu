@@ -7,6 +7,9 @@ import { MainShipPreview } from './MainShipPreview'
 import { MainShipCommand } from './MainShipCommand'
 import { PortNavPanel } from './PortNavPanel'
 import { DockServicesPanel } from './DockServicesPanel'
+import { MarketPanel } from './MarketPanel'
+import { useMainShipSelection } from './useMainShipSelection'
+import { TRADE_MARKET_ENABLED } from './osnReleaseGates'
 
 // Galaxy Map screen. Shows the world, the player's main ship, ports, and active movements; selecting a
 // location opens its detail panel + the main-ship expedition/move surface. When the main ship is docked at a
@@ -19,6 +22,9 @@ export function GalaxyMapScreen() {
   } = useGalaxyMapData()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  // TRADE-UI-1 — client selected-ship model (retires the sole-ship shim). Consumed by the DARK MarketPanel;
+  // auto-selects the sole ship today. The panel itself renders only behind the TRADE_MARKET_ENABLED gate.
+  const shipSelection = useMainShipSelection()
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
@@ -48,6 +54,12 @@ export function GalaxyMapScreen() {
       {showPreview && (
         <div className="border-b border-slate-800 bg-slate-900/95 p-3">
           <MainShipPreview sendEnabled={mainshipSendEnabled} fleet={mainShipFleet} onChanged={refresh} />
+          {/* TRADE-UI-1 — read-only market view for the selected ship. DARK: renders ONLY behind the
+              TRADE_MARKET_ENABLED gate (false), and the server rejects the trade reads while trade_market_enabled
+              is false — double fail-closed. Wired for when a human flips both the gate and the server flag. */}
+          {TRADE_MARKET_ENABLED && (
+            <MarketPanel key={shipSelection.selectedShipId ?? 'none'} selectedShip={shipSelection.selectedShip} />
+          )}
         </div>
       )}
 
