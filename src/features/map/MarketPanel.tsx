@@ -1,19 +1,24 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   getMarketOffers,
   getShipCargoLots,
   getWalletBalance,
+  marketBuy,
+  marketSell,
   type GetMarketOffersResult,
   type ShipCargoLot,
 } from './tradeApi'
+import { tradeReasonMessage } from './tradeReasonMessage'
 import type { SelectableShip } from './useMainShipSelection'
 
-// TRADE-UI-1 — READ-ONLY market view for the SELECTED ship. Shows the ship's name, wallet balance, occupied
-// cargo volume vs capacity (m³, computed from the ship_cargo_lots lot-sum — the authoritative volume model),
-// and the docked station's offers (get_market_offers). NO buy/sell actions yet (next step). DARK: mounted only
-// behind TRADE_MARKET_ENABLED (osnReleaseGates.ts) AND the server rejects get_market_offers while
-// trade_market_enabled is false — double fail-closed. Server-reject shapes ({ok:false, reason}) collapse to a
-// quiet muted note; nothing throws into the render path.
+// TRADE-UI-1 — trade surface for the SELECTED ship. Shows the ship's name, wallet balance, occupied cargo
+// volume vs capacity (m³, from the ship_cargo_lots lot-sum — the authoritative volume model), and the docked
+// station's offers, with per-offer Buy/Sell actions (market_buy / market_sell). Each intentional click is one
+// idempotent command keyed by a fresh crypto.randomUUID() request id; the row's buttons disable while its
+// request is in flight so a double-click can't double-submit, and a success re-reads wallet/cargo/offers via
+// refresh(). DARK: mounted only behind TRADE_MARKET_ENABLED (osnReleaseGates.ts) AND the server rejects every
+// trade RPC while trade_market_enabled is false — double fail-closed. All {ok:false, reason} shapes collapse to
+// a quiet note via tradeReasonMessage; nothing throws into the render path.
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -24,9 +29,9 @@ function Row({ label, value }: { label: string; value: string }) {
   )
 }
 
-// Map a fail-closed offers result to a quiet player-facing note (never a raw error).
+// Whole-panel fail-closed note (offers not readable): reuse the shared reason map; null/initial → generic.
 function unavailableNote(offers: GetMarketOffersResult | null): string {
-  if (offers && !offers.ok && offers.reason === 'not_docked') return 'Dock at a station to trade.'
+  if (offers && !offers.ok) return tradeReasonMessage(offers.reason)
   return 'Trading is not available here yet.'
 }
 
@@ -35,28 +40,76 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
   const [lots, setLots] = useState<ShipCargoLot[]>([])
   const [offers, setOffers] = useState<GetMarketOffersResult | null>(null)
   const [loading, setLoading] = useState(true)
+  // Per-offer (keyed by good_id) trade state: chosen qty (default 1), in-flight guard, and a quiet row note.
+  const [qty, setQty] = useState<Record<string, number>>({})
+  const [pending, setPending] = useState<Record<string, boolean>>({})
+  const [rowError, setRowError] = useState<Record<string, string | null>>({})
 
   const shipId = selectedShip?.main_ship_id ?? null
 
+  // Mounted guard: replaces the per-effect `active` flag so a single refresh() (called on mount AND after a
+  // completed trade) never sets state after unmount. The panel is keyed by ship id, so each ship is a fresh
+  // instance; StrictMode's mount→cleanup→mount re-arms this correctly.
+  const activeRef = useRef(true)
   useEffect(() => {
-    if (!shipId) return // no ship → the component returns null anyway; nothing to fetch
-    let active = true
-    // owner-read wallet + cargo, plus the (server-gated) offers projection — all fail closed. State is set
-    // ONLY in this async callback (loading starts true); the mount keys this panel by ship id so a future ship
-    // switch remounts with a fresh loading state.
-    void Promise.all([getWalletBalance(), getShipCargoLots(shipId), getMarketOffers(shipId)]).then(
-      ([w, l, o]) => {
-        if (!active) return
-        setWallet(w)
-        setLots(l)
-        setOffers(o)
-        setLoading(false)
-      },
-    )
+    activeRef.current = true
     return () => {
-      active = false
+      activeRef.current = false
     }
+  }, [])
+
+  // Synchronous per-row in-flight guard. `pending` state drives the DISABLED buttons, but state updates async —
+  // two clicks in the SAME render tick both read a stale pending=false and would each mint a DISTINCT request id
+  // (which the server, keyed on (main_ship_id, request_id), would NOT dedup → a real double-submit). This ref is
+  // mutated synchronously before the first await, so the second same-tick call bails before firing.
+  const inFlightRef = useRef<Set<string>>(new Set())
+
+  // The single owner-read fetch: wallet + cargo + (server-gated) offers, all fail closed. Does NOT set loading
+  // true, so a post-trade refresh updates in place without a flicker; the mount path starts with loading=true.
+  const refresh = useCallback(async () => {
+    if (!shipId) return
+    const [w, l, o] = await Promise.all([getWalletBalance(), getShipCargoLots(shipId), getMarketOffers(shipId)])
+    if (!activeRef.current) return
+    setWallet(w)
+    setLots(l)
+    setOffers(o)
+    setLoading(false)
   }, [shipId])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  // One intentional Buy/Sell for a row. Fresh request id per submit (server dedups on (main_ship_id, request_id));
+  // the synchronous in-flight ref + disabled buttons stop double-submits. Success → clear note + refresh;
+  // failure → quiet note. try/finally always releases the in-flight lock (wrappers never throw, but defensive).
+  async function submit(side: 'buy' | 'sell', goodId: string) {
+    if (!shipId || inFlightRef.current.has(goodId)) return // synchronous guard: bail before minting a 2nd request
+    const n = qty[goodId] ?? 1
+    if (!Number.isInteger(n) || n < 1) {
+      setRowError((e) => ({ ...e, [goodId]: tradeReasonMessage('invalid_qty') }))
+      return
+    }
+    inFlightRef.current.add(goodId) // claim the row synchronously, before any await
+    setPending((p) => ({ ...p, [goodId]: true }))
+    setRowError((e) => ({ ...e, [goodId]: null }))
+    const requestId = crypto.randomUUID()
+    try {
+      const res =
+        side === 'buy'
+          ? await marketBuy(shipId, goodId, n, requestId)
+          : await marketSell(shipId, goodId, n, requestId)
+      if (!activeRef.current) return
+      if (res.ok) {
+        await refresh()
+      } else {
+        setRowError((e) => ({ ...e, [goodId]: tradeReasonMessage(res.reason) }))
+      }
+    } finally {
+      inFlightRef.current.delete(goodId)
+      if (activeRef.current) setPending((p) => ({ ...p, [goodId]: false }))
+    }
+  }
 
   if (!selectedShip) return null // no ship → render nothing (fail closed)
 
@@ -68,12 +121,7 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
       data-testid="market-panel"
       className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/5 p-4 text-sm text-slate-200"
     >
-      <div className="flex items-center justify-between">
-        <h3 className="font-medium">🪙 Market — {selectedShip.name}</h3>
-        <span className="rounded bg-slate-700/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
-          Read-only
-        </span>
-      </div>
+      <h3 className="font-medium">🪙 Market — {selectedShip.name}</h3>
 
       {loading && <p className="mt-2 text-xs text-slate-500">Loading…</p>}
 
@@ -92,16 +140,71 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
                     <th className="pb-1 font-medium">Good</th>
                     <th className="pb-1 text-right font-medium">Buy</th>
                     <th className="pb-1 text-right font-medium">Sell</th>
+                    <th className="pb-1 text-right font-medium">Trade</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {offers.offers.map((o) => (
-                    <tr key={o.offer_id} className="border-t border-slate-800/60">
-                      <td className="py-1 text-slate-200">{o.good_id.replace(/_/g, ' ')}</td>
-                      <td className="py-1 text-right text-slate-300">{o.buy_price.toLocaleString()}</td>
-                      <td className="py-1 text-right text-slate-300">{o.sell_price.toLocaleString()}</td>
-                    </tr>
-                  ))}
+                  {offers.offers.map((o) => {
+                    const isPending = !!pending[o.good_id]
+                    const err = rowError[o.good_id]
+                    return (
+                      <Fragment key={o.offer_id}>
+                        <tr className="border-t border-slate-800/60">
+                          <td className="py-1 text-slate-200">{o.good_id.replace(/_/g, ' ')}</td>
+                          <td className="py-1 text-right text-slate-300">{o.buy_price.toLocaleString()}</td>
+                          <td className="py-1 text-right text-slate-300">{o.sell_price.toLocaleString()}</td>
+                          <td className="py-1 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                data-testid={`trade-qty-${o.good_id}`}
+                                value={qty[o.good_id] ?? 1}
+                                onChange={(ev) => {
+                                  const parsed = parseInt(ev.target.value, 10)
+                                  setQty((q) => ({
+                                    ...q,
+                                    [o.good_id]: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed,
+                                  }))
+                                }}
+                                className="w-14 rounded bg-slate-800/80 px-1 py-0.5 text-right text-slate-200"
+                              />
+                              <button
+                                type="button"
+                                data-testid={`trade-buy-${o.good_id}`}
+                                disabled={isPending}
+                                onClick={() => void submit('buy', o.good_id)}
+                                className="rounded bg-emerald-600/80 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                              >
+                                Buy
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`trade-sell-${o.good_id}`}
+                                disabled={isPending}
+                                onClick={() => void submit('sell', o.good_id)}
+                                className="rounded bg-sky-600/80 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+                              >
+                                Sell
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {err && (
+                          <tr>
+                            <td
+                              colSpan={4}
+                              data-testid={`trade-error-${o.good_id}`}
+                              className="pb-1 text-right text-[10px] text-rose-300"
+                            >
+                              {err}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
