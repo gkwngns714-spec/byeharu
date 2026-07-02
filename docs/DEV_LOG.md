@@ -5,6 +5,59 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-02 — TRADE-FLEET-0A-FLEET: fleet-group direction + read-only addendum audit (DESIGN RECORD ONLY; nothing built)
+
+**Request.** Continue from post-PR-#66 state (`main @ f48bc539`, head `0072`). New authoritative direction: the
+**strategic movement / docking / location / activity owner is a FLEET GROUP** (≈6–8 main ships that travel,
+arrive, dock, and enter activities **together**, sharing one location/activity state), **not** an individual
+ship. This supersedes **only** the earlier 0A assumption that several owned ships move/trade independently.
+Produce a strict read-only fleet-group addendum audit + a docs-only PR; do **not** implement, migrate, or start
+0B/0C. Coordinate travel stays dark. Migration head remains **`0072`**.
+
+**Direction locked (binding for design):**
+- **Additional ships are BUILT from activity rewards, not bought** — no ship vendor / no direct-credit purchase.
+  A future construction path is fed by separate rewards earned via Trading/Combat/Exploration/etc. Reward
+  structure (blueprints / fragments / components / materials / milestones / contracts), quantities, drop rates,
+  recipes, and balancing are **NOT decided** (0B alternatives). Credits stay a normal resource, not the ship
+  acquisition path.
+- **Fleet groups, not independent ships, are the primary operating unit.** Within one active group ships travel/
+  arrive/dock/enter activities **together** and share the group's location + activity state. The earlier "Ship A
+  trades at Haven while Ship B in the same group travels to Slagworks" model is **removed.** Whether a player may
+  later run **multiple independently-moving groups** is an explicit **0B** decision (not assumed).
+- **Authority split:** fleet group = movement/docking/location/activity owner. Individual ship = hull/stats/ship-
+  skills + volume cargo hold + ship-bound cargo + captain assignments + future modules/durability/repair/combat.
+  Captain = contribution to one specific ship. Target composition ≈6–8 ships/group, up to 8 captains/ship,
+  ≈48–64 captains/full fleet. Aggregation formulas (additive/percent/dup-skill/highest-only/conditional/
+  fleet-wide vs ship-local/anti-double-count/caps) are **0B** decisions.
+- **Cargo unchanged:** ship-bound, **volume-only `m³`** (litres display-only), no abstract/kg/mass/density/dual-
+  cap, no pooled/account/remote/teleport. **Fleet cargo total is a DERIVED read** over per-ship holds, never a
+  stored pool. Market loading/selling allocation (explicit target ship / server-allocated / confirmed plan) is
+  **0B** — analyzed, not chosen.
+
+**Addendum audit (read-only).** Recorded in
+[`docs/TRADE_FLEET_0A_FLEET_ADDENDUM.md`](TRADE_FLEET_0A_FLEET_ADDENDUM.md). **Headline finding:** the legacy
+`public.fleets` table (migration `20260616000006`) **already** owns movement/presence/location and is linked 1:1
+to a main ship (`fleets.main_ship_id`, zero `fleet_units`) — so the new "fleet group" **collides by name AND
+role**; the group must get a **distinct identity** (working name `fleet_groups`; final name a 0B decision) and
+must **not** overload `public.fleets` (the ROADMAP already flags `fleets` as a legacy misnomer). Per-ship
+`spatial_state`/`presence` become **derived from / subordinate to** the group's single position; movement/arrival/
+stop/presence become **one per group**; **cargo stays per-ship**. Lock order: `fleet_group → members (deterministic
+order) → movement → cargo` (composes over the existing per-ship `mainship_space_lock_context`, no global player
+lock). Idempotency splits: **movement/activity → `(fleet_group_id, request_id)`; cargo/market → `(main_ship_id,
+request_id)`**. Existing one-ship accounts wrap into **singleton fleet groups** with no relocation/dup/movement/
+dock change. **Superseded from 0A:** §4 independent per-ship movement/concurrency (now group-level, and multi-
+group is a 0B open question). **Still valid from 0A:** the one-ship blockers, ship-scoped locking/idempotency,
+ship-bound volume-only cargo, and the verifier RPC-inventory tripwire.
+
+**Work done**
+- New read-only audit doc `docs/TRADE_FLEET_0A_FLEET_ADDENDUM.md`; DEV_LOG (this entry) + ROADMAP updated.
+- The preserved `docs/TRADE_FLEET_0A_IMPACT_AUDIT.md` was **not** modified (history preserved).
+
+**Bugs / fixes**
+- _(none — design record only; no code path touched)_
+
+---
+
 ## 2026-07-02 — Trading V1 design record — FIXED product direction (volume-only per-ship cargo + multi-ship foundation) + TRADE-FLEET-0A read-only audit (DESIGN RECORD ONLY; nothing built)
 
 **Request.** Do **not** begin Trading implementation. Fix the Trading V1 product direction (below) as binding for
