@@ -129,13 +129,46 @@ future coordinate-enable slice owns ship-scoping it. Pins that remain valid (rec
 `port-entry-1-production-verify.sql:104,141`, `osn-postenable-verify.sh:84-86`,
 `osn-enablement-preflight.sql:42`, `osn-coord-gate-proof.sh:52,53`.
 
+### #7 `normalize_main_ship_dock()` → `normalize_main_ship_dock(uuid)`  *(converted in migration 0084)*
+
+| file:line | pinned expression | repoint to |
+|---|---|---|
+| `scripts/port-entry-1-production-verify.sql:109` | `('public.normalize_main_ship_dock()')` (D2 exact-RPC inventory) | `('public.normalize_main_ship_dock(uuid)')` |
+| `scripts/port-entry-1-production-verify.sql:47-52` | `to_regprocedure('public.normalize_main_ship_dock()')` (N_RESOLVED / N_RET_JSONB / N_PLPGSQL / N_SECDEF / N_SEARCHPATH / N_OWNER descriptor probes) | `…normalize_main_ship_dock(uuid)…` |
+| `scripts/port-entry-1-production-verify.sql:53` | `md5(p.prosrc)=:'exp_normalize'` (N_PROSRC_OK — **prosrc md5 pin**; body changed by 0C) | re-derive md5 from the 0C body |
+| `scripts/port-entry-1-production-verify.sql:67-70` | `to_regprocedure('public.normalize_main_ship_dock()')` (ACL_N_PUBLIC/ANON/AUTH/SVC) | `…normalize_main_ship_dock(uuid)…` |
+| `scripts/port-entry-1-production-verify.sh:41` | `extract_prosrc_md5 "$MIG" 'create or replace function public.normalize_main_ship_dock()'` (EXP_N — **md5 pin derivation**) | re-derive from the 0C `normalize_main_ship_dock(p_main_ship_id uuid default null)` body |
+| `scripts/port-entry-1-production-verify.sh:171` | greps SQL for `('public.normalize_main_ship_dock()')` inventory line | `('public.normalize_main_ship_dock(uuid)')` |
+| `scripts/port-entry-1-proof.sql:275,276` | `has_function_privilege(…,'public.normalize_main_ship_dock()','EXECUTE')` | `…normalize_main_ship_dock(uuid)…` |
+| `scripts/port-entry-1-proof.sql:281` | `'public.normalize_main_ship_dock()'::regprocedure` (prosecdef probe) | `…normalize_main_ship_dock(uuid)::regprocedure` |
+
+*Not invalidated (recorded): zero-arg CALLs `port-entry-1-proof.sql:169,178,196,209,226,249`
+(`call_as(u,'public.normalize_main_ship_dock()')`) resolve via the trailing default → unchanged.*
+
+### prosrc md5-pin repoints (PORT-ENTRY three pinned bodies)
+
+The PORT-ENTRY verifier pins the raw prosrc md5 of three bodies (`port_entry_commission_writer`,
+`commission_first_main_ship`, `normalize_main_ship_dock`). TRADE-FLEET-0C changed **two** of them, so their
+md5 pins are invalidated against a 0C-applied DB and must be **re-derived at the deploy-time human gate**:
+
+- **`port_entry_commission_writer`** — body changed by 0C (0077 added `cargo_capacity_m3`; 0078 advisory-lock
+  reframe; 0080 delegates to `port_entry_commission_build`). → **re-derive md5.**
+- **`normalize_main_ship_dock`** — body changed by 0C (0084 §2.5 resolver swap + `(uuid)` signature). →
+  **re-derive md5.**
+- **`commission_first_main_ship`** — **NOT changed by 0C** (its zero-ship pre-check + created-flag
+  interpretation still work). → **its md5 pin remains VALID; no repoint.**
+
 ---
 
-## Pending sites (not yet converted — will append their pins as each lands)
+## §2.5 command-signature conversion — **COMPLETE**
 
-- #7 `normalize_main_ship_dock()` → `+ uuid` (next commit)
-
-The remaining site adds its `regprocedure`/`has_function_privilege`/descriptor pin repoint list here in the
-commit that converts it. The PORT-ENTRY D2 inventory (`scripts/port-entry-1-production-verify.sql:96-113`)
-lists all of these by zero-/current-arg signature; it stays frozen and is repointed wholesale at the deploy
+Six active sites converted to a trailing `p_main_ship_id uuid default null` via the shared
+`mainship_resolve_owned_ship` helper: **#2** `command_main_ship_space_stop`, **#3**
+`command_main_ship_space_move_to_location`, **#4** `get_my_current_dock_services`, **#5**
+`get_osn_movement_readiness`, **#6** `repair_main_ship`, **#7** `normalize_main_ship_dock`. **#1**
+`command_main_ship_space_move` is **deferred/dark** (coordinate gate rejects before any ship read; signature
+unchanged → no repoint). All backward compatible (zero-arg callers → default null → sole-ship shim). Every
+pin above is a **deploy-time human repoint**, out of the loop's locked scope; the post-0C surface is proven
+by the forthcoming TRADE-FLEET verifier. The PORT-ENTRY D2 inventory
+(`scripts/port-entry-1-production-verify.sql:96-113`) stays frozen and is repointed wholesale at the deploy
 gate.
