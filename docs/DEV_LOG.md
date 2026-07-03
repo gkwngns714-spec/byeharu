@@ -5,6 +5,54 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-P12 SLICE A — design decisions (self-approved) + dark config/flag migration `0102`
+
+**Request.** Record the Phase 12 Mining design decisions and implement slice A: ONE new forward-only
+migration seeding the dark gate + tunables. Nothing else — no tables, no functions, no grants, no
+catalog rows, no frontend, no flag flipped.
+
+**Design decisions (self-approved; full text + rationale in `MINING_P12_RECON.local.md` §8):**
+1. **Extract shape:** mirror the exploration OSN-native template as a single
+   `command_mining_extract` (prospect+extract in one command) — settled `in_space` under the S2
+   lock + cross-domain exclusion, proximity via the existing `osn_distance` leaf against
+   `mining_extract_radius`, pending extraction row secured later by a flag-ignoring securing
+   processor when the ship settles safe (the 0099→0100 shape). Maximal reuse; no new engine surface.
+2. **Repeatability:** mining is repeatable (no `unique(player_id, field_id)`); one extraction row
+   per extraction, receipts idempotency, plus a server-enforced per-(player, field) cooldown from
+   the latest extraction's `created_at` against `mining_extract_cooldown_seconds`.
+3. **Reward landing zone:** item inventory via `reward_grant('mining', extraction_id, …)` reusing
+   the EXISTING `item_types` rows `ore`/`crystal`/`artifact_core`; NO new catalog rows, NO writes to
+   `base_resources` (that would add a second landing path to the Base-owned economy scalars). The
+   `trade_goods` `'ore'` is a separate Trade Market catalog and is not touched.
+4. **Field visibility:** hidden like `exploration_sites` (RLS, no client policy/grant);
+   deterministic `reward_bundle_json` per field; the read surface reveals only fields the player
+   has extracted from. Forfeiture of in-flight pending bundles DEFERRED with the exploration 0100
+   posture (pending rows wait; destruction semantics are a future product decision).
+
+**Slice plan** (recon §9): A=config/flag (this step) → B=`mining_fields`+`mining_extractions`
+schema+seeds → C=`command_mining_extract` → D=securing processor → E=read surface → F=dark frontend
+`src/features/mining/` → G=`verify:mining` script (must import `scripts/lib/verify-harness.mjs`).
+
+**Work done — NEW `supabase/migrations/20260618000102_mining_p12_config_and_flag.sql`** (0097
+structure/idioms; migration head moves **0101 → 0102**; `0001–0101` unedited):
+- `game_config` seeds (established `on conflict (key) do nothing` upsert idiom):
+  `mining_enabled='false'` (the dark gate — every later mining RPC must check it FIRST and
+  reject-before-any-read), `mining_extract_radius='750'` (matches the exploration radius default;
+  retune via config, no redeploy), `mining_extract_cooldown_seconds='300'`.
+- Deliberately NO `item_types` rows (decision 3 — unlike 0097, which needed two new item classes).
+- No table, no function, no grant, no cron; the keys are inert until slice C reads them.
+
+**Doc-sync note:** `docs/SYSTEM_BOUNDARIES.md` needs NO change this slice — no new table, writer, or
+cross-system edge exists yet (`game_config` stays Reference/Config, admin/migration sole writer);
+the Mining ownership rows + §2 system row land with the slice-B schema, same-step (the 0097/0098
+precedent).
+
+**State.** `npm run build` green. Migration head **0102**; no flag flipped, no live DB write —
+everything dark and server-rejected (`mining_enabled='false'`); PR-ready on
+`autopilot/20260703-064048`, `main` untouched.
+
+---
+
 ## 2026-07-04 — EXPLORATION CLEANUP step 4 (final) — delete dead `EXPLORATION_DISABLED_REASON` export; closes recon finding #3. **Exploration cleanup complete (findings 1–3 all fixed)**
 
 **Request.** Fix finding #3 and close out the exploration cleanup pass. Repo-wide grep re-confirmed
