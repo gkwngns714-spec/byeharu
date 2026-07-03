@@ -5,6 +5,39 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION CLEANUP step 4 (final) — delete dead `EXPLORATION_DISABLED_REASON` export; closes recon finding #3. **Exploration cleanup complete (findings 1–3 all fixed)**
+
+**Request.** Fix finding #3 and close out the exploration cleanup pass. Repo-wide grep re-confirmed
+`EXPLORATION_DISABLED_REASON` (`explorationTypes.ts:48`) had zero references outside the recon
+scratch file; deleted the constant + its doc comment (2 lines) and nothing else. Rationale: the
+panel deliberately collapses ALL failure envelopes without inspecting `reason`
+(`ExplorationPanel.tsx:86`), so the constant was speculative dead code with no consumer and no
+planned consumer — the dark surface stays server-driven either way.
+
+**Cleanup pass summary (the trade-milestone-style audit of Phase 11, slices A–H / 0096–0101):**
+- **Audit verdict:** boundaries acyclic and all edges downward; sole writers hold everywhere
+  (`exploration_discoveries` = one owner system, two writer fns; `exploration_sites` = no runtime
+  writer; `reward_grant` the sole depositor; `osn_distance` a pure IMMUTABLE leaf); dark gates
+  consistent (all three client-callable surfaces reject-before-any-read while
+  `exploration_enabled='false'`; the securing processor's flag exception documented as in-flight
+  safety); every shim carries its retirement condition. Three cleanup-class findings, none severe.
+- **Finding #1 (step 2):** `docs/ARCHITECTURE.md` doc-sync — §14 processors table gained the
+  `process_exploration_securing()` row; §7 gained the OSN-native as-built clarification (narrow
+  self-approved scope amendment, recorded in the recon §3).
+- **Finding #2 (step 3):** shared verify harness extracted to `scripts/lib/verify-harness.mjs`;
+  `verify-exploration.mjs` repointed (pure extraction, identical environmental abort point);
+  retirement plan: the 31 sibling verifiers adopt on next meaningful touch (`osn_distance`
+  precedent, `SYSTEM_BOUNDARIES.md:75–78`).
+- **Finding #3 (this step):** dead `EXPLORATION_DISABLED_REASON` export deleted.
+
+**State.** `npm run build` green; `node --check scripts/verify-exploration.mjs` parses clean.
+Migration head remains **0101**; no migration edited, no flag touched, `game_config` seeds
+untouched; every exploration surface still dark/server-rejected; everything PR-ready on
+`autopilot/20260703-064048`, `main` untouched. The exploration cleanup audit is **CLOSED**
+(recon: `CLEANUP_EXPLORATION_RECON.local.md`, findings 1–3 all FIXED).
+
+---
+
 ## 2026-07-04 — EXPLORATION CLEANUP step 3 — extract shared verify harness (`scripts/lib/verify-harness.mjs`); closes recon finding #2
 
 **Request.** Fix finding #2 of the exploration cleanup recon: `scripts/verify-exploration.mjs` had

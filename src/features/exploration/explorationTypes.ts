@@ -44,9 +44,6 @@ export type CommandExplorationScanResult =
     }
   | { ok: false; code: string; message: string }
 
-/** The dark read-reason token (0087 read idiom): the panel renders nothing on this envelope. */
-export const EXPLORATION_DISABLED_REASON = 'exploration_disabled' as const
-
 // ── Scan-enabled predicate ────────────────────────────────────────────────────────────────────────
 // Scan is legal only for a SETTLED in-space ship (0055 model: spatial_state 'in_space' ⇔
 // status 'stationary'). This predicate only drives the button's enabled state — the server remains
