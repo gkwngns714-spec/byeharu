@@ -5,6 +5,50 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — TRADE-MARKET-1 no-softlock floor: relief ledger + tunables + dark flag (schema slice; NO RPC)
+
+**Request.** Schema/config/flag slice of the no-softlock relief floor: add the relief ledger table, its tunables,
+and a dark gate — no RPC and no writer yet. Forward-only; ships DARK; no flag flipped true.
+
+**Ownership decision (planner authority).** The relief ledger + orchestrator belong to **Trade Market**, not
+Wallet (overriding the scope-lock's tentative "Wallet-owned ledger" phrasing — table ownership is a design detail
+within scope). Trade Market is the economy orchestrator that ALREADY fans out downward to Wallet (credit), Trade
+Cargo (lots), and Main Ship (read); siting relief there introduces **zero new cross-system edges** and keeps Wallet
+a pure downward leaf. Making Wallet orchestrate relief would force Wallet to read Trade Cargo + Main Ship and stop
+being a leaf. Mirrors the existing `trade_receipts` table + `market_buy`/`market_sell` RPCs. The relief credit is
+granted THROUGH `wallet_credit`, so Wallet stays the sole `player_wallet` writer — Trade Market never writes
+`player_wallet` directly.
+
+**Work done** — one new migration `20260618000094_trade_market_1_relief_claims.sql` (head bump **0093 → 0094**):
+- **`public.trade_relief_claims`** — Trade-Market-owned, per-player idempotent relief ledger: `claim_id` (pk),
+  `player_id` (fk → auth.users, on delete cascade), `request_id`, `amount` (`check >= 0`), `claimed_at`,
+  `unique (player_id, request_id)` idempotency key, and a `(player_id, claimed_at)` index for the cooldown /
+  lifetime-cap lookups the RPC will do. RLS enabled; owner-read policy `player_id = auth.uid()`; `grant select` to
+  authenticated (NOT anon); **no** insert/update/delete policy and **no** write grant → Trade Market will be the
+  sole writer via the forthcoming SECURITY DEFINER RPC. Account-scoped (keyed by player_id, not ship) because
+  relief is account-level softlock recovery; RLS/comment idiom matches `trade_receipts` (0086).
+- **Three tunables** (placeholders) via `on conflict (key) do nothing`: `relief_credits`=`250` (grant per claim),
+  `relief_cooldown_seconds`=`86400` (24h minimum spacing — prevents rapid re-farming),
+  `relief_max_lifetime_claims`=`3` (lifetime cap per player — bounds total relief while still guaranteeing
+  genuine-softlock recovery).
+- **Dark flag** `trade_relief_enabled`=`'false'` via `on conflict (key) do nothing`. The relief RPC (next step) is
+  server-rejected until this flips; it stays false here — no flag set true.
+
+**No writer exists yet.** The table starts DARK with no writer — exactly as `player_wallet`/`trade_receipts` did in
+0086. Nothing reads or writes `trade_relief_claims` yet; the sole writer arrives with the relief RPC in the next
+slice, itself gated by `trade_relief_enabled=false`.
+
+**State.** Forward-only. Migration `0094` is the highest-numbered file; `0001–0093` unedited. No new cross-system
+edge, no cycle — Wallet remains a downward leaf and `player_wallet`'s sole-writer invariant is preserved (relief
+credits flow through `wallet_credit`). `docs/SYSTEM_BOUNDARIES.md` synced in the SAME step (ownership matrix +
+Trade Market section + acyclic-invariant note). `main` untouched. No frontend, no workflow, no verifier, no engine
+(M2/M3/M4/M4.5) change. No flag default flipped true.
+
+**Bugs / fixes**
+- _(none — additive schema/config/flag slice; no writer, no behavior change.)_
+
+---
+
 ## 2026-07-03 — TRADE-MARKET-1 seed capital: `starting_credits` tunable + single shared `wallet_ensure` (DARK)
 
 **Request.** Seed-capital slice of the Trading V1 economy bootstrap: add a `starting_credits` tunable seeded into a
