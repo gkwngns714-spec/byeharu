@@ -5,6 +5,56 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — TRADE-ECONOMY-BOOTSTRAP proof: disposable, self-rolling-back seed + relief exercise (no CI yet)
+
+**Request.** Add a disposable proof that actually exercises the seed-capital + no-softlock-relief SQL end-to-end —
+the only way this logic runs, since `verify:m*` can't reach a live DB in-sandbox. Mirror the
+`trade-market-1-proof.{sh,sql}` idiom. Touch no `src/` and no migrations.
+
+**Work done** — two new files under `scripts/` (no migration, no committed flag change):
+- **`trade-economy-bootstrap-proof.sql`** — one `begin;`…`rollback;` transaction that persists NOTHING (no COMMIT
+  anywhere). Same idiom as the sibling: `\set ON_ERROR_STOP on`, the `pg_temp.call_as(sub, fn)` JWT-subject helper,
+  a `teb` temp fixture table, `teb.`-prefixed fixture users, the "mirror production config a fresh chain lacks"
+  setup (`reveal_starter_ports()` + transient `mainship_space_movement_enabled='true'`), real-RPC provisioning
+  (`commission_first_main_ship()`), and owner-level `insert into public.player_wallet (player_id, balance)` /
+  `insert into public.ship_cargo_lots …` for state setup (harness runs as DB owner, bypassing RLS; all reverted by
+  ROLLBACK). Both dark flags (`trade_market_enabled`, `trade_relief_enabled`) are toggled ONLY inside the txn.
+  Asserts, each ending in a `raise notice` PASS marker:
+  - **SEED**: `SEED_PASS_DARK` (wallet-less buy while trade dark → `trade_market_disabled`, no wallet seeded),
+    `SEED_PASS_APPLIED` (first buy seeds `starting_credits`=1000 once then debits → balance 1000−T),
+    `SEED_PASS_ONCE` (2nd buy debits further; balance never returns to 1000 — `wallet_ensure`'s `on conflict do
+    nothing` is unfarmable).
+  - **RELIEF anti-farm matrix**: `RELIEF_PASS_DARK` (rock-bottom claim while relief dark → `trade_relief_disabled`,
+    no claim, wallet 0), `RELIEF_PASS_NO_WALLET` (wallet-less → `no_wallet`, still no wallet — proves relief never
+    calls `wallet_ensure`, closing the seed+relief double-grant hole), `RELIEF_PASS_WALLET_NOT_EMPTY`,
+    `RELIEF_PASS_CARGO_NOT_EMPTY`, `RELIEF_PASS_GRANT` (0 → `relief_credits`=250, exactly one claim @ 250),
+    `RELIEF_PASS_IDEMPOTENT` (replay → `idempotent_replay`, no 2nd claim/credit), `RELIEF_PASS_COOLDOWN`
+    (`relief_cooldown_active` + `next_eligible_at`), `RELIEF_PASS_CAP` (cooldown transiently 0; 3 grants then 4th →
+    `relief_cap_reached`). Ends with the `TRADE-ECONOMY-BOOTSTRAP PROOF PASSED` line, then `rollback;`.
+- **`trade-economy-bootstrap-proof.sh`** — mirrors the sibling's two modes. `selftest` (DB-free): verifies the
+  `.sql` is self-rolling-back (opens a txn, last verb is `rollback;`, no COMMIT), toggles both dark flags strictly
+  inside the txn, provisions via the real RPCs (`commission_first_main_ship`/`market_buy`/`market_claim_relief`),
+  sets up a wallet via an owner insert, contains every PASS marker, asserts the key reason tokens
+  (`trade_market_disabled`/`trade_relief_disabled`/`no_wallet`/`wallet_not_empty`/`cargo_not_empty`/
+  `idempotent_replay`/`relief_cooldown_active`/`relief_cap_reached`), and references neither `src/` nor
+  `migrations/`; prints an ALL-PASSED line. `local` (against a disposable `DB_URL`): `psql -X -v ON_ERROR_STOP=1
+  -f` the `.sql`, require the final PASS line + every marker, print `OVERALL_PASS`.
+
+**Self-rolling-back; persists nothing; flips no committed flag.** The whole proof runs inside one rolled-back
+transaction — no wallet, lot, claim, ship, fixture user, or flag flip survives. The dark flags are enabled only
+transiently inside the txn to exercise the capabilities; production/committed defaults stay false. Relief credits
+are never injected directly — the GRANT case drives the real `market_claim_relief` RPC.
+
+**State.** No migration added/edited; no `src/`; no committed flag changed. **CI wiring is a separate follow-up**
+(would mirror the existing `trade-*-proof` CI idiom). No `SYSTEM_BOUNDARIES.md` change — a proof script is not an
+architectural fact. `main` untouched. `selftest` was run in-sandbox (DB-free) and passes; `local` needs a
+disposable Supabase (same environmental limitation as `verify:m*`) and was not run here.
+
+**Bugs / fixes**
+- _(none — new disposable proof; exercises existing DARK logic, changes no product code.)_
+
+---
+
 ## 2026-07-03 — TRADE-MARKET-1 no-softlock floor: relief claim RPC `market_claim_relief` (DARK; server-rejected)
 
 **Request.** The relief floor's writer: a Trade-Market orchestrator that grants `relief_credits` to a genuinely
