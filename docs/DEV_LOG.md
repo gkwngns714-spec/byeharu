@@ -5,6 +5,45 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — Trade-economy cleanup audit: ROADMAP Phase-10 doc-sync (docs-only; one stale figure fixed)
+
+**Request.** Final auto-cleanup/audit pass for the trade-economy milestone: verify the branch is in the clean
+end-state the milestone claims (boundaries doc, single docked-location helper, dark-both-sides flags, CI proof
+wiring, law-doc sync) and fix — narrowly — anything that is not.
+
+**Audit result** (full evidence trail in the untracked scratch file `TRADE_ECONOMY_CLEANUP_RECON.local.md`):
+claims (a)–(d) — SYSTEM_BOUNDARIES coverage + sole-writers/acyclicity, single `mainship_resolve_docked_location`
+(defined once in `0092`, no surviving inline copy in `0093–0095` or the proof SQL), dark both sides
+(`trade_market_enabled`/`trade_relief_enabled` seeded false + RPC dark-rejects + `TRADE_MARKET_ENABLED=false`
+client gate; relief has NO client UI — N/A by evidence), and the `trade-v1-proof.yml` posture (feature-branch
+triggers only, no `environment:`, `permissions: contents: read`, `if: always()` teardown, proof SQL one
+begin…ROLLBACK txn, no COMMIT) — all ✅ CLEAN. ONE defect: claim (e) — `docs/ROADMAP.md` (Phase-10 cell, line 85)
+still said "migration head `0092`" and omitted the economy-bootstrap phase entirely, contradicting this log's own
+"migration head remains **0095**" (CI-wiring entry below).
+
+**Work done** — exactly one doc-sync edit to the Phase-10 status sentence in `docs/ROADMAP.md`, nothing else:
+- Stale "migration head `0092`" → "`0095`".
+- The pipeline enumeration now includes the previously-missing 2026-07-03 work: cleanup helper `0092`,
+  ECONOMY-BOOTSTRAP `0093–0095` (seed capital via `wallet_ensure` + no-softlock relief `market_claim_relief`),
+  and the disposable proof `scripts/trade-economy-bootstrap-proof.{sql,sh}` wired into `trade-v1-proof.yml`.
+  The historical `0073–0084` / `0085–0091` ranges and the "implemented DARK & PR-ready … all trade flags/gates
+  OFF" meaning are unchanged.
+
+**State.** Docs-only, forward-only. No code, migration, RPC, frontend, workflow, proof, flag default, or behavior
+changed — nothing activated; `main` untouched; migration head remains **0095** on `autopilot/20260703-064048`.
+No `SYSTEM_BOUNDARIES.md` change (no architectural fact changed; §1/§2 already document the 0092–0095 surface —
+re-verified in this audit). `npm run build` green (`tsc -b && vite build`, 141 modules); the remote-DB
+`verify:m2/m3/m4` runs fail only on `fetch failed` (no reachable Supabase from this sandbox) and `verify:m45/m5`
+need `SUPABASE_SERVICE_ROLE_KEY` — environmental, no code/assertion failure;
+`scripts/trade-economy-bootstrap-proof.sh selftest` passes in-sandbox.
+
+**Bugs / fixes**
+- **ROADMAP Phase-10 status stale (doc/law mismatch).** The 0093–0095 + proof + CI slices updated this log but
+  not the ROADMAP status figure written back at head-0092 time. Fixed by the doc-sync above; no other
+  contradiction found.
+
+---
+
 ## 2026-07-03 — TRADE-ECONOMY-BOOTSTRAP proof wired into existing `trade-v1-proof.yml` (disposable-only; no new workflow)
 
 **Request.** Wire the economy-bootstrap proof into CI by EXTENDING the existing `trade-v1-proof.yml` — which
