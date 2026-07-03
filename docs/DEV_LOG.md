@@ -5,6 +5,68 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION-P11 SLICE G: dark frontend surface `src/features/exploration/` (scan control + discoveries panel; renders nothing while the server says dark). Frontend only — no migration
+
+**Request.** The exploration client surface: scan control + discoveries panel in a new feature folder,
+integrated with the OSN in-space controls. NO new migration; nothing outside the feature folder + one
+integration point + docs.
+
+**Design decisions (self-approved).**
+1. **Server-driven visibility, no client flag constant.** The panel calls `get_my_exploration_discoveries()`
+   on mount/lifecycle change and renders **nothing unless the server affirmatively answers `{ok:true}`** —
+   the `exploration_disabled` dark envelope (and any transport failure) fails closed to `null`. This follows
+   the fail-closed side of the trade client idiom (all `{ok:false, reason}` shapes collapse quietly; nothing
+   throws into the render path — `tradeApi.ts`/`MarketPanel.tsx`) while deliberately NOT copying trade's
+   compile-time `TRADE_MARKET_ENABLED` constant: visibility is the SERVER's answer alone. The UI is not the
+   control anyway — the server rejects every exploration RPC while dark (fail-closed law, both sides).
+2. **Placement with the OSN in-space controls.** The panel mounts in `GalaxyMapScreen`'s map-overlay stack
+   (where the OSN command surfaces live: PortNavPanel top-left, DockServicesPanel top-right, SpaceStopControls
+   bottom-right) at **bottom-left**, receiving the ship id + `status`/`spatial_state` the screen already
+   threads to its OSN siblings. Single feature folder `src/features/exploration/`; no new route (matches how
+   the trade/dock surfaces integrate — overlay panels, not routes).
+3. **request_id idiom copied from the existing command clients:** one `crypto.randomUUID()` per intentional
+   submit (the `MarketPanel` idiom; the server dedups on `(main_ship_id, request_id)`), a synchronous
+   in-flight ref so a same-tick double-click can't mint a second id, and disabled buttons while in flight.
+
+**Work done** — three new files + one integration point; no migration, `0001–0101` unedited:
+- **`src/features/exploration/explorationTypes.ts`** — framework-free types mirroring the server contracts
+  exactly (`CommandExplorationScanResult` from 0099/0100's wrapper; `ExplorationDiscovery` /
+  `GetMyExplorationDiscoveriesResult` from 0101: discovery_id, site_name, space_x, space_y, discovered_at,
+  secured_at, bundle), the `isSettledInSpace` predicate (0055 model: `in_space` ⇔ `stationary`; drives only
+  the button — the server stays authoritative), and the scan reason→message copy map in the
+  `spaceStopCommand.ts` style (`feature_disabled`, `invalid_request`, `request_conflict`, `no_ship`,
+  `ship_destroyed`, `not_in_space`, `busy_legacy`, `no_site_in_range`, `already_discovered`,
+  `not_authenticated`, `unavailable`).
+- **`src/features/exploration/explorationApi.ts`** — two thin `supabase.rpc` wrappers
+  (`commandExplorationScan(mainShipId, requestId)`, `getMyExplorationDiscoveries()`); transport/DB errors
+  normalize to `{ok:false, code/reason:'unavailable'}` (tradeApi idiom — never throw into render).
+- **`src/features/exploration/ExplorationPanel.tsx`** — reads discoveries on mount + lifecycleKey change
+  (the `useDockServices` re-fetch idiom); early-returns `null` unless `result.ok`; Scan button enabled only
+  when settled in space (disabled with the truthful hint "Stop in open space to scan." otherwise); on
+  success shows "Discovered <name>." and refreshes; failures show the server message (fallback: copy map).
+  Discovery rows: name, rounded coordinates, local discovery time, and a Pending/Secured badge from
+  `secured_at`. Styling/testids match the neighboring OSN overlay panels.
+- **Integration (the ONE point):** `src/features/map/GalaxyMapScreen.tsx` — `ExplorationPanel` mounted
+  directly after `DockServicesPanel` in the map-area overlay block, passing
+  `mainShipId`/`shipStatus`/`shipSpatialState` + the lifecycle key the siblings already use.
+
+**Panel renders nothing in production today because the server returns `exploration_disabled` — no flag was
+touched.** `docs/SYSTEM_BOUNDARIES.md` NOT edited: verified it does not document client surfaces per system
+(the Trade Market row lists RPCs/flags only; trade's UI is not listed), so exploration's UI is not added
+either.
+
+**State.** Frontend-only; migration head remains **0101**. `npm run build` green (`tsc -b && vite build`,
+**144 modules** — up from 141 with the three new files); `npx eslint` on the new folder + the integration
+file: clean. `verify:m3`/`verify:m4` fail only on `fetch failed` (no reachable Supabase from this sandbox)
+and `verify:m45` needs `SUPABASE_SERVICE_ROLE_KEY` — the recorded environmental posture; no code/assertion
+failure. `main` untouched.
+
+**Bugs / fixes**
+- _(none — additive dark UI; server rejects everything while dark, and the panel renders nothing on that
+  answer.)_
+
+---
+
 ## 2026-07-04 — EXPLORATION-P11 SLICE F: dark read surface `get_my_exploration_discoveries()` (reveal-after-discovery) + ACTIVITIES.md as-built reconciliation
 
 **Request.** The exploration read surface: one server RPC exposing the caller's own discoveries (with the joined

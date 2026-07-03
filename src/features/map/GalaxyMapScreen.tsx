@@ -11,6 +11,7 @@ import { MarketPanel } from './MarketPanel'
 import { ShipSwitcher } from './ShipSwitcher'
 import { useMainShipSelection } from './useMainShipSelection'
 import { TRADE_MARKET_ENABLED } from './osnReleaseGates'
+import { ExplorationPanel } from '../exploration/ExplorationPanel'
 
 // Galaxy Map screen. Shows the world, the player's main ship, ports, and active movements; selecting a
 // location opens its detail panel + the main-ship expedition/move surface. When the main ship is docked at a
@@ -124,6 +125,17 @@ export function GalaxyMapScreen() {
               <DockServicesPanel
                 lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
                 mainShipId={mainShip?.main_ship_id ?? null}
+              />
+              {/* EXPLORATION-P11 — dark exploration surface (scan + discoveries). SERVER-driven
+                  visibility: it renders ONLY when get_my_exploration_discoveries answers ok; while
+                  the server returns exploration_disabled it renders nothing, so today's player
+                  experience is unchanged. Scan itself is legal only settled in space; the server
+                  rejects everything else (fail-closed both sides). */}
+              <ExplorationPanel
+                lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
+                mainShipId={mainShip?.main_ship_id ?? null}
+                shipStatus={mainShip?.status}
+                shipSpatialState={mainShip?.spatial_state}
               />
             </>
           )}
