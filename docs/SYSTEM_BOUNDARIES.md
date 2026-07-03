@@ -36,6 +36,10 @@ server-side functions — **never** by directly changing another system's tables
 | `build_orders` | **Production** (Training) | owner |
 | `player_inventory`, `inventory_ledger` | **Inventory** | owner |
 | `main_ship_instances` | **Main Ship** | owner |
+| `trade_goods` | **Reference/Config** (admin/migration; Trade Market catalog) | public read-only |
+| `ship_cargo_lots` | **Trade Cargo** | owner |
+| `player_wallet` | **Wallet** | owner |
+| `trade_receipts` | **Trade Market** | owner |
 
 **Source of truth for active combat** = `combat_encounters` + `combat_rounds` +
 `fleet_units` + `location_presence`. **Never** `combat_reports` (history only).
@@ -58,7 +62,16 @@ server-side functions — **never** by directly changing another system's tables
 | **Report** | combat_reports | `report_create(encounter)` *(idempotent)*, `get_combat_reports()` | **any** gameplay mutation · be a source of truth for active state |
 | **Production** (Training) | build_orders | `train_units(base,unit,qty)` *(player)*, `process_build_queue()` *(cron)*, `production_create_order/complete_order(...)` *(internal)* | write base_units/base_resources directly (spends via `Base.base_spend_resources`, deposits via `Base.base_merge_units`) · touch combat/world-state/movement · change reward logic |
 | **Inventory** | player_inventory, inventory_ledger | `inventory_deposit(player,item,qty,key?)` *(idempotent)*, `inventory_spend(player,item,qty)` *(transactional)*, `inventory_get_balance(player,item)` | combat/movement/world-state · be a source of truth for live combat · client writes · touch metal/`base_resources` (metal stays Base-owned) |
-| **Main Ship** | main_ship_instances | `ensure_main_ship_for_player(player)` *(idempotent; one per player)*, `get_main_ship(player)`, `rename_main_ship(player,name)` *(all server-only)* | touch fleets/combat/movement/production · drive expeditions yet · client writes |
+| **Main Ship** | main_ship_instances | `ensure_main_ship_for_player(player)` *(idempotent; ensures the first/sole ship)*, `get_main_ship(player)`, `rename_main_ship(player,name)`, `commission_first_main_ship()` / `commission_additional_main_ship()` *(the priced additional-ship path — DARK)* *(all server-only)* — a player MAY own multiple `main_ship_instances` rows (the `player_id` UNIQUE was dropped in 0079); sole-ship is now a runtime shim / dark gate, not a schema constraint | touch fleets/combat/movement/production · drive expeditions yet · client writes |
+| **Wallet** | player_wallet | `wallet_debit(player,amount)` *(atomic conditional; false if too poor)*, `wallet_credit(player,amount)` *(lazy ensure)* — **internal** (no client grant); called DOWNWARD by Main Ship (additional-ship commission debits `main_ship_price`) and Trade Market (buy debits / sell credits). A **downward leaf**: depends on nothing above it → no cycle, no mutual/two-way dependency | write any other system's table · be called cyclically · client writes |
+| **Trade Cargo** | ship_cargo_lots | `trade_cargo_add_lot(ship,good,qty,cost,origin)` *(insert)*, `trade_cargo_consume(ship,good,qty)` *(FIFO delete/update; returns consumed cost basis)* — **internal** (no client grant); per-ship, volume-keyed cargo lots hung on a `main_ship_instances` ship. A **leaf** Trade Market depends on downward | write main_ship_instances/player_wallet/trade_receipts · cache volume on the instance · client writes |
+| **Trade Market** | trade_receipts | `get_market_offers(ship)` *(read)*, `market_buy(ship,good,qty,req)`, `market_sell(ship,good,qty,req)` *(authenticated; idempotent on (ship,request_id))* — orchestrates buy/sell by fanning out one-directionally DOWNWARD to Wallet (debit/credit) + Trade Cargo (add/consume lots), reading `trade_goods` + the docked-location context; writes only its own `trade_receipts`. **DARK**: every trade RPC is server-rejected while `trade_market_enabled=false` | write ship_cargo_lots/player_wallet/main_ship_instances directly · second-write any table · run while the gate is off |
+
+> **Trade fan-out is acyclic.** Trade Market → {Wallet, Trade Cargo} and Main Ship → Wallet are all
+> one-directional DOWNWARD edges. Wallet and Trade Cargo are leaves — each writes only its own table and
+> calls nothing above it. Each of `trade_goods` / `ship_cargo_lots` / `player_wallet` / `trade_receipts` has
+> exactly **one** sole-writer and **no second writer anywhere**. The whole trade feature stays DARK while
+> `trade_market_enabled=false`.
 
 ---
 
@@ -118,8 +131,12 @@ secured by `Reward.grant` **on home arrival only** *(→ `Base.add_resources` fo
    `unit_types` (separate namespace). A future main ship exposes finite `support_capacity`
    and `calculate_expedition_stats` consumes these (Phases 7–8).
 7. **Main Ship (Phase 7)** — `main_ship_hull_types` = Reference/Config (public read);
-   `main_ship_instances` = the Main Ship system (owner-read; one row per player via a
-   `player_id` UNIQUE; writes only through `ensure/get/rename`, all server-only). The hull
+   `main_ship_instances` = the Main Ship system (owner-read). It was originally one row per player via a
+   `player_id` UNIQUE, but that UNIQUE was **dropped in migration 0079 (TRADE-FLEET-0C)** — a player MAY now
+   own multiple `main_ship_instances` rows. Multi-ship is structurally allowed but stays **DARK**: the
+   sole-ship behavior is now a runtime shim / dark gate (`mainship_additional_commission_enabled=false`), NOT a
+   schema UNIQUE. Writes only through the Main-Ship server functions (`ensure/get/rename` + the priced
+   commission path), all server-only. The hull
    exposes the finite `support_capacity` a future `calculate_expedition_stats` will enforce.
    **Phase 7 does NOT drive expeditions** — the ship sits `home`, untouched by combat/fleet/
    movement/production; nothing consumes it yet.

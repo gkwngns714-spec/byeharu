@@ -5,6 +5,37 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — Trading V1 cleanup pass: SYSTEM_BOUNDARIES doc-sync (docs-only; no behavior/flag change)
+
+**Request.** Bring `docs/SYSTEM_BOUNDARIES.md` back in sync with the actual schema after the TRADE-FLEET-0C /
+TRADE-MARKET-1 migrations (0073–0091). Docs-only; touch no code, migration, RPC, workflow, or flag.
+
+**Work done**
+- **Corrected the stale one-ship-per-player claim.** §4 item 7 (and the §2 Main Ship row) asserted
+  `main_ship_instances` had one row per player via a `player_id` UNIQUE. That UNIQUE
+  (`main_ship_instances_player_id_key`) was **dropped in migration 0079** — a player MAY now own multiple ships.
+  Both spots now state multi-ship is structurally allowed but stays **DARK**: sole-ship is a runtime shim / dark
+  gate (`mainship_additional_commission_enabled=false`), not a schema constraint.
+- **Documented the four new tables in the §1 ownership matrix** with their real sole-writers:
+  `trade_goods` = **Reference/Config** (Trade Market static catalog; admin/migration, seed-only),
+  `ship_cargo_lots` = **Trade Cargo**, `player_wallet` = **Wallet**, `trade_receipts` = **Trade Market**.
+- **Added the three new systems to the §2 contract:** **Wallet** (downward leaf; `wallet_debit`/`wallet_credit`
+  — both Main Ship (add-ship `main_ship_price` debit) and Trade Market (buy debit / sell credit) depend DOWNWARD
+  on it, Wallet depends on nothing above → acyclic, no mutual dependency); **Trade Cargo**
+  (`trade_cargo_add_lot`/`trade_cargo_consume` — per-ship volume-keyed lots; a leaf Trade Market depends on);
+  **Trade Market** (`trade_receipts`; orchestrates buy/sell fanning out DOWNWARD to Wallet + Trade Cargo,
+  reads `trade_goods` + docked context; DARK while `trade_market_enabled=false`). Added an acyclic-fan-out note
+  confirming exactly one sole-writer per table and no second writer anywhere.
+
+**State.** Docs-only. **No** migration/RPC/`MarketPanel`/workflow/flag change; migration head unchanged at **0091**.
+The trade feature stays **DARK** (`trade_market_enabled`, `TRADE_MARKET_ENABLED`,
+`mainship_additional_commission_enabled`, `MAINSHIP_ADDITIONAL_ENABLED` all OFF); `main` untouched.
+
+**Bugs / fixes**
+- _(none — a law-doc that contradicted the schema was corrected; no behavior path changed.)_
+
+---
+
 ## 2026-07-03 — TRADE-UI-1 landed DARK + PR-ready (ship-switcher + buy/sell + §2.5 sole-ship shim retirement)
 
 **Request.** Complete **TRADE-UI-1** on `autopilot/20260703-064048`: the client trading surface (ship switcher,
