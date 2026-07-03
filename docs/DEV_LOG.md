@@ -5,6 +5,49 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-CLEANUP SLICE 1 — panel guard scaffold extracted to `src/lib/useActivityPanelGuards.ts`; Exploration + Mining migrated
+
+**Request.** Extract the duplicated activity-panel guard pattern (the documented cross-panel
+"MarketPanel idiom") into ONE shared hook and migrate the two twin panels, byte-equivalent
+behavior. This is the sanctioned **"adopt-on-next-real-change"** the SLICE F entry recorded when
+it deliberately did NOT extract the scaffold (third copy landed → the change is now real).
+
+**Work done — NEW `src/lib/useActivityPanelGuards.ts`** (frontend-only; `src/lib/` is the
+established shared home, concern-per-file):
+- **`useActivityPanelGuards()`** → `{ activeRef, tryClaim, release }`. The mounted guard is the
+  MarketPanel block verbatim (`useRef(true)` + one empty-deps effect; StrictMode re-arms). The
+  in-flight guard is a `useRef<Set<string>>` with stable callbacks: `tryClaim(key)` claims
+  synchronously BEFORE any await (false if already claimed — the same-tick double-submit killer),
+  `release(key)` drops it in the caller's `finally`. A Set-of-string serves BOTH granularities —
+  MarketPanel's per-row `good_id` keys and Exploration/Mining's fixed `'scan'`/`'extract'` key —
+  so one hook covers all three panels with zero behavior change.
+- **`isServerLit(result)`** — the shared form of the `!result || !result.ok` fail-closed check,
+  ONLY for server-lit panels that render nothing until the server affirms (Exploration/Mining
+  style); explicitly NOT for MarketPanel's shell-with-unavailable-note posture. Typed
+  `result is Extract<T, { ok: true }>` so the discriminated-union narrowing the inline checks
+  gave callers is preserved (`result.discoveries`/`result.extractions` stay type-safe).
+
+**Migrated (behavior byte-equivalent):** `ExplorationPanel.tsx` + `MiningPanel.tsx` — the local
+`activeRef` block and boolean `inFlightRef` replaced by the hook; guard ORDER preserved
+(`!mainShipId` first, then `tryClaim`); `finally` now calls `release(...)`; fail-closed render
+check now `if (!isServerLit(result)) return null` under the same FAIL CLOSED comments; the
+"MarketPanel idiom" comments repointed to the shared hook. NOT touched: `refresh()`, effect deps,
+`lifecycleKey`, state shapes, error/success copy (incl. the mining cooldown suffix), MarketPanel.
+
+**Doc-sync note.** `docs/SYSTEM_BOUNDARIES.md` needs NO change (SLICE F precedent): frontend-only,
+no table, no writer, no cross-system edge; server contracts unchanged.
+
+**State.** `npm run build` green (tsc -b + vite). `npm run lint`: the 4 touched files lint clean
+(0 problems, incl. exhaustive-deps via the stable-ref dep); full-repo lint FAILS with 14
+pre-existing errors in out-of-scope files (`MainShipMarker.tsx`, `SpaceRouteLine.tsx`,
+`useSpaceMoveCommand.ts`, `tests/` harnesses/spec) that predate this slice and sit outside the
+locked scope — NOT fixed here (scope law), left for their own cleanup step. Migration head stays
+**0106** (no migrations, no flags); everything still dark and server-rejected. Diff = exactly
+4 files (new hook, two panels, this file). Next slice: migrate MarketPanel's per-row guards onto
+the same hook and retire its local copy.
+
+---
+
 ## 2026-07-04 — MINING-P12 SLICE G (final) — `verify:mining` dark-posture script. **Phase 12 Mining — dark implementation complete (slices A–G)**
 
 **Request.** Implement slice G, the last Phase 12 slice: the dark-posture verify script + its

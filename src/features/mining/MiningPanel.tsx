@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { isSettledInSpace } from '../../lib/osnState'
+import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { commandMiningExtract, getMyMiningExtractions } from './miningApi'
 import {
   miningExtractErrorMessage,
@@ -31,25 +32,14 @@ export function MiningPanel({
   const [extractPending, setExtractPending] = useState(false)
   const [extractNote, setExtractNote] = useState<string | null>(null)
 
-  // Mounted guard (MarketPanel idiom): refresh() (mount AND post-extract) never sets state after unmount.
-  const activeRef = useRef(true)
-  useEffect(() => {
-    activeRef.current = true
-    return () => {
-      activeRef.current = false
-    }
-  }, [])
-
-  // Synchronous in-flight guard (MarketPanel idiom): two clicks in the SAME render tick both read a
-  // stale extractPending=false and would each mint a DISTINCT request id (which the server, keyed on
-  // (main_ship_id, request_id), would NOT dedup). The ref flips synchronously before the first await.
-  const inFlightRef = useRef(false)
+  // Mounted + synchronous in-flight guards — the shared home of the idiom (useActivityPanelGuards).
+  const { activeRef, tryClaim, release } = useActivityPanelGuards()
 
   const refresh = useCallback(async () => {
     const res = await getMyMiningExtractions()
     if (!activeRef.current) return
     setResult(res)
-  }, [])
+  }, [activeRef]) // ref identity is stable — dep satisfies the lint rule without changing refresh's identity
 
   // lifecycleKey is a deliberate re-fetch trigger (the useDockServices dep idiom).
   useEffect(() => {
@@ -62,8 +52,8 @@ export function MiningPanel({
   // the server dedups on (main_ship_id, request_id)); success → note + refresh; failure → the
   // server's message, falling back to the shared copy map (+ the cooldown's real seconds when sent).
   async function extract() {
-    if (!mainShipId || inFlightRef.current) return
-    inFlightRef.current = true
+    if (!mainShipId) return
+    if (!tryClaim('extract')) return
     setExtractPending(true)
     setExtractNote(null)
     const requestId = crypto.randomUUID()
@@ -82,14 +72,14 @@ export function MiningPanel({
         )
       }
     } finally {
-      inFlightRef.current = false
+      release('extract')
       if (activeRef.current) setExtractPending(false)
     }
   }
 
   // FAIL CLOSED: render nothing unless the server affirmatively lit the surface. This is the dark
   // path in production today (mining_disabled); transport errors collapse to null the same way.
-  if (!result || !result.ok) return null
+  if (!isServerLit(result)) return null
 
   return (
     <div
