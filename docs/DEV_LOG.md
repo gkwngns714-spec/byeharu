@@ -5,6 +5,37 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — Trading V1 cleanup: CI proof workflow `trade-v1-proof.yml` (disposable DB only; no production)
+
+**Request.** Wire the two already-existing Trading-V1 proofs into CI. Add ONE workflow that runs both against a
+throwaway/disposable Supabase only — never production, flipping no flag. Reuse the `port-entry-1-proof.yml` idiom.
+
+**Work done**
+- **New workflow `.github/workflows/trade-v1-proof.yml`** (modeled on `port-entry-1-proof.yml`). One workflow, one
+  disposable stack for both proofs:
+  - `selftest` job — DB-free static checks: `bash scripts/trade-fleet-0c-proof.sh selftest` +
+    `bash scripts/trade-market-1-proof.sh selftest`.
+  - `disposable-matrix` job — `supabase start` (applies the full local chain 0001..0092, incl. the new shared
+    docked-location helper), exports the disposable `DB_URL` via `supabase status -o env` into a tmp env file (no
+    secrets), then runs `trade-fleet-0c-proof.sh local` then `trade-market-1-proof.sh local`, and an
+    `if: always()` `supabase stop --no-backup || true`.
+  - `on: workflow_dispatch` + `push` to `autopilot/**`, `trade-**`, `trade-market-**`, `trade-fleet-**` — **not**
+    `main` / any release branch. `permissions: contents: read`; `concurrency` on `github.ref` with
+    `cancel-in-progress: true`. **No `environment:` on any job** → no job can read production secrets.
+- **Flips NO committed flag.** Both proofs are self-rolling-back: they enable the dark trade capabilities ONLY
+  inside a txn that ends in ROLLBACK (no COMMIT), so the committed flag defaults (`trade_market_enabled`,
+  `mainship_additional_commission_enabled` = false) are untouched. Disposable local Supabase only — never prod.
+
+**State.** Additive CI wiring only. No proof `.sql`/`.sh`, migration, flag default, `MarketPanel`, or boundary-doc
+change (a CI workflow is not an architectural fact, so `SYSTEM_BOUNDARIES.md` needs none). Migration head unchanged
+at **0092**. Not dispatched/triggered (a human/CI action); `main` untouched. Both `selftest` invocations pass
+locally (DB-free); the `disposable-matrix` job needs GitHub-hosted Docker/Supabase and was **not** run in-sandbox.
+
+**Bugs / fixes**
+- _(none — additive CI wiring around existing proofs.)_
+
+---
+
 ## 2026-07-03 — Trading V1 cleanup: extract shared docked-location helper (migration 0092; behavior-identical)
 
 **Request.** The identical ~10-line "resolve docked location" block was copy-pasted verbatim into

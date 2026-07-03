@@ -1,0 +1,61 @@
+name: TRADE-V1 — trade-fleet-0c + trade-market-1 disposable proofs (no production)
+
+# Runs BOTH Trading-V1 disposable proofs together on a single throwaway local Supabase — NEVER production:
+#   1. DB-free selftests: both proof harnesses are well-formed, self-rolling-back (open a txn, toggle the dark
+#      trade flags ONLY inside it, provision via the real RPCs, and end in ROLLBACK with NO COMMIT — so they
+#      persist nothing and leave every committed flag = false);
+#   2. a disposable local Supabase (chain 0001..0092, including the shared docked-location helper) running both
+#      real-chain matrices — trade-fleet-0c (multi-ship + per-ship-command core, 0073..0084) then trade-market-1
+#      (the atomic get_market_offers/buy/sell surface + priced add-ship, 0085..0091).
+# The proofs flip NO committed flag: they enable the dark trade capabilities only inside the rolled-back txn.
+# No `environment:` on any job — none can read production secrets. Disposable local Supabase only.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'trade-**'
+      - 'trade-market-**'
+      - 'trade-fleet-**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trade-v1-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/trade-fleet-0c-proof.sh selftest
+      - run: bash scripts/trade-market-1-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies migrations 0001..0092)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: TRADE-FLEET-0C real-chain matrix
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/trade-fleet-0c-proof.sh local
+      - name: TRADE-MARKET-1 real-chain matrix
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/trade-market-1-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
