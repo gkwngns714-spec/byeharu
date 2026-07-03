@@ -5,6 +5,61 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-P12 SLICE C — the dark extraction command `0104` (`command_mining_extract` → private `mining_extract`)
+
+**Request.** Implement slice C of the Phase 12 plan (recon §9): ONE new forward-only migration with
+the two-layer extraction command, mirroring the exploration scan command's AS-BUILT form (0099 body
++ the 0100 changes) — same shape, envelopes, locking, and ACL — deviating only where the recon §8
+decisions require (repeatability/cooldown instead of unique-discovery). No processor, no read
+surface, no frontend, no `game_config` changes.
+
+**Work done — NEW `supabase/migrations/20260618000104_mining_p12_extract_command.sql`** (migration
+head moves **0103 → 0104**; `0001–0103` unedited):
+- **Private `mining_extract(p_player, p_main_ship_id, p_request_id)`** — the 0099/0100 writer
+  step-for-step: dark gate FIRST (`cfg_bool('mining_enabled')` → `feature_disabled` before ANY
+  read/lock/write) → request-id validation → S2 canonical lock context →
+  ownership-from-locked-snapshot → canonical payload hash → receipt lookup
+  (`main_ship_space_command_receipts`; replay returns the first committed result;
+  `request_id_payload_conflict` on hash mismatch — the EXACT 0099 mechanism, no new receipt
+  system) → `mainship_space_validate_context` (settled `in_space` required; `destroyed` /
+  `not_in_space` reasons) → `mainship_space_assert_cross_domain_exclusion` → live position under
+  lock → NEAREST active `mining_fields` row within `cfg_num('mining_extract_radius')` via
+  `osn_distance` (deterministic tie-break distance-then-name; none → `no_field_in_range`).
+  **Deviations (recon decisions 2/4, all header-documented):** no discovered-filter and no
+  ON CONFLICT race guard (repeatable; the S2 ship lock serializes concurrency, receipts dedupe
+  replays); NEW cooldown step — the latest `mining_extractions.created_at` for (player, field)
+  (the 0103 `(player_id, field_id, created_at desc)` index) must be older than
+  `cfg_num('mining_extract_cooldown_seconds')`, else `{ok:false, reason:'cooldown',
+  retry_after_seconds}` (failure writes NO receipt — 0064 posture — so the same request_id
+  retries cleanly after the cooldown). On success: ONE extraction row inserted with
+  `pending_bundle_json` = the field's `reward_bundle_json` verbatim + the resolved
+  `main_ship_id`; success envelope in 0099's shape; receipt finalised atomically.
+- **Public wrapper `command_mining_extract(p_main_ship_id, p_request_id)`** — the 0099 wrapper
+  verbatim: auth check → `mining_enabled` gate BEFORE any ship/argument resolution (anti-probe;
+  `{ok:false, code:'feature_disabled'}`) → `mainship_resolve_owned_ship` → delegate → the same
+  reason→code/message map with `no_field_in_range`/`cooldown` replacing
+  `no_site_in_range`/`already_discovered`; the `cooldown` failure passes `retry_after_seconds`
+  through.
+- **ACL verbatim from 0099:** `mining_extract` revoked from public/anon/authenticated, granted to
+  service_role; `command_mining_extract` revoked from public/anon, granted to authenticated.
+- DARK today: both gates reject every call; a successful extraction would only sit pending anyway —
+  the securing processor arrives in slice D (unreachable today).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: the `mining_extractions` §1 row now names
+`mining_extract` (0104) as the LIVE sole insert path (insert-only) with `process_mining_securing`
+still FORTHCOMING; the §2 Mining row rewritten to present tense for the shipped command (wrapper →
+private writer, receipts/S2/validate/exclusion reuse, cooldown + nearest-field rule) with slices
+D/E still marked forthcoming — edge list stays all-DOWNWARD (Mining → OSN geometry/locks · Main
+Ship read · Reference/Config reads · Bases/Reward deferred to slice D), exactly the Exploration
+shape.
+
+**State.** `npm run build` green. Migration head **0104**; still fully dark — the wrapper and
+writer both server-reject while `mining_enabled='false'`; no flag flipped, no live DB write;
+PR-ready on `autopilot/20260703-064048`, `main` untouched. Next: slice D
+(`process_mining_securing`).
+
+---
+
 ## 2026-07-04 — MINING-P12 SLICE B — mining schema migration `0103` (`mining_fields` + `mining_extractions`, dark, no writer exists)
 
 **Request.** Implement slice B of the Phase 12 plan (recon §9): ONE new forward-only migration with
