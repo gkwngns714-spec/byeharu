@@ -5,6 +5,90 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MODULES-P13 SLICE C — the dark craft command `0109` (`module_craft_receipts` + `craft_module` → private `production_craft_module`)
+
+**Request.** Implement slice C of Phase 13: ONE new forward-only migration with the player-scoped
+craft-receipt ledger and the two-layer craft command. NO read surface, NO frontend this slice.
+Idioms matched by re-reading the shipped sources end-to-end first: `0099` (scan command) + `0104`
+(extract command) for the two-layer/envelope/ACL shape, `0089` (`market_buy`) + `0095`
+(`market_claim_relief`) for the trade replay + insufficient-balance envelope, `0086`/`0094` for
+the receipts-table RLS posture, `0078`/`0080` for the per-player advisory lock.
+
+**Work done — NEW `supabase/migrations/20260618000109_modules_p13_craft_command.sql`**
+(migration head moves **0108 → 0109**; `0001–0108` unedited):
+- **`module_craft_receipts`** — Production-owned per-player idempotency ledger:
+  `receipt_id uuid pk`, `player_id` (the 0108 `auth.users on delete cascade` FK shape),
+  `request_id text not null`, `module_type_id` FK → `module_types`, `instance_id` FK →
+  `module_instances` (`on delete cascade` — the instance only ever disappears via the auth.users
+  cascade today; cascading the receipt keeps account deletion order-safe across the multi-path
+  cascade graph, the 0088 child-FK lesson), `created_at`, **unique (player_id, request_id)**.
+  RLS posture copied from the player-scoped receipts precedent `trade_relief_claims`
+  (**0094:24–43**): owner-read select policy + `grant select to authenticated`, NO write
+  policy/grant. No extra index — the unique index leads on player_id and covers idempotency
+  probes + owner lookups (the 0086:53–55 comment idiom).
+- **`craft_module(p_request_id text, p_module_type text)`** *(authenticated wrapper — the
+  0099:221–300 wrapper idiom: auth check → anti-probe flag gate FIRST → delegate → reason→
+  code/message map; the `insufficient_items` failure passes its `{item_id, have, need}` context
+  through, the 0104 `retry_after_seconds` pass-through idiom)* → private
+  **`production_craft_module(p_player, p_module_type, p_request_id)`** *(service_role)*:
+  1. **Dark gate FIRST** (0107 law; **0099:108–113**): `module_crafting_enabled` false →
+     `feature_disabled` before ANY other read.
+  2. request_id validation — TEXT per the locked signature (the shipped receipt columns are uuid;
+     text is validated non-empty + length-capped at 200 since it lacks uuid's intrinsic bound).
+  3. **Per-player advisory lock BEFORE the replay check** —
+     `pg_advisory_xact_lock(hashtext('module_craft'), hashtext(player))`, the shipped commission
+     idiom (**0078:43/79**): the player-scoped analogue of market_buy's per-ship lock
+     (0089:104–106) and relief's wallet FOR UPDATE (0095:53–57), both taken before their
+     idempotency checks for the same race-safety reason (a same-request_id race resolves to one
+     craft + one verbatim replay; the pre-check→spend window can't be raced by another craft of
+     the same player).
+  4. **REPLAY — matched to the TRADE receipts semantics (0089:108–116 / 0095:60–66), stated
+     explicitly:** an existing (player, request_id) receipt returns the ORIGINAL success envelope
+     rebuilt verbatim from the receipt row, flagged `idempotent_replay` — **NO payload-conflict
+     check** (a same-key-different-module_type replay returns the original receipt's data, exactly
+     as market_buy replays a same-key-different-good call). The `request_id_payload_conflict` hash
+     check (0099:140–148) belongs to the ship-scoped space receipts, which this player-scoped
+     command does not use.
+  5. Catalog validation: `unknown_module` (bad id) vs **`no_recipe`** (catalog row with zero
+     `module_recipe_ingredients` rows — a distinct truthful reason so a seed gap is diagnosable).
+  6. **Ingredient pre-check** via `inventory_get_balance` — shortfall returns
+     `{ok:false, reason:'insufficient_items', item_id, have, need}` (the **0089:150–153**
+     `insufficient_credits` + context shape) WITHOUT spending anything.
+  7. **One transaction:** loop the recipe rows → `inventory_spend(player, item, qty)` each (its
+     exceptions — 0039:113–121 — roll back everything; a failed craft writes NO receipt, the
+     0099/0104 law) → mint exactly ONE instance via
+     `modules_mint_instance(player, module_type, 'craft:'||player||':'||request_id)` (the
+     namespaced key per 0108's producer contract) → insert the receipt → success envelope with
+     `instance_id`/`receipt_id`/`module_type_id`/`crafted_at`. Crafting never touches
+     `player_inventory`/`inventory_ledger`/`module_instances` directly — only the two leaf
+     functions. This is `inventory_spend`'s FIRST live caller.
+- **ACL (0099:302–311 / 0104:291–299 verbatim):** private writer revoked from
+  public/anon/authenticated + granted to service_role; wrapper revoked from public/anon + granted
+  to authenticated (dark: both its gate and the writer's first check reject today).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §1 gained the `module_craft_receipts` row
+(**Production**, owner; sole writer = `production_craft_module` via the `craft_module` wrapper;
+DARK) and the `module_instances` row's "NOTHING calls it yet" became "called today ONLY by
+Production's craft command (0109)"; §2 Production row gained `module_craft_receipts` in its owns
+column, the full `craft_module` semantics in its functions column (dark-gated, idempotent by
+player+request_id with verbatim replay, items-only cost, downward `inventory_spend` +
+`modules_mint_instance` fan-out, one craft = one instance), and the direct-write bans in its
+forbidden column; §2 Modules row's "will belong to Production" note went present-tense
+("SHIPPED as `craft_module` (0109)") and its "NOTHING calls it yet" was replaced by the caller
+fact. New edges all DOWNWARD (Production → Inventory · Modules · Reference/Config) — acyclic, no
+second writer anywhere.
+
+**State.** `npm run build` green. Migration head **0109**; still fully dark — the wrapper and
+writer both server-reject while `module_crafting_enabled='false'`; no flag flipped, no live DB
+write, no workflow touched. **DB-apply posture (honest, unchanged from slices A/B):** no
+psql/docker/supabase CLI in this sandbox and npx cannot fetch (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`)
+— the migration was hand-verified line-by-line against the named idiom sources above; live
+assertions run in the owner's environment and will be covered by the slice-G `verify:modules`
+dark-posture script. PR-ready on `autopilot/20260703-064048`, `main` untouched. Next: slice D
+(the read surface, e.g. `get_my_module_instances()` — the 0101/0106 idiom).
+
+---
+
 ## 2026-07-04 — MODULES-P13 SLICE B — `module_instances` schema + the single Modules mint writer `0108` (`modules_mint_instance`; idempotent by `mint_key`)
 
 **Request.** Implement slice B of Phase 13: ONE new forward-only migration with the
