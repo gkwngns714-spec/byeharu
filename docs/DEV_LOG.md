@@ -5,6 +5,56 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION-P11 SLICE F: dark read surface `get_my_exploration_discoveries()` (reveal-after-discovery) + ACTIVITIES.md as-built reconciliation
+
+**Request.** The exploration read surface: one server RPC exposing the caller's own discoveries (with the joined
+site data), dark-gated; plus the reviewer-flagged ACTIVITIES.md lifecycle reconciliation. No frontend yet.
+
+**Design decisions (self-approved).**
+1. **The client never reads `exploration_sites` directly.** Reveal-after-discovery goes through ONE server read
+   RPC that joins the player's OWN `exploration_discoveries` to the site rows and returns only discovered sites.
+   The 0098 no-client-policy posture on sites is untouched: an undiscovered site's existence/name/coordinates
+   stay unreachable **by construction** (a site row is reachable exclusively through one of the caller's own
+   discovery rows; `where d.player_id = auth.uid()`). Same spirit as the `get_my_current_dock_services` (0069)
+   read surface — already-authoritative, player-scoped, everything derived server-side.
+2. **Dark-gated FIRST, copying the 0087 `get_market_offers` read idiom exactly** (`0087:46–50`): auth check,
+   then `if not cfg_bool('exploration_enabled') → {ok:false, reason:'exploration_disabled'}` BEFORE any
+   discovery/site read — the identical envelope regardless of caller state, so nothing can be probed while
+   dark (matches the `trade_market_disabled`/`trade_relief_disabled` reason-token style).
+3. **Exploration v1 is OSN-native ONLY (explicit scope decision).** The `activity_start`/`explore_derelict`
+   location-presence dispatch is deliberately NOT wired in Phase 11 (ROADMAP: "scan in OSN proximity … where
+   applicable"); `activity_start` still raises on `explore_derelict` — intended behavior, recorded in
+   ACTIVITIES.md so nobody "finishes" the branch by accident.
+
+**Work done** — one new migration `20260618000101_exploration_p11_read_surface.sql` (head **0100 → 0101**):
+`get_my_exploration_discoveries()` — `language plpgsql stable security definer`; no arguments (player =
+`auth.uid()`); flag gate first; then one read-only aggregate: the caller's discoveries joined to
+`exploration_sites`, each as `{discovery_id, site_name, space_x, space_y, discovered_at, secured_at, bundle}`
+(bundle = the row's `pending_bundle_json` snapshot; `secured_at` null = pending, non-null = deposited), ordered
+`discovered_at desc`, `[]`-coalesced; envelope `{ok:true, discoveries:[…]}`. **No write anywhere** (single
+SELECT aggregate). Discovered-then-disabled sites stay visible — the discovery is the player's own history.
+ACL (0087 idiom): revoke from public/anon; grant execute to authenticated only. Dark today because the gate
+rejects while `exploration_enabled='false'`.
+
+**Doc sync (same step).** (a) `docs/SYSTEM_BOUNDARIES.md` — the Exploration row's surface list now names
+`get_my_exploration_discoveries()` (read-only, dark-gated, the ONLY client path to site data, strictly
+post-discovery). (b) `docs/ACTIVITIES.md` — the reviewer-flagged reconciliation as a marked **"Phase 11
+as-built clarification (not a new design)"** note in §2: OSN-native activities secure pending rewards when the
+carrying ship next settles SAFE (home or docked `at_location`, 0055 model) via the activity's own processor +
+`reward_grant`; the "home arrival" wording is the fleet_movements-domain form (combat); destruction-forfeiture
+deferred; Exploration v1 OSN-native-only dispatch decision recorded.
+
+**State.** Forward-only; migration head **0101**; `0001–0100` unedited. No flag flipped; no frontend (next
+slice). `main` untouched. `npm run build` green; `verify:m3`/`verify:m4` fail only on `fetch failed` (no
+reachable Supabase from this sandbox) and `verify:m45` needs `SUPABASE_SERVICE_ROLE_KEY` — the recorded
+environmental posture; no code/assertion failure.
+
+**Bugs / fixes**
+- _(none — additive read-only surface; the ACTIVITIES.md fleet-domain wording ambiguity is reconciled by the
+  marked as-built note.)_
+
+---
+
 ## 2026-07-04 — EXPLORATION-P11 SLICE E: dark securing/deposit path — `process_exploration_securing` cron → `reward_grant('exploration', …)` on safe settlement. ⚠ DESIGN RE-DECISION: corrects the Slice-C carrier law
 
 **Request.** Secure pending exploration discoveries into real rewards when the scanning ship next settles safe,
