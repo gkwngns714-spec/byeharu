@@ -5,6 +5,40 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION CLEANUP step 3 — extract shared verify harness (`scripts/lib/verify-harness.mjs`); closes recon finding #2
+
+**Request.** Fix finding #2 of the exploration cleanup recon: `scripts/verify-exploration.mjs` had
+added the 32nd verbatim inline copy of the verify-script harness (the `loadEnv()` env loader +
+URL/key resolution, the `ok/bad/Abort/die` reporting harness, and the throwaway-signup `newUser()`)
+instead of extracting it to `scripts/lib/`. Touches ONLY the new module, the exploration verifier,
+this file, and the recon scratch file — no migrations, no flags, no sibling scripts, no `package.json`.
+
+**Work done — pure extraction, no behavior change:**
+- **NEW `scripts/lib/verify-harness.mjs`** (next to the existing `verifier-teardown.mjs`, same
+  module style): exports `loadEnv()` + `resolveEnv()` (anon key required → exit 2; service key
+  OPTIONAL at this layer — a verifier that requires it asserts that itself), `Abort`/`die`,
+  `createReporter()` (ok/bad + shared pass/fail counts), and `createUserFactory({url, anonKey,
+  emailPrefix, createdUserIds})` → `newUser(tag)` (ids pushed immediately after creation for
+  finally-teardown). Parameterized ONLY where the sibling comparison showed a variation point the
+  exploration script actually relies on (email prefix, optional service key, caller-owned
+  createdUserIds); no speculative knobs for sibling quirks it doesn't use.
+- **`scripts/verify-exploration.mjs`** repointed at the module; its inline copies deleted. Every
+  assertion, ordering, envelope check, and the teardown behavior are semantically identical.
+- **RETIREMENT PLAN for the remaining duplication (stated in the module header):** the **31 sibling
+  `verify-*.mjs` scripts still carry inline copies** and MUST adopt `verify-harness.mjs` the next
+  time each is meaningfully touched — the documented `osn_distance` adopt-on-next-real-change
+  precedent (`docs/SYSTEM_BOUNDARIES.md:75–78`). New verifiers import from the harness from day one.
+
+**Verification.** `node --check` parses both files clean. `node scripts/verify-exploration.mjs`
+reaches the IDENTICAL sandbox environmental abort as before the extraction (`✗ ABORTED — signup
+failed: fetch failed`, exit 1 — the same no-reachable-Supabase blocker the slice-H entry records),
+proving the harness wires up identically: `resolveEnv` resolved the keys, the shared `newUser`'s
+`die` threw `Abort` through the script's `instanceof Abort` catch, and the shared reporter printed
+the summary. `npm run build` green. Finding #2 of `CLEANUP_EXPLORATION_RECON.local.md` is FIXED
+(marked in the recon; finding #3 remains).
+
+---
+
 ## 2026-07-04 — EXPLORATION CLEANUP step 2 — ARCHITECTURE.md doc-sync (docs-only; closes recon finding #1)
 
 **Request.** Fix finding #1 of the exploration cleanup recon: `docs/ARCHITECTURE.md` contradicted the

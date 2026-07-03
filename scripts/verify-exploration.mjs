@@ -25,44 +25,20 @@
 // throwaway users with no admin cleanup).
 
 import { createClient } from '@supabase/supabase-js'
-import { readFileSync } from 'node:fs'
 import { teardownVerifier } from './lib/verifier-teardown.mjs'
+import { Abort, createReporter, createUserFactory, resolveEnv } from './lib/verify-harness.mjs'
 
-function loadEnv(p) {
-  const e = {}
-  try {
-    for (const l of readFileSync(p, 'utf8').split('\n')) {
-      const m = l.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/)
-      if (m) e[m[1]] = m[2].trim().replace(/^['"]|['"]$/g, '')
-    }
-  } catch {}
-  return e
-}
-const env = { ...loadEnv('.env.local'), ...process.env }
-const url = env.VITE_SUPABASE_URL
-const anonKey = env.VITE_SUPABASE_ANON_KEY
-const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY || env.SUPABASE_SECRET_KEY
-if (!url || !anonKey) { console.error('Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY'); process.exit(2) }
+// env/keys, reporter, and throwaway-signup come from the shared harness (scripts/lib/
+// verify-harness.mjs — the canonical copy of the blocks the sibling verifiers still inline).
+const { url, anonKey, serviceKey } = resolveEnv()
 
 const admin = serviceKey ? createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null
 const anon = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
-let pass = 0, fail = 0
-const ok = (n) => { console.log('  ✓', n); pass++ }
-const bad = (n, d) => { console.log('  ✗', n, d ? `— ${d}` : ''); fail++ }
-class Abort extends Error {}
-const die = (m) => { throw new Abort(m) }
+const { counts, ok, bad } = createReporter()
 const ZERO = '00000000-0000-0000-0000-000000000000'
 const createdUserIds = []
-
-async function newUser(tag) {
-  const c = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const { data: su, error } = await c.auth.signUp({ email: `exploretest.${tag}.${Date.now()}@example.com`, password: 'Test123456!' })
-  if (error) die(`signup failed: ${error.message}`)
-  if (!su.session) die('no session — email confirmation still ON')
-  createdUserIds.push(su.user.id)   // track immediately after creation for finally cleanup
-  return { client: c, userId: su.user.id }
-}
+const newUser = createUserFactory({ url, anonKey, emailPrefix: 'exploretest', createdUserIds })
 
 // game_config is public-read (0003); same query shape as the siblings' cfgVal, via the CLIENT role
 // and strictly read-only (this script owns no set_game_config path at all).
@@ -148,6 +124,6 @@ main()
     } else if (createdUserIds.length > 0) {
       console.log(`  · teardown skipped (no SUPABASE_SERVICE_ROLE_KEY) — throwaway user(s) left: ${createdUserIds.join(', ')}`)
     }
-    console.log(`\nExploration dark posture: ${pass} passed, ${fail} failed\n`)
-    process.exitCode = fail > 0 ? 1 : 0
+    console.log(`\nExploration dark posture: ${counts.pass} passed, ${counts.fail} failed\n`)
+    process.exitCode = counts.fail > 0 ? 1 : 0
   })
