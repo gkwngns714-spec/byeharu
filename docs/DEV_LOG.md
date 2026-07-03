@@ -5,6 +5,43 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — Trading V1 cleanup: extract shared docked-location helper (migration 0092; behavior-identical)
+
+**Request.** The identical ~10-line "resolve docked location" block was copy-pasted verbatim into
+`get_market_offers` (0087), `market_buy` (0089), and `market_sell` (0090). Extract ONE shared helper and repoint
+the three RPCs, in a NEW forward-only migration — never editing 0087/0089/0090; behavior-identical; DARK.
+
+**Work done**
+- **New migration `20260618000092_trade_market_1_resolve_docked_location.sql`.** Adds
+  `public.mainship_resolve_docked_location(uuid) returns uuid` (`security definer`, `set search_path`, `stable`,
+  read-only): calls `mainship_space_validate_context`, requires `ok` + `state='at_location'`, then reads the
+  present/location fleet's `current_location_id` — returns that id or NULL. Both original "not docked" null paths
+  collapse to one NULL, which each caller maps to the same `{ok:false, reason:'not_docked'}` → behavior-identical.
+- **Repointed all three RPCs** via `create or replace` (supersedes 0087/0089/0090 forward-only; those files are
+  untouched). Each body is byte-for-byte its original except (a) the inline block → the helper call, and (b) the
+  now-unused `v_ctx jsonb;` local dropped (dead after extraction). Flag gate, `mainship_resolve_owned_ship`
+  ownership assert, per-ship lock, request-id idempotency, offer/volume/cargo checks, and all wallet/cargo/receipt
+  writes are unchanged.
+- **ACL — INTERNAL (deviation from the step's suggested `grant authenticated`, on security grounds).** The helper
+  is revoked from public/anon/authenticated (no client grant), matching its true siblings
+  `mainship_space_validate_context` / `mainship_resolve_owned_ship`. It does NOT assert ownership (the
+  orchestrators do, before calling it); granting it to `authenticated` would create a new client-callable
+  SECURITY DEFINER read that leaks any ship's dock. It is called only inside the SECURITY DEFINER trade RPCs
+  (which run as owner), so the internal ACL changes no call path.
+- **Law-doc sync (same step).** `SYSTEM_BOUNDARIES.md`: named the helper in the Main Ship §2 row (shared
+  read-only docked-location helper, internal, called DOWNWARD by Trade Market) and in the Trade Market row's
+  docked-context read; extended the acyclic-fan-out note with the (pre-existing) Trade Market → Main-Ship-read
+  edge, now a single named function.
+
+**State.** Migration head now **0092**. No flag/behavior change; feature stays **DARK** (`trade_market_enabled`,
+`TRADE_MARKET_ENABLED`, `mainship_additional_commission_enabled`, `MAINSHIP_ADDITIONAL_ENABLED` all OFF). No
+migration ≤ 0091 edited; `main` untouched; not applied to production.
+
+**Bugs / fixes**
+- _(none — pure de-duplication; three verbatim copies → one helper, behavior-identical.)_
+
+---
+
 ## 2026-07-03 — Trading V1 cleanup pass: SYSTEM_BOUNDARIES doc-sync (docs-only; no behavior/flag change)
 
 **Request.** Bring `docs/SYSTEM_BOUNDARIES.md` back in sync with the actual schema after the TRADE-FLEET-0C /
