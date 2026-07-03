@@ -5,6 +5,61 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION-P11 SLICE C: hidden `exploration_sites` + per-player `exploration_discoveries` (tables + seed + RLS only; no RPC, no client path, fully dark)
+
+**Request.** Exploration domain schema: the hidden static site table and the per-player discovery ledger —
+tables + seed + RLS only; no RPCs, no processors, no client paths; everything stays dark.
+
+**Design decisions (self-approved).**
+1. **Sites are hidden — server-only read, fail-closed by construction.** `exploration_sites` is migration-seeded
+   static world data with NO runtime writer and — unlike `locations`/`item_types` — NO public read: a hidden
+   site's coordinates must never be client-readable before discovery. RLS is ENABLED with **no client policies
+   at all and no anon/authenticated grant**; future SECURITY DEFINER exploration functions reach it as owner.
+   There is nothing for the UI to hide — the client simply cannot see the table.
+2. **Per-player discovery state in its own table** `exploration_discoveries` with `unique (player_id, site_id)`
+   (+ a `(player_id, discovered_at desc)` index). **Sole writer = the Exploration system** (its future
+   RPC/processor — nothing writes it yet). Own-row select only, copying the `reward_grants_select_own` idiom
+   (`0015:18–21`); no insert/update/delete policy, no write grant; `grant select` to authenticated only.
+3. **v1 reward semantics: deterministic `reward_bundle_json` per site** in the EXACT pending-bundle shape the
+   carrier already transports (`{ "metal": N, "items": [{item_id, quantity}] }`, the 0040/0041 shape; CHECK
+   `jsonb_typeof = 'object'`) — reuses the Slice-A activity-agnostic deposit path byte-for-byte with zero new
+   roll logic. Weighted "discovery rolls" are an additive later change and, if they come, must reuse/extract the
+   combat loot-roll helper as ONE shared leaf, never a copy. `is_active boolean not null default true` lets a
+   bad seed be disabled without deleting world data (no destructive cleanup).
+
+**Coordinate representation — copied from OSN, no second convention.** Column names `space_x`/`space_y` from
+`main_ship_instances` (`0054:33–36`); `double precision`; finite-only CHECKs via the
+`<> 'NaN'::double precision` idiom and the immutable world envelope `[-10000,10000]^2`, both verbatim from
+`main_ship_space_movements` (`0055:56–63`), matching the movement writer's inclusive bounds gate
+(`0057:58–59, 95–96`). Seeds use integer-grid values (the 0070 command canonicalizes targets to the integer
+grid) well inside the envelope — every site is a legal open-space target.
+
+**Work done** — one new migration `20260618000098_exploration_p11_sites_schema.sql` (head bump **0097 → 0098**):
+the two tables above + five idempotent seeds (natural `name` unique key + `on conflict (name) do nothing` —
+the 0002 world-seed idiom; NOT fixed uuids, matching how sectors/zones/locations seed). Seed inventory
+(bundles draw ONLY from the Slice-B reward set; metal calibrated to the 0041 combat scale of ~10–40/wave):
+- `Derelict Listening Post` (−1200, 850) — 25 metal, scan_data ×3 (common)
+- `Shattered Survey Buoy` (2100, −1400) — 30 metal, scan_data ×2 + anomaly_shard ×1 (common)
+- `Anomalous Debris Field` (−2600, −1900) — 40 metal, anomaly_shard ×2 (uncommon)
+- `Silent Foundry Wreck` (3300, 2500) — 60 metal, scan_data ×2 + blueprint_fragment ×1 (rare)
+- `Precursor Vault Signal` (−4100, 3600) — 100 metal, anomaly_shard ×1 + artifact_core ×1 (epic)
+
+**State.** Forward-only; migration head **0098**; `0001–0097` unedited. No function created → no execute-surface
+relock needed (0054 precedent). No flag added/read/flipped — the feature stays server-rejected behind
+`exploration_enabled=false` (0097) with no RPC even existing. `docs/SYSTEM_BOUNDARIES.md` synced in the SAME
+step: §1 matrix gains `exploration_sites` (Reference/Config; NO runtime writer; **server-only** read) and
+`exploration_discoveries` (Exploration future writer; owner-read); §2 gains the **Exploration** system row with
+the dark gate inline (like Trade Market) and the carrier-reuse law (`movement_attach_cargo(…, 'exploration')`,
+never a parallel deposit path). `main` untouched; no frontend, no workflow, no verifier change.
+`npm run build` green; `verify:m3`/`verify:m4` fail only on `fetch failed` (no reachable Supabase from this
+sandbox) and `verify:m45` needs `SUPABASE_SERVICE_ROLE_KEY` — the recorded environmental posture; no
+code/assertion failure.
+
+**Bugs / fixes**
+- _(none — additive schema + seed; no writer, no reader, no behavior.)_
+
+---
+
 ## 2026-07-04 — EXPLORATION-P11 SLICE B: reward-item catalog entries + `exploration_enabled=false` dark flag (foundations only; nothing client-reachable, no behavior change)
 
 **Request.** Exploration foundations: the reward item catalog entries and the dark capability flag. No gameplay
