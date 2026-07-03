@@ -5,6 +5,36 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION CLEANUP step 2 — ARCHITECTURE.md doc-sync (docs-only; closes recon finding #1)
+
+**Request.** Fix finding #1 of the exploration cleanup recon: `docs/ARCHITECTURE.md` contradicted the
+as-built Phase 11 code — §14's processors/cron table omitted `process_exploration_securing()` (a live
+60s pg_cron job since 0100), and §7 still implied no exploration processor exists ("Later:
+`process_exploration_ticks()`"). Docs-only: no code, no migrations, no flags.
+
+**Scope amendment (self-approved, recorded in the recon §3).** The cleanup's locked scope is amended to
+also allow `docs/ARCHITECTURE.md`, restricted to exactly these two out-of-sync spots — a law doc
+contradicting as-built code is a defect under the doc-sync principle; ARCHITECTURE.md's exclusion from
+the original MAY-touch list was an oversight in the scope lock itself.
+
+**Work done — two surgical edits in `docs/ARCHITECTURE.md`:**
+- **§14 processors table:** added one row — `process_exploration_securing()` · every 60s · deposits
+  pending exploration discovery bundles via `reward_grant('exploration', discovery_id, …)` once the
+  carrying main ship settles safe (home / `at_location`); deliberately ignores `exploration_enabled`
+  (in-flight safety); pg_cron job `process-exploration-securing`, migration 0100.
+- **§7 activity list:** added an as-built bullet — Phase 11 shipped exploration OSN-native, outside the
+  presence dispatch, with its own securing processor (dark behind `exploration_enabled='false'`;
+  mirrors the `docs/ACTIVITIES.md` §2 as-built clarification); the `explore_derelict` presence branch
+  stays deliberately unwired. The "Later" line now names `process_mining_ticks()` /
+  `process_trade_ticks()` and a *presence-domain* `process_exploration_ticks()` only as a hypothetical
+  future form — it no longer implies the exploration processor is unbuilt.
+
+**State.** `npm run build` green (docs-only sanity check). Migration head remains **0101**; no flag
+touched; finding #1 of `CLEANUP_EXPLORATION_RECON.local.md` is FIXED (marked in the recon; findings
+#2–#3 remain for the next steps).
+
+---
+
 ## 2026-07-04 — EXPLORATION-P11 SLICE H (final): `verify:exploration` dark-posture script + wiring. **Phase 11 Exploration: dark implementation complete (slices A–H)**
 
 **Request.** The exploration verify script + `package.json` wiring + this closing entry. Touches ONLY

@@ -127,7 +127,12 @@ Statuses: `active → retreating → completed`; also `active → destroyed/expi
 foundation supports many activities without rewriting movement:
 
 - MVP: `process_combat_ticks()` (for `hunt_pirates`), `none` (safe zones).
-- Later: `process_mining_ticks()`, `process_exploration_ticks()`, `process_trade_ticks()`.
+- As-built (Phase 11): exploration shipped **OSN-native**, outside this presence dispatch — its own
+  `process_exploration_securing()` cron secures pending discoveries (dark behind
+  `exploration_enabled='false'`; see `docs/ACTIVITIES.md` §2 as-built clarification). The
+  `explore_derelict` presence branch stays deliberately unwired.
+- Later: `process_mining_ticks()`, `process_trade_ticks()`, and a presence-domain
+  `process_exploration_ticks()` if exploration ever gets a location-presence form.
 
 ---
 
@@ -240,6 +245,7 @@ data is owner-only.
 | `process_fleet_movements()` | every 30s | resolves arrivals (outbound + return) |
 | `process_combat_ticks()` | every 10–15s | one round per due encounter |
 | `process_location_state_ticks()` | every 60s | pirate pressure / danger drift |
+| `process_exploration_securing()` | every 60s | deposits pending exploration discovery bundles via `reward_grant('exploration', discovery_id, …)` once the carrying main ship settles safe (home / `at_location`); deliberately ignores `exploration_enabled` (in-flight safety) — pg_cron job `process-exploration-securing`, migration 0100 |
 
 Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 `15.1.1.61`+ — so sub-minute cadence is native. Only server/cron calls processors.
