@@ -5,6 +5,66 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MODULES-P13 SLICE B — `module_instances` schema + the single Modules mint writer `0108` (`modules_mint_instance`; idempotent by `mint_key`)
+
+**Request.** Implement slice B of Phase 13: ONE new forward-only migration with the
+`module_instances` table and the ONE Modules mint writer. NO craft command, NO receipts table, NO
+read surface, NO frontend this slice. Idioms matched by re-reading the shipped sources first:
+`0098` (exploration_discoveries) + `0103` (mining_extractions) for the player-state schema/RLS
+posture, `0039` (Inventory) for the SECURITY DEFINER internal-writer + idempotency-key pattern,
+and `0104:291–299` for the function-ACL relock wording.
+
+**Work done — NEW `supabase/migrations/20260618000108_modules_p13_instances_schema.sql`**
+(migration head moves **0107 → 0108**; `0001–0107` unedited):
+- **`module_instances`** — `id uuid primary key default gen_random_uuid()`;
+  `player_id uuid not null references auth.users (id) on delete cascade` (the exact 0098/0103
+  player-FK shape); `module_type_id text not null references module_types (id)`;
+  **`mint_key text not null unique`** — the idempotency spine; `created_at timestamptz not null
+  default now()`; plus the `(player_id, created_at desc)` player index (0098/0103 idiom).
+  Instances are INDIVIDUAL rows, never counts (the Phase-13 law) — no quantity column by design.
+  **NO fitting columns** (`fitted_ship_id`/slots/stats are Phase 14, forward-only).
+- **RLS posture copied from the P11/P12 player-state tables exactly** (verified, not assumed —
+  both 0098 `exploration_discoveries` and 0103 `mining_extractions` DO expose an owner-select
+  policy): RLS enabled + `module_instances_select_own` (`player_id = auth.uid()`) +
+  `grant select to authenticated`; NO insert/update/delete policy, NO write grant — no client
+  write path exists.
+- **`modules_mint_instance(p_player uuid, p_module_type text, p_key text) returns uuid`** — THE
+  ONE writer of `module_instances`: plpgsql SECURITY DEFINER, `set search_path = public`;
+  exception-style errors matching Inventory's internal-leaf idiom (`raise exception` on missing
+  key / unknown module type — not a player envelope RPC); then
+  `insert … on conflict (mint_key) do nothing`, and on conflict returns the EXISTING instance id
+  for that key — true idempotent replay mirroring `inventory_deposit(p_key)`'s
+  ledger-insert-is-the-guard semantics (0039:85–90): the same key can NEVER mint twice. Key
+  namespacing is the producer's contract (the slice-C craft command derives keys from its own
+  player-scoped receipts). Header states the **sole-writer law**: every future producer — the
+  Phase-13 craft command AND any future `build_orders` queue completion (the recorded M4.5
+  retirement path) — must mint through this function and nothing else.
+- **ACL (0099/0104 relock idiom verbatim):** execute revoked from public/anon/authenticated,
+  granted to service_role only. No existing grant touched.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §1 gained the `module_instances` row
+(**Modules**, owner-read; sole writer = `modules_mint_instance` (0108), idempotent by `mint_key`,
+service_role-only, nothing calls it yet) and the catalog row dropped its now-stale "mint writer
+arrives with `module_instances`" note; the §2 Modules row's function list gained the mint
+signature + semantics (replacing "*none yet — no function exists*") — the
+Production-will-own-the-craft-command note, the M4.5 retirement note, and the forbidden column
+are unchanged and still accurate. No new cross-system edge: the helper reads only Modules' own
+catalog (`module_types`), and nothing calls it yet — the graph stays acyclic.
+
+**State.** `npm run build` green (tsc -b + vite, exit 0). Migration head **0108**;
+`module_crafting_enabled='false'` — still fully dark: the mint writer is service_role-only with
+ZERO callers (dead-until-slice-C by design, documented as such), the table has no client write
+path, and no flag was flipped, no live DB write, no workflow touched. **DB-apply posture
+(honest, unchanged from slice A):** no psql/docker/supabase CLI in this sandbox and npx cannot
+fetch (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`) — the migration was hand-verified line-by-line against
+the shipped idioms it copies (0098/0103 table+RLS posture, 0039 writer/idempotency pattern,
+0104 ACL block); live assertions run in the owner's environment and will be covered by the
+slice-G `verify:modules` dark-posture script. PR-ready on `autopilot/20260703-064048`, `main`
+untouched. Next: slice C (the craft command — Production system, player-scoped receipts,
+`inventory_spend` fan-out + this mint helper).
+
+---
+
 ## 2026-07-04 — MODULES-P13 SLICE A — locked design decisions + dark flag/catalog migration `0107` (`module_types` + `module_recipe_ingredients`)
 
 **Request.** Begin Phase 13 "Module instances + crafting" (ROADMAP `:88` — "instances, not
