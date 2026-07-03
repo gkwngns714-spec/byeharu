@@ -5,6 +5,75 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION-P11 SLICE E: dark securing/deposit path — `process_exploration_securing` cron → `reward_grant('exploration', …)` on safe settlement. ⚠ DESIGN RE-DECISION: corrects the Slice-C carrier law
+
+**Request.** Secure pending exploration discoveries into real rewards when the scanning ship next settles safe,
+via Exploration's OWN cron processor (the ACTIVITIES.md "own cron per activity" template). Everything stays dark.
+
+**⚠ DESIGN RE-DECISION (self-approved) — the Slice-C carrier law was wrong for OSN-native scanning.**
+Slice C's SYSTEM_BOUNDARIES row said exploration deposits ride `movement_attach_cargo(…, 'exploration')`. That
+path is **UNREACHABLE** for OSN scanning: an OSN in-space ship never traverses `fleet_movements` — the S2
+posture never locks legacy movements, `mainship_space_assert_cross_domain_exclusion` rejects a ship claimed by
+one, and OSN has no HOME leg (`origin_not_anchored` fails closed) — so the fleet carrier can never fire for it.
+The engine contract Exploration actually reuses is one level down: **`reward_grant` is THE sole secured-deposit
+owner and idempotency owner (`reward_grants UNIQUE (source_type, source_id)`), and the activity accrues pending
+value on its own state until a safe arrival.** Exploration's own processor therefore calls
+`reward_grant('exploration', discovery_id, player, base, bundle)` directly — exactly as
+`process_fleet_movements` calls it for fleet returns. `movement_attach_cargo` remains the carrier for
+fleet_movements-domain activities ONLY (Slice A stays correct and is used by combat today). Dependency direction
+stays acyclic and DOWNWARD: Exploration → {OSN geometry/locks (read), Main Ship (read), Bases (read: deposit
+target), Reward (grant)}; OSN and the arrival processors are NOT edited and never call into Exploration.
+SYSTEM_BOUNDARIES corrected in the SAME step (matrix + Exploration row).
+
+**Work done** — one new migration `20260618000100_exploration_p11_securing_processor.sql` (head **0099 → 0100**):
+- **`exploration_discoveries.main_ship_id`** — FK → `main_ship_instances` `on delete set null`; records WHICH
+  ship holds the unsecured scan data. NULL only possible for legacy/deleted-ship rows; securing falls back to
+  the player's canonical main ship (`mainship_resolve_owned_ship(player, null)`, the 0081 shared resolver).
+- **`exploration_scan` re-created from the 0099 body with EXACTLY TWO changes** (diff-proven; ACL re-asserted
+  verbatim): (a) the discovery insert records `main_ship_id`; (b) **race-guard fix** — the insert is now
+  `on conflict (player_id, site_id) do nothing` and 0 rows inserted returns a truthful `already_discovered`
+  instead of a raw unique-violation exception on a same-player concurrent scan (failure reasons write no
+  receipt — the 0064 posture — so retries stay deterministic).
+- **`process_exploration_securing()`** — Exploration's OWN cron processor (security definer;
+  internal/service_role only, 0033 ACL idiom). `secured_at is null` rows via `FOR UPDATE SKIP LOCKED`; resolves
+  the carrying ship (row's `main_ship_id`, else canonical); secures ONLY if settled **SAFE** per the 0055 state
+  model — `spatial_state in ('home','at_location')` (constraints tie these to `status='home'` /
+  `status='stationary'`, 0055:151–153 / 0055:145–147) — never in_transit/in_space/destroyed/legacy-NULL;
+  resolves the deposit base with the 0050 idiom (`from bases where player_id=… and status='active' order by
+  created_at limit 1`) and SKIPS (row stays pending) rather than granting with a null base — `reward_grant`
+  would silently drop the metal half; then `reward_grant('exploration', d.id, …)` + `secured_at = now()`.
+  **Idempotency double-guarded:** the `secured_at` filter (fast path) + `reward_grants` UNIQUE
+  (source_type, source_id) (the law — can never double-deposit). **No forfeiture in this slice:** pending rows
+  simply wait (a destroyed ship secures after recovery lands it home); destruction semantics for pending scan
+  data are a future product decision, deliberately not invented here.
+- **IN-FLIGHT SAFETY (0064 precedent, stated in the header):** the processor does NOT check
+  `exploration_enabled` — accrued pending value must never be stranded by an emergency flag-off. Naturally
+  inert today: no discovery rows can exist while scan is dark.
+- **Cron:** `process-exploration-securing` every 60s via the 0033 idiom (guarded `cron.unschedule` DO-block +
+  `'* * * * *'` — pg_cron rejects `'60 seconds'`). Cadence rationale: securing is not latency-sensitive;
+  matches the location-state tick's order of magnitude. Cadence summary: movement 30s · combat 3s ·
+  worldstate 60s · space arrivals (0058) · **exploration securing 60s**.
+
+**State.** Forward-only; migration head **0100**; `0001–0099` unedited. No flag flipped (`exploration_enabled`
+stays `'false'`; the scan writer + wrapper still dark-reject first). No frontend. `docs/SYSTEM_BOUNDARIES.md`
+corrected in the SAME step: the Exploration row now carries the securing law (own processor →
+`Reward.grant('exploration', discovery_id)`; `movement_attach_cargo` = fleet-domain carrier ONLY, with the
+unreachability rationale; edges listed, all downward, acyclic), and the matrix row records the writer SET
+(`exploration_scan` inserts · `process_exploration_securing` sets `secured_at`) under the ONE Exploration
+owner system. `main` untouched. `npm run build` green; `verify:m3`/`verify:m4` fail only on `fetch failed`
+(no reachable Supabase from this sandbox) and `verify:m45` needs `SUPABASE_SERVICE_ROLE_KEY` — the recorded
+environmental posture; no code/assertion failure.
+
+**Bugs / fixes**
+- **Slice-C carrier law unreachable for OSN scanning (doc/design defect).** Fixed by the re-decision above —
+  corrected in SYSTEM_BOUNDARIES the same step; no shipped code implemented the wrong law (the deposit path
+  did not exist until this slice), so this is a doc/design correction, not a behavior change.
+- **Same-player concurrent-scan race (0099).** Two concurrent scans of the same site could raise a raw unique
+  violation instead of a clean reason. Fixed in the re-created writer via `on conflict … do nothing` +
+  `already_discovered`.
+
+---
+
 ## 2026-07-04 — EXPLORATION-P11 SLICE D: dark `command_exploration_scan` — OSN-proximity scan → pending discovery bundle (server-rejected while `exploration_enabled=false`; nothing deposits yet)
 
 **Request.** The exploration write path: an OSN-proximity scan that records a per-player discovery with a
