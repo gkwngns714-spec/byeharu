@@ -5,6 +5,42 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-CLEANUP SLICE 2 (final) — MarketPanel migrated onto `useActivityPanelGuards`. **Guard-hook extraction complete — no local copies remain**
+
+**Request.** Final slice of the mining-milestone cleanup: migrate `MarketPanel.tsx` (the idiom's
+original reference copy) onto the shared hook, byte-equivalent behavior, and close the doc trail.
+
+**Work done — `src/features/map/MarketPanel.tsx` only:**
+- Local mounted-guard block + per-row `inFlightRef` Set replaced by
+  `const { activeRef, tryClaim, release } = useActivityPanelGuards()` — the per-row granularity
+  maps directly onto the hook's Set-of-string keys (`tryClaim(goodId)` / `release(goodId)`).
+- Submit handler: `!shipId` first, then `tryClaim(goodId)` early-return; the qty validation now
+  sits AFTER the claim with `release(goodId)` before its early return. **Behavior-equivalent
+  reordering (claim→validate→release vs check→validate→claim):** the whole sequence is
+  synchronous with NO await in between, so a duplicate in-flight click still returns before any
+  validation side effect, and an invalid qty still leaves no lasting claim. `finally` now calls
+  `release(goodId)`; the `activeRef`-guarded pending reset is untouched.
+- Idiom comments repointed: the guard scaffold's home is `src/lib/useActivityPanelGuards.ts`;
+  MarketPanel is now a consumer like Exploration/Mining, not the reference copy.
+- `refresh` deps: `[shipId]` → `[shipId, activeRef]` (the SLICE 1 exhaustive-deps posture; ref
+  identity is stable so `refresh`'s identity is unchanged). NOT touched: `pending`/`qty`/`rowError`
+  state shapes, `refresh()`'s Promise.all body, the `!selectedShip → null` check, the
+  shell-with-`unavailableNote` posture (still NOT `isServerLit` — documented in the hook), error
+  copy via `tradeReasonMessage`, render output.
+
+**Extraction promised in the SLICE F note is COMPLETE:** all three activity panels
+(Market/Exploration/Mining) consume `useActivityPanelGuards`; grep confirms no file under `src/`
+declares a local `activeRef`/`inFlightRef` guard outside the hook itself.
+
+**Doc-sync note.** `docs/SYSTEM_BOUNDARIES.md` needs NO change (frontend-only, SLICE F precedent).
+
+**State.** `npm run build` green (tsc -b + vite). `npm run lint`: the 2 touched files lint clean;
+full-repo lint still FAILS with exactly the same 14 pre-existing out-of-scope errors recorded in
+SLICE 1 (no new problems). Migration head stays **0106** (no migrations, no flags); everything
+still dark and server-rejected. Diff = exactly 2 files (MarketPanel.tsx, this file).
+
+---
+
 ## 2026-07-04 — MINING-CLEANUP SLICE 1 — panel guard scaffold extracted to `src/lib/useActivityPanelGuards.ts`; Exploration + Mining migrated
 
 **Request.** Extract the duplicated activity-panel guard pattern (the documented cross-panel

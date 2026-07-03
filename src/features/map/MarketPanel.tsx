@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
+import { useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import {
   getMarketOffers,
   getShipCargoLots,
@@ -47,22 +48,9 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
 
   const shipId = selectedShip?.main_ship_id ?? null
 
-  // Mounted guard: replaces the per-effect `active` flag so a single refresh() (called on mount AND after a
-  // completed trade) never sets state after unmount. The panel is keyed by ship id, so each ship is a fresh
-  // instance; StrictMode's mount→cleanup→mount re-arms this correctly.
-  const activeRef = useRef(true)
-  useEffect(() => {
-    activeRef.current = true
-    return () => {
-      activeRef.current = false
-    }
-  }, [])
-
-  // Synchronous per-row in-flight guard. `pending` state drives the DISABLED buttons, but state updates async —
-  // two clicks in the SAME render tick both read a stale pending=false and would each mint a DISTINCT request id
-  // (which the server, keyed on (main_ship_id, request_id), would NOT dedup → a real double-submit). This ref is
-  // mutated synchronously before the first await, so the second same-tick call bails before firing.
-  const inFlightRef = useRef<Set<string>>(new Set())
+  // Mounted + synchronous per-row in-flight guards — the idiom now lives in src/lib/useActivityPanelGuards.ts;
+  // future activity panels use the hook (never a re-copy). MarketPanel is a consumer like the others.
+  const { activeRef, tryClaim, release } = useActivityPanelGuards()
 
   // The single owner-read fetch: wallet + cargo + (server-gated) offers, all fail closed. Does NOT set loading
   // true, so a post-trade refresh updates in place without a flicker; the mount path starts with loading=true.
@@ -74,23 +62,24 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
     setLots(l)
     setOffers(o)
     setLoading(false)
-  }, [shipId])
+  }, [shipId, activeRef]) // ref identity is stable — dep satisfies the lint rule without changing refresh's identity
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
   // One intentional Buy/Sell for a row. Fresh request id per submit (server dedups on (main_ship_id, request_id));
-  // the synchronous in-flight ref + disabled buttons stop double-submits. Success → clear note + refresh;
-  // failure → quiet note. try/finally always releases the in-flight lock (wrappers never throw, but defensive).
+  // the per-row tryClaim (useActivityPanelGuards) + disabled buttons stop double-submits. Success → clear note +
+  // refresh; failure → quiet note. try/finally always releases the claim (wrappers never throw, but defensive).
   async function submit(side: 'buy' | 'sell', goodId: string) {
-    if (!shipId || inFlightRef.current.has(goodId)) return // synchronous guard: bail before minting a 2nd request
+    if (!shipId) return
+    if (!tryClaim(goodId)) return // synchronous per-row claim, before any await: bail before minting a 2nd request
     const n = qty[goodId] ?? 1
     if (!Number.isInteger(n) || n < 1) {
       setRowError((e) => ({ ...e, [goodId]: tradeReasonMessage('invalid_qty') }))
+      release(goodId) // claim→validate→release, all synchronous (no await yet) — an invalid qty leaves no claim
       return
     }
-    inFlightRef.current.add(goodId) // claim the row synchronously, before any await
     setPending((p) => ({ ...p, [goodId]: true }))
     setRowError((e) => ({ ...e, [goodId]: null }))
     const requestId = crypto.randomUUID()
@@ -106,7 +95,7 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
         setRowError((e) => ({ ...e, [goodId]: tradeReasonMessage(res.reason) }))
       }
     } finally {
-      inFlightRef.current.delete(goodId)
+      release(goodId)
       if (activeRef.current) setPending((p) => ({ ...p, [goodId]: false }))
     }
   }
