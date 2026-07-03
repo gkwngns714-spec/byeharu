@@ -40,6 +40,7 @@
     "verify:mainship-move": "node scripts/verify-mainship-move.mjs",
     "verify:osn2": "node scripts/verify-osn2.mjs",
     "verify:exploration": "node scripts/verify-exploration.mjs",
+    "verify:mining": "node scripts/verify-mining.mjs",
     "db:size": "node scripts/db-size.mjs",
     "db:counts": "node scripts/db-counts.mjs",
     "db:cleanup:dry-run": "node scripts/db-cleanup.mjs",

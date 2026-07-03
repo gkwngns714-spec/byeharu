@@ -5,6 +5,89 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-P12 SLICE G (final) — `verify:mining` dark-posture script. **Phase 12 Mining — dark implementation complete (slices A–G)**
+
+**Request.** Implement slice G, the last Phase 12 slice: the dark-posture verify script + its
+`package.json` entry, mirroring the exploration slice-H precedent (the post-cleanup,
+harness-importing form). Touches ONLY `scripts/verify-mining.mjs`, `package.json`, this file, and
+the recon scratch file. No migrations (head stays **0106**), no CI/workflow edits, no flags.
+
+**Work done:**
+- **NEW `scripts/verify-mining.mjs`** — imports the shared harness from day one
+  (`Abort`/`createReporter`/`createUserFactory`/`resolveEnv` from `scripts/lib/verify-harness.mjs`
+  + `teardownVerifier` from `scripts/lib/verifier-teardown.mjs`) — ZERO inline harness copies (the
+  harness header's law). Same posture as `verify-exploration.mjs`: proves the DARK contracts only;
+  NEVER writes `game_config`, NEVER flips `mining_enabled`; service key OPTIONAL (teardown only);
+  one throwaway signup. Asserts, in the exploration script's order/idioms:
+  (1) **dark rejection** — `command_mining_extract(ZERO, ZERO)` →
+  `{ok:false, code:'feature_disabled'}` (0104 gates before ship resolution — anti-probe) and
+  `get_my_mining_extractions()` → `{ok:false, reason:'mining_disabled'}` (0106), both
+  authenticated; (2) **no field leak** — authenticated select on `mining_fields` → denied/0 rows
+  (0103 posture) and `mining_extractions` → 0 rows for a fresh user (own-row RLS);
+  (3) **internal surfaces locked** — `mining_extract` + `process_mining_securing` denied to the
+  authenticated client, both public RPCs denied to anon (`osn_distance` deliberately NOT
+  re-asserted — `verify:exploration` owns that slice's surface, no duplicate assertion);
+  (4) **config presence (read-only)** — `mining_enabled` = false, `mining_extract_radius` = 750,
+  `mining_extract_cooldown_seconds` = 300, via the same jsonb-storage-tolerant comparison.
+- **`package.json`** — `"verify:mining": "node scripts/verify-mining.mjs"` added in the verify
+  cluster, directly after `verify:exploration`. No CI/workflow edits.
+- **Verify posture run honestly:** `node --check scripts/verify-mining.mjs` parses clean.
+  `node scripts/verify-mining.mjs` in this sandbox aborts at the throwaway SIGNUP step with the
+  environmental TLS failure (`UNABLE_TO_VERIFY_LEAF_SIGNATURE` → "signup failed: fetch failed") —
+  `node scripts/verify-exploration.mjs` aborts at the IDENTICAL point in the same run, so this is
+  the known environmental-fail-only posture (DEV_LOG 2026-07-03 precedent), and reaching that
+  identical abort point proves the harness wiring. The assertions themselves run against a real
+  DB in the owner's environment.
+- `docs/SYSTEM_BOUNDARIES.md` needs NO change this slice — no table, writer, or cross-system edge
+  (a read-only verifier script + one npm alias).
+
+---
+
+### Phase 12 Mining — dark implementation complete (slices A–G) — closing summary
+
+- **Migrations `0102–0106`** (head **0101 → 0106**; all forward-only; `0001–0101` never edited):
+  `0102` config/flag (`mining_enabled='false'` + `mining_extract_radius='750'` +
+  `mining_extract_cooldown_seconds='300'`; NO new item_types rows) · `0103` schema
+  (`mining_fields` hidden/server-only + repeatable `mining_extractions` with own-row RLS +
+  cooldown/player indexes; 5 seeded fields, items-only bundles from the existing
+  `ore`/`crystal`/`artifact_core`) · `0104` the extract command (`command_mining_extract` wrapper →
+  private `mining_extract`; dark-gate-first, S2 lock, receipts idempotency, `osn_distance` radius,
+  per-(player, field) cooldown with `retry_after_seconds`) · `0105` the securing processor
+  (`process_mining_securing` + pg_cron `process-mining-securing` @60s; flag-ignoring in-flight
+  safety; deposits via `reward_grant('mining', extraction_id, …)` — the sole depositor — on safe
+  settle) · `0106` the read surface (`get_my_mining_extractions`; reveal-after-extraction only).
+- **Frontend:** dark `src/features/mining/` (types/api/panel twins of the post-cleanup exploration
+  files; server-driven visibility, fails closed to null) wired beside `ExplorationPanel` in
+  `GalaxyMapScreen.tsx`; **shared-lib extractions** `src/lib/rewardBundle.ts` (`PendingBundle`) +
+  `src/lib/osnState.ts` (`isSettledInSpace`) with exploration repointed same-step (no second copy).
+- **Verify:** `scripts/verify-mining.mjs` + `npm run verify:mining` (dark posture only, shared
+  harness, never flips flags).
+- **Design decisions** (recon §8, self-approved 2026-07-04): exploration-template OSN-native
+  extract command; repeatable extraction + server-enforced cooldown (no unique pair); rewards land
+  in item inventory ONLY via `reward_grant('mining', …)` reusing existing catalog rows (never
+  `base_resources`; `trade_goods` `'ore'` untouched); hidden fields + reveal-after-extraction;
+  forfeiture deferred (0100 posture); cooldown per-ship serialization accepted while multi-ship is
+  dark (0105 header note).
+- **Ownership/laws:** SYSTEM_BOUNDARIES §1/§2 rows + ARCHITECTURE §7-adjacent §14 processor row +
+  ACTIVITIES/ROADMAP untouched where already accurate — every doc synced in the SAME step as its
+  fact; edges all DOWNWARD/acyclic; sole writers: `mining_fields` none (Reference/Config),
+  `mining_extractions` = Mining (0104 inserts · 0105 secures); `reward_grant` the only depositor.
+- **HUMAN ACTIVATION CHECKLIST (the owner's gate — never this loop):** (1) apply migrations
+  0102–0106 to the target DB; (2) run `npm run verify:mining` there — expect ALL dark-posture
+  checks green; (3) optionally flip `mining_enabled='true'` on a DEV database and run the lit
+  path (settle in space near a seeded field → `command_mining_extract` → pending row → repeat →
+  `cooldown` with `retry_after_seconds` → dock/return home → `process_mining_securing` deposits
+  ore/crystal/core items via `reward_grant('mining', …)` → `get_my_mining_extractions` shows
+  Secured) — then decide production activation separately. The loop ships everything
+  server-rejected; activation is exclusively the human's.
+
+**State.** `npm run build` green; `node --check` clean on the new script. Migration head **0106**;
+`mining_enabled='false'` everywhere; no flag flipped, no live DB write, no workflow touched.
+**Phase 12 Mining is implemented DARK end-to-end and PR-ready on `autopilot/20260703-064048`** —
+SAFE FOR HUMAN MERGE REVIEW; `main` untouched.
+
+---
+
 ## 2026-07-04 — MINING-P12 SLICE F — dark frontend `src/features/mining/` + shared `src/lib/rewardBundle.ts`/`osnState.ts` extraction (exploration repointed same-step)
 
 **Request.** Implement slice F of the Phase 12 plan (recon §9): the dark mining frontend mirroring
