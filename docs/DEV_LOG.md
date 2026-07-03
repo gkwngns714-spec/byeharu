@@ -5,6 +5,112 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION-P11 SLICE H (final): `verify:exploration` dark-posture script + wiring. **Phase 11 Exploration: dark implementation complete (slices A–H)**
+
+**Request.** The exploration verify script + `package.json` wiring + this closing entry. Touches ONLY
+`scripts/verify-exploration.mjs`, `package.json`, and this file; migrations `0001–0101` unedited; no
+CI/workflow files; no flags flipped.
+
+**Design decisions (self-approved).**
+1. **`verify:exploration` wired in `package.json` exactly like the `verify:mainship-*` entries** (one
+   `node scripts/…` line in the verify cluster). **No CI/workflow edits** — the narrowest compliant wiring;
+   the human can extend the existing CI pattern later; this loop does not touch workflows.
+2. **The script proves the DARK POSTURE and contracts only — it activates nothing.** It never writes
+   `game_config`, never sets `exploration_enabled`, and creates nothing beyond the sibling scripts'
+   throwaway-test-player convention (one signup, tracked and deleted by the shared
+   `scripts/lib/verifier-teardown.mjs` when a service key is present; without one, teardown is skipped with
+   a note — the `verify-m3/m4` precedent). The sibling `verify-mainship-send.mjs` DOES flip its own flag via
+   `set_game_config` (its lines 49/98/105) — that part was **deliberately not copied**, and the script says
+   so in its header: lit-path verification is deferred to the activation checklist below. `SUPABASE_SERVICE_
+   ROLE_KEY` is OPTIONAL (teardown only); every assertion runs with anon/authenticated clients.
+
+**The script asserts, in order** (idioms: env loader + ok/bad + Abort + exit codes from `verify-m45.mjs:12–41,
+147–149`; throwaway `newUser` from `verify-m45.mjs:49–57`; client-role ACL-denial loop from
+`verify-m45.mjs:135–137`; read-only `cfgVal` query shape from `verify-mainship-send.mjs:50`, run as the client
+role; teardown from `verify-mainship-send.mjs:206–224` minus the flag entry):
+- **(a) dark rejection** — `command_exploration_scan(ZERO, ZERO)` → `{ok:false, code:'feature_disabled'}`
+  (0099/0100 wrapper envelope; the wrapper gates before ship resolution, so a zero id gets the same
+  anti-probe answer) and `get_my_exploration_discoveries()` → `{ok:false, reason:'exploration_disabled'}`
+  (0101), both for an authenticated throwaway user.
+- **(b) no site leak** — authenticated `select` on `exploration_sites` → denial or 0 rows (0098 posture);
+  `exploration_discoveries` → 0 rows for a fresh user (own-row RLS).
+- **(c) internal surfaces locked** — client-role rpc calls to `exploration_scan`,
+  `process_exploration_securing`, `osn_distance` all denied; plus anon denied on both public RPCs.
+- **(d) config presence (read-only)** — `exploration_enabled` reads `false`, `exploration_scan_radius`
+  reads `750`, compared tolerantly of the jsonb storage form (see Bugs below).
+
+---
+
+### Phase 11 Exploration — dark implementation complete (slices A–H)
+
+**The six migrations (`0096–0101`; head `0095 → 0101`, all forward-only, nothing shipped edited):**
+- **0096** — engine carrier made activity-agnostic: `fleet_movements.reward_source_type` (+ closed CHECK) and
+  `movement_attach_cargo(…, source_type default 'combat')`; `process_fleet_movements` deposits under the
+  carried type. Combat behavior unchanged.
+- **0097** — the four-item exploration reward set (`scan_data` + `anomaly_shard` seeded; `blueprint_fragment`
+  + `artifact_core` reused from 0039) + the `exploration_enabled='false'` dark gate.
+- **0098** — hidden `exploration_sites` (RLS, NO client policy/grant; OSN coordinate convention; deterministic
+  `reward_bundle_json`; 5 seeds) + own-row `exploration_discoveries` with `unique (player_id, site_id)`.
+- **0099** — dark write path: `osn_distance` leaf + `exploration_scan` private writer (S2 locks, 0055
+  receipts idempotency, reject-before-any-read) + `command_exploration_scan` wrapper +
+  `exploration_scan_radius='750'`; pending-bundle accrual columns.
+- **0100** — securing: `exploration_discoveries.main_ship_id`, the race-guarded re-created writer, and
+  `process_exploration_securing()` (60s cron) → `reward_grant('exploration', discovery_id, …)` when the
+  carrying ship settles safe (home / `at_location`); in-flight-safe (no flag check); double-guarded
+  idempotency.
+- **0101** — dark read surface `get_my_exploration_discoveries()` (reveal-after-discovery; the ONLY client
+  path to site data).
+
+**Frontend surface (Slice G):** `src/features/exploration/` (types + api + `ExplorationPanel`), mounted in
+`GalaxyMapScreen`'s OSN overlay stack; server-driven visibility — renders nothing while the server answers
+`exploration_disabled`.
+
+**The corrected securing law (Slice E re-decision):** OSN-native activities never traverse `fleet_movements`,
+so Exploration secures via its OWN processor calling `reward_grant` directly — the same sole depositor the
+fleet return branch uses; `movement_attach_cargo` remains the fleet-domain carrier only (combat today).
+`docs/SYSTEM_BOUNDARIES.md` + `docs/ACTIVITIES.md` carry the as-built law.
+
+**ACTIVATION CHECKLIST — for the human owner only (nothing below is done by this loop):**
+1. **Flip `exploration_enabled` → `'true'` — that is the ONLY switch.** The cron
+   (`process-exploration-securing`), both RPCs, the read surface, and the panel are already in place and
+   fail closed until the flip; the securing processor deliberately ignores the flag (in-flight safety) and
+   is inert while no discoveries exist.
+2. **Reposition the `GalaxyMap.tsx:390` bottom-left legend** ("N locations · M moving · drag to pan …") —
+   the ExplorationPanel also renders bottom-left when lit and will cover it. Cosmetic; deferred because a
+   dark panel covers nothing today.
+3. **Decide destruction-forfeiture semantics for pending exploration data BEFORE OSN main-ship combat
+   ships.** v1 never forfeits: a pending discovery waits and secures after recovery. Fine while destruction
+   is rare/dev-only; a real combat loop needs an explicit forfeit-or-keep rule (ACTIVITIES.md §2 note).
+4. **`activity_start`/`explore_derelict` is deliberately unwired in v1** (OSN-native-only scope decision,
+   Slice F). Do not "finish" that dispatch branch without a product decision.
+5. **Before any flip: run `verify:exploration` (dark posture) against a dev DB, then the lit-path checks
+   there** — flip the flag ON THE DEV DB only, scan from a settled in-space ship near a seeded site, watch
+   the discovery appear pending, dock/return home, confirm the cron deposits (metal → base, items →
+   inventory, `secured_at` set, `reward_grants` row `('exploration', discovery_id)`), and re-run
+   `verify:exploration` after re-darkening. Production flips remain a human production-gate action
+   (PROD_GATE_APPROVAL_POLICY).
+
+**Nothing in slices A–H flipped a flag, merged anything, deployed anything, or touched production.** All
+work sits PR-ready on `autopilot/20260703-064048`; every exploration surface is server-rejected while
+`exploration_enabled='false'`; `main` untouched.
+
+**State (this slice).** `npm run build` green; `node --check scripts/verify-exploration.mjs` parses clean;
+`node scripts/verify-exploration.mjs` in this sandbox aborts at signup with `fetch failed` (no reachable
+Supabase) — the identical ENVIRONMENT blocker `verify:m3/m4` record, not a syntax/logic failure. Migration
+head remains **0101**.
+
+**Bugs / fixes**
+- **jsonb type mismatch in the step-4 config assertions (reviewer-caught; fixed).** `game_config.value` is
+  **jsonb** (`0003:8`), so the seeded literals `'false'` (0097) / `'750'` (0099) store as JSON boolean/number
+  and supabase-js returns JS `false` / `750` — the original string comparisons (`v === 'false'` /
+  `v === '750'`) would have false-failed step 4 on exactly the healthy dev DB the activation checklist
+  targets (masked here because the sandbox aborts at signup, before step 4; no sibling script string-compares
+  a `cfgVal` result — they only capture-and-restore — so there was no precedent to copy). Fixed to
+  storage-form-tolerant comparisons (`String(v) === 'false'` / `Number(v) === 750`), mirroring how the
+  server's `cfg_bool`/`cfg_num` (`0046:23` idiom) are storage-form-agnostic; noted in-line in the script.
+
+---
+
 ## 2026-07-04 — EXPLORATION-P11 SLICE G: dark frontend surface `src/features/exploration/` (scan control + discoveries panel; renders nothing while the server says dark). Frontend only — no migration
 
 **Request.** The exploration client surface: scan control + discoveries panel in a new feature folder,
