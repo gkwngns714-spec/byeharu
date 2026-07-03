@@ -151,8 +151,11 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
                       <Fragment key={o.offer_id}>
                         <tr className="border-t border-slate-800/60">
                           <td className="py-1 text-slate-200">{o.good_id.replace(/_/g, ' ')}</td>
-                          <td className="py-1 text-right text-slate-300">{o.buy_price.toLocaleString()}</td>
+                          {/* Column name != field name: the "Buy" column shows the offer's sell_price (what the
+                              buyer PAYS — what market_buy charges), and "Sell" shows buy_price (what the seller
+                              RECEIVES — what market_sell pays). Do NOT "correct" these back to matching names. */}
                           <td className="py-1 text-right text-slate-300">{o.sell_price.toLocaleString()}</td>
+                          <td className="py-1 text-right text-slate-300">{o.buy_price.toLocaleString()}</td>
                           <td className="py-1 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <input
