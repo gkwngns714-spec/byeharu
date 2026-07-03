@@ -5,6 +5,34 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — Docs-only roadmap reconciliation: Phase-10 label + live migration head (no code/flag change)
+
+**Request.** Reconcile the Phase-10 (row `10 ⏳`) cell in `docs/ROADMAP.md` (line 85) with its own appended
+status: replace the stale leading label `**designed, NOT built.**` and bump the stale live "migration head"
+figure. Docs-only; touch nothing else.
+
+**Work done** — exactly two edits to the Phase-10 cell, nothing else in it:
+- **Label `designed, NOT built` → `implemented DARK, NOT activated`.** The cell's own appended note already reads
+  "**implemented DARK & PR-ready** … all trade flags/gates OFF", so the leading "NOT built" clause was factually
+  wrong (the pipeline IS built, only un-activated). The new label preserves the "not live" meaning while removing
+  the contradiction.
+- **Live "migration head `0091`" → "migration head `0092`".** The docked-location-helper migration
+  `20260618000092_trade_market_1_resolve_docked_location.sql` was added after that status note was written, so the
+  live head figure was stale. The historical `TRADE-MARKET-1 `0085–0091`` range is **left untouched** — it
+  correctly describes TRADE-MARKET-1's original migration set; `0092` is the later cleanup helper and only the live
+  head figure was stale.
+
+**State.** Docs-only, forward-only. No code, migration, RPC, frontend, workflow, test, verifier, flag default, or
+behavior changed — nothing activated. Locked scope was `docs/ROADMAP.md` + this `docs/DEV_LOG.md` entry only. No
+`SYSTEM_BOUNDARIES.md` sync needed (no architectural fact changed — no table/writer/constraint/call-graph change).
+Migration head remains **0092** on `autopilot/20260703-064048`; `main` untouched. No build/test run is required
+(no runtime surface); the M2/M3/M4/M4.5 engine tests are unaffected.
+
+**Bugs / fixes**
+- _(none — docs reconciliation only.)_
+
+---
+
 ## 2026-07-03 — Trading V1 cleanup: CI proof workflow `trade-v1-proof.yml` (disposable DB only; no production)
 
 **Request.** Wire the two already-existing Trading-V1 proofs into CI. Add ONE workflow that runs both against a
