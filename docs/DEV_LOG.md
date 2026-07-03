@@ -5,6 +5,63 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-P12 SLICE D — the securing processor `0105` (`process_mining_securing` + pg_cron; deposits via `reward_grant('mining', …)`)
+
+**Request.** Implement slice D of the Phase 12 plan (recon §9): ONE new forward-only migration with
+Mining's own securing processor, mirroring the exploration securing processor 0100 exactly —
+mining's as-built extraction rows already model the lifecycle the same way (`secured_at` NULL =
+pending, 0103), so the processor shape carries over verbatim with no structural deviation. No read
+surface, no frontend, no config changes.
+
+**Work done — NEW `supabase/migrations/20260618000105_mining_p12_securing_processor.sql`**
+(migration head moves **0104 → 0105**; `0001–0104` unedited):
+- **`process_mining_securing()`** — the 0100 body step-for-step: `FOR UPDATE SKIP LOCKED` sweep of
+  `mining_extractions where secured_at is null`; carrying ship = the row's `main_ship_id`, else
+  the player's canonical main ship via `mainship_resolve_owned_ship` (the 0100 NULL-fallback
+  verbatim; unresolvable → the row waits); settled SAFE = `spatial_state in ('home','at_location')`
+  per the 0055 state model (anything else waits); deposit target = the player's active home base
+  (0050 idiom; null base → the row waits — guard kept verbatim from 0100 even though mining
+  bundles are items-only, one pattern not two); then
+  `reward_grant('mining', extraction_id, player, base, pending_bundle_json)` + `secured_at = now()`
+  in the same transaction. Like 0100 there is NO per-row exception wrapper — skips are `continue`
+  branches, and idempotency is DOUBLE-guarded (`secured_at` NULL filter + the `reward_grants`
+  UNIQUE (source_type, source_id) law), so a re-run can never double-deposit.
+- **Flag posture (0100 wording convention):** the processor deliberately IGNORES `mining_enabled`
+  — in-flight safety: accrued pending value must never be stranded by an emergency flag-off.
+  Naturally inert today: the 0104 writer rejects while the flag is false, so no extraction rows
+  can exist and the processor sweeps an empty set.
+- **Slice-C review note recorded in the header:** the 0104 cooldown is serialized per SHIP via the
+  S2 lock, not per player — acceptable because the canonical model is one main ship per player
+  (multi-ship stays DARK behind `mainship_additional_commission_enabled=false`) and no
+  double-deposit is possible regardless (receipts + the `reward_grants` unique key); revisit if
+  multi-main-ship ever activates.
+- **ACL + cron verbatim from 0100:** execute revoked from public/anon/authenticated, granted to
+  service_role; `create extension if not exists pg_cron`; idempotent unschedule guard
+  (`undefined_table` swallowed); `cron.schedule('process-mining-securing', '* * * * *', …)` —
+  every 60s (pg_cron's seconds form caps at 59s, so every-minute standard cron, the 0100 comment).
+- NO forfeiture: a pending extraction simply WAITS (destroyed ships secure after recovery lands
+  them home) — the 0100 posture, recon decision 4.
+
+**Doc-sync (same step).**
+- `docs/SYSTEM_BOUNDARIES.md`: the `mining_extractions` §1 row now reads "ONE owner system, two
+  writer fns: `mining_extract` (0104) inserts · `process_mining_securing` (0105) sets
+  `secured_at`" (both LIVE); the §2 Mining row's securing paragraph rewritten to present tense
+  (0105 shipped — safe-settle definition, double-guarded idempotency, flag-ignoring in-flight
+  safety) with only the slice-E read surface still FORTHCOMING; the Mining → Bases (deposit-target
+  read) and Mining → Reward (grant) edges are now live and the edge list stays all-DOWNWARD,
+  exactly the Exploration shape.
+- `docs/ARCHITECTURE.md` §14 processors table: added the `process_mining_securing()` row exactly
+  parallel to the exploration row (every 60s; deposits via `reward_grant('mining',
+  extraction_id, …)` once the ship settles safe; deliberately ignores `mining_enabled`; pg_cron
+  job `process-mining-securing`; migration 0105).
+
+**State.** `npm run build` green. Migration head **0105**; still dark END-TO-END — the command
+rejects while `mining_enabled='false'`, so the processor (which correctly ignores the flag) has
+nothing to sweep; no flag flipped, no live DB write; PR-ready on `autopilot/20260703-064048`,
+`main` untouched. Next: slice E (the read surface).
+
+---
+
 ## 2026-07-04 — MINING-P12 SLICE C — the dark extraction command `0104` (`command_mining_extract` → private `mining_extract`)
 
 **Request.** Implement slice C of the Phase 12 plan (recon §9): ONE new forward-only migration with

@@ -246,6 +246,7 @@ data is owner-only.
 | `process_combat_ticks()` | every 10–15s | one round per due encounter |
 | `process_location_state_ticks()` | every 60s | pirate pressure / danger drift |
 | `process_exploration_securing()` | every 60s | deposits pending exploration discovery bundles via `reward_grant('exploration', discovery_id, …)` once the carrying main ship settles safe (home / `at_location`); deliberately ignores `exploration_enabled` (in-flight safety) — pg_cron job `process-exploration-securing`, migration 0100 |
+| `process_mining_securing()` | every 60s | deposits pending mining extraction bundles via `reward_grant('mining', extraction_id, …)` once the carrying main ship settles safe (home / `at_location`); deliberately ignores `mining_enabled` (in-flight safety) — pg_cron job `process-mining-securing`, migration 0105 |
 
 Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 `15.1.1.61`+ — so sub-minute cadence is native. Only server/cron calls processors.
