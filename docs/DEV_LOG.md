@@ -5,6 +5,53 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-P12 SLICE B — mining schema migration `0103` (`mining_fields` + `mining_extractions`, dark, no writer exists)
+
+**Request.** Implement slice B of the Phase 12 plan (recon §9): ONE new forward-only migration with
+the two mining tables + seeds + RLS, mirroring the exploration schema slice 0098 and deviating only
+where the recon §8 decisions require it. No functions, no cron, no `game_config` changes, no
+frontend.
+
+**Work done — NEW `supabase/migrations/20260618000103_mining_p12_fields_schema.sql`** (0098
+structure/idioms; migration head moves **0102 → 0103**; `0001–0102` unedited):
+- **`mining_fields`** — hidden static resource-field catalog, the 0098 `exploration_sites` shape
+  verbatim: name-unique seed key; `space_x`/`space_y` with the finite-only CHECK idiom + the
+  `[-10000,10000]²` envelope; deterministic `reward_bundle_json` (jsonb-object CHECK); `is_active`
+  soft-disable. **RLS enabled with NO client policy and NO client grant** (anti-probe posture
+  identical to 0098 — field coordinates/composition are never client-readable before extraction).
+  Seeds 5 fields on the integer grid, near/far spread, distinct from the exploration sites, with
+  ITEMS-ONLY bundles (decision 3) drawn from the EXISTING catalog rows: `ore` in every field
+  (qty 2–3), `crystal` in three (qty 1–2), `artifact_core` in exactly one (qty 1) — per-item
+  quantities in the 0098 magnitude; no metal scalar, so nothing can ever land in `base_resources`.
+- **`mining_extractions`** — per-extraction state row: player + field FKs, `main_ship_id`
+  (`on delete set null`, the 0100 resolver-fallback idiom), `pending_bundle_json` snapshot +
+  `secured_at` (NULL = pending — the exploration as-built lifecycle verbatim; no `'{}'` default
+  needed on a fresh table, unlike the 0099 migration-validity shim), `created_at` as the cooldown
+  anchor. **THE deliberate deviation from 0098 (decision 2): NO `unique (player_id, field_id)`** —
+  extraction is repeatable; one row per extraction; idempotency = the slice-C receipt convention;
+  pacing = the per-(player, field) cooldown. Indexes: `(player_id, field_id, created_at desc)`
+  (cooldown lookup) + `(player_id, created_at desc)` (the 0098 player-index idiom, serves the
+  slice-E read surface). Own-row SELECT policy + `grant select to authenticated` only — NO write
+  policy/grant; writers are the forthcoming slice-C command and slice-D processor.
+- Forfeiture of pending bundles: DEFERRED with the documented 0100 posture (pending rows wait;
+  destruction semantics are a future product decision) — stated in the migration header.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §1 matrix gained the two rows —
+`mining_fields` = Reference/Config (static hidden world data, NO runtime writer, server-only read);
+`mining_extractions` = **Mining** (ONE owner system, two FORTHCOMING writer fns: slice-C
+`mining_extract` inserts · slice-D `process_mining_securing` sets `secured_at`; DARK behind
+`mining_enabled=false`, schema-only today) — and §2 gained the Mining system row (forthcoming
+surfaces named; bundles items-only; deposits ONLY via `Reward.grant('mining', extraction_id, …)` —
+`reward_grant` remains the sole depositor; edges all DOWNWARD in the Exploration shape; forbidden
+column includes writing `base_resources` at all). No other section contradicts the new tables (the
+"OSN geometry leaf" note already anticipated Mining as a later downward consumer).
+
+**State.** `npm run build` green. Migration head **0103**; both tables exist DARK with NO writer
+anywhere (nothing can insert until slice C ships); no flag flipped, no live DB write; PR-ready on
+`autopilot/20260703-064048`, `main` untouched. Next: slice C (`command_mining_extract`).
+
+---
+
 ## 2026-07-04 — MINING-P12 SLICE A — design decisions (self-approved) + dark config/flag migration `0102`
 
 **Request.** Record the Phase 12 Mining design decisions and implement slice A: ONE new forward-only
