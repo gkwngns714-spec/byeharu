@@ -5,6 +5,50 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-P12 SLICE E — the dark read surface `0106` (`get_my_mining_extractions()`). **Server side of Phase 12 complete, fully dark**
+
+**Request.** Implement slice E of the Phase 12 plan (recon §9): ONE new forward-only migration with
+the read surface, mirroring the exploration read surface 0101 exactly (function shape, dark-gate
+behavior, reveal semantics, envelope, ACL). No frontend, no config changes, no other functions.
+
+**Work done — NEW `supabase/migrations/20260618000106_mining_p12_read_surface.sql`** (migration
+head moves **0105 → 0106**; `0001–0105` unedited):
+- **`get_my_mining_extractions()`** — the 0101 body step-for-step: `auth.uid()` resolution
+  (`not_authenticated` envelope), then the dark gate BEFORE any extraction/field read —
+  `{ok:false, reason:'mining_disabled'}` (the 0101 `exploration_disabled` envelope shape),
+  identical regardless of caller state (no probing while dark) — then the caller's OWN
+  `mining_extractions` joined to the hidden `mining_fields` rows. Per row it reveals exactly the
+  0101 attribute classes: field `name` + `space_x`/`space_y` (as 0101 reveals sites), the
+  extraction's lifecycle fields (`extracted_at` = the row's `created_at`, `secured_at`), and
+  `bundle` = the row's `pending_bundle_json` snapshot — 0101 exposes the discovery's pending
+  bundle, so mining mirrors it; the field's own `reward_bundle_json` is never exposed directly.
+  Ordering (`created_at desc`), response shape (`{ok:true, extractions:[…]}` mirroring
+  `{ok:true, discoveries:[…]}`), and posture (`stable`, `security definer`,
+  `set search_path = public`) all verbatim from 0101. Repeatability nuance (header-documented):
+  the history legitimately contains multiple rows per field — one per extraction — and
+  extracted-then-disabled fields stay visible (the 0101 posture: the player's own history).
+- **Reveal rule (header):** a field is revealed ONLY through the player's own extraction rows —
+  no browse-all surface; the 0103 no-client-policy posture on `mining_fields` is untouched, so an
+  un-extracted field stays unreachable by construction (identical anti-probe stance to
+  exploration).
+- **ACL verbatim from 0101:** execute revoked from public/anon, granted to authenticated only —
+  and dark today: the gate rejects every call while `mining_enabled='false'`.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: the §2 Mining row dropped its last
+FORTHCOMING — the read surface is now named LIVE (read-only, dark-gated `mining_disabled`, the
+only client path to field data, strictly post-extraction). The §1 matrix rows need NO change —
+slice E adds no writer (`get_my_mining_extractions` is read-only; `mining_fields` still has no
+runtime writer, `mining_extractions` still has exactly the two 0104/0105 writer fns).
+
+**State.** `npm run build` green. Migration head **0106**. **The server side of Phase 12 Mining is
+COMPLETE (slices A–E) and fully dark end-to-end:** the command wrapper + writer and the read
+surface all server-reject while `mining_enabled='false'`; the securing processor correctly ignores
+the flag but is inert (no extraction row can exist). No flag flipped, no live DB write; PR-ready on
+`autopilot/20260703-064048`, `main` untouched. Next: slice F (dark frontend
+`src/features/mining/`), then slice G (`verify:mining`).
+
+---
+
 ## 2026-07-04 — MINING-P12 SLICE D — the securing processor `0105` (`process_mining_securing` + pg_cron; deposits via `reward_grant('mining', …)`)
 
 **Request.** Implement slice D of the Phase 12 plan (recon §9): ONE new forward-only migration with
