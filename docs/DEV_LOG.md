@@ -5,6 +5,77 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION-P11 SLICE D: dark `command_exploration_scan` — OSN-proximity scan → pending discovery bundle (server-rejected while `exploration_enabled=false`; nothing deposits yet)
+
+**Request.** The exploration write path: an OSN-proximity scan that records a per-player discovery with a
+PENDING (not yet deposited) reward bundle. Deposit wiring is deliberately NOT in this slice.
+
+**Design decisions (self-approved).**
+1. **Geometry is OSN's concern; Exploration depends on it DOWNWARD.** New pure IMMUTABLE leaf
+   `osn_distance(ax,ay,bx,by) → double precision` — the exact euclidean formula the movement writers already
+   use inline (`sqrt(power(bx-ax,2)+power(by-ay,2))`, verified at `0007:105`, `0057:179`, `0067:319`). The
+   shipped movement-writer bodies were NOT re-created just to swap their one-line inline sqrt: a single
+   arithmetic expression is below the duplication bar, and re-creating proven critical writers for a cosmetic
+   swap adds regression risk with zero behavior gain. **Future re-definitions of those writers should adopt
+   the helper when next touched for real changes** (also recorded in SYSTEM_BOUNDARIES).
+2. **Accrual law (ACTIVITIES.md):** the activity accrues pending rewards on ITS OWN state. The discovery row
+   snapshots the site's bundle at scan time — new columns `pending_bundle_json jsonb not null default '{}'`
+   (CHECK object; the default is a migration-validity shim only — retirement is behavioral: the sole writer
+   ALWAYS snapshots a real bundle, so no row ever relies on it) and `secured_at timestamptz` (NULL = pending;
+   set ONLY by the deposit slice's securing path). **This slice mints nothing into inventory** — no
+   inventory/base/reward/movement write anywhere in the scan path.
+3. **Scan preconditions:** ship settled OSN in-space (`mainship_space_validate_context` state = `in_space`,
+   which the 0055 constraints tie to `status='stationary'`; in transit / docked / home / legacy all reject),
+   not claimed by another domain (`mainship_space_assert_cross_domain_exclusion` — the 0064
+   arrival-processor posture, reused not re-derived), within `exploration_scan_radius` (new `game_config`
+   tunable, default **750** — same order as the world's port/proximity scales, tunable without redeploy) of an
+   `is_active` site the player has not discovered. Nearest-first, deterministic tie-break (distance, then name).
+
+**Work done** — one new migration `20260618000099_exploration_p11_scan_command.sql` (head bump **0098 → 0099**):
+- **`osn_distance`** — `language sql immutable strict`; internal posture (no client grant; service_role for CI
+  parity with the S2 helpers).
+- **`exploration_discoveries` + pending columns** (decision 2 above).
+- **`exploration_scan(p_player, p_main_ship_id, p_request_id)`** — PRIVATE service-role/internal writer; the
+  **sole writer** of `exploration_discoveries`. Ordered body: (1) **DARK GATE FIRST** —
+  `if not cfg_bool('exploration_enabled') → feature_disabled` BEFORE any other read/lock/write (0097
+  reject-before-any-read law, 0070 idiom); (2) null request_id → `invalid_request_id`; (3) S2 canonical
+  blocking lock (ship → fleet → coordinate movement → presence) — `missing_ship` / lock status; (4) ownership
+  from the LOCKED snapshot → `not_owned`; (5) canonical payload hash (no coordinate body — 0064 stop idiom);
+  (6) **receipts idempotency REUSED EXACTLY** — `main_ship_space_command_receipts` (0055), lookup AFTER ship
+  lock + ownership (0064 order): verbatim replay of the first committed `result_json`, or
+  `request_id_payload_conflict`; (7) `validate_context` → `destroyed` / `not_in_space` unless settled
+  `in_space`; (8) cross-domain exclusion → forwarded reason; (9) ship coords under lock; (10) nearest
+  undiscovered active site within radius via `osn_distance` — else `already_discovered` (an in-range active
+  site exists but all are this player's discoveries) or `no_site_in_range`; (11) insert the discovery with the
+  bundle snapshot (`secured_at` NULL); (12) receipt insert atomic with the discovery (movement_id null).
+- **`command_exploration_scan(p_main_ship_id, p_request_id)`** — authenticated public wrapper (0083 idiom):
+  auth → **anti-probe flag gate** (while dark, identical answer regardless of input — no hidden-site probing) →
+  `mainship_resolve_owned_ship` (selected owned ship or sole-ship shim; UI never trusted) → delegate →
+  narrow reason→code/message map. Reason set: `feature_disabled`, `invalid_request_id`,
+  `request_id_payload_conflict`, `missing_ship`/`not_owned`→`no_ship`, `destroyed`, `not_in_space`,
+  `active_legacy_movement`→`busy_legacy`, `no_site_in_range`, `already_discovered`, else `unavailable`.
+- **`exploration_scan_radius` = `'750'`** seeded `on conflict (key) do nothing`.
+- **ACL (targeted 0083/0095 idiom):** `osn_distance` + `exploration_scan` revoked from public/anon/
+  authenticated, granted to service_role only; `command_exploration_scan` revoked from public/anon, granted to
+  authenticated — dark today because both the wrapper gate and the writer's first check reject.
+
+**Nothing deposits yet — pending bundles only.** The deposit-on-arrival wiring through the Slice-A
+activity-agnostic carrier (`movement_attach_cargo(…, 'exploration')`) is the NEXT slice.
+
+**State.** Forward-only; migration head **0099**; `0001–0098` unedited. No flag flipped
+(`exploration_enabled` stays `'false'`; it is read, never written). No frontend change.
+`docs/SYSTEM_BOUNDARIES.md` synced in the SAME step: matrix + Exploration row now name `exploration_scan` as
+sole writer via the dark `command_exploration_scan`, enumerate the reused OSN machinery, and a new note records
+the `osn_distance` leaf ("pure/immutable, consumed downward by activities; movement writers adopt it when next
+re-defined for real changes"). `main` untouched. `npm run build` green; `verify:m3`/`verify:m4` fail only on
+`fetch failed` (no reachable Supabase from this sandbox) and `verify:m45` needs `SUPABASE_SERVICE_ROLE_KEY` —
+the recorded environmental posture; no code/assertion failure.
+
+**Bugs / fixes**
+- _(none — additive dark write path; reuses the proven receipts/lock/validation machinery unchanged.)_
+
+---
+
 ## 2026-07-04 — EXPLORATION-P11 SLICE C: hidden `exploration_sites` + per-player `exploration_discoveries` (tables + seed + RLS only; no RPC, no client path, fully dark)
 
 **Request.** Exploration domain schema: the hidden static site table and the per-player discovery ledger —
