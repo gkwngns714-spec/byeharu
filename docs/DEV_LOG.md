@@ -5,6 +5,64 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MINING-P12 SLICE F — dark frontend `src/features/mining/` + shared `src/lib/rewardBundle.ts`/`osnState.ts` extraction (exploration repointed same-step)
+
+**Request.** Implement slice F of the Phase 12 plan (recon §9): the dark mining frontend mirroring
+the post-cleanup exploration frontend exactly, with the HARD-RULE duplication check. No server
+changes, no migrations, no config — migration head STAYS **0106**.
+
+**Duplication check first (the hard rule) — TWO extractions, exploration repointed in this same step:**
+- **NEW `src/lib/rewardBundle.ts`** — `PendingBundleItem` + `PendingBundle` (the 0040/0041 server
+  bundle contract). Mining needed the identical types verbatim; the one copy moved out of
+  `explorationTypes.ts` (which now imports it) and `miningTypes.ts` imports it from day one.
+- **NEW `src/lib/osnState.ts`** — `isSettledInSpace()` (the 0055 settled-in-space predicate that
+  drives the action button's enabled state; server stays authoritative). Same story: moved out of
+  `explorationTypes.ts`; `ExplorationPanel.tsx` and `MiningPanel.tsx` both import it from here.
+  `src/lib/` is the established shared home (catalog/location/time idiom, concern-per-file).
+- **NOT extracted (below the bar, stated per the request):** the panel scaffold
+  (mounted-guard `activeRef` + synchronous `inFlightRef` + `refresh` callback) is the documented
+  cross-panel "MarketPanel idiom" already present in several panels — the exploration cleanup pass
+  reviewed these exact files and did not extract it; a shared-hook refactor would touch MarketPanel
+  and siblings, out of this slice's scope (adopt-on-next-real-change precedent). The API wrappers
+  (2-line rpc calls with per-feature names/types), the per-feature error-copy maps (different
+  strings), and the inline `toLocaleString()` one-liner are trivial per-feature glue.
+
+**Work done — NEW `src/features/mining/` (the exploration twins, post-cleanup state — NO
+speculative disabled-reason constant, exactly what the cleanup pass deleted from exploration):**
+- **`miningTypes.ts`** — `MiningExtraction` (the 0106 row: field_name, space_x/space_y,
+  extracted_at, secured_at, bundle), `GetMyMiningExtractionsResult`,
+  `CommandMiningExtractResult` (0104 wrapper success shape; failure envelope includes optional
+  `retry_after_seconds` — REAL server data on the `cooldown` code), and the extract error-copy
+  map (the 0104 code set) + `miningExtractErrorMessage`.
+- **`miningApi.ts`** — thin `supabase.rpc` wrappers for `command_mining_extract` +
+  `get_my_mining_extractions`, identical envelope-handling idiom (transport error → normalized
+  failure, never a throw into the render path).
+- **`MiningPanel.tsx`** — the `ExplorationPanel` structure verbatim: server-driven visibility
+  (reads the extractions on mount/lifecycle change and **fails closed to null on ANY non-ok
+  envelope without inspecting reason** — the documented deliberate posture; while the server
+  returns `mining_disabled` the panel renders nothing, so production is unchanged); extract
+  enabled only when settled in space; fresh `crypto.randomUUID()` request id per submit with the
+  synchronous in-flight guard; extraction history list (field name, Pending/Secured badge, bundle
+  contents as `item ×qty`, coords + timestamp). Mining-specific glue: the cooldown failure note
+  appends the server's `retry_after_seconds`; amber styling vs exploration's violet; positioned
+  bottom-left BESIDE ExplorationPanel (`left-[17rem]`; both are server-lit so overlap only ever
+  involves lit surfaces).
+- **Wiring:** `GalaxyMapScreen.tsx` — `MiningPanel` imported and rendered directly adjacent to
+  `ExplorationPanel`, same import style, same props (`lifecycleKey`/`mainShipId`/`shipStatus`/
+  `shipSpatialState`), same comment convention.
+
+**Doc-sync note.** `docs/SYSTEM_BOUNDARIES.md` needs NO change: the extractions are client-side
+display types/predicates (no table, no writer, no cross-system edge); the server contracts they
+mirror are unchanged.
+
+**State.** `npm run build` green (`tsc -b` typecheck + vite; standalone `tsc --noEmit` also clean).
+Migration head stays **0106**; everything still dark — the panel is wired but renders nothing
+(every mining RPC server-rejects while `mining_enabled='false'`), and the repointed exploration
+surface is behavior-identical. PR-ready on `autopilot/20260703-064048`, `main` untouched. Next:
+slice G (`scripts/verify-mining.mjs` + the `verify:mining` entry).
+
+---
+
 ## 2026-07-04 — MINING-P12 SLICE E — the dark read surface `0106` (`get_my_mining_extractions()`). **Server side of Phase 12 complete, fully dark**
 
 **Request.** Implement slice E of the Phase 12 plan (recon §9): ONE new forward-only migration with

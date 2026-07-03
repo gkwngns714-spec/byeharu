@@ -6,15 +6,7 @@
 // exploration_enabled is false; the panel renders nothing on that envelope — the UI is never the
 // control (fail-closed law), and no client-side flag constant gates visibility (server-driven).
 
-export interface PendingBundleItem {
-  item_id: string
-  quantity: number
-}
-/** The pending-bundle shape ({ metal?, items[] }) — the 0040/0041 reward-bundle contract. */
-export interface PendingBundle {
-  metal?: number
-  items?: PendingBundleItem[]
-}
+import type { PendingBundle } from '../../lib/rewardBundle'
 
 /** One row of get_my_exploration_discoveries() (0101). secured_at null = deposit still pending. */
 export interface ExplorationDiscovery {
@@ -44,16 +36,8 @@ export type CommandExplorationScanResult =
     }
   | { ok: false; code: string; message: string }
 
-// ── Scan-enabled predicate ────────────────────────────────────────────────────────────────────────
-// Scan is legal only for a SETTLED in-space ship (0055 model: spatial_state 'in_space' ⇔
-// status 'stationary'). This predicate only drives the button's enabled state — the server remains
-// authoritative and rejects everything else with not_in_space.
-export function isSettledInSpace(input: {
-  spatialState: string | null | undefined
-  status: string | null | undefined
-}): boolean {
-  return input.spatialState === 'in_space' && input.status === 'stationary'
-}
+// The scan-enabled predicate (settled in space, 0055 model) lives in the shared
+// src/lib/osnState.ts — one copy for every OSN-native activity surface.
 
 // Player-facing copy for the narrow code set command_exploration_scan's wrapper can return (0099),
 // same tone as the OSN command copy (spaceStopCommand.ts). The server's message is preferred when

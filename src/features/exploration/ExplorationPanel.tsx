@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { isSettledInSpace } from '../../lib/osnState'
 import { commandExplorationScan, getMyExplorationDiscoveries } from './explorationApi'
 import {
   explorationScanErrorMessage,
-  isSettledInSpace,
   type GetMyExplorationDiscoveriesResult,
 } from './explorationTypes'
 

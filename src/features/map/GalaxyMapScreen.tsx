@@ -12,6 +12,7 @@ import { ShipSwitcher } from './ShipSwitcher'
 import { useMainShipSelection } from './useMainShipSelection'
 import { TRADE_MARKET_ENABLED } from './osnReleaseGates'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
+import { MiningPanel } from '../mining/MiningPanel'
 
 // Galaxy Map screen. Shows the world, the player's main ship, ports, and active movements; selecting a
 // location opens its detail panel + the main-ship expedition/move surface. When the main ship is docked at a
@@ -132,6 +133,17 @@ export function GalaxyMapScreen() {
                   experience is unchanged. Scan itself is legal only settled in space; the server
                   rejects everything else (fail-closed both sides). */}
               <ExplorationPanel
+                lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
+                mainShipId={mainShip?.main_ship_id ?? null}
+                shipStatus={mainShip?.status}
+                shipSpatialState={mainShip?.spatial_state}
+              />
+              {/* MINING-P12 — dark mining surface (extract + extraction history). SERVER-driven
+                  visibility: it renders ONLY when get_my_mining_extractions answers ok; while
+                  the server returns mining_disabled it renders nothing, so today's player
+                  experience is unchanged. Extract itself is legal only settled in space; the
+                  server rejects everything else (fail-closed both sides). */}
+              <MiningPanel
                 lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
                 mainShipId={mainShip?.main_ship_id ?? null}
                 shipStatus={mainShip?.status}
