@@ -5,6 +5,41 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — TRADE-ECONOMY-BOOTSTRAP proof wired into existing `trade-v1-proof.yml` (disposable-only; no new workflow)
+
+**Request.** Wire the economy-bootstrap proof into CI by EXTENDING the existing `trade-v1-proof.yml` — which
+already spins up ONE disposable stack for all Trading-V1 proofs — rather than adding a parallel workflow that would
+redundantly start a second throwaway stack. This resolves the "CI wiring is a separate follow-up" note from the
+prior entry.
+
+**Work done** — additive edits to `.github/workflows/trade-v1-proof.yml` only (no new workflow file):
+- **`selftest` job** — added a third step `- run: bash scripts/trade-economy-bootstrap-proof.sh selftest` after the
+  trade-market-1 selftest (DB-free static check).
+- **`disposable-matrix` job** — added a `TRADE-ECONOMY-BOOTSTRAP real-chain matrix` step mirroring the
+  trade-market-1 step's exact shape (`set -a; . /tmp/sbenv; set +a; bash scripts/trade-economy-bootstrap-proof.sh
+  local`), placed AFTER the trade-market-1 matrix and BEFORE the `if: always()` "Stop disposable stack" teardown so
+  the single throwaway stack is still up when it runs. The new proof is self-rolling-back and order-independent;
+  ordering just keeps the file readable.
+- **Truthful references** — the `supabase start` step name "applies migrations 0001..0092" → "0001..0095"; the
+  top-of-file comment + workflow `name:` now enumerate the economy-bootstrap proof (seed capital + no-softlock
+  relief floor, 0093..0095) alongside the existing two, keeping the "NEVER production / no `environment:` / flips no
+  committed flag / disposable local Supabase only" language intact.
+
+**Preserved:** `permissions: contents: read`, the `concurrency` block, the `on:` triggers (feature branches only —
+NOT `main`/any release branch), no `environment:` on any job, and the `if: always()` teardown. Reuses the single
+disposable stack — no second stack started.
+
+**State.** CI-config only. No migration, no `src/`, no committed flag changed; dispatches no production/deploy/
+verifier/sensitive workflow (dispatching this workflow is a human/CI action, not taken here). No
+`SYSTEM_BOUNDARIES.md` change — a CI workflow is not an architectural fact. `main` untouched; migration head remains
+**0095**. `selftest` re-run in-sandbox (DB-free) and passes; the `disposable-matrix` job needs GitHub-hosted
+Docker/Supabase (same limitation as the sibling matrix) and was not run here.
+
+**Bugs / fixes**
+- _(none — additive CI wiring; runs existing disposable proofs, changes no product code.)_
+
+---
+
 ## 2026-07-03 — TRADE-ECONOMY-BOOTSTRAP proof: disposable, self-rolling-back seed + relief exercise (no CI yet)
 
 **Request.** Add a disposable proof that actually exercises the seed-capital + no-softlock-relief SQL end-to-end —
