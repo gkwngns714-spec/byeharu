@@ -5,6 +5,85 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MODULES-P13 SLICE A — locked design decisions + dark flag/catalog migration `0107` (`module_types` + `module_recipe_ingredients`)
+
+**Request.** Begin Phase 13 "Module instances + crafting" (ROADMAP `:88` — "instances, not
+stack-only") with slice A: record the owner's LOCKED design decisions, then ONE new forward-only
+migration seeding the dark flag + the module catalog/recipe config tables + starter seeds. NO
+instances table, NO command, NO read surface, NO frontend this slice. Recon:
+`MODULES_P13_RECON.local.md` (scope locked 2026-07-04).
+
+**LOCKED DESIGN DECISIONS (owner-directed 2026-07-04 — not self-approved):**
+1. **System shape** (ROADMAP law 5: "Production=support craft/crafting · Fitting=modules"): a NEW
+   leaf system **Modules** owns the module state tables (`module_types` catalog,
+   `module_recipe_ingredients` config, and — in later slices — `module_instances` + a mint
+   writer), while the craft COMMAND itself will belong to the existing **Production** system,
+   depending DOWNWARD on Inventory (`inventory_spend`) and Modules (mint) — acyclic, one
+   sole-writer per table.
+2. **Crafting is INSTANT in Phase 13**: an idempotent dark command in the 0099/0104 two-layer
+   idiom with a PLAYER-scoped receipts table (crafting is non-spatial, so
+   `trade_relief_claims`-style (player, request_id) keying, NOT ship-scoped space receipts). The
+   M4.5 "same queue" note is FUTURE meaning — integrating with `build_orders` would touch the
+   shipped Production queue and risk the green M4.5 tests, so it is explicitly deferred with this
+   RETIREMENT NOTE: when module production later moves onto the serial queue, the queued
+   completion path must call the SAME Modules mint helper this phase creates.
+3. **Recipe encoding is a normalized table, NOT jsonb**: `module_recipe_ingredients
+   (module_type_id, item_id, qty)` with FKs to `module_types` and `item_types` and a `qty > 0`
+   check — referential integrity over blob parsing; one implicit recipe per module type (its
+   ingredient rows); costs are ITEMS-ONLY in Phase 13 (no metal/credits — the pipeline law says
+   crafting consumes INVENTORY; metal would drag in a Base edge the phase doesn't need and can be
+   added forward-only later).
+4. **One craft = one instance** (no batching), keeping idempotency trivial.
+5. **Flag name `module_crafting_enabled`**, seeded `'false'`, following the exact 0097/0102
+   config+flag idiom including the server-side `feature_disabled` rejection posture for every
+   future RPC.
+
+**Work done — NEW `supabase/migrations/20260618000107_modules_p13_catalog_and_flag.sql`**
+(migration head moves **0106 → 0107**; `0001–0106` unedited):
+- **(a)** `game_config` seed `module_crafting_enabled='false'` (`on conflict (key) do nothing`,
+  the exact 0097/0102 dark-gate idiom + description stating the reject-before-any-read law).
+- **(b)** **`module_types`** — minimal intrinsic catalog identity ONLY: `id text primary key`,
+  `name text not null`, `slot_type text not null` (intrinsic archetype; display now, fitting
+  validation in Phase 14; unconstrained text like `item_types.category`/`support_craft_types.role`
+  — no code consumer yet), `description text not null`, `created_at`. **NO stats columns** —
+  stats wiring is Phase 14's job, added forward-only there.
+- **(c)** **`module_recipe_ingredients`** per decision 3: FKs to both catalogs,
+  `qty integer not null check (qty > 0)`, PK `(module_type_id, item_id)`.
+- **(d)** Seeds (`on conflict do nothing`): 4 starter module types spanning distinct slot
+  archetypes, copy matching the 0042 catalog tone — `autocannon_battery` (weapon: weapon_parts ×4
+  + pirate_alloy ×2 + scrap ×6), `vector_thruster_kit` (engine: engine_parts ×4 + crystal ×2 +
+  scrap ×4), `expanded_cargo_lattice` (cargo: scrap ×10 + pirate_alloy ×3 + repair_parts ×2),
+  `deep_scan_sensor_array` (sensor: scan_data ×5 + anomaly_shard ×2 + blueprint_fragment ×1).
+  Recipes consume ONLY EXISTING `item_types` rows (0039/0097 seeds REUSED — `item_types` is NOT
+  touched; the 0097 reuse law).
+- **(e)** RLS/grants — verified against the sources, not assumed: both tables copy the
+  Reference/Config catalog posture verbatim (`item_types` 0039:23–25 / `support_craft_types`
+  0042:32–36): RLS enabled, ONE public-read select policy, `grant select to anon, authenticated`,
+  NO write policy/grant. No function created → no execute-surface relock needed (0054 precedent).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §1 matrix gained the row
+`module_types`, `module_recipe_ingredients` → **Modules** (catalog/config — seeded by migration
+only, NO runtime writer yet; the mint writer arrives with `module_instances` in a later Phase-13
+slice; public read-only); §2 gained the **Modules** system row recording the dark gate, the
+Production-will-own-the-craft-command note (with the downward Inventory+Modules fan-out, the
+player-scoped receipt keying, one-craft-one-instance, and the M4.5 retirement note) and the
+forbidden column (never write player_inventory/inventory_ledger/base_resources; never mint outside
+the ONE mint helper; fitting/`module_slots` is Phase 14).
+
+**State.** `npm run build` green (tsc -b + vite). Migration head **0107**;
+`module_crafting_enabled='false'` — nothing client-writable exists (two public-read catalogs + one
+dark flag; no RPC, no writer, no reader). No flag flipped, no live DB write, no workflow touched.
+**DB-apply posture (honest):** this sandbox has no psql/docker/supabase CLI and npx cannot fetch
+(the recorded `UNABLE_TO_VERIFY_LEAF_SIGNATURE` environmental posture) — the migration was
+hand-verified line-by-line against the shipped idioms it copies (0039/0042 table+RLS posture,
+0097/0102 seed idiom, 0098 same-step boundaries sync), exactly the P11/P12 slice-B/C verification
+posture; the seeds/flag assertions run against a real DB in the owner's environment (and will be
+covered by the slice-G `verify:modules` dark-posture script). PR-ready on
+`autopilot/20260703-064048`, `main` untouched. Next: slice B (`module_instances` + the mint
+helper).
+
+---
+
 ## 2026-07-04 — MINING-CLEANUP SLICE 2 (final) — MarketPanel migrated onto `useActivityPanelGuards`. **Guard-hook extraction complete — no local copies remain**
 
 **Request.** Final slice of the mining-milestone cleanup: migrate `MarketPanel.tsx` (the idiom's
