@@ -5,6 +5,62 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION-P11 SLICE B: reward-item catalog entries + `exploration_enabled=false` dark flag (foundations only; nothing client-reachable, no behavior change)
+
+**Request.** Exploration foundations: the reward item catalog entries and the dark capability flag. No gameplay
+logic, no RPC, no table, nothing reachable by clients.
+
+**Design decisions (self-approved).**
+1. **Reuse the existing item-catalog + `player_inventory` path** that pirate loot uses (0039/0040/0041) — no new
+   inventory table, no new depositor. `reward_grant` stays the sole depositor; its item validation is
+   catalog-driven (`exists (select 1 from item_types where item_id = …)`, `0040:78`; same guard in
+   `inventory_deposit`, `0039:81`), so it recognizes the new ids with **zero code change** — seeding the catalog
+   row IS the enablement.
+2. **The ACTIVITIES.md §3 exploration reward classes** ("data / shards / blueprint fragments / artifact cores")
+   **become exactly four catalog items** — the smallest closed set covering the documented classes; more variants
+   are additive later. Two classes already had exact catalog matches seeded in 0039 and reserved by
+   ACTIVITIES.md §5 for precisely these later progression drops — `blueprint_fragment` (progression, rare) and
+   `artifact_core` (progression, epic) — so they are **REUSED, not re-added** (re-adding them under
+   exploration-specific ids would duplicate catalog concepts — forbidden). Only the two missing classes are
+   seeded: **`scan_data`** ('Scan Data', category `data`, common — the bulk "data" class; the category value is
+   the class name the ACTIVITIES.md row uses; `category` is unconstrained Reference/Config metadata with no code
+   consumer, grep-verified) and **`anomaly_shard`** ('Anomaly Shard', `material`, uncommon — the "shards" class,
+   named from the exploration ownership row's "anomalies"; deliberately NOT `captain_memory_shard`, which is
+   captain-progression material, a different concept). Exploration reward set =
+   `{ scan_data, anomaly_shard, blueprint_fragment, artifact_core }`.
+3. **Capability flag `exploration_enabled = 'false'`** — the standard server-authoritative dark gate, copying the
+   0070/0071 reject-before-any-read idiom verbatim (same posture as `trade_market_enabled`/`trade_relief_enabled`).
+   No RPC exists yet; the flag simply exists dark. The migration header states the law: every exploration RPC
+   added in later slices MUST check it FIRST and reject-before-any-read while false — UI hiding is never the only
+   control.
+
+**Work done** — one new migration `20260618000097_exploration_p11_catalog_and_flag.sql` (head bump **0096 → 0097**):
+two idempotent `item_types` rows + one idempotent `game_config` row, both via the established
+`on conflict … do nothing` seeding idiom (0039 / 0070). No table, no function, no RPC, no frontend, no index —
+nothing else.
+
+**RLS/grants — verified, not assumed.** New `item_types` rows inherit the table-wide public-read posture
+(`item_types_public_read` for select using (true) + `grant select to anon, authenticated`, `0039:23–25`); the
+`game_config` row likewise (`game_config_public_read`, `0003:13–15`). The items are inert without any exploration
+RPC. No function created → no execute-surface relock needed (0054 precedent). Also grep-verified: `item_types` is
+seeded ONLY in 0039 (no later migration adds items or a category constraint), and `0041` produces only
+0039-seeded ids — so nothing can mint the new items yet; no loot source references them.
+
+**Flag seeded false, nothing client-reachable, no behavior change.** No flag set true anywhere; no existing flag
+value touched. `docs/SYSTEM_BOUNDARIES.md` NOT edited — verified it enumerates dark gates only inline within
+per-system rows (Trade Market / Main Ship), and no Exploration system row exists yet (it arrives with the
+exploration tables in a later slice, which will add the matrix row + gate in the same step); `item_types` /
+`game_config` ownership (Reference/Config, §1) is unchanged by adding rows. `docs/ACTIVITIES.md` untouched.
+`main` untouched; migration head is now **0097**; `0001–0096` unedited.
+`npm run build` green; `verify:m3`/`verify:m4` fail only on `fetch failed` (no reachable Supabase from this
+sandbox) and `verify:m45` needs `SUPABASE_SERVICE_ROLE_KEY` — the recorded environmental posture; no
+code/assertion failure.
+
+**Bugs / fixes**
+- _(none — additive Reference/Config seed + dark flag; no writer, no reader, no behavior.)_
+
+---
+
 ## 2026-07-04 — EXPLORATION-P11 SLICE A: activity-agnostic deposit-on-arrival carrier (`reward_source_type`; refactor only, combat behavior unchanged, everything dark)
 
 **Request.** Prerequisite refactor for Phase 11 Exploration: make the pending-bundle → attach →
