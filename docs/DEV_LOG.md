@@ -5,6 +5,44 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — TRADE-MARKET-1 seed capital: `starting_credits` tunable + single shared `wallet_ensure` (DARK)
+
+**Request.** Seed-capital slice of the Trading V1 economy bootstrap: add a `starting_credits` tunable seeded into a
+wallet on first creation, and collapse the two copies of the Wallet "lazy ensure" block (inline in `wallet_debit`
+0089 and `wallet_credit` 0090) into ONE shared helper. Forward-only; ships DARK; no flag default flipped.
+
+**Work done** — one new migration `20260618000093_trade_market_1_wallet_seed_capital.sql` (head bump **0092 → 0093**):
+- **`starting_credits` = `'1000'`** added to `game_config` via the `on conflict (key) do nothing` numeric-seed idiom
+  (0003). Placeholder economy value; an inert tunable until a wallet is actually created.
+- **`wallet_ensure(player)`** — the ONE shared lazy-ensure + seed:
+  `insert into public.player_wallet (player_id, balance) values (p_player, coalesce(cfg_num('starting_credits'),0)::numeric) on conflict (player_id) do nothing`.
+  Seeds the starting balance exactly once on first creation; idempotent + **unfarmable** by the `player_id`
+  primary-key conflict (a re-call is a no-op — the row is only ever inserted once). Internal (`revoke execute …
+  from public, anon, authenticated`), `security definer`, `set search_path = public`.
+- **`wallet_debit` de-duplicated:** former inline `insert … on conflict do nothing` → `perform wallet_ensure(...)`;
+  the existing atomic conditional `update … where balance >= p_amount` and `return found` are left exactly as-is.
+  Behavior preserved: seed on first touch, then race-safe conditional debit that can never overdraw.
+- **`wallet_credit` de-duplicated:** reworked from its upsert-add into **ensure-then-add** — `perform
+  wallet_ensure(...)` then an unconditional `update … set balance = balance + p_amount`. The ensure guarantees the
+  row exists (seeded on first creation), then the amount adds on top — credit semantics preserved, second copy of
+  the ensure logic removed. This is the de-duplication target: the ensure block now lives in exactly one place.
+
+**Ships DARK — no flag flipped.** The seed only ever fires when a wallet is first created, and every
+wallet-creation path is already server-rejected: `market_buy`/`market_sell` under `trade_market_enabled=false`, and
+the additional-ship commission debit under `mainship_additional_commission_enabled=false`. So no wallet — and thus
+no seed — occurs while trade/commission stay dark. No flag default changed.
+
+**State.** Forward-only. Migration `0093` is now the highest-numbered file; `0001–0092` unedited. Wallet stays a
+**downward leaf** (reads `cfg_num('starting_credits')` from Reference/Config — a DOWNWARD read; no new cycle, no new
+writer to any non-Wallet table). `docs/SYSTEM_BOUNDARIES.md` Wallet row synced in the SAME step (names
+`wallet_ensure` as the shared lazy-ensure+seed, records the config read, drops the stale `wallet_credit` "lazy
+ensure" phrasing). `main` untouched. No frontend, no workflow, no verifier, no engine (M2/M3/M4/M4.5) change.
+
+**Bugs / fixes**
+- _(none — clean de-duplication + additive tunable; behavior preserved on both wallet writers.)_
+
+---
+
 ## 2026-07-03 — Docs-only roadmap reconciliation: Phase-10 label + live migration head (no code/flag change)
 
 **Request.** Reconcile the Phase-10 (row `10 ⏳`) cell in `docs/ROADMAP.md` (line 85) with its own appended
