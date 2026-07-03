@@ -5,6 +5,50 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-03 — TRADE-MARKET-1 no-softlock floor: relief claim RPC `market_claim_relief` (DARK; server-rejected)
+
+**Request.** The relief floor's writer: a Trade-Market orchestrator that grants `relief_credits` to a genuinely
+softlocked player and records the claim. Forward-only; ships DARK; no flag flipped true.
+
+**Work done** — one new migration `20260618000095_trade_market_1_claim_relief.sql` (head bump **0094 → 0095**):
+`public.market_claim_relief(p_request_id uuid) returns jsonb` (`plpgsql` / `security definer` / `search_path =
+public`; market_buy idiom + ACL: `revoke … from public, anon; grant … to authenticated`). It is the **sole writer**
+of `trade_relief_claims`. Ordered body: (1) `auth.uid()` → not_authenticated; (2) **DARK reject before any read**
+`if not cfg_bool('trade_relief_enabled')` → trade_relief_disabled; (3) `p_request_id is null` → invalid_request;
+(4) **account lock + rock-bottom read** `select balance … for update` on the EXISTING wallet row, NOT FOUND →
+no_wallet; (5) idempotency on (player, request_id) → verbatim replay, no re-grant; (6) `balance <> 0` →
+wallet_not_empty; (7) cargo sum across ALL the player's ships (`ship_cargo_lots ⋈ main_ship_instances`) `<> 0` →
+cargo_not_empty; (8) lifetime cap `count >= cfg_num('relief_max_lifetime_claims')` → relief_cap_reached;
+(9) cooldown `last > now() - cfg_num('relief_cooldown_seconds')` → relief_cooldown_active (+ next_eligible_at);
+(10) grant `cfg_num('relief_credits')` **through `wallet_credit`**; (11) insert the claim, return
+{ok, claim_id, amount, claimed_at}.
+
+**Anti-farm design (the "no `wallet_ensure` in relief" rule).** `wallet_credit` now routes through `wallet_ensure`,
+which seeds `starting_credits` (1000). If relief ensured a wallet, a rock-bottom player with NO wallet row would be
+seeded 1000 **plus** granted 250 relief — a farming hole. So relief **requires an EXISTING `player_wallet` row**
+(reason `no_wallet` when absent) and **never calls `wallet_ensure`**: a player with no row hasn't entered the
+economy and gets the normal seed on first trade, not relief. The rock-bottom read is `SELECT balance … FOR UPDATE`
+on that existing row, giving a natural **per-account lock** — every check and the ledger write run under it, so
+distinct-`request_id` races cannot bypass the cap/cooldown. Relief fires only at exact rock-bottom (balance = 0 AND
+zero cargo across all ships), bounded by the lifetime cap and cooldown.
+
+**Boundaries.** Trade Market is the sole `trade_relief_claims` writer; the balance write flows only through
+`wallet_credit`, preserving `player_wallet`'s sole-writer invariant. All of `player_wallet` (FOR UPDATE),
+`ship_cargo_lots`, `main_ship_instances` are DOWNWARD reads — no new cross-system edge, no cycle, Wallet stays a
+downward leaf.
+
+**State.** Forward-only. Migration `0095` is the highest-numbered file; `0001–0094` unedited. Ships
+**DARK/server-rejected** (`trade_relief_enabled=false`) — no flag default flipped. `docs/SYSTEM_BOUNDARIES.md`
+synced in the SAME step (Trade Market row names `market_claim_relief` as sole `trade_relief_claims` writer +
+records the downward reads; acyclic-invariant note updated). `main` untouched. No frontend, no workflow, no
+verifier, no engine (M2/M3/M4/M4.5) change.
+
+**Bugs / fixes**
+- _(none — additive DARK RPC; the seed+relief double-grant hole is closed by design via the existing-wallet-row
+  requirement, not patched after the fact.)_
+
+---
+
 ## 2026-07-03 — TRADE-MARKET-1 no-softlock floor: relief ledger + tunables + dark flag (schema slice; NO RPC)
 
 **Request.** Schema/config/flag slice of the no-softlock relief floor: add the relief ledger table, its tunables,
