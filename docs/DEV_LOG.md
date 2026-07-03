@@ -5,6 +5,62 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — EXPLORATION-P11 SLICE A: activity-agnostic deposit-on-arrival carrier (`reward_source_type`; refactor only, combat behavior unchanged, everything dark)
+
+**Request.** Prerequisite refactor for Phase 11 Exploration: make the pending-bundle → attach →
+deposit-on-arrival carrier activity-agnostic. No new feature, no behavior change, nothing activated.
+
+**Design decision (self-approved).** `reward_grant(source_type, …)` has been generic since 0015/0040 — the only
+combat coupling in the engine path (docs/ACTIVITIES.md §2) was at the CARRIER layer: `fleet_movements` had no
+source-type column and `process_fleet_movements`' return branch (latest shipped body: `0030:36`) hard-coded
+`reward_grant('combat', …)`. **Why:** Exploration (and later Mining) must reuse the exact same
+pending-bundle → `movement_attach_cargo` → deposit-on-arrival path — one shared engine carrier, never a parallel
+deposit system — so the movement row now transports its reward source type instead of the engine assuming combat.
+
+**Work done** — one new migration `20260618000096_engine_reward_source_type.sql` (head bump **0095 → 0096**):
+- **`fleet_movements.reward_source_type`** — `text not null default 'combat'` (existing rows backfill to
+  `'combat'`: every payload-carrying return in flight today IS combat's) + closed domain CHECK
+  `('combat','exploration','mining','trade')` matching the docs/ACTIVITIES.md §3 activity ownership table
+  (closed set now; a future activity is an additive constraint change in a new forward-only migration).
+- **`movement_attach_cargo(movement, source, bundle, source_type default 'combat')`** — the old 3-arg signature
+  is DROPPED first (the 0038/0081–0084 signature-evolution idiom; keeping both overloads would make existing
+  3-arg calls ambiguous), then re-created with the defaulted 4th param that writes the column. Every existing
+  caller — `process_combat_ticks`, latest `0046:185`, a 3-arg call bound by name at runtime — keeps working
+  verbatim via the default; combat callers are untouched.
+- **`process_fleet_movements`** — re-created from its latest shipped body (`0030:36`, grep-confirmed: no later
+  migration re-defines it or `movement_attach_cargo`; `0032/0041/0046` only re-define the CALLER
+  `process_combat_ticks`) **byte-identical except** the deposit call — `reward_grant(m.reward_source_type, …)`
+  instead of the literal `'combat'` — and that call's two-line comment, which claimed combat-specificity and
+  would otherwise contradict the code it annotates.
+- **ACL preserved (anti-cheat; no new client execute grants):** the re-created 4-arg `movement_attach_cargo`
+  gets the explicit internal revoke (`from public, anon, authenticated` — 0093 idiom; the DROP discarded the old
+  signature's ACL); `process_fleet_movements` keeps its ACL through CREATE OR REPLACE with a defense-in-depth
+  re-assert (0070 idiom). Neither had — nor gains — any client or service_role grant (grep: no `src/`, no
+  client RPC, no verify-runner grant; cron + SECURITY DEFINER orchestrators invoke them as owner).
+
+**Combat behavior unchanged.** Same column default, same attach default, same deposit semantics and timing law
+(pending while out, secured once on home arrival, forfeited on destruction), same idempotency
+(`reward_grants UNIQUE (source_type, source_id)`, 0040). No flag added, read, or flipped; no activity enabled;
+exploration remains entirely unbuilt/dark after this slice.
+
+**State.** Forward-only. Migration `0096` is now the highest-numbered file; `0001–0095` unedited.
+`docs/SYSTEM_BOUNDARIES.md` synced in the SAME step: the Movement row now names `movement_attach_cargo(…,
+source_type='combat')` as the internal shared carrier, and the §3 return-arrival edge now reads
+`Reward.grant(reward_source_type, bundle)` (activity-agnostic; today always `'combat'`). Sole writers unchanged:
+Movement remains the sole `fleet_movements` writer (`movement_attach_cargo` is Movement-owned;
+`process_fleet_movements` remains the only return-branch writer) and `reward_grant` remains the only depositor —
+no new cross-system edge, call graph unchanged and acyclic. `docs/ACTIVITIES.md` untouched (it already describes
+this target state). `main` untouched; no frontend, no workflow, no verifier change.
+`npm run build` green (`tsc -b && vite build`, 141 modules); `verify:m3`/`verify:m4` fail only on
+`fetch failed` (no reachable Supabase from this sandbox) and `verify:m45` needs `SUPABASE_SERVICE_ROLE_KEY` —
+the same environmental posture recorded by the 2026-07-03 entries; no code/assertion failure.
+
+**Bugs / fixes**
+- _(none — pure carrier refactor; the deposit path's combat literal was a latent Phase-11 blocker, removed
+  before any exploration code exists.)_
+
+---
+
 ## 2026-07-03 — Trade-economy cleanup audit: ROADMAP Phase-10 doc-sync (docs-only; one stale figure fixed)
 
 **Request.** Final auto-cleanup/audit pass for the trade-economy milestone: verify the branch is in the clean

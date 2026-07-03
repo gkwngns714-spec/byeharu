@@ -55,7 +55,7 @@ server-side functions — **never** by directly changing another system's tables
 | **World State** | zone_state, location_state | `worldstate_register_presence(loc)`, `worldstate_unregister_presence(loc)`, `worldstate_tick()` | touch fleets/combat/rewards |
 | **Base** | bases, base_units, base_resources | `initialize_new_player()`, `base_reserve_units(base,units)`, `base_merge_units(base,units)`, `base_add_resources(base,rewards)` *(only Reward calls this)*, `base_spend_resources(base,resource,amount)` *(only Production calls this)* | movement/combat logic |
 | **Fleet** | fleets, fleet_units | `fleet_create(...)`, `fleet_set_moving/present/returning/complete/destroy(...)` *(state-guarded)*, `fleet_combat_stats(fleet)`, `fleet_sync_quantities(fleet,counts)`, `fleet_get_power(fleet)` | write base_/combat_/movement tables |
-| **Movement** | fleet_movements | `movement_create(fleet,origin,target,mission)`, `process_fleet_movements()` | combat math · spawn pirates · rewards · unit losses · victory/defeat |
+| **Movement** | fleet_movements | `movement_create(fleet,origin,target,mission)`, `movement_attach_cargo(movement,source,bundle,source_type='combat')` *(internal; attaches the pending `{metal?, items[]}` bundle + its activity-agnostic `reward_source_type` to the return movement — the ONE shared carrier every activity reuses)*, `process_fleet_movements()` | combat math · spawn pirates · rewards · unit losses · victory/defeat |
 | **Presence** | location_presence | `presence_create(fleet,loc,activity)`, `presence_request_leave(presence)`, `presence_complete/destroy/expire(...)` | combat damage · resource writes · map writes |
 | **Activity** *(no table — router)* | — | `activity_start(presence,type)` → `hunt_pirates`→Combat, `none`→no-op | own gameplay state; MVP only dispatches |
 | **Combat** | combat_encounters, combat_rounds | `combat_create_encounter(presence)`, `process_combat_ticks()`, `combat_set_retreating(enc)` | move fleets (except request return via Movement) · edit map · add resources directly · mining/trade/captains |
@@ -95,7 +95,9 @@ mission allowed · fleet limit · not-already-assigned)
 - outbound arrival → `Movement.mark_arrived` → `Fleet.set_present` → `Presence.create`
   *(→ `WorldState.register_presence` + `Activity.start` → `Combat.create_encounter` for hunt)*
 - return arrival → `Movement.mark_arrived` → `Base.merge_units` → `Fleet.complete`
-  *(→ `Reward.grant(bundle)` secures the carried `{metal?, items[]}` once: metal →
+  *(→ `Reward.grant(reward_source_type, bundle)` secures the carried `{metal?, items[]}` once
+  under the movement's activity-agnostic `reward_source_type` — today always `'combat'`;
+  exploration/mining/trade reuse the same carrier additively: metal →
   `Base.add_resources`, items → `Inventory.inventory_deposit`)*
 
 **`process_combat_ticks()`** *(cron 10–15s · locked · idempotent on `last_resolved_at`/`ended_at`)*
