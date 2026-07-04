@@ -5,6 +5,82 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — LOCATION-INVEST-P18 SLICE 1 — the sole-writer invest command (`invest_in_location` → `location_investment_invest`) + min-amount tunable
+
+**Request.** The Phase-18 core write path: ONE new forward-only migration adding the SOLE-writer invest
+command (the only path that writes `location_investments`) + its one consumed tunable, with same-step
+doc-sync. Reuse the established idioms — the Trade Market `market_buy` command (0089) + the shared
+docked-location resolver `mainship_resolve_docked_location` (0092) for ownership + dock resolution, the
+Wallet sink `wallet_debit`/`wallet_ensure` (0093) for the one-way debit, and the two-layer
+wrapper→private + advisory-lock-before-replay + verbatim-replay idempotency of
+`craft_module`/`production_craft_module` (0109). Still NO read surface, NO frontend, NO cron, NO flag
+flipped true. Also fold in the STEP-1 reviewer nit: move the §1 `location_investments` matrix row to
+sit after `ranking_standings` (restore Ranking's contiguous two-row group).
+
+**Self-approved locked design (this slice).**
+- **DOCKED-LOCATION-GATED.** An investment targets the ship's CURRENTLY DOCKED location, resolved
+  server-side via `mainship_resolve_docked_location` (never a client-supplied location) — not docked →
+  `not_docked`. The resolved id is a real `locations(id)` (from the present/location fleet), so the
+  ledger FK is satisfied by construction.
+- **LEDGER-ROW-AS-RECEIPT idempotency.** No separate receipts table — the `location_investments` row
+  IS the receipt. A per-player advisory lock `('location_investment', player)` is taken BEFORE the
+  replay check (the 0109/0078 idiom); a replayed `(player, request_id)` returns the original row's
+  envelope verbatim (0089/0109 trade-receipt semantics, no payload-conflict check). A raced
+  `unique (player_id, request_id)` trip is caught in a sub-block: the savepoint rolls back that call's
+  debit (NO double-charge) and replays the now-existing row.
+- **ONE-WAY SINK.** `wallet_debit(player, amount)` DOWNWARD (false → `insufficient_credits`, no row
+  written); on success exactly ONE append. There is NO `wallet_credit` / NO withdrawal / NO payout
+  anywhere in Investment — score/development can never be farmed (ROADMAP :93 guard "no infinite
+  exploit").
+- **MIN-AMOUNT FLOOR.** `location_investment_min_amount = '1'` (anti-dust/spam), consumed THIS slice
+  (no dead config); amount `<= 0` or `< floor` → `invalid_amount`, nothing spent.
+- **REQUEST_ID TYPE BRIDGE (deviation, reported).** Per the directive, the command's `p_request_id`
+  is `uuid` (same type as `market_buy`'s, 0089:66 — intrinsically bounded, null-only check). The
+  shipped ledger column `location_investments.request_id` is `text` (0132, the `module_craft_receipts`
+  idiom, which pairs with a text-param command). 0132 is forward-only / not editable, so the command
+  bridges at the single ledger boundary with an explicit `p_request_id::text` cast (uuid→text is
+  canonical + deterministic, so the idempotency key is preserved). Documented in-line.
+- **ENVELOPES** are code-keyed (`{ok:false, code:'…'}`) — the 0131 posture; no localized message layer
+  this slice (presentation belongs to the read/UI slice). The private writer returns well-formed code
+  envelopes; the wrapper passes them through verbatim.
+
+**Work done — `supabase/migrations/20260618000133_location_invest_p18_invest_command.sql`:**
+- **(a)** seed `location_investment_min_amount = '1'` (`on conflict (key) do nothing`). No
+  season-window tunables (those belong to the read slice).
+- **(b1)** private `location_investment_invest(uuid, uuid, numeric, uuid)` — SECURITY DEFINER, the SOLE
+  writer: dark gate FIRST → request_id null-check → per-player advisory lock → verbatim replay →
+  `mainship_resolve_docked_location` → amount/min-floor validation → `wallet_debit` → ONE ledger row →
+  success envelope; unique-violation sub-block backstop replays without double-debit.
+- **(b2)** public `invest_in_location(uuid, numeric, uuid)` — authenticated wrapper: auth → dark gate
+  (anti-probe) → `mainship_resolve_owned_ship` (`ship_not_owned`) → delegate → pass through.
+- **(c)** ACL per the 0109 targeted idiom: private revoked from public/anon/authenticated + granted to
+  service_role; public revoked from public/anon + granted to authenticated. No blanket relock (the
+  0064 default-privileges revoke already denies new functions; recent migrations use per-function ACL).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md` §1 — the `location_investments` sole writer is now
+the concrete `location_investment_invest` (via `invest_in_location`), and the row was MOVED to sit after
+`ranking_standings` (the STEP-1 reviewer nit; Ranking's two rows are contiguous again). §2 Location
+Investment — recorded both functions and replaced "no cross-system edge yet" with the now-REALIZED
+DOWNWARD edges (Wallet `wallet_debit` · Main Ship `mainship_resolve_owned_ship` +
+`mainship_resolve_docked_location` · Reference/Config `cfg_bool` + `cfg_num`); nothing calls into
+Investment → acyclic. Added the "mutate `location_investments` outside `location_investment_invest`"
+Must-NOT (the sole-writer law).
+
+**Human gates preserved.** `location_investment_enabled` stays `'false'` (dark — both the wrapper gate
+and the writer's first check reject every call today). No flag flipped true; migrations `0001–0132`
+untouched (forward-only, new file only); backend-only (no `src/features/**`); no cron scheduled; no
+`main` touch; no merge/deploy. SAFE FOR HUMAN MERGE REVIEW.
+
+**Verify.** SQL (no `node --check`): inspected against the 0089 (`market_buy` ownership + docked +
+`wallet_debit` + code envelopes) and 0109 (two-layer wrapper, advisory-lock-before-replay,
+verbatim-replay, per-function ACL) idioms — signatures verified against source
+(`mainship_resolve_owned_ship(uuid,uuid)` 0081, `mainship_resolve_docked_location(uuid)` 0092,
+`wallet_debit(uuid,numeric)` 0093, `market_buy` request_id `uuid` 0089). `git status --porcelain` shows
+the ONLY changes are the new migration + `docs/SYSTEM_BOUNDARIES.md` + `docs/DEV_LOG.md`; no shipped
+`0001–0132` migration edited, no flag flipped.
+
+---
+
 ## 2026-07-04 — LOCATION-INVEST-P18 SLICE 0 — dark flag + the `location_investments` root table (foundations only)
 
 **Request.** Begin Phase 18 (Location investment — ROADMAP :93, "seasonal investment score vs
