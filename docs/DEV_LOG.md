@@ -5,6 +5,51 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P15 SLICE B — `captain_instances` schema + the single Captain mint writer (inert AND dark)
+
+**Request.** Phase 15 slice B, mirroring the P13 instances slice (0108): ONE new forward-only
+migration creating the instances table + the ONE internal-leaf sole writer, plus same-step
+doc-sync. NO assignment table, NO receipts, NO commands, NO read surfaces, NO frontend, NO verify
+script in this slice.
+
+**Work done:**
+- **NEW `supabase/migrations/20260618000118_captain_p15_instances_schema.sql`** (0001–0117
+  unedited):
+  - `captain_instances` — INDIVIDUAL rows, never counts (no quantity column by design): `id uuid`
+    PK `gen_random_uuid()` · `player_id` FK `auth.users` on delete cascade · `captain_type_id` FK
+    `captain_types` · **`mint_key text not null unique` (the idempotency spine)** · `created_at`;
+    player index `(player_id, created_at desc)`; RLS on with the own-row SELECT policy +
+    `grant select to authenticated` ONLY — no write policy/grant (the 0108:42–63 shape exactly).
+    NO assignment columns — assigned-ship/slot state belongs to the later assignment slice's own
+    junction table (the `ship_module_fittings` shape), forward-only there.
+  - `captains_mint_instance(p_player_id uuid, p_captain_type_id text, p_mint_key text)` — THE ONE
+    writer of `captain_instances` (internal leaf, SECURITY DEFINER): validates the mint key +
+    catalog id with exception-style errors (no envelopes — the 0039/0108 internal-leaf idiom),
+    inserts `on conflict (mint_key) do nothing`, and on replay returns the EXISTING instance id
+    for that key (the 0108:95–104 idiom — the same key can never mint twice). Targeted ACL:
+    revoke from public/anon/authenticated, `grant execute to service_role` only.
+  - **LOCKED DECISION (recorded in the migration header): no acquisition path is built in this
+    slice** — nothing calls `captains_mint_instance` yet. It is the future downward leaf for
+    whatever grants captains (Phase-16 progression consuming inventory, or a later dark grant
+    command), exactly as `modules_mint_instance` (0108) predated its craft command (0109) by one
+    slice. The system is therefore inert AND dark: no client-reachable surface exists, and
+    `captain_assignment_enabled` (0117) stays `'false'` besides — no row can exist today.
+- **`docs/SYSTEM_BOUNDARIES.md`** (same step): §1 matrix gains the `captain_instances` row in the
+  `module_instances` row's exact shape (system = Captain, sole writer = `captains_mint_instance`,
+  idempotent by the NOT NULL UNIQUE `mint_key`, service_role-only internal leaf); and the **§2
+  Captain system row is added NOW** — the system has its first writer, so the row is real (the
+  0108 precedent; slice A had deferred it). Contract stated: owns captain instance state + the
+  FUTURE assignment state, reads only its own `captain_types` catalog (downward, intra-system —
+  no cross-system edge exists yet), no inbound client surface, everything dark behind
+  `captain_assignment_enabled`.
+- **Verify:** `npm run build` green (SQL-only slice — confirms nothing else drifted). §5
+  invariant checklist re-read against the migration: `captain_instances` has exactly ONE writing
+  system (the mint leaf; no client write path — select-only policy/grant); no new cross-system
+  call edge (the helper reads only Captain's own catalog — graph stays acyclic); Activity stays
+  table-less; reward path and combat source-of-truth untouched; no flag flipped.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P15 SLICE A — dark flag `captain_assignment_enabled` + the `captain_types` catalog (foundations only)
 
 **Request.** Phase 15 "Captain instances + assignment" (ROADMAP :90) slice A, mirroring the
