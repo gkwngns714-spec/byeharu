@@ -5,6 +5,76 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — LOCATION-INVEST-P18 SLICE 0 — dark flag + the `location_investments` root table (foundations only)
+
+**Request.** Begin Phase 18 (Location investment — ROADMAP :93, "seasonal investment score vs
+persistent state", guard "no infinite exploit"), mirroring the proven RANKING-P17 slice-0 shape
+(migration `0127`) exactly. ONE new forward-only migration establishing the dark capability gate + the
+Location-Investment-owned persistent root table, with same-step doc-sync. NO writer function, NO invest
+command, NO read RPC, NO aggregate read surface, NO frontend, NO cron, NO tunables beyond the flag,
+NOTHING client-writable, NO flag flipped true.
+
+**Self-approved locked design (owner-directed, recorded here so later slices are grounded).** Location
+Investment is a NEW, DARK, downward **LEAF** owning exactly ONE persistent table — the append-only,
+monotonic per-contribution ledger `location_investments`.
+1. **Persistent state** (a location's "development") = the all-time SUM of contributions per
+   `location_id`, DERIVED from the ledger — never a denormalized column (the 0131 "derived, never
+   stored" stance).
+2. **Seasonal score** = a player's contributions SUMMED within the CURRENT season WINDOW, the window
+   derived DETERMINISTICALLY from config (a period length + epoch tunable) in the consuming slice — NO
+   season table, NO season-open writer, so it does **not** duplicate Ranking's `ranking_season_open`
+   machinery (the no-duplication hard rule) and adds **no** season coupling to Ranking. Reset-by-season
+   (ROADMAP law) is honored STRUCTURALLY: a new window resets the windowed SCORE read while the ledger
+   (persistent state) is never touched. Those tunables are NOT seeded this slice (no dead config) —
+   they land in the slice that consumes them.
+3. **No infinite exploit** (the ROADMAP guard) = investment is a strict ONE-WAY SINK: `amount` CHECK
+   (>0); the future invest command debits credits via `wallet_debit` DOWNWARD then appends a row; NO
+   withdrawal path, NO payout returning value → score/development can never be farmed in a loop.
+4. Edges (all DOWNWARD, acyclic, realized in later slices): Investment → Wallet (`wallet_debit` sink) ·
+   Map (read `locations`) · Reference/Config (`cfg_bool`/`cfg_num`). Nothing calls into Investment.
+
+**Work done — `supabase/migrations/20260618000132_location_invest_p18_flag_and_ledger.sql`** (mirrors
+`0127` structure + header discipline):
+- **(a) dark gate** — `insert into game_config ('location_investment_enabled', 'false', …)
+  on conflict (key) do nothing` (the exact 0097/0102/0107/0117/0124/0127 slice-0 flag idiom); the
+  description records the server-authoritative reject-before-any-read posture every future Investment
+  RPC must adopt and that the UI stays hidden independently (fails closed both sides). No other config
+  value seeded this slice.
+- **(b) `location_investments`** — the append-only per-contribution ledger. Receipt idiom matched
+  POINT-FOR-POINT to `module_craft_receipts` (0109): `player_id uuid not null references auth.users(id)
+  on delete cascade`, `request_id text not null`, `unique (player_id, request_id)` (player-scoped,
+  non-spatial — NOT the ship-scoped trade keying). Plus `investment_id uuid pk default
+  gen_random_uuid()`, `location_id uuid not null references locations(id)` (Map target; `locations.id`
+  confirmed PK), `amount numeric not null check (amount > 0)`, `invested_at`/`created_at timestamptz
+  default now()`. Two supporting indexes: `(location_id, invested_at)` (sum-by-location = persistent
+  development) and `(player_id, invested_at)` (sum-by-player-within-window = seasonal score). RLS
+  enabled; ONE owner-read select policy (`player_id = auth.uid()`) + `grant select to authenticated`
+  ONLY — NO insert/update/delete policy, NO write grant → clients cannot mutate; sole writer is
+  Investment's own future SECURITY DEFINER command. `comment on table` captures append-only/monotonic,
+  the persistent-vs-seasonal split, the one-way-sink rationale, and the dark gate. No function created
+  → no execute-surface relock needed (0054/0127 precedent). The table is inert — no RPC/reader/writer
+  references it yet.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md` §1 matrix gains the `location_investments` row
+under the NEW **Location Investment** system (sole writer = future invest command, owner read, DARK,
+append-only, persistent-vs-seasonal derivation), and §2 gains the **Location Investment** system row (a
+NEW DARK downward LEAF: owns `location_investments`; edges all DOWNWARD/acyclic — Wallet · Map ·
+Reference/Config; Must-NOT includes withdraw/pay out, write another system's table, store a
+denormalized aggregate, delete/truncate to reset, duplicate Ranking's season machinery, or invest while
+the gate is off; explicitly notes this slice adds NO cross-system edge yet).
+
+**Human gates preserved.** `location_investment_enabled` stays `'false'` (dark). No flag flipped true;
+migrations `0001–0131` untouched (forward-only, new file only); backend-only (no `src/features/**`); no
+cron scheduled; no `main` touch; no merge/deploy. SAFE FOR HUMAN MERGE REVIEW.
+
+**Verify.** SQL (no `node --check`): inspected against the `0127` idiom — flag insert, table shape, RLS
+posture, grants, and `comment on table` all match the slice-0 precedent; receipt columns match
+`module_craft_receipts` (0109) exactly. `git status --porcelain` shows the ONLY changes are the new
+migration + `docs/SYSTEM_BOUNDARIES.md` + `docs/DEV_LOG.md`; no shipped `0001–0131` migration edited, no
+flag flipped.
+
+---
+
 ## 2026-07-04 — RANKING-P17 CLEANUP — correct two stale figures in the `verify-harness.mjs` header (docs-in-code only)
 
 **Request.** Final Phase-17 Ranking auto-cleanup pass. The STEP 1 read-only audit
