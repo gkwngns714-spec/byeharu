@@ -5,6 +5,69 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — PHASE20-POLISH SLICE 4 — the UI asset-key vocabulary `ui_asset_catalog` (static reference table + seed) + its flag-gated read surface `get_ui_asset_catalog(...)` (`0142`)
+
+**Request.** The portrait/icon Reference catalog — the server-authoritative asset-key vocabulary the
+Phase-20 frontend polish will render. ONE forward-only migration + same-step doc-sync. No flag flipped,
+no `src/`, no verifier/`package.json` change, no cron, no shipped-migration edit, no git.
+
+**Design decision (self-approved).** ONE static reference table `ui_asset_catalog` discriminated by
+`asset_kind ('portrait'|'icon')`, NOT two near-identical parallel tables — portraits and icons share
+the same shape (key → display metadata → asset ref), so a single leaf catalog avoids a duplicated
+parallel system (DRY / no-spaghetti; a future third kind is an additive CHECK change, not a new table).
+Server-owned VOCABULARY, frontend-owned FILES: server rows reference a stable `asset_key` (e.g.
+`world_events.severity 'critical'` → an icon key; a future captain → a portrait key); the image files +
+key→file resolution live in the FRONTEND (`asset_ref` = the stable identifier the client resolves).
+Pure static leaf: SEED-ONLY, NO runtime writer (edited only by forward-only seed migrations, like the
+static Map — no sole-writer function, no second writer anywhere), references nothing, exposed only
+through a flag-gated fail-closed read RPC so the ENTIRE Phase-20 surface stays uniformly dark.
+
+**Work done — `0142_phase20_ui_asset_catalog.sql` (forward-only; edits NO shipped migration
+`0001–0141`).**
+- **(a) Table.** `ui_asset_catalog`: `asset_kind` (`portrait`/`icon` CHECK), `asset_key`, PK
+  `(asset_kind, asset_key)`, `display_name`, `asset_ref` (stable frontend identifier — not a file
+  path/binary), `category`, `sort_order` default 0, `is_active` default true (retire without deleting),
+  `created_at`/`updated_at`. SERVER-ONLY (the 0103 `mining_fields` / 0139 `world_events` posture): RLS
+  enabled, `revoke all … from public, anon, authenticated` — no client read, no client write, NO
+  runtime writer.
+- **(b) Seed** (`on conflict (asset_kind, asset_key) do nothing`; minimal, no bloat): five icons —
+  `severity_info`/`severity_warning`/`severity_critical` (pairing with `world_events.severity`) +
+  `event_notice`/`event_world_state`; three portraits — `captain_default`/`captain_veteran`/
+  `faction_pirate`. `asset_ref` values are stable frontend identifiers (e.g. `icon.severity.critical`),
+  not file paths.
+- **(c) `get_ui_asset_catalog(p_asset_kind text default null)` → `jsonb`**, `stable security definer`,
+  `set search_path = public`, reusing the exact 0141 fail-closed envelope: while
+  `phase20_polish_enabled=false` → return `{ok:true, assets:[]}` WITHOUT reading the table; enabled →
+  active rows (`is_active`), optionally filtered by `p_asset_kind` when non-null, ordered
+  `(asset_kind, sort_order, asset_key)`. ACL `revoke … from public, anon; grant … to authenticated` —
+  read-only, no write path.
+
+**Boundary discipline.** `ui_asset_catalog` is Reference/Config (seed-migration only, no runtime writer,
+no sole-writer function) — no second writer anywhere. `get_ui_asset_catalog` reads ONLY its own table +
+the master flag and references nothing → a pure downward leaf, no new cross-system call-edge, acyclic;
+grants nothing, writes nothing.
+
+**Doc-sync (this step).** `docs/SYSTEM_BOUNDARIES.md`: §1 gains `ui_asset_catalog` under Reference/Config
+(seed-migration only, NO runtime writer; server-only read); §2 gains a **UI Assets** read-leaf exposing
+`get_ui_asset_catalog` (flag-gated → empty while dark; authenticated-only; reads only its own table +
+the flag; references nothing → pure leaf). Folded in the one-line doc-consistency fix noted last review:
+the World Events §2 version tag bumped `(0139/0140)` → `(0139/0140/0141)`, and the §1 `world_events`
+read-access cell updated from "future read RPC" to the now-shipped `get_world_events` (0141). This
+DEV_LOG entry.
+
+**Retirement.** None — a permanent static catalog + permanent read surface. `phase20_polish_enabled`
+remains the permanent Phase-20 master gate (retires only on human activation).
+
+**Posture / gates.** Flips NO flag — `phase20_polish_enabled` still `'false'` and untouched (the read
+RPC only reads it to gate); edits no `0001–0141`; table has NO client policy and NO runtime writer
+(seed block only); the read RPC is granted to `authenticated` only (no anon/public execute, no
+write/insert path); no `src/`, no cron, no git. Backend-only and dark/undeployed, so **no lit DB run** —
+a lit apply proving dark→empty and enabled→seeded-vocabulary is the human owner's activation-checklist
+job (run with the flag flipped on a DEV DB). The M2/M3/M4/M4.5 engine tests are unaffected — no engine
+path reads `ui_asset_catalog` or calls `get_ui_asset_catalog`.
+
+---
+
 ## 2026-07-04 — PHASE20-POLISH SLICE 3 — the World Events flag-gated READ surface `get_world_events(...)` (fail-closed, authenticated-only) (`0141`)
 
 **Request.** The consumer of `world_events` — the flag-gated, fail-closed client READ surface — after
