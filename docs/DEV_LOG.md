@@ -5,6 +5,60 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — PHASE20-POLISH SLICE 3 — the World Events flag-gated READ surface `get_world_events(...)` (fail-closed, authenticated-only) (`0141`)
+
+**Request.** The consumer of `world_events` — the flag-gated, fail-closed client READ surface — after
+the producer (`0140`), mirroring the command→read-surface order. ONE forward-only migration + same-step
+doc-sync. No flag flipped, no `src/`, no verifier/`package.json` change, no cron, no shipped-migration
+edit, no git.
+
+**Design decision (self-approved).** `get_world_events(p_location_id, p_zone_id)` takes the display
+context as PARAMETERS the client already holds from the map, rather than resolving the player's ship
+position server-side. World events are PUBLIC presentational world info (no per-player secret, no cheat
+vector — unlike the hidden `exploration_sites`/`mining_fields` that MUST resolve server-side), so a
+parameterized read keeps World Events a PURE downward LEAF: it reads ONLY its own `world_events` table +
+the `phase20_polish_enabled` master flag, adding NO cross-system call-edge to Main-Ship/Presence. The
+server stays authoritative over WHAT IS SHOWN (the flag gate + `is_active` + the active-time-window),
+the only authority that matters for presentational info.
+
+**Work done — `0141_phase20_world_events_read_surface.sql` (forward-only; edits NO shipped migration
+`0001–0140`).** `get_world_events(p_location_id uuid default null, p_zone_id uuid default null)` →
+`jsonb`, `stable security definer`, `set search_path = public` (reads the RLS-locked, client-revoked
+`world_events` and returns curated rows). Reuses the exact 0087/0101/0106 read-surface convention (jsonb
+`{ok, events:[...]}` envelope — no new convention):
+- **Fail-closed FIRST.** `if not coalesce(cfg_bool('phase20_polish_enabled'), false)` → return
+  `{ok:true, events:[]}` immediately, WITHOUT reading the table (the server-rejected-while-dark proof;
+  the read-side consumer of the master flag). World events are public presentational info, so the dark
+  answer is an empty list (frontend renders nothing), not a reject envelope.
+- **Live + in-scope filter (enabled).** Returns only rows that are BOTH currently LIVE (`is_active` AND
+  `starts_at <= now()` AND (`ends_at is null` OR `ends_at > now()`)) AND IN SCOPE (`scope='global'`
+  always; `scope='zone'` only when `zone_id = p_zone_id`; `scope='location'` only when
+  `location_id = p_location_id`). Presentational columns only (id, event_type, scope, zone_id,
+  location_id, title, body, severity, starts_at, ends_at). Deterministic order: severity rank
+  (critical → warning → info) then `starts_at desc`.
+- **ACL.** `revoke execute … from public, anon; grant execute … to authenticated;` (the map/dashboard
+  are behind auth — the 0087/0101/0106 auth-guarded read idiom). No write path is exposed.
+
+**Boundary discipline.** World Events stays a downward LEAF: `get_world_events` reads ONLY `world_events`
++ the master flag and writes nothing; the client passes its display context, so NO new cross-system
+call-edge is introduced (no Main-Ship/Presence ship-position resolve). Acyclic; grants nothing.
+
+**Doc-sync (this step).** `docs/SYSTEM_BOUNDARIES.md`: §2 World Events row gains `get_world_events` under
+"exposes" (read-only, flag-gated → empty while dark; reads only `world_events` + the master flag; client
+passes display context so no new call-edge; still a downward leaf). This DEV_LOG entry.
+
+**Retirement.** None — a permanent read surface. `phase20_polish_enabled` remains the permanent Phase-20
+master gate (retires only on human activation).
+
+**Posture / gates.** Flips NO flag — `phase20_polish_enabled` still `'false'` and untouched (this RPC
+only reads it to gate); edits no `0001–0140`; granted to `authenticated` only (no anon/public execute,
+no write/insert path); no `src/`, no cron, no git. Backend-only and dark/undeployed, so **no lit DB
+run** — a lit apply proving dark→empty and enabled→live+in-scope filtering is the human owner's
+activation-checklist job (run with the flag flipped on a DEV DB). The M2/M3/M4/M4.5 engine tests are
+unaffected — no engine path calls `get_world_events`.
+
+---
+
 ## 2026-07-04 — PHASE20-POLISH SLICE 2 — the World Events sole-writer functions `world_events_publish` / `world_events_set_active` (service-role, idempotent) + the `dedup_key` idempotency column (`0140`)
 
 **Request.** Give `world_events` its promised sole writer (the producer) BEFORE the read surface (the
