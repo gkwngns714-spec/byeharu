@@ -5,6 +5,74 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — FITTING-P14 SLICE B — `ship_module_fittings` + the single Fitting writer `0112` (`fitting_apply`; FIT and UNFIT through THE ONE writer)
+
+**Request.** Implement slice B of Phase 14: ONE new forward-only migration with the fitting-state
+table and THE ONE Fitting writer. NO RPC wrapper, NO receipts table, NO adapter change, NO
+frontend, NO verify script this slice. Idioms matched by re-reading the shipped sources first:
+`0108` (module_instances schema + mint writer — the slice this one mirrors), `0109` (the
+per-player advisory-lock key derivation), `0043` (main-ship ownership shape + `module_slots`).
+
+**Work done — NEW `supabase/migrations/20260618000112_fitting_p14_fittings_schema.sql`**
+(migration head moves **0111 → 0112**; `0001–0111` unedited):
+- **`ship_module_fittings`** — Fitting-owned junction state:
+  **`module_instance_id uuid PRIMARY KEY`** FK → `module_instances` on delete cascade (**the PK IS
+  the invariant**: one module instance is fitted to at most one ship, ever — a schema fact, not
+  writer discipline), `main_ship_id` FK → `main_ship_instances` on delete cascade, `player_id` FK →
+  `auth.users` on delete cascade, `fitted_at timestamptz`, plus a `(main_ship_id)` index (the
+  capacity sum + the future adapter read). RLS posture = 0108 verbatim: own-row SELECT only
+  (`player_id = auth.uid()`), select granted to authenticated, NO write policy/grant — no client
+  write path exists.
+- **`fitting_apply(p_player uuid, p_module_instance_id uuid, p_main_ship_id uuid) returns jsonb`**
+  — THE sole writer of `ship_module_fittings` (SECURITY DEFINER; service_role-only via the 0108
+  relock idiom). **DECISION — fit/unfit in ONE writer:** `p_main_ship_id` NOT NULL = FIT, NULL =
+  UNFIT; one sole writer per table covers ALL mutations of that table (insert AND delete) — two
+  writer functions would be two writers. The writer enforces the STRUCTURAL invariants itself so no
+  future caller can violate them, in order: (1) per-player
+  `pg_advisory_xact_lock(hashtext('module_fitting'), hashtext(player))` FIRST (the exact 0109
+  key-derivation idiom — serializes all of a player's fitting mutations; since every fitting on a
+  ship belongs to the ship's owner, per-player IS per-ship-fit-set, so the capacity read cannot be
+  raced); (2) module instance exists AND `module_instances.player_id = p_player`
+  (`module_not_owned` — another player's instance answers like a nonexistent one); on FIT: (3) ship
+  exists AND owned (`ship_not_owned`; also fixes owner-consistency — row.player = module owner =
+  ship owner); (4) `already_fitted` reject NAMING the current ship — an already-fitted module is
+  never silently re-homed (explicit unfit first; the PK backstops); (5) the CAPACITY HARD CAP —
+  Σ `module_types.slot_cost` currently fitted to the ship + the new module's `slot_cost` ≤
+  `main_ship_instances.module_slots`, else `insufficient_slots` + `{used, cost, limit}` — a hard
+  rejection mirroring 0044:112–115, NEVER a clamp; (6) the one insert. UNFIT of a non-fitted
+  module → distinct `not_fitted` (idempotency ENVELOPES are the slice-C command's receipt-replay
+  job, not the writer's). Envelopes are the 0104/0109 private-writer family (`{ok, reason, …}` —
+  the slice-C wrapper maps reasons to client codes); validation failures write nothing.
+  **GAME-RULE checks deliberately live in the slice-C command layer, NOT here:** the
+  `module_fitting_enabled` dark gate, the ship-must-be-home spatial rule, and receipt-keyed
+  idempotency — this writer owns only table invariants and is unreachable by clients
+  (service_role-only) until that gated command exists, so the feature stays fully dark.
+- **ACL (0108:108–113 relock idiom verbatim):** execute revoked from public/anon/authenticated,
+  granted to service_role only. No existing grant touched.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §1 gained the `ship_module_fittings` row
+(**Fitting**, owner; sole writer = `fitting_apply`, service_role-only, FIT+UNFIT through the one
+writer, called by nothing yet); §2 gained the new **Fitting** leaf-system row (owns
+`ship_module_fittings`; the full writer semantics; edges all DOWNWARD — Fitting → Modules (read
+`module_instances`) · Main Ship (read ownership + `module_slots`) · Reference/Config (read
+`module_types.slot_cost`); no system depends on Fitting yet — the Phase-14 adapter slice will later
+add the Expedition-stats → Fitting downward READ edge; forbidden column bans a second mutation
+path, clamping, silent re-homing, client exposure, and gating game rules in the writer).
+
+**State.** `npm run build` green (no `src/` change was made — confirmed). Migration head **0112**;
+`module_fitting_enabled='false'` — still fully dark: the ONE writer is service_role-only with ZERO
+callers (dead-until-slice-C by design, documented as such), the table has no client write path, and
+no flag was flipped, no live DB write, no workflow touched. **DB-apply posture (honest, unchanged
+from P11–P13):** no psql/docker/supabase CLI in this sandbox — the migration was hand-verified
+line-by-line against the shipped idioms it copies (0108 table+RLS+ACL posture, 0109 advisory-lock
+key derivation, 0043 ownership reads, 0044 hard-cap semantics); live assertions run in the owner's
+environment and will be covered by the later `verify:fitting` dark-posture script. PR-ready on
+`autopilot/20260703-064048`, `main` untouched. Next: slice C (the dark two-layer fit/unfit command
+— `module_fitting_enabled` gate, player-scoped receipts, ship-must-be-home rule, delegating to this
+writer).
+
+---
+
 ## 2026-07-04 — FITTING-P14 SLICE A — locked design decisions + dark flag/stats-catalog migration `0111` (`module_fitting_enabled` + `module_types.slot_cost`/`stats_json`)
 
 **Request.** Begin Phase 14 "Module fitting" (ROADMAP `:89` — "`fit_module_to_ship` |
