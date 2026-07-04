@@ -5,6 +5,84 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — WORLD-BALANCE-P19 SLICE 1 — PIRATE PRESSURE (dark): wire the `defeat_pressure` seam in `worldstate_tick()` (`0135`)
+
+**Request.** Phase 19 first mechanic: pirate pressure, dark-gated, by EXTENDING the existing World
+State tick — ONE forward-only migration `0135` + same-step doc-sync. No flag flip, no new cron, no
+`src/`, no git, no edit to any shipped migration.
+
+**Design (self-approved, grounded in the STEP-0 recon seam).** Pirate pressure is NOT a new system or
+a new column — it is a living reaction on the EXISTING `location_state.pressure` field, delivered by
+re-creating the one World State writer `worldstate_tick()`. It finally wires the long-standing
+`-- defeat_pressure TODO (M5+): add recent-defeat reads from combat_reports` seam left in the tick
+since 0032.
+
+**Work done — `0135`:**
+- **`world_balance_enabled`** — NEW dark master flag, seeded `'false'` (`on conflict do nothing`), the
+  Phase-19 gate. CONSUMED this slice by the tick (not a dead flag): the danger term is gated on it.
+- **`world_balance_defeat_window_seconds`** — NEW tunable, seeded `'3600'` (a one-hour rolling danger
+  memory), consumed this slice.
+- **Reused, NOT re-seeded:** `worldstate_pressure_defeat_increase` (from 0032) scales the danger term.
+- **`worldstate_tick()` re-created** = byte-for-byte the 0034 body EXCEPT the decay TARGET. Old:
+  decay toward `baseline`. New: decay toward `baseline + danger_term`, where
+  `danger_term = 0` unless `cfg_bool('world_balance_enabled')` is true, in which case
+  `danger_term = count(combat_reports at this location with result='defeat' within the window) *
+  worldstate_pressure_defeat_increase`.
+
+**Join key (verified from the real schema, not invented).** `combat_reports` (0016) carries
+`location_id uuid references public.locations (id)` and `result text` (`report_create` copies the
+encounter `status` — `'defeat'` on fleet loss, 0032 — into `result`). So a defeat attributes directly
+to its location: `combat_reports.location_id = location_state.location_id`, filtered `result='defeat'`
+and `created_at >= now() - window`. Only DEFEATS raise pressure; victories/escapes/completions do not.
+
+**Preserved-while-dark invariant (byte-identical output).** With `world_balance_enabled='false'`:
+`v_wb_enabled=false` → the danger-term read is skipped entirely (no `combat_reports` query) →
+`v_danger_term=0` → `v_target = v_baseline` → the decay expression becomes
+`(v_baseline - v_pressure) * v_decay_rate` — the EXACT 0034 line — minus the identical fleet-relief
+term, under the IDENTICAL `least(v_max, greatest(v_min, …))` cap. Reconcile/danger-modifier/zone-rollup
+are untouched from 0034. So a dark tick produces the same `pressure`/`danger_modifier`/`active_fleets`
+writes as today: self-correcting toward baseline, no accumulation, pressure never exceeds
+`worldstate_pressure_max`. When the flag is on, the term is a decay TARGET (not an accumulator), so it
+is self-correcting too — as defeats age out of the window the target falls back to baseline and pressure
+decays back down, always bounded by the same cap.
+
+**New downward read edge (acyclic).** `worldstate_tick()` now READS `combat_reports` DOWNWARD (history,
+read-only) — a NEW edge World State → Report. ACYCLIC: Report writes only `combat_reports` and calls
+nothing (0016), so it cannot call back. World State still writes ONLY `location_state`/`zone_state` and
+never fleets/combat/rewards. This mirrors Combat's pre-existing downward READ of
+`location_state.danger_modifier` (0032), just the other direction into finalized history — not a read of
+active state (Report stays never-a-source-of-truth-for-active-state).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §2 World State contract row updated (target =
+baseline + gated danger term; the downward `combat_reports` read; dark/no-op posture; "must NOT write
+`combat_reports`"); §3 `process_location_state_ticks()` cron note + a new World State forbidden-edges
+line recording the acyclic downward read. `docs/ROADMAP.md`: the Phase-19 row carries no per-phase
+status column (it is a plain scope cell), so it is left UNTOUCHED this slice (noted here per the
+instruction).
+
+**Retirement / activation.** `world_balance_enabled` is a permanent capability gate (the Phase-19
+master flag), not a transitional shim — it "retires" only when the human owner activates Phase 19.
+Lit-path verification (flag on a DEV DB → seed a `'defeat'` report at a location → run
+`worldstate_tick()` → pressure rises toward `baseline + term`, bounded by the cap → age the report out
+of the window → pressure decays back to baseline) is deferred to the human's activation checklist. This
+slice flips NO flag.
+
+**Human gates preserved.** `world_balance_enabled` stays `'false'`; ALL Phase 11–18 flags remain
+`'false'`; migrations `0001–0134` untouched (forward-only — `0135` is new); no new cron (the existing
+60s `process_location_state_ticks()` → `worldstate_tick()` path is reused verbatim); backend-only (no
+`src/**`); no `game_config` runtime write; no lit-path/production DB run; no `main` touch; no
+merge/deploy/workflow dispatch — activation is the human owner's decision. SAFE FOR HUMAN MERGE REVIEW.
+
+**Verify.** Migration is forward-only: `0135` is a new file; `git status` shows the only changes are the
+new `0135`, `docs/SYSTEM_BOUNDARIES.md`, and this DEV_LOG entry — no shipped migration edited. The
+byte-identical-while-dark property is established by the logic walk above. **The M2–M4.5 / M5 verify
+suites could NOT be run locally**: they connect to a live Supabase (service-role key in `.env.local`),
+which the human gates forbid (no production/lit-path DB run) and where `0135` is not deployed anyway —
+so no green/red claim is made on them; the dark-safety argument rests on the logic walk + forward-only
+proof, exactly as the prior dark slices' local verification was doc-level only (`0132–0134` precedent).
+
+---
+
 ## 2026-07-04 — LOCATION-INVEST-P18 SLICE 3 (FINAL) — the dark-posture verifier `verify-location-investment.mjs` + `verify:location-investment`; **Phase 18 CLOSED**
 
 **Request.** Phase 18 final slice: ONE new verify script (the `verify-ranking.mjs` analogue) + one

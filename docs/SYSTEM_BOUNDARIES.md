@@ -71,7 +71,7 @@ server-side functions — **never** by directly changing another system's tables
 | System | Owns (writes) | Public functions (only way in) | Must NOT |
 |---|---|---|---|
 | **Map** | sectors, zones, locations | `get_world_map()`, `get_location_detail()` | move fleets · combat · rewards · change unit counts · create presence |
-| **World State** | zone_state, location_state | `worldstate_register_presence(loc)`, `worldstate_unregister_presence(loc)`, `worldstate_tick()` | touch fleets/combat/rewards |
+| **World State** | zone_state, location_state | `worldstate_register_presence(loc)`, `worldstate_unregister_presence(loc)`, `worldstate_tick()` *(the 60s heartbeat; sole writer of `location_state`/`zone_state`. Pressure decays toward a TARGET: baseline PLUS a **pirate-pressure** danger term (WORLD-BALANCE-P19, 0135). The danger term is `0` — target = baseline, the pre-Phase-19 decay-toward-baseline verbatim — UNLESS `world_balance_enabled=true`, when it = `count(recent 'defeat' combat_reports at this location within world_balance_defeat_window_seconds) * worldstate_pressure_defeat_increase` (the 0032 key, reused). This is the wired form of the long-standing `defeat_pressure` seam: it READS `combat_reports` DOWNWARD (history, read-only) — the ONLY cross-system access, acyclic (Report writes only `combat_reports` and calls nothing). **DARK/no-op while `world_balance_enabled='false'`** (0135): the danger term is 0 and `combat_reports` is not even read, so a dark tick's output is byte-identical to pre-slice. Bounded by the SAME cap — pressure never exceeds `worldstate_pressure_max`)* | touch fleets/combat/rewards · **write** `combat_reports` or any Report/Combat table (reads `combat_reports` DOWNWARD, read-only) |
 | **Base** | bases, base_units, base_resources | `initialize_new_player()`, `base_reserve_units(base,units)`, `base_merge_units(base,units)`, `base_add_resources(base,rewards)` *(only Reward calls this)*, `base_spend_resources(base,resource,amount)` *(only Production calls this)* | movement/combat logic |
 | **Fleet** | fleets, fleet_units | `fleet_create(...)`, `fleet_set_moving/present/returning/complete/destroy(...)` *(state-guarded)*, `fleet_combat_stats(fleet)`, `fleet_sync_quantities(fleet,counts)`, `fleet_get_power(fleet)` | write base_/combat_/movement tables |
 | **Movement** | fleet_movements | `movement_create(fleet,origin,target,mission)`, `movement_attach_cargo(movement,source,bundle,source_type='combat')` *(internal; attaches the pending `{metal?, items[]}` bundle + its activity-agnostic `reward_source_type` to the return movement — the ONE shared carrier every activity reuses)*, `process_fleet_movements()` | combat math · spawn pirates · rewards · unit losses · victory/defeat |
@@ -176,12 +176,21 @@ secured by `Reward.grant` **on home arrival only** *(→ `Base.add_resources` fo
 *(return movement created later by the combat tick after `retreat_delay_seconds`)*
 
 **`process_location_state_ticks()`** *(cron 60s)* → `WorldState.tick()` only
+*(`worldstate_tick()` READS `combat_reports` DOWNWARD (history, read-only) for the WORLD-BALANCE-P19
+pirate-pressure danger term — a NEW acyclic edge World State → Report; it still writes ONLY
+`location_state`/`zone_state` and never fleets/combat/rewards. That read is skipped entirely while
+`world_balance_enabled='false'` — the tick's output is byte-identical to pre-slice, 0135.)*
 
 ### Explicitly forbidden edges
 - Movement → never writes `base_units`/`fleet_units`/`combat_*`.
 - Combat → never writes `base_resources` (only via `Reward.grant`); never writes
   `fleet_movements` except via `Movement.create`.
 - Presence → never writes `location_state` (only via `WorldState.*`) or `combat_*`.
+- World State → never writes fleets/combat/rewards/`combat_reports`. It MAY READ `combat_reports`
+  DOWNWARD (history, read-only) for the WORLD-BALANCE-P19 pirate-pressure danger term (0135) — an
+  acyclic edge World State → Report (Report writes only `combat_reports` and calls nothing back). This
+  is a passive world dynamic over finalized history, not a read of active state (Report stays
+  never-a-source-of-truth-for-active-state), and it is skipped while `world_balance_enabled='false'`.
 - Report → writes only `combat_reports`; never read as source of truth for active state.
 - Client → writes nothing; calls RPCs only.
 
