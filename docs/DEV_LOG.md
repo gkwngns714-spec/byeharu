@@ -5,6 +5,128 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — FITTING-P14 SLICE G (final) — `verify:fitting` dark-posture script. **Phase 14 Module fitting — dark implementation complete (slices A–G)**
+
+**Request.** Implement slice G, the last Phase 14 slice: the dark-posture verify script + its
+`package.json` entry, mirroring the P13 slice-F verifier exactly (read end-to-end first:
+`verify-modules.mjs`, `scripts/lib/verify-harness.mjs`, `scripts/lib/verifier-teardown.mjs`, the
+package.json verify cluster). Touches ONLY `scripts/verify-fitting.mjs`, `package.json`, this
+file, and the recon scratch file. No migrations (head stays **0116**), no CI/workflow edits, no
+flags.
+
+**Flag-handling mechanism — the twins', stated and followed exactly.** The script NEVER writes
+`game_config` and NEVER flips `module_fitting_enabled` — dark contracts only (the
+`verify-mining.mjs:16–20` mechanism; the `set_game_config` flip in `verify-mainship-send.mjs` is
+the explicitly-NOT-copied alternative). Lit-path behaviors live in the HUMAN ACTIVATION CHECKLIST
+below — run on a DEV database by the owner, never by this script. Teardown: the shared
+`teardownVerifier` deletes the throwaway user (the 0112/0113 player FKs cascade its rows away); no
+flag entry is passed — nothing to restore, `module_fitting_enabled` stays exactly as found.
+
+**Work done:**
+- **NEW `scripts/verify-fitting.mjs`** — shared harness imports from day one
+  (`Abort`/`createReporter`/`createUserFactory`/`resolveEnv` + `teardownVerifier`) — ZERO inline
+  harness copies. Service key OPTIONAL (teardown only); one throwaway signup. Asserts, in the
+  twins' order/idioms:
+  (1) **dark rejection** — authenticated `fit_module_to_ship` AND `unfit_module_from_ship` →
+  `{ok:false, code:'feature_disabled'}` with syntactically VALID uuids/request_ids passed, so the
+  identical dark answer proves the 0113 anti-probe gate fires BEFORE any validation; and
+  `get_my_ship_fittings` → `{ok:false, reason:'module_fitting_disabled'}` (0116);
+  (2) **catalog contract (0111, exact)** — `module_types.slot_cost`/`stats_json` publicly
+  readable; the four archetypes' seeds verbatim (autocannon 1/`{"attack":10}` · thruster
+  1/`{"evasion":3,"speed_mult_bonus":0.1}` · cargo lattice 2/`{"cargo":25}` · sensor
+  1/`{"scan":8}`) and every `slot_cost >= 1` — public-read IS the posture assertion (the P13
+  inversion note applies);
+  (3) **player-state RLS + no client write path** — fresh user sees 0 rows in
+  `ship_module_fittings` + `module_fitting_receipts`; inserts denied on both;
+  (4) **internal surfaces locked** — `fitting_apply`, `fitting_execute_command`, and
+  `fitting_command_client_envelope` denied to the authenticated client; the three public RPCs
+  denied to anon;
+  (5) **config presence (read-only)** — `module_fitting_enabled` = false via the same
+  jsonb-storage-tolerant comparison.
+- **`package.json`** — `"verify:fitting": "node scripts/verify-fitting.mjs"` added directly after
+  `verify:modules`, same command shape.
+- **CI note:** the exploration/mining/modules verifiers are wired into NO workflow file — nothing
+  to mirror, and no workflow was created or modified. Wiring `verify:fitting` into CI, if desired,
+  is a human / PR-review step.
+- **Verify posture run honestly:** `node --check scripts/verify-fitting.mjs` parses clean;
+  `npm run build` green. `node scripts/verify-fitting.mjs` in this sandbox aborts at the throwaway
+  SIGNUP step with the environmental TLS failure ("fetch failed / unable to verify the first
+  certificate") — `node scripts/verify-modules.mjs` aborts at the IDENTICAL point in the SAME run
+  (the P12/P13 precedent), so this is the known environmental-fail-only posture and reaching that
+  identical abort point proves the harness wiring. The assertions themselves run against a real DB
+  in the owner's environment.
+- `docs/SYSTEM_BOUNDARIES.md` needs NO change this slice — confirmed and stated (the P12/P13
+  verify-slice precedent): a read-only verifier script + one npm alias adds no table, writer, or
+  cross-system edge.
+
+---
+
+### Phase 14 Module fitting — dark implementation complete (slices A–G) — closing summary
+
+- **Migrations `0111–0116`** (head **0110 → 0116**; all forward-only; `0001–0110` never edited):
+  `0111` config/flag + stats catalog (`module_fitting_enabled='false'` + `module_types.slot_cost`/
+  `stats_json` with the four seeded archetypes) · `0112` the fittings table + THE ONE writer
+  (`ship_module_fittings` with the `module_instance_id` PK-as-invariant + `fitting_apply`,
+  service_role-only) · `0113` the two-layer command (`module_fitting_receipts` +
+  `fit_module_to_ship`/`unfit_module_from_ship` → private `fitting_execute_command`;
+  dark-gate-first, lock-before-replay, trade-semantics verbatim replay, failure-writes-no-receipt)
+  · `0114` the settled-SAFE rule correction (`ship_not_home` → `ship_not_settled`) · `0115` the
+  adapter integration (fitted modules feed `calculate_expedition_stats` under the `module_slots`
+  hard cap; +`module_slots_used`/`module_slots_limit`) · `0116` the read surface
+  (`get_my_ship_fittings`).
+- **Frontend:** the fitting section EXTENDS `src/features/modules/` (types/api/panel + the
+  `mainshipApi.ts` `fetchMyMainShips` list variant) — double-gated server-driven visibility,
+  fails closed to nothing; per-instance fit/unfit controls with display-only slot arithmetic.
+- **Verify:** `scripts/verify-fitting.mjs` + `npm run verify:fitting` (dark posture only, shared
+  harness, never flips flags).
+- **Locked design decisions (each with its one-line rationale):**
+  1. **Fitting is a NEW leaf system** (ROADMAP law 5 "Fitting=modules") owning
+     `ship_module_fittings` + `module_fitting_receipts` — never a second writer or new columns on
+     `module_instances`.
+  2. **ONE writer for BOTH mutations** (`fitting_apply`: ship = FIT, null = UNFIT) — one sole
+     writer per table covers ALL its mutations; two functions would be two writers.
+  3. **ONE private command for both actions** (`fitting_execute_command`) — so the receipts table
+     keeps ONE sole writer.
+  4. **Capacity hard-reject + slot_type tradeoffs, never a raw sum** — Σ `slot_cost` ≤
+     `module_slots` enforced at fit time AND re-checked in the adapter (raise, never clamp — the
+     0044 mechanism); weapon/cargo/sensor tradeoffs mirror the role rules.
+  5. **`stats_json` reuses the `base_stats_json` idiom** (same seven keys through the SAME
+     accumulators) **+ `speed_mult_bonus`** applied before penalties — one stat pipeline.
+  6. **Settled-SAFE rule (C2 correction)** — the 0113 `'home'` literal was dead-on-arrival (no
+     writer produces it); 0114 ships the 0100/0105 SAFE state set + the 0099/0104 companion
+     machinery (intent preserved, literal fixed, precedent reused).
+  7. **Extend-not-duplicate frontend** — the fitting UI lives in ModulesPanel (which already lists
+     instances); consequence: double-gated, renders nothing while either flag is dark.
+  8. **Two deliberate read-surface omissions** (0116) — no catalog RPC (public-read direct
+     selects) and no ship `module_slots` in the RPC (limits come from the client's own
+     `main_ship_instances` rows / `get_my_expedition_preview`).
+- **Ownership/edges recap:** all DOWNWARD/acyclic — Fitting → Modules (read) · Main Ship (read,
+  incl. the OSN context helpers) · Reference/Config (read); inbound only the adapter's 0115 READ.
+  Sole writers: `ship_module_fittings` = `fitting_apply` (called only by `fitting_execute_command`)
+  · `module_fitting_receipts` = `fitting_execute_command` (via the two wrappers). SYSTEM_BOUNDARIES
+  §1/§2 synced in the SAME step as every fact change.
+- **HUMAN ACTIVATION CHECKLIST (the owner's gate — never this loop):** (1) apply migrations
+  0111–0116 to the target DB; (2) run `npm run verify:fitting` there — expect ALL dark-posture
+  checks green; (3) optionally flip `module_fitting_enabled='true'` on a DEV database and exercise
+  the lit path: craft (or service-role-mint) module instances, then fit within slots → success AND
+  the adapter stats change with the tradeoffs visible in `get_my_expedition_preview`
+  (attack/evasion/cargo/scan up; pirate_attention/speed per the slot_type rules;
+  `module_slots_used/limit` correct); an over-capacity fit (e.g. 2× cargo lattice + autocannon =
+  5 > 3) → `insufficient_slots` with `{used, cost, limit}` and NOTHING written; a fit/unfit while
+  the ship is in_space/in_transit → `ship_not_settled`; `already_fitted` (naming the current ship)
+  and `not_fitted` codes fire; REPLAY the same (player, request_id) → the verbatim envelope +
+  `idempotent_replay:true` and provably NO double-fit; unfit → the adapter stats revert;
+  `verify:phase8`, `verify:mainship-preview`, and `verify:m2/m3/m4/m45` all stay green throughout;
+  then flip the flag back and decide production activation separately. The loop ships everything
+  server-rejected; activation is exclusively the human's.
+
+**State.** `npm run build` green; `node --check` clean on the new script. Migration head **0116**;
+`module_fitting_enabled='false'` everywhere; no flag flipped, no live DB write, no workflow
+touched. **Phase 14 Module fitting is implemented DARK end-to-end and PR-ready on
+`autopilot/20260703-064048`** — SAFE FOR HUMAN MERGE REVIEW; `main` untouched.
+
+---
+
 ## 2026-07-04 — FITTING-P14 SLICE F — dark frontend: the fitting section EXTENDS `src/features/modules/` (fit/unfit controls inside ModulesPanel; renders nothing while either flag is dark). Frontend only — no migration
 
 **Request.** Implement slice F: the dark fitting UI as a minimal extension of the existing

@@ -42,6 +42,7 @@
     "verify:exploration": "node scripts/verify-exploration.mjs",
     "verify:mining": "node scripts/verify-mining.mjs",
     "verify:modules": "node scripts/verify-modules.mjs",
+    "verify:fitting": "node scripts/verify-fitting.mjs",
     "db:size": "node scripts/db-size.mjs",
     "db:counts": "node scripts/db-counts.mjs",
     "db:cleanup:dry-run": "node scripts/db-cleanup.mjs",
