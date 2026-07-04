@@ -5,6 +5,64 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P16 SLICE 1 — the dark capability flag `captain_progression_enabled = 'false'` (flag-only, the 0107/0117 seed idiom) + the self-approved Phase-16 design decision
+
+**Request.** Phase 16 slice 1: ONE new forward-only migration seeding exactly one `game_config`
+row `captain_progression_enabled = 'false'`, mirroring the 0117 `captain_assignment_enabled` /
+0107 `module_crafting_enabled` flag-seed idiom, plus same-step doc-sync. NO recipe table, NO
+command, NO writer, NO adapter change, NO frontend, NO flag flipped true.
+
+**Self-approved Phase-16 design decision (owner-directed 2026-07-04; recorded here so later slices
+are grounded).** Phase 16 "Captain progression (consumes inventory)" (ROADMAP :91) is the captain
+analogue of module crafting (Phase 13 / 0109 `craft_module`):
+
+- **Mechanism = captain RECRUITMENT via consuming inventory.** A dark, idempotent command spends a
+  per-captain-type item recipe through the Inventory `inventory_spend` leaf (0039) and mints ONE
+  `captain_instances` row through the already-built `captains_mint_instance` leaf (0118 — built
+  explicitly for "Phase-16 progression consuming inventory"). This is the truest reading of ROADMAP
+  law 3 (Progression = the inventory-consuming acquisition system): "inventory is the bridge".
+- **Reuse, no new writer.** Recruitment NEVER touches `player_inventory` / `inventory_ledger` /
+  `captain_instances` directly — ONLY through the two pre-built leaves. No second writer to
+  `captain_instances` (sole writer stays `captains_mint_instance`), no schema change to it, no
+  adapter change (the 0122 stats feed reads the minted rows unchanged). Edges all DOWNWARD
+  (Progression command → Inventory `inventory_spend` · Captain `captains_mint_instance` ·
+  Reference/Config catalog + this flag), acyclic — the exact 0109 fan-out shape. Any recruitment
+  bookkeeping that would otherwise need a second writer to an existing table lives in a NEW
+  progression-owned table with its OWN sole writer, read DOWNWARD by the adapter.
+- **Later slices, all gated on THIS flag** (reject-before-any-read while false): a Production-owned
+  recruitment receipts table + its private writer + a two-layer public wrapper command (the
+  0109/0113 idiom, PLAYER-scoped request_id idempotency), plus a per-captain-type recipe catalog.
+
+**Work done — NEW `supabase/migrations/20260618000124_captain_p16_progression_flag.sql`** (leaves
+`0001`–`0123` unedited; forward-only):
+
+- Seeds exactly one `game_config` row: `('captain_progression_enabled', 'false', …)` with a
+  description mirroring the 0117 wording — server-authoritative dark gate for Phase-16 captain
+  progression (recruitment that consumes `player_inventory`); OFF until the owner explicitly
+  enables it; every Phase-16 RPC must check it FIRST and reject-before-any-read while false; UI
+  stays hidden independently (fails closed both sides).
+- `on conflict (key) do nothing` — idempotent. Flips NO flag true, creates NO table/function.
+- The migration header records the full self-approved Phase-16 locked design above.
+
+**FLAG-ONLY AND INERT.** No RPC, recipe table, writer, or reader references the flag yet — the
+0117 "flag exists dark, no RPC yet" posture. The row inherits the table-wide public-read
+`game_config_public_read` policy (0003:13-15). No execute-surface relock needed (no function
+created — 0054 precedent).
+
+**Doc-sync — SYSTEM_BOUNDARIES intentionally UNTOUCHED this slice.** Re-read
+`docs/SYSTEM_BOUNDARIES.md`: `game_config` is already Reference/Config public-read (§1 matrix,
+"`unit_types`, `game_config`, …"), and a pure key seed adds NO table, NO writer, NO cross-system
+edge — so no architectural fact changed. Per the 0117-analogue deferral (a doc must never describe
+state that isn't real — the 0111:57-58 no-row-yet posture), NO §2 Captain-progression system row is
+added until a writer/function actually exists in a later slice. SYSTEM_BOUNDARIES is deliberately
+not edited.
+
+**Human gates preserved.** No flag flipped true (`captain_progression_enabled` and all captain
+flags stay `'false'`), no frontend/client change, no migration `0001`–`0123` edited, no production
+DB / merge / deploy / workflow dispatch. Backend flag-seed only, on the feature branch.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P15 SLICE I — the DARK-posture verifier `scripts/verify-captain.mjs` (the verify-fitting.mjs analogue; the sole remaining Phase-15 deliverable)
 
 **Request.** Phase 15 slice I: ONE new verify script proving migrations 0117–0123 ship exactly as
