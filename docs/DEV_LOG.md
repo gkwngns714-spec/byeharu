@@ -5,6 +5,51 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P15 SLICE A — dark flag `captain_assignment_enabled` + the `captain_types` catalog (foundations only)
+
+**Request.** Phase 15 "Captain instances + assignment" (ROADMAP :90) slice A, mirroring the
+0107/0111 catalog+flag idiom: ONE new forward-only migration + same-step doc-sync. NO
+instances/assignment/receipt tables, NO commands, NO read surfaces, NO frontend, NO verify
+scripts in this slice.
+
+**Work done:**
+- **NEW `supabase/migrations/20260618000117_captain_p15_catalog_and_flag.sql`** (0001–0116
+  unedited):
+  - Dark flag `captain_assignment_enabled='false'` inserted into `game_config`
+    `on conflict (key) do nothing` (the exact 0107:63–69 shape) — created FALSE, NOT flipped;
+    every future Phase-15 RPC must check it FIRST and reject-before-any-read while false.
+  - `captain_types` catalog (Reference/Config posture verbatim from 0039/0042/0107: RLS on,
+    ONE public-read select policy, `grant select to anon, authenticated`, NO write
+    policy/grant): text `id` PK · `name` · `specialization` with a CHECK
+    ('combat','trade','exploration','mining','support') — deliberately UNLIKE 0107's
+    unconstrained display-only `slot_type`, because specialization is the captain analogue of
+    the module slot_type tradeoff CASE (ROADMAP law 4: never a plain sum), a constrained
+    mechanism input the later adapter slice consumes · `description` ·
+    `stats_json jsonb not null default '{}'` in the ONE shared stat vocabulary
+    (attack/defense/repair/cargo/scan/mining/evasion + optional speed_mult_bonus —
+    0115:173–180; no parallel captain vocabulary).
+  - **NO `slot_cost` column** (locked decision): every assigned captain occupies exactly ONE
+    slot — `main_ship_instances.captain_slots` (0043:58; starter frigate seeds 2) is a
+    HEADCOUNT, not a point budget; the later adapter cap is `count(*) <= captain_slots`
+    (reject, never clamp).
+  - Five seeds, one per specialization, `on conflict (id) do nothing`, each clearly weaker
+    than the same-role module in the 0111 band (attack 10 / cargo 25 / scan 8): combat →
+    attack 4 · trade → cargo 8 · exploration → scan 3 · mining → mining 4 · support →
+    repair 3. Captains complement fitting, never replace it; Phase 16 progression (consumes
+    inventory) is the growth path. Conservative, not final balance.
+- **`docs/SYSTEM_BOUNDARIES.md`** (same step): §1 matrix gains the `captain_types` row under
+  the new **Captain** system in the `module_types` row's exact shape (catalog/config,
+  migration-seeded only, NO runtime writer, public read-only). **The §2 Captain system row is
+  deliberately DEFERRED** to the instances slice: no writer/function exists yet, and a doc must
+  never describe state that isn't real (the 0111 no-Fitting-row-yet precedent). That slice adds
+  it together with the first writer.
+- **Verify:** `npm run build` green (SQL-only slice — confirms nothing else drifted). §5
+  invariant checklist re-read against the migration: the new table is migration-seeded
+  catalog/config with no runtime writer and no client write path; no new call edge (acyclic
+  graph unchanged); no reward-path or combat-truth change; no flag flipped.
+
+---
+
 ## 2026-07-04 — CLEANUP SLICE 4 (final, scripts-only) — auto-cleanup part 4: the trade proof scripts' five duplicated blocks extracted into the sourced `scripts/lib/trade-proof-lib.sh`
 
 **Request.** Part 4 — the FINAL slice of the module-fitting-milestone auto-cleanup: the three
