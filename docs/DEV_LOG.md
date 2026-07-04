@@ -5,6 +5,53 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CLEANUP SLICE 4 (final, scripts-only) — auto-cleanup part 4: the trade proof scripts' five duplicated blocks extracted into the sourced `scripts/lib/trade-proof-lib.sh`
+
+**Request.** Part 4 — the FINAL slice of the module-fitting-milestone auto-cleanup: the three
+trade proof orchestrators (`trade-economy-bootstrap-proof.sh` / `trade-fleet-0c-proof.sh` /
+`trade-market-1-proof.sh`) each carried near-byte-identical copies of five shell blocks. Extract
+them into ONE sourced library, adopted by all three in the same step. Scripts-only — NO
+migration, src/, flag, CI/workflow, or other-script change; NO change to what any proof proves.
+
+**Work done:**
+- **NEW `scripts/lib/trade-proof-lib.sh`** (sourced, never executed; sited beside the existing
+  shared mjs verifier libs `verify-harness.mjs`/`verifier-teardown.mjs`) exposing the five
+  blocks as functions — the header states who sources it and that NEW trade-proof scripts must
+  source it rather than re-copying: `fail` + **(1)** `tp_init` (arg/usage scaffold: shell opts,
+  global MODE, `usage → exit 2`), **(2)** `tp_assert_self_rolling_back` (begin;/final-ROLLBACK/
+  no-COMMIT static checks — one implementation of the byte-identical block), **(3)**
+  `tp_assert_flags_inside_txn` (ONE list/loop form; `trade-fleet-0c-proof.sh`'s single-flag
+  inline spelling became a one-element list call — same logic per the recon), **(4)**
+  `tp_assert_out_of_scope` (the identical src/-and-migrations guard), **(5)** `tp_run_local`
+  (the local-mode psql + PASS-line + per-marker greps, on bootstrap's existing
+  `$MARKERS`/`$PASS_LINE` interface). Feature-specific pieces stay in each caller as
+  parameters/greps (SQL path, flag list, marker list, PASS line, provisioning/reject-token/
+  property asserts, the selftest summary echo) — the lib never forks per caller. The one-line
+  `: "${DB_URL:?…}"` env contract stays in each caller so its diagnostic keeps naming the
+  script, not the lib.
+- **All three scripts converted** to source the lib: 76→52 / 74→55 / 74→53 lines (net −69
+  across the three; the lib is 80).
+
+**Behavior identical — verified honestly within sandbox limits:** `bash -n` clean on all four
+files (`shellcheck` is NOT available in this sandbox — stated plainly). Before/after outputs
+captured for EVERY DB-free path of all three scripts — no-arg usage (exit 2), `selftest`
+(DB-free static checks, exit 0), and `local` without DB_URL (exit 1): usage and selftest outputs
+are BYTE-IDENTICAL; the only diff anywhere is the bash-generated line NUMBER inside the DB_URL
+diagnostic (`line 66` → `line 51` etc. — the scripts got shorter; script name, message text, and
+exit codes unchanged). The lib's failure paths were exercised directly on doctored SQL files
+(missing begin; / missing rollback; / missing flag / src-reference) — each fires the exact
+pre-change `FAIL: …` message with exit 1. The real `local` psql mode cannot be exercised here
+(no disposable DB; the documented environmental precedent) — it is the same psql/grep text
+verbatim, parameterized, and remains the owner/CI gate. One fail-path-only wording note: 0c's
+flag-assert failure copy now uses the shared loop form ("…the dark flag
+'mainship_additional_commission_enabled'…" instead of "…the dark add-ship flag…") — unreachable
+on the green path and semantically identical.
+- **`docs/SYSTEM_BOUNDARIES.md` explicitly needs NO change** — a shell-block extraction inside
+  the proof harness adds no table, writer, flag, or cross-system edge; no architectural fact
+  changed. **This completes the module-fitting-milestone auto-cleanup (parts 1–4).**
+
+---
+
 ## 2026-07-04 — CLEANUP SLICE 3 (frontend) — auto-cleanup part 3: the four-way duplicated guard body extracted into `runGuardedCommand`
 
 **Request.** Part 3 of the post-milestone auto-cleanup: the same ~20-line guarded command-submit
