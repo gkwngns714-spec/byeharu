@@ -5,6 +5,71 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — RANKING-P17 SLICE 1 — the standings (leaderboard) schema `ranking_standings` (migration `0128`)
+
+**Request.** Phase 17 Slice 1: ONE new forward-only migration (the per-player leaderboard score
+schema) + same-step doc-sync. Still NO scoring function, NO season-management writer, NO read RPC, NO
+frontend, NO flag flipped.
+
+**Domain lock (read first, no translation layer).** Re-confirmed the EXACT literal set the standings
+`dimension` maps to: the `reward_grants.source_type` domain is the closed activity-source set
+`('combat','exploration','mining','trade')` established by the 0096
+`fleet_movements_reward_source_type_domain` CHECK (the carrier feeding `reward_grant(source_type,…)`).
+`reward_grants.source_type` itself is `text not null` (0015, no CHECK), constrained upstream by that
+carrier + the direct depositor calls. Live depositors today: combat/exploration/mining call
+`reward_grant` directly; **`trade` is in the domain but has NO depositor yet** — Trade V1 banks via the
+Wallet path, not `reward_grants` — so its standings stay 0 until a trade activity deposits a grant.
+`dimension` uses these four literals verbatim (1:1, no lookup/mapping).
+
+**Work done — migration `20260618000128_ranking_p17_standings_schema.sql` (forward-only; `0001–0127`
+unedited).**
+- **`ranking_standings`** — the per-(season, player, dimension) score row:
+  - `season_id uuid not null references ranking_seasons(season_id) on delete cascade`;
+    `player_id uuid not null references auth.users(id) on delete cascade`;
+    `dimension text not null check (dimension in ('combat','trade','exploration','mining'))`;
+    `score numeric not null default 0`; `events_counted integer not null default 0`;
+    `last_counted_at timestamptz` (nullable); `updated_at timestamptz not null default now()`.
+  - **PK `(season_id, player_id, dimension)`.**
+  - **Leaderboard index `ranking_standings_leaderboard_idx (season_id, dimension, score desc)`** — the
+    future read RPC's access path (a season's dimension board, best first).
+  - RLS ON + ONE public-read select policy + `grant select to anon, authenticated`; **NO
+    insert/update/delete policy and NO write grant** — clients cannot mutate.
+  - Table + `last_counted_at` comments record the sole-writer, derived-overall, and high-water-mark
+    facts below.
+
+**Self-approved locked design decisions (owner-directed; grounds later slices).**
+1. **Dimension = the read source, 1:1, no translation.** `dimension` is exactly the
+   `reward_grants.source_type` domain (the 0096 closed set). The scoring fn folds a grant into the row
+   of its own `source_type` — no lookup. A future activity source is an additive forward-only CHECK
+   change here + at 0096, in lockstep.
+2. **One score row per (season, player, dimension); OVERALL is DERIVED at read time** (sum across
+   dimensions), NEVER a stored denormalized row — so there is no second write path to keep in sync.
+3. **Incremental, idempotent accrual via `last_counted_at`** — the high-water mark of the latest
+   `reward_grants.granted_at` already folded in (NULL until first count). The future scoring fn accrues
+   only grants with `granted_at > last_counted_at` and advances the mark in the same write, so a re-run
+   never double-counts and never re-reads old events (the 0100/0105 `secured_at` idempotency analogue).
+4. **No writer this slice.** The SOLE writer of `ranking_standings` is Ranking's OWN future
+   season-scoring function (a later slice: `SECURITY DEFINER`, client-revoked). No RPC reads/writes it
+   yet — dark, inert.
+5. **Reset by season, never by deletion.** A reset is a NEW `season_id` scoping a fresh standings set;
+   old standings rows and the `reward_grants` behind them are never deleted. The `on delete cascade` on
+   `season_id` is a schema-integrity guard for an intentionally-removed season, NOT the reset mechanism.
+
+**Boundary placement (same-step doc-sync).**
+- `docs/SYSTEM_BOUNDARIES.md` §1 matrix: added the `ranking_standings` row under the **Ranking** owner
+  (sole writer = future scoring fn; public read-only; DARK), adjacent to `ranking_seasons`.
+- `docs/SYSTEM_BOUNDARIES.md` §2 **Ranking** row: extended Owns to `ranking_seasons, ranking_standings`
+  (0128); kept the READ-ONLY-downward-leaf role accurate (reads `reward_grants` DOWNWARD, overall
+  derived at read time, edges Ranking → Reward read · Reference/Config flag read — acyclic, nothing
+  calls into Ranking). Added the explicit Must-NOT "store a denormalized OVERALL score".
+
+**Human gates preserved.** `ranking_enabled` stays `'false'` (no flag flipped); every Phase 11–17 flag
+remains `'false'`. No existing migration edited (`0001–0127` untouched, forward-only). No `game_config`
+value changed. Backend-only (no `src/features/**`). No merge/deploy/production apply/workflow dispatch.
+Slice is inert: no reader/writer references `ranking_standings` yet.
+
+---
+
 ## 2026-07-04 — RANKING-P17 SLICE 0 — dark flag `ranking_enabled` + the Ranking-owned root table `ranking_seasons` (migration `0127`)
 
 **Request.** Begin Phase 17 (Ranking / competition — ROADMAP :92 "weekly/monthly seasons;
