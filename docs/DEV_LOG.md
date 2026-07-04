@@ -5,7 +5,73 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-07-05 — MINING-P12 POST-AUDIT FIX — close the double-extract race in `mining_extract` with a per-(player, field) advisory lock (migration 0143)
+## 2026-07-05 — MINING-P12 POST-AUDIT RECONCILIATION — the 0143 double-extract race is NOT reachable today; honest reframing + deferred concurrency proof (no code/migration change)
+
+**Request.** Before proving item (1), reconcile its reachability honestly against the code, correct the
+0143 doc wording that overstated the race as reachable-today, and author the deferred concurrency proof
+— WITHOUT editing migration 0143 (the guard is correct defense-in-depth and the explicit audit ask).
+
+**Reachability verdict — I PARTIALLY DISAGREE with the stated premise (one factual correction).**
+- CONFIRMED: `mainship_space_lock_context(p_main_ship_id, false)` does `SELECT ... FOR UPDATE` on
+  `main_ship_instances` (`20260618000056_osn3_s2_transition_core.sql:46`), so two concurrent
+  `mining_extract` calls on the SAME main ship serialize on the ship row lock — the second reads the
+  first's committed extraction and is cooldown-rejected.
+- CORRECTION: `main_ship_instances.player_id` is **NOT UNIQUE today**. The inline UNIQUE at
+  `20260617000043_main_ship_instance.sql:47` (`main_ship_instances_player_id_key`) was **DROPPED in
+  `20260618000079_trade_fleet_0c_drop_player_id_unique.sql`**. So "one main ship per player" is a
+  DARK-GATE / runtime invariant, not a schema constraint.
+- The path that COULD create a 2nd ship — `commission_additional_main_ship()`
+  (`20260618000080...`) — exists and is real, but is DARK behind
+  `mainship_additional_commission_enabled='false'` (cap `max_main_ships_per_player=3`); the first-ship
+  writer is zero-ship-guarded. So every player holds ≤ 1 ship at runtime, and the "two ships of one
+  player at one field" double-extract variant is **NOT constructible today**.
+- NET: the `(player, field)` no-double-extract invariant IS already held today by [ship `FOR UPDATE`
+  lock + cooldown read + the dark additional-commission gate keeping ≤ 1 ship/player]. The 0143
+  advisory lock is **defense-in-depth**, inert today, becoming LOAD-BEARING the moment
+  `mainship_additional_commission_enabled` is flipped true (multi-ship-per-player). This makes the
+  guard MORE relevant than the premise implied — its trigger is an already-built dark capability, not
+  a hypothetical future schema change.
+
+**Doc corrections (this same step).** Reframed the prior-slice wording that implied reachability today:
+- `docs/DEV_LOG.md` (the 0143 entry below): title changed from "close the double-extract race …" →
+  "add a per-(player, field) advisory lock … as defense-in-depth …"; the "**The bug.**" paragraph
+  reframed to "**The modeled race — reachability CORRECTED …**" stating the two-ship variant is not
+  constructible today and why (dark commission gate; `0043` UNIQUE dropped in `0079`); the design-
+  decision paragraph now records the LOAD-BEARING TRIGGER (`mainship_additional_commission_enabled`
+  true).
+- `docs/SYSTEM_BOUNDARIES.md` (§2 Mining note): the phrase "the lock closes that window" (which
+  implied an active window today) replaced with a reachability statement — invariant already held by
+  the ship `FOR UPDATE` + cooldown + ≤ 1-ship dark gate; the advisory lock is defense-in-depth,
+  load-bearing only if/when multi-ship is activated; permanent guard, no retirement.
+
+**Deferred concurrency proof (new artifact).** `scripts/mining-p12-double-extract-concurrency.sh`,
+mirroring `scripts/osn3-s3-realchain-concurrency.sh` point-for-point (real concurrent FIFO-driven psql
+sessions, distinct `application_name`, `pg_stat_activity` wait-state, a `trap` that restores every
+flag/tunable it toggled — `mining_enabled`→`false` asserted, `mining_extract_cooldown_seconds`→captured
+original — plus fixture cleanup; `$DB_URL`-gated; never touches a shared/live DB). It proves the
+REACHABLE invariant: fixtures = one user + one settled `in_space` main ship + one active `mining_fields`
+row at the ship's coordinates (within `mining_extract_radius`) + a large cooldown, with `mining_enabled`
+flipped true ONLY inside the disposable stack; two sessions issue `mining_extract` for that ship with
+two DISTINCT `request_id`s → assert A succeeds (one extraction), B blocks on the ship `FOR UPDATE`, and
+after A commits B returns `reason='cooldown'` (not a second extraction); final assert = exactly ONE
+`mining_extractions` row for `(player, field)`. The two-ship variant is documented in the header as not
+constructible today (dark commission gate; `0043` UNIQUE dropped in `0079`), so the proof covers the
+reachable surface; the 0143 advisory `(player, field)` lock is additionally verified STRUCTURALLY
+(present and ordered immediately before the cooldown read) as defense-in-depth (this check runs without
+a DB). Static-checked green with `bash -n`. The LIT run is DEFERRED to the human owner's activation
+checklist (this environment has no local DB, and no flag may be flipped in a committed artifact). It is
+deliberately NOT added to the dark `verify:*` block in `package.json` (it needs a lit DB); referenced
+only from its own header and this log.
+
+**Preserved human gates.** No code or migration changed (0143 and all shipped migrations 0001–0142
+untouched); the new script sets `mining_enabled='true'` ONLY at runtime inside a disposable `$DB_URL`
+stack and restores it to `'false'`. `mining_enabled` stays `'false'` in every committed file. No flag
+flipped, no `package.json` verify entry added, nothing merged/deployed/applied to production.
+SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
+## 2026-07-05 — MINING-P12 POST-AUDIT FIX — add a per-(player, field) advisory lock to `mining_extract` as defense-in-depth for the double-extract race (migration 0143)
 
 **Request.** Post-audit fix pass, item 1: the mining `extract` command had a read-then-insert
 double-extract race. Fix it as a NEW forward-only migration that `CREATE OR REPLACE`s the writer,
@@ -13,14 +79,24 @@ reproducing the 0104 body verbatim and changing exactly ONE thing — adding a p
 advisory lock — then sync the law docs the same step. No flag flip, no shipped-migration edit, no new
 RPC/table.
 
-**The bug.** `mining_extract` (0104, step 11) reads the latest `mining_extractions.created_at` for
-`(player, field)` and, if older than `mining_extract_cooldown_seconds`, inserts a new extraction. The
-S2 canonical ship lock (`mainship_space_lock_context`) serializes commands on the SAME ship only — it
-locks the caller's OWN ship row. So two DIFFERENT ships owned by the SAME player, both settled within
-`mining_extract_radius` of the SAME field, take locks on distinct ship rows and never contend. Both
-could read an empty (or equally stale) cooldown history and both insert — a double extraction, i.e. a
-double-reward window once the slice-D securing processor (`process_mining_securing`, 0105) deposits
-both pending bundles.
+**The modeled race — reachability CORRECTED 2026-07-05 (see the reconciliation note above; this
+paragraph was initially overstated as reachable-today and is now accurate).** `mining_extract` (0104,
+step 11) reads the latest `mining_extractions.created_at` for `(player, field)` and, if older than
+`mining_extract_cooldown_seconds`, inserts a new extraction. The S2 canonical ship lock
+(`mainship_space_lock_context`, `20260618000056...:46` `SELECT ... FOR UPDATE` on
+`main_ship_instances`) serializes commands on the SAME ship only. IF one player could hold TWO ships
+both settled within `mining_extract_radius` of the SAME field, those two `mining_extract` calls would
+lock distinct ship rows, never contend, both pass the read-then-insert cooldown check, and double-
+extract — a double-reward window once `process_mining_securing` (0105) deposits both bundles. **That
+two-ship configuration is NOT constructible at runtime today**: the ONLY additional-ship path
+`commission_additional_main_ship` (0080) is DARK behind `mainship_additional_commission_enabled='false'`
+(cap `max_main_ships_per_player=3`), and the first-ship writer is zero-ship-guarded, so every player
+holds ≤ 1 main ship — two concurrent extracts therefore contend on the SAME ship row, and the second
+reads the first's committed row and is cooldown-rejected. **NOTE (premise correction):** the original
+`0043:47` `player_id` UNIQUE (`main_ship_instances_player_id_key`) was DROPPED in `0079`, so ≤ 1-ship
+is a DARK-GATE / runtime invariant (the dark additional-commission flag), NOT a schema constraint. The
+advisory lock is thus DEFENSE-IN-DEPTH — inert today, load-bearing the moment multi-ship-per-player is
+activated.
 
 **Work done (migration 0143 — `20260618000143_mining_p12_extract_double_extract_guard.sql`).**
 `CREATE OR REPLACE FUNCTION public.mining_extract(...)`, body copied byte-for-byte from 0104 with a
@@ -39,10 +115,15 @@ re-run).
 0113 (fitting), 0126 (recruit), 0133 (location investment). Domain = `'mining_extract'`, scope = the
 combined `(player, field)` key.
 
-**Design decision — PERMANENT guard, no retirement condition.** Xact-scoped advisory locks
-auto-release at commit/rollback (no cleanup path, no softlock risk — NO-ACCOUNT-SOFTLOCK holds) and
-are reentrant within the transaction (harmless alongside the existing S2 row locks). This is a
-correctness invariant of the writer, not a shim/compat path — it stays for the life of the function.
+**Design decision — PERMANENT guard, no retirement condition; recorded load-bearing trigger.**
+Xact-scoped advisory locks auto-release at commit/rollback (no cleanup path, no softlock risk —
+NO-ACCOUNT-SOFTLOCK holds) and are reentrant within the transaction (harmless alongside the existing
+S2 row locks). This is a correctness invariant of the writer, not a shim/compat path — it stays for the
+life of the function (so "no retirement condition"). Its LOAD-BEARING TRIGGER is recorded: today it is
+inert defense-in-depth (≤ 1 main ship per player ⇒ the ship `FOR UPDATE` lock already serializes the
+`(player, field)` invariant); it becomes load-bearing the moment `mainship_additional_commission_enabled`
+is flipped true (multi-ship-per-player), when two ships of one player at one field could otherwise
+race the cooldown read.
 
 **Boundaries / doc-sync (same step).** No new table, writer, or cross-system edge — this refines the
 concurrency discipline of an EXISTING sole-writer (`mining_extract` remains the sole insert path of
