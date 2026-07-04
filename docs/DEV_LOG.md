@@ -5,6 +5,74 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P15 SLICE E — the settled-SAFE rule for captain assignment + the `mainship_space_assert_settled_safe` shared-leaf extraction (fitting re-created behavior-identically)
+
+**Request.** Phase 15 slice E, the 0114 analogue: read 0114 first, determine whether the
+settled-SAFE check is a callable helper or inline, then add the same rule to captains honoring
+the no-duplication HARD RULE. NO adapter change, NO read surfaces, NO frontend, NO verify
+scripts, NO flag changes.
+
+**What 0114 was read to contain:** the check is INLINE in `fitting_execute_command`
+(0114:126–142) — no callable composite exists; 0114:41–44 explicitly recorded "no shared-helper
+extraction is needed" because the mechanism appeared ONCE. Captain is now the second consumer →
+the hard rule triggers the extraction in this same step (case (b) of the slice spec).
+
+**Work done — NEW `supabase/migrations/20260618000121_captain_p15_settled_safe_rule.sql`**
+(0001–0120 unedited; 0114/0120 stay as history):
+- **NEW shared leaf `mainship_space_assert_settled_safe(p_main_ship_id uuid) returns boolean`** —
+  the 0114:126–142 composite VERBATIM: `mainship_space_validate_context` ok AND validated state
+  in `('home','at_location')` (the 0100/0105 SAFE set) AND
+  `mainship_space_assert_cross_domain_exclusion` ok; fail-closed (legacy NULL / in_space /
+  in_transit / destroyed / incoherent → false). Main-Ship-owned (`mainship_space_*` family),
+  service_role-only (the 0056 family ACL posture). **Signature is ship-id-ONLY, deliberately
+  without the p_player_id the slice spec's example sketched:** its family siblings
+  (0056:91/224) take only the ship id, and ownership resolution is per-action per-system
+  semantics that must stay in each command for the fitting re-create to be behavior-identical —
+  a player param would be either dead or a behavior change.
+- **`fitting_execute_command` re-created — a PURE refactor, ZERO behavior change** (the
+  compatibility contract stated in the header the 0115:10–18 way). **Diff proof run against
+  0114's shipped body:** the ONLY changes are (a) two declare lines dropped (`v_val`/`v_excl`
+  moved into the leaf), (b) the step-6 comment updated to name the leaf, (c) the inline
+  two-step check block replaced by the single leaf call inside the same
+  `if v_check_ship is not null` guard (short-circuit AND preserves skip-if-null). Same reads,
+  same evaluation order, same single truthful `ship_not_settled`. Wrappers, writer, receipts,
+  mapper untouched on the fitting side.
+- **`captain_execute_command` re-created with the rule** — the 0120 header's promised
+  forward-only amendment (the P14 0113→0114 split, delivered). LOCKED DECISIONS (header):
+  placement AFTER the replay check and action-shape validation, BEFORE delegating to
+  `captain_assign_apply` (game rule in the COMMAND, structure in the WRITER); applies to BOTH
+  actions — assign checks the TARGET ship (owner-scoped, `ship_not_owned` at this layer — the
+  0114 fit-branch shape), unassign checks the ship the captain is CURRENTLY assigned to
+  (owner-scoped read of `ship_captain_assignments`; an unassigned captain SKIPS the rule — the
+  structural writer's truthful `not_assigned` handles it, the exact 0114 unfit-branch
+  semantics) — because a loadout, captain roster included, is frozen
+  mid-transit/in-space/mid-combat; reject reason = the same truthful `ship_not_settled`.
+  Everything else byte-identical to 0120.
+- **`captain_command_client_envelope` re-created ONLY to add the `ship_not_settled` mapping**
+  (reason + player-facing copy — 0120 shipped without it because the rule did not exist yet;
+  the 0114:164–165 re-create rationale).
+- **ACLs:** the new leaf service_role-only; the three re-created functions' grants re-asserted
+  (the 0114:217–224 idiom). No other grants touched.
+- **Safe to ship dark:** `captain_assignment_enabled` and `module_fitting_enabled` are both
+  `'false'` — no caller could reach the rule-less 0120 command in the gap, and none can reach
+  these; no flag touched.
+- **`docs/SYSTEM_BOUNDARIES.md`** (same step): the §2 Captain row's deferral note replaced by
+  the shipped settled-SAFE contract (rule position in the flow, both-action semantics, the
+  skip-for-unassigned nuance) and its edges sentence now names the shared leaf; the §2 Fitting
+  row's inline-check wording now records that the composite lives in the shared leaf since 0121
+  (pure refactor); a new **Settled-SAFE leaf** note block added beside the OSN-geometry-leaf
+  note (the family's documentation home) — including why exploration/mining deliberately do NOT
+  consume it (their accepted state is `in_space`, a different rule) — so no section contradicts
+  the new leaf.
+- **Verify:** `npm run build` green (SQL-only slice — confirms nothing else drifted). §5
+  invariant checklist re-read: no new table and no writer change (`ship_captain_assignments` /
+  `ship_module_fittings` / both receipt ledgers keep their single writers); the leaf owns no
+  table and adds no new cross-system edge (Fitting and Captain already read Main Ship
+  downward — graph stays acyclic); no client write path (leaf + commands service_role-only);
+  reward path and combat truth untouched; no flag flipped.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P15 SLICE D — the dark assign/unassign command + `captain_assignment_receipts` (settled-SAFE rule deliberately deferred, the 0113→0114 split)
 
 **Request.** Phase 15 slice D, mirroring the P14 command slice (0113): ONE new forward-only
