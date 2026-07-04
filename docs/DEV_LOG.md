@@ -5,6 +5,74 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P15 SLICE D — the dark assign/unassign command + `captain_assignment_receipts` (settled-SAFE rule deliberately deferred, the 0113→0114 split)
+
+**Request.** Phase 15 slice D, mirroring the P14 command slice (0113): ONE new forward-only
+migration adding the player-scoped receipts ledger, the ONE private command, the TWO thin
+authenticated wrappers, and the shared reason→envelope mapper, plus same-step doc-sync. NO
+adapter change, NO read surfaces, NO frontend, NO verify scripts in this slice.
+
+**Work done:**
+- **NEW `supabase/migrations/20260618000120_captain_p15_assign_command.sql`** (0001–0119
+  unedited):
+  - `captain_assignment_receipts` — the 0113:69–91 posture verbatim: **PK (player_id,
+    request_id)** (captains are non-spatial → the PLAYER-scoped keying, not the ship-scoped
+    space receipts), action CHECK ('assign','unassign'), request fingerprint columns for audit,
+    `result_json` (the success envelope, verbatim replay truth), `created_at`; RLS own-row
+    select + `grant select to authenticated`, NO write policy/grant.
+  - `captain_execute_command(p_player_id, p_action, p_captain_instance_id, p_main_ship_id,
+    p_request_id)` — service_role-only, THE sole writer of the receipts, the exact 0113 flow
+    order: **dark gate FIRST** on `captain_assignment_enabled` (reject before any
+    read/lock/write) → request_id validation → **per-player advisory lock BEFORE the replay
+    check** (the SAME `('captain_assignment', player)` key as `captain_assign_apply` —
+    reentrant, so the nested acquisition is safe) → **verbatim replay** of the stored
+    `result_json` on (player, request_id) hit (trade semantics, no payload-conflict check) →
+    action-shape validation in ('assign','unassign') → **delegate DOWNWARD to the slice-C sole
+    writer `captain_assign_apply`** (assign passes the ship id, unassign passes null —
+    `ship_captain_assignments` keeps ONE writer; this command writes only its own receipts) →
+    only a SUCCESSFUL mutation writes a receipt.
+  - **Exception→envelope translation (the 0119 header's promise fulfilled):** the writer is
+    exception-style, so the delegate runs in a guarded block translating its reason-prefixed
+    raises (`captain_not_owned`/`ship_not_owned`/`already_assigned`/`captain_slots_full`/
+    `not_assigned`) into failure envelopes; UNKNOWN exceptions RE-RAISE (never hide a bug). The
+    writer returns void, so the command builds the success envelope (ok/action/ids) and stores
+    it verbatim.
+  - `assign_captain_to_ship(p_request_id, p_captain_instance_id, p_main_ship_id)` /
+    `unassign_captain_from_ship(p_request_id, p_captain_instance_id)` — the 0113
+    two-wrappers-one-command shape: auth check → **anti-probe dark gate returning the identical
+    literal `{ok:false, reason:'captain_assignment_disabled'}` for every caller** → delegate
+    with the fixed action. Reason-keyed client envelopes throughout (locked adaptation of
+    0113's code-keyed ones, matching the 0110/0116 read-surface signal convention).
+  - `captain_command_client_envelope` — 0113's `fitting_command_client_envelope` was READ FIRST
+    per the slice spec: its map is coupled to fitting's reason vocabulary (0113:219–250), NOT
+    feature-generic, so the captain analogue was created and is called from BOTH wrappers —
+    never inlining the map twice (the exact 0113:33–35 extraction rationale). Its
+    `feature_disabled` entry emits the same literal dark envelope as the wrapper gates.
+  - Targeted ACLs (the 0113:305–317 block verbatim): private command + mapper revoked from
+    public/anon/authenticated, granted to service_role only; the two wrappers `revoke from
+    public, anon; grant execute to authenticated` (dark: both gates reject today).
+  - **LOCKED DECISION (header): the settled-SAFE game rule (ship must be home/at_location) is
+    NOT in this slice** — it lands NEXT slice as a forward-only amendment of this command,
+    mirroring exactly how P14 shipped 0113 (command) then 0114 (settled-SAFE). Safe because
+    `captain_assignment_enabled` is `'false'`: the gate rejects before any read, so no caller
+    can reach the rule-less command in the gap.
+- **`docs/SYSTEM_BOUNDARIES.md`** (same step): §1 matrix gains the `captain_assignment_receipts`
+  row in the `module_fitting_receipts` row's exact shape (ONE private command for both actions so
+  the ledger keeps ONE writer, PK (player_id, request_id), verbatim replay, DARK — rejects before
+  any read); the §2 Captain row extended with the command/wrapper contract, the
+  exception→envelope translation, the deferred settled-SAFE note, the new downward
+  Reference/Config (`cfg_bool`) edge, and the inbound client edge (ONLY the two authenticated
+  wrappers); `captain_assign_apply`'s "called by NOTHING yet" replaced — this command is its ONE
+  caller.
+- **Verify:** `npm run build` green (SQL-only slice — confirms nothing else drifted). §5
+  invariant checklist re-read: `captain_assignment_receipts` has exactly ONE writing system and
+  no client write path; `ship_captain_assignments` keeps `captain_assign_apply` as its only
+  writer (the command only delegates); edges stay DOWNWARD/acyclic (new: Reference/Config
+  `cfg_bool` read); Activity table-less; reward path and combat truth untouched; no flag flipped
+  — the entire surface ships server-rejected.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P15 SLICE C — `ship_captain_assignments` schema + the ONE assignment writer (inert AND dark)
 
 **Request.** Phase 15 slice C, mirroring the P14 fittings slice (0112): ONE new forward-only
