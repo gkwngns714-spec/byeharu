@@ -5,6 +5,72 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P16 SLICE 4 — the dark-posture verifier `scripts/verify-captain-progression.mjs` (the verify-captain.mjs analogue) + the self-approved "no new read RPC" decision
+
+**Request.** Phase 16 slice 4, the final implementation slice: ONE new verify script proving
+migrations 0124–0126 ship exactly as claimed and fully dark, mirroring `verify-captain.mjs`
+point-for-point for the recruitment surface, plus one `verify:captain-progression` package.json line
+and same-step doc-sync. NO migration change, NO flag write, NO lit-path testing, NO frontend, NO new
+read RPC.
+
+**Work done — NEW `scripts/verify-captain-progression.mjs`** (mirrors `verify-captain.mjs`; ZERO
+inline harness copies — imports `resolveEnv`/`createReporter`/`createUserFactory`/`Abort` from
+`scripts/lib/verify-harness.mjs` + `teardownVerifier` from `scripts/lib/verifier-teardown.mjs`; the
+same `admin`/`anon`/throwaway-user/`cfgVal` scaffold and the same `.catch/.finally` teardown, passing
+NO flag entry since this verifier touches none). Assertions, all with anon/authenticated clients only:
+
+- **§1 Dark rejection** — with a throwaway authenticated user, a syntactically valid `p_request_id`
+  AND a REAL captain type id (`'gunnery_veteran'`), `recruit_captain` returns `{ok:false,
+  code:'feature_disabled'}` — the anti-probe gate fires BEFORE any validation while
+  `captain_progression_enabled='false'`. CODE-keyed (like `craft_module` 0109), NOT the reason-keyed
+  assignment surface — the 0126 wrapper envelope matched exactly.
+- **§2 Recipe catalog contract** — reads `captain_recipe_ingredients` publicly and asserts the exact
+  0125 seed set verbatim: the five recipes' `(captain_type_id, item_id, qty)` rows (gunnery_veteran
+  shard1/weapon_parts3/pirate_alloy2 · trade_broker shard1/scrap8/repair_parts2 · survey_cartographer
+  shard1/scan_data4/anomaly_shard2 · extraction_foreman shard1/ore6/crystal2 · fleet_quartermaster
+  shard1/repair_parts3/engine_parts2), and every `qty > 0`. Reading the public seeds back IS the
+  public-read posture assertion.
+- **§3 Player-state RLS + no client write path** — `captain_recruit_receipts` returns 0 rows for a
+  fresh user, and a direct client insert is denied (no insert policy / no write grant — 0126).
+- **§4 Internal surface locked** — `production_recruit_captain` denied to the authenticated client;
+  `recruit_captain` denied to anon.
+- **§5 Config presence** — `captain_progression_enabled` reads `'false'` (READ-ONLY; the
+  storage-form-tolerant `String(v)==='false'` compare).
+
+**No-flag-write / no-lit-path stance** (verbatim to `verify-fitting.mjs`/`verify-captain.mjs`): the
+script NEVER writes `game_config` and NEVER flips `captain_progression_enabled`. Lit-path
+verification (flag on → recruit within balance → success + one new `captain_instances` row + one
+receipt → insufficient balance → `insufficient_items` → verbatim replay returns the original receipt
+without a second mint/spend → unknown_captain / no_recipe reasons) is DEFERRED to the human owner's
+activation checklist — flip the flag on a DEV database and run the lit checks there, never here.
+
+**`package.json`** — one new line adjacent to `verify:captain`:
+`"verify:captain-progression": "node scripts/verify-captain-progression.mjs"`.
+
+**Self-approved read-surface decision (2026-07-04): NO new read RPC for Phase 16.** Following the
+0110 precedent (decision 2 — a read RPC that duplicates an already-available surface is not added),
+Phase 16 adds NO get-recipe/get-receipt RPC because every recruitment-relevant surface is ALREADY
+readable: (a) the recruitment RESULT — captain instances — is exposed by `get_my_captain_instances()`
+(0123); (b) the recipe catalog `captain_recipe_ingredients` is public-read (clients select it
+directly, the `item_types`/`captain_types` stance); (c) `captain_recruit_receipts` is owner-read
+(direct select). A get-catalog/receipt RPC would duplicate an already-available surface — so none is
+added. (When the feature lights up, the client reads its recipes from the public catalog, submits
+`recruit_captain`, and sees the new captain via the existing 0123 read.)
+
+**Doc-sync — SYSTEM_BOUNDARIES intentionally UNTOUCHED this slice.** A verifier script + a
+package.json line + a not-added read RPC add NO table, NO writer, NO function, NO cross-system edge —
+so no architectural fact changed (the slice-I precedent: the Phase-15 verifier left
+SYSTEM_BOUNDARIES untouched for the same reason). `docs/SYSTEM_BOUNDARIES.md` is deliberately not
+edited.
+
+**Human gates preserved.** No flag flipped true, no migration change, no lit-path DB run (the
+verifier's execution belongs to the owner's activation checklist, exactly as the Phase-15 slice-I
+verifier), no frontend/client change, no production DB / merge / deploy / workflow dispatch. This
+CLOSES Phase 16's backend + verifier deliverables — dark, server-rejected, PR-ready on the feature
+branch.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P16 SLICE 3 — the dark recruit command: `captain_recruit_receipts` + private `production_recruit_captain` + two-layer `recruit_captain` (the 0109 `craft_module` analogue, point-for-point)
 
 **Request.** Phase 16 slice 3, the core: ONE new forward-only migration adding the

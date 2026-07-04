@@ -44,6 +44,7 @@
     "verify:modules": "node scripts/verify-modules.mjs",
     "verify:fitting": "node scripts/verify-fitting.mjs",
     "verify:captain": "node scripts/verify-captain.mjs",
+    "verify:captain-progression": "node scripts/verify-captain-progression.mjs",
     "db:size": "node scripts/db-size.mjs",
     "db:counts": "node scripts/db-counts.mjs",
     "db:cleanup:dry-run": "node scripts/db-cleanup.mjs",
