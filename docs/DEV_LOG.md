@@ -5,6 +5,82 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — WORLD-BALANCE-P19 SLICE 4 (FINAL) — the dark-posture verifier `verify-world-balance.mjs` + `verify:world-balance`; **Phase 19 CLOSED**
+
+**Request.** Phase 19 final slice: ONE new verify script (the `verify-location-investment.mjs` analogue)
++ one `package.json` line + same-step doc-sync. NO migration change, NO flag write, NO lit-path DB run,
+NO `src/`, NO new RPC, NO cron, no git.
+
+**Work done — `scripts/verify-world-balance.mjs`** (mirrors `verify-location-investment.mjs`
+point-for-point; ZERO inline harness copies — imports the shared `Abort`/`resolveEnv`/`createReporter`/
+`createUserFactory` from `scripts/lib/verify-harness.mjs` + `teardownVerifier` from
+`scripts/lib/verifier-teardown.mjs`, the same `admin`/`anon`/throwaway-user/`cfgVal` scaffold, the same
+`.catch/.finally` teardown with NO flag entry passed — this verifier touches no flag). Proves migrations
+`0135–0137` ship exactly as built and fully dark, with anon/authenticated clients only. Five assertion
+groups (CODE/lock-keyed, `String()` storage-form-tolerant compares):
+1. **Config presence** (READ-ONLY) — `world_balance_enabled='false'` + all eight tunables at their
+   seeded values (`world_balance_defeat_window_seconds='3600'`, `world_balance_price_pressure_coeff='0.5'`,
+   `world_balance_price_drift_rate='0.1'`, `world_balance_price_multiplier_min='0.5'`,
+   `world_balance_price_multiplier_max='2.0'`, `world_balance_field_depletion_per_extract='0.1'`,
+   `world_balance_field_regen_rate='0.02'`, `world_balance_field_reserve_min='0.1'`).
+2. **Internal World-State functions locked** — `worldstate_current_price_multiplier`,
+   `worldstate_field_remaining`, `worldstate_deplete_field`, and `worldstate_tick` are DENIED to BOTH
+   anon and authenticated (service-role-only, `0135–0137`); VALID-shaped uuid args so the denial proves
+   the lock, not argument validation.
+3. **`mining_field_state` server-only** — anon + authenticated SELECT DENIED (no client policy/grant —
+   the `mining_fields` posture), and a direct authenticated INSERT DENIED (no client write path).
+4. **`location_state.price_multiplier` dark no-op** — public-readable; every existing row equals `1.0`
+   (composition inert while dark); a fresh DB with 0 rows does not fail (the column being selectable is
+   the proof).
+5. **Static catalogs — no second writer** — `market_offers` + `mining_fields` keep NO client write path
+   (direct authenticated INSERT/UPDATE DENIED), confirming Phase 19 added no runtime writer to either
+   (drift/depletion live on the World-State-owned `location_state`/`mining_field_state`).
+
+**`package.json`** — one line added adjacent to `verify:location-investment`:
+`"verify:world-balance": "node scripts/verify-world-balance.mjs"`.
+
+**Lit-path DEFERRED (the verify-location-investment stance verbatim).** The script NEVER writes
+`game_config` / NEVER flips `world_balance_enabled`; it exercises NO lit path. Lit-path verification —
+flag on → the tick raises pressure at recently-defeated locations and decays it; drifts
+`location_state.price_multiplier` toward the danger-premium target so `trade_effective_price` moves the
+charged/paid price in lockstep with the displayed price; depletes `mining_field_state.reserve_fraction`
+on each extraction (bundle yield thins, floored) while the tick regenerates it toward 1.0 — is deferred
+to the human owner's activation checklist (flip the flag on a DEV database and run the lit checks there,
+never here). Because `0135–0137` are not deployed, local verification is
+`node --check scripts/verify-world-balance.mjs` only (**parses OK**).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md` INTENTIONALLY UNTOUCHED — a verifier script + a
+`package.json` line add no table, writer, function, or cross-system edge (the Phase-15/16/17/18
+slice-verifier precedent). Only this DEV_LOG entry is the doc change.
+
+**Phase 19 (World balance / living economy) CLOSED — backend + verifier deliverables:**
+- `0135` — PIRATE PRESSURE: wires the `defeat_pressure` seam in `worldstate_tick()` — the pressure
+  decay TARGET gains a flag-gated danger term from recent `combat_reports` defeats (read DOWNWARD); the
+  dark master flag `world_balance_enabled='false'` + `world_balance_defeat_window_seconds='3600'`.
+- `0136` — PRICE DRIFT: the World-State-owned `location_state.price_multiplier` (tick-driven, gated) +
+  the read helper `worldstate_current_price_multiplier` + the ONE composition helper
+  `trade_effective_price`, routed through all three Trade Market functions (display == charged/paid); no
+  runtime writer added to `market_offers`.
+- `0137` — FIELD DEPLETION: the World-State-owned `mining_field_state` reserve (lazy rows) +
+  `worldstate_field_remaining` (read) + `worldstate_deplete_field` (sole reserve write, NO-SOFTLOCK
+  floor) + a gated tick regen, composed into `mining_extract` (bundle scaled by reserve, depleted once
+  per real extraction); no runtime writer added to `mining_fields`.
+- `verify-world-balance.mjs` — the dark-posture verifier + `verify:world-balance`.
+
+**Human gates preserved.** `world_balance_enabled` stays `'false'` and ALL `world_balance*` dynamics
+remain behind it; ALL Phase 11–18 flags remain `'false'`; migrations `0001–0134` untouched
+(forward-only — Phase 19 is `0135–0137`); backend-only (no `src/**`); no `game_config` write; no
+lit-path DB run; no cron scheduled (the 60s `process_location_state_ticks()` → `worldstate_tick()` path
+is reused); no `main` touch; no merge / deploy / production apply / workflow dispatch — activation is the
+human owner's decision. SAFE FOR HUMAN MERGE REVIEW.
+
+**Verify.** `node --check scripts/verify-world-balance.mjs` → parses OK. `git status --porcelain` shows
+the ONLY changes are the new script + `package.json` + this DEV_LOG entry; no migration,
+`SYSTEM_BOUNDARIES.md`, flag, `src/`, or `main` touched. The verifier was NOT executed against a DB (the
+gates forbid a lit/production DB run) — dark-posture proof is by `node --check` + the mirrored precedent.
+
+---
+
 ## 2026-07-04 — WORLD-BALANCE-P19 SLICE 3 (FINAL) — RESOURCE-FIELD DEPLETION (dark): World-State `mining_field_state` reserve, composed into `mining_extract`, regenerated by the tick (`0137`)
 
 **Request.** Phase 19 third/final mechanic: resource-field depletion, dark-gated, as ONE coherent
