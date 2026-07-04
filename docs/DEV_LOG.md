@@ -5,6 +5,93 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — WORLD-BALANCE-P19 SLICE 2 — PRICE DRIFT (dark): World-State price multiplier folded into `location_state`, composed into all three Trade Market prices (`0136`)
+
+**Request.** Phase 19 second mechanic: price drift, dark-gated, as ONE coherent producer+consumer
+vertical slice — one forward-only migration `0136` + same-step doc-sync, one revertible commit, nothing
+dead. No flag flip, no new cron, no `src/`, no git, no edit to any shipped migration.
+
+**Design (self-approved; "world-state owns world-state" + no-second-writer / no-cycle).**
+`market_offers` stays STATIC Reference/Config (NO runtime writer). Price drift is NEW World-State-owned
+state FOLDED into the existing `location_state` (the tick already iterates it — no parallel table),
+COMPOSED with the static base price at read/transaction time.
+
+**Work done — `0136` (producer + consumer together):**
+- **`location_state.price_multiplier`** — ONE new column, `numeric not null default 1.0 check (> 0)`.
+  `add column … default 1.0 not null` backfills every existing row to a no-op 1.0. World State stays
+  the SOLE writer — only `worldstate_tick` writes it.
+- **`worldstate_tick()` re-created** = the `0135` body verbatim except a flag-gated multiplier drift.
+  When `world_balance_enabled=true`: the multiplier nudges toward
+  `target = 1.0 + world_balance_price_pressure_coeff × clamp((pressure−baseline)/(max−baseline),0,1)`
+  by `world_balance_price_drift_rate` per applied tick, hard-clamped to
+  `[world_balance_price_multiplier_min, world_balance_price_multiplier_max]` — the STEP-1
+  target-based / self-correcting / bounded philosophy, reusing the SAME baseline/max pressure config
+  (not duplicated).
+- **`worldstate_current_price_multiplier(loc)`** — the World-State read helper (internal/service-role).
+  Flag-gated: returns `1.0` while dark regardless of the stored column (the provable dark guarantee),
+  else the row's `price_multiplier` (1.0 if no row).
+- **`trade_effective_price(base, loc)`** = `greatest(1, round(base × worldstate_current_price_multiplier(loc)))`
+  — the ONE shared composition helper (integer credits, ≥1 floor; the round/floor rule decided here
+  once). Internal.
+- **All three trade functions re-created** = `0087`/`0089`/`0090` verbatim EXCEPT the price read:
+  `get_market_offers` composes BOTH displayed prices; `market_buy` composes the charged `sell_price`;
+  `market_sell` composes the paid `buy_price`. So DISPLAYED == CHARGED/PAID always — no
+  drift-vs-transaction exploit — and the composition lives in exactly ONE place. Docking resolution,
+  dark gate, locks, idempotency, and grants are all preserved verbatim.
+
+**Reused vs new config.** Reused (NOT re-seeded): `world_balance_enabled` (0135, the master gate) and
+the pressure `baseline`/`max` (0032). New this slice, all consumed: `world_balance_price_pressure_coeff='0.5'`
+(up to +50% at max danger), `world_balance_price_drift_rate='0.1'` (10%/tick toward target),
+`world_balance_price_multiplier_min='0.5'`, `world_balance_price_multiplier_max='2.0'` (a bounded
+premium that breathes, never runs away).
+
+**Dark-identical invariant (multiplier = 1.0 while dark, gated in BOTH the tick and the read helper).**
+Two independent guards make the whole slice a no-op while `world_balance_enabled='false'`:
+1. **Tick:** the multiplier column is written `price_multiplier = case when v_wb_enabled then v_new_mult
+   else price_multiplier end` (the 0135 `last_tick_at` self-assign idiom), and ALL normalized/premium
+   math is inside `if v_wb_enabled` — so while dark the column is left untouched at 1.0 and no drift
+   math runs. The pressure/danger-modifier/zone-rollup logic is byte-for-byte 0135. So a dark tick's
+   writes are identical to pre-slice.
+2. **Read helper:** `worldstate_current_price_multiplier` returns 1.0 while dark REGARDLESS of any
+   stored value, so `trade_effective_price` = `round(base × 1.0)` = `round(base)` = the base integer
+   price. Every composed price (display, charged, paid) equals the pre-slice price. (The base
+   `market_offers` prices seed as integers, so `round(base)` is a no-op.)
+
+**New downward edge (acyclic).** Trade Market → World State (read `worldstate_current_price_multiplier`).
+ACYCLIC: World State reads only its OWN `location_state` + `combat_reports` (0135) and never reads Trade
+Market → no cycle, no two-way dependency. NO new edge into `market_offers` (still static, no runtime
+writer, no second writer). World State stays the SOLE writer of `location_state`; Trade Market writes
+only `trade_receipts`.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §1 `location_state` row (the new column is
+tick-sole-written, dark/no-op); §2 World State contract (the price multiplier + `worldstate_current_price_multiplier`
+helper; "must NOT add a runtime writer to `market_offers`"); §2 Trade Market row (base price is now
+COMPOSED via the one `trade_effective_price` helper, the "source of ALL offer prices" phrasing corrected
+to "BASE offer prices", the new downward read edge, still never writes `market_offers`/`location_state`);
+§3 a new "Trade Market → World State price-composition edge is acyclic" note. `docs/ROADMAP.md`: Phase-19
+row carries no per-phase status marker (dark phases 11+), left UNTOUCHED (noted per the instruction).
+
+**Retirement / activation.** `world_balance_enabled` is the permanent Phase-19 gate (same as 0135).
+Lit-path verification (flag on a DEV DB → drive the tick under danger → the multiplier breathes toward
+the bounded target → composed buy/sell prices track it → display == charged/paid) is deferred to the
+human's activation checklist. This slice flips NO flag.
+
+**Human gates preserved.** `world_balance_enabled` stays `'false'`; ALL Phase 11–18 flags remain
+`'false'`; migrations `0001–0135` untouched (forward-only — `0136` is new); no new cron (reuses the 60s
+`process_location_state_ticks()` → `worldstate_tick()` path); backend-only (no `src/**`); no runtime
+`game_config` write; no lit-path/production DB run; no `main` touch; no merge/deploy/workflow dispatch.
+SAFE FOR HUMAN MERGE REVIEW.
+
+**Verify.** Forward-only: `0136` is a new file; the only changes are `0136`, `docs/SYSTEM_BOUNDARIES.md`,
+and this DEV_LOG entry — no shipped migration edited. Single-sourced composition: all three trade
+functions call `trade_effective_price` (grep-confirmed). The dark-identical property is established by
+the two-guard logic walk above. **The M2–M5 / trade verify suites could NOT be run locally**: they
+connect to a live Supabase (service-role key in `.env.local`), which the human gates forbid and where
+`0136` is not deployed — so NO green/red claim is made; the dark-safety argument rests on the logic walk
++ forward-only proof (the `0132–0135` dark-slice precedent).
+
+---
+
 ## 2026-07-04 — WORLD-BALANCE-P19 SLICE 1 — PIRATE PRESSURE (dark): wire the `defeat_pressure` seam in `worldstate_tick()` (`0135`)
 
 **Request.** Phase 19 first mechanic: pirate pressure, dark-gated, by EXTENDING the existing World
