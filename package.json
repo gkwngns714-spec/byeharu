@@ -46,6 +46,7 @@
     "verify:captain": "node scripts/verify-captain.mjs",
     "verify:captain-progression": "node scripts/verify-captain-progression.mjs",
     "verify:ranking": "node scripts/verify-ranking.mjs",
+    "verify:location-investment": "node scripts/verify-location-investment.mjs",
     "db:size": "node scripts/db-size.mjs",
     "db:counts": "node scripts/db-counts.mjs",
     "db:cleanup:dry-run": "node scripts/db-cleanup.mjs",

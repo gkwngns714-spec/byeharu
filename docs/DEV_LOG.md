@@ -5,6 +5,82 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — LOCATION-INVEST-P18 SLICE 3 (FINAL) — the dark-posture verifier `verify-location-investment.mjs` + `verify:location-investment`; **Phase 18 CLOSED**
+
+**Request.** Phase 18 final slice: ONE new verify script (the `verify-ranking.mjs` analogue) + one
+`package.json` line + same-step doc-sync. NO migration change, NO flag write, NO lit-path DB run, NO
+frontend, NO new RPC.
+
+**Work done — `scripts/verify-location-investment.mjs`** (mirrors `verify-ranking.mjs` point-for-point;
+ZERO inline harness copies — imports the shared `resolveEnv`/`createReporter`/`createUserFactory`/
+`Abort` from `scripts/lib/verify-harness.mjs` + `teardownVerifier` from `scripts/lib/
+verifier-teardown.mjs`, same `admin`/`anon`/throwaway-user/`cfgVal` scaffold, same `.catch/.finally`
+teardown with NO flag entry passed — this verifier touches no flag). Proves migrations `0132–0134`
+ship exactly as built and fully dark, with anon/authenticated clients only. Five assertion groups:
+1. **Dark rejection** — `invest_in_location(<uuid>, 1, <uuid>)`, `get_location_development(<uuid>)`,
+   `get_location_investment_leaderboard(<uuid>, 10)`, and `get_my_location_investments()` all return
+   `{ok:false, code:'feature_disabled'}` while `location_investment_enabled='false'`; VALID-shaped
+   args are passed precisely so the identical dark answer proves the anti-probe gate fires BEFORE any
+   validation (ship_not_owned / not_docked / unknown_location are NOT reached). CODE-keyed, matching
+   the 0133/0134 read/write envelopes.
+2. **Owner-read posture (NOT public — the Phase-18 divergence from Ranking's public tables)** — the
+   authenticated own-set of `location_investments` reads back empty (0 rows) on a fresh DB (RLS
+   `player_id = auth.uid()`), and anon SELECT is DENIED (no anon grant — 0132 grants to authenticated
+   ONLY). **Deviation noted:** the instruction's Group-2 wording said "anon returns 0 rows", but the
+   shipped 0132 grant excludes anon, so anon is DENIED — the stronger, truthful proof of owner-read
+   (NOT public). The verifier asserts anon-DENIED + authenticated-0-rows.
+3. **No client write path** — a direct authenticated-client insert into `location_investments` is
+   denied (no insert policy / no write grant — 0132).
+4. **Internal surface locked** — the private sole-writer `location_investment_invest` AND the internal
+   helper `location_investment_current_window` are BOTH denied to the authenticated client and to anon
+   (service-role-only — 0133/0134).
+5. **Config presence** (READ-ONLY; `String()` storage-form-tolerant compares) —
+   `location_investment_enabled='false'`, `location_investment_min_amount='1'`,
+   `location_investment_season_seconds='604800'`,
+   `location_investment_season_epoch_seconds='1767225600'`.
+
+`package.json` — one line adjacent to `verify:ranking`:
+`"verify:location-investment": "node scripts/verify-location-investment.mjs"`.
+
+**Lit-path DEFERRED (the verify-ranking stance verbatim).** The script NEVER writes `game_config` /
+NEVER flips `location_investment_enabled`; it exercises NO lit path. Lit-path verification — flag on →
+a docked ship → `invest_in_location` debits credits via `wallet_debit` and appends exactly one ledger
+row → a replay of the same `request_id` is a no-op (no double debit) → `get_location_development`
+reflects the new `all_time_total`/`season_total` → `get_location_investment_leaderboard` ranks the
+contributor within the current window → crossing into the next window resets `season_total` while
+`all_time_total` + the ledger persist → withdrawal/payout is impossible (one-way sink) — is deferred
+to the human owner's activation checklist (flip the flag on a DEV database and run the lit checks
+there, never here). Because `0132–0134` are not deployed, local verification is `node --check
+scripts/verify-location-investment.mjs` only.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md` INTENTIONALLY UNTOUCHED — a verifier script + a
+`package.json` line add no table, writer, function, or cross-system edge (the Phase-15/16/17
+slice-verifier precedent). Only this DEV_LOG entry is the doc change.
+
+**Phase 18 (Location Investment) CLOSED — backend + verifier deliverables:**
+- `0132` — the dark flag `location_investment_enabled='false'` + the `location_investments` append-only,
+  monotonic per-contribution ledger (owner-read, client-unwritable).
+- `0133` — the `location_investment_invest` SOLE writer via the public `invest_in_location` wrapper: a
+  docked-gated, ledger-row-as-receipt idempotent, strict ONE-WAY credit sink (`wallet_debit` down, no
+  withdrawal/no payout) + the `location_investment_min_amount='1'` floor.
+- `0134` — the ONE season-window helper `location_investment_current_window()` + the three dark read
+  RPCs (`get_location_development`, `get_location_investment_leaderboard` public;
+  `get_my_location_investments` own-history): persistent-vs-seasonal as TWO derived reads over the one
+  ledger, window derived deterministically from config (no season table, no coupling to Ranking).
+- `verify-location-investment.mjs` — the dark-posture verifier + `verify:location-investment`.
+
+**Human gates preserved.** `location_investment_enabled` stays `'false'`; ALL Phase 11–18 flags remain
+`'false'`; migrations `0001–0134` untouched (forward-only); backend-only (no `src/features/**`); no
+`game_config` write; no lit-path DB run; no cron scheduled; no `main` touch; no merge / deploy /
+production apply / workflow dispatch — activation is the human owner's decision. SAFE FOR HUMAN MERGE
+REVIEW.
+
+**Verify.** `node --check scripts/verify-location-investment.mjs` → parses OK. `git status --porcelain`
+shows the ONLY changes are the new script + `package.json` + this DEV_LOG entry; no migration,
+`SYSTEM_BOUNDARIES.md`, flag, or `main` touched.
+
+---
+
 ## 2026-07-04 — LOCATION-INVEST-P18 SLICE 2 — the dark PUBLIC read surface (development vs seasonal score) + the ONE season-window helper
 
 **Request.** The Phase-18 read surface: ONE new forward-only migration exposing the persistent state vs
