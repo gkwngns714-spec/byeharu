@@ -5,6 +5,85 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — FITTING-P14 SLICE D — stats integration `0115` (fitted modules feed `calculate_expedition_stats` under the `module_slots` hard cap; re-create of the 0044 adapter)
+
+**Request.** Implement slice D: ONE new forward-only migration re-creating the stat adapter so
+fitted modules feed expedition stats via capacity/tradeoff — ROADMAP law 4's "replace the SOURCE
+of stats … capacity + tradeoffs, never a plain sum", now real for modules. NO frontend, NO verify
+script, NO wrapper/writer/receipts change this slice. Read first, end-to-end: `0044` (the function
+being re-created), `0049` (its only live caller), and BOTH pinning scripts.
+
+**What the pinning scripts actually assert (checked, not assumed):**
+- `verify-phase8.mjs` asserts specific field VALUES (empty loadout → `support_capacity_used 0`,
+  `limit 10`, `combat_power 0`, `speed 1`, `cargo_capacity` = ship's; per-craft deltas;
+  rejection/exception cases; determinism = two identical calls compared to each other; ship +
+  inventory not mutated) and LIST-membership finiteness over its `NUM_FIELDS` array (`:38–39`,
+  `.every(...)`) — it never asserts an exact key SET, so ADDING keys is safe.
+- `verify-mainship-preview.mjs` (reported per the request): asserts envelope/value checks only —
+  `has_ship`/`valid` flags, `stats.support_capacity_limit === 10`/`used === 0`/`combat_power === 0`
+  (`:52–54`), `used === 3` + `combat_power > 0` for one missile_boat (`:56–58`), over-capacity →
+  `valid:false` with an error message matching `/capacity/i` (`:60–62` — the support-capacity
+  exception text is unchanged, so this still matches), unknown craft → `valid:false`, no-ship →
+  hull-teaser fields, preview-writes-nothing, and the adapter still denied to clients. It also
+  never asserts an exact key set — additive keys are safe here too.
+
+**Work done — NEW `supabase/migrations/20260618000115_fitting_p14_stats_adapter.sql`**
+(migration head moves **0114 → 0115**; `0001–0114` unedited): `create or replace
+calculate_expedition_stats` — SAME signature, support-craft path byte-identical, and the module
+feed ADDED between the loadout capacity check and the final jsonb build:
+1. **Read** the ship's fit set: `ship_module_fittings` (for `v_ship.main_ship_id`) →
+   `module_instances` → `module_types` (`slot_cost`/`slot_type`/`stats_json` — the 0111 columns'
+   FIRST code consumer). Pure downward read; no player filter needed — the existing owned-ship
+   read plus `fitting_apply`'s owner-consistency invariant (0112) guarantee the fit set is the
+   player's (commented in place).
+2. **Capacity** — 0044:112–115 verbatim: `Σ slot_cost > v_ship.module_slots` → `raise exception`.
+   Defense-in-depth: fit-time enforcement in `fitting_apply` is primary; the adapter still refuses
+   to compute from an over-capacity state rather than clamp or trust it.
+3. **Contributions** into the SAME accumulators the loadout loop uses
+   (a_combat/a_survival/a_repair/a_cargo/a_scout/a_mining/a_retreat), exact key list
+   attack/defense/repair/cargo/scan/mining/evasion, coalesced to 0 — one stat pipeline, no
+   parallel module pipeline.
+4. **Speed** — Σ `speed_mult_bonus` applied BEFORE penalties (the slice-A locked model):
+   `round(greatest(0.2, v_speed * (1 + v_mod_speed_bonus) * (1 - a_spd_pen)), 3)` — floor and
+   rounding untouched; zero modules reduces the expression to 0044's exactly.
+5. **Tradeoffs (numbers + rationale, recorded):** slot_type CASE × `slot_cost` (the module
+   analogue of ×qty) — **weapon** → attention +2·cost, speed_pen +0.03·cost; **cargo** →
+   attention +2·cost, speed_pen +0.04·cost; **sensor** → attention +1·cost; **engine** → no
+   tradeoff. Rationale: weapons/cargo mirror the 0044 combat_damage/cargo role tradeoffs — more
+   firepower / a bigger hold draws pirates and slows the burn; active sensors emit (attention
+   only); the engine's cost is the slot itself. Unknown/future slot_types contribute stats but no
+   tradeoff (CASE else 0 — 0044's permissive unmatched-role posture). No activity-tag warning for
+   modules — `module_types` has no `activity_tags` column.
+6. **Output** — exactly two added keys, `module_slots_used`/`module_slots_limit`, mirroring the
+   support-capacity pair. **THE COMPATIBILITY CONTRACT:** a ship with no fitted modules returns
+   today's values for every pre-existing key — which is what keeps verify:phase8 /
+   verify:mainship-preview green; and no fitted module can exist anywhere until the owner flips
+   the dark flag.
+- **ACL** re-asserted with the targeted idiom (0084/0113/0114 posture; same end state 0044
+  established: service_role only, never clients — `get_my_expedition_preview` (0049) remains the
+  one client path and needs no change: it passes the adapter's jsonb through, so the two new keys
+  simply appear in previews).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §4 item 8 (stat adapter) now records the
+0115 extension — reads `ship_module_fittings`+`module_instances`+`module_types` downward
+read-only, enforces BOTH hard caps (raise, never clamp), same accumulators + speed bonus, the two
+added keys, the zero-module compatibility contract; the §2 Fitting row's "future adapter edge"
+note became the real shipped edge (Expedition-stats → Fitting is a READ by the adapter; nothing
+writes through Fitting but its own command). Still acyclic; the adapter owns no table.
+
+**State.** `npm run build` green (no `src/` change was made — confirmed). Migration head **0115**;
+`module_fitting_enabled='false'` — the adapter change is inert today (no fitting rows can exist
+while the command surface is dark, so every caller sees pre-0115 values plus `module_slots_used:0`
+/`module_slots_limit`). No flag flipped, no live DB write, no workflow touched. **DB-apply posture
+(honest, unchanged):** no psql/docker/supabase CLI in this sandbox — the re-created function was
+mechanically diffed against 0044 (only the stated additions: declares, the module block, the two
+speed-line/output changes) and the pinning scripts were read end-to-end as reported above; live
+assertions run in the owner's environment (`verify:phase8` + `verify:mainship-preview` must stay
+green there) and the later `verify:fitting` covers the dark posture. PR-ready on
+`autopilot/20260703-064048`, `main` untouched. Next: the read surface + frontend + `verify:fitting`.
+
+---
+
 ## 2026-07-04 — FITTING-P14 SLICE C2 — settled-SAFE ship-state rule `0114` (corrects the 0113 `'home'` literal; `ship_not_home` → `ship_not_settled`)
 
 **Request.** Forward-only correction of the slice-C game rule, while everything is still dark: the
