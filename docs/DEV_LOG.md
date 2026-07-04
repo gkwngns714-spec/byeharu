@@ -5,6 +5,80 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — PHASE20-POLISH SLICE 7 (FINAL) — the dark-posture verifier `verify-phase20-polish.mjs` + `verify:phase20-polish`; **Phase 20 CLOSED**
+
+**Request.** Phase 20 final slice: ONE new verify script (the `verify-world-balance.mjs` analogue) +
+one `package.json` line + same-step doc-sync + phase close. NO migration change, NO flag write, NO
+lit-path DB run, NO `src/`, NO new RPC, NO cron, no git.
+
+**Work done — `scripts/verify-phase20-polish.mjs`** (mirrors `verify-world-balance.mjs`
+point-for-point; ZERO inline harness copies — imports the shared `Abort`/`resolveEnv`/`createReporter`/
+`createUserFactory` from `scripts/lib/verify-harness.mjs` + `teardownVerifier` from
+`scripts/lib/verifier-teardown.mjs`, the same `admin`/`anon`/throwaway-user/`cfgVal` scaffold, the same
+`.catch/.finally` teardown with NO flag entry passed — this verifier touches no flag; `emailPrefix`
+`'phase20'`). Proves migrations `0139–0142` ship exactly as built and fully dark, with anon/authenticated
+clients only. Five assertion groups (`String()` storage-form-tolerant compares; VALID-shaped uuid/arg
+sets so a denial proves the LOCK, not argument validation):
+1. **Config presence** (READ-ONLY) — `phase20_polish_enabled='false'` (the dark master gate).
+2. **Read surfaces dark + ACL-correct** — as AUTHENTICATED: `get_world_events({p_location_id:null,
+   p_zone_id:null})` → `ok:true` with an EMPTY `events` array, and `get_ui_asset_catalog({p_asset_kind:
+   null})` → `ok:true` with an EMPTY `assets` array (flag-gated fail-closed → empty while dark). As
+   ANON: BOTH RPCs DENIED (granted to `authenticated` only).
+3. **World Events writers locked** — `world_events_publish` (full valid-shaped arg set) and
+   `world_events_set_active({p_event_id:randomUUID(), p_is_active:false})` DENIED to BOTH authenticated
+   and anon (service-role-only ACL, 0140).
+4. **`world_events` server-only** — authenticated + anon SELECT DENIED (no client read policy/grant); a
+   direct authenticated INSERT DENIED (sole writers are its two owner functions).
+5. **`ui_asset_catalog` server-only, still static** — authenticated + anon SELECT DENIED; a direct
+   authenticated INSERT DENIED (static Reference/Config, seed-migration-only, no runtime writer added).
+
+**`package.json`** — ONE line added adjacent to `verify:world-balance`:
+`"verify:phase20-polish": "node scripts/verify-phase20-polish.mjs"`.
+
+**NO-FLAG-WRITE / NO-LIT-PATH stance** (verbatim from the `verify-world-balance` precedent): the script
+NEVER writes `game_config` and NEVER flips `phase20_polish_enabled`; it exercises NO lit path. Lit-path
+verification (flag on a DEV DB → `world_events_publish` a scoped event → `get_world_events` returns it
+with its resolved severity icon; retire via `world_events_set_active`) is DEFERRED to the human owner's
+activation checklist.
+
+**Doc-sync (this step).** This DEV_LOG entry (incl. the phase-close summary below). `docs/SYSTEM_BOUNDARIES.md`
+is INTENTIONALLY UNTOUCHED — a verifier script + a `package.json` line add no table/writer/function/edge
+(the Phase-15–19 slice-verifier precedent). Per the dark-phase convention (dark phases 11+ carry NO
+ROADMAP marker; DEV_LOG is authoritative), `docs/ROADMAP.md` gets NO Phase-20 status marker.
+
+**Verify.** `node --check scripts/verify-phase20-polish.mjs` → parses OK. NOT executed against a DB —
+`0139–0142` are dark/undeployed, so a lit run is deferred (above). The ONLY changes this slice are the
+new script + the `package.json` line + this DEV_LOG entry. The M2/M3/M4/M4.5 engine tests are unaffected.
+
+### Phase 20 (Polish / expansion — map UI, portraits, icons, events) — CLOSED
+
+**Deliverables (all DARK behind `phase20_polish_enabled='false'`; migrations `0139–0142`, forward-only):**
+- **World Events triad** — `0139` schema (`world_events`, server-only, scope↔target CHECK) → `0140`
+  service-role idempotent writers (`world_events_publish` / `world_events_set_active`, nullable-unique
+  `dedup_key`, retire-not-delete, both dark-gate-first no-op) → `0141` flag-gated fail-closed read
+  surface (`get_world_events`, authenticated-only, live+in-scope filter). World Events is a NEW
+  downward-LEAF system: writes ONLY `world_events`, grants nothing, reads only the static Map for FK
+  validation — no second writer, acyclic.
+- **UI asset vocabulary** — `0142` `ui_asset_catalog` (ONE table discriminated by `asset_kind`
+  portrait/icon; static Reference/Config, seed-migration-only, NO runtime writer) + `get_ui_asset_catalog`
+  (flag-gated fail-closed, authenticated-only).
+- **Fail-closed frontend** — `src/features/events/` (the World Events panel on the galaxy map,
+  top-center, read-only, renders nothing while dark) + `src/features/assets/` (the icon resolver +
+  client glyph registry) consuming `get_ui_asset_catalog('icon')` for severity icons — so the `0142`
+  catalog has a live consumer. Server (flag gate + live-window filter) is the sole visibility control.
+- **Portraits** — delivered as DARK seed-ahead vocabulary (`ui_asset_catalog` portrait rows) pending
+  their live host (captains, itself dark/unsurfaced) — the accepted Phase-6 `support_craft_types`
+  seed-ahead pattern, NOT speculative UI.
+- **Verifier** — `verify-phase20-polish` (dark posture, shared harness, no lit path).
+
+**Preserved human gates (nothing activated by this loop):** `phase20_polish_enabled` stays `'false'`;
+every Phase-11–20 capability flag remains `'false'`; migrations `0001–0138` untouched (forward-only —
+Phase 20 is `0139–0142`); NO `game_config` write; NO lit-path DB run; NO cron scheduled; `main`
+untouched; NO merge / deploy / production-apply / workflow-dispatch. Activation (flag flip on a DEV DB,
+lit verification, deploy) is the human owner's decision. **SAFE FOR HUMAN MERGE REVIEW.**
+
+---
+
 ## 2026-07-04 — PHASE20-POLISH SLICE 6 — icon resolver (`src/features/assets/`) + severity icons on the World Events panel, fail-closed
 
 **Request.** Wire `ui_asset_catalog` into the World Events panel as SEVERITY ICONS — delivering the
