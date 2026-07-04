@@ -5,6 +5,62 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MODULES-P13 SLICE D — the dark read surface `0110` (`get_my_module_instances()`). **Server side of Phase 13 complete, fully dark**
+
+**Request.** Implement slice D: ONE new forward-only migration with the read surface, mirroring
+the exploration/mining read surfaces (0101/0106) exactly — re-read end-to-end first. NO frontend,
+NO verify script this slice.
+
+**Work done — NEW `supabase/migrations/20260618000110_modules_p13_read_surface.sql`** (migration
+head moves **0109 → 0110**; `0001–0109` unedited):
+- **`get_my_module_instances()`** — the 0101/0106 body step-for-step (line-level sources:
+  envelope + auth + dark-gate order **0101:36–44 / 0106:38–46**; jsonb_agg row shape + desc
+  ordering + coalesce-to-`[]` **0101:49–63 / 0106:51–65**; `stable`/`security definer`/
+  `set search_path = public` posture **0101:26–29**): `auth.uid()` → `not_authenticated`
+  envelope; then the dark gate BEFORE any instance read — `{ok:false,
+  reason:'module_crafting_disabled'}` (the 0101 `exploration_disabled` / 0106 `mining_disabled`
+  envelope shape), identical regardless of caller state (no probing while dark); then the
+  caller's OWN `module_instances` joined to their `module_types` catalog identity. Per row:
+  `instance_id`, `module_type_id`, `name`, `slot_type`, `created_at` — newest first
+  (`created_at desc`); response `{ok:true, instances:[…]}` mirroring
+  `{ok:true, discoveries/extractions:[…]}`.
+- **Catalog surface decision — the precedent points AGAINST a catalog RPC, and was followed:**
+  0101/0106 exist because `exploration_sites`/`mining_fields` are HIDDEN (RLS, no client
+  policy — reveal only through the player's own rows). The module catalog/recipe tables are the
+  opposite posture by design (0107): public-read Reference/Config catalogs exactly like
+  `item_types` (0039:23–25) / `support_craft_types` (0042:32–36) / `trade_goods`, which the
+  client reads by DIRECT table select (the shipped convention — e.g. the hull-type selects in
+  `src/features/map/mainshipApi.ts`). A `get_module_catalog` RPC would duplicate an
+  already-public surface — NOT added.
+- **No inventory-balance join:** no shipped read surface joins another system's balances
+  (`inventory_get_balance` is an internal service_role-only leaf, 0039:156). The surface stays
+  dumb; the client reads its own `player_inventory` through the existing Inventory read path
+  (the 0039:50–52 own-row select policy + grant). No new cross-system read edge without
+  precedent.
+- **ACL verbatim from 0101:69–70 / 0106:71–72:** execute revoked from public/anon, granted to
+  authenticated only — and dark today: the gate rejects every call while
+  `module_crafting_enabled='false'`.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: the §2 Modules row gained
+`get_my_module_instances()` with its dark-gate semantics + the two recorded non-additions (no
+catalog RPC, no balance join, with the precedent reasons). The §1 matrix is UNCHANGED — mirroring
+the 0101/0106 precedent exactly: read surfaces add no writer and are recorded in the §2 system
+row, not the matrix (the mining slice-E entry did the same).
+
+**State.** `npm run build` green. Migration head **0110**. **The server side of Phase 13 Module
+crafting is COMPLETE (slices A–D) and fully dark end-to-end:** the craft command (both layers)
+and the read surface all server-reject while `module_crafting_enabled='false'`; the mint writer
+is service_role-only; the catalogs are inert public-read reference data. No flag flipped, no live
+DB write, no workflow touched. **DB-apply posture (honest, unchanged from slices A–C):** no
+psql/docker/supabase CLI in this sandbox and npx cannot fetch (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`)
+— the migration was hand-verified line-by-line against 0101/0106 at the sources cited above; live
+assertions run in the owner's environment and will be covered by the slice-F `verify:modules`
+dark-posture script. PR-ready on `autopilot/20260703-064048`, `main` untouched. Next: slice E
+(dark frontend `src/features/modules/`, consuming `useActivityPanelGuards`), then slice F
+(`verify:modules`).
+
+---
+
 ## 2026-07-04 — MODULES-P13 SLICE C — the dark craft command `0109` (`module_craft_receipts` + `craft_module` → private `production_craft_module`)
 
 **Request.** Implement slice C of Phase 13: ONE new forward-only migration with the player-scoped
