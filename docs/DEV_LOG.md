@@ -5,6 +5,64 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — RANKING-P17 POST-AUDIT FIX, SLICE A — the commit-safe consumption-ledger SCHEMA `ranking_counted_grants` (migration 0144; schema only, no writer)
+
+**Request.** Post-audit fix pass, item 2: `ranking_accrue_standings`'s timestamp high-water cursor is
+commit-unsafe. Build the fix in slices, schema first. Slice A = a NEW forward-only migration adding the
+per-(season, grant) consumption ledger table ONLY (no writer — that is slice B), plus same-step
+doc-sync. No flag flip, no shipped-migration edit (0001–0142 or the mining 0143), no new RPC/writer.
+
+**The bug (commit-unsafe cursor).** `ranking_accrue_standings` (0130) is INCREMENTAL by a TIMESTAMP
+high-water cursor, `ranking_standings.last_counted_at` (0128 decision 3): each run folds only grants
+with `granted_at > last_counted_at` and advances the mark. But `reward_grants.granted_at` defaults to
+`now()` = the inserting transaction's START time (`20260616000015_reward_system.sql:14`), while a row
+becomes VISIBLE to the accrual reader only at COMMIT. A grant whose txn started BEFORE an accrual run
+(small `granted_at`) but COMMITS AFTER that run advanced the watermark past its `granted_at` is then
+PERMANENTLY SKIPPED — the next run's `granted_at > last_counted_at` filter excludes it forever. Under
+normal concurrent finalization this silently drops points. `reward_grants` has a stable `id uuid` PK
+(0015:8), so a per-row consumption marker is the correct, ordering-independent key.
+
+**The fix (per-grant consumption marker; the securing `secured_at` idiom).** Replace timestamp-cursoring
+with a visibility-based per-(season, grant) marker. `ranking_counted_grants` records, EXACTLY ONCE,
+that a specific `reward_grants` row has been folded into a specific active season. Slice B's accrual
+will select grants by an ANTI-JOIN against this table (grants NOT yet marked for the season) rather than
+by a `granted_at` comparison — so a late-committing grant is simply ABSENT from the ledger and picked up
+on the next run, regardless of `granted_at` ordering. Commit-safe by construction, exactly-once (the
+`unique (season_id, grant_id)` key), idempotent. This is the SAME per-row consumption-marker idiom the
+codebase already uses for commit-safe idempotency — the securing processors' `secured_at` mark
+(0100/0105) that the 0128/0130 accrual comment itself cites as its analogue — here materialized as its
+own ledger row (one grant folds once PER active season it belongs to, so the marker is per-(season,
+grant), not a single column on the grant). PERMANENT correctness structure, NOT a shim; it does not
+retire — the timestamp cursor is simply what slice B stops depending on.
+
+**Work done (migration 0144 — `20260618000144_ranking_p17_counted_grants_schema.sql`).** Created
+`public.ranking_counted_grants` (schema/RLS/index/comments only, mirroring the 0128 standings style):
+`id uuid PK`, `season_id → ranking_seasons(season_id) ON DELETE CASCADE`, `grant_id → reward_grants(id)
+ON DELETE CASCADE`, `player_id → auth.users(id) ON DELETE CASCADE`, `dimension text` with the IDENTICAL
+0128 closed-set CHECK `('combat','trade','exploration','mining')` (reused, not re-spelled), `score
+numeric`, `granted_at timestamptz` (informational snapshot, NOT a cursor), `counted_at timestamptz
+default now()`, and `unique (season_id, grant_id)` (the exactly-once key; its index also serves the
+anti-join lookup). Added `ranking_counted_grants_fold_idx (season_id, player_id, dimension)` for the
+per-standings-row aggregation. SERVER-ONLY posture (the 0103 securing-table stance, NOT the 0128
+public-read stance): RLS enabled, NO policy, NO `anon`/`authenticated` grant → clients can neither read
+nor write; the SECURITY DEFINER writer (slice B) reaches it as definer-owner. NO writer created this
+slice.
+
+**Boundaries / doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md` §1 matrix gains the
+`ranking_counted_grants` row (sole writer = `ranking_accrue_standings` (slice B); server-only, no client
+read; DARK behind `ranking_enabled`), adjacent to `ranking_standings`; the §2 Ranking row's Owns is
+extended and its accrual note now flags the `last_counted_at` timestamp cursor as commit-unsafe and
+being replaced by this ledger's anti-join. Ranking stays a READ-ONLY downward leaf: reads Reward's
+`reward_grants` DOWNWARD, writes only its own tables, nothing calls into Ranking — call graph unchanged
+and acyclic. No new table adds any cross-system edge.
+
+**Preserved human gates.** `ranking_enabled` stays `'false'` (dark) — no reader or writer references
+the new table yet; no flag flipped, no shipped migration (0001–0143, incl. mining 0143) edited, no new
+RPC/writer, nothing merged/deployed/applied to production. Verified: with RLS on and no policy/grant,
+no `anon`/`authenticated` client can read or write `ranking_counted_grants`. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — MINING-P12 POST-AUDIT RECONCILIATION — the 0143 double-extract race is NOT reachable today; honest reframing + deferred concurrency proof (no code/migration change)
 
 **Request.** Before proving item (1), reconcile its reachability honestly against the code, correct the
