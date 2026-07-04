@@ -5,6 +5,68 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — RANKING-P17 SLICE 0 — dark flag `ranking_enabled` + the Ranking-owned root table `ranking_seasons` (migration `0127`)
+
+**Request.** Begin Phase 17 (Ranking / competition — ROADMAP :92 "weekly/monthly seasons;
+combat/trade/explore/mine · reads finalized events; reset by season, not deletion"). Slice 0 only:
+ONE new forward-only migration (the dark flag + the seasons foundation) + same-step doc-sync. NO
+scoring/season/read function, NO standings table, NO frontend, NO flag flipped true.
+
+**Work done — migration `20260618000127_ranking_p17_seasons_and_flag.sql` (forward-only; `0001–0126`
+unedited).**
+- **(a) Dark flag.** Seeded `game_config('ranking_enabled', 'false')` with the exact 0097/0102/0107/
+  0117/0124 slice-0 flag idiom (`on conflict (key) do nothing`, inherits the table-wide
+  `game_config_public_read` posture). Description records that it gates ALL future Ranking
+  scoring/read/season RPCs, each of which must check it FIRST and reject-before-any-read while false
+  (fails closed both server + UI). No flag flipped true.
+- **(b) `ranking_seasons` — the NEW Ranking-owned root table.** Columns: `season_id uuid pk default
+  gen_random_uuid()`, `cadence text check in ('weekly','monthly')`, `label text`, `starts_at`/
+  `ends_at timestamptz`, `status text default 'upcoming' check in ('upcoming','active','closed')`,
+  `created_at`, plus a table-level `check (ends_at > starts_at)`. Integrity: a **partial unique index
+  `ranking_seasons_one_active_per_cadence` (`unique (cadence) where status = 'active'`)** — AT MOST
+  ONE active season per cadence. RLS ON + ONE public-read select policy + `grant select to anon,
+  authenticated`; **NO insert/update/delete policy and NO write grant** — clients cannot mutate. A
+  table comment records: Ranking is the sole writer, seasons are the reset-by-season scoping
+  mechanism (never delete event data), DARK behind `ranking_enabled`.
+
+**Self-approved locked design decisions (owner-directed; grounds later slices).**
+1. A **season is a named scoring WINDOW per cadence**. A weekly AND a monthly season may run
+   CONCURRENTLY over the same finalized events (independent leaderboards) — cadence is part of
+   identity, not mutually exclusive. Direct reading of "weekly/monthly seasons".
+2. **Reset-by-season, NEVER by deletion** (ROADMAP law). A reset is a NEW season row scoping a new
+   `[starts_at, ends_at)` window; the finalized event ledger (`reward_grants`) is never deleted or
+   truncated. Scores partition by the window without touching any event.
+3. **At most one `active` season per cadence** (the partial unique index) — the "one active window"
+   invariant; `upcoming`/`closed` seasons are unconstrained (history + scheduling).
+4. **No writer this slice.** The SOLE writer of `ranking_seasons` is Ranking's OWN future
+   season-management function (a later slice: `SECURITY DEFINER`, client-revoked; rows are
+   runtime-created, NOT migration-seeded). No RPC reads or writes the table yet — dark, inert.
+
+**Finalized-event source (later slices, not built here).** Ranking's read source is the idempotent
+reward ledger `reward_grants` (0015): UNIQUE (source_type, source_id) = one row per SECURED activity
+result; `source_type` ('combat','exploration','mining','trade' — the closed 0096 activity domain) is
+the activity dimension, `player_id` the leaderboard subject, `granted_at` the season-window field. A
+per-player, per-season, per-activity score is fully derivable from a plain DOWNWARD read — no writer
+to `reward_grants` or any activity table, ever.
+
+**Boundary placement (same-step doc-sync — the 0098/0103/0117 table-creating-slice precedent).**
+- `docs/SYSTEM_BOUNDARIES.md` §1 matrix: added the `ranking_seasons` row under a NEW **Ranking**
+  system (sole writer = Ranking's future season fn; public read-only; DARK behind `ranking_enabled`).
+- `docs/SYSTEM_BOUNDARIES.md` §2: added the **Ranking** system row — Owns `ranking_seasons` (0127);
+  role = a READ-ONLY downward leaf consumer of finalized events (reads `reward_grants` DOWNWARD in
+  later slices; writes only its own tables); Must-NOT = write any other system's table, be written by
+  any non-Ranking function, or reset scores by deleting event data. Edges (later slices) are all
+  DOWNWARD (Ranking → Reward read · Reference/Config flag read) — nothing calls into Ranking, so the
+  call graph stays **acyclic**, one sole-writer per table, and Ranking is a NEW dark **leaf** owner.
+
+**Human gates preserved.** `ranking_enabled` stays `'false'` (no flag flipped); every Phase 11–17
+flag remains `'false'`. No existing migration edited (`0001–0126` untouched, forward-only). No
+`game_config` value changed except ADDING the new dark key. Backend-only (no `src/features/**`). No
+merge/deploy/production apply/workflow dispatch. Slice is inert: no reader/writer references
+`ranking_seasons` or the flag yet.
+
+---
+
 ## 2026-07-04 — CAPTAIN cleanup audit — SYSTEM_BOUNDARIES §1-matrix doc-sync (rows `captain_types` / `captain_recipe_ingredients` / `ship_captain_assignments`)
 
 **Request.** Cleanup/audit pass over the Captain milestone (Phase 15 assignment 0117–0123 + Phase 16
