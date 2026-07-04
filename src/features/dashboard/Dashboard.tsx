@@ -11,6 +11,7 @@ import { FleetStatusPanel } from '../fleets/FleetStatusPanel'
 import { useCombat } from '../combat/useCombat'
 import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
 import { CombatReportsView } from '../combat/CombatReportsView'
+import { RankingPanel } from '../ranking/RankingPanel'
 
 /**
  * Command Center (home). Composes the M3 feature panels — base, send-fleet, fleet
@@ -133,6 +134,10 @@ export function Dashboard() {
             onChanged={game.refresh}
           />
           <CombatReportsView reports={combat.reports} locations={game.locations} unitTypes={game.unitTypes} fleets={game.fleets} />
+          {/* RANKING-P17 (dark): server-lit leaderboard. Renders null while ranking_enabled is false
+              (get_ranking_seasons → feature_disabled → not server-lit), so the Dashboard is byte-unchanged
+              in production today. Reads ONLY the existing 0131 read RPCs; own standing derived client-side. */}
+          <RankingPanel lifecycleKey={user?.id ?? 'anon'} />
         </div>
       )}
     </div>

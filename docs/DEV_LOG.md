@@ -5,6 +5,60 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — RANKING-P17 POST-AUDIT UI (panel 1 of 4) — the dark `src/features/ranking/` leaderboard screen (frontend-only; no server change)
+
+**Request.** Item (4), panel 1 of 4: build the dark Ranking screen as a new `src/features/ranking/`
+feature mirroring `src/features/events` and the shared fail-closed idiom, reading ONLY the two existing
+0131 RPCs (`get_ranking_seasons` / `get_ranking_leaderboard`) — NO new server authority. Frontend-only:
+no migration/RPC/flag/server-file change.
+
+**Files added (3 + a mount edit).**
+- `src/features/ranking/rankingTypes.ts` — pure discriminated-union result types mirroring the 0131
+  jsonb exactly: `RankingSeason` (season_id, cadence, label, starts_at, ends_at, status), `RankingRow`
+  (rank, player_id, score, events_counted), `RankingDimension` ('overall'|'combat'|'trade'|
+  'exploration'|'mining'), and `GetRankingSeasonsResult` / `GetRankingLeaderboardResult` as
+  `{ok:true, …} | {ok:false, code?}` so `isServerLit` narrows the success member cleanly (the
+  eventsTypes.ts idiom; arrays optional for defensive `?? []`).
+- `src/features/ranking/rankingApi.ts` — two thin `supabase.rpc` wrappers `getRankingSeasons()` +
+  `getRankingLeaderboard(seasonId, dimension, limit?)`, each catching transport/DB errors and collapsing
+  to `{ok:false}` EXACTLY like `eventsApi.ts` (fail-closed; a denied/failed call is not server-lit).
+- `src/features/ranking/RankingPanel.tsx` — dark, server-driven leaderboard: on mount / lifecycle
+  change reads `getRankingSeasons()`; renders `null` unless `isServerLit(seasons)` AND ≥1 season exists;
+  when lit, default-selects the active season (else the first) + dimension `'overall'`, fetches
+  `getRankingLeaderboard(season_id, dimension)`, and renders ranked rows (rank, short player_id, score,
+  events_counted) with minimal season + dimension selectors (the 0131 domain). Uses the shared
+  `useActivityPanelGuards` mounted-guard + a `lifecycleKey` refetch trigger exactly like
+  `WorldEventsPanel`. `data-testid="ranking-panel"` mirrors the events panel.
+- Mounted `<RankingPanel lifecycleKey={user?.id ?? 'anon'} />` in `src/features/dashboard/Dashboard.tsx`
+  as a dark server-lit section (a season leaderboard is a top-level standing surface, not a map overlay;
+  the Dashboard is the post-auth landing). It renders `null` while dark, so the Dashboard is
+  byte-unchanged in production.
+
+**Fail-closed logic.** Visibility is 100% server-driven — there is NO client flag constant. While
+`ranking_enabled='false'` both RPCs return `{ok:false, code:'feature_disabled'}` → `isServerLit` is
+false → the panel returns `null`. Transport/DB errors collapse to `{ok:false}` in the API layer and
+fail closed identically. The board only appears once the human lights the flag AND opens a season.
+
+**Own-standing derivation (client-side only — no new RPC).** There is no `get_my_standing` RPC by
+design. The panel reads the signed-in user id from `authStore` and, among the returned leaderboard
+`rows`, highlights the row whose `player_id` matches (marked "(you)") and summarises "Your standing:
+#rank · score · events". If the player is absent from the returned rows it shows a small "Unranked —
+outside the top N" line — computed purely from the already-returned rows, never a server call.
+
+**Build.** `npm run build` (`tsc -b && vite build`) GREEN — 158 modules transformed, no type or build
+errors (the >500 kB chunk-size note is a pre-existing vite advisory, unrelated).
+
+**Boundaries.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — this is FRONTEND-ONLY: no table, no
+writer, no RPC, no cross-system edge. It consumes the existing 0131 read surface already recorded in the
+§2 Ranking contract; a UI consumer adds nothing to the ownership matrix or call graph (the established
+precedent that read-only UI over an existing RPC is not a boundary fact).
+
+**Preserved human gates.** `ranking_enabled` stays `'false'` (dark) — the panel is server-rejected and
+renders null; no flag flipped, no migration/RPC/server-file changed, no new authority, nothing
+merged/deployed. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — EXPLORATION-P11 POST-AUDIT FIX — convert the racing duplicate-scan insert into a clean `already_discovered` (migration 0146)
 
 **Request.** Post-audit fix pass, item 3: `exploration_scan`'s step-11 discovery insert has no
