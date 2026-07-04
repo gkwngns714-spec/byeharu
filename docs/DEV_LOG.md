@@ -5,6 +5,65 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — RANKING-P17 POST-AUDIT FIX (item 5) — schedule the ranking-accrual cron; world-tick already scheduled, no redundant cron (migration 0147)
+
+**Request.** Item (5), the deferred background schedulers: add the ranking-accrual cron, and document
+that world-balance is already scheduled (no redundant cron). NEW forward-only migration mirroring the
+`0033` cron idiom EXACTLY; same-step doc-sync. No flag flip, no shipped-migration edit, no new
+function/table, not applied/dispatched to any DB.
+
+**The resolution.** Investigation confirmed only ONE background job genuinely lacked a scheduler:
+- **Ranking-accrual** (`ranking_accrue_standings`, 0130/0144/0145) had NO cron (shipped as a safe dark
+  no-op, "deferred"). → **This migration schedules it.**
+- **World-balance world-tick** is ALREADY scheduled. Phase-19 folded ALL its dynamics INTO
+  `worldstate_tick()` itself — pirate-pressure (0135), price-drift (0136), field-depletion (0137) are
+  `create or replace` extensions of that ONE function — and `worldstate_tick()` is already driven every
+  60s by the pre-existing `process-location-state-ticks` cron (0033 →
+  `process_location_state_ticks()` → `worldstate_tick()`). → **No second cron added: a redundant
+  schedule would DOUBLE-TICK every world-balance dynamic** (double pressure decay / price drift / field
+  regen-and-depletion). World-balance stays gated by its own dark no-op flag `world_balance_enabled`.
+
+**Work done (migration 0147 — `20260618000147_ranking_p17_accrue_cron.sql`).** Mirrors `0033` verbatim:
+`create extension if not exists pg_cron;` → the idempotent unschedule `do`-block for jobname
+`'ranking-accrue-standings'` (the `exception when undefined_table then null` guard copied verbatim) →
+```
+select cron.schedule(
+  'ranking-accrue-standings',
+  '*/5 * * * *',
+  $$select public.ranking_accrue_standings();$$
+);
+```
+Scheduled DIRECTLY — no `process_*` wrapper: `ranking_accrue_standings` is already a self-contained,
+service-role-granted entry point with its own dark gate, so a wrapper would be dead abstraction (unlike
+0033, which wraps `worldstate_tick()`).
+
+**Cadence rationale (self-approved) — every 5 minutes (`*/5 * * * *`).** Standings are a SLOW
+incremental aggregate and the fold is idempotent + commit-safe (the 0144/0145 per-(season, grant) ledger
+anti-join), so cadence affects ONLY leaderboard freshness, never correctness — a missed/late run simply
+folds the backlog on the next firing (no grant is ever skipped). 5 minutes keeps boards fresh at
+negligible load versus the 60s world heartbeat.
+
+**Dark-no-op-until-flag (why scheduling now is safe).** `ranking_accrue_standings` self-checks
+`ranking_enabled` FIRST (0145: dark gate before any read/write) and returns `feature_disabled` without
+folding/writing anything while the flag is `'false'`. So installing the schedule changes NOTHING
+observable today — every firing is an instant no-op — and it begins accruing the moment the owner flips
+`ranking_enabled` true (no further migration needed).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: the §1 `ranking_standings` row, the §2 Ranking
+accrual description, and the Ranking acyclic-edge blockquote all changed from "no cron scheduled yet
+(deferred)" to "cron-driven every 5 minutes (`ranking-accrue-standings`, 0147) — dark no-op while
+`ranking_enabled='false'`"; the §3 cron topology section gains a `ranking_accrue_standings()` *(cron
+5min)* entry and the `process_location_state_ticks()` entry now notes the world-balance world-tick is
+this SAME 60s cron (no cron of its own — a second would double-tick). This DEV_LOG entry added.
+
+**Preserved human gates.** `ranking_enabled` stays `'false'` (dark) — the scheduled job is a no-op until
+the human flips it; `world_balance_enabled` untouched (its 60s tick stays a dark no-op). No flag flipped,
+no shipped migration (0001–0146, incl. mining 0143, ranking 0144/0145, exploration 0146) edited, no new
+function/table, and this migration is NOT applied or dispatched to any database. SAFE FOR HUMAN MERGE
+REVIEW.
+
+---
+
 ## 2026-07-05 — CAPTAIN-P16 POST-AUDIT UI (panel 4 of 4) — the dark Captain Progression (recruit) screen, EXTENDING `src/features/captains/` (frontend-only; no server change)
 
 **Request.** Item (4), panel 4 of 4: build the dark Captain Progression (recruit) screen by EXTENDING
