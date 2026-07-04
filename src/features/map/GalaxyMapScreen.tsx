@@ -15,6 +15,7 @@ import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { MiningPanel } from '../mining/MiningPanel'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
+import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
 import { ModulesPanel } from '../modules/ModulesPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 
@@ -181,6 +182,13 @@ export function GalaxyMapScreen() {
               <CaptainsPanel
                 lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
                 mainShipId={mainShip?.main_ship_id ?? null}
+              />
+              {/* CAPTAIN-P16 (dark): captain recruitment (progression). Non-spatial (inventory→captain) —
+                  no ship id needed. Visibility derives from the captain-system roster read (fail-closed);
+                  the recruit COMMAND is the authoritative captain_progression_enabled gate (feature_disabled
+                  while dark, surfaced inline). Renders null while dark, so production is byte-unchanged. */}
+              <RecruitCaptainPanel
+                lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
               />
               {/* PHASE20-POLISH — dark World Events display (read-only, presentational). SERVER-driven
                   visibility: it renders ONLY when get_world_events returns live events; while

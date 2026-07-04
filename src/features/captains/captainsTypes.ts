@@ -65,3 +65,62 @@ export function captainCommandErrorMessage(res: { reason?: string; message?: str
     CAPTAIN_COMMAND_ERROR_COPY.unavailable
   )
 }
+
+// ── CAPTAIN-P16 (post-audit UI, panel 4 of 4): recruitment (progression) types ─────────────────────
+
+/** One raw ingredient row of the public-read captain_recipe_ingredients catalog (0125). */
+export interface RecipeIngredient {
+  captain_type_id: string
+  item_id: string
+  qty: number
+}
+
+/** A recruitable captain type with its ingredient costs, ASSEMBLED CLIENT-SIDE from the public-read
+ *  catalogs (captain_recipe_ingredients + captain_types + item_types) — the shipped direct-select
+ *  catalog convention; no new server RPC. item_name is the item_types display name. */
+export interface CaptainRecipe {
+  captain_type_id: string
+  name: string
+  specialization: string
+  ingredients: { item_id: string; item_name: string; qty: number }[]
+}
+
+// recruit_captain wrapper envelope (0126). NOTE: unlike the assign/unassign wrappers (reason-keyed),
+// the recruit wrapper is CODE-keyed (the 0109 craft-command mirror) — the REAL client codes, enumerated
+// from 0126: feature_disabled · not_authenticated · invalid_request (mapped from invalid_request_id) ·
+// unknown_captain · no_recipe · insufficient_items (+ item_id/have/need payload) · unavailable. Success
+// carries the recruited instance (+ idempotent_replay on a same (player, request_id) replay).
+export type RecruitCaptainResult =
+  | {
+      ok: true
+      receipt_id: string
+      instance_id: string
+      captain_type_id: string
+      recruited_at: string
+      idempotent_replay?: boolean
+    }
+  | { ok: false; code?: string; message?: string; item_id?: string; have?: number; need?: number }
+
+// Player-facing copy for the EXACT recruit code set (0126). Prefers the server `message`, else maps the
+// code, then appends the insufficient_items shortfall detail (the ModulesPanel craft-error idiom).
+const RECRUIT_ERROR_COPY: Record<string, string> = {
+  feature_disabled: 'Captain recruitment is not available yet.',
+  not_authenticated: 'You must be signed in.',
+  invalid_request: 'Invalid command request.',
+  unknown_captain: 'Unknown captain.',
+  no_recipe: 'This captain cannot be recruited yet.',
+  insufficient_items: 'Not enough materials to recruit this captain.',
+  unavailable: 'Captain recruitment is unavailable right now.',
+}
+export function recruitCaptainErrorMessage(res: {
+  code?: string
+  message?: string
+  item_id?: string
+  have?: number
+  need?: number
+}): string {
+  const base = res.message ?? RECRUIT_ERROR_COPY[res.code ?? 'unavailable'] ?? RECRUIT_ERROR_COPY.unavailable
+  return res.code === 'insufficient_items' && res.item_id
+    ? `${base} (${res.item_id}: ${res.have ?? 0}/${res.need ?? 0})`
+    : base
+}

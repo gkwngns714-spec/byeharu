@@ -5,6 +5,80 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — CAPTAIN-P16 POST-AUDIT UI (panel 4 of 4) — the dark Captain Progression (recruit) screen, EXTENDING `src/features/captains/` (frontend-only; no server change)
+
+**Request.** Item (4), panel 4 of 4: build the dark Captain Progression (recruit) screen by EXTENDING
+the existing `src/features/captains/` feature (reuse `captainsApi.ts`/`captainsTypes.ts` — no parallel
+dir, no duplicated roster read/types), reading the roster via the existing `get_my_captain_instances`,
+recipes via the existing public-read catalogs by direct select, and submitting ONLY the existing
+`recruit_captain` command — NO new server authority. Frontend-only.
+
+**Files touched (2 extended + 1 new + a mount edit).**
+- `src/features/captains/captainsTypes.ts` (EXTENDED) — added `RecipeIngredient`, `CaptainRecipe`
+  (assembled client-side, with display names), `RecruitCaptainResult`, and `recruitCaptainErrorMessage`.
+- `src/features/captains/captainsApi.ts` (EXTENDED) — added `recruitCaptain(requestId, captainType)`
+  (thin `supabase.rpc`, fail-closed, request_id a `crypto.randomUUID()` string — TEXT param) and
+  `getCaptainRecipes()` (three DIRECT public-read selects joined client-side; fail-closed to `[]`).
+- `src/features/captains/RecruitCaptainPanel.tsx` (NEW) — the dark recruit panel (props `lifecycleKey`;
+  no ship id — recruit is inventory→captain).
+- Mounted `<RecruitCaptainPanel/>` in `src/features/map/GalaxyMapScreen.tsx` adjacent to `<CaptainsPanel/>`.
+
+**Enumerated REAL client codes (read from 0126 — not invented; and it is CODE-keyed, not reason-keyed).**
+Unlike the assign/unassign wrappers (reason-keyed), the `recruit_captain` wrapper is CODE-keyed (the 0109
+craft-command mirror). The real client codes: `feature_disabled` (there is NO `captain_progression_disabled`
+— the wrapper returns `feature_disabled`), `not_authenticated`, `invalid_request` (mapped from the
+internal `invalid_request_id`), `unknown_captain`, `no_recipe`, `insufficient_items` (+ `item_id`/`have`/
+`need` payload), and the `unavailable` fallback. `recruitCaptainErrorMessage` prefers the server `message`,
+then maps the code, then appends the insufficient_items shortfall (the ModulesPanel craft-error idiom).
+
+**Recipe catalog read approach.** `getCaptainRecipes()` does three DIRECT public-read selects —
+`captain_recipe_ingredients` (captain_type_id, item_id, qty; 0125), `captain_types` (id, name,
+specialization), `item_types` (item_id, name) — all `grant select to anon, authenticated` catalogs, the
+shipped direct-select convention (no RPC). It joins them client-side into per-type `CaptainRecipe` rows
+with item display names; any select error fails closed to `[]`.
+
+**Affordability NOT annotated (honest, no new authority).** The only inventory-balance function
+`inventory_get_balance` (0039) is service_role-only (no client grant), and item (4) forbids adding a
+client read RPC — so the panel shows recipe COSTS only and relies on the server's `insufficient_items`
+{item_id, have, need} payload on attempt (surfaced by the decorator). No new RPC added.
+
+**Fail-closed + THE VISIBILITY-GATE DECISION (documented honestly in the panel header).**
+`captain_progression_enabled` (0124) is gated ONLY in the recruit COMMAND (0126) — there is NO existing
+read RPC gated on it, and item (4) forbids adding one. So this panel derives VISIBILITY from the captain
+system's existing gated roster read `get_my_captain_instances` (gated on `captain_assignment_enabled`) —
+progression is the recruitment face of the captain system — rendering `null` unless `isServerLit(roster)`.
+The recruit COMMAND remains the AUTHORITATIVE `captain_progression_enabled` gate: while progression is dark
+it returns `feature_disabled`, surfaced inline on click (never a false success). The server is the sole
+control; no client flag enables recruiting. CAVEAT recorded: if `captain_assignment_enabled` is lit but
+`captain_progression_enabled` is not, the panel shows recipes with a Recruit affordance the server rejects
+`feature_disabled` on click — a dedicated progression-gated read surface (to also hide the affordance on
+the progression flag) is the clean future follow-up, out of this fix pass's no-new-authority scope.
+
+**Per-type recruit wiring.** Each recipe row keys its own `pending`/`rowNote` by `captain_type_id` (the
+ModulesPanel Record-keyed idiom) and submits `recruitCaptain(crypto.randomUUID(), captain_type_id)` via
+`runGuardedCommand`, refreshing the roster on success and showing `recruitCaptainErrorMessage(res)` on
+failure.
+
+**Mount point.** `GalaxyMapScreen`, immediately after `CaptainsPanel` — no ship id needed, just a
+`lifecycleKey`; non-spatial, placed at `left-[66.5rem]` in the bottom-left overlay row (after captains at
+`left-[50rem]`), overlapping none. Renders `null` while dark, so production is byte-unchanged.
+
+**Build.** `npm run build` (`tsc -b && vite build`) GREEN — no type or build errors (the >500 kB
+chunk-size note is a pre-existing vite advisory, unrelated).
+
+**Boundaries.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — FRONTEND-ONLY: no table, writer, RPC, or
+cross-system edge. It consumes the existing 0125/0126/0123 surface already recorded in the §2 Captain /
+Production contracts; a read/command UI consumer (incl. direct public-read catalog selects, already the
+shipped convention) adds nothing to the ownership matrix or call graph.
+
+**Preserved human gates.** `captain_progression_enabled` stays `'false'` (dark) — the recruit command is
+server-rejected and, via the roster-gate reuse, the panel renders null while the captain system is dark;
+no flag flipped, no migration/RPC/server-file changed, no new authority, nothing merged/deployed. This
+completes item (4) — all 4 read-surface UI panels (ranking, investment, captains-assign, captains-recruit)
+now exist dark. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — CAPTAIN-P15 POST-AUDIT UI (panel 3 of 4) — the dark `src/features/captains/` assign/unassign screen (frontend-only; no server change)
 
 **Request.** Item (4), panel 3 of 4: build the dark Captains (assign/unassign) screen as a new
