@@ -5,6 +5,61 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — RANKING-P17 SLICE 4 — the dark read surface `get_ranking_seasons` + `get_ranking_leaderboard` (migration `0131`)
+
+**Request.** Phase 17 Slice 4: ONE new forward-only migration (the two public leaderboard/season read
+RPCs) + same-step doc-sync. Still NO frontend, NO flag flipped, NO cron, NO new table/writer.
+
+**Work done — migration `20260618000131_ranking_p17_read_surface.sql` (forward-only; `0001–0130`
+unedited).** Two READ-ONLY RPCs mirroring the 0123/0116 read-surface idiom (jsonb envelope · `stable`
+· `security definer` · dark-gate FIRST · SELECT only Ranking's own public tables · no write anywhere):
+- **`get_ranking_seasons() → jsonb`** — dark-gate FIRST (`cfg_bool('ranking_enabled')` false →
+  `{ok:false, code:'feature_disabled'}`). When enabled: `{ok:true, seasons:[…]}` selecting
+  `season_id, cadence, label, starts_at, ends_at, status` from `ranking_seasons`, ordered `cadence,
+  starts_at desc` (active naturally sorts to the top within a cadence).
+- **`get_ranking_leaderboard(p_season_id uuid, p_dimension text, p_limit int default 100) → jsonb`** —
+  dark-gate FIRST (same disabled envelope). When enabled: validate `p_dimension in
+  ('combat','trade','exploration','mining','overall')` else `invalid_dimension`; validate the season
+  exists else `unknown_season`; clamp `p_limit` to `[1, 500]` (default 100). For a concrete dimension:
+  the `ranking_standings` rows for `(season_id, dimension)`, ranked `score desc, player_id` with a
+  1-based `row_number()` rank, limited. For `'overall'`: **derived at read time** — `sum(score)`,
+  `sum(events_counted)` grouped by `player_id` across the season, same ranking/limit — NEVER a stored
+  row (the slice-1 Must-NOT). Returns `{ok:true, season_id, dimension, rows:[{rank, player_id, score,
+  events_counted}, …]}`.
+- **ACL** (the 0123 idiom, adjusted for PUBLIC leaderboards): `revoke execute … from public, anon;
+  grant execute … to anon, authenticated`. Granted to **anon + authenticated** (not authenticated-only
+  like the captain own-roster surface) because leaderboards/season info are PUBLIC — the 0127/0128
+  `ranking_seasons`/`ranking_standings` public-read posture. No auth.uid() check / no per-player
+  scoping — the exposed data is already public.
+
+**Deliberate divergences from the captain read surface (grounded).**
+- **Public, not own-data:** grant anon + authenticated; no auth check.
+- **Envelope key `code`** (not `reason`) — consistent with the Ranking writers (0129/0130).
+- **`'overall'` derived at read time** — sums per-dimension scores on the fly, no stored denormalized
+  row (upholds the slice-1 standings Must-NOT).
+
+**Boundary placement (same-step doc-sync).**
+- **§1 matrix UNCHANGED** — read-only functions add NO new table and NO new writer, so the sole-writer
+  matrix is untouched (the 0101/0106/0110/0116/0123 precedent: read surfaces are recorded in the §2
+  system row, not the matrix). Stated here explicitly rather than editing §1.
+- `docs/SYSTEM_BOUNDARIES.md` §2 **Ranking** row: recorded `get_ranking_seasons` +
+  `get_ranking_leaderboard` (READ-ONLY, dark-gated, PUBLIC anon+authenticated, overall derived at read
+  time, no writer added); confirmed NO new cross-system edge (they read only Ranking's own tables +
+  `cfg_bool`) — call graph still ACYCLIC, nothing calls into Ranking.
+- `docs/SYSTEM_BOUNDARIES.md` §2 "Ranking read-edge is acyclic" note: extended the `cfg_bool` edge
+  list to include the two read RPCs; noted they SELECT only Ranking's own public tables and write
+  nothing (overall derived, never stored).
+- `docs/DEV_LOG.md`: this entry.
+
+**Human gates preserved.** `ranking_enabled` stays `'false'` (no flag flipped; both RPCs' dark gate
+rejects every call today with the identical anti-probe envelope); every Phase 11–17 flag remains
+`'false'`. No existing migration edited (`0001–0130` untouched, forward-only). No `game_config` value
+changed. Backend-only (no `src/features/**`). No cron. No merge/deploy/production apply/workflow
+dispatch. Surface is inert while dark: the RPCs exist and are grant-scoped, but server-reject every
+call until the human activates.
+
+---
+
 ## 2026-07-04 — RANKING-P17 SLICE 3 — the core standings-scoring accrual `ranking_accrue_standings` (the SOLE writer of `ranking_standings`, reading `reward_grants` DOWNWARD; migration `0130`)
 
 **Request.** Phase 17 Slice 3: ONE new forward-only migration (the standings accrual writer) +
