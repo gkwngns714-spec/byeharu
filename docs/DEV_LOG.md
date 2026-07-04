@@ -5,6 +5,68 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MODULES-P13 SLICE E — dark frontend `src/features/modules/` (catalog + craft + instances panel; renders nothing while the server says dark). Frontend only — no migration
+
+**Request.** Implement slice E: the dark module-crafting frontend mirroring the post-cleanup
+exploration/mining twins exactly (read end-to-end first: both panels + api/types modules, the
+shared `src/lib/useActivityPanelGuards.ts`, the GalaxyMapScreen mounting, MarketPanel's per-row
+state shapes, and the `mainshipApi.ts` direct-select convention). NO migration (head stays
+**0110**), NO verify script, no config.
+
+**Work done — NEW `src/features/modules/` (the twins' structure, adapted where crafting differs):**
+- **`modulesTypes.ts`** — pure types + copy (the miningTypes.ts idiom): `ModuleInstance` (the 0110
+  row), `GetMyModuleInstancesResult`, `CraftModuleResult` (0109 wrapper shape; `item_id`/`have`/
+  `need` are REAL server data on the `insufficient_items` code), the public catalog row types, and
+  the craft error-copy map (`module_crafting_disabled` read reason is handled by the fail-closed
+  render, not copy; command codes covered: `feature_disabled`, `invalid_request`,
+  `unknown_module`, `no_recipe`, `insufficient_items`, `not_authenticated`, `unavailable`) +
+  `craftModuleErrorMessage`.
+- **`modulesApi.ts`** — thin `supabase.rpc` wrappers for `craft_module` +
+  `get_my_module_instances` (identical envelope-handling idiom: transport error → normalized
+  failure, never a throw into the render path), PLUS two direct selects per the shipped
+  conventions: `fetchModuleCatalog()` reads the PUBLIC-READ `module_types` +
+  `module_recipe_ingredients` (0107) by direct table select — the `mainshipApi.ts` hull-types
+  convention; deliberately NO catalog RPC exists (0110 header) — and `fetchMyItemBalances()` reads
+  the caller's own `player_inventory` rows through the EXISTING 0039 own-row grant (the existing
+  Inventory read path; no new server surface, no new cross-system edge).
+- **`ModulesPanel.tsx`** — server-driven visibility: reads the instances on mount/lifecycle change
+  and **fails closed to null on ANY non-ok envelope** — the Exploration/Mining twins' posture via
+  `isServerLit` (the hook documents this server-lit stance as distinct from MarketPanel's
+  shell-with-`unavailableNote`, which is reserved for client-flag-mounted shells — the twins ARE
+  the match here; while the server returns `module_crafting_disabled` the panel renders nothing,
+  so production is unchanged; the panel never pretends the feature is on). Catalog + balances are
+  fetched only after the server lights the surface. **Per-module-type claim keys**
+  (`tryClaim(entry.id)` — the MarketPanel per-row granularity, with its
+  `pending`/`rowNote: Record<string, …>` state shapes) since the catalog lists multiple craftable
+  types; fresh `crypto.randomUUID()` request id per submit (the twins' idiom; the server dedups on
+  (player_id, request_id)); craft buttons disable while in flight and on a client-side shortfall
+  preview (server stays authoritative — `insufficient_items`); ingredient lines show
+  `item ×qty (have N)` with shortfalls flagged rose; the `insufficient_items` failure note appends
+  the server's real `item_id: have/need` (the mining cooldown-suffix idiom); crafted-instances
+  list (name, slot badge, timestamp), newest first. **Crafting is NON-SPATIAL** (player-scoped,
+  0109) — no ship/settled precondition, so unlike the twins the panel takes only `lifecycleKey`
+  (no ship props; a deliberate, documented deviation). Sky styling vs violet/amber; positioned
+  bottom-left BESIDE MiningPanel (`left-[33.5rem]` — the w-64 row continues; all three activity
+  panels are server-lit, so overlap only ever involves lit surfaces).
+- **Wiring:** `GalaxyMapScreen.tsx` — `ModulesPanel` imported and rendered directly adjacent to
+  `MiningPanel`, same container, same comment convention, same `lifecycleKey` expression.
+
+**Doc-sync note.** `docs/SYSTEM_BOUNDARIES.md` needs NO change (the MINING-P12 SLICE F precedent,
+stated explicitly per the request): frontend-only — no table, no writer, no cross-system edge;
+the server contracts the new files mirror (0107/0109/0110, the 0039 grant) are unchanged.
+
+**State.** `npm run build` green (tsc -b + vite, exit 0). `npm run lint`: the 4 touched files
+(`modulesTypes.ts`, `modulesApi.ts`, `ModulesPanel.tsx`, `GalaxyMapScreen.tsx`) lint CLEAN
+(targeted eslint exit 0, incl. exhaustive-deps via the stable-ref dep); full-repo lint still FAILS
+with exactly the same 14 pre-existing out-of-scope errors recorded in MINING-CLEANUP SLICE 1
+(`MainShipMarker.tsx`, `SpaceRouteLine.tsx`, `useSpaceMoveCommand.ts`, tests harnesses/spec —
+no new problems). Migration head stays **0110** (no migrations, no flags); everything still dark
+and server-rejected — the panel is wired but renders nothing while
+`module_crafting_enabled='false'`. PR-ready on `autopilot/20260703-064048`, `main` untouched.
+Next: slice F (`scripts/verify-modules.mjs` + the `verify:modules` entry).
+
+---
+
 ## 2026-07-04 — MODULES-P13 SLICE D — the dark read surface `0110` (`get_my_module_instances()`). **Server side of Phase 13 complete, fully dark**
 
 **Request.** Implement slice D: ONE new forward-only migration with the read surface, mirroring

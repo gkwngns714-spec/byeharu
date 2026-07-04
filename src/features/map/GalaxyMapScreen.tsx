@@ -13,6 +13,7 @@ import { useMainShipSelection } from './useMainShipSelection'
 import { TRADE_MARKET_ENABLED } from './osnReleaseGates'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { MiningPanel } from '../mining/MiningPanel'
+import { ModulesPanel } from '../modules/ModulesPanel'
 
 // Galaxy Map screen. Shows the world, the player's main ship, ports, and active movements; selecting a
 // location opens its detail panel + the main-ship expedition/move surface. When the main ship is docked at a
@@ -148,6 +149,14 @@ export function GalaxyMapScreen() {
                 mainShipId={mainShip?.main_ship_id ?? null}
                 shipStatus={mainShip?.status}
                 shipSpatialState={mainShip?.spatial_state}
+              />
+              {/* MODULES-P13 — dark module-crafting surface (catalog + craft + instances). SERVER-driven
+                  visibility: it renders ONLY when get_my_module_instances answers ok; while the server
+                  returns module_crafting_disabled it renders nothing, so today's player experience is
+                  unchanged. Crafting is non-spatial (player-scoped) — no ship props; the server rejects
+                  everything while dark (fail-closed both sides). */}
+              <ModulesPanel
+                lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
               />
             </>
           )}
