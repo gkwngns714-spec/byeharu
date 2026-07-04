@@ -5,6 +5,95 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — FITTING-P14 SLICE C — the dark two-layer fit/unfit command `0113` (`module_fitting_receipts` + `fit_module_to_ship`/`unfit_module_from_ship` → ONE private `fitting_execute_command`)
+
+**Request.** Implement slice C of Phase 14: ONE new forward-only migration with the player-scoped
+fitting-receipt ledger and the dark two-layer fit/unfit command, delegating every mutation to the
+0112 writer. NO frontend, NO adapter change, NO verify script this slice. Idioms matched by
+re-reading the shipped sources end-to-end first: `0109` (the two-layer craft command this slice
+mirrors verbatim — receipts posture, gate order, lock-before-replay, trade-semantics replay,
+failure-writes-no-receipt, envelopes, relock), `0112` (the writer being wired), `0054`/`0055`
+(the exact `spatial_state` values + constraints).
+
+**Work done — NEW `supabase/migrations/20260618000113_fitting_p14_fit_command.sql`**
+(migration head moves **0112 → 0113**; `0001–0112` unedited):
+- **`module_fitting_receipts`** — Fitting-owned per-player idempotency ledger: **PK
+  (player_id, request_id)** (the locked keying — the idempotency key IS the row identity; 0109
+  used a surrogate receipt_id + a UNIQUE on the same pair, same semantics), `action` check in
+  ('fit','unfit'), the request fingerprint (`module_instance_id` FK cascade, `main_ship_id` FK
+  cascade nullable — as-requested, NULL on unfit; the 0088/0109 order-safe-cascade lesson), and
+  **`result_json`** — the writer's success envelope stored VERBATIM. RLS = the 0109 posture
+  verbatim: owner-read select only, no write path. No extra index (the PK leads on player_id —
+  the 0086/0109 comment idiom).
+- **DECISION — ONE private command for BOTH actions:**
+  `fitting_execute_command(p_player, p_action, p_module_instance_id, p_main_ship_id, p_request_id)`
+  (service_role-only) handles 'fit' AND 'unfit' precisely so the receipts table keeps **ONE sole
+  writer** — a fit-command and an unfit-command each inserting receipts would be TWO writers on
+  one table. Order of operations mirrors 0109 exactly: **dark gate FIRST**
+  (`module_fitting_enabled` via `cfg_bool`, reject-before-any-read, `feature_disabled`) →
+  request_id validation (text, non-empty, ≤200) → **per-player advisory lock BEFORE the replay
+  check** using the SAME `('module_fitting', player)` key as `fitting_apply` (documented:
+  `pg_advisory_xact_lock` is reentrant within a transaction, so the writer's nested acquisition is
+  safe and the replay check is serialized with ALL fitting mutations — a same-request_id race
+  resolves to one mutation + one verbatim replay) → **verbatim replay** (an existing
+  (player, request_id) receipt returns its stored `result_json` + `idempotent_replay:true`; NO
+  payload-conflict check — the 0089/0095/0109 trade semantics: a reused request_id replays the
+  original result even if the call names a different action/module/ship) → action-shape validation
+  ('fit' requires a ship, 'unfit' forbids one → `invalid_request`) → **the GAME RULE this layer
+  owns** (below) → delegate to `fitting_apply` (NEVER touching `ship_module_fittings` directly —
+  the sole-writer law; writer reasons `module_not_owned`/`ship_not_owned`/`already_fitted`/
+  `not_fitted`/`insufficient_slots` pass through) → **only a SUCCESSFUL mutation writes a receipt**
+  (failures write nothing — the 0109 law).
+- **THE HOME-ONLY GAME RULE (`ship_not_home`).** The affected ship — `p_main_ship_id` on fit; the
+  currently-fitted ship (read from `ship_module_fittings`, owner-scoped) on unfit — must have
+  `spatial_state = 'home'`. RATIONALE (recorded per the locked spec): constrained state
+  transitions — a loadout must never change mid-transit / in-space / mid-combat; expedition stats
+  are frozen for the duration of an expedition; refitting happens at home before departure.
+  Fail-closed (`is distinct from 'home'`): NULL (legacy) and every other state reject. ⚠ **AS-SHIPPED
+  HONESTY NOTE (for the human activation review):** grep of all migrations shows NO shipped writer
+  ever sets `spatial_state = 'home'` — commissions insert ships `at_location` (0072/0077/0078/0080),
+  OSN writers produce `in_transit`/`in_space`/`at_location`, destruction/repair leave NULL (0059) —
+  so with current writers EVERY existing ship answers `ship_not_home` even once the flag flips.
+  Implemented as the strict locked reading; relaxing to the 0100/0105 settled-SAFE set
+  (`in ('home','at_location')`) or adding a `'home'` writer is a forward-only HUMAN decision.
+- **TWO thin authenticated wrappers** (0109 wrapper idiom; named per ROADMAP `:89`):
+  `fit_module_to_ship(p_module_instance_id, p_main_ship_id, p_request_id)` and
+  `unfit_module_from_ship(p_module_instance_id, p_request_id)` — each does auth resolution + the
+  anti-probe dark-gate-first check exactly like `craft_module`, then calls the private command with
+  its fixed action. **Adaptation (the no-duplication hard rule):** 0109 inlined its reason→
+  code/message map in its single wrapper; two wrappers would duplicate that block, so it is
+  extracted ONCE as `fitting_command_client_envelope(jsonb)` (pure jsonb→jsonb; service_role-only
+  surface) and both wrappers call it. Codes covered: `feature_disabled`, `not_authenticated`,
+  `invalid_request`, `ship_not_home`, `module_not_owned`, `ship_not_owned`, `already_fitted`
+  (+`main_ship_id` context), `not_fitted`, `insufficient_slots` (+`{used, cost, limit}` context),
+  `unavailable` fallback, and the `idempotent_replay` marker on replays.
+- **ACL (0109:265–273 verbatim posture):** private command + shared mapper revoked from
+  public/anon/authenticated + granted to service_role; both wrappers revoked from public/anon +
+  granted to authenticated (dark: every layer's gate rejects today).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §1 gained the `module_fitting_receipts` row
+(**Fitting**; sole writer = `fitting_execute_command` via the two wrappers; one-command-for-both-
+actions rationale; DARK, no row can exist today) and the `ship_module_fittings` row's "called by
+NOTHING yet" became "called today ONLY by Fitting's own command `fitting_execute_command` (0113)";
+the §2 Fitting row now records the full command layer (wrappers → private command → `fitting_apply`),
+the home-only rule with its rationale and the as-shipped ⚠ note, the new DOWNWARD reads
+(Reference/Config flag · Main Ship `spatial_state`), and the expanded forbidden column (no second
+receipt writer, no client exposure of command/writer/mapper, no fit/unfit while the gate is off).
+Still nothing depends on Fitting.
+
+**State.** `npm run build` green (no `src/` change was made — confirmed). Migration head **0113**;
+`module_fitting_enabled='false'` — the entire command surface is server-rejected at every layer
+(both wrappers gate, the private command gates first, the writer stays service_role-only); no flag
+flipped, no live DB write, no workflow touched. **DB-apply posture (honest, unchanged from
+P11–P13):** no psql/docker/supabase CLI in this sandbox — the migration was hand-verified
+line-by-line against 0109 (order, replay, receipts, ACL), 0112 (delegation contract), and
+0054/0055 (state values); live assertions run in the owner's environment and will be covered by
+the later `verify:fitting` dark-posture script. PR-ready on `autopilot/20260703-064048`, `main`
+untouched. Next: the adapter slice (modules feeding `calculate_expedition_stats` under the slot
+cap) and/or the read surface, then frontend + `verify:fitting`.
+
+---
+
 ## 2026-07-04 — FITTING-P14 SLICE B — `ship_module_fittings` + the single Fitting writer `0112` (`fitting_apply`; FIT and UNFIT through THE ONE writer)
 
 **Request.** Implement slice B of Phase 14: ONE new forward-only migration with the fitting-state
