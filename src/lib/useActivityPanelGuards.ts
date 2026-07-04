@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef } from 'react'
 // ExplorationPanel, and MiningPanel each carried as a local copy. Extraction is the sanctioned
 // "adopt-on-next-real-change" recorded in the MINING-P12 SLICE F DEV_LOG entry. Future activity
 // panels (trade/exploration/mining sequels) use this hook instead of re-copying the pattern.
+// runGuardedCommand is the guarded command-submit BODY built on these guards — the shared
+// claim → pending → exec → note/refresh → finally-release shape every submit handler runs.
 
 /**
  * Mounted guard + synchronous in-flight guard for an activity panel.
@@ -43,6 +45,61 @@ export function useActivityPanelGuards() {
   }, [])
 
   return { activeRef, tryClaim, release }
+}
+
+/**
+ * The guarded command-submit body shared by every activity-panel submit handler
+ * (ExplorationPanel `scan` · MiningPanel `extract` · ModulesPanel `craft`/`runFitting`) —
+ * extracted because the same tryClaim / try-finally / mounted-guard shape lived at four sites.
+ * Semantics and ORDER preserved exactly:
+ * - bail unless `tryClaim(key)` — the synchronous double-submit guard (two same-tick clicks
+ *   would otherwise each mint a DISTINCT request id, which the server would NOT dedup);
+ * - pending on, note cleared, then `exec()` runs ONCE per accepted claim — each site mints its
+ *   fresh `crypto.randomUUID()` request id inside the thunk, so ids stay fresh per submit;
+ * - after the await, the mounted guard (`activeRef`) stops any state write on an unmounted
+ *   panel; ok → success note + `refresh()`, else → the site's decorated error note;
+ * - `finally` ALWAYS releases the claim; pending clears only while still mounted.
+ * Site-specific pieces stay AT the call sites as closures: pre-guards (e.g. `!mainShipId`),
+ * boolean vs per-row-Record setters over the fixed/per-row key, and error-copy decoration.
+ */
+export async function runGuardedCommand<R extends { ok: boolean }>({
+  key,
+  guards,
+  setPending,
+  setNote,
+  exec,
+  successNote,
+  errorNote,
+  refresh,
+}: {
+  key: string
+  guards: ReturnType<typeof useActivityPanelGuards>
+  setPending: (on: boolean) => void
+  setNote: (note: string | null) => void
+  exec: () => Promise<R>
+  successNote: (res: Extract<R, { ok: true }>) => string
+  errorNote: (res: Extract<R, { ok: false }>) => string
+  refresh: () => Promise<void>
+}): Promise<void> {
+  const { activeRef, tryClaim, release } = guards
+  if (!tryClaim(key)) return
+  setPending(true)
+  setNote(null)
+  try {
+    const res = await exec()
+    if (!activeRef.current) return
+    if (res.ok) {
+      // `res.ok` alone cannot narrow the GENERIC R — the Extract casts hand each callback the
+      // discriminated member, keeping the isServerLit stance (typed success/error payloads).
+      setNote(successNote(res as Extract<R, { ok: true }>))
+      await refresh()
+    } else {
+      setNote(errorNote(res as Extract<R, { ok: false }>))
+    }
+  } finally {
+    release(key)
+    if (activeRef.current) setPending(false)
+  }
 }
 
 /**

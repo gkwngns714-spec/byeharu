@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
+import { isServerLit, runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { fetchMyMainShips, type MainShipRow } from '../map/mainshipApi'
 import {
   craftModule,
@@ -64,7 +64,8 @@ export function ModulesPanel({
   const [rowNote, setRowNote] = useState<Record<string, string | null>>({})
 
   // Mounted + synchronous in-flight guards — the shared home of the idiom (useActivityPanelGuards).
-  const { activeRef, tryClaim, release } = useActivityPanelGuards()
+  const guards = useActivityPanelGuards()
+  const { activeRef } = guards
 
   const refresh = useCallback(async () => {
     const res = await getMyModuleInstances()
@@ -98,65 +99,49 @@ export function ModulesPanel({
     void refresh()
   }, [refresh, lifecycleKey])
 
-  // One intentional Craft per row. Fresh request id per submit (crypto.randomUUID — the
-  // MarketPanel idiom; the server dedups on (player_id, request_id)); success → note + refresh
-  // (instances AND balances change); failure → the server's message, falling back to the shared
-  // copy map (+ the shortfall's real item/have/need when sent).
+  // One intentional Craft per row — the shared guarded-submit body (runGuardedCommand) over the
+  // per-row key (catalog id); the server dedups on (player_id, request_id). Refresh re-reads
+  // instances AND balances. Failure copy: the server's message, else the shared map, plus the
+  // shortfall's real item/have/need when sent.
   async function craft(entry: ModuleCatalogEntry) {
-    if (!tryClaim(entry.id)) return // synchronous per-row claim, before any await
-    setPending((p) => ({ ...p, [entry.id]: true }))
-    setRowNote((n) => ({ ...n, [entry.id]: null }))
-    const requestId = crypto.randomUUID()
-    try {
-      const res = await craftModule(requestId, entry.id)
-      if (!activeRef.current) return
-      if (res.ok) {
-        setRowNote((n) => ({ ...n, [entry.id]: `Crafted ${entry.name}.` }))
-        await refresh()
-      } else {
+    await runGuardedCommand({
+      key: entry.id,
+      guards,
+      setPending: (on) => setPending((p) => ({ ...p, [entry.id]: on })),
+      setNote: (note) => setRowNote((n) => ({ ...n, [entry.id]: note })),
+      exec: () => craftModule(crypto.randomUUID(), entry.id),
+      successNote: () => `Crafted ${entry.name}.`,
+      errorNote: (res) => {
         const base = res.message ?? craftModuleErrorMessage(res.code)
-        setRowNote((n) => ({
-          ...n,
-          [entry.id]:
-            res.code === 'insufficient_items' && res.item_id
-              ? `${base} (${res.item_id}: ${res.have ?? 0}/${res.need ?? 0})`
-              : base,
-        }))
-      }
-    } finally {
-      release(entry.id)
-      if (activeRef.current) setPending((p) => ({ ...p, [entry.id]: false }))
-    }
+        return res.code === 'insufficient_items' && res.item_id
+          ? `${base} (${res.item_id}: ${res.have ?? 0}/${res.need ?? 0})`
+          : base
+      },
+      refresh,
+    })
   }
 
-  // FITTING-P14: one intentional fit/unfit per instance row — the craft() shape verbatim (fresh
-  // crypto.randomUUID per submit, the server dedups on (player_id, request_id); per-row claim;
-  // mapped error copy with the real insufficient_slots {used, cost, limit} detail; success →
-  // refresh, which re-reads instances AND fittings).
+  // FITTING-P14: one intentional fit/unfit per instance row — the shared guarded-submit body
+  // over the per-row key (instance uuid); the JSX passes the exec thunk (fit vs unfit, minting
+  // its fresh request id) + the success verb. Failure copy: the server's message, else the
+  // shared map, plus the real insufficient_slots {used, cost, limit} detail. Refresh re-reads
+  // instances AND fittings.
   async function runFitting(m: ModuleInstance, exec: () => Promise<FittingCommandResult>, verb: string) {
-    if (!tryClaim(m.instance_id)) return
-    setPending((p) => ({ ...p, [m.instance_id]: true }))
-    setRowNote((n) => ({ ...n, [m.instance_id]: null }))
-    try {
-      const res = await exec()
-      if (!activeRef.current) return
-      if (res.ok) {
-        setRowNote((n) => ({ ...n, [m.instance_id]: `${verb} ${m.name}.` }))
-        await refresh()
-      } else {
+    await runGuardedCommand({
+      key: m.instance_id,
+      guards,
+      setPending: (on) => setPending((p) => ({ ...p, [m.instance_id]: on })),
+      setNote: (note) => setRowNote((n) => ({ ...n, [m.instance_id]: note })),
+      exec,
+      successNote: () => `${verb} ${m.name}.`,
+      errorNote: (res) => {
         const base = res.message ?? fittingErrorMessage(res.code)
-        setRowNote((n) => ({
-          ...n,
-          [m.instance_id]:
-            res.code === 'insufficient_slots' && res.limit != null
-              ? `${base} (${res.used ?? 0}/${res.limit} used, needs ${res.cost ?? 0})`
-              : base,
-        }))
-      }
-    } finally {
-      release(m.instance_id)
-      if (activeRef.current) setPending((p) => ({ ...p, [m.instance_id]: false }))
-    }
+        return res.code === 'insufficient_slots' && res.limit != null
+          ? `${base} (${res.used ?? 0}/${res.limit} used, needs ${res.cost ?? 0})`
+          : base
+      },
+      refresh,
+    })
   }
 
   // FAIL CLOSED: render nothing unless the server affirmatively lit the surface. This is the dark

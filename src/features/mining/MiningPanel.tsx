@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isSettledInSpace } from '../../lib/osnState'
-import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
+import { isServerLit, runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { commandMiningExtract, getMyMiningExtractions } from './miningApi'
 import {
   miningExtractErrorMessage,
@@ -33,7 +33,8 @@ export function MiningPanel({
   const [extractNote, setExtractNote] = useState<string | null>(null)
 
   // Mounted + synchronous in-flight guards — the shared home of the idiom (useActivityPanelGuards).
-  const { activeRef, tryClaim, release } = useActivityPanelGuards()
+  const guards = useActivityPanelGuards()
+  const { activeRef } = guards
 
   const refresh = useCallback(async () => {
     const res = await getMyMiningExtractions()
@@ -48,33 +49,26 @@ export function MiningPanel({
 
   const settled = isSettledInSpace({ spatialState: shipSpatialState, status: shipStatus })
 
-  // One intentional Extract. Fresh request id per submit (crypto.randomUUID — the MarketPanel idiom;
-  // the server dedups on (main_ship_id, request_id)); success → note + refresh; failure → the
-  // server's message, falling back to the shared copy map (+ the cooldown's real seconds when sent).
+  // One intentional Extract — the shared guarded-submit body (runGuardedCommand); the server
+  // dedups on (main_ship_id, request_id). Failure copy: the server's message, else the shared
+  // map, plus the cooldown's real seconds when sent.
   async function extract() {
     if (!mainShipId) return
-    if (!tryClaim('extract')) return
-    setExtractPending(true)
-    setExtractNote(null)
-    const requestId = crypto.randomUUID()
-    try {
-      const res = await commandMiningExtract(mainShipId, requestId)
-      if (!activeRef.current) return
-      if (res.ok) {
-        setExtractNote(`Extracted from ${res.name}.`)
-        await refresh()
-      } else {
+    await runGuardedCommand({
+      key: 'extract',
+      guards,
+      setPending: setExtractPending,
+      setNote: setExtractNote,
+      exec: () => commandMiningExtract(mainShipId, crypto.randomUUID()),
+      successNote: (res) => `Extracted from ${res.name}.`,
+      errorNote: (res) => {
         const base = res.message ?? miningExtractErrorMessage(res.code)
-        setExtractNote(
-          res.code === 'cooldown' && typeof res.retry_after_seconds === 'number'
-            ? `${base} (~${res.retry_after_seconds}s)`
-            : base,
-        )
-      }
-    } finally {
-      release('extract')
-      if (activeRef.current) setExtractPending(false)
-    }
+        return res.code === 'cooldown' && typeof res.retry_after_seconds === 'number'
+          ? `${base} (~${res.retry_after_seconds}s)`
+          : base
+      },
+      refresh,
+    })
   }
 
   // FAIL CLOSED: render nothing unless the server affirmatively lit the surface. This is the dark

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isSettledInSpace } from '../../lib/osnState'
-import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
+import { isServerLit, runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { commandExplorationScan, getMyExplorationDiscoveries } from './explorationApi'
 import {
   explorationScanErrorMessage,
@@ -32,7 +32,8 @@ export function ExplorationPanel({
   const [scanNote, setScanNote] = useState<string | null>(null)
 
   // Mounted + synchronous in-flight guards — the shared home of the idiom (useActivityPanelGuards).
-  const { activeRef, tryClaim, release } = useActivityPanelGuards()
+  const guards = useActivityPanelGuards()
+  const { activeRef } = guards
 
   const refresh = useCallback(async () => {
     const res = await getMyExplorationDiscoveries()
@@ -47,28 +48,20 @@ export function ExplorationPanel({
 
   const settled = isSettledInSpace({ spatialState: shipSpatialState, status: shipStatus })
 
-  // One intentional Scan. Fresh request id per submit (crypto.randomUUID — the MarketPanel idiom;
-  // the server dedups on (main_ship_id, request_id)); success → note + refresh; failure → the
-  // server's message, falling back to the shared copy map.
+  // One intentional Scan — the shared guarded-submit body (runGuardedCommand); the server dedups
+  // on (main_ship_id, request_id). Failure copy: the server's message, else the shared map.
   async function scan() {
     if (!mainShipId) return
-    if (!tryClaim('scan')) return
-    setScanPending(true)
-    setScanNote(null)
-    const requestId = crypto.randomUUID()
-    try {
-      const res = await commandExplorationScan(mainShipId, requestId)
-      if (!activeRef.current) return
-      if (res.ok) {
-        setScanNote(`Discovered ${res.name}.`)
-        await refresh()
-      } else {
-        setScanNote(res.message ?? explorationScanErrorMessage(res.code))
-      }
-    } finally {
-      release('scan')
-      if (activeRef.current) setScanPending(false)
-    }
+    await runGuardedCommand({
+      key: 'scan',
+      guards,
+      setPending: setScanPending,
+      setNote: setScanNote,
+      exec: () => commandExplorationScan(mainShipId, crypto.randomUUID()),
+      successNote: (res) => `Discovered ${res.name}.`,
+      errorNote: (res) => res.message ?? explorationScanErrorMessage(res.code),
+      refresh,
+    })
   }
 
   // FAIL CLOSED: render nothing unless the server affirmatively lit the surface. This is the dark

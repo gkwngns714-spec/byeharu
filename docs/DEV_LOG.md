@@ -5,6 +5,53 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CLEANUP SLICE 3 (frontend) — auto-cleanup part 3: the four-way duplicated guard body extracted into `runGuardedCommand`
+
+**Request.** Part 3 of the post-milestone auto-cleanup: the same ~20-line guarded command-submit
+body (tryClaim → pending/note reset → try { await command; mounted guard; ok → note + refresh;
+else → mapped error note } finally { release; conditional pending clear }) lived at FOUR call
+sites — ExplorationPanel `scan`, MiningPanel `extract`, ModulesPanel `craft` and `runFitting`.
+Extract it into ONE shared helper and adopt it at all four sites in the same step. NO behavior
+change, no copy change, no fail-closed render-guard change; no migration/flag/script change.
+
+**Work done:**
+- **`src/lib/useActivityPanelGuards.ts`** — new exported `runGuardedCommand<R extends {ok:
+  boolean}>` beside `tryClaim`/`release`/`activeRef` (the module IS the guard idiom's shared
+  home; header comment extended). One options object: `{ key, guards, setPending, setNote, exec,
+  successNote, errorNote, refresh }` — the body preserves the exact current semantics and ORDER
+  (bail unless claimed · pending on · note cleared · exec once per accepted claim · mounted
+  guard after the await · ok → success note + refresh, else → decorated error note · finally
+  always releases, pending clears only while mounted). The doc comment carries the shared
+  rationale (synchronous double-submit guard, mounted guard, finally-release); `Extract<R,…>`
+  casts hand each callback the discriminated member (generic `R` does not narrow by `res.ok`
+  alone — the isServerLit stance).
+- **Four call sites converted to thin wrappers**; the site-specific pieces stay AT the sites as
+  closures: the `!mainShipId` pre-guard (Exploration/Mining, before the helper); request-id
+  minting moved INSIDE each site's `exec` thunk (`crypto.randomUUID()` — the runFitting idiom;
+  still fresh per submit since exec runs once per accepted claim); boolean setters (scan/extract)
+  vs per-row Record updaters over the fixed/per-row key (craft/runFitting); and each site's
+  error decoration (mining's cooldown `~Ns`, craft's `insufficient_items` item/have/need,
+  runFitting's `insufficient_slots` used/limit/needs, exploration plain). `runFitting` keeps its
+  `exec`/`verb` params from JSX and forwards through the helper. Per-site scaffold comments
+  trimmed to the site-specific parts; the helper's doc comment carries the shared explanation.
+- **MarketPanel intentionally NOT touched** (recon-note scope): its `submit` carries an extra
+  synchronous validate→release step before the await — a different posture; it adopts the helper
+  on its next real change, per the established adopt-on-next-real-change rule.
+- **`docs/SYSTEM_BOUNDARIES.md` needs NO change** — stated explicitly: a frontend-only extraction
+  adds no table, writer, flag, or cross-system edge; no architectural fact changed.
+
+**Verify (honest):** `npm run build` green (`tsc -b` + vite — typecheck included). `npm run lint`:
+the four touched files are CLEAN (`npx eslint` on them exits 0); the repo-wide run reports 14
+PRE-EXISTING errors, all in untouched files (`src/features/map/MainShipMarker.tsx` /
+`SpaceRouteLine.tsx` / `useSpaceMoveCommand.ts` and `tests/` harness/spec files) — none
+introduced by this slice. Each converted site's diff visually confirmed to preserve the
+claim-key, pending/note targets, and decoration logic exactly.
+
+**Follow-up (separate slice, NOT this step):** part 4 — shared `scripts/lib/trade-proof-lib.sh`
+for the three trade proof scripts' duplicated blocks.
+
+---
+
 ## 2026-07-04 — CLEANUP SLICE 2 (docs-only) — auto-cleanup part 2: the `fleets` commission writes recorded as the sanctioned Main-Ship shim (with retirement condition)
 
 **Request.** Part 2 of the post-milestone auto-cleanup: the Main-Ship port-entry commission path
