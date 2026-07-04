@@ -5,6 +5,58 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — PHASE20-POLISH SLICE 5 — the World Events display feature (`src/features/events/`) wired into the galaxy map, fail-closed
+
+**Request.** The "events polish" — a read-only World Events overlay on the galaxy map, fail-closed,
+build-verified. Frontend-only: new `src/features/events/*` + the `GalaxyMapScreen.tsx` mount + a
+DEV_LOG entry. No migration, no flag, no cron, no git.
+
+**Design decision (self-approved).** The panel renders NOTHING when there are no active events. Because
+`get_world_events` (0141) returns `{ok:true, events:[]}` while dark (the flag gate empties the feed
+server-side), an empty feed → nothing rendered → today's production UI is byte-unchanged; when the human
+later lights `phase20_polish_enabled` AND publishes events, they appear. The server (flag gate +
+live-window filter) is the SOLE control; the client never decides visibility. This slice builds ONLY the
+events display (single responsibility). Icons-from-the-asset-catalog is the NEXT slice; portraits stay a
+server-side vocabulary with no speculative UI (their live host — captains — is itself dark/unsurfaced,
+so building portrait UI now would be speculative — deferred).
+
+**Work done — new `src/features/events/`.**
+- `eventsTypes.ts` — `WorldEvent` (id, event_type, scope, zone_id, location_id, title, body, severity
+  `'info'|'warning'|'critical'`, starts_at, ends_at) + `GetWorldEventsResult`.
+- `eventsApi.ts` — thin `supabase.rpc('get_world_events', { p_location_id: null, p_zone_id: null })`
+  wrapper (the `explorationApi.ts` convention): on a transport/DB error resolves to the normalized
+  fail-closed `{ ok:false }` — never throws into the render path. This minimal cut requests
+  GLOBAL-scope events only (nulls) — always map-relevant, no coupling to selected-location state.
+- `WorldEventsPanel.tsx` — mirrors `ExplorationPanel`: a `lifecycleKey` re-fetch trigger,
+  `useActivityPanelGuards()` mounted guard, `refresh()` on mount / `lifecycleKey` change. FAIL CLOSED:
+  `if (!isServerLit(result) || (result.events?.length ?? 0) === 0) return null` — renders nothing while
+  dark (empty) or with no live events. When events exist, a compact READ-ONLY overlay (no actions/
+  buttons — purely presentational) lists each event's `title`, optional `body`, and a `severity`-styled
+  badge (info/warning/critical color classes — the ExplorationPanel badge idiom). Positioned TOP-CENTER,
+  clear of the four existing overlays (PortNav top-left, DockServices top-right, Exploration/Mining
+  bottom-left, Stop bottom-right). `data-testid="world-events-panel"` + per-event/-badge testids.
+- Wired into `GalaxyMapScreen.tsx` in the same overlay block as `ExplorationPanel`/`MiningPanel`, with
+  the SAME `lifecycleKey` expression the siblings use, and the same server-driven-visibility comment.
+
+**Deviation from the brief (reported).** `GetWorldEventsResult` is a DISCRIMINATED union
+(`{ok:true; events?} | {ok:false}`) rather than the brief's flat `{ ok:boolean; events? }`. A flat shape
+makes the shared `isServerLit()` guard's `Extract<T,{ok:true}>` narrow to `never` (fragile render
+types); the union is exactly the `explorationTypes.ts` idiom the brief told me to mirror, so the exact
+fail-closed line compiles to clean types. Runtime shape and behavior are identical.
+
+**Doc-sync (this step).** This DEV_LOG entry. `docs/SYSTEM_BOUNDARIES.md` needs NO change — a client
+read-only consumer adds no table, no writer, and no cross-system call-edge (it just calls the already-
+documented `get_world_events` RPC). Stated explicitly here so the omission is intentional, not missed.
+
+**Verify.** `npm run build` (tsc -b + vite build) — **GREEN** (154 modules transformed, typecheck
+clean; only the pre-existing >500 kB chunk-size advisory, unrelated). Touched ONLY `src/features/events/*`
+(new) + `GalaxyMapScreen.tsx` (mount) + this DEV_LOG entry — no migration, no flag, no cron, no git.
+`phase20_polish_enabled` remains `'false'` and untouched. The M2/M3/M4/M4.5 engine tests are backend and
+unaffected by a fail-closed presentational panel. No lit DB run — the panel renders nothing until the
+human lights the flag and publishes events; nothing deployed, `main` untouched.
+
+---
+
 ## 2026-07-04 — PHASE20-POLISH SLICE 4 — the UI asset-key vocabulary `ui_asset_catalog` (static reference table + seed) + its flag-gated read surface `get_ui_asset_catalog(...)` (`0142`)
 
 **Request.** The portrait/icon Reference catalog — the server-authoritative asset-key vocabulary the

@@ -14,6 +14,7 @@ import { TRADE_MARKET_ENABLED } from './osnReleaseGates'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { MiningPanel } from '../mining/MiningPanel'
 import { ModulesPanel } from '../modules/ModulesPanel'
+import { WorldEventsPanel } from '../events/WorldEventsPanel'
 
 // Galaxy Map screen. Shows the world, the player's main ship, ports, and active movements; selecting a
 // location opens its detail panel + the main-ship expedition/move surface. When the main ship is docked at a
@@ -156,6 +157,14 @@ export function GalaxyMapScreen() {
                   unchanged. Crafting is non-spatial (player-scoped) — no ship props; the server rejects
                   everything while dark (fail-closed both sides). */}
               <ModulesPanel
+                lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
+              />
+              {/* PHASE20-POLISH — dark World Events display (read-only, presentational). SERVER-driven
+                  visibility: it renders ONLY when get_world_events returns live events; while
+                  phase20_polish_enabled is false the server empties the feed, so it renders nothing and
+                  today's player experience is unchanged. No actions — the server (flag gate + live-window
+                  filter) is the sole control. Same lifecycleKey as its siblings (a re-fetch trigger). */}
+              <WorldEventsPanel
                 lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
               />
             </>
