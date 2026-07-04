@@ -5,6 +5,84 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P16 SLICE 3 — the dark recruit command: `captain_recruit_receipts` + private `production_recruit_captain` + two-layer `recruit_captain` (the 0109 `craft_module` analogue, point-for-point)
+
+**Request.** Phase 16 slice 3, the core: ONE new forward-only migration adding the
+Production-owned recruit command, mirroring `0109 module_craft_command` POINT-FOR-POINT with the
+captain domain substituted (craft a module → recruit a captain). NO read surface, NO adapter
+change, NO frontend, NO flag flipped.
+
+**Work done — NEW `supabase/migrations/20260618000126_captain_p16_recruit_command.sql`** (leaves
+`0001`–`0125` unedited; forward-only). Every idiom inherited from the 0109 mirror:
+
+- **`captain_recruit_receipts`** — Production-owned per-player idempotency ledger, the
+  `module_craft_receipts` (0109:55–84) shape verbatim: `receipt_id uuid pk default
+  gen_random_uuid()`, `player_id → auth.users on delete cascade`, `request_id text`,
+  `captain_type_id → captain_types(id)`, `instance_id → captain_instances(id) on delete cascade`,
+  `created_at`, `unique (player_id, request_id)`. No extra index (the unique index leads on
+  player_id). RLS on, owner-read `captain_recruit_receipts_select_own` `using (player_id =
+  auth.uid())`, `grant select to authenticated` (NOT anon), no write path. Table comment matches
+  the 0109 shape (sole writer = `production_recruit_captain`; replay verbatim; DARK behind
+  `captain_progression_enabled`).
+- **`production_recruit_captain(player, captain_type, request_id)`** — PRIVATE writer, SOLE writer
+  of `captain_recruit_receipts`, the `production_craft_module` (0109:86–195) body verbatim:
+  (1) DARK GATE FIRST `cfg_bool('captain_progression_enabled')` → `feature_disabled` before any
+  read; (2) request_id non-empty + `length ≤ 200` → `invalid_request_id`; (3)
+  `pg_advisory_xact_lock(hashtext('captain_recruit'), hashtext(player))` before the replay check;
+  (4) idempotency replay — existing `(player, request_id)` receipt rebuilds the original success
+  envelope verbatim (`idempotent_replay:true`, no re-spend/re-mint, no payload-conflict check);
+  (5) catalog validation — type exists → else `unknown_captain`; recipe rows exist → else
+  `no_recipe` (distinct truthful reasons); (6) ingredient PRE-CHECK loop over
+  `captain_recipe_ingredients` (ordered by item_id) via `inventory_get_balance` → `insufficient_items`
+  + `{item_id, have, need}` BEFORE any spend; (7) SPEND loop via `inventory_spend` (any exception
+  rolls back the whole tx — no receipt, nothing minted); (8) MINT exactly ONE via
+  `captains_mint_instance(player, captain_type, 'recruit:'||player||':'||request_id)` — namespaced
+  per 0108, can never collide with `craft:`; (9) insert the receipt + return `{ok:true, receipt_id,
+  instance_id, captain_type_id, recruited_at}`.
+- **`recruit_captain(request_id, captain_type)`** — authenticated public wrapper, the `craft_module`
+  (0109:197–263) idiom: `auth.uid()` null → `not_authenticated`; flag gate FIRST (anti-probe,
+  identical answer while dark) → `feature_disabled`; delegate; on success re-emit; on failure map
+  `reason` → `code`/`message` (`invalid_request_id`→`invalid_request`; `unknown_captain`;
+  `no_recipe`→"This captain cannot be recruited yet."; `insufficient_items`→"Not enough materials to
+  recruit this captain." + pass-through `{item_id, have, need}`; else `unavailable`).
+- **ACLs** (0109:265–273): private writer revoked from public/anon/authenticated, granted
+  service_role; wrapper revoked from public/anon, granted authenticated.
+
+**DARK — the whole surface ships server-rejected.** `captain_progression_enabled='false'` (0124),
+so the wrapper's gate AND the writer's first check both reject every call; no receipt/instance row
+can exist today. No client UI (backend only, like Phase 15).
+
+**Boundary edges (all DOWNWARD, acyclic — no cycle).** `production_recruit_captain` fans out
+one-directionally: Production → Inventory (`inventory_spend`, reusing 0109's EXISTING spend edge) ·
+Production → Captain (`captains_mint_instance` mint — this is now that leaf's FIRST caller) ·
+Production → Captain recipe read (`captain_recipe_ingredients`) · Production → Reference/Config
+(`cfg_bool`). Recruitment NEVER touches `player_inventory`/`inventory_ledger`/`captain_instances`
+directly — only through the two leaves (the forbidden-column law). Captain stays a pure
+instance-leaf: the recipe CONFIG is Captain's, the recruit COMMAND is Production's (which owns the
+Inventory spend), so there is NO Captain→Inventory edge and NO second writer to any table.
+
+**Doc-sync (SAME step).**
+- `docs/SYSTEM_BOUNDARIES.md` §1 matrix gains `captain_recruit_receipts` under **Production**
+  (sole writer = `production_recruit_captain`; owner-read; DARK behind `captain_progression_enabled`),
+  adjacent to `module_craft_receipts`.
+- §2 **Production** row: Owns column gains `captain_recruit_receipts *(0126)*`; the row body adds the
+  `recruit_captain`→`production_recruit_captain` two-layer command with its new DOWNWARD edges
+  (Production → Captain mint + recipe read, reusing Production → Inventory spend + Reference/Config);
+  the Must-NOT column adds "write captain_instances directly (recruit minting ONLY via
+  `Captain.captains_mint_instance`)" and "recruit while the gate is off".
+- §2 **Captain** row + §1 `captain_instances` row: the "NO caller exists yet" note on
+  `captains_mint_instance` is REPLACED — its ONE caller is now `production_recruit_captain` (0126);
+  the DARK gate reference updated to `captain_progression_enabled` (the recruit command's gate). The
+  0125 recruit-recipe-config note updated from "next-slice consumer" to "consumer is now 0126". This
+  is the 0109-replaces-Modules-note precedent (a law doc must never contradict the code).
+
+**Human gates preserved.** No flag flipped true (`captain_progression_enabled` and all captain flags
+stay `'false'`), no read surface, no adapter change, no frontend/client change, no migration
+`0001`–`0125` edited, no production DB / merge / deploy / workflow dispatch. Dark, server-rejected,
+PR-ready on the feature branch.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P16 SLICE 2 — the recruitment recipe catalog `captain_recipe_ingredients` + seeds (the 0107 `module_recipe_ingredients` analogue)
 
 **Request.** Phase 16 slice 2: ONE new forward-only migration adding the recruit recipe config
