@@ -5,6 +5,73 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — PHASE20-POLISH SLICE 2 — the World Events sole-writer functions `world_events_publish` / `world_events_set_active` (service-role, idempotent) + the `dedup_key` idempotency column (`0140`)
+
+**Request.** Give `world_events` its promised sole writer (the producer) BEFORE the read surface (the
+consumer), mirroring the established command→read-surface order. ONE forward-only migration + same-step
+doc-sync. No flag flipped, no `src/`, no verifier/`package.json` change, no cron, no shipped-migration
+edit, no git.
+
+**Design decision (self-approved).** The writer is **service-role-only** (SECURITY DEFINER,
+client-revoked, granted only to `service_role` — the 0021/0135 lockdown). That keeps World Events
+server-authoritative and structurally forbids any player-to-player event injection — there is NO client
+publish path, so events can never be a PvP / player-interaction vector (Online Presence & Visibility v1
+stays deferred). Idempotent via a nullable-unique `dedup_key`: a retried publish with the same key
+returns the EXISTING event id, never a duplicate (the idempotent-command law); a NULL key = an ad-hoc,
+non-deduplicated event (a permanent optional key, not a shim). Retirement is a status flip
+(`is_active=false`), never a delete (no destructive cleanup).
+
+**Work done — `0140_phase20_world_events_writer.sql` (forward-only; edits NO shipped migration
+`0001–0139`).**
+- **(a) Idempotency storage.** `alter table public.world_events add column dedup_key text;` + a partial
+  unique index `world_events_dedup_key_uidx … (dedup_key) where dedup_key is not null` (idempotency
+  ONLY over non-null keys — unlimited ad-hoc events coexist).
+- **(b) `world_events_publish(...)` → uuid** — SECURITY DEFINER, `set search_path = public`; THE sole
+  insert path. Validates (raises on violation, the leaf-writer exception idiom since it returns a bare
+  uuid) `event_type`/`scope`/`severity` membership + the scope↔target invariant, mirroring the 0139
+  CHECKs exactly, and that a supplied `zone_id`/`location_id` exists (a DOWNWARD read of the static Map
+  — the already-noted relationship, no new edge). Idempotent: a non-null `dedup_key` uses
+  `insert … on conflict (dedup_key) where dedup_key is not null do nothing returning id` with a
+  fallback select of the existing id; a NULL key always inserts a fresh event.
+- **(c) `world_events_set_active(event_id, is_active)` → void** — SECURITY DEFINER; flips `is_active` +
+  bumps `updated_at`; the retire/reactivate path, NEVER a delete.
+- **(d) ACL lockdown.** `revoke execute … from public, anon, authenticated; grant execute … to
+  service_role;` for BOTH functions — service-role only, never clients.
+
+**Deviation from the STEP-2 brief (reported).** Both writers gate on `phase20_polish_enabled` FIRST and
+no-op while false (publish → returns NULL; set_active → returns without writing), BEFORE any validation
+or write. The brief did not enumerate this gate; I added it because SLICE 1's shipped `0139` flag
+description commits that "any future World Events writer/processor must no-op" while false — omitting the
+gate would leave that shipped law text contradicting the code (a defect per the engineering principles).
+It is also the pervasive reject-before-any-read idiom (`location_investment_invest:74–78`), is strictly
+more conservative (darker), and does not change the enabled-path publish/dedup/set_active behavior the
+brief specified. The planner's "service-role-only alone keeps it dark" rationale (forbidding the
+PvP-injection vector) is fully compatible with also gating.
+
+**Boundary discipline.** `world_events` now has its concrete sole writers (`world_events_publish` /
+`world_events_set_active`) — one write path per table, no second writer. World Events stays a downward
+LEAF: the ONLY cross-system access is a DOWNWARD read of the static Map (`zones`/`locations`) to
+validate a supplied FK target — no NEW call-edge, acyclic; it writes ONLY `world_events` and grants no
+rewards (one-directional pipeline law).
+
+**Doc-sync (this step).** `docs/SYSTEM_BOUNDARIES.md`: §1 `world_events` sole writer updated from "its
+own future function" to the concrete `world_events_publish` / `world_events_set_active` (service-role
+only; idempotent via `dedup_key`; retire-not-delete); §2 World Events row records both functions, the
+dark-gate-first no-op, the Map-FK downward read, and the no-client-path / no-delete forbiddens. This
+DEV_LOG entry.
+
+**Retirement.** None new. `dedup_key` NULL-means-ad-hoc is a permanent optional key, not a shim.
+`phase20_polish_enabled` remains the permanent Phase-20 master gate (retires only on human activation).
+
+**Posture / gates.** Flips NO flag — `phase20_polish_enabled` still `'false'` and untouched; edits no
+`0001–0139`; no client grant on either function (service-role only); no `src/`, no cron, no git.
+Backend-only and dark/undeployed, so **no lit DB run** — a lit apply proving publish-then-dedup (same
+key → same id, no duplicate) and `set_active` (retire/reactivate, no delete) is the human owner's
+activation-checklist job (run with the flag flipped on a DEV DB). The M2/M3/M4/M4.5 engine tests are
+unaffected — no engine path calls these service-role functions or reads `world_events`.
+
+---
+
 ## 2026-07-04 — PHASE20-POLISH SLICE 1 — the Phase-20 dark master flag `phase20_polish_enabled` + the World Events schema `world_events` (`0139`)
 
 **Request.** Phase 20 (Polish / expansion — map UI, portraits, icons, events; ROADMAP :95) first build
