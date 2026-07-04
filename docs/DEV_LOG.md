@@ -5,6 +5,49 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CLEANUP SLICE 2 (docs-only) — auto-cleanup part 2: the `fleets` commission writes recorded as the sanctioned Main-Ship shim (with retirement condition)
+
+**Request.** Part 2 of the post-milestone auto-cleanup: the Main-Ship port-entry commission path
+writes `fleets` directly — `port_entry_commission_build` (0080; called by
+`port_entry_commission_writer` and the dark `commission_additional_main_ship`, 0080/0091) inserts
+the commissioned ship's present/location fleet row, and `normalize_main_ship_dock` (0084)
+normalizes dock state on `fleets` — while §1 named **Fleet** the sole writer with no recorded
+exception. An undocumented second writer on `fleets` is a LAW-DOC DEFECT (the doc contradicted
+shipped code). Docs-only — NO migration, code, script, or flag change in this step.
+
+**DESIGN DECISION (planner authority): DOCUMENT-THE-SHIM, not the repoint migration.**
+Rationale: the commission path's bodies are guarded by the FROZEN md5-pinned PORT-ENTRY
+production verifiers (`normalize_main_ship_dock` and `port_entry_commission_writer` — the build
+core's caller — are two of the three prosrc-md5-pinned bodies; see 0084's header and
+`docs/TRADE_FLEET_0C_VERIFIER_REPOINT.md`), and the path is the ACTIVE first-ship onboarding
+writer. A behavior-identical CREATE OR REPLACE purely for boundary hygiene would invalidate
+deploy-gate md5 pins (a deploy-time human-gate concern) and add risk to a live path for zero
+functional gain. The honest, reversible fix today is to make the law doc match reality with an
+explicit retirement condition.
+
+**Retirement condition (recorded verbatim in the §1 note):** the exception retires when the
+port-entry path is next reworked for a FUNCTIONAL reason; at that point the `fleets` writes MUST
+be repointed through a Fleet-exposed commission/dock function via a forward-only migration
+(re-deriving the PORT-ENTRY prosrc-md5 pins at that deploy gate) and the §1 exception note
+deleted.
+
+**Work done (docs only):**
+- **§1 `fleets`/`fleet_units` row** — owner cell amended in the matrix's existing long-parenthetical
+  idiom: Fleet stays the sole writer EXCEPT the ONE sanctioned Main-Ship port-entry commission
+  shim (the two functions above, writes confined to the calling player's OWN rows), with the
+  retirement condition and the not-repointed-now rationale attached in place.
+- **§2 Main Ship row** — corrected ONLY the contradicting Must-NOT clause: "touch fleets" now
+  carries the "(except …)" parenthetical pointing at the §1 exception note (the Combat row's
+  existing "(except request return via Movement)" idiom). The §2 Fleet row contradicts nothing
+  and was not touched; verified the caller set against 0080/0084/0091 before wording.
+- `npm run build` green (docs-only sanity).
+
+**Follow-ups (separate slices, NOT this step):** part 3 — shared frontend guard helper for the
+four duplicated command-submit bodies; part 4 — shared `scripts/lib/trade-proof-lib.sh` for the
+three trade proof scripts.
+
+---
+
 ## 2026-07-04 — CLEANUP SLICE 1 (docs-only) — module-fitting-milestone auto-cleanup part 1: `market_offers` law-doc sync
 
 **Request.** Part 1 of the post-milestone auto-cleanup: fix two DOC DEFECTS in
