@@ -5,6 +5,60 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — FITTING-P14 SLICE E — the dark read surface `0116` (`get_my_ship_fittings()`). **Server side of Phase 14 complete, fully dark**
+
+**Request.** Implement slice E: ONE new forward-only migration with the read surface, mirroring the
+modules read surface (0110, the 0101/0106 family) — re-read end-to-end first. NO write path, NO new
+table, NO frontend, NO verify script this slice; flag stays `'false'`.
+
+**Work done — NEW `supabase/migrations/20260618000116_fitting_p14_read_surface.sql`** (migration
+head moves **0115 → 0116**; `0001–0115` unedited):
+- **`get_my_ship_fittings()`** — the 0110 body idiom (jsonb envelope · `stable` ·
+  `security definer` · `set search_path = public` · jsonb_agg row shape + coalesce-to-`[]` ·
+  `{ok:true, fittings:[…]}` plural envelope), with ONE deliberate divergence recorded in the
+  header: **the dark gate runs FIRST, then auth** (0110 checks auth first) per the slice spec —
+  `{ok:false, reason:'module_fitting_disabled'}` identically for every caller while dark (the
+  frontend's server-driven visibility signal; anon has no execute grant anyway), then the 0110
+  `not_authenticated` posture. Per row: `module_instance_id`, `main_ship_id`, `fitted_at`,
+  `module_type_id`, plus the catalog display fields the future panel needs (`name`, `slot_type`,
+  `slot_cost`), joined DOWNWARD via `module_instances` to `module_types`; ordered `fitted_at` desc
+  **then `module_instance_id`** (determinism — the 0110 ordering idiom + a uuid tiebreak since
+  several fittings can share a timestamp). Rows are scoped `player_id = auth.uid()` IN THE QUERY
+  (defense in depth over the 0112 own-row RLS, as 0110 does).
+- **NO catalog RPC** (the 0110 stance restated in the header): `module_types` (incl. the 0111
+  `slot_cost`/`stats_json`) is a public-read Reference/Config catalog read by direct client
+  select — an RPC would duplicate an already-public surface.
+- **DECISION — deliberately NO ship `module_slots` in this RPC** (recorded so the omission is
+  never read as forgotten): the slot LIMIT belongs to the ship, not the fitting rows — the client
+  reads its own `main_ship_instances` rows (the 0043 own-row grant covers `module_slots`) or
+  `get_my_expedition_preview` (whose stats carry `module_slots_used`/`module_slots_limit` since
+  0115). The surface stays dumb — fitting rows only.
+- **ACL (0110:72–75 verbatim):** execute revoked from public/anon, granted to authenticated only —
+  and dark today: the gate rejects every call while `module_fitting_enabled='false'`. Table RLS
+  unchanged.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: the §2 Fitting row gained
+`get_my_ship_fittings()` with its gate-first semantics, the no-catalog-RPC stance, and the
+no-ship-limit decision. The **§1 matrix is UNCHANGED — confirmed and stated**: no new table, no new
+writer (the 0101/0106/0110 precedent: read surfaces are recorded in the §2 system row, not the
+matrix).
+
+**State.** `npm run build` green (no `src/` change was made — confirmed). Migration head **0116**;
+`module_fitting_enabled='false'` everywhere. **The server side of Phase 14 Module fitting is
+COMPLETE (slices A–E) and fully dark end-to-end:** the flag + stats catalog (0111), the fittings
+table + THE ONE writer (0112), the two-layer fit/unfit command + receipts (0113, settled-SAFE rule
+0114), the adapter integration (0115), and the read surface (0116) — every client-reachable
+surface server-rejects while the flag is false; the writer/command internals are
+service_role-only. No flag flipped, no live DB write, no workflow touched. **DB-apply posture
+(honest, unchanged):** no psql/docker/supabase CLI in this sandbox — the migration was
+hand-verified line-by-line against 0110 at the idioms cited above; live assertions run in the
+owner's environment and will be covered by the slice-G `verify:fitting` dark-posture script.
+PR-ready on `autopilot/20260703-064048`, `main` untouched. Next: slice F (dark frontend
+`src/features/fitting/` or a minimal `src/features/modules/` extension), then slice G
+(`scripts/verify-fitting.mjs` + the `verify:fitting` entry).
+
+---
+
 ## 2026-07-04 — FITTING-P14 SLICE D — stats integration `0115` (fitted modules feed `calculate_expedition_stats` under the `module_slots` hard cap; re-create of the 0044 adapter)
 
 **Request.** Implement slice D: ONE new forward-only migration re-creating the stat adapter so
