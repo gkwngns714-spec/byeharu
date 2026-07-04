@@ -5,6 +5,62 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P15 SLICE C — `ship_captain_assignments` schema + the ONE assignment writer (inert AND dark)
+
+**Request.** Phase 15 slice C, mirroring the P14 fittings slice (0112): ONE new forward-only
+migration creating the assignment junction table + the ONE structural sole writer, plus same-step
+doc-sync. NO receipts, NO client commands, NO settled-SAFE rule, NO read surfaces, NO frontend,
+NO adapter change, NO verify script in this slice.
+
+**Work done:**
+- **NEW `supabase/migrations/20260618000119_captain_p15_assignments_schema.sql`** (0001–0118
+  unedited):
+  - `ship_captain_assignments` — **the `captain_instance_id` PK IS the one-ship-per-captain
+    invariant** (the exact 0112:54 shape): PK FK `captain_instances` on delete cascade ·
+    `main_ship_id` FK `main_ship_instances` cascade · `player_id` FK `auth.users` cascade ·
+    `assigned_at timestamptz default now()`; index on `main_ship_id` (the headcount cap + the
+    future adapter's per-ship read, 0115:162–167); RLS on with the own-row SELECT policy +
+    `grant select to authenticated` ONLY — no write policy/grant.
+  - `captain_assign_apply(p_player_id uuid, p_captain_instance_id uuid, p_main_ship_id uuid)` —
+    THE sole writer covering ALL mutations: `p_main_ship_id` NOT NULL = ASSIGN, NULL = UNASSIGN
+    (the `fitting_apply` one-writer shape — two functions would be two writers). Structural
+    invariants enforced in the writer, reject never clamp: captain ownership; ship read by the
+    **(main_ship_id, player_id) pair** (never "the player's ship" singular — the 0079 multi-ship
+    posture); truthful `already_assigned` NAMING the current ship (PK backstops — never silently
+    re-homed); and the **HEADCOUNT hard cap `count(*) < captain_slots`** — the captain analogue
+    of Σ slot_cost ≤ module_slots, count because slice A locked one-captain-one-slot.
+    Owner-consistency guaranteed: stored `player_id` = captain owner = ship owner (the
+    0115:47–50 guarantee that later lets the adapter join without a player filter). Race safety:
+    the per-player `pg_advisory_xact_lock(('captain_assignment', player))` taken FIRST (the
+    0112:99–103 idiom) — the count→insert window is single-writer by construction. Targeted ACL:
+    revoke public/anon/authenticated, grant service_role only.
+  - **Error style (locked, documented in the header):** exception-style (the 0039/0108
+    internal-leaf idiom) with stable reason-prefixed messages (`captain_not_owned` /
+    `ship_not_owned` / `already_assigned` / `captain_slots_full` / `not_assigned`) — a
+    deliberate deviation from `fitting_apply`'s envelopes; the future command slice translates
+    raised reasons into client envelopes.
+  - **LOCKED DECISION (header): the settled-SAFE game rule is deliberately NOT in this
+    structural writer** — the dark gate, the home/at_location spatial rule (the 0114 layer), and
+    receipt idempotency all land in the later COMMAND slice, exactly as P14 split 0112
+    (structure) from 0113/0114 (command + game rule). Until then nothing can call this writer
+    (service_role-only, no caller exists), so the system stays inert AND dark — no row can exist
+    today.
+- **`docs/SYSTEM_BOUNDARIES.md`** (same step): §1 matrix gains the `ship_captain_assignments`
+  row in the `ship_module_fittings` row's exact shape (Captain, ONE sole writer
+  `captain_assign_apply` covering assign AND unassign, PK = one-ship-per-captain, headcount ≤
+  `captain_slots` hard cap — reject never clamp); the §2 Captain row extended to name the new
+  table + writer, the game-rule/adapter deferrals, and the system's FIRST cross-system edge:
+  Captain → Main Ship (read-only ownership + `captain_slots`) — downward, acyclic, nothing
+  depends on Captain.
+- **Verify:** `npm run build` green (SQL-only slice — confirms nothing else drifted). §5
+  invariant checklist re-read: `ship_captain_assignments` has exactly ONE writing system and no
+  client write path (select-only policy/grant); the one new call edge is a downward read
+  (Captain → Main Ship — graph stays acyclic, no second writer to `main_ship_instances` or any
+  table); Activity stays table-less; reward path and combat source-of-truth untouched; no flag
+  flipped.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P15 SLICE B — `captain_instances` schema + the single Captain mint writer (inert AND dark)
 
 **Request.** Phase 15 slice B, mirroring the P13 instances slice (0108): ONE new forward-only
