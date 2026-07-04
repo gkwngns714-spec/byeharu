@@ -5,6 +5,53 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — WORLD-BALANCE-P19 CLEANUP — restore the `0092` docked-resolve dedup that `0136` regressed; re-route all three Trade Market RPCs through `mainship_resolve_docked_location` (`0138`)
+
+**Request.** Act on the highest-priority world-economy cleanup finding (F1 from the baseline audit) with
+ONE new forward-only migration + same-step doc-sync. No flag write, no `src/`, no verifier/`package.json`
+change, no shipped-migration edit, no git.
+
+**Bug (F1 — duplication regression in `0136`).** Migration `0092` (trade_market_1) had extracted the
+copy-pasted ~10-line "resolve docked location" block (`mainship_space_validate_context` → require
+`at_location` → read the present/location fleet's `current_location_id`) into ONE shared read-only helper
+`public.mainship_resolve_docked_location(ship)` and repointed all three Trade Market RPCs to it. But
+`0136` (price drift) rebuilt `get_market_offers` / `market_buy` / `market_sell` from the STALE pre-`0092`
+bodies (`0087`/`0089`/`0090`) to add the `trade_effective_price` price composition — and in doing so
+**re-inlined** the docked block into all three (`0136:295–305`, `376–384`, `472–480`) and re-declared the
+`v_ctx jsonb` local `0092` had dropped. That silently reverted the dedup (the SAME non-trivial logic in
+three places again) and orphaned the helper from the trade path (it stayed in use only by `0133`).
+
+**Fix — `0138_world_balance_p19_trade_docked_helper_reuse.sql` (forward-only; edits NO shipped
+migration).** `create or replace`s the three functions to the EXACT `0136` bodies, changing ONLY:
+(a) each re-inlined docked block → `v_loc := public.mainship_resolve_docked_location(v_ship);` followed by
+the SAME `if v_loc is null then … 'not_docked' … end if;` each already had; and (b) drop the now-unused
+`v_ctx jsonb;` local. A line-for-line diff of each function region (`0136` → `0138`) shows ONLY those two
+changes per function and nothing else. **BEHAVIOR-IDENTICAL:** both inline null-paths (not `at_location`;
+no matching fleet row) already collapsed to one `not_docked` reason, and the helper returns NULL for both,
+mapped to the same `not_docked`. Everything else is byte-for-byte `0136`: the dark `trade_market_enabled`
+server-reject, `mainship_resolve_owned_ship`, the per-ship `mainship_space_lock_context`, the idempotency
+replay, the `trade_effective_price` composition on EVERY price, the receipt writes, and the same
+`revoke … from public, anon` / `grant … to authenticated` ACLs.
+
+**Posture / gates.** Adds NO table / column / writer / flag / cross-system edge — the helper and the Trade
+Market → Main-Ship read edge already existed and were already documented. The feature stays **DARK** behind
+`trade_market_enabled='false'`; this migration flips NO flag and edits no `0001–0137`.
+
+**Doc-sync (this step).** This DEV_LOG entry. `docs/SYSTEM_BOUNDARIES.md` needs **no edit**: the Trade-Market
+row (line ~89, "the docked-location context (via the shared Main-Ship helper
+`mainship_resolve_docked_location`)") and the Main-Ship row (line ~86, "`mainship_resolve_docked_location`
+… called DOWNWARD by the Trade Market RPCs") described the INTENDED end-state — `0136` was the drift, and
+`0138` makes both statements true of the shipped code again. No remaining contradiction found.
+
+**Retirement.** None — this removes a regression and adds no temporary code. `mainship_resolve_docked_location`
+is the permanent single source for docked-location resolution across Trade Market and Location Investment.
+
+**Verify.** Line-for-line diff of each of the three function regions (`0136` → `0138`) confirms the ONLY
+differences are the three helper-call substitutions and the three dropped `v_ctx` locals; no other change
+leaked in. Not executed against a DB (dark; a lit run is the human owner's activation-checklist job).
+
+---
+
 ## 2026-07-04 — WORLD-BALANCE-P19 SLICE 4 (FINAL) — the dark-posture verifier `verify-world-balance.mjs` + `verify:world-balance`; **Phase 19 CLOSED**
 
 **Request.** Phase 19 final slice: ONE new verify script (the `verify-location-investment.mjs` analogue)
