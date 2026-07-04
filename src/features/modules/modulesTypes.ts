@@ -71,3 +71,68 @@ const CRAFT_ERROR_COPY: Record<string, string> = {
 export function craftModuleErrorMessage(code: string): string {
   return CRAFT_ERROR_COPY[code] ?? CRAFT_ERROR_COPY.unavailable
 }
+
+// ── FITTING-P14 — types for the dark module-fitting surface (0112–0116) ─────────────────────────
+// Same posture as the crafting types above: the server rejects every fitting RPC while
+// module_fitting_enabled is false; the read reason 'module_fitting_disabled' is handled by
+// FAIL-CLOSED rendering (the fitting section renders nothing), never by copy.
+
+/** One row of get_my_ship_fittings() (0116) — the seven shipped fields, fitted_at desc. */
+export interface ShipFittingRow {
+  module_instance_id: string
+  main_ship_id: string
+  fitted_at: string
+  module_type_id: string
+  name: string
+  slot_type: string
+  slot_cost: number
+}
+
+export type GetMyShipFittingsResult =
+  | { ok: true; fittings: ShipFittingRow[] }
+  | { ok: false; reason: string }
+
+// The fit/unfit wrapper envelopes (0113 wrappers → 0114 mapper). Success passes the writer's
+// envelope through (fitted/unfitted + slot facts) plus the replay flag; failure carries the mapped
+// code/message with REAL server context on insufficient_slots ({used, cost, limit} — the
+// insufficient_items idiom) and already_fitted ({main_ship_id}).
+export type FittingCommandResult =
+  | {
+      ok: true
+      idempotent_replay: boolean
+      module_instance_id: string
+      main_ship_id: string
+      fitted?: boolean
+      unfitted?: boolean
+      slot_cost?: number
+      slots_used?: number
+      slots_limit?: number
+      fitted_at?: string
+    }
+  | {
+      ok: false
+      code: string
+      message: string
+      used?: number
+      cost?: number
+      limit?: number
+      main_ship_id?: string
+    }
+
+// Player-facing copy for the code set the 0113/0114 wrappers can return, same tone as the craft
+// map above. The server's message is preferred when present; this map is the client-side fallback.
+const FITTING_ERROR_COPY: Record<string, string> = {
+  feature_disabled: 'Module fitting is not available yet.',
+  invalid_request: 'Invalid command request.',
+  ship_not_settled: 'The ship must be settled at home or docked at a location to change its module loadout.',
+  module_not_owned: 'That module is not in your possession.',
+  ship_not_owned: 'That ship is not yours.',
+  already_fitted: 'That module is already fitted to a ship. Unfit it first.',
+  not_fitted: 'That module is not fitted to any ship.',
+  insufficient_slots: 'Not enough free module slots on this ship.',
+  not_authenticated: 'You must be signed in.',
+  unavailable: 'Module fitting is unavailable right now.',
+}
+export function fittingErrorMessage(code: string): string {
+  return FITTING_ERROR_COPY[code] ?? FITTING_ERROR_COPY.unavailable
+}

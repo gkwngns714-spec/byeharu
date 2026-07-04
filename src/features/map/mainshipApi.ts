@@ -50,6 +50,7 @@ export interface MainShipView {
 }
 
 const HULL_COLS = 'hull_type_id, name, base_hp, base_speed, base_cargo_capacity, base_captain_slots, base_module_slots'
+const SHIP_COLS = 'main_ship_id, name, status, hp, max_hp, cargo_capacity, captain_slots, module_slots, hull_type_id'
 
 async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
   const { data } = await supabase.from('main_ship_hull_types').select(HULL_COLS).eq('hull_type_id', hullTypeId).maybeSingle()
@@ -60,7 +61,7 @@ async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
 export async function fetchMyMainShip(): Promise<MainShipView> {
   const { data: ship, error } = await supabase
     .from('main_ship_instances')
-    .select('main_ship_id, name, status, hp, max_hp, cargo_capacity, captain_slots, module_slots, hull_type_id')
+    .select(SHIP_COLS)
     .maybeSingle() // owner-read RLS → the caller's single ship, or null
   if (error) throw new Error(error.message)
 
@@ -70,6 +71,21 @@ export async function fetchMyMainShip(): Promise<MainShipView> {
   }
   // no ship commissioned yet → read-only starter-hull teaser
   return { has_ship: false, hull: await fetchHull('starter_frigate') }
+}
+
+/**
+ * FITTING-P14 — owner-read ALL of the caller's ships (the multi-ship-ready LIST variant of
+ * fetchMyMainShip; same owner-read RLS, same columns — kept inside this module so there is ONE
+ * ship-select convention, never a second copy elsewhere). Used by the fitting section's ship
+ * picker. Returns [] on error (non-fatal; the picker degrades to nothing).
+ */
+export async function fetchMyMainShips(): Promise<MainShipRow[]> {
+  const { data, error } = await supabase
+    .from('main_ship_instances')
+    .select(SHIP_COLS)
+    .order('created_at', { ascending: true })
+  if (error) return []
+  return (data ?? []) as MainShipRow[]
 }
 
 // ── Phase 10D: main-ship send/return + live status ────────────────────────────────

@@ -1,8 +1,11 @@
 import { supabase } from '../../lib/supabase'
 import {
   craftModuleErrorMessage,
+  fittingErrorMessage,
   type CraftModuleResult,
+  type FittingCommandResult,
   type GetMyModuleInstancesResult,
+  type GetMyShipFittingsResult,
   type ModuleCatalogEntry,
   type ModuleRecipeIngredientRow,
   type ModuleTypeRow,
@@ -53,6 +56,45 @@ export async function fetchModuleCatalog(): Promise<ModuleCatalogEntry[] | null>
       .filter((r) => r.module_type_id === t.id)
       .map((r) => ({ item_id: r.item_id, qty: r.qty })),
   }))
+}
+
+// ── FITTING-P14 — the dark module-fitting surface (0113/0114 commands + 0116 read) ──────────────
+// Same conventions as the crafting wrappers above; the server rejects all three while
+// module_fitting_enabled is false (feature_disabled / module_fitting_disabled).
+
+/** Read the caller's own fittings (server-rejected with module_fitting_disabled while dark). */
+export async function getMyShipFittings(): Promise<GetMyShipFittingsResult> {
+  const { data, error } = await supabase.rpc('get_my_ship_fittings', {})
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as GetMyShipFittingsResult
+}
+
+/** Fit an owned module instance to an owned, settled ship (idempotent on requestId). */
+export async function fitModuleToShip(
+  moduleInstanceId: string,
+  mainShipId: string,
+  requestId: string,
+): Promise<FittingCommandResult> {
+  const { data, error } = await supabase.rpc('fit_module_to_ship', {
+    p_module_instance_id: moduleInstanceId,
+    p_main_ship_id: mainShipId,
+    p_request_id: requestId,
+  })
+  if (error) return { ok: false, code: 'unavailable', message: fittingErrorMessage('unavailable') }
+  return data as FittingCommandResult
+}
+
+/** Unfit a fitted module instance (idempotent on requestId). */
+export async function unfitModuleFromShip(
+  moduleInstanceId: string,
+  requestId: string,
+): Promise<FittingCommandResult> {
+  const { data, error } = await supabase.rpc('unfit_module_from_ship', {
+    p_module_instance_id: moduleInstanceId,
+    p_request_id: requestId,
+  })
+  if (error) return { ok: false, code: 'unavailable', message: fittingErrorMessage('unavailable') }
+  return data as FittingCommandResult
 }
 
 /**

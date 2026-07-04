@@ -5,6 +5,75 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — FITTING-P14 SLICE F — dark frontend: the fitting section EXTENDS `src/features/modules/` (fit/unfit controls inside ModulesPanel; renders nothing while either flag is dark). Frontend only — no migration
+
+**Request.** Implement slice F: the dark fitting UI as a minimal extension of the existing
+`src/features/modules/` feature. NO migration (head stays **0116**), no config, no verify script.
+Read end-to-end first: `modulesTypes.ts` / `modulesApi.ts` / `ModulesPanel.tsx`, the shared
+`src/lib/useActivityPanelGuards.ts`, the `GalaxyMapScreen.tsx` mounting, the `mainshipApi.ts`
+ship-reading convention, and the twins' `crypto.randomUUID()` request-id idiom.
+
+**DECISION — EXTEND, don't duplicate (locked):** the fitting UI extends `ModulesPanel` rather than
+adding a parallel panel, because the panel already lists the player's module instances and a second
+panel would duplicate that list (the no-duplication rule). **CONSEQUENCE (recorded honestly): the
+fitting section is server-gated TWICE** — it renders only when the CRAFTING read surface is lit
+(the panel's existing `isServerLit` gate on `get_my_module_instances`, `module_crafting_enabled`)
+AND `get_my_ship_fittings` answers ok (`module_fitting_enabled`) — it fails closed both ways and
+renders NOTHING today. With both flags `'false'` the fittings RPC is not even called (it rides the
+lit branch); with crafting lit and fitting dark, every fitting element is behind a
+`litFittings &&` gate, so the rendered output is exactly the pre-slice-F markup.
+
+**Work done (4 files, all existing modules — no new feature dir, no GalaxyMapScreen change):**
+- **`modulesTypes.ts`** — added the fitting types: `ShipFittingRow` (the seven 0116 fields) +
+  `GetMyShipFittingsResult`; `FittingCommandResult` (the 0113/0114 wrapper envelopes — success
+  passes the writer's fitted/unfitted + slot facts through with the replay flag; failure carries
+  code/message with the real `insufficient_slots` `{used, cost, limit}` and `already_fitted`
+  `{main_ship_id}` context); and the `FITTING_ERROR_COPY` map + `fittingErrorMessage()` covering
+  `feature_disabled` / `invalid_request` / `ship_not_settled` / `module_not_owned` /
+  `ship_not_owned` / `already_fitted` / `not_fitted` / `insufficient_slots` /
+  `not_authenticated` / `unavailable`. The read reason `module_fitting_disabled` is handled by
+  fail-closed rendering, not copy (stated in the section header).
+- **`modulesApi.ts`** — three thin wrappers in the existing envelope idiom (transport error →
+  normalized failure, never a throw into the render path): `getMyShipFittings()`,
+  `fitModuleToShip(moduleInstanceId, mainShipId, requestId)`,
+  `unfitModuleFromShip(moduleInstanceId, requestId)`.
+- **`mainshipApi.ts`** — minimal extension INSIDE the existing module (never a second ship-select
+  elsewhere): the ship column list was extracted to `SHIP_COLS` (now used by both selects) and
+  `fetchMyMainShips()` added — the multi-ship-ready LIST variant of `fetchMyMainShip` (same
+  owner-read RLS, same columns incl. `module_slots`; `[]` on error, non-fatal).
+- **`ModulesPanel.tsx`** — the fitting section: `getMyShipFittings()` rides the existing lit-branch
+  read batch (mount + `lifecycleKey`); ships fetched only once fitting is lit. Per instance row
+  (all double-gated): fitted state joined from the fittings result by `module_instance_id`
+  ("Fitted → <ship name>" + an Unfit control), or a fit control — ship picker over the player's
+  ships labeled `name (Σ slot_cost used / module_slots)` computed from the already-loaded fittings
+  data (**display-only arithmetic; `fitting_apply`'s hard cap + the 0114 settled-SAFE rule remain
+  the enforcer**, commented in place) + a Fit button. Each command generates a fresh
+  `crypto.randomUUID()` request id (the twins' idiom; the server dedups on (player_id,
+  request_id)), claims the row synchronously via the shared `tryClaim(instance_id)` (craft rows
+  key by catalog slug, fitting rows by instance uuid — the key spaces cannot collide, noted),
+  disables the row while in flight, renders the server's message (falling back to the copy map,
+  with the real `{used, cost, limit}` suffix on `insufficient_slots` — the insufficient_items
+  idiom), and refetches instances + fittings on success. One shared `runFitting()` executes both
+  commands (no duplicated submit block).
+
+**Doc-sync note.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — confirmed and stated (the
+MODULES-P13 SLICE E precedent): frontend-only; no table, no writer, no cross-system edge; the
+client reads/commands only through the shipped RPCs (0113/0114/0116) and the existing owner-read
+selects.
+
+**State.** `npm run build` green (tsc -b + vite, exit 0 — this slice DOES touch src; one TS error
+was caught and fixed during the slice: a double-wrapped `Promise<ReturnType<…>>` in the shared
+submit helper's type). Targeted eslint on all four touched files: exit 0. **Dark-render trace
+(manual, per the request):** with both flags `'false'` the panel's first read returns
+`module_crafting_disabled` → `isServerLit` false → the panel renders `null`, byte-identical to
+before this slice (the fittings RPC is never called); with crafting lit + fitting dark every added
+element is behind `litFittings &&` → the instances list renders the exact pre-slice markup.
+Migration head stays **0116**; `module_fitting_enabled='false'`; nothing flipped, no live DB
+write, no workflow touched. PR-ready on `autopilot/20260703-064048`, `main` untouched. Next:
+slice G (`scripts/verify-fitting.mjs` + the `verify:fitting` package.json entry).
+
+---
+
 ## 2026-07-04 — FITTING-P14 SLICE E — the dark read surface `0116` (`get_my_ship_fittings()`). **Server side of Phase 14 complete, fully dark**
 
 **Request.** Implement slice E: ONE new forward-only migration with the read surface, mirroring the
