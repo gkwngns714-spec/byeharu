@@ -1,4 +1,5 @@
-// RANKING-P17 verification — DARK POSTURE + contracts (slices 0–4, migrations 0127–0131).
+// RANKING-P17 verification — DARK POSTURE + contracts (slices 0–4 + post-audit commit-safe accrual;
+// migrations 0127–0131, 0144/0145).
 //   node scripts/verify-ranking.mjs
 //
 // Proves, with anon/authenticated clients only, that the whole Ranking surface ships dark and locked
@@ -14,6 +15,9 @@
 //     the catalog-table precedent)
 //   • ranking_seasons + ranking_standings have NO client write path (direct inserts denied — no insert
 //     policy / no write grant, 0127/0128)
+//   • ranking_counted_grants (0144 schema / 0145 accrual writer) is SERVER-ONLY — client SELECT (anon
+//     AND authenticated) denied and a valid-shaped authenticated INSERT denied (RLS, no client
+//     policy/grant; the mining_fields/securing-table posture, not the public-read standings posture)
 //   • internal surface (ranking_season_open, ranking_accrue_standings, ranking_score_delta) is
 //     service-role-only — denied to authenticated AND to anon (0129/0130)
 //   • ranking_enabled reads 'false' (READ-ONLY)
@@ -108,6 +112,35 @@ async function main() {
     ;(await me.from('ranking_standings').insert(row)).error
       ? ok('ranking_standings insert denied to authenticated client')
       : bad('ranking_standings write path', 'INSERTED — hole!')
+  }
+
+  // ── 3b) ranking_counted_grants is SERVER-ONLY (0144 schema / 0145 accrual writer) ────────────────
+  //   Unlike the PUBLIC-READ seasons/standings, the accrual consumption ledger leaks NOTHING to
+  //   clients (RLS enabled, NO client policy/grant — the mining_fields/securing-table posture) and has
+  //   NO client write path; its sole writer is the server-only ranking_accrue_standings (0145). Read
+  //   denial mirrors the mining_fields server-only assertion (tolerant of 'denied' OR '0 rows'); the
+  //   INSERT denial mirrors the section-3 ranking_seasons/standings write-path assertions exactly.
+  console.log('\n3b. ranking_counted_grants server-only (0144/0145):')
+  {
+    const { data, error } = await me.from('ranking_counted_grants').select('*')
+    error || (data ?? []).length === 0
+      ? ok(`ranking_counted_grants unreadable by authenticated clients (${error ? 'denied' : '0 rows'})`)
+      : bad('ranking_counted_grants read', `authenticated client read ${data.length} ledger row(s)!`)
+  }
+  {
+    const { data, error } = await anon.from('ranking_counted_grants').select('*')
+    error || (data ?? []).length === 0
+      ? ok(`ranking_counted_grants unreadable by anon (${error ? 'denied' : '0 rows'})`)
+      : bad('ranking_counted_grants anon read', `anon read ${data.length} ledger row(s)!`)
+  }
+  {
+    // Sole writer is ranking_accrue_standings (server-only); no insert policy / no write grant. A
+    // valid-shaped row (real columns/types) proves the denial is the grant/policy layer, not a
+    // constraint trip.
+    const row = { season_id: ZERO, grant_id: ZERO, player_id: u.userId, dimension: 'combat', score: 1, granted_at: WINDOW_START }
+    ;(await me.from('ranking_counted_grants').insert(row)).error
+      ? ok('ranking_counted_grants insert denied to authenticated client')
+      : bad('ranking_counted_grants write path', 'INSERTED — hole!')
   }
 
   // ── 4) Internal surface locked — client-role denial (the verify-captain-progression ACL idiom, via

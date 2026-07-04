@@ -5,6 +5,79 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — RANKING-P17 POST-AUDIT FIX, SLICE B — `ranking_accrue_standings` made COMMIT-SAFE by folding through the `ranking_counted_grants` ledger (migration 0145)
+
+**Request.** Post-audit fix pass, item 2, slice B: rewrite `ranking_accrue_standings` so correctness no
+longer depends on the `granted_at` timestamp watermark. NEW forward-only migration
+`CREATE OR REPLACE`-ing the accrual writer, changing ONLY the fold; preserve everything else verbatim;
+same-step doc-sync + verifier update. No flag flip, no shipped-migration edit, no writer for any other
+table, `ranking_score_delta` unchanged.
+
+**The bug (recap).** 0130's fold is INCREMENTAL by `ranking_standings.last_counted_at`: it counts only
+grants with `granted_at > last_counted_at` and advances the mark. `reward_grants.granted_at` defaults to
+the inserting txn's START time (`20260616000015...:14`), but a row is VISIBLE to the reader only at
+COMMIT. A grant whose txn started before a run yet commits after that run advanced the watermark past
+its `granted_at` is PERMANENTLY skipped — silently dropped points under concurrent finalization.
+
+**Before → after (the fold is the ONLY change).**
+- BEFORE (0130): a pure `folded` CTE selects grants with a HIGH-WATER FILTER
+  `((st.last_counted_at is null and rg.granted_at >= s.starts_at) or (rg.granted_at > st.last_counted_at))`
+  via a LEFT JOIN to the existing standings row, groups by (season, player, dimension), then `upserted`
+  reads `folded`. Correctness depends on the timestamp watermark.
+- AFTER (0145): a data-modifying `newly_counted` CTE
+  `insert into ranking_counted_grants (…) select … from reward_grants rg join ranking_seasons s on
+  s.status='active' and rg.granted_at between s.starts_at and s.ends_at where rg.source_type in (…4…)
+  and not exists (select 1 from ranking_counted_grants c where c.season_id=s.season_id and
+  c.grant_id=rg.id) on conflict (season_id, grant_id) do nothing returning season_id, player_id,
+  dimension, score, granted_at`. Then `aggregated` groups the RETURNING rows by (season, player,
+  dimension) (score=Σ, events_counted=count, last_counted_at=max granted_at), and `upserted` reads
+  `aggregated` with the SAME `on conflict (season_id, player_id, dimension) do update set score =
+  t.score + excluded.score, …, last_counted_at = greatest(…), updated_at = now()` shape as 0130.
+
+**Why the anti-join is commit-safe (and never skips a finalized reward).** The fold no longer asks
+"is this grant newer than the watermark?" (a time question, defeated by commit-after-start visibility);
+it asks "is this grant already in the ledger for this season?" (a VISIBILITY question). A grant becomes
+visible to a run only once committed; whenever it first becomes visible — however late, whatever its
+`granted_at` — it is not yet in the ledger, so the `not exists` anti-join includes it and the run marks
++ folds it exactly once. `unique (season_id, grant_id)` + `on conflict do nothing` guarantee at-most-once
+even under a raced run (belt-and-braces with the global advisory lock); a re-run with nothing unmarked
+inserts nothing and upserts nothing (idempotent). No `granted_at` ordering assumption remains, so no
+late-committing grant is ever dropped.
+
+**`last_counted_at` is now INFORMATIONAL.** It is still written (max `granted_at` among grants folded
+this run, kept via `greatest`) for audit/display, but is NEVER read back as a cursor — the ledger's
+anti-join is the correctness cursor. The COLUMN is intentionally NOT dropped (a forward-only column drop
+is out of scope for this fix); the migration/function comments state this explicitly.
+
+**Preserved VERBATIM from 0130 (verified by code-only diff).** The signature
+`ranking_accrue_standings() returns jsonb`, `language plpgsql security definer set search_path = public`,
+the declare block, the DARK-GATE-FIRST `cfg_bool('ranking_enabled')` reject, the
+`pg_advisory_xact_lock(hashtext('ranking_accrue_standings'), 0)` serialize, the three summary aggregate
+expressions (`count(distinct season_id)`, `count(*)`, `coalesce(sum(events_counted),0)` — only the FROM
+source changed `folded`→`aggregated`), the `jsonb_build_object('ok', true, 'seasons_scored', …,
+'rows_upserted', …, 'events_folded', …)` result shape, and the service-role-only ACL block are all
+byte-identical. `ranking_score_delta` is UNCHANGED and NOT redefined here (0130 owns it and its grants).
+
+**Sole-writer status.** `ranking_accrue_standings` remains the SOLE writer of `ranking_standings` and is
+now the REALIZED sole writer of `ranking_counted_grants` (0144's deferred writer). No second write path
+to either table.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: §1 `ranking_standings` fold note rewritten to the
+commit-safe ledger anti-join with `last_counted_at` informational; §1 `ranking_counted_grants` row now
+shows the REALIZED sole writer `ranking_accrue_standings` (0145); §2 Ranking contract's Owns entry,
+accrual description, and Role fold note all updated to the anti-join (present tense). Edges unchanged:
+Ranking → Reward (`reward_grants` read) + Reference/Config (`cfg_bool`), DOWNWARD, acyclic; nothing calls
+into Ranking. **Verifier:** `scripts/verify-ranking.mjs` extended to assert `ranking_counted_grants` is
+SERVER-ONLY — authenticated SELECT denied, anon SELECT denied, and a valid-shaped authenticated INSERT
+denied — mirroring the existing table-denial assertions; no lit path, no flag flip.
+
+**Preserved human gates.** `ranking_enabled` stays `'false'` (dark) — the writer still rejects
+`feature_disabled` before any read; no flag flipped, no shipped migration (0001–0144, incl. mining 0143
+and the slice-A schema 0144) edited, no new table, no cron, nothing merged/deployed/applied to
+production. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — RANKING-P17 POST-AUDIT FIX, SLICE A — the commit-safe consumption-ledger SCHEMA `ranking_counted_grants` (migration 0144; schema only, no writer)
 
 **Request.** Post-audit fix pass, item 2: `ranking_accrue_standings`'s timestamp high-water cursor is
