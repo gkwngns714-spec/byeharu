@@ -5,6 +5,38 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — RANKING-P17 CLEANUP — correct two stale figures in the `verify-harness.mjs` header (docs-in-code only)
+
+**Request.** Final Phase-17 Ranking auto-cleanup pass. The STEP 1 read-only audit
+(`RANKING_CLEANUP_RECON.local.md`) found the milestone clean on every claim EXCEPT one narrow
+docs-in-code defect: the shared harness's in-file ADOPTION / RETIREMENT PLAN header carried two stale
+figures. This slice corrects ONLY those figures — no logic change, no migration, no flag change, no
+frontend; `ranking_enabled` stays `'false'`.
+
+**Defect (audit Claim 4).** `scripts/lib/verify-harness.mjs` header said (a) "the **31** sibling
+`verify-*.mjs` scripts still carry inline copies" and (b) cited the `osn_distance`
+adopt-on-next-real-change precedent as `docs/SYSTEM_BOUNDARIES.md:75–78`. Both were wrong: there are only
+**27** `scripts/verify-*.mjs` files, of which **7** already import the harness (captain, captain-progression,
+exploration, fitting, mining, modules, ranking) → **20** remaining (not 31); and lines `75–78` are the
+Fleet/Movement/Presence/Activity matrix rows — the actual "OSN geometry leaf" note is at
+`docs/SYSTEM_BOUNDARIES.md:101–104` (the "should adopt the helper whenever they are next re-defined"
+sentence is `:103–104`).
+
+**Work done — `scripts/lib/verify-harness.mjs` (header comment ONLY):** rewrote the ADOPTION /
+RETIREMENT PLAN paragraph to state the self-checking accounting — 27 total / 7 adopters (named) / 20
+remaining — and corrected the precedent citation to `docs/SYSTEM_BOUNDARIES.md:101–104`. Added an explicit
+retirement condition (plan discharged when all 27 import the harness). NO exported function, no
+`loadEnv`/`resolveEnv`/`createReporter`/`createUserFactory` logic, and no other line changed — the harness
+code and its behavior are untouched. Re-verified the 27/7/20 split by counting `scripts/verify-*.mjs` and
+`grep -l "lib/verify-harness"` this step.
+
+**Verify.** `node --check scripts/lib/verify-harness.mjs` → parses OK. `node --check
+scripts/verify-ranking.mjs` → parses OK (unchanged, sanity re-check). No migration, `package.json`,
+`verify-ranking.mjs`, flag, or `main` touched; `ranking_enabled` remains `'false'` (dark). SAFE FOR HUMAN
+MERGE REVIEW.
+
+---
+
 ## 2026-07-04 — RANKING-P17 SLICE 5 — the dark-posture verifier `scripts/verify-ranking.mjs` + `verify:ranking` (FINAL Phase-17 slice)
 
 **Request.** Phase 17 Slice 5 (final): ONE new verify script (the `verify-captain-progression.mjs`

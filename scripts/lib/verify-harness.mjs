@@ -6,11 +6,14 @@
 //   3. `createUserFactory()` — the throwaway-signup `newUser(tag)` helper (tracks each created
 //      user id immediately for finally-teardown via ./verifier-teardown.mjs).
 //
-// ADOPTION / RETIREMENT PLAN for the remaining duplication: the 31 sibling `verify-*.mjs`
-// scripts still carry inline copies of these blocks and MUST adopt this module the next time
-// each is meaningfully touched (the documented `osn_distance` adopt-on-next-real-change
-// precedent, `docs/SYSTEM_BOUNDARIES.md:75–78`). New verifiers import from here from day one;
-// never add a fresh inline copy.
+// ADOPTION / RETIREMENT PLAN for the remaining duplication: of the 27 `scripts/verify-*.mjs`
+// scripts, 7 now import this module (captain, captain-progression, exploration, fitting, mining,
+// modules, ranking) and the remaining 20 still carry inline copies of these blocks — those 20 MUST
+// adopt this module the next time each is meaningfully touched (the documented `osn_distance`
+// adopt-on-next-real-change precedent, `docs/SYSTEM_BOUNDARIES.md:101–104` — the "OSN geometry leaf"
+// note; the "should adopt the helper" sentence is `:103–104`). New verifiers import from here from
+// day one; never add a fresh inline copy. Retirement condition: this plan is discharged when all 27
+// import the harness (adopter count reaches 27 / remaining reaches 0).
 
 import { createClient } from '@supabase/supabase-js'
 import { readFileSync } from 'node:fs'
