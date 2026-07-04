@@ -5,6 +5,119 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — MODULES-P13 SLICE F (final) — `verify:modules` dark-posture script. **Phase 13 Module crafting — dark implementation complete (slices A–F)**
+
+**Request.** Implement slice F, the last Phase 13 slice: the dark-posture verify script + its
+`package.json` entry, mirroring the exploration/mining verifier twins (read end-to-end first:
+`verify-exploration.mjs`, `verify-mining.mjs`, `scripts/lib/verify-harness.mjs`,
+`scripts/lib/verifier-teardown.mjs`). Touches ONLY `scripts/verify-modules.mjs`, `package.json`,
+this file, and the recon scratch file. No migrations (head stays **0110**), no CI/workflow edits,
+no flags.
+
+**Flag-handling mechanism — the twins', stated and followed exactly.** `verify-mining.mjs:16–20`
+records the mechanism verbatim: the twins **NEVER write `game_config` and NEVER flip their flag**
+— they exercise NO lit path at all (the `set_game_config` flip in `verify-mainship-send.mjs` is
+the explicitly-NOT-copied alternative; the self-rolling-back mechanism exists only in the
+separate `trade-economy-bootstrap-proof` psql/CI harness, which is workflow-wired and out of this
+loop's scope). So `verify-modules.mjs` proves the DARK contracts only, and the requested lit-path
+behaviors are recorded in the HUMAN ACTIVATION CHECKLIST below — run on a DEV database by the
+owner, never by this script. Teardown guarantee: the shared `teardownVerifier` deletes the
+throwaway user (the 0108/0109 player FKs cascade any of its rows away); no flag entry is passed
+because the script touches NO flag — nothing to restore, `module_crafting_enabled` stays exactly
+as found (`'false'`).
+
+**Work done:**
+- **NEW `scripts/verify-modules.mjs`** — imports the shared harness from day one
+  (`Abort`/`createReporter`/`createUserFactory`/`resolveEnv` from `scripts/lib/verify-harness.mjs`
+  + `teardownVerifier` from `scripts/lib/verifier-teardown.mjs`) — ZERO inline harness copies (the
+  harness header's law). Same posture as the twins: dark contracts only; NEVER writes
+  `game_config`; service key OPTIONAL (teardown only); one throwaway signup. Asserts, in the
+  twins' order/idioms:
+  (1) **dark rejection** — `craft_module` → `{ok:false, code:'feature_disabled'}` (0109 gates
+  before any validation — anti-probe) and `get_my_module_instances` →
+  `{ok:false, reason:'module_crafting_disabled'}` (0110), both authenticated;
+  (2) **catalog seeds (0107, exact contract)** — `module_types` = the 4 seeded archetypes with
+  their slot types; `module_recipe_ingredients` = exactly 12 rows, all `qty > 0`, per-type
+  ingredient maps equal to the seed verbatim, and every ingredient id present in `item_types`
+  (the client-checkable form of FK validity). NOTE the deliberate inversion vs mining's
+  "no field leak": these catalogs are PUBLIC-READ by design (the item_types posture), so reading
+  them back exactly IS the posture assertion;
+  (3) **player-state RLS + no client write path** — `module_instances` + `module_craft_receipts`
+  own-row RLS (fresh user sees 0 rows) AND inserts denied to the authenticated client on all four
+  Modules/Production tables (both state tables + both catalogs);
+  (4) **internal surfaces locked** — `production_craft_module` + `modules_mint_instance` denied
+  to the authenticated client; both public RPCs denied to anon;
+  (5) **config presence (read-only)** — `module_crafting_enabled` = false, via the same
+  jsonb-storage-tolerant comparison.
+- **`package.json`** — `"verify:modules": "node scripts/verify-modules.mjs"` added in the verify
+  cluster, directly after `verify:mining`, same command shape.
+- **CI note:** grep confirms the exploration/mining verifiers are wired into NO workflow file —
+  there is nothing to mirror, and no workflow was created or modified (dispatching/enabling
+  workflows is outside this loop). Wiring `verify:modules` into CI, if desired, is a human /
+  PR-review step.
+- **Verify posture run honestly:** `node --check scripts/verify-modules.mjs` parses clean;
+  `npm run build` green. `node scripts/verify-modules.mjs` in this sandbox aborts at the
+  throwaway SIGNUP step with the environmental TLS failure ("signup failed: fetch failed") —
+  `node scripts/verify-mining.mjs` aborts at the IDENTICAL point in the same run, so this is the
+  known environmental-fail-only posture (the Phase 12 slice-G precedent), and reaching that
+  identical abort point proves the harness wiring. The assertions themselves run against a real
+  DB in the owner's environment.
+- `docs/SYSTEM_BOUNDARIES.md` needs NO change this slice (checked the twins' verify slices: the
+  Phase 12 slice-G entry recorded the same) — no table, writer, or cross-system edge (a read-only
+  verifier script + one npm alias).
+
+---
+
+### Phase 13 Module crafting — dark implementation complete (slices A–F) — closing summary
+
+- **Migrations `0107–0110`** (head **0106 → 0110**; all forward-only; `0001–0106` never edited):
+  `0107` config/flag + catalogs (`module_crafting_enabled='false'` + `module_types` +
+  `module_recipe_ingredients` + 4 seeded archetypes whose recipes reuse EXISTING `item_types`
+  rows) · `0108` instances schema + the ONE mint writer (`module_instances` with the
+  `mint_key` idempotency spine + `modules_mint_instance`, service_role-only) · `0109` the craft
+  command (`module_craft_receipts` + `craft_module` wrapper → private `production_craft_module`;
+  dark-gate-first, per-player advisory lock, trade-semantics verbatim replay, items-only cost via
+  `inventory_spend`, one craft = one instance via the namespaced `craft:` mint key) · `0110` the
+  read surface (`get_my_module_instances`; the 0101/0106 idiom; no catalog RPC — public-read
+  catalogs are direct client selects).
+- **Frontend:** dark `src/features/modules/` (types/api/panel — the twins' structure; server-driven
+  visibility, fails closed to null; MarketPanel per-row claims; direct catalog + own-inventory
+  selects) wired beside `MiningPanel` in `GalaxyMapScreen.tsx`.
+- **Verify:** `scripts/verify-modules.mjs` + `npm run verify:modules` (dark posture only, shared
+  harness, never flips flags).
+- **Design decisions (owner-directed, slice A):** Modules leaf system + Production-owned craft
+  command; instant idempotent craft (player-scoped receipts; `build_orders` integration deferred
+  with the mint-helper retirement note); normalized items-only recipes; one craft = one instance;
+  `module_crafting_enabled` flag.
+- **Ownership/laws:** SYSTEM_BOUNDARIES §1 rows (`module_types`/`module_recipe_ingredients`,
+  `module_instances`, `module_craft_receipts`) + §2 Modules and Production rows — every doc synced
+  in the SAME step as its fact; edges all DOWNWARD/acyclic (Production → Inventory · Modules ·
+  Reference/Config); sole writers: catalogs none (migration-seeded), `module_instances` =
+  `modules_mint_instance` (called only by 0109), `module_craft_receipts` =
+  `production_craft_module`.
+- **HUMAN ACTIVATION CHECKLIST (the owner's gate — never this loop):** (1) apply migrations
+  0107–0110 to the target DB; (2) run `npm run verify:modules` there — expect ALL dark-posture
+  checks green; (3) optionally flip `module_crafting_enabled='true'` on a DEV database and run the
+  lit path there: seed a test player's inventory (e.g. via secured mining/exploration deposits or
+  a dev grant), then `craft_module` with sufficient balances → expect success AND (a) exactly the
+  recipe quantities spent from `player_inventory` with matching negative `inventory_ledger` rows,
+  (b) exactly ONE `module_instances` row minted with the namespaced `craft:<player>:<request_id>`
+  key, (c) exactly one `module_craft_receipts` row; REPLAY the same (player, request_id) → same
+  `instance_id` + `idempotent_replay:true`, and provably NO double-spend/double-mint; a shortfall
+  craft → `insufficient_items` with `{item_id, have, need}`, nothing spent, no receipt;
+  `unknown_module` and `no_recipe` codes fire; `modules_mint_instance` twice with the same key
+  (service_role) → one row; `get_my_module_instances` returns the crafted instance newest-first
+  for the owner and NOT for a second test player; then flip the flag back and decide production
+  activation separately. The loop ships everything server-rejected; activation is exclusively the
+  human's.
+
+**State.** `npm run build` green; `node --check` clean on the new script. Migration head **0110**;
+`module_crafting_enabled='false'` everywhere; no flag flipped, no live DB write, no workflow
+touched. **Phase 13 Module crafting is implemented DARK end-to-end and PR-ready on
+`autopilot/20260703-064048`** — SAFE FOR HUMAN MERGE REVIEW; `main` untouched.
+
+---
+
 ## 2026-07-04 — MODULES-P13 SLICE E — dark frontend `src/features/modules/` (catalog + craft + instances panel; renders nothing while the server says dark). Frontend only — no migration
 
 **Request.** Implement slice E: the dark module-crafting frontend mirroring the post-cleanup
