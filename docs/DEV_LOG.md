@@ -5,6 +5,64 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — PHASE20-POLISH SLICE 1 — the Phase-20 dark master flag `phase20_polish_enabled` + the World Events schema `world_events` (`0139`)
+
+**Request.** Phase 20 (Polish / expansion — map UI, portraits, icons, events; ROADMAP :95) first build
+slice: ONE forward-only migration seeding the dark master flag + creating the World Events foundation
+table, with same-step doc-sync. No flag flipped, no `src/`, no verifier/`package.json` change, no cron,
+no shipped-migration edit, no git.
+
+**Design decision (self-approved, grounded in the docs).** **World Events is a NEW server-authoritative
+downward-LEAF system**, the sole writer of its own `world_events` table — presentational, timed world
+happenings (a "pirate surge in Zone X" notice, a seasonal banner, a world-state highlight) that the map
+/ dashboard will READ (via a later flag-gated read RPC) to satisfy Phase 20's "events" polish goal. It
+is a PURE leaf honoring the one-directional pipeline law (ROADMAP standing law 3): it NEVER writes
+`zone_state`/`location_state` (World State's tables — so it is NOT a second writer to World State),
+`fleets`/`combat_*`/`reward_grants`, or any other system's table, and it grants no rewards; it only
+READS the static Map (`zones`/`locations`) for FK integrity. Nothing depends on writing it. It is
+fail-closed and server-only — no client read/write path this slice; a later slice adds ONE flag-gated
+read RPC (the only client path) and later still a service-role writer to publish/expire events.
+
+**Work done — `0139_phase20_world_events_flag_and_schema.sql` (forward-only; edits NO shipped
+migration `0001–0138`).**
+- **(a) Config.** Seeds the Phase-20 dark master flag `phase20_polish_enabled='false'` (`on conflict
+  (key) do nothing`). Every Phase-20 read surface must gate on this FIRST and return nothing while
+  false; any future writer/processor no-ops while false. NOT flipped true.
+- **(b) Schema.** Creates `public.world_events`: `id uuid pk`, `event_type` (`notice`/`world_state`/
+  `seasonal` CHECK), polymorphic `scope` (`global`/`zone`/`location` CHECK) with nullable `zone_id`→
+  `zones(id)` / `location_id`→`locations(id)` (Map FK targets, `on delete cascade`) and a CHECK
+  enforcing the scope↔target invariant (global ⇒ both null; zone ⇒ zone_id set & location_id null;
+  location ⇒ location_id set & zone_id null), `title`/`body`, `severity` (`info`/`warning`/`critical`
+  default `info`), `is_active` default true (retire without deleting — no destructive cleanup),
+  `starts_at`/`ends_at` (null = open-ended), `created_at`/`updated_at`. Indexes: active-window
+  `(is_active, starts_at desc)` + partial `zone_id`/`location_id` scoped-lookup indexes.
+- **Fail-closed posture (the 0103 `mining_fields` / `market_offers` server-only idiom).** RLS enabled
+  with NO client policy and `revoke all … from public, anon, authenticated` — no client read, no client
+  write. Sole writer will be World Events' OWN future service-role function; no runtime writer exists
+  this slice and no other system writes this table.
+
+**Boundary discipline.** One sole writer per table (`world_events` → World Events, deferred to its own
+future writer — the 0128/0103 schema-first idiom). Downward LEAF: no new cross-system CALL edge exists
+yet (no function is created here); the only relationship is the read-only Map FK. Acyclic and no second
+writer to any table — World Events never writes World State's `zone_state`/`location_state`.
+
+**Doc-sync (this step).** `docs/SYSTEM_BOUNDARIES.md`: §1 ownership matrix gains the `world_events` row
+under a NEW **World Events** system (sole writer = its own future service-role writer; server-only, no
+client surface; DARK behind `phase20_polish_enabled`); §2 gains the World-Events contract row (owns
+`world_events`; a downward leaf — reads only the static Map for FK integrity; writes nothing else;
+grants nothing; no client surface yet). No call-edge invented (none exists yet). This DEV_LOG entry.
+
+**Retirement / activation.** `phase20_polish_enabled` is a permanent capability gate (the Phase-20
+master flag), not a transitional shim — it retires only when the human owner activates Phase 20.
+
+**Posture / gates.** Ships the flag `'false'` — NOT flipped; edits no `0001–0138`; touches no `src/`,
+no other flag, no cron, no git. Backend-only and dark/undeployed, so **no lit DB run** — a lit run
+(apply `0139` on a DEV DB, confirm the flag is false, the table exists server-only, no client
+read/write) is the human owner's activation-checklist job. The M2/M3/M4/M4.5 engine tests are
+unaffected by a new dark, server-only table (no engine path reads or writes `world_events`).
+
+---
+
 ## 2026-07-04 — WORLD-BALANCE-P19 CLEANUP — restore the `0092` docked-resolve dedup that `0136` regressed; re-route all three Trade Market RPCs through `mainship_resolve_docked_location` (`0138`)
 
 **Request.** Act on the highest-priority world-economy cleanup finding (F1 from the baseline audit) with
