@@ -5,6 +5,40 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN cleanup audit — SYSTEM_BOUNDARIES §1-matrix doc-sync (rows `captain_types` / `captain_recipe_ingredients` / `ship_captain_assignments`)
+
+**Request.** Cleanup/audit pass over the Captain milestone (Phase 15 assignment 0117–0123 + Phase 16
+progression 0124–0126, backend-only). Read-only recon (`CLEANUP_CAPTAIN_RECON.local.md`) + the
+narrowest same-step law-doc sync for the ONE defect it found. NO migration change, NO flag write, NO
+code/frontend change.
+
+**Defect found (F-1, LOW, docs-only).** `docs/SYSTEM_BOUNDARIES.md` §1 (the sole-writer matrix) had
+three rows frozen at their creation-slice, contradicting the as-built 0120–0126, the fully-current §2
+Captain row, and the §4 adapter note (a law doc that contradicts the code is a defect — the doc-sync
+law): `captain_types` said "nothing reads them yet", `captain_recipe_ingredients` said "nothing reads
+it yet", and `ship_captain_assignments` said "NO caller exists yet" / the settled-SAFE rule "lands in
+the later command slice". The parallel rows `ship_module_fittings` (kept current — "called today ONLY
+by `fitting_execute_command`"), `captain_instances`, and `captain_assignment_receipts` proved the
+matrix was half-updated, not a deliberate convention.
+
+**Fix (docs-only, same step — the `TRADE_ECONOMY_CLEANUP_RECON` doc-only-defect precedent).** Rewrote
+the three §1 rows to present tense matching the as-built surface, mirroring the current-row phrasing:
+- `captain_types` → "read today by the Phase-15 stats-adapter `calculate_expedition_stats` (0122 …),
+  the read surface (0123), and the `captains_mint_instance`/`production_recruit_captain` type-existence
+  checks (0118/0126)".
+- `captain_recipe_ingredients` → "Read DOWNWARD today by its consumer, the Phase-16 Production-owned
+  recruit command `production_recruit_captain` (0126), for the recruit cost".
+- `ship_captain_assignments` → the settled-SAFE rule "lives in the command `captain_execute_command`
+  (0121 …)"; "the command `captain_execute_command` translates" its exception-style reasons; "called
+  today ONLY by that command (0120/0121)"; "the adapter (0122)" (was "the future adapter").
+
+The SOLE-WRITER / ownership facts in all three rows were already correct and are unchanged; only the
+stale reader/caller/rule-timing prose was corrected. §2, §4, `docs/ARCHITECTURE.md`, and every
+migration are untouched (they were already in sync). No flag flipped; `0001–0126` unedited; no
+`game_config` value touched.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P16 SLICE 4 — the dark-posture verifier `scripts/verify-captain-progression.mjs` (the verify-captain.mjs analogue) + the self-approved "no new read RPC" decision
 
 **Request.** Phase 16 slice 4, the final implementation slice: ONE new verify script proving
