@@ -5,6 +5,60 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — EXPLORATION-P11 POST-AUDIT FIX — convert the racing duplicate-scan insert into a clean `already_discovered` (migration 0146)
+
+**Request.** Post-audit fix pass, item 3: `exploration_scan`'s step-11 discovery insert has no
+`unique_violation` handler, so a racing duplicate surfaces a raw SQL error instead of the clean
+`already_discovered` envelope the pre-check already returns. Fix as a NEW forward-only migration
+`CREATE OR REPLACE`-ing the writer, changing exactly ONE thing (wrap the insert); same-step doc-sync.
+No flag flip, no shipped-migration edit, no new table/RPC.
+
+**The gap.** `exploration_scan` (0099) selects the nearest UNDISCOVERED site via a `not exists`
+pre-check (0099:181-182), then at step 11 does a BARE insert into `exploration_discoveries`
+(0099:200-202) with NO exception handler. The `unique (player_id, site_id)` constraint keeps a player's
+discovery of a site to exactly one row, but if two scans of the SAME player race past the pre-check for
+the SAME site (a TOCTOU window between the step-10 check and the insert), the second insert raises a raw
+`unique_violation` that propagates UNCAUGHT — instead of the clean `{ok:false, reason:'already_discovered'}`
+the settled-duplicate path returns (0099:192).
+
+**The fix (exactly ONE change vs 0099).** Wrap the step-11 insert in a `begin … exception when
+unique_violation then return jsonb_build_object('ok', false, 'reason', 'already_discovered'); end;`
+sub-block. `v_now := clock_timestamp();` stays OUTSIDE/BEFORE the block (unchanged position); the
+success path (`v_result` + the step-12 receipt insert + `return v_result`) stays AFTER the block so it
+runs only on a successful insert. Verified by diff: the ONLY change is the wrap — signature, dark-flag
+gate, ship-lock/ownership/validation/cross-domain order, receipt lookup, site selection, the pre-check
+`already_discovered`/`no_site_in_range` branch, and the public wrapper `command_exploration_scan` are
+byte-identical to 0099 (`CREATE OR REPLACE` preserves the 0099 ACL, so it and `osn_distance` and the
+wrapper are not re-run). The wrapper already maps `already_discovered` → code/message (0099:283/296), so
+the caught path flows through it unchanged.
+
+**This is POLISH, not a double-discovery fix (conservation was already protected).** The `unique
+(player_id, site_id)` constraint is the sole authority and already guaranteed at-most-one discovery per
+(player, site) — the losing insert was always rejected. The only defect was the SHAPE of that rejection
+(a raw error vs the truthful `already_discovered`); this hardens the error handling.
+
+**Honest reachability (defense-in-depth today).** The two racing scans must be DIFFERENT commands
+(distinct `request_id`, so the 0055 receipt replay does not absorb them) on the SAME player at the SAME
+site — which needs two in-space ships of one player. A player holds >1 main ship only via
+`commission_additional_main_ship` (0080), DARK behind `mainship_additional_commission_enabled='false'`,
+so the racing path is LATENT today (defense-in-depth), becoming live only if/when multi-ship-per-player
+is activated — mirroring the mining 0143 posture. PERMANENT guard, not a shim (no retirement; multi-ship
+activation is its relevance trigger).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md` §2 Exploration contract note UPDATED — it
+documented the scan's idempotency posture INACCURATELY (claimed a `race-guarded on conflict (player_id,
+site_id) do nothing` that was never in 0099); corrected to the real mechanism: the `not exists`
+pre-check PLUS the 0146 `unique_violation` catch → `already_discovered`, guarded by the `unique
+(player_id, site_id)` constraint, with the honest latent-two-ship reachability. No table/writer/edge
+changes, so the §1 matrix is untouched (the behavior-refinement precedent). This DEV_LOG entry added.
+
+**Preserved human gates.** `exploration_enabled` stays `'false'` (dark) — every call is still
+server-rejected `feature_disabled` before this code is reached; no flag flipped, no shipped migration
+(0001–0145, incl. mining 0143 and ranking 0144/0145) edited, no new table/RPC, nothing
+merged/deployed/applied to production. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — RANKING-P17 POST-AUDIT FIX — the deferred commit-safety PROOF `scripts/ranking-p17-commit-safe-accrual-proof.sh` (no migration/flag change)
 
 **Request.** The "Verify" for item (2): a dynamic proof that the slice-B commit-safe fold actually
