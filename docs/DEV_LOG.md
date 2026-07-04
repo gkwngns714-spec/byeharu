@@ -5,6 +5,91 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — PHASE20-POLISH CLEANUP — independent re-audit of the closed polish milestone; ALL THREE audits CLEAN, ZERO remediation (docs-only close-out)
+
+**Request.** The Phase-20 (Polish/expansion — map UI, portraits, icons, world events) milestone was
+already CLOSED (see the SLICE 7 entry below) and its three cleanup audits reported clean. Rather than
+trust that premise, re-establish the baseline and INDEPENDENTLY re-verify each audit against the actual
+code, then record a durable close-out. Read-only audit throughout; this entry is the only artifact.
+
+**Honest premise correction (found at STEP 1).** The three named audits were NOT previously persisted
+as `*_RECON.local.md` recon docs — the only Phase-20 recon in the tree is the pre-build STEP-0 recon
+(`WORLD_POLISH_P20_RECON.local.md`), and every `CLEANUP_*_RECON.local.md` covers an EARLIER phase
+(11–19). So the milestone's "clean" verdict had been resting on the goal's premise plus the SLICE 7
+close-out, not on persisted per-audit evidence. This entry is therefore the DURABLE record: the three
+audits were re-run inline against `docs/DEV_LOG.md` + `docs/SYSTEM_BOUNDARIES.md` + the on-disk source
+(migrations `0139–0142`, `src/features/{events,assets}`, `scripts/verify-phase20-polish.mjs`).
+
+**Audit 1 — World-Events / UI-Assets migrations `0139–0142` — CLEAN (all six properties PASS).**
+- **Dark-gate-first** — `cfg_bool('phase20_polish_enabled')` is the FIRST executable statement in all
+  four functions (`world_events_publish` `0140:87–89`, `world_events_set_active` `0140:167–169`,
+  `get_world_events` `0141:48–50`, `get_ui_asset_catalog` `0142:109–111`); no table is touched before
+  it. `cfg_bool` (`0046:17–24`) is a `stable`, read-only SQL select from `game_config`.
+- **Exactly one sole-writer per table, no second writer anywhere** — tree-wide grep for
+  `insert/update/delete` on either table returns only: `world_events` ← `world_events_publish`
+  (`0140:130,146`) + `world_events_set_active` (`0140:176`); `ui_asset_catalog` ← the `0142:80` seed
+  insert only (no runtime writer). Zero writes elsewhere; no `DELETE` (retire is a status flip).
+- **Pure downward LEAF** — the writers touch only `world_events`; their sole cross-reference is a
+  read-only `EXISTS` against the static Map (`zones` `0140:118–119`, `locations` `0140:122–123`) for FK
+  validation. Grep for the four function names finds callers ONLY in their defining migrations — zero
+  inbound edges, acyclic, no write into another system's table.
+- **`ui_asset_catalog` seed-only static Reference/Config** — RLS on, all client grants revoked
+  (`0142:60–61`); rows come only from the `0142:80–90` seed.
+- **Grants** — writers service-role-only (`0140:186–190`); read RPCs authenticated-only
+  (`0141:92–93`, `0142:136–137`).
+- **Doc-sync accurate** — `docs/SYSTEM_BOUNDARIES.md` (`:64–65, :107, :109`) documents both tables,
+  both sole-writers, the downward-leaf boundary, the seed-only nature, and the grants with NO
+  contradiction of the migration source.
+
+**Audit 2 — Frontend `src/features/{events,assets}` — CLEAN (all four properties PASS).**
+- **Reuses the shared helpers** — `WorldEventsPanel.tsx:2` imports `isServerLit` +
+  `useActivityPanelGuards` from `src/lib/useActivityPanelGuards.ts` and calls them (`:34, :49, :61`);
+  the icon resolver reads `get_ui_asset_catalog('icon')` through the shared `supabase.rpc` wrapper
+  (`assetsApi.ts:17`), not an ad-hoc fetch. `runGuardedCommand`/`rewardBundle` are CORRECTLY omitted —
+  a read-only presentational panel ("no actions/buttons", `WorldEventsPanel.tsx:15`) has no
+  command-submit or reward surface to use them on; importing them would be dead code.
+- **No duplicated guard/command/lit/reward logic** — the only new code is presentational (a 3-entry
+  `SEVERITY_BADGE` map, a 5-entry `assetGlyphs` `asset_ref → emoji` map, thin per-RPC api wrappers,
+  discriminated-union types shaped so the shared `isServerLit` narrows cleanly). Guard/lit logic lives
+  once in the shared lib and is called, never inlined.
+- **Fails closed with the server as sole control** — `WorldEventsPanel.tsx:61` renders `null` unless
+  `isServerLit(result)` AND events exist; transport errors collapse to `{ok:false}` → also `null`. The
+  mount (`GalaxyMapScreen.tsx:167–169`) passes ONLY a `lifecycleKey` re-fetch trigger — no client-side
+  feature flag. Dark → the server empties the feed → the panel renders nothing (production UI unchanged).
+- **Zero shims** — grep for `shim|compat|TODO|FIXME|HACK|temporary|transitional` across both feature
+  dirs returns no matches. (The one sanctioned port-entry shim belongs to a different feature, not this
+  surface.)
+
+**Audit 3 — Verifier `scripts/verify-phase20-polish.mjs` + `package.json` — CLEAN (props 1/2/4 PASS,
+prop 3 correct N/A).**
+- **Imports the shared harness, zero inline copies** — `:28–29` import `teardownVerifier`
+  (`verifier-teardown.mjs:18`) + `Abort`/`createReporter`/`createUserFactory`/`resolveEnv`
+  (`verify-harness.mjs:46,50,62,36`). Grep of the verifier for locally-redefined harness functions →
+  none; the only local helper is the one-line read-only `cfgVal` (`:44`).
+- **Strictly dark-posture** — never writes `game_config`, never flips `phase20_polish_enabled`, and
+  exercises NO lit path; assertions prove only the LOCK (gate reads `'false'` `:57–58`; read surfaces
+  return `ok:true` + empty while dark `:68–70,:78–80`; writers denied to authenticated + anon with
+  VALID-shaped args `:91–106`; table SELECT/INSERT denied `:113–147`). Lit-path checks are explicitly
+  deferred to the human owner's activation checklist (`:17–20`).
+- **Single clean npm entry** — `package.json:51` `"verify:phase20-polish": "node scripts/verify-phase20-polish.mjs"`
+  (grep count = 1; no duplicate/stale line).
+- **No Phase-20 shell proof exists** — grep for `phase20|world_event|ui_asset` across `scripts/*.sh`
+  finds nothing; none was invented and `trade-proof-lib.sh` is untouched.
+
+**Outcome — NO change warranted.** The tree is clean; NO code, migration, flag, or `src/` behavior
+change was made. `docs/SYSTEM_BOUNDARIES.md` is INTENTIONALLY UNTOUCHED because this cleanup changed no
+architectural fact — no table, writer, constraint, or cross-system edge was added, dropped, or altered
+(the slice-verifier precedent: a doc-sync is required only when an architectural fact changes). This
+entry is the sole artifact of the milestone.
+
+**Preserved human gates (nothing activated by this loop):** `phase20_polish_enabled` and every
+Phase-11–20 master flag remain seeded `'false'` (untouched); migrations `0001–0142` are unedited
+(forward-only); NO `game_config` write; NO lit-path DB run; NO cron scheduled; `main` untouched; no
+merge / deploy / production-apply / workflow-dispatch. **SAFE FOR HUMAN MERGE REVIEW** — activation
+(flag flip, deploy, event publish/cron) remains the human owner's decision.
+
+---
+
 ## 2026-07-04 — PHASE20-POLISH SLICE 7 (FINAL) — the dark-posture verifier `verify-phase20-polish.mjs` + `verify:phase20-polish`; **Phase 20 CLOSED**
 
 **Request.** Phase 20 final slice: ONE new verify script (the `verify-world-balance.mjs` analogue) +
