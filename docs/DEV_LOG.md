@@ -5,6 +5,73 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — FITTING-P14 SLICE A — locked design decisions + dark flag/stats-catalog migration `0111` (`module_fitting_enabled` + `module_types.slot_cost`/`stats_json`)
+
+**Request.** Begin Phase 14 "Module fitting" (ROADMAP `:89` — "`fit_module_to_ship` |
+server-validated; feeds stats") with slice A: record the planner-approved LOCKED design decisions,
+then ONE new forward-only migration seeding the dark flag + the module stats/slot-cost catalog
+wiring. NO fittings table, NO RPC, NO adapter change, NO frontend, NO verify script this slice.
+Recon: `FITTING_P14_RECON.local.md` (scope locked 2026-07-04). Template: the 0107 slice-A idiom.
+
+**LOCKED DESIGN DECISIONS (planner-approved 2026-07-04):**
+1. **SYSTEM SHAPE** — Phase 14 creates a NEW leaf system **Fitting** per ROADMAP law 5
+   ("Fitting=modules"); fitting state will live in a NEW Fitting-owned junction table
+   `ship_module_fittings` (arrives slice B — NOT this slice) with its own sole writer, never a
+   second writer or new columns on `module_instances`; Fitting depends one-directionally DOWNWARD
+   on Modules (read instances), Main Ship (read `module_slots`), and Reference/Config.
+2. **CAPACITY/TRADEOFF MODEL** — mirrors the proven support-craft mechanism in 0044: each module
+   type has an integer `slot_cost ≥ 1`; the adapter (extended in a later slice via
+   `create or replace` in a new migration) will hard-REJECT when Σ slot_cost of fitted modules >
+   `main_ship_instances.module_slots` (exception, never a clamp — the 0044:112–115 idiom), and
+   slot_type-based tradeoff rules (pirate_attention / speed penalty) will apply exactly like
+   0044's role-based rules — so module power is capacity-limited with tradeoffs, never a raw sum.
+3. **STATS ENCODING** — reuse the `support_craft_types.base_stats_json` idiom: add a
+   `stats_json jsonb not null default '{}'` column to `module_types`, using the SAME physical stat
+   keys the adapter already reads (attack/defense/repair/cargo/scan/mining/evasion) plus one new
+   key `speed_mult_bonus` (numeric fraction of hull base speed, applied before penalties — the
+   engine archetype's positive effect; the adapter clamps total speed exactly as today:
+   `round(greatest(0.2, …), 3)` — 0044:117–118).
+4. **FLAG** — `module_fitting_enabled` seeded `'false'`, the exact 0097/0102/0107 idiom; every
+   Phase 14 RPC must check it FIRST and reject-before-any-read; this migration flips nothing.
+
+**Work done — NEW `supabase/migrations/20260618000111_fitting_p14_config_and_stats.sql`**
+(migration head moves **0110 → 0111**; `0001–0110` unedited):
+- **(a)** `game_config` seed `module_fitting_enabled='false'` (`on conflict (key) do nothing`, the
+  exact 0097/0102/0107 dark-gate idiom + description stating the reject-before-any-read law).
+- **(b)** `alter table module_types add column slot_cost integer not null default 1 check
+  (slot_cost >= 1), add column stats_json jsonb not null default '{}'::jsonb` — Reference/Config
+  CATALOG data exactly like `support_craft_types.capacity_cost`/`base_stats_json` (0042). Posture
+  unchanged: the existing 0107 public-read policy + grants cover new columns (the 0075/0076
+  add-column precedent); still no client write path; no function created → no execute relock
+  (0054 precedent). First code consumer arrives with the Phase 14 adapter slice — nothing reads
+  them today.
+- **(c)** Write-once per-id UPDATEs seeding the four shipped archetypes, guarded on
+  `stats_json = '{}'::jsonb` (the update analogue of the seeds' `on conflict do nothing` — a
+  re-run or later owner rebalance is never clobbered). Magnitudes were read against the 0042
+  `base_stats_json` band (missile_boat cap 3 → attack 12 · cargo_drone cap 2 → cargo 20 ·
+  survey_drone cap 2 → scan 8 · decoy_drone cap 1 → evasion 6) so a full 3-slot fit is comparable
+  to a similarly-sized support loadout: `autocannon_battery` (weapon) slot 1 → `{"attack":10}` ·
+  `vector_thruster_kit` (engine) slot 1 → `{"evasion":3,"speed_mult_bonus":0.1}` ·
+  `expanded_cargo_lattice` (cargo) **slot 2** (deliberately multi-slot so the Σ slot_cost cap math
+  is exercised) → `{"cargo":25}` · `deep_scan_sensor_array` (sensor) slot 1 → `{"scan":8}`.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md`: the §1 `module_types` row now records
+`slot_cost` + `stats_json` (still migration-seeded only, NO runtime writer; consumer = the Phase 14
+fitting adapter, later slice). Deliberately NO Fitting system row yet — `ship_module_fittings`
+does not exist until slice B, and a doc must never describe state that isn't real.
+
+**State.** `npm run build` green (no `src/` change was made — confirmed). Migration head **0111**;
+`module_fitting_enabled='false'` and `module_crafting_enabled='false'` — nothing client-writable
+was added (one dark flag + two inert catalog columns + write-once seeds; no RPC, no writer, no
+reader). No flag flipped, no live DB write, no workflow touched. **DB-apply posture (honest,
+unchanged from P11–P13):** no psql/docker/supabase CLI in this sandbox — the migration was
+hand-verified line-by-line against the idioms it copies (0107 flag seed, 0042 catalog stats shape,
+0075/0076 add-column posture); live assertions run in the owner's environment and will be covered
+by the later `verify:fitting` dark-posture script. PR-ready on `autopilot/20260703-064048`,
+`main` untouched. Next: slice B (`ship_module_fittings` + the Fitting sole writer).
+
+---
+
 ## 2026-07-04 — MODULES-P13 SLICE F (final) — `verify:modules` dark-posture script. **Phase 13 Module crafting — dark implementation complete (slices A–F)**
 
 **Request.** Implement slice F, the last Phase 13 slice: the dark-posture verify script + its
