@@ -5,6 +5,71 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — LOCATION-INVEST-P18 SLICE 2 — the dark PUBLIC read surface (development vs seasonal score) + the ONE season-window helper
+
+**Request.** The Phase-18 read surface: ONE new forward-only migration exposing the persistent state vs
+the seasonal score, plus the caller's own history, plus the ONE shared season-window helper (window
+math in exactly one place), with same-step doc-sync. Reuse the Ranking read surface (0131 — `stable
+security definer`, dark-gate FIRST, code-keyed envelopes, anon+authenticated PUBLIC leaderboards,
+limit-clamp, `row_number()`), the own-history idiom (0106/0110), and `cfg_num`. Still NO writer, NO
+frontend, NO cron, NO flag flipped true.
+
+**Self-approved locked design (this slice).**
+- **Config-derived WEEKLY window with a fixed epoch.** `location_investment_season_seconds = '604800'`
+  (7-day weekly cadence) + `location_investment_season_epoch_seconds = '1767225600'`
+  (2026-01-01T00:00:00Z anchor). Both are numeric unix-seconds so the window helper computes purely via
+  the existing `cfg_num` — NO new `cfg_text` helper.
+- **The single window helper.** `location_investment_current_window()` returns `(window_index,
+  window_start, window_end)` via `k = floor((now − epoch)/period)`, `window_start = to_timestamp(epoch
+  + k·period)`, `window_end = window_start + period`. It is THE ONE definition of "the current season
+  window" — every windowed read calls it, so no season table exists and no window arithmetic is
+  duplicated (does NOT re-create Ranking's `ranking_season_open` machinery).
+- **Persistent-vs-seasonal = TWO reads over ONE ledger.** Persistent development (all-time SUM +
+  distinct-contributor count per location) and seasonal score (windowed SUM) are both DERIVED at read
+  time from `location_investments` — never a stored denormalized row (the 0131 law). SECURITY DEFINER
+  aggregates across owners but exposes ONLY totals/ranked scores; individual rows stay behind the 0132
+  owner-read RLS and surface only via the own-history RPC.
+- **Public leaderboards vs owner-read rows.** The location/leaderboard reads are PUBLIC (anon +
+  authenticated — the 0131 public-aggregate posture; an aggregate leaks no raw rows). The own-history
+  read is authenticated-only and query-scoped `player_id = auth.uid()`.
+
+**Work done — `supabase/migrations/20260618000134_location_invest_p18_read_surface.sql`:**
+- **(a)** seeded the two season-window tunables (`on conflict do nothing`; consumed this slice — no
+  dead config).
+- **(b)** `location_investment_current_window()` — `stable`, `language sql`, INTERNAL (client-revoked).
+- **(c1)** `get_location_development(uuid)` — PUBLIC; dark gate → `unknown_location` → window →
+  `{ok:true, location_id, all_time_total, contributor_count, season_total, window_index, window_start,
+  window_end}`.
+- **(c2)** `get_location_investment_leaderboard(uuid, int default 100)` — PUBLIC; dark gate →
+  `unknown_location` → clamp [1,500] → window → ranked `rows:[{rank, player_id, season_score}]`.
+- **(c3)** `get_my_location_investments()` — authenticated; dark gate → auth → own rows joined to
+  `locations` for the name, newest first → `rows:[{investment_id, location_id, location_name, amount,
+  invested_at}]`.
+- **(d)** ACL (the 0131/0106 posture): the two location/leaderboard reads granted to anon +
+  authenticated; own-history to authenticated only; the window helper revoked from all clients
+  (internal).
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md` §1 matrix UNCHANGED (read-only functions add no
+table/writer — stated in the migration header per the 0131/0106 precedent). §2 Location Investment row
+gained the three RPCs + the window helper, recorded the now-realized DOWNWARD **Map** read edge (reads
+`locations` for validation/identity) alongside the existing Reference/Config edge, and noted
+persistent-vs-seasonal as two derived reads over the one append-only ledger, public leaderboards vs
+owner-read rows, all dark-gated FIRST, still acyclic (nothing calls into Investment).
+
+**Human gates preserved.** `location_investment_enabled` stays `'false'` (dark — every read gate rejects
+today). No flag flipped true; migrations `0001–0133` untouched (forward-only, new file only);
+backend-only (no `src/features/**`); no cron scheduled; no `main` touch; no merge/deploy. SAFE FOR HUMAN
+MERGE REVIEW.
+
+**Verify.** SQL (no `node --check`): inspected against the 0131 read idiom (stable security definer,
+dark-gate-first code envelopes, clamp, `row_number()`, anon+authenticated ACL) and the 0106 own-history
+idiom; `cfg_num` returns double precision, so the window arithmetic and `to_timestamp` compose without a
+cast beyond the explicit `extract(epoch …)::double precision`. `git status --porcelain` shows the ONLY
+changes are the new migration + `docs/SYSTEM_BOUNDARIES.md` + `docs/DEV_LOG.md`; no shipped `0001–0133`
+migration edited, no flag flipped.
+
+---
+
 ## 2026-07-04 — LOCATION-INVEST-P18 SLICE 1 — the sole-writer invest command (`invest_in_location` → `location_investment_invest`) + min-amount tunable
 
 **Request.** The Phase-18 core write path: ONE new forward-only migration adding the SOLE-writer invest
