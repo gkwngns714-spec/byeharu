@@ -5,6 +5,58 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — MINING-P12 POST-AUDIT FIX — close the double-extract race in `mining_extract` with a per-(player, field) advisory lock (migration 0143)
+
+**Request.** Post-audit fix pass, item 1: the mining `extract` command had a read-then-insert
+double-extract race. Fix it as a NEW forward-only migration that `CREATE OR REPLACE`s the writer,
+reproducing the 0104 body verbatim and changing exactly ONE thing — adding a per-(player, field)
+advisory lock — then sync the law docs the same step. No flag flip, no shipped-migration edit, no new
+RPC/table.
+
+**The bug.** `mining_extract` (0104, step 11) reads the latest `mining_extractions.created_at` for
+`(player, field)` and, if older than `mining_extract_cooldown_seconds`, inserts a new extraction. The
+S2 canonical ship lock (`mainship_space_lock_context`) serializes commands on the SAME ship only — it
+locks the caller's OWN ship row. So two DIFFERENT ships owned by the SAME player, both settled within
+`mining_extract_radius` of the SAME field, take locks on distinct ship rows and never contend. Both
+could read an empty (or equally stale) cooldown history and both insert — a double extraction, i.e. a
+double-reward window once the slice-D securing processor (`process_mining_securing`, 0105) deposits
+both pending bundles.
+
+**Work done (migration 0143 — `20260618000143_mining_p12_extract_double_extract_guard.sql`).**
+`CREATE OR REPLACE FUNCTION public.mining_extract(...)`, body copied byte-for-byte from 0104 with a
+SINGLE inserted block (new step "10b") between field resolution (step 10) and the cooldown read
+(step 11): `perform pg_advisory_xact_lock(hashtext('mining_extract'), hashtext(p_player::text || ':'
+|| v_field.id::text));`. Two commands for the same `(player, field)` now serialize there — the second
+blocks until the first COMMITS, then reads the first's now-committed extraction at step 11 and is
+correctly `cooldown`-rejected. Verified by diff: the ONLY change vs 0104 is the 10b comment + the
+`perform` line; the signature, dark-flag gate, ship-lock/ownership order, receipt/idempotency logic,
+cooldown math, selection rule, accrual/reward math, the public wrapper `command_mining_extract`, and
+all grants are unchanged (`CREATE OR REPLACE` preserves the 0104 ACL, so the revoke/grant block is not
+re-run).
+
+**Idiom reused (not re-invented).** The established two-arg advisory-lock pattern
+`pg_advisory_xact_lock(hashtext('<domain>'), hashtext('<scope>'))` already used at 0078 (commission),
+0113 (fitting), 0126 (recruit), 0133 (location investment). Domain = `'mining_extract'`, scope = the
+combined `(player, field)` key.
+
+**Design decision — PERMANENT guard, no retirement condition.** Xact-scoped advisory locks
+auto-release at commit/rollback (no cleanup path, no softlock risk — NO-ACCOUNT-SOFTLOCK holds) and
+are reentrant within the transaction (harmless alongside the existing S2 row locks). This is a
+correctness invariant of the writer, not a shim/compat path — it stays for the life of the function.
+
+**Boundaries / doc-sync (same step).** No new table, writer, or cross-system edge — this refines the
+concurrency discipline of an EXISTING sole-writer (`mining_extract` remains the sole insert path of
+`mining_extractions`). `docs/SYSTEM_BOUNDARIES.md` §2 Mining contract row updated to document the new
+per-(player, field) extract serialization lock in its pacing/concurrency note; this DEV_LOG entry
+added.
+
+**Preserved human gates.** `mining_enabled` stays `'false'` (dark) — every call is still
+server-rejected `feature_disabled` before this lock is ever reached; no flag flipped, no shipped
+migration (0001–0142) edited, no new RPC/table, nothing merged/deployed/applied to production.
+SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — PHASE20-POLISH CLEANUP — independent re-audit of the closed polish milestone; ALL THREE audits CLEAN, ZERO remediation (docs-only close-out)
 
 **Request.** The Phase-20 (Polish/expansion — map UI, portraits, icons, world events) milestone was
