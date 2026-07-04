@@ -5,6 +5,56 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P15 SLICE I — the DARK-posture verifier `scripts/verify-captain.mjs` (the verify-fitting.mjs analogue; the sole remaining Phase-15 deliverable)
+
+**Request.** Phase 15 slice I: ONE new verify script proving migrations 0117–0123 ship exactly as
+claimed and fully dark, mirroring `verify-fitting.mjs` point-for-point for the captain surface, plus
+one `verify:captain` package.json line and same-step doc-sync. NO migration change, NO flag write,
+NO lit-path testing, NO frontend.
+
+**Work done — NEW `scripts/verify-captain.mjs`** (mirrors `verify-fitting.mjs`; ZERO inline harness
+copies — imports `resolveEnv`/`createReporter`/`createUserFactory`/`Abort` from
+`scripts/lib/verify-harness.mjs` and `teardownVerifier` from `scripts/lib/verifier-teardown.mjs`):
+- **§1 Dark rejection** — with a throwaway authenticated user and syntactically VALID uuids/
+  request_ids (so the identical answer proves the anti-probe gate fires BEFORE any validation):
+  `assign_captain_to_ship` / `unassign_captain_from_ship` / `get_my_captain_instances` /
+  `get_my_ship_captains` all return `{ok:false, reason:'captain_assignment_disabled'}` (the 0120
+  wrapper + 0123 read envelopes — reason-keyed, the ONE server-driven visibility signal, adapted
+  from fitting's code-keyed `feature_disabled`).
+- **§2 Catalog contract** — reads `captain_types` `id/name/specialization/description/stats_json`
+  back verbatim for all five 0117 seeds (gunnery_veteran combat/attack 4 · trade_broker
+  trade/cargo 8 · survey_cartographer exploration/scan 3 · extraction_foreman mining/mining 4 ·
+  fleet_quartermaster support/repair 3) and asserts every `specialization` sits in the CHECK set —
+  reading the public seeds back IS the public-read posture assertion (the item_types/module_types
+  posture).
+- **§3 Player-state RLS + no client write path** — `captain_instances` / `ship_captain_assignments`
+  / `captain_assignment_receipts` each return 0 rows for a fresh user, and direct client inserts are
+  denied (no insert policy / no write grant — 0118/0119/0120).
+- **§4 Internal surfaces locked** — `captain_assign_apply` / `captain_execute_command` /
+  `captain_command_client_envelope` / `mainship_space_assert_settled_safe` denied to the
+  authenticated client; the four public RPCs denied to anon.
+- **§5 Config presence** — `captain_assignment_enabled` reads `'false'` (READ-ONLY).
+- **Deliberate no-flag-write / no-lit-path stance** (copied from `verify-fitting.mjs:20–28`): the
+  script NEVER writes `game_config` and NEVER flips `captain_assignment_enabled`; every assertion
+  runs with anon/authenticated clients only; `service_role` is used ONLY for teardown (delete the
+  throwaway user via the shared `teardownVerifier`, no flag entry passed). Lit-path verification
+  (assign within slots → success + adapter stats change with specialization tradeoffs → over-capacity
+  `captain_slots_full` → settled-SAFE `ship_not_settled` → already/not-assigned → verbatim replay
+  without double-assign → unassign reverts stats) is deferred to the human owner's activation
+  checklist — flip the flag on a DEV database and run the lit checks there, never here.
+
+**`package.json`** — one line added adjacent to `verify:fitting`:
+`"verify:captain": "node scripts/verify-captain.mjs"`.
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md` **untouched** — a verifier adds NO table, NO writer, NO
+cross-system edge, so no architectural fact changed (the ownership matrix and Captain §2 row are
+already correct as of slices A–G).
+
+**Verify:** `npm run build` green (confirms nothing else drifted). The verifier itself is dark-posture
+proof only — it is NOT run against production and requires no flag flip.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P15 SLICE G — the dark read surface: `get_my_captain_instances()` + `get_my_ship_captains(ship)` (the 0110/0116 analogues)
 
 **Request.** Phase 15 slice G: ONE new forward-only migration with exactly two read-only RPCs,
