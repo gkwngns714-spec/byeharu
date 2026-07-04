@@ -5,6 +5,58 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P15 SLICE G — the dark read surface: `get_my_captain_instances()` + `get_my_ship_captains(ship)` (the 0110/0116 analogues)
+
+**Request.** Phase 15 slice G: ONE new forward-only migration with exactly two read-only RPCs,
+each mirroring its own analogue's idiom precisely (0110 for the instances roster, 0116 for the
+per-ship roster — both read first per the slice spec), plus same-step doc-sync. NO frontend, NO
+verify scripts, NO adapter change, NO flag changes.
+
+**Work done — NEW `supabase/migrations/20260618000123_captain_p15_read_surface.sql`**
+(0001–0122 unedited):
+- **`get_my_captain_instances()`** — the 0110 shape with its check ordering copied exactly
+  (auth → dark gate → query): jsonb envelope · `stable` · `security definer set search_path =
+  public` · dark gate on `captain_assignment_enabled` BEFORE any row read, returning the
+  identical literal `{ok:false, reason:'captain_assignment_disabled'}` for every caller (no
+  probing while dark; the same envelope the 0120 wrappers emit — ONE visibility signal) ·
+  own-rows-only query (query-scoped `player_id = auth.uid()`, defense in depth over RLS) joining
+  `captain_instances` to `captain_types` display identity (name / specialization / stats_json) ·
+  `jsonb_agg(… order by created_at desc)` newest-first · `{ok:true, captains:[…]}` — PLUS a
+  per-row assignment indicator (the assigned `main_ship_id` or null) via LEFT JOIN to
+  `ship_captain_assignments`, so the client renders roster state from one call. **LOCKED
+  DECISION (header):** the left join is read-only display data — no new writer, no new
+  dependency direction (a Captain-owned function reading Captain-owned tables + the public
+  catalog).
+- **`get_my_ship_captains(p_main_ship_id uuid)`** — the 0116 shape including its exact
+  gate/auth ORDERING (0116:23–26/51–56: gate FIRST, then auth — copied verbatim as the slice
+  spec requires): identical dark reject → auth → ship validated by the **(main_ship_id,
+  player_id) pair** (the 0079 multi-ship posture; foreign = missing → `ship_not_owned`) → that
+  ship's roster joined via `captain_instances` to `captain_types`, ordered `assigned_at desc,
+  captain_instance_id` (the 0116 determinism idiom with the uuid tiebreak) → `{ok:true,
+  captains:[…]}`. **NO COUNTS — 0116 returns none, so none were added** (the slice spec's
+  mirror rule; no speculative surface). The 0116:18–22 deliberate-omission rationale transfers:
+  limits come from the client's own `main_ship_instances` rows (the 0043 grant covers
+  `captain_slots`) or `get_my_expedition_preview` (carries `captain_slots_used/limit` since
+  0122).
+- **NO catalog RPC** — the 0110:9–15 stance: `captain_types` is a public-read Reference/Config
+  catalog the client selects directly; a get-catalog RPC would duplicate an already-public
+  surface.
+- **ACLs** copied from the analogues (0110:72–75 / 0116:84–87): both RPCs `revoke from public,
+  anon; grant execute to authenticated`. Dark today — the gates reject every call.
+- **`docs/SYSTEM_BOUNDARIES.md`** (same step): the §2 Captain row gains the read-surface
+  contract (two gated read RPCs, identical dark envelope, own-rows only, the assignment
+  indicator's no-new-writer note, the no-counts and no-catalog-RPC stances). §1 matrix unchanged
+  — read surfaces are recorded in the §2 system row, not the matrix (the 0101/0106/0110/0116
+  precedent).
+- **Verify:** `npm run build` green (SQL-only slice — confirms nothing else drifted). §5
+  invariant checklist re-read: NO new table, NO new writer (both functions are pure reads —
+  every sole writer unchanged); no new cross-system edge (Captain-owned functions reading
+  Captain-owned tables + the public catalog — graph unchanged, acyclic); no client write path
+  (read-only RPCs, authenticated-only); reward path and combat truth untouched; no flag flipped
+  — the whole surface ships server-rejected.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P15 SLICE F — assigned captains feed `calculate_expedition_stats` (the 0115 analogue; third feed block, headcount-capped)
 
 **Request.** Phase 15 slice F, the 0115 analogue recon §5 fully determines: ONE new forward-only
