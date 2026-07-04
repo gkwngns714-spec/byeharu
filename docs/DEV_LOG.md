@@ -5,6 +5,61 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P15 SLICE F — assigned captains feed `calculate_expedition_stats` (the 0115 analogue; third feed block, headcount-capped)
+
+**Request.** Phase 15 slice F, the 0115 analogue recon §5 fully determines: ONE new forward-only
+migration re-creating `calculate_expedition_stats` with EXACTLY one addition — a THIRD feed
+block for captains — the support-craft and module paths byte-identical. NO read surfaces, NO
+frontend, NO verify scripts, NO flag changes.
+
+**Work done — NEW `supabase/migrations/20260618000122_captain_p15_stats_adapter.sql`**
+(0001–0121 unedited; a `create or replace` re-create, the 0044/0115 forward-only idiom):
+- **The captain block, mirroring 0115:157–196 point for point:** new declares (`c` /
+  `v_cap_used` / `v_cap_speed_bonus`); roster read `ship_captain_assignments` →
+  `captain_instances` → `captain_types` filtered by `a.main_ship_id = v_ship.main_ship_id` with
+  NO player filter (the 0115:47–50 rationale cited in the header: the (1)(2) ship read proves
+  ownership; `captain_assign_apply`'s owner-consistency invariant (0119) covers the rest);
+  contributions into the SAME nine accumulators from the exact stats_json key list
+  (attack/defense/repair/cargo/scan/mining/evasion, coalesced to 0) with `speed_mult_bonus`
+  summed into `v_cap_speed_bonus` — ONE stat pipeline, no parallel vocabulary.
+- **Tradeoffs (locked values, header-documented):** a `specialization` CASE, one slot each so no
+  cost scaling — combat → attention +2, spd_pen +0.02 · trade → attention +1, spd_pen +0.02 ·
+  exploration → attention +1 · mining → attention +1, spd_pen +0.02 · support → 0 (a captain
+  draws attention like crewed hardware; support-role captains are the low-profile option;
+  magnitudes mirror 0115's per-slot numbers).
+- **Headcount HARD cap:** `v_cap_used > v_ship.captain_slots → raise` — count-based (one captain
+  = one slot), defense-in-depth over the 0119 assign-time gate; refuse, never clamp.
+- **Speed:** `round(greatest(0.2, v_speed * (1 + v_mod_speed_bonus + v_cap_speed_bonus) * (1 -
+  a_spd_pen)), 3)` — the captain bonus joins the module bonus ADDITIVELY inside the one
+  multiplier; a zero-captain ship reduces EXACTLY to the 0115 expression.
+- **Output:** exactly two added keys `captain_slots_used` / `captain_slots_limit`, mirroring the
+  module pair; no existing key's value changes for a zero-captain ship.
+- **Compatibility contract (header, the 0115:10–18 way):** verify:phase8 /
+  verify:mainship-preview / verify:fitting assert field VALUES and list-membership, never an
+  exact key SET → additive keys are safe; and no assignment row can exist until the owner flips
+  `captain_assignment_enabled` (0117 flag dark; 0118 instances have no producer; 0119–0121
+  command chain service_role-only/dark) → live behavior is unchanged today.
+- **Diff proof run against 0115's shipped body:** the ONLY changes are (a) the three captain
+  declares, (b) the captain feed block + count hard cap inserted between the module cap and the
+  speed expression, (c) the one speed-expression edit (+ its comment), (d) the two output keys.
+  The support-craft and module paths are byte-identical.
+- **ACL:** the 0115:232–233 targeted re-assert verbatim — revoke from public/anon/authenticated,
+  grant service_role only.
+- **`docs/SYSTEM_BOUNDARIES.md`** (same step): §4 item 8 now records the third read edge
+  (Captain), the three hard caps (`support_capacity` / `module_slots` / `captain_slots` —
+  captain cap count-based), the additive speed-bonus composition, the two new output keys, and
+  the "(later +captains)" note reworded as REDEEMED — THE single source of expedition stats
+  (still not wired into live combat; the proven fleet-stack path owns outcomes). The §2 Captain
+  row's inbound note gains the adapter-read edge (the 0115 Fitting precedent) — still nothing
+  writes through Captain but its own command.
+- **Verify:** `npm run build` green (SQL-only slice — confirms nothing else drifted). §5
+  invariant checklist re-read: the adapter owns no table and mutates nothing (pure read/compute,
+  `stable`); no writer changes anywhere; the new edge is DOWNWARD read-only (adapter → Captain —
+  graph stays acyclic); no client write path (service_role-only); reward path and combat truth
+  untouched; no flag flipped.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P15 SLICE E — the settled-SAFE rule for captain assignment + the `mainship_space_assert_settled_safe` shared-leaf extraction (fitting re-created behavior-identically)
 
 **Request.** Phase 15 slice E, the 0114 analogue: read 0114 first, determine whether the
