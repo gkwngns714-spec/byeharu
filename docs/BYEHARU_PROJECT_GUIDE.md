@@ -39,6 +39,22 @@ the **Glossary** (§12).
 
 ## 2. Current project snapshot
 
+> **2026-07-05 update — WHOLE GAME BUILT (dark, on branch, unmerged).** All 12 planned milestones are
+> implemented DARK on branch `autopilot/20260703-064048`; migration head **`0142`**; `main` untouched; every
+> feature flag still `false`. Built this cycle (all flag-gated off, server-rejected, forward-only migrations):
+> **Trading V1** (`0073–0091`: multi-ship volume-cargo, market buy/sell, lazy wallet, receipts) + **economy**
+> (starting credits + no-broke relief) → **Exploration** (Phase 11) → **Mining** (Phase 12) → **Module crafting**
+> (Phase 13) → **Module fitting** (Phase 14) → **Captains** (Phase 15) + **captain progression** (Phase 16) →
+> **Ranking / competition** (Phase 17) → **Location investment** (Phase 18) → **World balance / living economy**
+> (Phase 19) → **Polish / world events + UI asset catalog** (Phase 20, `0139–0142`). Each milestone was built in
+> small reviewed slices, audited, and left dark. **Go-live (human gates, NOT yet done):** merge branch → `main`,
+> deploy migrations, then flip the per-system flags ONE AT A TIME — `trade_market_enabled`,
+> `mainship_additional_commission_enabled`, `trade_relief_enabled`, `exploration_enabled`, `mining_enabled`,
+> `module_crafting_enabled`, `module_fitting_enabled`, `captain_assignment_enabled`, `captain_progression_enabled`,
+> `ranking_enabled`, `location_investment_enabled`, `world_balance_enabled`, `phase20_polish_enabled` — testing each
+> on the live site before the next. Free coordinate travel (`mainship_coordinate_travel_enabled`) stays OFF by
+> design. See `DEV_LOG.md` (newest 2026-07-05 entry) for authoritative detail.
+
 > **2026-07-03 update.** Local `main` synced to head **`f48bc53`** (22 commits pulled). **PORT-ENTRY player UI
 > (PR #65, `cb0d4fe`) is MERGED** — the player-facing **Claim First Ship** + **Finish Docking (normalize)** panel
 > (`src/features/portentry/PortEntryPanel.tsx` + hooks) now exists, **frontend-only**, calling the migration-`0072`
@@ -630,32 +646,56 @@ play. Until then, the instant-Home safelock stays, unchanged.
 
 ---
 
-## 10. Future gameplay systems
+## 10. Gameplay systems
 
-These are the systems the game is heading toward. A recurring theme: **don't build them prematurely**,
-because each depends on foundations that must exist first — most of all, OSN's shared position model.
+> **2026-07-05: most of this section is now BUILT (dark).** The systems below marked **[Implemented — DARK]**
+> are fully implemented on branch `autopilot/20260703-064048` (migrations `0073`–`0142`), each behind an OFF
+> feature flag, `main` untouched. They light up only when you flip their flag. The ones still marked
+> **[Future]** are genuinely not built yet.
 
-### Exploration **[Future]**
-- **You do:** scan and discover unknown space → earn data, shards, blueprints.
-- **Depends on:** OSN proximity (OSN-5) to "scan when near an unexplored coordinate"; the inventory
-  + pending-reward systems already built.
-- **Don't build early:** without OSN, "explore" collapses back into "visit a named location," which
-  isn't exploration at all.
+### Exploration **[Implemented — DARK]**
+- **You do:** scan an unexplored area → earn data / shards into your inventory.
+- **Built:** scan command + discovery rewards + `ExplorationPanel.tsx`. Flag: **`exploration_enabled`** (off).
+- **Note:** a duplicate-scan currently raises a raw DB error (cosmetic; being smoothed in the fix pass).
 
-### Mining **[Future]**
-- **You do:** navigate to a resource field and extract ore/crystal/cores.
-- **Depends on:** OSN movement (OSN-3) + proximity (OSN-5) to reach and work a *coordinate* that
-  isn't a named location; inventory for the yield.
-- **Don't build early:** a field is a *point in space*, not a menu entry — it needs OSN to exist meaningfully.
+### Mining **[Implemented — DARK]**
+- **You do:** go to a resource field and extract ore / crystal / cores into inventory/base.
+- **Built:** extract command + rewards + `MiningPanel.tsx`. Flag: **`mining_enabled`** (off).
+- **Note:** don't enable mining *and* multiple-ships together until the double-extract race fix (in progress) lands.
 
-### Trading **[Future]**
-- **You do:** buy low at one market, carry cargo, sell high at another; mind route danger.
-- **Depends on:** OSN routes (the path between markets, with danger along the segment); cargo capacity;
-  the existing reward/inventory plumbing.
-- **Don't build early:** trading is fundamentally about *routes through space* — OSN is the substrate.
+### Trading **[Implemented — DARK]**
+- **You do:** dock at a port, buy goods (volume-based cargo), sail, sell for profit; own up to 3 ships.
+- **Built:** market buy/sell (money-safe, atomic, idempotent), lazy wallet, trade receipts, per-ship
+  volume cargo, multi-ship, starting-credit + no-broke relief economy, `MarketPanel.tsx`. Flags:
+  **`trade_market_enabled`**, **`mainship_additional_commission_enabled`**, **`trade_relief_enabled`** (all off).
 
-> **Note:** Exploration, Mining, and Trading are the three "baseline activities." Their exact order
-> among themselves can be revisited — but **all three depend on OSN**.
+### Modules (craft + fit) **[Implemented — DARK]**
+- **You do:** craft ship modules from gathered items, then fit them to a ship to change its stats.
+- **Built:** crafting + fitting (feeds the one stat adapter `calculate_expedition_stats`, capacity/tradeoff not
+  a raw sum), `ModulesPanel.tsx`. Flags: **`module_crafting_enabled`**, **`module_fitting_enabled`** (off).
+
+### Captains **[Implemented — DARK, UI in progress]**
+- **You do:** assign a captain to a ship (effects via `calculate_expedition_stats`), and recruit/level captains
+  by spending inventory items.
+- **Built (server):** assign + recruit/progression. Flags: **`captain_assignment_enabled`**,
+  **`captain_progression_enabled`** (off). **Player UI is being built now** (fix pass).
+
+### Rankings **[Implemented — DARK, UI in progress]**
+- **You do:** compete on seasonal leaderboards across trade/explore/mine metrics (reads finalized events).
+- **Built (server):** standings accrual + leaderboard reads. Flag: **`ranking_enabled`** (off). **Player UI +
+  the background accrual scheduler are being added now** (fix pass).
+
+### Port investment **[Implemented — DARK, UI in progress]**
+- **You do:** invest in a port toward a seasonal score (a one-way sink, no exploit).
+- **Built (server):** invest command + score. Flag: **`location_investment_enabled`** (off). **UI in the fix pass.**
+
+### Living / world economy **[Implemented — DARK]**
+- **The world does:** prices drift, pirate pressure rises, resource fields deplete over time (a passive tick).
+- **Built:** world-balance tick. Flag: **`world_balance_enabled`** (off). **Its scheduler is being added** (fix pass).
+
+### Polish — world events + UI assets **[Implemented — DARK]**
+- **You see:** in-game world events and map icons/assets.
+- **Built:** world-events display (`WorldEventsPanel.tsx`) + UI asset catalog. Flag: **`phase20_polish_enabled`** (off).
 
 ### Online Presence & Visibility **[Future]**
 - **You do:** start to *see* other players' ships near you — carefully, not globally.
@@ -682,16 +722,10 @@ because each depends on foundations that must exist first — most of all, OSN's
 - **Don't build early:** this is *the* thing most often assumed to exist but deliberately deferred —
   it must wait for OSN and Repair & Recovery foundations.
 
-### Captains / modules / support craft **[Future]**
-- **You do:** equip captains and modules (and, if revived, support craft) to shape your ship's stats
-  via the one stat adapter (`calculate_expedition_stats`).
-- **Depends on:** the Phase 7/8 main-ship + stats foundation (built); inventory as the crafting bridge.
-- **Don't build early:** they only matter once the activities that *use* their stats exist.
-
-### Rankings **[Future]**
-- **You do:** compete on seasonal leaderboards across combat/trade/explore/mine metrics.
-- **Depends on:** stable underlying systems to measure; reads *finalized* result events only.
-- **Don't build early:** ranking unstable systems just measures noise.
+### Support craft **[Future]**
+- **You do:** attach capacity-limited support craft to shape your ship — the one remaining piece of the
+  captains / modules / support-craft trio not yet built (captains and modules are done & dark, listed above).
+- **Depends on:** the built main-ship + stats foundation; inventory.
 
 ### Outposts / stations / colonies **[Future]**
 - **You do:** progress from a personal outpost toward stations and colonies.
