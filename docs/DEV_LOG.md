@@ -5,6 +5,72 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — RANKING-P17 SLICE 2 — the season-management writer `ranking_season_open` (the SOLE writer of `ranking_seasons`; migration `0129`)
+
+**Request.** Phase 17 Slice 2: ONE new forward-only migration (the season-lifecycle writer) +
+same-step doc-sync. Still NO standings scoring, NO read RPC, NO frontend, NO flag flipped.
+
+**Work done — migration `20260618000129_ranking_p17_season_open.sql` (forward-only; `0001–0128`
+unedited).**
+- **Idempotency natural key.** New index `ranking_seasons_cadence_start_uidx` = `unique (cadence,
+  starts_at)` on `ranking_seasons` (a NEW index in a NEW migration — `0127` is never edited). A season
+  window is uniquely identified by its (cadence, starts_at), so season-open is idempotent WITHOUT a
+  receipts table (the 0126 receipt ledger was per-(player, request_id); a lifecycle op is keyed by its
+  window, not a client request).
+- **`ranking_season_open(p_cadence text, p_starts_at timestamptz, p_ends_at timestamptz, p_label
+  text)` → jsonb** — PRIVATE, `SECURITY DEFINER`, service-role-only, THE sole writer of
+  `ranking_seasons`. Body mirrors the 0126 `production_recruit_captain` writer idioms:
+  1. **DARK GATE FIRST** — `if not cfg_bool('ranking_enabled')` → `{ok:false, code:'feature_disabled'}`
+     before any read/write (anti-probe; identical answer while dark; `cfg_bool` (0046) coalesces a
+     missing key to false).
+  2. **Validation** (no reads): `p_cadence in ('weekly','monthly')` else `invalid_cadence`;
+     `p_ends_at > p_starts_at` (both non-null) else `invalid_window`; non-empty trimmed label with a
+     sanity length cap (the 0126:121 text-bound hygiene) else `invalid_label`. Codes returned directly
+     — no reason→code translation layer (there is no client wrapper).
+  3. **Advisory lock** `pg_advisory_xact_lock(hashtext('ranking_season_open'), hashtext(p_cadence))` —
+     concurrent opens of the SAME cadence serialize, so the replay check and the close→insert window
+     cannot be raced by another open of this cadence.
+  4. **Idempotent replay** from the natural key: if a season exists for (cadence, starts_at), return it
+     VERBATIM (`{ok:true, idempotent:true, season_id, cadence, label, starts_at, ends_at, status,
+     created_at}`) — NO second insert, NO status churn (a re-open of an already-closed window does NOT
+     reactivate it).
+  5. **Open new active window** — in the same tx `update … set status='closed' where cadence=… and
+     status='active'` (closing the prior active season — reset by season, NOT deletion: its standings
+     rows remain under the closed `season_id`), then `insert … status='active'`. The close-prior step
+     makes room for the partial unique active index (0127); a raced `unique_violation` on either index
+     is caught into a clean `{ok:false, code:'conflict'}` rather than a raw exception.
+  - **ACL**: `revoke execute … from public, anon, authenticated; grant … to service_role` (the
+    0126:273–274 private-writer block). **No public wrapper** — season management is a
+    server/cron/admin operation, not a player command, so it stays service-role-only and dark.
+
+**Design rationale (locked; grounds later slices).**
+- **Sole writer, concrete.** This is the function the 0127 §1/§2 "future season fn" note promised — no
+  second write path to `ranking_seasons`, ever.
+- **Reset by season, never by deletion** (ROADMAP :92). Opening a new active window CLOSES the prior
+  active one; nothing is deleted, and standings accrued under the closed `season_id` remain intact
+  (a closed season is queryable history; a "reset" is the NEW active season scoping a fresh standings
+  set). No DELETE of any season or event data anywhere.
+- **One active per cadence** — the close-prior step + the partial unique active index (0127) + the
+  per-cadence advisory lock together guarantee exactly one active window per cadence.
+
+**Boundary placement (same-step doc-sync).**
+- `docs/SYSTEM_BOUNDARIES.md` §1: updated the `ranking_seasons` row — sole writer is now the CONCRETE
+  `ranking_season_open` (0129) (was "future season fn"); service-role-only + DARK; recorded the
+  natural-key idempotency, the close-prior-active semantics, and the `conflict` guard.
+- `docs/SYSTEM_BOUNDARIES.md` §2 **Ranking** row: recorded `ranking_season_open` as the
+  season-lifecycle writer; added the ONE cross-system edge (Ranking → Reference/Config `cfg_bool`
+  read — a DOWNWARD leaf read, acyclic, nothing calls into Ranking); the standings-scoring writer
+  stays a later slice; Must-NOT now also forbids deleting closed-season standings.
+- `docs/DEV_LOG.md`: this entry.
+
+**Human gates preserved.** `ranking_enabled` stays `'false'` (no flag flipped; the writer's dark gate
+rejects every call today); every Phase 11–17 flag remains `'false'`. No existing migration edited
+(`0001–0128` untouched, forward-only). No `game_config` value changed. Backend-only (no
+`src/features/**`). No player wrapper / no client execute grant. No merge/deploy/production
+apply/workflow dispatch. Surface is inert: dark-gated + service-role-only, no caller exists.
+
+---
+
 ## 2026-07-04 — RANKING-P17 SLICE 1 — the standings (leaderboard) schema `ranking_standings` (migration `0128`)
 
 **Request.** Phase 17 Slice 1: ONE new forward-only migration (the per-player leaderboard score
