@@ -5,6 +5,75 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — FITTING-P14 SLICE C2 — settled-SAFE ship-state rule `0114` (corrects the 0113 `'home'` literal; `ship_not_home` → `ship_not_settled`)
+
+**Request.** Forward-only correction of the slice-C game rule, while everything is still dark: the
+strict `spatial_state = 'home'` literal was confirmed dead-on-arrival (NO shipped writer ever
+produces `'home'` — commissions land `at_location`, OSN writers produce
+in_transit/in_space/at_location, destruction/repair leave NULL), so even a flag flip would strand
+the feature behind another migration. **Rationale (one line): intent preserved, literal fixed,
+precedent reused** — the rule's INTENT ("loadout never changes mid-transit/in-space/mid-combat")
+stands; only the accepted-state literal was wrong; the codebase's authoritative "settled and safe
+to act on" definition is reused. No flag touched, nothing activated — a design correction within
+the loop's authority.
+
+**The shipped gating, as read first (transcribed in `FITTING_P14_RECON.local.md` §6b):** the
+scan/extract COMMANDS (0099:151–167 / 0104:124–140) gate IDENTICALLY to each other — no
+stricter-of-two choice was needed: `mainship_space_validate_context` must be ok, its validated
+state must be `'in_space'` exactly, then `mainship_space_assert_cross_domain_exclusion` (no active
+legacy movement / coordinate-pointer mismatch / presence conflict) must be ok. Their `'in_space'`
+state exists because scan/extract ARE open-space actions — transcribing that literal into fitting
+would contradict the recorded intent, so it deliberately does NOT transfer. The settled-SAFE STATE
+SET is the securing processors' (0100:231 / 0105:69): `spatial_state in ('home','at_location')`.
+**What ships: the processors' state set verbatim + the commands' companion machinery verbatim** —
+`validate_context` ok AND state in `('home','at_location')`, then `cross_domain_exclusion` ok — so
+fitting is gated AT LEAST as strictly as the shipped activity commands. Every non-settled outcome
+(legacy NULL, in_space, in_transit, destroyed, incoherent context, busy in either movement domain)
+collapses to ONE truthful reject **`ship_not_settled`** (the 0099:159 "one truthful reason" idiom).
+Satisfiable today: commissioned ships sit `at_location` in the canonical coherent shape.
+
+**Work done — NEW `supabase/migrations/20260618000114_fitting_p14_settled_safe_rule.sql`**
+(migration head moves **0113 → 0114**; `0001–0113` unedited; 0113 stays as history):
+- **`fitting_execute_command` re-created** (the 0044-style `create or replace` forward-only idiom)
+  changing ONLY the step-6 game rule: the affected ship is resolved per action first (fit → the
+  owner-checked target, `ship_not_owned` unchanged; unfit → the currently-fitted ship, rule
+  skipped when no fitting row exists so the writer still answers `module_not_owned`/`not_fitted`
+  truthfully), then ONE shared settled-SAFE check block runs. Dark-gate order, request_id
+  validation, per-player lock, verbatim replay, action-shape validation, delegation to
+  `fitting_apply`, and failure-writes-no-receipt semantics are byte-identical to 0113 (the only
+  other diff: the declare block swaps `v_state` for `v_check_ship`/`v_val`/`v_excl`).
+  **NO-DUPLICATION NOTE (explicit, per the review):** the settled-SAFE mechanism appears ONCE
+  (resolve-then-check), so no shared-helper extraction is needed — and the membership check itself
+  is one line.
+- **`fitting_command_client_envelope` re-created** only because it embeds the renamed code + copy:
+  `ship_not_settled` with the message "The ship must be settled at home or docked at a location to
+  change its module loadout." (matching the existing copy tone); every other line identical.
+  Repo grep confirms NO other site references `ship_not_home` (0113 itself is history; no
+  frontend/verify script exists yet).
+- **ACL re-asserted** for both re-created functions exactly as 0113 (revoke public/anon/
+  authenticated + grant service_role — `create or replace` preserves grants, but the shipped
+  re-create precedents re-assert explicitly). `fitting_apply`, `module_fitting_receipts`, both
+  wrappers, and every exploration/mining object are NOT touched.
+
+**Doc-sync (same step).** `docs/SYSTEM_BOUNDARIES.md` §2 Fitting row: the ⚠ unsatisfiable-rule
+note is replaced by the settled-SAFE rule as now shipped (citing the 0099/0104 machinery +
+0100/0105 state-set precedents), and the edges line now records the OSN-context-helper reads
+(`mainship_space_validate_context` + `mainship_space_assert_cross_domain_exclusion` — read-only,
+downward, the exact 0099/0104 reuse-never-reinvent posture; still acyclic, still nothing depends
+on Fitting).
+
+**State.** `npm run build` green (no `src/` change was made — confirmed). Migration head **0114**;
+`module_fitting_enabled='false'` — the surface stays server-rejected at every layer; no flag
+flipped, no live DB write, no workflow touched. **DB-apply posture (honest, unchanged):** no
+psql/docker/supabase CLI in this sandbox — the re-created functions were diffed line-by-line
+against 0113 (single-rule change + declares + the two mapper lines) and the new rule block against
+0099:151–167/0104:124–140 (machinery) and 0100:231/0105:69 (state set); live assertions run in the
+owner's environment and will be covered by the later `verify:fitting` dark-posture script.
+PR-ready on `autopilot/20260703-064048`, `main` untouched. Next: the adapter slice and/or the read
+surface, then frontend + `verify:fitting`.
+
+---
+
 ## 2026-07-04 — FITTING-P14 SLICE C — the dark two-layer fit/unfit command `0113` (`module_fitting_receipts` + `fit_module_to_ship`/`unfit_module_from_ship` → ONE private `fitting_execute_command`)
 
 **Request.** Implement slice C of Phase 14: ONE new forward-only migration with the player-scoped
