@@ -5,6 +5,44 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CLEANUP SLICE 1 (docs-only) — module-fitting-milestone auto-cleanup part 1: `market_offers` law-doc sync
+
+**Request.** Part 1 of the post-milestone auto-cleanup: fix two DOC DEFECTS in
+`docs/SYSTEM_BOUNDARIES.md` where the law doc contradicted shipped code (0085/0087/0089/0090).
+Docs-only — NO code, migration, script, or flag change in this step.
+
+**The defects (law doc contradicted shipped code):**
+- `market_offers` (shipped in 0085 as the Trade Market price catalog) had **no §1 sole-writer row
+  at all** — 0085's own header claimed a SYSTEM_BOUNDARIES ownership posture that the doc never
+  actually recorded.
+- The §2 Trade Market row attributed the RPCs' reads to "`trade_goods` + the docked-location
+  context", never mentioning `market_offers` — but ALL offer prices actually come from
+  `market_offers` (`get_market_offers` projects the docked station's active offers (0087),
+  `market_buy` takes its `sell_price` (0089), `market_sell` its `buy_price` (0090));
+  `trade_goods` genuinely provides only good identity/metadata (`unit_volume_m3` for the
+  buy-side volume check, 0089 — `market_sell` reads it not at all).
+
+**Work done (docs only):**
+- **§1 ownership matrix** — added the `market_offers` row directly after its sibling catalog
+  `trade_goods`, following that row's exact Reference/Config idiom:
+  owner **Reference/Config** (admin/migration; Trade Market price catalog — migration-seeded only
+  (0085, idempotent seed), NO runtime writer) · read = public read-only (RLS public-read policy,
+  no client write path).
+- **§2 Trade Market row** — corrected ONLY the reading clause: prices now attributed to
+  `market_offers` (read by all three RPCs as above); `trade_goods` kept for what it still truly
+  provides (good identity/metadata — `unit_volume_m3` for the buy-side volume check). Nothing
+  else in §2 touched.
+- Verified against 0085/0087/0089/0090 before wording; `npm run build` green (docs-only sanity).
+
+**Follow-ups (separate slices, NOT this step):** part 2 — commission-writer repoint decision
+(`port_entry_commission_build` / `normalize_main_ship_dock` write `fleets` directly while §1
+names Fleet its sole writer); part 3 — shared frontend guard helper for the four duplicated
+command-submit bodies (ExplorationPanel `scan` / MiningPanel `extract` / ModulesPanel `craft` +
+`runFitting`); part 4 — shared `scripts/lib/trade-proof-lib.sh` for the three trade proof
+scripts' duplicated blocks.
+
+---
+
 ## 2026-07-04 — FITTING-P14 SLICE G (final) — `verify:fitting` dark-posture script. **Phase 14 Module fitting — dark implementation complete (slices A–G)**
 
 **Request.** Implement slice G, the last Phase 14 slice: the dark-posture verify script + its
