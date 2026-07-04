@@ -5,6 +5,53 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — RANKING-P17 POST-AUDIT FIX — the deferred commit-safety PROOF `scripts/ranking-p17-commit-safe-accrual-proof.sh` (no migration/flag change)
+
+**Request.** The "Verify" for item (2): a dynamic proof that the slice-B commit-safe fold actually
+counts a reward that COMMITS after an overlapping accrual run — the exact scenario the old timestamp
+cursor skipped forever — mirroring the deferred-proof idiom used for item (1). Only changes this slice:
+the new script + this note.
+
+**The proof (`scripts/ranking-p17-commit-safe-accrual-proof.sh`).** Mirrors
+`scripts/mining-p12-double-extract-concurrency.sh` / `scripts/osn3-s3-realchain-concurrency.sh`
+point-for-point: a FIFO-driven held-open psql session (distinct `application_name`), `pg_stat_activity`
+state polling, a `trap` that restores `ranking_enabled` to `'false'` and asserts it + cleans all
+fixtures, `$DB_URL`-gated, never touches a shared/live DB.
+
+**Scenario staged (the exact skip case).** Under `ranking_enabled` toggled true ONLY in the disposable
+stack: (1) one ACTIVE `ranking_seasons` row whose window spans the test + one throwaway player; (2)
+session A `begin`s and inserts a `reward_grants` row so its `granted_at` is stamped at A's txn START
+(T1), and HOLDS the txn open (uncommitted ⇒ invisible); (3) grant B is inserted AND committed for a
+later `granted_at` (T2 > T1) in the same window; (4) `ranking_accrue_standings()` runs once — sees only
+B (A invisible): asserts B folded into `ranking_standings` (score/events 5/1) and B in
+`ranking_counted_grants`, A absent from the ledger; (5) session A commits (commit time T3 > T2, but
+A.granted_at is still the older T1) — the script asserts A.granted_at < B.granted_at AND A.granted_at <
+the run-1 watermark (`last_counted_at` ≈ T2), pinning that this is precisely the row the OLD 0130
+`granted_at > last_counted_at` cursor would exclude forever; (6) `ranking_accrue_standings()` runs
+again and asserts the 0145 anti-join COUNTS A — A now in the ledger, standings rise to 8/2 (exactly A's
++3 score / +1 event), exactly TWO grants folded for (season, player), and B still counted exactly once
+(no double-count — the ledger `unique (season_id, grant_id)` + anti-join).
+
+**Why this proves "no finalized reward is ever missed."** A is visible to a run only once committed;
+whenever it first becomes visible — however late, whatever its `granted_at` — it is absent from the
+ledger, so the visibility-based anti-join includes it and folds it exactly once. The counterfactual
+(the old watermark dropping A because T1 < the advanced watermark) is documented in the header and
+pinned by the T1-below-watermark assertion, but not executed (the old function no longer exists).
+
+**Run instructions (DEFERRED to the human activation checklist).** `DB_URL=postgres://... bash
+scripts/ranking-p17-commit-safe-accrual-proof.sh`. NOT wired into `package.json`'s dark `verify:*`
+block — it needs a LIT DB (it flips `ranking_enabled` true INSIDE its disposable stack and restores it)
+and so cannot run in the flag-off sweep; referenced only from its own header and this note. This
+environment has no local DB, so the lit run is deferred; static-checked green here with `bash -n`.
+
+**Preserved human gates.** No migration edited, no committed file flips a flag — the script's `true`
+toggle is a runtime `psql` update inside a disposable `$DB_URL` stack, restored to the captured
+original (`'false'`) and asserted in the trap. `ranking_enabled` stays `'false'` in every committed
+file; no `package.json` entry added; nothing merged/deployed/applied to production.
+SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — RANKING-P17 POST-AUDIT FIX, SLICE B — `ranking_accrue_standings` made COMMIT-SAFE by folding through the `ranking_counted_grants` ledger (migration 0145)
 
 **Request.** Post-audit fix pass, item 2, slice B: rewrite `ranking_accrue_standings` so correctness no
