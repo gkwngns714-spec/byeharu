@@ -5,6 +5,73 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — CAPTAIN-P16 SLICE 2 — the recruitment recipe catalog `captain_recipe_ingredients` + seeds (the 0107 `module_recipe_ingredients` analogue)
+
+**Request.** Phase 16 slice 2: ONE new forward-only migration adding the recruit recipe config
+table `captain_recipe_ingredients` (the captain analogue of Modules' `module_recipe_ingredients`,
+0107) + five seed recipes, plus same-step doc-sync. NO command, NO writer, NO RPC, NO adapter
+change, NO frontend, NO flag flipped.
+
+**Recipe design decision (self-approved 2026-07-04).** The recruit recipe is a normalized,
+items-only, existing-items-only catalog — the exact 0107 recipe posture, one implicit recipe per
+captain type:
+
+- **Normalized-table encoding, not jsonb** (0107 decision 3): FK to `captain_types` + `item_types`,
+  `qty > 0` CHECK, composite PK `(captain_type_id, item_id)` — real referential integrity, no
+  parallel jsonb recipe vocabulary.
+- **Items-only cost** — the pipeline law: progression consumes INVENTORY, so recruitment's cost
+  lands ONLY in `player_inventory` (via the next-slice command's `inventory_spend`), NEVER in
+  metal/credits/Base/Wallet.
+- **`captain_memory_shard` the shared gating ingredient** — the 'progression'/'rare' item (0039)
+  seeded expressly for this, `qty 1` on every recipe; each type adds two specialization-flavored
+  materials from the existing catalog.
+- **Existing `item_types` only** (0039 + 0097) — no new item invented; quantities in the 0107 1–8
+  band.
+
+**Work done — NEW `supabase/migrations/20260618000125_captain_p16_recruit_recipes.sql`** (leaves
+`0001`–`0124` unedited; forward-only):
+
+- `create table public.captain_recipe_ingredients (captain_type_id text ref captain_types(id),
+  item_id text ref item_types(item_id), qty integer check (qty>0), created_at, PK
+  (captain_type_id, item_id))` — mirrors `module_recipe_ingredients` line-for-line.
+- RLS/grants VERBATIM from 0107:96–98 — RLS enabled, ONE public-read select policy
+  `captain_recipe_ingredients_public_read` `using (true)`, `grant select to anon, authenticated`,
+  NO insert/update/delete policy, NO write grant → clients cannot mutate; only migration/service_role
+  write (the 0039/0107 catalog posture).
+- Five seeds (`on conflict (captain_type_id, item_id) do nothing`), all item ids verified to exist
+  and all captain_type ids verified against 0117:
+  - `gunnery_veteran` (combat): `captain_memory_shard` 1 · `weapon_parts` 3 · `pirate_alloy` 2
+  - `trade_broker` (trade): `captain_memory_shard` 1 · `scrap` 8 · `repair_parts` 2
+  - `survey_cartographer` (exploration): `captain_memory_shard` 1 · `scan_data` 4 · `anomaly_shard` 2
+  - `extraction_foreman` (mining): `captain_memory_shard` 1 · `ore` 6 · `crystal` 2
+  - `fleet_quartermaster` (support): `captain_memory_shard` 1 · `repair_parts` 3 · `engine_parts` 2
+
+**INERT this slice.** Nothing reads the table yet. Its FIRST consumer is the next-slice
+**Production**-owned recruit command (ROADMAP law 5 "Production = crafting"), which reads this config
+DOWNWARD — the acyclic 0109 fan-out: Production → Captain recipe read · Production → Inventory
+`inventory_spend` · Production → Captain `captains_mint_instance` mint. One sole-writer per table;
+this slice adds NO writer and NO cross-system edge, and NO Captain→Inventory edge (Captain stays a
+pure instance-leaf; the recipe CONFIG belongs to Captain, the recruit COMMAND to Production).
+
+**Doc-sync (SAME step — the 0107 catalog-table-creating precedent).**
+- `docs/SYSTEM_BOUNDARIES.md` §1 matrix gains `captain_recipe_ingredients` under **Captain**
+  (catalog/config — seeded by migration only, NO runtime writer; public read-only), adjacent to
+  `captain_types`, mirroring how `module_recipe_ingredients` sits under Modules.
+- §2 Captain row: the Owns column gains `captain_types, captain_recipe_ingredients *(catalog/config
+  … no runtime writer)*` (the Modules-row idiom), and the row body notes the recruit recipe config
+  now exists with its first consumer the next-slice Production recruit command — NO writer/edge
+  added this slice.
+- A pure catalog table under an existing system adds a table but NO new writer/function and NO
+  cross-system edge, so the acyclic ownership graph is unchanged; documenting the new owned config
+  IS the required sync (unlike 0124's pure flag seed, which added no table and so left
+  SYSTEM_BOUNDARIES untouched).
+
+**Human gates preserved.** No flag flipped true (all captain flags stay `'false'`), no
+frontend/client change, no migration `0001`–`0124` edited, no production DB / merge / deploy /
+workflow dispatch. Backend catalog/config only, on the feature branch.
+
+---
+
 ## 2026-07-04 — CAPTAIN-P16 SLICE 1 — the dark capability flag `captain_progression_enabled = 'false'` (flag-only, the 0107/0117 seed idiom) + the self-approved Phase-16 design decision
 
 **Request.** Phase 16 slice 1: ONE new forward-only migration seeding exactly one `game_config`
