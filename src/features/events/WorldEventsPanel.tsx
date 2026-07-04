@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
+import { getUiAssetCatalog } from '../assets/assetsApi'
+import { assetGlyphs } from '../assets/assetGlyphs'
+import type { GetUiAssetCatalogResult, UiAsset } from '../assets/assetsTypes'
 import { getWorldEvents } from './eventsApi'
 import type { GetWorldEventsResult, WorldEventSeverity } from './eventsTypes'
 
@@ -25,16 +28,27 @@ export function WorldEventsPanel({
   lifecycleKey: string
 }) {
   const [result, setResult] = useState<GetWorldEventsResult | null>(null)
+  const [icons, setIcons] = useState<GetUiAssetCatalogResult | null>(null)
 
   // Mounted guard — the shared home of the idiom (useActivityPanelGuards).
   const guards = useActivityPanelGuards()
   const { activeRef } = guards
 
   const refresh = useCallback(async () => {
-    const res = await getWorldEvents()
+    // Fetch the feed and the icon vocabulary together; both empty server-side while dark (fail-closed).
+    const [events, iconCatalog] = await Promise.all([getWorldEvents(), getUiAssetCatalog('icon')])
     if (!activeRef.current) return
-    setResult(res)
+    setResult(events)
+    setIcons(iconCatalog)
   }, [activeRef]) // ref identity is stable — dep satisfies the lint rule without changing refresh's identity
+
+  // asset_key → UiAsset lookup from the returned 'icon' rows (empty while dark / on a failed read →
+  // no glyph resolves, which the render below tolerates without breaking the feed).
+  const iconByKey = useMemo(() => {
+    const map = new Map<string, UiAsset>()
+    if (isServerLit(icons)) for (const a of icons.assets ?? []) map.set(a.asset_key, a)
+    return map
+  }, [icons])
 
   // lifecycleKey is a deliberate re-fetch trigger (the ExplorationPanel dep idiom).
   useEffect(() => {
@@ -55,20 +69,39 @@ export function WorldEventsPanel({
     >
       <p className="text-[11px] font-medium text-indigo-300">World Events</p>
       <ul data-testid="world-events-list" className="mt-2 space-y-1 border-t border-slate-700/60 pt-2">
-        {result.events?.map((e) => (
-          <li key={e.id} data-testid={`world-event-${e.id}`} className="text-[10px]">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-slate-200">{e.title}</span>
-              <span
-                data-testid={`world-event-badge-${e.id}`}
-                className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase ${SEVERITY_BADGE[e.severity]}`}
-              >
-                {e.severity}
-              </span>
-            </div>
-            {e.body && <p className="text-slate-400">{e.body}</p>}
-          </li>
-        ))}
+        {result.events?.map((e) => {
+          // Resolve the server-owned severity icon vocabulary → the client-owned glyph. Any miss
+          // (dark/empty catalog, unseeded key, unregistered asset_ref) resolves to no glyph — the
+          // event still renders with its severity badge (never break the feed).
+          const icon = iconByKey.get(`severity_${e.severity}`)
+          const glyph = icon ? assetGlyphs[icon.asset_ref] : undefined
+          return (
+            <li key={e.id} data-testid={`world-event-${e.id}`} className="text-[10px]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 items-center gap-1">
+                  {glyph && (
+                    <span
+                      data-testid={`world-event-icon-${e.id}`}
+                      aria-label={icon?.display_name}
+                      title={icon?.display_name}
+                      className="shrink-0"
+                    >
+                      {glyph}
+                    </span>
+                  )}
+                  <span className="truncate text-slate-200">{e.title}</span>
+                </span>
+                <span
+                  data-testid={`world-event-badge-${e.id}`}
+                  className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase ${SEVERITY_BADGE[e.severity]}`}
+                >
+                  {e.severity}
+                </span>
+              </div>
+              {e.body && <p className="text-slate-400">{e.body}</p>}
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

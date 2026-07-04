@@ -5,6 +5,57 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — PHASE20-POLISH SLICE 6 — icon resolver (`src/features/assets/`) + severity icons on the World Events panel, fail-closed
+
+**Request.** Wire `ui_asset_catalog` into the World Events panel as SEVERITY ICONS — delivering the
+"icons" polish with a real consumer so `get_ui_asset_catalog`/`ui_asset_catalog` (0142) are not a
+dead backend surface. Frontend-only: new `src/features/assets/*` + the extended `WorldEventsPanel.tsx`
++ a DEV_LOG entry. No migration, no flag, no cron, no git.
+
+**Design decision (self-approved).** The STEP-4 split holds: the SERVER owns the icon VOCABULARY
+(`severity_info`/`severity_warning`/`severity_critical` keys + display metadata + stable `asset_ref`);
+the CLIENT owns the rendered GLYPH per `asset_ref` (a tiny inline-emoji registry — the "files" side,
+ZERO binary assets). This is the intended architecture, not duplication. The resolver is generic
+(`asset_kind`-parameterized) but this slice only CONSUMES `'icon'`; the seeded PORTRAIT rows stay a
+server-side vocabulary whose live host (captains) is still dark — a portrait UI consumer remains a
+documented seed-ahead deferral (the accepted Phase-6 `support_craft_types` pattern), not speculative UI.
+
+**Work done — new `src/features/assets/`.**
+- `assetsTypes.ts` — `UiAsset` (asset_kind `'portrait'|'icon'`, asset_key, display_name, asset_ref,
+  category, sort_order) + `GetUiAssetCatalogResult` as a DISCRIMINATED union (`{ok:true; assets?} |
+  {ok:false}` — the `isServerLit`-compatible idiom, same reason SLICE 5 used it).
+- `assetsApi.ts` — thin `supabase.rpc('get_ui_asset_catalog', { p_asset_kind })` wrapper (the
+  explorationApi.ts / eventsApi.ts convention): error → `{ ok:false }`, never throws into render.
+- `assetGlyphs.ts` — the client "files" side: a registry mapping each SEEDED icon `asset_ref` (0142) →
+  a tiny inline emoji glyph, with an in-file comment stating the split (server owns the key vocabulary;
+  this file owns the rendered glyph per `asset_ref`). An unrecognized `asset_ref` → `undefined` → no
+  glyph (fail-safe).
+
+**Work done — extended `WorldEventsPanel.tsx` (NOT a new panel).** `refresh()` now fetches both surfaces
+together (`Promise.all([getWorldEvents(), getUiAssetCatalog('icon')])`) and stores both; a `useMemo`
+builds a `Map<asset_key, UiAsset>` from the returned `'icon'` rows (empty while dark / on a failed read).
+Per event, it resolves `severity_${event.severity}` → its `UiAsset` → the glyph via
+`assetGlyphs[asset.asset_ref]`, rendered next to the title with the asset's `display_name` as
+`title`/`aria-label`. The existing severity badge stays; the icon augments it. FAIL CLOSED is unchanged
+(`if (!isServerLit(result) || (result.events?.length ?? 0) === 0) return null`); any icon miss
+(dark/empty catalog, unseeded key, unregistered `asset_ref`) renders the event with NO glyph — never
+breaks the feed.
+
+**Doc-sync (this step).** This DEV_LOG entry. `docs/SYSTEM_BOUNDARIES.md` needs NO change — another
+client read-only consumer adds no table, no writer, no cross-system call-edge (it just calls the
+already-documented `get_ui_asset_catalog` RPC). Stated explicitly so the omission is intentional.
+
+**Verify.** `npm run build` (tsc -b + vite build) — **GREEN** (156 modules, +2 for `src/features/assets/*`;
+typecheck clean; only the pre-existing >500 kB chunk-size advisory, unrelated). Touched ONLY
+`src/features/assets/*` (new) + `WorldEventsPanel.tsx` (extended) + this DEV_LOG entry — no migration, no
+flag, no cron, no git. `phase20_polish_enabled` remains `'false'` and untouched. The M2/M3/M4/M4.5 engine
+tests are backend and unaffected by a fail-closed presentational panel. No lit DB run — while dark the
+icon catalog is empty (no glyph resolves) and the feed is empty anyway (panel renders nothing); the
+`0142` catalog now has a live consumer only once the human lights the flag and publishes events. Nothing
+deployed, `main` untouched.
+
+---
+
 ## 2026-07-04 — PHASE20-POLISH SLICE 5 — the World Events display feature (`src/features/events/`) wired into the galaxy map, fail-closed
 
 **Request.** The "events polish" — a read-only World Events overlay on the galaxy map, fail-closed,
