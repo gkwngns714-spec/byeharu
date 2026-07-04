@@ -5,6 +5,75 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — LOCATION-INVEST-P18 POST-AUDIT UI (panel 2 of 4) — the dark `src/features/investment/` Port Investment screen (frontend-only; no server change)
+
+**Request.** Item (4), panel 2 of 4: build the dark Port Investment screen as a new
+`src/features/investment/` feature, mirroring the just-built `src/features/ranking/` (leaderboard read +
+own-standing derivation) AND `src/features/mining/` (the `runGuardedCommand` guarded-submit + client
+`request_id` generation), reading ONLY the three existing 0134 RPCs and submitting ONLY the existing
+0133 `invest_in_location` command — NO new server authority. Frontend-only: no migration/RPC/flag/server
+change.
+
+**Files added (3 + a mount edit).**
+- `src/features/investment/investmentTypes.ts` — pure discriminated-union result types matching 0134/0133
+  jsonb exactly: `GetLocationDevelopmentResult` (all_time_total, contributor_count, season_total,
+  window_index, window_start, window_end), `GetLocationInvestmentLeaderboardResult` (rows: {rank,
+  player_id, season_score}), `GetMyLocationInvestmentsResult` (rows: {investment_id, location_id,
+  location_name, amount, invested_at}), `InvestInLocationResult` ({investment_id, location_id, amount,
+  invested_at, idempotent_replay?} | {ok:false, code?}) — all `{ok:true,…}|{ok:false,code?}` so
+  `isServerLit` narrows cleanly. Plus `investErrorMessage(code)` mirroring `miningExtractErrorMessage`.
+- `src/features/investment/investmentApi.ts` — thin `supabase.rpc` wrappers `getLocationDevelopment`,
+  `getLocationInvestmentLeaderboard`, `getMyLocationInvestments`, `investInLocation`, each catching
+  transport errors → `{ok:false}` EXACTLY like `miningApi.ts` (fail-closed).
+- `src/features/investment/InvestmentPanel.tsx` — dark, server-driven panel (props `locationId`,
+  `mainShipId`, `lifecycleKey` like MiningPanel): on mount/refresh reads development + leaderboard + own
+  history; renders `null` unless `isServerLit(development)`; when lit shows persistent development
+  (all_time_total, contributor_count), the seasonal score (season_total + window bounds), the seasonal
+  leaderboard with the own row highlighted, the caller's own history, and ONE Invest action (amount input
+  → `investInLocation(mainShipId, amt, crypto.randomUUID())` via `runGuardedCommand`). `data-testid=
+  "investment-panel"`.
+- Mounted `<InvestmentPanel/>` in `src/features/map/GalaxyMapScreen.tsx` beside `DockServicesPanel`.
+
+**Enumerated REAL writer codes (read from 0133 — not invented).** The `invest_in_location` wrapper +
+private writer return exactly: `feature_disabled`, `invalid_request` (null request_id), `not_docked`,
+`invalid_amount`, `insufficient_credits` (the real wallet code — NOT the instruction's placeholder
+"insufficient_funds"), `not_authenticated`, `ship_not_owned`; success `{ok:true, investment_id,
+location_id, amount, invested_at}` (+ `idempotent_replay` on a same-(player, request_id) replay).
+`investErrorMessage` maps these exact codes with an `unavailable` fallback.
+
+**Fail-closed logic.** Visibility is 100% server-driven — NO client flag constant. While
+`location_investment_enabled='false'` every RPC returns `{ok:false, code:'feature_disabled'}` →
+`isServerLit(development)` false → the panel returns `null`. An undocked ship (`locationId` null →
+skipped read / `unknown_location`) and transport errors collapse to null the same way. The board appears
+only when the human lights the flag AND the ship is docked at a port.
+
+**Own-standing derivation (client-side only — no new RPC).** The panel reads the signed-in user id from
+`authStore` and, among the returned leaderboard `rows`, highlights the row whose `player_id` matches
+("(you)") and summarises "Your standing: #rank · score". Absent → "Unranked — outside the top N".
+Computed purely from the already-returned rows, never a server call.
+
+**Mount point + rationale.** `GalaxyMapScreen`, immediately after `DockServicesPanel`. Chosen over the
+Dashboard because BOTH the server-reported docked location (`mainShipPresence?.location_id` — the same id
+`PortNavPanel` consumes as `currentDockedLocationId`) and the player's `mainShip?.main_ship_id` are
+already in scope there: the reads are location-scoped and the invest command uses the ship whose docked
+location the server derives, so the docked-port context is the natural home. Chosen over mounting INSIDE
+`DockServicesPanel` because that panel does not expose its resolved `location_id` to children — mounting
+in the map screen (which already holds both ids) is the smaller change (no prop-drilling / DockServices
+refactor). It renders `null` while dark and when not docked, so production is byte-unchanged.
+
+**Build.** `npm run build` (`tsc -b && vite build`) GREEN — 161 modules transformed, no type or build
+errors (the >500 kB chunk-size note is a pre-existing vite advisory, unrelated).
+
+**Boundaries.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — FRONTEND-ONLY: no table, writer, RPC, or
+cross-system edge. It consumes the existing 0133/0134 surface already recorded in the §2 Location
+Investment contract; a read/command UI consumer adds nothing to the ownership matrix or call graph.
+
+**Preserved human gates.** `location_investment_enabled` stays `'false'` (dark) — the panel is
+server-rejected and renders null; no flag flipped, no migration/RPC/server-file changed, no new
+authority, nothing merged/deployed. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — RANKING-P17 POST-AUDIT UI (panel 1 of 4) — the dark `src/features/ranking/` leaderboard screen (frontend-only; no server change)
 
 **Request.** Item (4), panel 1 of 4: build the dark Ranking screen as a new `src/features/ranking/`

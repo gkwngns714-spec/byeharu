@@ -13,6 +13,7 @@ import { useMainShipSelection } from './useMainShipSelection'
 import { TRADE_MARKET_ENABLED } from './osnReleaseGates'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { MiningPanel } from '../mining/MiningPanel'
+import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { ModulesPanel } from '../modules/ModulesPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 
@@ -127,6 +128,17 @@ export function GalaxyMapScreen() {
                   Docking). No buy/sell/repair actions; no home-port. */}
               <DockServicesPanel
                 lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
+                mainShipId={mainShip?.main_ship_id ?? null}
+              />
+              {/* LOCATION-INVEST-P18 (dark): docked-port investment surface. Mounted here (not the
+                  Dashboard) because BOTH the server-reported docked location (mainShipPresence.location_id,
+                  the same id PortNavPanel uses) and the player's main_ship_id are in scope — the reads are
+                  location-scoped and the invest command uses the ship whose docked location the server
+                  derives. Renders null unless the server lit get_location_development (feature_disabled →
+                  not server-lit while dark; also null when not docked), so production is byte-unchanged. */}
+              <InvestmentPanel
+                lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
+                locationId={mainShipPresence?.location_id ?? null}
                 mainShipId={mainShip?.main_ship_id ?? null}
               />
               {/* EXPLORATION-P11 — dark exploration surface (scan + discoveries). SERVER-driven
