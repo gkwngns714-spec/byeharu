@@ -5,6 +5,74 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — RANKING-P17 SLICE 5 — the dark-posture verifier `scripts/verify-ranking.mjs` + `verify:ranking` (FINAL Phase-17 slice)
+
+**Request.** Phase 17 Slice 5 (final): ONE new verify script (the `verify-captain-progression.mjs`
+analogue) + one `package.json` line + same-step doc-sync. NO migration change, NO flag write, NO
+lit-path testing, NO frontend, NO new read RPC.
+
+**Work done — `scripts/verify-ranking.mjs`** (mirrors `verify-captain-progression.mjs` point-for-point;
+ZERO inline harness copies — imports the shared `resolveEnv`/`createReporter`/`createUserFactory`/
+`Abort` from `scripts/lib/verify-harness.mjs` + `teardownVerifier` from `scripts/lib/
+verifier-teardown.mjs`, same `admin`/`anon`/throwaway-user/`cfgVal` scaffold, same `.catch/.finally`
+teardown with NO flag entry passed — this verifier touches no flag). Proves migrations `0127–0131`
+ship exactly as claimed and fully dark, with anon/authenticated clients only. Five assertion groups:
+1. **Dark rejection** — `get_ranking_seasons()` and `get_ranking_leaderboard(<valid uuid>,'combat',10)`
+   both return `{ok:false, code:'feature_disabled'}` while `ranking_enabled='false'`; a valid uuid +
+   real dimension are passed precisely so the identical dark answer proves the anti-probe gate fires
+   BEFORE any validation (unknown_season / invalid_dimension are NOT reached). CODE-keyed, matching the
+   0131 read surface.
+2. **Public-read posture** — anon can SELECT `ranking_seasons` and `ranking_standings` (permitted, 0
+   rows on a fresh DB — reading the public tables back IS the assertion, the catalog-table precedent).
+3. **No client write path** — direct authenticated-client inserts into `ranking_seasons` AND
+   `ranking_standings` are denied (no insert policy / no write grant — 0127/0128).
+4. **Internal surface locked** — `ranking_season_open`, `ranking_accrue_standings`, and
+   `ranking_score_delta` are denied to the authenticated client, and `ranking_accrue_standings` is
+   denied to anon (service-role-only — 0129/0130).
+5. **Config presence** — `ranking_enabled` reads `'false'` (READ-ONLY; storage-form-tolerant
+   `String(v)==='false'` compare).
+
+**No-flag-write / no-lit-path stance** (verbatim to `verify-captain-progression.mjs`): the script NEVER
+writes `game_config` and NEVER flips `ranking_enabled`. Lit-path verification — flag on →
+`ranking_season_open` opens an active season → deposit finalized `reward_grants` →
+`ranking_accrue_standings` folds them once → a re-run is a no-op → `get_ranking_leaderboard` ranks them
+(overall = sum of per-dimension scores) → opening a new season closes the prior active one while
+PRESERVING the closed season's standings rows — is DEFERRED to the human owner's activation checklist
+(flip the flag on a DEV database and run the lit checks there, never here). Because `0127–0131` are not
+deployed, local verification is `node --check scripts/verify-ranking.mjs` only (**parses OK**); the
+script is NOT executed against a live DB this slice (its execution belongs to the owner's post-apply
+checklist, exactly as the prior dark verifiers).
+
+**`package.json`.** Added one line adjacent to `verify:captain-progression`:
+`"verify:ranking": "node scripts/verify-ranking.mjs"`.
+
+**Doc-sync (same step).**
+- `docs/SYSTEM_BOUNDARIES.md` — **intentionally UNTOUCHED**. A verifier script + a `package.json` line
+  add NO table, writer, function, or cross-system edge (the Phase-15/16 slice-verifier precedent — the
+  law doc describes architectural facts, and nothing architectural changed). Stated here explicitly
+  rather than editing it.
+- `docs/DEV_LOG.md`: this entry.
+
+**Phase 17 status — CLOSED (backend + verifier deliverables).** The Ranking milestone is complete and
+PR-ready on the feature branch, fully dark and server-rejected:
+- `0127` — `ranking_enabled='false'` dark flag + `ranking_seasons` root table.
+- `0128` — `ranking_standings` per-(season, player, dimension) schema (dimension = the `reward_grants.
+  source_type` domain 1:1; overall derived at read time).
+- `0129` — `ranking_season_open` (sole writer of `ranking_seasons`; natural-key idempotent;
+  close-prior-active = reset by season, not deletion).
+- `0130` — `ranking_score_delta` + `ranking_accrue_standings` (sole writer of `ranking_standings`;
+  incremental high-water fold reading `reward_grants` DOWNWARD — the acyclic Ranking→Reward edge).
+- `0131` — `get_ranking_seasons` + `get_ranking_leaderboard` (public, dark-gated read surface).
+- `verify-ranking.mjs` — the dark-posture verifier.
+
+**Human gates preserved.** `ranking_enabled` stays `'false'` (no flag flipped); every Phase 11–17 flag
+remains `'false'`. NO migration changed (`0127–0131` and all of `0001–0126` untouched). NO
+`game_config` write. NO lit-path DB run (deferred to the owner's activation checklist). Backend-only
+(no `src/features/**`). No merge/deploy/production apply/workflow dispatch. Activation (flipping
+`ranking_enabled` true + scheduling the accrual cron) is the human owner's decision, not this loop's.
+
+---
+
 ## 2026-07-04 — RANKING-P17 SLICE 4 — the dark read surface `get_ranking_seasons` + `get_ranking_leaderboard` (migration `0131`)
 
 **Request.** Phase 17 Slice 4: ONE new forward-only migration (the two public leaderboard/season read
