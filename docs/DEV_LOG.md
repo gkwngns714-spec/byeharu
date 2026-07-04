@@ -5,6 +5,79 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-04 — RANKING-P17 SLICE 3 — the core standings-scoring accrual `ranking_accrue_standings` (the SOLE writer of `ranking_standings`, reading `reward_grants` DOWNWARD; migration `0130`)
+
+**Request.** Phase 17 Slice 3: ONE new forward-only migration (the standings accrual writer) +
+same-step doc-sync. Still NO read RPC, NO frontend, NO flag flipped, NO cron scheduled.
+
+**Metric lock (read first, no guessing).** Re-confirmed the EXACT `reward_grants.rewards` bundle shape
+from 0040/0015: `{ "metal": <number>, "items": [ { "item_id": "...", "quantity": <int> }, … ] }` — the
+item quantity key is **`quantity`** (0040:64 `(el->>'quantity')::numeric`). The per-event score value
+is defined in ONE place, `ranking_score_delta(p_rewards jsonb) returns numeric` (IMMUTABLE,
+single-source, testable): `coalesce(metal,0) + coalesce(sum of item quantities,0)`. Rationale:
+standings are PER-DIMENSION separate leaderboards (slice 1), so absolute scale is irrelevant within a
+board; a reward-magnitude metric is uniform across dimensions, deterministic, and computed purely from
+the finalized event. The items sum is guarded to a real jsonb array (the 0040 "fail safely" ethos — a
+malformed row can never abort the batch; metal-only combat bundles simply have no `items` key → 0).
+
+**Work done — migration `20260618000130_ranking_p17_accrue_standings.sql` (forward-only; `0001–0129`
+unedited).**
+- **`ranking_score_delta(jsonb) → numeric`** — IMMUTABLE, service-role-only (client-revoked). The ONE
+  place the per-event score is defined.
+- **`ranking_accrue_standings() → jsonb`** — PRIVATE, `SECURITY DEFINER`, service-role-only, THE sole
+  writer of `ranking_standings`. Batch accrual over ALL active seasons (cron/admin-style, no player
+  input):
+  1. **DARK GATE FIRST** — `if not cfg_bool('ranking_enabled')` → `{ok:false, code:'feature_disabled'}`
+     before any read/write (folds nothing while dark).
+  2. **Advisory lock** `pg_advisory_xact_lock(hashtext('ranking_accrue_standings'), 0)` — concurrent
+     accruals serialize.
+  3. **Incremental, idempotent fold** — one statement (`with folded … , upserted as (insert … on
+     conflict … do update) …`). Source: `reward_grants rg` joined to each `ranking_seasons s where
+     s.status='active'` on `rg.granted_at between s.starts_at and s.ends_at`, LEFT JOIN the existing
+     `ranking_standings st` on `(season_id, player_id, source_type)`. **High-water filter:** fold only
+     `(st.last_counted_at is null and rg.granted_at >= s.starts_at) or (rg.granted_at >
+     st.last_counted_at)` — NULL high-water counts from season start inclusive; strict `>` afterward
+     makes re-runs a no-op. `group by (season_id, player_id, source_type)` → `score =
+     sum(ranking_score_delta(rewards))`, `events_counted = count(*)`, `last_counted_at =
+     max(granted_at)`. `on conflict … do update set score = score + excluded.score, events_counted =
+     events_counted + excluded.events_counted, last_counted_at = greatest(…), updated_at = now()`.
+     `dimension = rg.source_type` directly (the slice-1 1:1 domain lock — no translation); the fold is
+     scoped `rg.source_type in ('combat','trade','exploration','mining')` so an out-of-domain source
+     (none exist today) is skipped rather than aborting the batch / tripping the dimension CHECK.
+  4. Returns `{ok:true, seasons_scored, rows_upserted, events_folded}` (a summary for the future
+     cron/verifier).
+  - **ACL**: `revoke execute … from public, anon, authenticated; grant … to service_role` (0129
+    private-writer block). **No public wrapper, no cron scheduled** — accrual is a server/cron/admin
+    op; scheduling is deferred, and the dark-gated fn is a safe no-op until the human activates it.
+
+**Reset-by-season semantics.** The fold's window is bounded by each ACTIVE season's `[starts_at,
+ends_at]`; a CLOSED season (closed by `ranking_season_open`, 0129) is no longer joined so it stops
+accruing, but its standings rows remain intact. A "reset" is a new active season scoping a fresh
+standings set — NEVER a delete of any standings or `reward_grants` event data.
+
+**Boundary placement (same-step doc-sync).**
+- `docs/SYSTEM_BOUNDARIES.md` §1: updated the `ranking_standings` row — sole writer is now the CONCRETE
+  `ranking_accrue_standings` (0130) (was "future scoring fn"); service-role-only + DARK +
+  incremental-by-`last_counted_at`; the `ranking_score_delta` metric; no-cron-yet.
+- `docs/SYSTEM_BOUNDARIES.md` §2 **Ranking** row: recorded `ranking_accrue_standings` + the
+  `ranking_score_delta` helper as the standings writer, and added the concrete **Ranking → Reward
+  (`reward_grants` read)** DOWNWARD edge — the FIRST realized cross-system read.
+- `docs/SYSTEM_BOUNDARIES.md` §2 notes: added a **"Ranking read-edge is acyclic"** note (the "Trade
+  fan-out is acyclic" precedent — the home for dark-phase cross-system edge facts, since §3 is the
+  fixed MVP-5-entry-points snapshot the activity securing processors also don't touch): confirms
+  Ranking → Reward + Ranking → Reference/Config are the only edges, both DOWNWARD reads; Reward never
+  reads Ranking; nothing calls into Ranking → **ACYCLIC**, one sole-writer per Ranking table.
+- `docs/DEV_LOG.md`: this entry.
+
+**Human gates preserved.** `ranking_enabled` stays `'false'` (no flag flipped; the writer's dark gate
+folds nothing today); every Phase 11–17 flag remains `'false'`. No existing migration edited
+(`0001–0129` untouched, forward-only). No `game_config` value changed. Backend-only (no
+`src/features/**`). No player wrapper / no client execute grant. No cron scheduled. No
+merge/deploy/production apply/workflow dispatch. Surface is inert: dark-gated + service-role-only, no
+caller/schedule exists.
+
+---
+
 ## 2026-07-04 — RANKING-P17 SLICE 2 — the season-management writer `ranking_season_open` (the SOLE writer of `ranking_seasons`; migration `0129`)
 
 **Request.** Phase 17 Slice 2: ONE new forward-only migration (the season-lifecycle writer) +
