@@ -14,6 +14,7 @@ import { TRADE_MARKET_ENABLED } from './osnReleaseGates'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { MiningPanel } from '../mining/MiningPanel'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
+import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { ModulesPanel } from '../modules/ModulesPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 
@@ -170,6 +171,16 @@ export function GalaxyMapScreen() {
                   everything while dark (fail-closed both sides). */}
               <ModulesPanel
                 lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
+              />
+              {/* CAPTAIN-P15 (dark): assign/unassign the player's captains to their main ship. Mounted here
+                  (like ModulesPanel) because the player's main_ship_id is in scope — captains are assigned to
+                  that ship; the server derives ownership + enforces slots + the settled-safe rule. SERVER-driven
+                  visibility: renders null unless get_my_captain_instances answers ok; while
+                  captain_assignment_enabled is false the server returns captain_assignment_disabled → not
+                  server-lit → null, so today's player experience is byte-unchanged (fail-closed both sides). */}
+              <CaptainsPanel
+                lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
+                mainShipId={mainShip?.main_ship_id ?? null}
               />
               {/* PHASE20-POLISH — dark World Events display (read-only, presentational). SERVER-driven
                   visibility: it renders ONLY when get_world_events returns live events; while

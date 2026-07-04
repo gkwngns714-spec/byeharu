@@ -5,6 +5,73 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — CAPTAIN-P15 POST-AUDIT UI (panel 3 of 4) — the dark `src/features/captains/` assign/unassign screen (frontend-only; no server change)
+
+**Request.** Item (4), panel 3 of 4: build the dark Captains (assign/unassign) screen as a new
+`src/features/captains/` feature, mirroring `src/features/investment/` + `src/features/mining/` (the
+`runGuardedCommand` guarded-submit) and the ModulesPanel per-row Record-keyed idiom, reading ONLY
+`get_my_captain_instances` (0123) and submitting ONLY the existing `assign_captain_to_ship` /
+`unassign_captain_from_ship` commands (0120/0121) — NO new server authority. Frontend-only.
+
+**Files added (3 + a mount edit).**
+- `src/features/captains/captainsTypes.ts` — pure discriminated-union types matching 0123/0120 jsonb
+  exactly. NOTE these envelopes are REASON-keyed (not `code`): `GetMyCaptainInstancesResult =
+  {ok:true, captains?: CaptainInstance[]} | {ok:false, reason?}` with `CaptainInstance` = {instance_id,
+  captain_type_id, name, specialization, stats_json, main_ship_id (assigned ship | null), created_at};
+  `AssignCaptainResult` / `UnassignCaptainResult = {ok:true, action, captain_instance_id, main_ship_id,
+  idempotent_replay?} | {ok:false, reason?, message?}`. Plus `captainCommandErrorMessage(res)` — prefers
+  the server `message`, else maps the enumerated `reason` (mirrors `miningExtractErrorMessage`).
+- `src/features/captains/captainsApi.ts` — thin `supabase.rpc` wrappers `getMyCaptainInstances`,
+  `assignCaptainToShip(requestId, captainInstanceId, mainShipId)`, `unassignCaptainFromShip(requestId,
+  captainInstanceId)`, each catching transport errors → fail-closed. request_id passed as a
+  `crypto.randomUUID()` STRING (the wrapper param is TEXT).
+- `src/features/captains/CaptainsPanel.tsx` — dark, server-driven roster panel (props `mainShipId`,
+  `lifecycleKey`): renders `null` unless `isServerLit(roster)`; when lit shows each captain (name,
+  specialization, key stats from `stats_json`) with its assignment state and ONE per-row action — an
+  unassigned captain shows "Assign to ship" (guarded behind `mainShipId != null`), an assigned captain
+  shows "Unassign" — both via `runGuardedCommand` with a per-captain key (the ModulesPanel Record-keyed
+  `pending`/`rowNote` idiom), a fresh `crypto.randomUUID()` per submit, refreshing on success and showing
+  `captainCommandErrorMessage` on failure. `data-testid="captains-panel"`.
+- Mounted `<CaptainsPanel/>` in `src/features/map/GalaxyMapScreen.tsx` after `ModulesPanel`.
+
+**Enumerated REAL client `reason` codes (read from 0120 + 0121 — not invented).** The
+`captain_command_client_envelope` mapper (0121) + the wrapper gates can return, to the client:
+`captain_assignment_disabled` (the dark visibility signal, no message), `not_authenticated`,
+`invalid_request` (the internal `invalid_request_id` is mapped to this), `ship_not_settled` (the 0121
+settled-safe rule), `captain_not_owned`, `ship_not_owned`, `already_assigned`, `captain_slots_full`,
+`not_assigned`, and the `unavailable` fallback. Every non-dark failure carries a server `message`, which
+the decorator prefers.
+
+**Fail-closed logic.** Visibility is 100% server-driven — NO client flag constant. While
+`captain_assignment_enabled='false'` `get_my_captain_instances` returns
+`{ok:false, reason:'captain_assignment_disabled'}` → `isServerLit(roster)` false → the panel returns
+`null`. Transport errors collapse to `{ok:false}` the same way. The commands are also server-rejected
+while dark; the UI is never the control.
+
+**Per-row assign/unassign wiring.** Each captain row keys its own `pending`/`rowNote` by `instance_id`
+(the ModulesPanel `Record<string, …>` idiom). Assign submits `assignCaptainToShip(crypto.randomUUID(),
+instance_id, mainShipId)`; Unassign submits `unassignCaptainFromShip(crypto.randomUUID(), instance_id)`.
+The server stays authoritative on ownership / slot cap / the settled-safe rule; the panel just reflects
+the roster and surfaces the reason on failure.
+
+**Mount point + rationale.** `GalaxyMapScreen`, immediately after `ModulesPanel` — the player's
+`mainShip?.main_ship_id` is already in scope there (captains are assigned to that ship). Non-spatial like
+Modules, so it sits at `left-[50rem]` in the bottom-left overlay row (after exploration/mining/modules),
+overlapping none. Renders `null` while dark, so production is byte-unchanged.
+
+**Build.** `npm run build` (`tsc -b && vite build`) GREEN — no type or build errors (the >500 kB
+chunk-size note is a pre-existing vite advisory, unrelated).
+
+**Boundaries.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — FRONTEND-ONLY: no table, writer, RPC, or
+cross-system edge. It consumes the existing 0120/0121/0123 surface already recorded in the §2 Captain
+contract; a read/command UI consumer adds nothing to the ownership matrix or call graph.
+
+**Preserved human gates.** `captain_assignment_enabled` stays `'false'` (dark) — the panel is
+server-rejected and renders null; no flag flipped, no migration/RPC/server-file changed, no new
+authority, nothing merged/deployed. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — LOCATION-INVEST-P18 POST-AUDIT UI (panel 2 of 4) — the dark `src/features/investment/` Port Investment screen (frontend-only; no server change)
 
 **Request.** Item (4), panel 2 of 4: build the dark Port Investment screen as a new
