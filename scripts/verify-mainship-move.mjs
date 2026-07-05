@@ -57,6 +57,9 @@ async function newUser(tag) {
 }
 
 let origScale, origMin, origSend, flagTouched = false
+// Section 12 (item 6A): OSN flags captured up-front, toggled ONLY inside that section (established
+// capture/restore verifier pattern — same as the send flag), restored in finally.
+let origSpaceMv, origCoord
 const createdUserIds = []
 
 async function main() {
@@ -65,6 +68,8 @@ async function main() {
   origScale = await cfgVal('travel_scale')
   origMin   = await cfgVal('min_travel_seconds')
   origSend  = await cfgVal('mainship_send_enabled')   // capture original BEFORE any flag write
+  origSpaceMv = await cfgVal('mainship_space_movement_enabled')
+  origCoord   = await cfgVal('mainship_coordinate_travel_enabled')
   await setCfg('travel_scale', 0.001)
   await setCfg('min_travel_seconds', 2)
   await setCfg('mainship_send_enabled', true); flagTouched = true
@@ -208,6 +213,78 @@ async function main() {
         ? ok('11g. post-arrival stop is a no-op (already_settled)') : bad('11g. post-arrival', JSON.stringify(stop3))
     }
   }
+
+  // ── 12. on-demand OSN arrival settle (UX-CLEANUP item 6A, migration 0150) ──────────────────────────
+  {
+    // Deployment probe: SKIP loudly until 0150 is applied, exactly like section 11's probe.
+    const probe = await u.client.rpc('command_main_ship_settle_arrival', { p_main_ship_id: null })
+    if (probe.error && /could not find|does not exist|schema cache/i.test(probe.error.message)) {
+      console.log('  ⤳ 12. SKIPPED — command_main_ship_settle_arrival not deployed (apply migration 0150, then re-run)')
+    } else {
+      // OSN movement flag on for this section (captured above; restored in finally — live env: no-op).
+      await setCfg('mainship_space_movement_enabled', true)
+      await setCfg('min_travel_seconds', 20) // long enough to observe not_due; short enough to complete
+
+      const u3 = await newUser('c')
+      await poll(async () => (await u3.client.from('bases').select('id').limit(1).maybeSingle()).data, { timeoutMs: 20000, intervalMs: 1500 })
+      const { data: comm, error: cErr } = await u3.client.rpc('commission_first_main_ship', {})
+      if (cErr || comm?.ok !== true) die(`12: commission failed: ${cErr?.message ?? JSON.stringify(comm)}`)
+      const ship3 = (await admin.from('main_ship_instances').select('main_ship_id').eq('player_id', u3.userId).maybeSingle()).data?.main_ship_id
+      if (!ship3) die('12: no commissioned ship')
+
+      // Destination = the server's own eligibility projection (requires the starter ports revealed).
+      const { data: rdy } = await u3.client.rpc('get_osn_movement_readiness', {})
+      const dest = (rdy?.eligible_destination_ids ?? [])[0]
+      if (!dest) die('12: no eligible OSN destination (starter ports revealed? ship docked?)')
+      const { data: mv3, error: mErr3 } = await u3.client.rpc('command_main_ship_space_move_to_location',
+        { p_location: dest, p_request_id: crypto.randomUUID(), p_main_ship_id: ship3 })
+      if (mErr3 || mv3?.ok !== true) die(`12: port move failed: ${mErr3?.message ?? JSON.stringify(mv3)}`)
+
+      // 12a. not due yet → safe no-op.
+      const early = (await u3.client.rpc('command_main_ship_settle_arrival', { p_main_ship_id: ship3 })).data
+      early?.ok === true && early?.settled === false && early?.reason === 'not_due'
+        ? ok('12a. not-due settle is a safe no-op (not_due)') : bad('12a. not_due', JSON.stringify(early))
+
+      // 12b. the moment it is due, the RPC settles it (docks) — or the cron won the race (still exactly-once).
+      await sleep(Math.max(0, new Date(mv3.arrive_at).getTime() - Date.now()) + 400)
+      const t0 = Date.now()
+      const settle = (await u3.client.rpc('command_main_ship_settle_arrival', { p_main_ship_id: ship3 })).data
+      if (settle?.ok === true && settle?.settled === true && settle?.outcome === 'docked') {
+        ok(`12b. due location movement settled ON DEMAND (docked ${Date.now() - t0}ms after the call)`)
+      } else if (settle?.ok === true && settle?.settled === false && settle?.reason === 'already_settled') {
+        ok('12b. due location movement already settled (cron won the race — still exactly-once)')
+      } else { bad('12b. settle', JSON.stringify(settle)) }
+      const row3 = (await admin.from('main_ship_instances').select('spatial_state,status').eq('main_ship_id', ship3).maybeSingle()).data
+      row3?.spatial_state === 'at_location' ? ok('12c. ship canonically docked (at_location)') : bad('12c. state', JSON.stringify(row3))
+
+      // 12d. repeat call → idempotent no-op.
+      const again = (await u3.client.rpc('command_main_ship_settle_arrival', { p_main_ship_id: ship3 })).data
+      again?.ok === true && again?.settled === false && again?.reason === 'already_settled'
+        ? ok('12d. repeat settle is a no-op (already_settled)') : bad('12d. repeat', JSON.stringify(again))
+
+      // 12e/f. SPACE-kind settle. The coordinate flag gates INITIATION only (settlement is
+      // flag-independent, the OSN-4 in-flight-safety principle), so the dark gate is re-restored within
+      // ~a second of issuing the one test move (capture/restore, minimal window).
+      await setCfg('mainship_coordinate_travel_enabled', true)
+      const { data: smv, error: smErr } = await u3.client.rpc('command_main_ship_space_move',
+        { p_target_x: 5, p_target_y: 5, p_request_id: crypto.randomUUID() })
+      await setCfg('mainship_coordinate_travel_enabled', origCoord ?? false) // restore the dark gate immediately
+      if (smErr || smv?.ok !== true) {
+        bad('12e. coordinate move for the space-settle case', smErr?.message ?? JSON.stringify(smv))
+      } else {
+        const arrive2 = (await admin.from('main_ship_space_movements').select('arrive_at').eq('id', smv.movement_id).maybeSingle()).data?.arrive_at
+        await sleep(Math.max(0, new Date(arrive2 ?? 0).getTime() - Date.now()) + 400)
+        const s2 = (await u3.client.rpc('command_main_ship_settle_arrival', { p_main_ship_id: ship3 })).data
+        if (s2?.ok === true && s2?.settled === true && s2?.outcome === 'arrived') {
+          ok('12e. due space movement settled ON DEMAND (arrived in space)')
+        } else if (s2?.ok === true && s2?.settled === false && s2?.reason === 'already_settled') {
+          ok('12e. due space movement already settled (cron won the race — still exactly-once)')
+        } else { bad('12e. space settle', JSON.stringify(s2)) }
+        const row4 = (await admin.from('main_ship_instances').select('spatial_state').eq('main_ship_id', ship3).maybeSingle()).data
+        row4?.spatial_state === 'in_space' ? ok('12f. ship settled in_space') : bad('12f. in_space', JSON.stringify(row4))
+      }
+    }
+  }
 }
 
 main()
@@ -219,7 +296,8 @@ main()
       admin, createdUserIds,
       flag: { key: 'mainship_send_enabled', original: origSend, touched: flagTouched },
     })
-    for (const [k, v] of [['travel_scale', origScale], ['min_travel_seconds', origMin]]) {
+    for (const [k, v] of [['travel_scale', origScale], ['min_travel_seconds', origMin],
+                          ['mainship_space_movement_enabled', origSpaceMv], ['mainship_coordinate_travel_enabled', origCoord]]) {
       if (v === undefined) continue
       try { const { error } = await setCfg(k, v); if (error) failures.push(`restore ${k}: ${error.message}`) }
       catch (e) { failures.push(`restore ${k}: ${e?.message ?? String(e)}`) }

@@ -127,6 +127,20 @@ server-side functions — **never** by directly changing another system's tables
 > answers only whether that ship is settled. The exploration/mining commands deliberately do NOT consume it —
 > their accepted state is `in_space` (they are open-space actions), a different rule.
 
+> **On-demand OSN arrival settle.** `command_main_ship_settle_arrival(ship?)` (0150 — UX-CLEANUP item 6A;
+> authenticated, gated on the EXISTING `mainship_space_movement_enabled`) lets the owner settle their OWN
+> due `main_ship_space_movements` row immediately instead of waiting for the 30s
+> `process-mainship-space-arrivals` cron (which is UNCHANGED and remains the backstop). It adds NO writer
+> and NO settlement logic: after the §2.5 ownership resolver (`mainship_resolve_owned_ship`) it mirrors the
+> cron's claim sequence verbatim — SKIP-LOCKED `mainship_space_lock_context` (contention → `busy`, the cron
+> wins; never blocks), coherent `in_transit` validate, cross-domain exclusion, movement re-read under lock
+> (`status='moving' AND due`), full fleet-linkage check — then invokes the cron's OWN primitives
+> (`mainship_space_dock_at_location` / `mainship_space_settle_space_arrival`), whose `status='moving'`
+> guards make a cron/on-demand race exactly-once (loser no-ops as `already_settled`). Not-due / no-movement
+> calls are safe no-ops. No reward/spend path exists to re-enter (OSN settlement writes only
+> movement/fleet/ship/presence state). The client fires it once per movement id at `arrive_at`
+> (`useSettleDueArrival` due-trigger); poll cadences and the cron are untouched.
+
 > **Trade fan-out is acyclic.** Trade Market → {Wallet, Trade Cargo}, Trade Market → Main Ship (read-only, via
 > `mainship_resolve_docked_location`), and Main Ship → Wallet are all one-directional DOWNWARD edges. Wallet and
 > Trade Cargo are leaves — each writes only its own table and calls nothing above it. (The Trade Market →

@@ -5,6 +5,69 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 6, part A) — on-demand OSN arrival settlement (migration 0150 + client due-trigger)
+
+**Request.** Per the diagnosis §C: a due OSN movement waits up to ~30s of
+`process-mainship-space-arrivals` cron (0058:129) plus a 3–4s poll before the player sees the ship settle
+(~34s worst case, ship visibly floating "arrived but not settled"). Add a server-authoritative, idempotent
+on-demand settle that reuses the cron's exact primitives — no duplicated settlement body, no cron/poll
+cadence changes.
+
+**Internals confirmed first (citations).** Current processor body = 0064:95-178: non-locking due scan
+(112-118) → SKIP-LOCKED ship claim via `mainship_space_lock_context(ship, true)` (120; 0056:37-44 returns
+'skipped' on contention) → coherent `in_transit` validate (126-131) → cross-domain exclusion (134-139) →
+movement re-read under lock, still `status='moving'` AND due, + full fleet-linkage check (142-160) →
+primitives: `target_kind='location'` → `mainship_space_dock_at_location` (0061; current body 0067 §E1 —
+returns docked:true, or docked:false = deterministic TERMINAL settlement) else
+`mainship_space_settle_space_arrival` with ONE captured timestamp (0064:43-92). Both primitives guard
+every write with `… and status='moving'`. Ownership resolution incl. sole-ship shim =
+`mainship_resolve_owned_ship` (0081:26-54). Every OSN command gates on
+`mainship_space_movement_enabled` (0083:127). OSN travel time uses the same `travel_scale` /
+`min_travel_seconds` config as legacy (0067 core).
+
+**Migration `20260618000150_osn_settle_arrival_on_demand.sql`** — ONE authenticated RPC
+`command_main_ship_settle_arrival(p_main_ship_id default null)` (SECURITY DEFINER, `search_path=public`;
+revoke public/anon, grant authenticated). Gate = the SAME existing `mainship_space_movement_enabled` (no
+new flag, no flip; dark envs reject `feature_disabled` before any read). Body mirrors the cron's claim
+sequence VERBATIM for the caller's own ship, then invokes the cron's OWN primitives — zero settlement
+logic duplicated. **Idempotent/race-safe by state, no receipts** (settling grants nothing — it advances an
+inevitable transition): SKIP-LOCKED claim → contention returns `{settled:false, reason:'busy'}` (the cron
+wins, never blocks); the primitives' `status='moving'` guards make a cron/on-demand race exactly-once
+(loser observes not-moving → `already_settled`); not-due → `not_due` no-op; settled/idle ship →
+`already_settled`/`no_active_movement`; any linkage mismatch → frozen-failure `incoherent_state`, touching
+nothing. **No reward/spend re-entry exists**: OSN settlement writes only movement/fleet/ship/presence
+state (rewards ride LEGACY fleet_movements only). The cron stays UNCHANGED at 30s as the backstop. NOT
+applied to any DB.
+
+**Client due-trigger (no new poll loop, no interval changes).** `settleArrival.ts` (pure): RPC literal,
+fail-closed envelope parser, `computeSettleDelayMs` (0 when due; exact remaining delay otherwise; null =
+nothing to schedule — the cron backstops). `useSettleDueArrival` (hook): arms ONE timer at `arrive_at`
+(+150ms so the server-side due check is already true), fires the RPC ONCE per movement id (ref-guard, the
+existing stop/recall idiom), then `refresh()`; effect deps are the movement's PRIMITIVE fields so the 3–4s
+polls never reschedule it. Wired in `GalaxyMapScreen` (where the OSN movement is already in scope);
+`mainshipApi.commandMainShipSettleArrival` is the thin §2.5 wrapper. Perceived settle latency drops from
+~34s worst case to roughly the RPC round-trip after `arrive_at`.
+
+**Tests.** `tests/settleArrival.spec.ts` (+ `verify:osn:settle` script): RPC-name pin, envelope parsing
+(all settled outcomes / all no-op reasons / rejection passthrough / malformed fails closed — never a
+fabricated settlement), and the due-trigger timing truth table. `scripts/verify-mainship-move.mjs` §12
+(same harness, probe-SKIPs until 0150 is applied): not-due no-op → due location move settles ON DEMAND
+(docks; cron-race tolerated as `already_settled` — still exactly-once) → ship canonically `at_location` →
+repeat call `already_settled` → due SPACE move settles `arrived`/`in_space`. Flag handling in §12 follows
+the script's established capture/restore pattern (send flag precedent); the DARK
+`mainship_coordinate_travel_enabled` gate is restored within ~a second of issuing the one test move —
+possible because that flag gates INITIATION only (settlement is flag-independent, the OSN-4 in-flight
+principle). Note: §12 runs only when the human applies 0150 and executes the script.
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md`: new "On-demand OSN arrival settle" blockquote (the doc's
+established OSN-note idiom, beside the geometry/settled-safe leaf notes) — no new writer, no new table,
+call graph unchanged/acyclic. This entry added.
+
+**Verify (real runs).** `npm run build` green; `verify:osn:settle` green; `verify:m3` green — results in
+the step report. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 3) — consistent in-transit "stop" for LEGACY main-ship moves (migration 0149 + shared stop UI reuse)
 
 **Request.** Per the movement→arrival→dock diagnosis: the stop system existed only in the OSN

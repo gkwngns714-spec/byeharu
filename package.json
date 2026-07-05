@@ -20,6 +20,7 @@
     "verify:osn:s6b3": "playwright test devFixedSpacePreview.spec.ts",
     "verify:osn:s6c": "playwright test spaceMoveCommand.spec.ts spaceMoveTarget.spec.ts",
     "verify:osn:osn4": "playwright test spaceStopCommand.spec.ts",
+    "verify:osn:settle": "playwright test settleArrival.spec.ts",
     "verify:osn:port": "playwright test osnReadiness.spec.ts portMoveCommand.spec.ts",
     "verify:portentry": "playwright test portEntry.spec.ts",
     "verify:osn:s6b-route": "playwright test spaceRouteModel.spec.ts spaceRouteLine.spec.ts galaxyShipLayer.spec.ts",

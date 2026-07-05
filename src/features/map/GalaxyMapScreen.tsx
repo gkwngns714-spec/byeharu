@@ -8,6 +8,7 @@ import { PortNavPanel } from './PortNavPanel'
 import { SpaceStopControls } from './SpaceStopControls'
 import { isActiveLegacyOutboundTransit } from './spaceStopCommand'
 import { useLegacyStopTransitCommand } from './useSpaceStopCommand'
+import { useSettleDueArrival } from './useSettleDueArrival'
 import { DockServicesPanel } from './DockServicesPanel'
 import { MarketPanel } from './MarketPanel'
 import { ShipSwitcher } from './ShipSwitcher'
@@ -53,6 +54,15 @@ export function GalaxyMapScreen() {
     missionType: legacyMove?.mission_type,
   })
   const legacyStop = useLegacyStopTransitCommand(inLegacyOutboundTransit ? (mainShipFleet?.id ?? null) : null)
+
+  // UX-CLEANUP item 6 (part A) — on-demand OSN arrival settle: the moment the ship's active OSN movement
+  // is due, fire command_main_ship_settle_arrival once (server re-validates under the cron's locks; the
+  // 30s cron stays the backstop) and refresh — the ship settles in ~a second instead of up to ~34s.
+  useSettleDueArrival({
+    mainShipId: mainShip?.main_ship_id ?? null,
+    movement: mainShipSpaceMovement,
+    onSettled: () => void refresh(),
+  })
 
   return (
     <div data-testid="galaxy-map-screen" className="flex h-[100dvh] flex-col bg-slate-950 text-slate-100">

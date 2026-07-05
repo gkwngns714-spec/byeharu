@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase'
 import { SPACE_MOVE_RPC, buildSpaceMoveRpcArgs, type SpaceMoveResult } from './spaceMoveCommand'
 import { SPACE_STOP_RPC, STOP_TRANSIT_RPC, buildSpaceStopRpcArgs, parseStopTransitResult, type SpaceStopResult } from './spaceStopCommand'
+import { SETTLE_ARRIVAL_RPC, parseSettleArrivalResult, type SettleArrivalResult } from './settleArrival'
 import { parseOsnReadiness, OSN_NOT_ACTIONABLE, type OsnReadiness } from './osnReadiness'
 import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockServices'
 
@@ -282,6 +283,21 @@ export async function commandMainShipSpaceStop(requestId: string, mainShipId?: s
   const { data, error } = await supabase.rpc(SPACE_STOP_RPC, { ...buildSpaceStopRpcArgs(requestId), p_main_ship_id: mainShipId ?? null })
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceStopResult
+}
+
+// UX-CLEANUP item 6 (part A) — thin client wrapper over the on-demand OSN arrival settle
+// (command_main_ship_settle_arrival, 0150). Sends ONLY the explicit selected/sole main-ship id (§2.5;
+// null → server sole-ship shim). The server re-validates flag/ownership/coherence/due-ness under the
+// arrival cron's own locks and settles via the cron's own primitives — an early/duplicate/raced call is a
+// clean {settled:false} no-op, so this wrapper needs no idempotency key.
+export async function commandMainShipSettleArrival(mainShipId?: string | null): Promise<SettleArrivalResult> {
+  try {
+    const { data, error } = await supabase.rpc(SETTLE_ARRIVAL_RPC, { p_main_ship_id: mainShipId ?? null })
+    if (error) return { ok: false, reason: error.message }
+    return parseSettleArrivalResult(data)
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : 'unavailable' }
+  }
 }
 
 // UX-CLEANUP item 3 — thin client wrapper over the LEGACY transit halt (command_main_ship_stop_transit,
