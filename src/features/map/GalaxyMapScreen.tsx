@@ -55,12 +55,15 @@ export function GalaxyMapScreen() {
   })
   const legacyStop = useLegacyStopTransitCommand(inLegacyOutboundTransit ? (mainShipFleet?.id ?? null) : null)
 
-  // UX-CLEANUP item 6 (part A) — on-demand OSN arrival settle: the moment the ship's active OSN movement
-  // is due, fire command_main_ship_settle_arrival once (server re-validates under the cron's locks; the
-  // 30s cron stays the backstop) and refresh — the ship settles in ~a second instead of up to ~34s.
+  // UX-CLEANUP item 6 — on-demand arrival settles, BOTH families: the moment the ship's active movement
+  // is due (part A: the OSN movement; part B: the legacy main-ship fleet movement — the `legacyMove`
+  // computed above), fire the matching settle RPC once (server re-validates under the crons' locks; the
+  // 30s crons stay the backstop) and refresh — arrivals settle in ~a second instead of up to ~34s.
   useSettleDueArrival({
     mainShipId: mainShip?.main_ship_id ?? null,
     movement: mainShipSpaceMovement,
+    legacyMovement: legacyMove,
+    legacyFleetId: mainShipFleet?.id ?? null,
     onSettled: () => void refresh(),
   })
 

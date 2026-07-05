@@ -285,6 +285,73 @@ async function main() {
       }
     }
   }
+
+  // ── 13. on-demand LEGACY arrival settle (UX-CLEANUP item 6B, migration 0151) ───────────────────────
+  {
+    // Deployment probe: SKIP loudly until 0151 is applied, the §11/§12 idiom.
+    const probe = await u.client.rpc('command_main_ship_settle_arrival_legacy', { p_fleet: null })
+    if (probe.error && /could not find|does not exist|schema cache/i.test(probe.error.message)) {
+      console.log('  ⤳ 13. SKIPPED — command_main_ship_settle_arrival_legacy not deployed (apply migration 0151, then re-run)')
+    } else {
+      await setCfg('min_travel_seconds', 20) // long enough to observe not_due; short enough to complete
+      const u4 = await newUser('d')
+      const base4 = await poll(async () => (await u4.client.from('bases').select('id').limit(1).maybeSingle()).data, { timeoutMs: 20000, intervalMs: 1500 })
+      await admin.rpc('ensure_main_ship_for_player', { p_player: u4.userId })
+      const ship4 = (await admin.from('main_ship_instances').select('main_ship_id').eq('player_id', u4.userId).maybeSingle()).data?.main_ship_id
+      if (!ship4) die('13: no commissioned ship')
+
+      // Outbound: home → A (a non-combat waypoint), settle ON DEMAND to present.
+      const { data: sent4, error: sErr4 } = await u4.client.rpc('send_main_ship_expedition', { p_ships: [ship4], p_location: A.id })
+      if (sErr4) die(`13: send failed: ${sErr4.message}`)
+      const fleet4 = sent4.fleet_id
+      const early4 = (await u4.client.rpc('command_main_ship_settle_arrival_legacy', { p_fleet: fleet4 })).data
+      early4?.ok === true && early4?.settled === false && early4?.reason === 'not_due'
+        ? ok('13a. not-due settle is a safe no-op (not_due)') : bad('13a. not_due', JSON.stringify(early4))
+      await sleep(Math.max(0, new Date(sent4.arrive_at).getTime() - Date.now()) + 400)
+      const t13 = Date.now()
+      const s4 = (await u4.client.rpc('command_main_ship_settle_arrival_legacy', { p_fleet: fleet4 })).data
+      if (s4?.ok === true && s4?.settled === true && s4?.outcome === 'present') {
+        ok(`13b. due outbound arrival settled ON DEMAND (present ${Date.now() - t13}ms after the call)`)
+      } else if (s4?.ok === true && s4?.settled === false && s4?.reason === 'already_settled') {
+        ok('13b. due outbound arrival already settled (cron won the race — still exactly-once)')
+      } else { bad('13b. settle', JSON.stringify(s4)) }
+      const f4 = await fleetRow(fleet4)
+      f4?.status === 'present' && f4?.current_location_id === A.id
+        ? ok('13c. fleet present at the destination') : bad('13c. present', JSON.stringify(f4))
+      const rep4 = (await u4.client.rpc('command_main_ship_settle_arrival_legacy', { p_fleet: fleet4 })).data
+      rep4?.ok === true && rep4?.settled === false && rep4?.reason === 'already_settled'
+        ? ok('13d. repeat settle is a no-op (already_settled)') : bad('13d. repeat', JSON.stringify(rep4))
+
+      // Return leg: recall home, settle ON DEMAND to completed.
+      const { data: ret4, error: rErr4 } = await u4.client.rpc('request_main_ship_return', { p_fleet: fleet4 })
+      if (rErr4) die(`13: return failed: ${rErr4.message}`)
+      const retArrive = (await admin.from('fleet_movements').select('arrive_at').eq('id', ret4.return_movement_id).maybeSingle()).data?.arrive_at
+      await sleep(Math.max(0, new Date(retArrive ?? 0).getTime() - Date.now()) + 400)
+      const s5 = (await u4.client.rpc('command_main_ship_settle_arrival_legacy', { p_fleet: fleet4 })).data
+      if (s5?.ok === true && s5?.settled === true && s5?.outcome === 'completed') {
+        ok('13e. due return_home settled ON DEMAND (completed home)')
+      } else if (s5?.ok === true && s5?.settled === false && s5?.reason === 'already_settled') {
+        ok('13e. due return_home already settled (cron won the race — still exactly-once)')
+      } else { bad('13e. return settle', JSON.stringify(s5)) }
+      const f5 = await fleetRow(fleet4)
+      f5?.status === 'completed' ? ok('13f. fleet completed at home') : bad('13f. completed', JSON.stringify(f5))
+
+      // Refusal: a NON-main-ship (unit) fleet — also a combat target — must be refused by the on-demand path.
+      if (combat && base4) {
+        const unitType = (await admin.from('base_units').select('unit_type_id').eq('base_id', base4.id).gt('quantity', 0).limit(1).maybeSingle()).data?.unit_type_id
+        if (unitType) {
+          const { data: disp, error: dErr } = await u4.client.rpc('send_fleet_to_location',
+            { p_base: base4.id, p_location: combat.id, p_units: [{ unit_type_id: unitType, quantity: 1 }] })
+          if (dErr) { bad('13g. dispatch for the refusal case', dErr.message) }
+          else {
+            const ref = (await u4.client.rpc('command_main_ship_settle_arrival_legacy', { p_fleet: disp.fleet_id })).data
+            ref?.ok === false && ref?.reason === 'not_main_ship_fleet'
+              ? ok('13g. non-main-ship (combat-target) fleet refused (not_main_ship_fleet)') : bad('13g. refusal', JSON.stringify(ref))
+          }
+        } else { bad('13g. refusal setup', 'no base units available') }
+      }
+    }
+  }
 }
 
 main()

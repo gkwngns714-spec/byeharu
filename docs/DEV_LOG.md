@@ -5,6 +5,77 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 6, part B) — on-demand LEGACY main-ship arrival settlement (migration 0151: helper extraction + RPC + unified client due-trigger)
+
+**Request.** The legacy first-trip arrival (MainShipCommand home→port/waypoint, and every return leg)
+still waits up to ~30s of `process-fleet-movements` cron (0011) + a 3–4s poll. Highest-risk slice (it
+touches the core legacy movement cron): extract the cron's per-movement settle into ONE shared helper both
+the cron and a new narrow RPC call — no second settlement copy, combat path untouched, spine proven green.
+
+**Internals confirmed first (citations).** The CURRENT `process_fleet_movements` body is **0096** (NOT
+0030 — 0096 re-created it for the activity-agnostic `reward_source_type` deposit): due scan
+`status='moving' and arrive_at<=now()` **FOR UPDATE SKIP LOCKED** (movement rows first, fleets updated
+after) → per-row: location target → arrived + `fleet_set_present` + `presence_create(activity)` (combat
+init is NOT a cron branch — it lives downstream in `activity_start`, 0008:52/0018, which routes
+`hunt_pirates` → Combat); base target → arrived + unit merge + `fleet_complete` (requires
+`status='returning'`, 0006:163) + reward deposit ONLY when payload non-empty AND source set; unknown →
+failed. Main-ship legacy movements can never reach the combat/reward parts: sends hard-reject non-'none'
+targets (0050:104/0053:71), the fleets carry zero units, and payload stays '{}'. Main-ship predicate =
+`fleets.main_ship_id is not null` (0050:185-187); gate = `mainship_send_enabled` (0050:73/0053:34).
+
+**Migration `20260618000151_legacy_settle_arrival_on_demand.sql` (3 parts).**
+1. **`movement_settle_arrival(p_movement)`** (internal; revoked from all client roles) — THE extracted
+   per-movement settle: the verbatim 0096 loop body behind a guarded locked re-read
+   (`status='moving' AND arrive_at<=now()` FOR UPDATE — a no-op re-take for the cron, which already holds
+   the lock on a row it proved due (now() is txn-constant); the authoritative claim for the RPC).
+2. **`process_fleet_movements()` re-created** — the scan/locks/count are UNCHANGED; the loop body is now
+   exactly `perform movement_settle_arrival(m.id)`. **Byte-equivalent:** identical writes in identical
+   order, including `presence_create(activity)` (hunt arrivals still enter Combat exactly as before) and
+   the 0096 reward deposit. The combat-triggering path is untouched by construction — it was never a cron
+   branch to begin with.
+3. **`command_main_ship_settle_arrival_legacy(p_fleet default null)`** (SECURITY DEFINER,
+   `search_path=public`; revoke public/anon, grant authenticated) — gate `mainship_send_enabled` (no new
+   flag, no flip) → resolve the fleet (explicit owned id, or the sole in-flight main-ship fleet;
+   fail-closed `ambiguous_fleet` otherwise) → main-ship-only → claim the movement FOR UPDATE SKIP LOCKED
+   (the cron's own lock order ⇒ no deadlock either direction; contention → `{settled:false,
+   reason:'busy'}`, the cron wins, never blocks) → `not_due` when early → **NON-COMBAT SCOPING:** refuses
+   any `activity_type<>'none'` location target (`combat_target_unsupported`) so the on-demand path can
+   NEVER drive combat init (defense-in-depth over the structural unreachability) → settle via the SAME
+   helper. Idempotent by state (no receipts — settling grants nothing): the helper's guard makes a
+   cron-vs-RPC race exactly-once; the loser no-ops `already_settled`. NOT applied to any DB.
+
+**Client (ONE due-trigger for both families — no second loop, no cadence changes).**
+`useSettleDueArrival` refactored around a shared inner `useDueTimer` (one timer at `arrive_at`+150ms, one
+fire per movement id, primitive-field deps so polls never reschedule) and now takes the optional
+`legacyMovement`/`legacyFleetId` pair alongside the OSN movement — part A behavior byte-identical.
+`settleArrival.ts` gains `LEGACY_SETTLE_ARRIVAL_RPC` and the legacy outcomes
+(`present`/`completed`/`failed`) in the shared fail-closed parser;
+`mainshipApi.commandMainShipSettleArrivalLegacy` is the thin wrapper. Wired in `GalaxyMapScreen` (reuses
+the item-3 `legacyMove`) AND in `Dashboard` (the first-trip player waits at the Command Center's
+MainShipPanel countdown; routes are exclusive so only one hook instance is ever mounted; OSN part stays
+inert there).
+
+**Tests.** `tests/settleArrival.spec.ts` extended (legacy RPC pin + legacy outcomes in the parser truth
+table). `scripts/verify-mainship-move.mjs` §13 (same harness, probe-SKIPs until 0151 is applied): not-due
+no-op → due outbound arrival settles ON DEMAND to `present` at the destination (cron race tolerated as
+`already_settled` — still exactly-once) → repeat no-op → due `return_home` settles to `completed` at home
+→ a non-main-ship (combat-target) unit fleet is REFUSED (`not_main_ship_fleet`).
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md`: the §2 Movement row gains `movement_settle_arrival` (the ONE
+settlement body, both callers) + `command_main_ship_settle_arrival_legacy` (full guards), and §3 gains the
+RPC's flow entry + the cron note — Movement remains the SOLE writer of `fleet_movements`, no new table,
+call graph unchanged/acyclic. This entry added.
+
+**Verify (real runs — spine regression proof).** `npm run build` green; `verify:osn:settle` green;
+`verify:m3` **must stay 13/13** and `verify:m4` **must show no new failures vs the recorded 36/40
+baseline** (failing names before: wave pacing · damage-no-loss · wave HP decreasing · not one-shot) —
+results recorded in the step report. Honest scope note: the live DB does not include 0151 (human gate), so
+live m3/m4 exercise the deployed cron unchanged; the extraction's equivalence is proven by the verbatim
+code diff above and asserted end-to-end by §13 the moment the human applies 0151. SAFE FOR HUMAN MERGE
+REVIEW.
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 6, part A) — on-demand OSN arrival settlement (migration 0150 + client due-trigger)
 
 **Request.** Per the diagnosis §C: a due OSN movement waits up to ~30s of

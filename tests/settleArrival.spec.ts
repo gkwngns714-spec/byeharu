@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   SETTLE_ARRIVAL_RPC,
+  LEGACY_SETTLE_ARRIVAL_RPC,
   parseSettleArrivalResult,
   computeSettleDelayMs,
 } from '../src/features/map/settleArrival'
@@ -9,13 +10,15 @@ import {
 // No browser/page/DB. The SERVER (command_main_ship_settle_arrival, 0150) is the sole authority; these
 // prove the client only fires at the right moment and never fabricates a settled state from a bad payload.
 
-test('item 6: the settle RPC name is pinned to the deployed function', () => {
+test('item 6: the settle RPC names are pinned to the deployed functions', () => {
   expect(SETTLE_ARRIVAL_RPC).toBe('command_main_ship_settle_arrival')
+  expect(LEGACY_SETTLE_ARRIVAL_RPC).toBe('command_main_ship_settle_arrival_legacy')
 })
 
 test('item 6: parseSettleArrivalResult accepts exactly the server envelope, fail-closed otherwise', () => {
-  // Settled outcomes (docked / Dock-0 deterministic terminal / in-space arrival).
-  for (const outcome of ['docked', 'terminal', 'arrived']) {
+  // Settled outcomes — OSN (docked / Dock-0 deterministic terminal / in-space arrival) AND
+  // legacy (present at location / completed home / defensive failed).
+  for (const outcome of ['docked', 'terminal', 'arrived', 'present', 'completed', 'failed']) {
     expect(parseSettleArrivalResult({ ok: true, settled: true, outcome })).toEqual({ ok: true, settled: true, outcome })
   }
   // Safe no-ops.

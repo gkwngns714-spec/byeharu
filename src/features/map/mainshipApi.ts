@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase'
 import { SPACE_MOVE_RPC, buildSpaceMoveRpcArgs, type SpaceMoveResult } from './spaceMoveCommand'
 import { SPACE_STOP_RPC, STOP_TRANSIT_RPC, buildSpaceStopRpcArgs, parseStopTransitResult, type SpaceStopResult } from './spaceStopCommand'
-import { SETTLE_ARRIVAL_RPC, parseSettleArrivalResult, type SettleArrivalResult } from './settleArrival'
+import { SETTLE_ARRIVAL_RPC, LEGACY_SETTLE_ARRIVAL_RPC, parseSettleArrivalResult, type SettleArrivalResult } from './settleArrival'
 import { parseOsnReadiness, OSN_NOT_ACTIONABLE, type OsnReadiness } from './osnReadiness'
 import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockServices'
 
@@ -293,6 +293,21 @@ export async function commandMainShipSpaceStop(requestId: string, mainShipId?: s
 export async function commandMainShipSettleArrival(mainShipId?: string | null): Promise<SettleArrivalResult> {
   try {
     const { data, error } = await supabase.rpc(SETTLE_ARRIVAL_RPC, { p_main_ship_id: mainShipId ?? null })
+    if (error) return { ok: false, reason: error.message }
+    return parseSettleArrivalResult(data)
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : 'unavailable' }
+  }
+}
+
+// UX-CLEANUP item 6 (part B) — thin client wrapper over the on-demand LEGACY arrival settle
+// (command_main_ship_settle_arrival_legacy, 0151). Sends ONLY the caller's own in-flight main-ship fleet
+// id (null → server sole-in-flight-fleet resolution, the 0081 fail-closed shape). The server re-validates
+// flag/ownership/main-ship predicate/due-ness and settles via the cron's extracted movement_settle_arrival
+// helper — an early/duplicate/raced call is a clean {settled:false} no-op, so no idempotency key needed.
+export async function commandMainShipSettleArrivalLegacy(fleetId?: string | null): Promise<SettleArrivalResult> {
+  try {
+    const { data, error } = await supabase.rpc(LEGACY_SETTLE_ARRIVAL_RPC, { p_fleet: fleetId ?? null })
     if (error) return { ok: false, reason: error.message }
     return parseSettleArrivalResult(data)
   } catch (e) {

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useGameState } from './useGameState'
+import { useSettleDueArrival } from '../map/useSettleDueArrival'
 import { BasePanel } from '../base/BasePanel'
 import { PortEntryPanel } from '../portentry/PortEntryPanel'
 import { MainShipPanel } from './MainShipPanel'
@@ -23,6 +24,21 @@ export function Dashboard() {
   const combat = useCombat()
   const locName = (id: string | null) =>
     (id && game.locations.find((l) => l.id === id)?.name) || 'unknown'
+
+  // UX-CLEANUP item 6 (part B) — on-demand LEGACY arrival settle from the Command Center too: the
+  // first-trip player usually waits HERE (MainShipPanel countdown), so when the main-ship fleet's
+  // movement is due, settle it immediately instead of waiting on the 30s cron + poll. Same hook as the
+  // Galaxy Map (routes are exclusive — only one instance is ever mounted); OSN movement isn't in this
+  // screen's scope, so part A stays inert here (movement: null).
+  const msFleet = game.fleets.find((f) => f.main_ship_id !== null && (f.status === 'moving' || f.status === 'returning')) ?? null
+  const msMove = msFleet ? (game.movements.find((mv) => mv.fleet_id === msFleet.id && mv.status === 'moving') ?? null) : null
+  useSettleDueArrival({
+    mainShipId: game.mainShip?.ship?.main_ship_id ?? null,
+    movement: null,
+    legacyMovement: msMove,
+    legacyFleetId: msFleet?.id ?? null,
+    onSettled: () => void game.refresh(),
+  })
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">

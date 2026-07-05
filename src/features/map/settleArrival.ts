@@ -7,20 +7,26 @@
 // cron's own primitives — a stale or early client call is a clean {settled:false} no-op, never a mutation.
 
 export const SETTLE_ARRIVAL_RPC = 'command_main_ship_settle_arrival' as const
+// Item 6 part B (0151): the LEGACY-family sibling — settles the caller's due fleet_movements arrival
+// (MainShipCommand trips + return legs) via the cron's extracted movement_settle_arrival helper.
+export const LEGACY_SETTLE_ARRIVAL_RPC = 'command_main_ship_settle_arrival_legacy' as const
 
 // The server's result envelope, mapped fail-closed (anything unrecognized → a safe non-settled error).
+// Outcomes: docked/terminal/arrived = OSN (0150); present/completed/failed = legacy (0151).
 export type SettleArrivalResult =
-  | { ok: true; settled: true; outcome: 'docked' | 'terminal' | 'arrived' }
+  | { ok: true; settled: true; outcome: 'docked' | 'terminal' | 'arrived' | 'present' | 'completed' | 'failed' }
   | { ok: true; settled: false; reason: 'busy' | 'not_due' | 'no_active_movement' | 'already_settled' }
   | { ok: false; reason: string }
+
+const SETTLED_OUTCOMES = ['docked', 'terminal', 'arrived', 'present', 'completed', 'failed'] as const
 
 export function parseSettleArrivalResult(raw: unknown): SettleArrivalResult {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'malformed' }
   const o = raw as Record<string, unknown>
   if (o.ok === true && o.settled === true) {
     const outcome = o.outcome
-    if (outcome === 'docked' || outcome === 'terminal' || outcome === 'arrived') {
-      return { ok: true, settled: true, outcome }
+    if (typeof outcome === 'string' && (SETTLED_OUTCOMES as readonly string[]).includes(outcome)) {
+      return { ok: true, settled: true, outcome: outcome as (typeof SETTLED_OUTCOMES)[number] }
     }
     return { ok: false, reason: 'malformed' }
   }
