@@ -93,16 +93,16 @@ export function RankingPanel({
   return (
     <div
       data-testid="ranking-panel"
-      className="rounded-xl border border-indigo-500/30 bg-slate-900/60 p-4 text-slate-100"
+      className="rounded-card border border-accent/20 bg-surface p-4 text-ink shadow-card"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-medium text-indigo-300">Leaderboard</p>
+        <p className="text-sm font-medium text-accent">Leaderboard</p>
         <div className="flex items-center gap-2">
           <select
             data-testid="ranking-season-select"
             value={seasonId ?? ''}
             onChange={(e) => setSeasonId(e.target.value)}
-            className="rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-slate-200"
+            className="rounded border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
           >
             {litSeasons.map((s) => (
               <option key={s.season_id} value={s.season_id}>
@@ -115,7 +115,7 @@ export function RankingPanel({
             data-testid="ranking-dimension-select"
             value={dimension}
             onChange={(e) => setDimension(e.target.value as RankingDimension)}
-            className="rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-slate-200"
+            className="rounded border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
           >
             {DIMENSIONS.map((d) => (
               <option key={d} value={d}>
@@ -126,9 +126,9 @@ export function RankingPanel({
         </div>
       </div>
 
-      <ul data-testid="ranking-list" className="mt-3 space-y-1 border-t border-slate-700/60 pt-2">
+      <ul data-testid="ranking-list" className="mt-3 space-y-1 border-t border-edge pt-2">
         {rows.length === 0 ? (
-          <li className="text-xs text-slate-400">No standings yet for this board.</li>
+          <li className="text-xs text-ink-faint">No standings yet for this board.</li>
         ) : (
           rows.map((r) => {
             const isSelf = userId != null && r.player_id === userId
@@ -137,16 +137,16 @@ export function RankingPanel({
                 key={r.player_id}
                 data-testid={`ranking-row-${r.player_id}`}
                 className={`flex items-center justify-between gap-2 rounded px-2 py-1 text-xs ${
-                  isSelf ? 'bg-indigo-500/20 text-indigo-100' : 'text-slate-200'
+                  isSelf ? 'bg-accent/15 text-ink' : 'text-ink-muted'
                 }`}
               >
-                <span className="w-8 shrink-0 tabular-nums text-slate-400">#{r.rank}</span>
+                <span className="w-8 shrink-0 tabular-nums text-ink-faint">#{r.rank}</span>
                 <span className="min-w-0 flex-1 truncate font-mono">
                   {shortId(r.player_id)}
-                  {isSelf && <span className="ml-1 text-indigo-300">(you)</span>}
+                  {isSelf && <span className="ml-1 text-accent">(you)</span>}
                 </span>
                 <span className="shrink-0 tabular-nums">{r.score}</span>
-                <span className="w-10 shrink-0 text-right tabular-nums text-slate-400">{r.events_counted}</span>
+                <span className="w-10 shrink-0 text-right tabular-nums text-ink-faint">{r.events_counted}</span>
               </li>
             )
           })
@@ -158,11 +158,11 @@ export function RankingPanel({
           player is outside the returned top-N. */}
       {userId != null && rows.length > 0 && (
         ownRow ? (
-          <p data-testid="ranking-own-standing" className="mt-2 text-xs text-indigo-300">
+          <p data-testid="ranking-own-standing" className="mt-2 text-xs text-accent">
             Your standing: #{ownRow.rank} · {ownRow.score} pts · {ownRow.events_counted} events
           </p>
         ) : (
-          <p data-testid="ranking-own-standing-unranked" className="mt-2 text-xs text-slate-400">
+          <p data-testid="ranking-own-standing-unranked" className="mt-2 text-xs text-ink-faint">
             Unranked — outside the top {rows.length}.
           </p>
         )

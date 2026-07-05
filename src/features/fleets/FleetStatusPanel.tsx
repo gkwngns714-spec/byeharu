@@ -6,14 +6,15 @@ import type { MapLocation } from '../map/mapTypes'
 import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from './fleetTypes'
 import { requestLeaveLocation } from './fleetApi'
 import { isMainShipFleet } from './fleetGuards'
+import { Card, CardHeader, Badge, Button, Notice, type BadgeTone } from '../../components/ui'
 
-const STATUS_STYLE: Record<string, string> = {
-  moving: 'bg-amber-500/15 text-amber-300',
-  present: 'bg-emerald-500/15 text-emerald-300',
-  returning: 'bg-sky-500/15 text-sky-300',
-  completed: 'bg-white/10 text-white/50',
-  idle: 'bg-white/10 text-white/50',
-  destroyed: 'bg-red-500/15 text-red-300',
+const STATUS_TONE: Record<string, BadgeTone> = {
+  moving: 'warning',
+  present: 'success',
+  returning: 'accent',
+  completed: 'neutral',
+  idle: 'neutral',
+  destroyed: 'danger',
 }
 
 // M6: friendlier lifecycle wording (server status stays the truth).
@@ -85,16 +86,19 @@ export function FleetStatusPanel({
   }
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-      <h2 className="text-lg font-medium">Fleets</h2>
-      <p className="mb-4 text-xs text-white/40">Active expeditions — travel, on-station, and returns.</p>
+    <Card>
+      <CardHeader title="Fleets" subtitle="Active expeditions — travel, on-station, and returns." />
 
-      {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
+      {error && (
+        <Notice tone="danger" className="mb-3">
+          {error}
+        </Notice>
+      )}
 
       {active.length === 0 ? (
-        <p className="text-sm text-white/40">
+        <p className="text-sm text-ink-muted">
           No active expedition.{' '}
-          <Link to="/galaxy" className="text-indigo-300 underline-offset-2 hover:underline">
+          <Link to="/galaxy" className="text-accent underline-offset-2 hover:underline">
             Send your first from the Galaxy Map →
           </Link>
         </p>
@@ -115,20 +119,13 @@ export function FleetStatusPanel({
                 : (PHASE_LABEL[f.status] ?? f.status)
 
             return (
-              <li key={f.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <li key={f.id} className="rounded-lg border border-edge bg-surface-2/60 p-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-white/80">{composition || 'fleet'}</span>
-                  <span
-                    className={
-                      'rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ' +
-                      (STATUS_STYLE[f.status] ?? 'bg-white/10 text-white/50')
-                    }
-                  >
-                    {phaseLabel}
-                  </span>
+                  <span className="text-sm text-ink">{composition || 'fleet'}</span>
+                  <Badge tone={STATUS_TONE[f.status] ?? 'neutral'}>{phaseLabel}</Badge>
                 </div>
 
-                <div className="mt-1 text-xs text-white/45">
+                <div className="mt-1 text-xs text-ink-muted">
                   {f.status === 'moving' &&
                     move &&
                     (() => {
@@ -150,7 +147,7 @@ export function FleetStatusPanel({
                           Returning home ·{' '}
                           {clock ? `arriving in ${clock}` : 'awaiting server confirmation…'}
                           {hasReward && (
-                            <span className="text-amber-300/70"> · 💰 rewards locked (secured on arrival)</span>
+                            <span className="text-warning/80"> · 💰 rewards locked (secured on arrival)</span>
                           )}
                         </>
                       )
@@ -159,18 +156,20 @@ export function FleetStatusPanel({
                 </div>
 
                 {f.status === 'present' && presence && presence.activity_type === 'hunt_pirates' && (
-                  <p className="mt-2 text-xs text-red-300/80">
+                  <p className="mt-2 text-xs text-danger/90">
                     ⚔️ In combat at {locName(f.current_location_id)} — retreat from the combat panel below to bank rewards.
                   </p>
                 )}
                 {f.status === 'present' && presence && presence.activity_type !== 'hunt_pirates' && (
-                  <button
+                  <Button
+                    size="sm"
                     onClick={() => handleLeave(presence.id, f)}
-                    disabled={leavingId === presence.id}
-                    className="mt-2 rounded-md border border-white/15 px-3 py-1 text-xs text-white/80 transition hover:bg-white/10 disabled:opacity-40"
+                    busy={leavingId === presence.id}
+                    busyLabel="Leaving…"
+                    className="mt-2"
                   >
-                    {leavingId === presence.id ? 'Leaving…' : 'Leave & return home'}
-                  </button>
+                    Leave & return home
+                  </Button>
                 )}
               </li>
             )
@@ -182,7 +181,7 @@ export function FleetStatusPanel({
         <div className="mt-4">
           <button
             onClick={() => setShowHistory((s) => !s)}
-            className="text-xs text-white/40 transition hover:text-white/70"
+            className="text-xs text-ink-faint transition hover:text-ink-muted"
           >
             {showHistory ? 'Hide previous run(s)' : `Show ${completed.length} previous run(s)`}
           </button>
@@ -195,10 +194,10 @@ export function FleetStatusPanel({
                 return (
                   <li
                     key={f.id}
-                    className="flex justify-between rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/55"
+                    className="flex justify-between rounded-lg border border-edge bg-surface-2/60 px-3 py-2 text-xs text-ink-muted"
                   >
                     <span>{composition || 'fleet'}</span>
-                    <span className="text-white/40">returned to {formatLocationLabel({ is_home: true })}</span>
+                    <span className="text-ink-faint">returned to {formatLocationLabel({ is_home: true })}</span>
                   </li>
                 )
               })}
@@ -206,6 +205,6 @@ export function FleetStatusPanel({
           )}
         </div>
       )}
-    </section>
+    </Card>
   )
 }

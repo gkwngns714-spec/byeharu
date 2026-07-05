@@ -4,6 +4,7 @@ import { CombatEventLayer } from './CombatEventLayer'
 import { RoundLog } from './RoundLog'
 import { requestRetreat } from './combatApi'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
+import { Card, Button, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
 
 // Display-only combat panel. All values are server-authoritative; the only action
 // is the Retreat request. Shows total + per-unit-type integrity, the pirate wave,
@@ -73,58 +74,65 @@ export function ActiveCombatPanel({
   }
 
   return (
-    <section className="rounded-2xl border border-red-500/20 bg-red-500/[0.04] p-6">
-      <div className="mb-4 flex items-start justify-between">
+    <Card tone="danger">
+      <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-medium text-red-200">⚔️ Combat — {locationName}</h2>
-          <p className="text-sm text-white/45">
-            Wave <span className="text-white/80">{encounter.wave_number}</span> · Danger{' '}
-            <span className="text-white/80">{encounter.danger_level}</span> ·{' '}
-            <span className="text-white/80">{encounter.waves_cleared}</span> waves cleared ·{' '}
-            <span className="text-white/70">
+          <h2 className="text-lg font-semibold text-danger">⚔️ Combat — {locationName}</h2>
+          <p className="text-sm text-ink-muted">
+            Wave <span className="text-ink">{encounter.wave_number}</span> · Danger{' '}
+            <span className="text-ink">{encounter.danger_level}</span> ·{' '}
+            <span className="text-ink">{encounter.waves_cleared}</span> waves cleared ·{' '}
+            <span className="text-ink">
               {retreating ? 'Retreating' : waveCleared ? 'Next wave incoming' : 'In combat'}
             </span>
           </p>
         </div>
-        <button
+        <Button
+          variant="warning"
+          size="sm"
           onClick={handleRetreat}
-          disabled={busy || retreating}
-          className="rounded-lg bg-amber-500/90 px-3 py-1.5 text-sm font-medium text-black transition hover:bg-amber-400 disabled:opacity-50"
+          disabled={retreating}
+          busy={busy}
+          busyLabel="Working…"
         >
-          {retreating ? 'Retreating…' : busy ? 'Working…' : 'Retreat'}
-        </button>
+          {retreating ? 'Retreating…' : 'Retreat'}
+        </Button>
       </div>
 
       {retreating && (
-        <p className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
+        <Notice tone="warning" className="mb-4 text-xs">
           Retreating — fleet breaks away and heads home in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}.
           Warning: it can still take damage until it escapes.
-        </p>
+        </Notice>
       )}
-      {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
+      {error && (
+        <Notice tone="danger" className="mb-3">
+          {error}
+        </Notice>
+      )}
 
       {/* Fleet (total) + pirate wave */}
       <div className="mb-4 space-y-3">
-        <Bar label="Fleet integrity" pct={playerPct} text={`${playerPct.toFixed(0)}% · ${Math.round(encounter.player_integrity_current).toLocaleString()} / ${Math.round(encounter.player_integrity_max).toLocaleString()}`} color="bg-indigo-400" />
+        <Bar label="Fleet integrity" pct={playerPct} text={`${playerPct.toFixed(0)}% · ${Math.round(encounter.player_integrity_current).toLocaleString()} / ${Math.round(encounter.player_integrity_max).toLocaleString()}`} tone="accent" />
         {waveCleared ? (
           <div>
-            <div className="mb-1 text-xs text-white/60">Pirate wave</div>
-            <p className="text-xs text-amber-300/80">
+            <div className="mb-1 text-xs text-ink-muted">Pirate wave</div>
+            <p className="text-xs text-warning/90">
               {incomingIn > 0 ? `Next wave incoming in ${incomingIn}s…` : 'Next wave incoming…'}
             </p>
           </div>
         ) : (
           <Bar label={`Pirate wave ${encounter.wave_number}`} pct={enemyPct}
             text={`${enemyPct.toFixed(0)}% · ${Math.round(encounter.enemy_integrity_current).toLocaleString()} / ${Math.round(encounter.enemy_integrity_max).toLocaleString()}`}
-            color="bg-red-400" />
+            tone="danger" />
         )}
       </div>
 
       {/* Per-unit-type integrity */}
       <div className="mb-4">
-        <h4 className="mb-2 text-[10px] uppercase tracking-wide text-white/35">Fleet units</h4>
+        <SectionLabel>Fleet units</SectionLabel>
         <div className="space-y-2">
-          {units.length === 0 && <p className="text-sm text-white/40">no units</p>}
+          {units.length === 0 && <p className="text-sm text-ink-faint">no units</p>}
           {units.slice().sort((a, b) => a.unit_type_id.localeCompare(b.unit_type_id)).map((u) => {
             const pct = u.hp_max > 0 ? (u.hp_current / u.hp_max) * 100 : 0
             const lost = u.initial_count - u.alive_count
@@ -134,7 +142,7 @@ export function ActiveCombatPanel({
                 label={`${typeName(u.unit_type_id)} — ${u.alive_count}/${u.initial_count} ships${lost > 0 ? ` (${lost} lost)` : ''}`}
                 pct={pct}
                 text={`${pct.toFixed(0)}% · ${Math.round(u.hp_current)}/${Math.round(u.hp_max)} HP`}
-                color={u.alive_count === 0 ? 'bg-white/20' : 'bg-emerald-400'}
+                tone={u.alive_count === 0 ? 'neutral' : 'success'}
               />
             )
           })}
@@ -143,32 +151,32 @@ export function ActiveCombatPanel({
 
       {/* Latest exchange */}
       {latest && (
-        <div className="mb-4 rounded-lg border border-white/10 bg-black/20 p-3 text-sm">
-          <h4 className="mb-1 text-[10px] uppercase tracking-wide text-white/35">Latest exchange (tick {latest.tick_number})</h4>
+        <div className="mb-4 rounded-lg border border-edge bg-surface-2/60 p-3 text-sm">
+          <SectionLabel className="mb-1">Latest exchange (tick {latest.tick_number})</SectionLabel>
           {retreating ? (
             <>
-              <p className="text-amber-200/80">Your fleet is retreating — weapons disengaged.</p>
-              <p className="text-white/70">Pirates dealt <span className="text-red-300">{Math.round(latest.enemy_damage)}</span> damage during disengagement.</p>
+              <p className="text-warning/90">Your fleet is retreating — weapons disengaged.</p>
+              <p className="text-ink-muted">Pirates dealt <span className="text-danger">{Math.round(latest.enemy_damage)}</span> damage during disengagement.</p>
             </>
           ) : (
             <>
-              <p className="text-white/70">You dealt <span className="text-indigo-300">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
-              <p className="text-white/70">Pirates dealt <span className="text-red-300">{Math.round(latest.enemy_damage)}</span> damage.</p>
+              <p className="text-ink-muted">You dealt <span className="text-accent">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
+              <p className="text-ink-muted">Pirates dealt <span className="text-danger">{Math.round(latest.enemy_damage)}</span> damage.</p>
             </>
           )}
-          <p className="text-white/55">{lossText(latest.player_losses_json)}</p>
+          <p className="text-ink-faint">{lossText(latest.player_losses_json)}</p>
         </div>
       )}
 
       <div className="mb-1">
-        <h4 className="mb-2 text-[10px] uppercase tracking-wide text-white/35">
-          Pending rewards {retreating && <span className="text-amber-300/70">(locked)</span>}
-        </h4>
+        <SectionLabel>
+          Pending rewards {retreating && <span className="text-warning/80 normal-case">(locked)</span>}
+        </SectionLabel>
         <p className="text-sm">
-          {rewards.length === 0 ? <span className="text-white/40">none yet</span>
-            : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-white/70">{code}: {amt}</span>)}
+          {rewards.length === 0 ? <span className="text-ink-faint">none yet</span>
+            : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-ink-muted">{code}: {amt}</span>)}
         </p>
-        <p className="mt-1 text-[11px] text-white/35">
+        <p className="mt-1 text-[11px] text-ink-faint">
           {retreating
             ? 'Locked — secured only after your fleet returns to base.'
             : 'Pending — secured only after your fleet returns to base (lost if destroyed).'}
@@ -180,24 +188,21 @@ export function ActiveCombatPanel({
       </div>
 
       <div className="mt-4">
-        <h4 className="mb-2 text-[10px] uppercase tracking-wide text-white/35">Round log</h4>
+        <SectionLabel>Round log</SectionLabel>
         <RoundLog ticks={ticks} unitTypes={unitTypes} limit={12} />
       </div>
-    </section>
+    </Card>
   )
 }
 
-function Bar({ label, pct, text, color }: { label: string; pct: number; text: string; color: string }) {
-  const clamped = Math.max(0, Math.min(100, pct))
+function Bar({ label, pct, text, tone }: { label: string; pct: number; text: string; tone: MeterTone }) {
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between text-xs">
-        <span className="text-white/60">{label}</span>
-        <span className="tabular-nums text-white/45">{text}</span>
+        <span className="text-ink-muted">{label}</span>
+        <span className="font-mono tabular-nums text-ink-faint">{text}</span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded bg-white/10">
-        <div className={`h-full ${color} transition-all duration-300`} style={{ width: `${clamped}%` }} />
-      </div>
+      <Meter pct={pct} tone={tone} />
     </div>
   )
 }

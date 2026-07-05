@@ -38,9 +38,9 @@ function describe(e: CombatEvent): { icon: string; text: string } {
 }
 
 function sideColor(source: string | null) {
-  if (source === 'player') return 'border-l-indigo-400/70'
-  if (source === 'pirate') return 'border-l-red-400/70'
-  return 'border-l-white/30'
+  if (source === 'player') return 'border-l-accent/70'
+  if (source === 'pirate') return 'border-l-danger/70'
+  return 'border-l-edge'
 }
 
 export function CombatEventLayer({ events }: { events: CombatEvent[] }) {
@@ -48,9 +48,9 @@ export function CombatEventLayer({ events }: { events: CombatEvent[] }) {
 
   return (
     <div>
-      <h4 className="mb-2 text-[10px] uppercase tracking-wide text-white/35">Battle feed</h4>
+      <h4 className="mb-2 text-xs uppercase tracking-wide text-ink-faint">Battle feed</h4>
       {recent.length === 0 ? (
-        <p className="text-xs text-white/30">awaiting combat events…</p>
+        <p className="text-xs text-ink-faint">awaiting combat events…</p>
       ) : (
         <ul className="space-y-1">
           {recent.map((e) => {
@@ -58,11 +58,11 @@ export function CombatEventLayer({ events }: { events: CombatEvent[] }) {
             return (
               <li
                 key={e.id}
-                className={`bh-fade-in flex items-center gap-2 border-l-2 ${sideColor(e.source)} bg-black/20 px-2 py-1 text-xs`}
+                className={`bh-fade-in flex items-center gap-2 border-l-2 ${sideColor(e.source)} bg-surface-2/60 px-2 py-1 text-xs`}
               >
                 <span>{d.icon}</span>
-                <span className="text-white/75">{d.text}</span>
-                <span className="ml-auto text-white/25">t{e.tick_number}</span>
+                <span className="text-ink-muted">{d.text}</span>
+                <span className="ml-auto text-ink-faint/70">t{e.tick_number}</span>
               </li>
             )
           })}

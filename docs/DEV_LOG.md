@@ -5,6 +5,55 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 5, slice A) — the ONE shared design system + Command Center conversion (presentational-only)
+
+**Request.** Final goal item, foundation slice: establish the single source of truth for styling (tokens +
+primitives) and prove it by fully converting the first real screen — the Command Center. Presentational
+ONLY: no RPC call, data flow, flag, migration, or `data-testid` changed; other screens untouched (they
+keep the default Tailwind palette until their slices).
+
+**Tokens (`src/index.css` `@theme` — Tailwind v4; the canonical source, documented in-line).** Deep-space
+dark: color layers `app` (#0b1120, near-black blue — never pure black) < `surface` (#131c31) <
+`surface-2` (#1c2742) + border `edge`; text `ink` / `ink-muted` / `ink-faint` (AA on the surfaces); ONE
+interactive accent (sky #38bdf8) + semantic `success`/`warning`/`danger` (light-400 weights, AA on dark;
+each with a `-hover` step so filled buttons run dark-text-on-bright-fill at ~8:1); `--font-sans` (system
+stack) + `--font-mono` (numeric readouts); `--radius-card` (1rem) + `--shadow-card` (soft elevation +
+hairline top highlight). Type conventions recorded (page `text-2xl semibold`, panel `text-lg semibold`,
+body `sm`, metadata `xs`, micro-labels via SectionLabel). `body` now consumes the tokens (the old
+hardcoded `#070b16`/`#e6ecff` removed).
+
+**Primitives (`src/components/ui/` + barrel + README — "screens compose primitives, never re-define
+styles").** Built ONLY what the Command Center consumes (no speculative components):
+`Button` (primary/secondary/ghost/danger/warning · sm/md · busy/busyLabel; `buttonClasses()` for router
+Links), `Card`/`CardHeader` (the panel treatment; `tone` prop for feature identity tints; spreads
+data-testid/aria), `Badge` (semantic status pill), `Meter` (progress/integrity bar), `Notice` (inline
+tinted callout), `SectionLabel`, `PageHeader`. README documents tokens, primitives, conventions, and the
+single-source rule.
+
+**Command Center fully converted (no half-old/half-new).** `Dashboard.tsx` (PageHeader + buttonClasses
+nav + Notice error), `BasePanel`, `ExpeditionLauncher`, `MainShipPanel` (Badge status, Notice warnings,
+warning-variant Repair, Meter progress), `FleetStatusPanel` (STATUS_STYLE class map → semantic
+`STATUS_TONE` Badge map), `ActiveCombatPanel` (danger-tone Card; its local Bar now wraps the shared
+Meter) + its children `CombatEventLayer`/`RoundLog` (token swap), `CombatReportsView`,
+`PortEntryPanel` (the local `CARD` const retired for the Card primitive), and the dark `RankingPanel`
+(incidental token pass — the locked-scope dark-feature styling exception; renders null in production
+regardless). Grep-proven: ZERO old palette literals (`white/*`, `slate-*`, `indigo-*`, `emerald-*`,
+`amber-*`, `rose-*`, `red-*`, `sky-*`) remain in any converted file; every `data-testid` preserved
+(counts re-checked per file); element roles preserved (panels stay `<section>` via Card; the PortEntry
+affordance wrappers keep their outer `<div data-testid="port-entry-panel">`).
+
+**Next slices.** Galaxy map screen, dock/port surfaces, market — each converts to the same primitives;
+add primitives only as those screens need them.
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — confirmed: no table, writer, flag, RPC, or
+cross-system edge changed; this is client presentation only. This entry added.
+
+**Verify.** `npm run build` green; `verify:portentry` (drives the PortEntryPanel affordance logic)
+green; `verify:m2`/`verify:m3` unaffected (backend suites) — results in the step report. SAFE FOR HUMAN
+MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — UX CLEANUP — reconcile the stale `verify:m2` world-count pin (test-only; suite green again, 13/13)
 
 **Request.** `verify:m2` had been red (10/11) since the goal started: its "exactly 5 locations" pin

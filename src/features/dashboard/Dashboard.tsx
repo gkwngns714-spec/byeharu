@@ -11,6 +11,7 @@ import { useCombat } from '../combat/useCombat'
 import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
 import { CombatReportsView } from '../combat/CombatReportsView'
 import { RankingPanel } from '../ranking/RankingPanel'
+import { PageHeader, Notice, buttonClasses } from '../../components/ui'
 
 /**
  * Command Center (home). Composes the M3 feature panels — base, send-fleet, fleet
@@ -42,49 +43,37 @@ export function Dashboard() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
-      <header className="mb-8 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-indigo-200">Byeharu</h1>
-          <p className="text-sm text-white/40">{user?.email}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            to="/galaxy"
-            className="rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-3 py-1.5 text-sm text-indigo-200 transition hover:bg-indigo-500/20"
-          >
-            🗺 Galaxy map
-          </Link>
-          <Link
-            to="/map"
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
-          >
-            List view
-          </Link>
-          <Link
-            to="/reports"
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
-          >
-            Reports
-          </Link>
-          <button
-            onClick={signOut}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title="Byeharu"
+        subtitle={user?.email}
+        actions={
+          <>
+            <Link to="/galaxy" className={buttonClasses('primary', 'sm')}>
+              🗺 Galaxy map
+            </Link>
+            <Link to="/map" className={buttonClasses('ghost', 'sm')}>
+              List view
+            </Link>
+            <Link to="/reports" className={buttonClasses('ghost', 'sm')}>
+              Reports
+            </Link>
+            <button onClick={signOut} className={buttonClasses('ghost', 'sm')}>
+              Sign out
+            </button>
+          </>
+        }
+      />
 
       {game.error && (
-        <div className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">
+        <Notice tone="danger" className="mb-6">
           {game.error}
-        </div>
+        </Notice>
       )}
 
       {game.loading && !game.base ? (
-        <p className="text-white/40">Loading command center…</p>
+        <p className="text-ink-muted">Loading command center…</p>
       ) : !game.base ? (
-        <p className="text-white/40">No base found. Try reloading.</p>
+        <p className="text-ink-muted">No base found. Try reloading.</p>
       ) : (
         <div className="space-y-6">
           <BasePanel

@@ -3,6 +3,7 @@ import type { UnitType } from '../../lib/catalog'
 import type { MapLocation } from '../map/mapTypes'
 import type { Fleet } from '../fleets/fleetTypes'
 import type { CombatReport } from './combatTypes'
+import { Card, CardHeader } from '../../components/ui'
 
 // Player-facing combat history. Three clear phases (no technical wording):
 //   defeat                         → "FLEET DESTROYED"
@@ -32,15 +33,17 @@ export function CombatReportsView({
   }
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-      <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="text-lg font-medium">Combat reports</h2>
-        <Link to="/reports" className="text-xs text-indigo-300 transition hover:text-indigo-200">
-          View all →
-        </Link>
-      </div>
+    <Card>
+      <CardHeader
+        title="Combat reports"
+        aside={
+          <Link to="/reports" className="text-xs text-accent transition hover:text-accent-hover">
+            View all →
+          </Link>
+        }
+      />
       {reports.length === 0 ? (
-        <p className="text-sm text-white/40">No battles fought yet.</p>
+        <p className="text-sm text-ink-muted">No battles fought yet.</p>
       ) : (
         <ul className="space-y-3">
           {reports.slice(0, 8).map((r) => {
@@ -53,42 +56,42 @@ export function CombatReportsView({
             let titleCls: string
             if (!won) {
               title = 'FLEET DESTROYED'
-              titleCls = 'text-red-300'
+              titleCls = 'text-danger'
             } else if (arrived) {
               title = 'RETURN COMPLETE'
-              titleCls = 'text-emerald-300'
+              titleCls = 'text-success'
             } else {
               title = 'RETREAT SUCCESSFUL'
-              titleCls = 'text-amber-300'
+              titleCls = 'text-warning'
             }
 
             return (
-              <li key={r.id} className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm">
+              <li key={r.id} className="rounded-lg border border-edge bg-surface-2/60 p-3 text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="text-white/80">{locName(r.location_id)}</span>
+                  <span className="text-ink">{locName(r.location_id)}</span>
                   <span className={`text-xs font-semibold uppercase ${titleCls}`}>{title}</span>
                 </div>
 
                 {!won ? (
-                  <div className="mt-1 space-y-0.5 text-xs text-white/50">
+                  <div className="mt-1 space-y-0.5 text-xs text-ink-faint">
                     <div>Waves cleared: {r.waves_cleared} · {r.duration_seconds}s</div>
-                    <div>Ships lost: <span className="text-white/75">{ships(r.total_losses_json)}</span></div>
-                    <div className="text-red-300/70">Rewards forfeited — lost with the fleet.</div>
+                    <div>Ships lost: <span className="text-ink-muted">{ships(r.total_losses_json)}</span></div>
+                    <div className="text-danger/80">Rewards forfeited — lost with the fleet.</div>
                   </div>
                 ) : arrived ? (
-                  <div className="mt-1 space-y-0.5 text-xs text-white/50">
-                    <div className="text-emerald-300/80">Fleet returned to base.</div>
-                    <div>Ships recovered: <span className="text-white/75">{ships(r.survivors_json)}</span></div>
-                    <div>Ships lost: <span className="text-white/75">{ships(r.total_losses_json)}</span></div>
-                    <div>Rewards secured: <span className="text-white/75">{metal(r.total_rewards_json)}</span></div>
+                  <div className="mt-1 space-y-0.5 text-xs text-ink-faint">
+                    <div className="text-success/90">Fleet returned to base.</div>
+                    <div>Ships recovered: <span className="text-ink-muted">{ships(r.survivors_json)}</span></div>
+                    <div>Ships lost: <span className="text-ink-muted">{ships(r.total_losses_json)}</span></div>
+                    <div>Rewards secured: <span className="text-ink-muted">{metal(r.total_rewards_json)}</span></div>
                   </div>
                 ) : (
-                  <div className="mt-1 space-y-0.5 text-xs text-white/50">
+                  <div className="mt-1 space-y-0.5 text-xs text-ink-faint">
                     <div>Waves cleared: {r.waves_cleared} · {r.duration_seconds}s</div>
-                    <div>Ships returning: <span className="text-white/75">{ships(r.survivors_json)}</span></div>
-                    <div>Ships lost: <span className="text-white/75">{ships(r.total_losses_json)}</span></div>
-                    <div>Rewards pending: <span className="text-white/75">{metal(r.total_rewards_json)}</span></div>
-                    <div className="text-amber-300/70">Fleet escaped. Rewards will be secured when it reaches base.</div>
+                    <div>Ships returning: <span className="text-ink-muted">{ships(r.survivors_json)}</span></div>
+                    <div>Ships lost: <span className="text-ink-muted">{ships(r.total_losses_json)}</span></div>
+                    <div>Rewards pending: <span className="text-ink-muted">{metal(r.total_rewards_json)}</span></div>
+                    <div className="text-warning/80">Fleet escaped. Rewards will be secured when it reaches base.</div>
                   </div>
                 )}
               </li>
@@ -96,6 +99,6 @@ export function CombatReportsView({
           })}
         </ul>
       )}
-    </section>
+    </Card>
   )
 }
