@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test'
 import {
   SPACE_STOP_RPC,
+  STOP_TRANSIT_RPC,
   buildSpaceStopRpcArgs,
   isActiveCoordinateTransit,
+  isActiveLegacyOutboundTransit,
+  parseStopTransitResult,
   spaceStopErrorMessage,
   createSpaceStopController,
   type SpaceStopResult,
@@ -48,6 +51,43 @@ test('OSN-4: move exists + flag disabled → Stop CTA available, initiation cont
 test('OSN-4: no active coordinate movement → Stop CTA dark', () => {
   expect(isActiveCoordinateTransit({ spatialState: 'home', spaceMovementStatus: undefined, spaceMovementTargetKind: undefined })).toBe(false)
   expect(isActiveCoordinateTransit({ spatialState: 'at_location', spaceMovementStatus: undefined, spaceMovementTargetKind: undefined })).toBe(false)
+})
+
+// ── UX-CLEANUP item 3: LEGACY transit stop (halt → return home; command_main_ship_stop_transit 0149) ──
+test('item 3: the legacy stop RPC name is pinned to the deployed function', () => {
+  expect(STOP_TRANSIT_RPC).toBe('command_main_ship_stop_transit')
+})
+
+test('item 3: isActiveLegacyOutboundTransit — moving + outbound mission only', () => {
+  // The stoppable case: the main-ship fleet is moving on an outbound (non-return) mission.
+  expect(isActiveLegacyOutboundTransit({ fleetStatus: 'moving', missionType: 'rally' })).toBe(true)
+  // A return leg has nothing to stop (it is already heading home).
+  expect(isActiveLegacyOutboundTransit({ fleetStatus: 'moving', missionType: 'return_home' })).toBe(false)
+  // Not moving / no movement row / unknown → dark.
+  expect(isActiveLegacyOutboundTransit({ fleetStatus: 'present', missionType: 'rally' })).toBe(false)
+  expect(isActiveLegacyOutboundTransit({ fleetStatus: 'returning', missionType: 'return_home' })).toBe(false)
+  expect(isActiveLegacyOutboundTransit({ fleetStatus: 'moving', missionType: null })).toBe(false)
+  expect(isActiveLegacyOutboundTransit({ fleetStatus: undefined, missionType: undefined })).toBe(false)
+})
+
+test('item 3: parseStopTransitResult maps the server envelope onto the shared stop contract', () => {
+  // A successful halt → outcome 'stopped' (the shared CTA shows the stopped message).
+  expect(parseStopTransitResult({ ok: true, stopped: true, movement_id: 'm1' })).toEqual({ ok: true, outcome: 'stopped' })
+  // Every idempotent no-op (cron settled first / duplicate / due) → outcome 'arrived'.
+  for (const reason of ['already_settled', 'already_returning', 'arrived']) {
+    expect(parseStopTransitResult({ ok: true, stopped: false, reason })).toEqual({ ok: true, outcome: 'arrived' })
+  }
+  // Rejections pass through code + server message; a missing message falls back to client copy.
+  expect(parseStopTransitResult({ ok: false, code: 'feature_disabled', message: 'Main-ship movement is not available yet.' }))
+    .toEqual({ ok: false, code: 'feature_disabled', message: 'Main-ship movement is not available yet.' })
+  expect(parseStopTransitResult({ ok: false, code: 'not_authenticated' }))
+    .toEqual({ ok: false, code: 'not_authenticated', message: spaceStopErrorMessage('not_authenticated') })
+  // Malformed input fails closed to a safe error, never a fabricated success.
+  for (const bad of [null, 42, [], {}, { ok: 'yes' }, { ok: false }]) {
+    const res = parseStopTransitResult(bad)
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.code).toBe('unavailable')
+  }
 })
 
 // ── Controller: idempotent submit (reuses the request id on retry), success + error transitions ───────

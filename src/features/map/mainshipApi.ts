@@ -1,6 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import { SPACE_MOVE_RPC, buildSpaceMoveRpcArgs, type SpaceMoveResult } from './spaceMoveCommand'
-import { SPACE_STOP_RPC, buildSpaceStopRpcArgs, type SpaceStopResult } from './spaceStopCommand'
+import { SPACE_STOP_RPC, STOP_TRANSIT_RPC, buildSpaceStopRpcArgs, parseStopTransitResult, type SpaceStopResult } from './spaceStopCommand'
 import { parseOsnReadiness, OSN_NOT_ACTIONABLE, type OsnReadiness } from './osnReadiness'
 import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockServices'
 
@@ -282,6 +282,17 @@ export async function commandMainShipSpaceStop(requestId: string, mainShipId?: s
   const { data, error } = await supabase.rpc(SPACE_STOP_RPC, { ...buildSpaceStopRpcArgs(requestId), p_main_ship_id: mainShipId ?? null })
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceStopResult
+}
+
+// UX-CLEANUP item 3 — thin client wrapper over the LEGACY transit halt (command_main_ship_stop_transit,
+// 0149). Sends ONLY the fleet id of the caller's own in-transit main-ship fleet — no coordinates, ids, or
+// timing (the server interpolates the halt point and fixes the symmetric return time). Idempotent by
+// state server-side (no request key needed: a duplicate/late stop is a clean {stopped:false} no-op). The
+// result is mapped onto the shared SpaceStopResult so the ONE stop controller/CTA is reused unchanged.
+export async function commandMainShipStopTransit(fleetId: string): Promise<SpaceStopResult> {
+  const { data, error } = await supabase.rpc(STOP_TRANSIT_RPC, { p_fleet: fleetId })
+  if (error) return { ok: false, code: 'unavailable', message: error.message }
+  return parseStopTransitResult(data)
 }
 
 // OSN-HUB-1A / TRADE-FLEET-0C §2.5 — thin client wrapper over the public canonical location-target boundary

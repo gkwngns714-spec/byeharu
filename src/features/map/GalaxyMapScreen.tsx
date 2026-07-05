@@ -5,6 +5,9 @@ import { GalaxyMap } from './GalaxyMap'
 import { MainShipPreview } from './MainShipPreview'
 import { MainShipCommand } from './MainShipCommand'
 import { PortNavPanel } from './PortNavPanel'
+import { SpaceStopControls } from './SpaceStopControls'
+import { isActiveLegacyOutboundTransit } from './spaceStopCommand'
+import { useLegacyStopTransitCommand } from './useSpaceStopCommand'
 import { DockServicesPanel } from './DockServicesPanel'
 import { MarketPanel } from './MarketPanel'
 import { ShipSwitcher } from './ShipSwitcher'
@@ -36,6 +39,20 @@ export function GalaxyMapScreen() {
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
   const selState = selectedId ? locationStates[selectedId] : undefined
+
+  // UX-CLEANUP item 3 — stop for a LEGACY in-transit main-ship move (MainShipCommand sends create
+  // fleet_movements, invisible to the OSN stop mounts). Reuses the ONE stop controller/CTA, wired to
+  // command_main_ship_stop_transit (0149: halt → symmetric return home; server-gated on
+  // mainship_send_enabled, idempotent by state). Renders only for an OUTBOUND transit of the main-ship
+  // fleet — a return leg has nothing to stop.
+  const legacyMove = mainShipFleet
+    ? (movements.find((mv) => mv.fleet_id === mainShipFleet.id && mv.status === 'moving') ?? null)
+    : null
+  const inLegacyOutboundTransit = isActiveLegacyOutboundTransit({
+    fleetStatus: mainShipFleet?.status,
+    missionType: legacyMove?.mission_type,
+  })
+  const legacyStop = useLegacyStopTransitCommand(inLegacyOutboundTransit ? (mainShipFleet?.id ?? null) : null)
 
   return (
     <div data-testid="galaxy-map-screen" className="flex h-[100dvh] flex-col bg-slate-950 text-slate-100">
@@ -124,6 +141,20 @@ export function GalaxyMapScreen() {
                 mainShipId={mainShip?.main_ship_id ?? null}
                 onCommitted={refresh}
               />
+              {/* UX-CLEANUP item 3 — the legacy in-transit stop CTA (see the hook block above). Same
+                  component/controller as the OSN stops; mutually exclusive with them by state (one active
+                  movement owner per ship). Refreshes the polled data after the command settles. */}
+              {inLegacyOutboundTransit && (
+                <SpaceStopControls
+                  phase={legacyStop.state.phase}
+                  errorMessage={legacyStop.state.errorMessage}
+                  outcome={legacyStop.state.outcome}
+                  onStop={() => void legacyStop.submit().finally(() => void refresh())}
+                  title="Main ship in transit"
+                  stopLabel="Stop — return home"
+                  stoppedMessage="Turning around — returning home."
+                />
+              )}
               {/* PHASE 9 — read-only docked-port context for the main ship. Renders only when the server
                   reports the ship is docked (at_location); shows the port + its active services (today:
                   Docking). No buy/sell/repair actions; no home-port. */}

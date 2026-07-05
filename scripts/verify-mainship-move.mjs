@@ -160,6 +160,54 @@ async function main() {
     const bu = ((await admin.from('base_units').select('quantity').eq('base_id', base.id)).data ?? []).reduce((a, r) => a + r.quantity, 0)
     Number.isFinite(bu) ? ok(`10a. base_units intact (sum ${bu}, never touched by main-ship moves)`) : bad('10a. base_units', 'unreadable')
   }
+
+  // ── 11. stop-transit (UX-CLEANUP item 3, migration 0149): halt outbound → symmetric return home ────
+  {
+    // Deployment probe: the RPC ships with migration 0149. If the target DB does not have it yet,
+    // SKIP this section loudly (apply 0149, then re-run) rather than failing the whole suite.
+    const probe = await u.client.rpc('command_main_ship_stop_transit', { p_fleet: '00000000-0000-4000-8000-000000000000' })
+    if (probe.error && /could not find|does not exist|schema cache/i.test(probe.error.message)) {
+      console.log('  ⤳ 11. SKIPPED — command_main_ship_stop_transit not deployed (apply migration 0149, then re-run)')
+    } else {
+      await setCfg('min_travel_seconds', 45) // long outbound so the stop lands mid-flight (finally restores)
+      const u2 = await newUser('b')
+      await poll(async () => (await u2.client.from('bases').select('id').limit(1).maybeSingle()).data, { timeoutMs: 20000, intervalMs: 1500 })
+      await admin.rpc('ensure_main_ship_for_player', { p_player: u2.userId })
+      const ship2 = (await admin.from('main_ship_instances').select('main_ship_id').eq('player_id', u2.userId).maybeSingle()).data?.main_ship_id
+      if (!ship2) die('11: second ship not commissioned')
+      const { data: sent2, error: sErr2 } = await u2.client.rpc('send_main_ship_expedition', { p_ships: [ship2], p_location: A.id })
+      if (sErr2) die(`11: send failed: ${sErr2.message}`)
+      const fleet2 = sent2.fleet_id
+      await sleep(3000) // let some outbound time elapse — the symmetric return should take about this long
+
+      const t0 = Date.now()
+      const { data: stop1, error: st1 } = await u2.client.rpc('command_main_ship_stop_transit', { p_fleet: fleet2 })
+      if (st1) die(`11: stop failed: ${st1.message}`)
+      stop1?.ok === true && stop1?.stopped === true
+        ? ok('11. mid-flight stop accepted (halt → return home)') : bad('11. stop', JSON.stringify(stop1))
+
+      const m2 = await moveRow(sent2.movement_id)
+      m2?.mission_type === 'return_home' && m2?.target_type === 'base'
+        ? ok('11a. movement transformed IN PLACE → return_home targeting the home base') : bad('11a. transform', JSON.stringify(m2))
+      const f2 = await fleetRow(fleet2)
+      f2?.status === 'returning' ? ok('11b. fleet status → returning') : bad('11b. returning', f2?.status)
+      const ship2Status = (await admin.from('main_ship_instances').select('status').eq('main_ship_id', ship2).maybeSingle()).data?.status
+      ship2Status === 'returning' ? ok('11c. main ship status → returning') : bad('11c. ship status', ship2Status)
+      {
+        const secs = (new Date(stop1.arrive_at).getTime() - t0) / 1000
+        secs > 0 && secs < 20
+          ? ok(`11d. symmetric turnaround (arrives home in ~${secs.toFixed(1)}s ≈ elapsed outbound)`) : bad('11d. symmetric timing', `${secs}s`)
+      }
+      const { data: stop2 } = await u2.client.rpc('command_main_ship_stop_transit', { p_fleet: fleet2 })
+      stop2?.ok === true && stop2?.stopped === false && stop2?.reason === 'already_returning'
+        ? ok('11e. duplicate stop is a no-op (already_returning)') : bad('11e. duplicate', JSON.stringify(stop2))
+      const done2 = await poll(async () => { const f = await fleetRow(fleet2); return f?.status === 'completed' ? f : null })
+      done2 ? ok('11f. returned home via the ONE settlement path (process_fleet_movements → fleet completed)') : bad('11f. settle', 'fleet never completed')
+      const { data: stop3 } = await u2.client.rpc('command_main_ship_stop_transit', { p_fleet: fleet2 })
+      stop3?.ok === true && stop3?.stopped === false && stop3?.reason === 'already_settled'
+        ? ok('11g. post-arrival stop is a no-op (already_settled)') : bad('11g. post-arrival', JSON.stringify(stop3))
+    }
+  }
 }
 
 main()

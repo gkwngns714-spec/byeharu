@@ -5,6 +5,83 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 3) — consistent in-transit "stop" for LEGACY main-ship moves (migration 0149 + shared stop UI reuse)
+
+**Request.** Per the movement→arrival→dock diagnosis: the stop system existed only in the OSN
+`main_ship_space_movements` domain, while every visible send (`send_main_ship_expedition` 0050 /
+`move_main_ship_to_location` 0053 — the `MainShipCommand` surface) creates LEGACY `fleet_movements` with NO
+halt capability at all (`request_main_ship_return` requires `status='present'`, 0050:189). Design decision
+(human): a legacy in-transit stop is a Fleet/Movement-domain **halt → return-home** with a **symmetric
+turnaround** (arrives home after the time already spent outbound) — never a new "hold in space" state (that
+is OSN's concept; recreating it in legacy would be a parallel movement system).
+
+**Movement internals confirmed first (citations).** `fleet_movements` 0007:9-52 (status
+moving/arrived/cancelled/failed; `mission_type` incl. `return_home`; `one_active_movement_per_fleet`
+partial unique; `arrive_at > depart_at`); `movement_create` 0007:68-125; the cron `process_fleet_movements`
+0030:36-83 claims due rows `FOR UPDATE SKIP LOCKED` (movement row FIRST, fleets updated after) and its
+base-arrival branch calls `fleet_complete`, which REQUIRES `status='returning'` (0006:163) — so a halt must
+also step the fleet moving→returning; the generic state machine has no such edge (0053:92-102 is the exact
+precedent: a dedicated, main-ship-scoped inline transition for its missing present→moving edge). The
+visible send is gated on `mainship_send_enabled` (0050:73, 0053:34).
+
+**Migration `20260618000149_mainship_stop_transit.sql`** — ONE new authenticated RPC
+`command_main_ship_stop_transit(p_fleet)` (SECURITY DEFINER, `search_path=public`; revoke public/anon,
+grant authenticated). Gate = the SAME existing `mainship_send_enabled` (no new flag, no flip — dark envs
+reject `feature_disabled`; the human's live env gets it). Validates owned + main-ship fleet (the 0050
+return predicate), then claims the active movement `FOR UPDATE` in the cron's own lock order and:
+- **outbound + not due** → transforms the SAME row in place to the `return_home` shape
+  `request_main_ship_return` produces (target = origin base; `depart_at=now`,
+  `arrive_at = now + elapsed-outbound` floored at 1s; `origin_x/y` = the interpolated halt point so the map
+  shows the ship turning around in place; origin entity ids keep the halted destination as provenance;
+  `travel_seconds` is the design-fixed symmetric time — documented in the header; `speed_used` unchanged),
+  steps the fleet moving→returning (dedicated scoped edge, 0053 idiom) and the ship to 'returning'
+  (0050:223 idiom). The one-active-movement invariant holds by construction (no second row) and the
+  transformed row is settled by the NORMAL `process_fleet_movements` return branch — one settlement path.
+- **idempotent no-ops by state** (no receipts — a stop grants nothing): cron settled first / no transit →
+  `{ok:true, stopped:false, reason:'already_settled'}`; already `return_home` → `'already_returning'`;
+  due-but-unsettled → `'arrived'` (LEFT for the cron). Every mutation is guarded `status='moving'` under
+  the row lock; same lock order as the cron ⇒ no deadlock, SKIP LOCKED ⇒ the cron never blocks on us.
+- **No reward interaction possible:** main-ship targets are `activity_type='none'` (0050:104/0053:71) so no
+  combat ever attaches cargo; `reward_payload_json` stays `'{}'` and the deposit branch (0030:70-72)
+  requires a non-empty payload — double-reward is structurally unreachable. NOT applied to any DB.
+
+**Client (reuse, no parallel stop system).** `spaceStopCommand.ts`: `STOP_TRANSIT_RPC`,
+`isActiveLegacyOutboundTransit` (fleet 'moving' + non-return mission), and `parseStopTransitResult` mapping
+the server envelope onto the SHARED `SpaceStopResult` (halt→'stopped'; every no-op→'arrived').
+`mainshipApi.commandMainShipStopTransit(fleetId)` (thin wrapper, the 0064 idiom).
+`useLegacyStopTransitCommand` (sibling of `useSpaceStopCommand`, SAME `createSpaceStopController` — only
+the wired RPC differs; recreated per in-transit fleet). `SpaceStopControls` gained optional copy props
+(defaults = the original OSN strings byte-for-byte) so the ONE component also serves
+"Main ship in transit / Stop — return home / Turning around — returning home." — mounted in
+`GalaxyMapScreen` beside the other overlays (renders only for an outbound legacy transit of the main-ship
+fleet; refreshes after the command settles; mutually exclusive with the OSN stop mounts by
+one-movement-owner state). **PortNav hardening (diagnosis follow-through):** `PortNavPanel` now renders the
+OSN stop for ANY location-target transit; only the destination NAME stays behind the visible-map check
+(fail-closed — no name/id/coord leak).
+
+**Tests.** `tests/spaceStopCommand.spec.ts` extended (same harness): RPC-name pin, the legacy-transit
+predicate truth table, and the envelope mapping (halt / all three no-op reasons / rejection passthrough +
+copy fallback / malformed fails closed). `scripts/verify-mainship-move.mjs` extended with section 11
+(fresh user: mid-flight stop → in-place `return_home` transform + fleet/ship 'returning' + symmetric
+timing bound; duplicate stop → `already_returning`; normal-path completion; post-arrival stop →
+`already_settled`), behind a loud DEPLOYMENT PROBE that SKIPs when `command_main_ship_stop_transit` is not
+yet in the target DB — so the suite stays green before AND after the human applies 0149.
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md`: the §2 Movement row gains `command_main_ship_stop_transit`
+(full semantics + guards) and §3 gains its flow entry — Movement remains the SOLE writer of
+`fleet_movements`, no new table, call graph unchanged/acyclic. This entry added.
+
+**Verify (recorded honestly — real runs).** `npm run build` green. `verify:osn:osn4` (the extended stop
+spec) **9/9 green**. Live DB: `verify:m3` **13/13 PASSED** (movement spine unaffected — 0149 is additive
+and NOT applied). `verify:m4` **36/40**: the 4 failures are combat PACING/TUNING assertions (wave pacing,
+damage-no-loss, mid-wave HP ticks, not-one-shot) — **PRE-EXISTING live-environment balance drift**,
+provably unrelated to this commit (zero server-side change is applied by it; the client diff cannot touch
+a server-driving node script). Same class as the `verify:m2` "5 locations" pin already on record — flagged
+for the human alongside it. Section 11 of `verify-mainship-move.mjs` SKIPs live until 0149 is applied
+(by design; the probe prints the skip loudly). SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 2) — honest docking UX at non-dock waypoints (frontend-only; server eligibility untouched)
 
 **Request.** Fix the misleading docking rejection per the movement→arrival→dock diagnosis: a

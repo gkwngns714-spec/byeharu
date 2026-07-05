@@ -16,10 +16,12 @@ import { SpaceStopControls } from './SpaceStopControls'
 //
 // Renders NOTHING unless the SERVER readiness projection says it should: the selection UI mounts only when
 // osn_available===true AND origin_category==='anchored' AND at least one VISIBLE eligible destination
-// exists; the travel/Stop view mounts only for a real active location-target transit whose destination is
-// visible. Both conditions are unreachable while production is dark (mainship_space_movement_enabled=false
-// → osn_available=false, and no location movement can exist), so this merges with zero player-visible change
-// and shows no banner/teaser/error. There is NO coordinate field, crosshair, or empty-space target here.
+// exists; the travel/Stop view mounts for a real active location-target transit (UX-CLEANUP item 3: the
+// Stop CTA is in-flight safety, so it no longer requires the destination to be visible — only the
+// destination NAME stays behind the visible-map check, fail-closed). Both conditions are unreachable while
+// production is dark (mainship_space_movement_enabled=false → osn_available=false, and no location movement
+// can exist), so this merges with zero player-visible change and shows no banner/teaser/error. There is NO
+// coordinate field, crosshair, or empty-space target here.
 
 function formatEta(arriveAt: string | null | undefined): string | null {
   if (!arriveAt) return null
@@ -69,9 +71,10 @@ export function PortNavPanel({
 
   const showSelection = isPortNavActionable(readiness, selectable.length)
 
-  // Travel/Stop view: a real active LOCATION-target transit whose destination is in the visible map
-  // (fail-closed — a hidden destination shows nothing, no name/id/coord leak). Flag-independent so an
-  // in-flight ship can always Stop; naturally dark in production.
+  // Travel/Stop view: a real active LOCATION-target transit. UX-CLEANUP item 3 hardening: the STOP CTA
+  // renders for ANY such transit (flag-independent in-flight safety — the OSN-4 principle), while the
+  // destination NAME stays behind the visible-map check (fail-closed — a hidden destination leaks no
+  // name/id/coord; the traveller just sees an unnamed route it can still stop).
   const inLocTransit = isActiveLocationTargetTransit({
     spatialState: shipSpatialState,
     spaceMovementStatus: spaceMovement?.status,
@@ -79,7 +82,7 @@ export function PortNavPanel({
   })
   const destId = spaceMovement?.target_location_id ?? null
   const destName = destId ? (visibleLocations.find((l) => l.id === destId)?.name ?? null) : null
-  const showTravel = inLocTransit && destName !== null
+  const showTravel = inLocTransit
 
   if (!showSelection && !showTravel) return null
 
@@ -140,10 +143,12 @@ export function PortNavPanel({
 
       {showTravel && (
         <div data-testid="port-nav-travel" className="mt-1">
-          <p className="text-[11px] text-sky-300">
-            Travelling to {destName}
-            {formatEta(spaceMovement?.arrive_at) ? ` · arrives ${formatEta(spaceMovement?.arrive_at)}` : ''}
-          </p>
+          {destName !== null && (
+            <p className="text-[11px] text-sky-300">
+              Travelling to {destName}
+              {formatEta(spaceMovement?.arrive_at) ? ` · arrives ${formatEta(spaceMovement?.arrive_at)}` : ''}
+            </p>
+          )}
           {/* Re-use the EXISTING Stop command path (useSpaceStopCommand) + control for a location-target route. */}
           <SpaceStopControls
             phase={stop.state.phase}
