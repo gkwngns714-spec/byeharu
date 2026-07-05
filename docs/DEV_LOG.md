@@ -5,6 +5,42 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP — reconcile the stale `verify:m2` world-count pin (test-only; suite green again, 13/13)
+
+**Request.** `verify:m2` had been red (10/11) since the goal started: its "exactly 5 locations" pin
+predates the 3 starter ports (0066) and the human's production reveal. Test-only reconciliation — no
+migration, seed, or product code touched; `verify:m3/m4/m45/m5` untouched. No `SYSTEM_BOUNDARIES` change
+(no table/writer/system change).
+
+**What the pin now asserts (strict — never a loose count).** `scripts/verify-m2.mjs` runs against the
+LIVE DB via `get_world_map()` (ACTIVE locations only), so the correct world shape is: the 5 waypoints
+(0002 — Refuge/Lull `safe_zone`, Snare/Reaver/Blackden `pirate_hunt`) always present with exact
+names+types; the 3 starter ports (0066 — Haven/Slagworks/Driftmarch `trade_outpost`) as an
+ALL-OR-NOTHING set (0 pre-reveal on a fresh seed, 3 post-reveal — the production state; a partial set
+always fails); total count = exactly 5 + revealed ports (no strays); type totals (3 pirate_hunt +
+2 safe_zone + N trade_outpost).
+
+**TRANSITIONAL rename-pair matching (in-line note + retirement condition).** The first green run exposed
+that production is post-REVEAL but pre-0148 (the item-4 rename is human-applied and still pending), so
+pinning only the new names would keep m2 red until 0148 lands — and pinning old names would re-drift the
+moment it does. Each location is therefore matched under EXACTLY one of its two known names (the 0002/0066
+seed name OR the 0148 one-word rename) with the type pinned; the output labels which era it saw.
+**Retirement:** collapse each pair to the new name only, once the human applies 0148 to every verified
+environment.
+
+**Verify.** `verify:m2` **13/13 PASSED** (live output labeled "pre-0148 seed names", 8 locations = 5
+waypoints + 3 revealed ports); `npm run build` green (nothing else moved).
+
+**`verify:m4` 36/40 baseline confirmed genuinely pre-existing (no action — combat correctness is out of
+locked scope).** The same four failures on every run this goal (steps 6, 8): `wave pacing — max 0
+ticks/wave` · `damage-no-loss — not observed` · `wave HP decreasing — no mid-wave tick found` · `not
+one-shot — wave HP <= player damage`. Rationale: all four are combat-PACING observations against the live
+engine; no slice in this goal modified combat/reward code — the branch's only server-side artifacts are
+the additive, UNAPPLIED migrations 0148–0151 (rename data + stop/settle functions), so the deployed combat
+path is byte-identical to before this goal. The drift is live-environment tuning that predates the branch.
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 6, part B) — on-demand LEGACY main-ship arrival settlement (migration 0151: helper extraction + RPC + unified client due-trigger)
 
 **Request.** The legacy first-trip arrival (MainShipCommand home→port/waypoint, and every return leg)

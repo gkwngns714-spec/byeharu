@@ -56,17 +56,58 @@ if (wErr) {
   const locs = zones.flatMap((z) => z.locations ?? [])
   sectors.length === 2 ? ok('2 sectors') : bad('2 sectors', `got ${sectors.length}`)
   zones.length === 2 ? ok('2 zones') : bad('2 zones', `got ${zones.length}`)
-  locs.length === 5 ? ok('5 locations') : bad('5 locations', `got ${locs.length}`)
   const nested =
     sectors.length > 0 &&
     sectors.every((s) => Array.isArray(s.zones)) &&
     zones.every((z) => Array.isArray(z.locations))
   nested ? ok('nested sectors → zones → locations') : bad('nested shape', 'missing nesting')
+
+  // World pin (reconciled 2026-07-05 — see DEV_LOG). The seed is 8 locations, not the obsolete 5:
+  // the 5 waypoints (0002) are ALWAYS active, while the 3 starter ports (0066) are seeded HIDDEN and
+  // enter get_world_map() (active-only) ONLY after the human-gated one-way reveal_starter_ports()
+  // (0068) — run in production, so the live expectation is all 8. Exact names AND types are pinned
+  // (never a loose count); the ports are all-or-nothing so the pin is also correct against a fresh
+  // pre-reveal seed, and a PARTIAL port set always fails.
+  //
+  // TRANSITIONAL (retire once forward-only 0148 is applied to every verified env): each location is
+  // matched under EXACTLY one of its two known names — the 0002/0066 seed name OR the 0148 one-word
+  // rename — because 0148 is human-applied and may lag this checkout (live today: post-reveal,
+  // pre-0148). Collapse each pair to the new name only after the human applies 0148.
+  const WAYPOINTS = [
+    { names: ['Refuge', 'Safe Rally Point'], type: 'safe_zone' },
+    { names: ['Snare', 'Pirate Ambush Point'], type: 'pirate_hunt' },
+    { names: ['Reaver', 'Raider Outpost'], type: 'pirate_hunt' },
+    { names: ['Lull', 'Quiet Drift'], type: 'safe_zone' },
+    { names: ['Blackden', 'Pirate Den'], type: 'pirate_hunt' },
+  ]
+  const PORTS = [
+    { names: ['Haven', 'Haven Reach'], type: 'trade_outpost' },
+    { names: ['Slagworks', 'Slagworks Anchorage'], type: 'trade_outpost' },
+    { names: ['Driftmarch', 'Driftmarch Waypost'], type: 'trade_outpost' },
+  ]
+  const byName = new Map(locs.map((l) => [l.name, l.location_type]))
+  const matchedOnce = (e) => e.names.filter((n) => byName.get(n) === e.type).length === 1
+  const era = byName.has('Refuge') || byName.has('Haven') ? 'post-0148 one-word names' : 'pre-0148 seed names'
+  const wpMisses = WAYPOINTS.filter((e) => !matchedOnce(e))
+  wpMisses.length === 0
+    ? ok(`the 5 seeded waypoints, exact names+types (${era}; Refuge/Lull safe_zone, Snare/Reaver/Blackden pirate_hunt)`)
+    : bad('5 waypoints', `missing/mismatched: ${wpMisses.map((e) => e.names[0]).join(', ')}`)
+  const portsPresent = PORTS.filter(matchedOnce).length
+  portsPresent === 3
+    ? ok(`the 3 starter ports revealed, exact names+type (${era}; Haven/Slagworks/Driftmarch trade_outpost)`)
+    : portsPresent === 0
+      ? ok('starter ports hidden (pre-reveal seed state — reveal_starter_ports not run in this env)')
+      : bad('starter ports', `PARTIAL reveal: ${portsPresent}/3 matched`)
+  const expected = 5 + (portsPresent === 3 ? 3 : 0)
+  locs.length === expected
+    ? ok(`${expected} locations total (5 waypoints + ${expected - 5} revealed ports; no strays)`)
+    : bad('location count', `got ${locs.length}, expected ${expected}`)
   const hunt = locs.filter((l) => l.location_type === 'pirate_hunt').length
   const safe = locs.filter((l) => l.location_type === 'safe_zone').length
-  hunt === 3 && safe === 2
-    ? ok('location types (3 pirate_hunt + 2 safe_zone)')
-    : bad('location types', `pirate_hunt=${hunt}, safe_zone=${safe}`)
+  const trade = locs.filter((l) => l.location_type === 'trade_outpost').length
+  hunt === 3 && safe === 2 && trade === expected - 5
+    ? ok(`location types (3 pirate_hunt + 2 safe_zone + ${expected - 5} trade_outpost)`)
+    : bad('location types', `pirate_hunt=${hunt}, safe_zone=${safe}, trade_outpost=${trade}`)
 }
 
 // 2) RLS read access (anon)
