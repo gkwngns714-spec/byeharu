@@ -11,6 +11,7 @@ import { useOsnReadiness } from './useOsnReadiness'
 import { usePortMoveCommand } from './usePortMoveCommand'
 import { useSpaceStopCommand } from './useSpaceStopCommand'
 import { SpaceStopControls } from './SpaceStopControls'
+import { Button } from '../../components/ui'
 
 // PORT-LAUNCH-1B — the DARK port-to-port OSN navigation surface.
 //
@@ -100,11 +101,13 @@ export function PortNavPanel({
   return (
     <div
       data-testid="port-nav-panel"
-      className="pointer-events-auto absolute left-2 top-2 z-10 w-60 rounded-lg border border-sky-500/30 bg-slate-900/90 p-2 text-slate-100"
+      // UX-CLEANUP item 5: design-system tokens (accent tone = the OSN travel surface), matching the
+      // compact map-overlay idiom (token-styled container, primitives for interactive elements).
+      className="pointer-events-auto absolute left-2 top-2 z-10 w-60 rounded-lg border border-accent/25 bg-surface/90 p-2 text-ink shadow-card"
     >
       {showSelection && (
         <div data-testid="port-nav-selection">
-          <p className="mb-1 text-[11px] font-medium text-sky-300">Travel to a port</p>
+          <p className="mb-1 text-[11px] font-medium text-accent">Travel to a port</p>
           <ul className="flex max-h-48 flex-col gap-1 overflow-auto">
             {selectable.map((loc) => {
               const isSel = port.state.selected?.id === loc.id
@@ -114,7 +117,7 @@ export function PortNavPanel({
                     type="button"
                     data-testid={`port-nav-dest-${loc.id}`}
                     onClick={() => port.selectPort(loc)}
-                    className={`w-full truncate rounded px-2 py-1 text-left text-xs ${isSel ? 'bg-sky-600/80 text-white' : 'bg-slate-800/80 text-slate-200 hover:bg-slate-700'}`}
+                    className={`w-full truncate rounded px-2 py-1 text-left text-xs transition ${isSel ? 'bg-accent text-app font-medium' : 'bg-surface-2 text-ink-muted hover:bg-edge hover:text-ink'}`}
                   >
                     {loc.name}
                   </button>
@@ -123,18 +126,20 @@ export function PortNavPanel({
             })}
           </ul>
           {port.state.selected && (
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               data-testid="port-nav-confirm"
-              disabled={port.state.phase === 'submitting'}
+              busy={port.state.phase === 'submitting'}
+              busyLabel="Sending…"
               onClick={() => void onConfirm()}
-              className="mt-2 w-full rounded bg-sky-600/90 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+              className="mt-2 w-full"
             >
-              {port.state.phase === 'submitting' ? 'Sending…' : `Travel to ${port.state.selected.name}`}
-            </button>
+              Travel to {port.state.selected.name}
+            </Button>
           )}
           {port.state.phase === 'error' && port.state.errorMessage && (
-            <p data-testid="port-nav-error" className="mt-1 text-[10px] text-rose-300">
+            <p data-testid="port-nav-error" className="mt-1 text-[10px] text-danger">
               {port.state.errorMessage}
             </p>
           )}
@@ -144,7 +149,7 @@ export function PortNavPanel({
       {showTravel && (
         <div data-testid="port-nav-travel" className="mt-1">
           {destName !== null && (
-            <p className="text-[11px] text-sky-300">
+            <p className="text-[11px] text-accent">
               Travelling to {destName}
               {formatEta(spaceMovement?.arrive_at) ? ` · arrives ${formatEta(spaceMovement?.arrive_at)}` : ''}
             </p>

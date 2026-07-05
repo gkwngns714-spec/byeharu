@@ -5,6 +5,45 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 5, slice C) — dock/port surfaces on the design system (presentational-only)
+
+**Request.** Apply the slice-A tokens/primitives to the dock/port screens: `DockServicesPanel`,
+`PortEntryPanel`, `PortNavPanel`. Presentational ONLY — no RPC, data flow, flag, item-2 affordance logic,
+stop-control wiring, or `data-testid` change.
+
+**State correction against the slice plan (honest accounting).** `PortEntryPanel` — including the removal
+of its duplicated local `CARD` constant in favor of the shared `Card` — was ALREADY fully converted in
+slice A (it is mounted on the Command Center, so slice A's "no half-converted screen" rule pulled it in;
+that entry records the CARD retirement). Re-verified clean this step (zero old literals; 20 testids
+intact). This slice therefore converts the remaining two panels.
+
+**Converted (the compact map-overlay idiom from slice B: token-styled container, primitives for
+interactive elements).**
+- `DockServicesPanel` — success-toned container (the "safely docked" state), title `text-success`,
+  service chips `bg-surface-2 text-ink-muted`, empty-state `ink-faint`. Layout/truncation caps unchanged.
+- `PortNavPanel` — accent-toned container (the OSN travel surface); destination list buttons on tokens
+  (selected `bg-accent text-app`, idle `bg-surface-2` with hover); the confirm action is now the shared
+  `Button` (primary/sm, busy state — testid `port-nav-confirm` preserved via prop spread); error
+  `text-danger`; travel line `text-accent`. The item-3 stop mount and the destName-gated label are
+  untouched.
+
+**No new primitive was needed** — `Button`/`Notice`/`Card` from slices A/B cover these panels; the
+semantic tokens replace every raw rose/amber/emerald/sky literal.
+
+**Preservation (proof).** `data-testid` counts byte-identical before/after (stash comparison:
+DockServicesPanel 5, PortNavPanel 6, PortEntryPanel 20); all conditional states/behavior unchanged;
+grep-proven zero old palette literals across the three panels. Only the MARKET slice (MarketPanel +
+ShipSwitcher, dark behind `trade_market_enabled`) remains for item 5.
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — confirmed: presentation only. This entry
+added.
+
+**Verify.** `npm run build` green; `verify:portentry` 32/32 (drives PortEntryPanel's affordance logic);
+`verify:osn:port` 25/25 (readiness + port-move logic) and `verify:osn:osn4` 9/9 (stop surface) as
+regression; `verify:m2`/`verify:m3` unaffected — results in the step report. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 5, slice B) — Galaxy Map on the design system + map-look elevation (presentational-only)
 
 **Request.** Apply the slice-A tokens/primitives to the Galaxy Map (the goal's explicit "improve the
