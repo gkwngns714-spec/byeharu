@@ -1,12 +1,16 @@
 import { useRef } from 'react'
 import { usePortEntry, type UsePortEntryOverrides } from './usePortEntry'
+import type { PortEntryKnownLocation } from './portEntry'
+import { isDockablePortForDisplay } from '../map/mapTypes'
 import type { PortEntryActionKind } from './portEntryCommand'
 
 // PORT-ENTRY player UI — the single onboarding / finish-docking surface for the caller's OWN main ship.
 //
 // Renders exactly ONE affordance derived from server-authoritative state:
 //   • no ship            → "Claim First Ship"  (commission_first_main_ship)
-//   • legacy_present     → "Finish Docking"    (normalize_main_ship_dock)
+//   • legacy_present at a dockable port → "Finish Docking" (normalize_main_ship_dock)
+//   • legacy_present at a non-dock waypoint → a read-only explanation (no doomed docking button;
+//     display-classified via isDockablePortForDisplay — the server target_legal stays the authority)
 //   • at_location        → nothing (the ordinary docked experience is the Phase-9 DockServicesPanel)
 //   • home / legacy_home → a read-only explanation (no in-place docking path exists yet — travel to a port)
 //   • in_transit / in_space / destroyed / contradictory → a read-only safe explanation, no action
@@ -18,8 +22,16 @@ import type { PortEntryActionKind } from './portEntryCommand'
 
 const CARD = 'rounded-xl border p-4 text-sm'
 
-export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
-  const pe = usePortEntry(deps)
+export function PortEntryPanel({
+  deps,
+  locations,
+}: {
+  deps?: UsePortEntryOverrides
+  // The parent's already-polled get_world_map list (Dashboard has it in scope) — display classification
+  // only, no fetch here. Optional: omitted → the pre-existing affordance behavior.
+  locations?: readonly PortEntryKnownLocation[]
+}) {
+  const pe = usePortEntry(deps, locations)
   const { affordance, phase, actionKind, message } = pe
   const busy = phase === 'submitting'
   const sendingRef = useRef(false)
@@ -101,6 +113,26 @@ export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
           </div>
         </div>
       )
+
+    case 'at_waypoint': {
+      // Honest read-only state: holding position at a non-dock waypoint. Port names come from the SAME
+      // classifier over the threaded world map — no hardcoded location names.
+      const portNames = (locations ?? [])
+        .filter((l) => isDockablePortForDisplay(l.location_type))
+        .map((l) => l.name)
+      const portHint = portNames.length > 0 ? ` (${portNames.join(', ')})` : ''
+      return (
+        <div data-testid="port-entry-panel">
+          <div className={`${CARD} border-white/10 bg-white/5 text-white/70`} data-testid="port-entry-at-waypoint">
+            <p className="font-medium text-white/80">Holding position at {affordance.locationName}</p>
+            <p className="mt-1">
+              This is a waypoint, not a port — there is no docking here. Travel to a port{portHint} to dock
+              and use port services.
+            </p>
+          </div>
+        </div>
+      )
+    }
 
     case 'at_home':
       return (

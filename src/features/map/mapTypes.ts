@@ -19,6 +19,20 @@ export type ActivityType =
   | 'rally'
   | 'none'
 
+/**
+ * DISPLAY-ONLY dockability classifier — the single client source of truth for "is this location a
+ * dockable port?". The seed cleanly separates them: dockable ports are `location_type='trade_outpost'`
+ * (physical_role city/port + an active docking service, 0066), waypoints are `safe_zone`/`pirate_hunt`.
+ * This is a HEURISTIC for choosing what to render; the server predicate
+ * `mainship_space_location_target_legal` (0067: physical_role + active docking service) is the real
+ * authority and still rejects a wrong guess (UI fails closed). RETIREMENT/AUTHORITY NOTE: if the seed's
+ * location_type ↔ dockability coupling ever changes (e.g. a non-dockable trade_outpost, or dockability
+ * exposed directly through get_world_map), update or retire THIS function — never scatter the literal.
+ */
+export function isDockablePortForDisplay(locationType: LocationType): boolean {
+  return locationType === 'trade_outpost'
+}
+
 export interface MapLocation {
   id: string
   name: string

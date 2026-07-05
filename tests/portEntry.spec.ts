@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
 import {
-  parseCommissionResult, parseNormalizeResult, derivePortEntryAffordance,
+  parseCommissionResult, parseNormalizeResult, derivePortEntryAffordance, resolvePresentLocation,
   commissionReasonMessage, normalizeReasonMessage, COMMISSION_RPC, NORMALIZE_RPC,
-  type PortEntryShipState,
+  type PortEntryShipState, type PortEntryKnownLocation,
 } from '../src/features/portentry/portEntry'
+import { isDockablePortForDisplay } from '../src/features/map/mapTypes'
 import {
   createPortEntryController, type PortEntryCommandController,
 } from '../src/features/portentry/portEntryCommand'
@@ -22,7 +23,7 @@ test('rpc names are exactly the deployed PORT-ENTRY functions', () => {
 
 // ── Eligibility rendering: state → the single affordance ───────────────────────────────────────────────
 const base: PortEntryShipState = {
-  hasShip: true, spatialState: null, shipStatus: 'home', fleetStatus: null, fleetLocationMode: null, hasActivePresence: false,
+  hasShip: true, spatialState: null, shipStatus: 'home', fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null,
 }
 
 test('affordance: null state → loading (never a premature action)', () => {
@@ -68,6 +69,48 @@ test('affordance: legacy present but INCOHERENT (no active presence) → unavail
   expect(derivePortEntryAffordance({
     ...base, fleetStatus: 'present', fleetLocationMode: 'movement', hasActivePresence: true,
   })).toEqual({ kind: 'unavailable', detail: 'indeterminate' })
+})
+
+// ── UX-CLEANUP item 2: waypoint-vs-port affordance split (display heuristic; server stays authority) ───
+const worldMap: PortEntryKnownLocation[] = [
+  { id: 'loc-haven', name: 'Haven', location_type: 'trade_outpost' },
+  { id: 'loc-refuge', name: 'Refuge', location_type: 'safe_zone' },
+  { id: 'loc-snare', name: 'Snare', location_type: 'pirate_hunt' },
+]
+const legacyPresentAt = (locId: string): PortEntryShipState => ({
+  ...base, spatialState: null, shipStatus: 'stationary',
+  fleetStatus: 'present', fleetLocationMode: 'location', hasActivePresence: true, presentLocationId: locId,
+})
+
+test('affordance: legacy_present at a NON-dock waypoint → at_waypoint explanation, NOT a doomed Finish Docking', () => {
+  const state = legacyPresentAt('loc-refuge')
+  expect(derivePortEntryAffordance(state, resolvePresentLocation(state, worldMap)))
+    .toEqual({ kind: 'at_waypoint', locationName: 'Refuge' })
+})
+
+test('affordance: legacy_present at a dockable port → still normalize (Finish Docking works there)', () => {
+  const state = legacyPresentAt('loc-haven')
+  expect(derivePortEntryAffordance(state, resolvePresentLocation(state, worldMap)))
+    .toEqual({ kind: 'normalize' })
+})
+
+test('affordance: legacy_present at an UNKNOWN location (not in map / no map) → pre-existing normalize (server rejects a wrong guess)', () => {
+  const unknown = legacyPresentAt('loc-not-in-map')
+  expect(derivePortEntryAffordance(unknown, resolvePresentLocation(unknown, worldMap))).toEqual({ kind: 'normalize' })
+  const noMap = legacyPresentAt('loc-refuge')
+  expect(derivePortEntryAffordance(noMap, resolvePresentLocation(noMap, undefined))).toEqual({ kind: 'normalize' })
+})
+
+test('dockability classifier: trade_outpost is the ONLY display-dockable type', () => {
+  expect(isDockablePortForDisplay('trade_outpost')).toBe(true)
+  expect(isDockablePortForDisplay('safe_zone')).toBe(false)
+  expect(isDockablePortForDisplay('pirate_hunt')).toBe(false)
+})
+
+test('ineligible_port copy never mislabels the location as a port that is "not accepting" docking', () => {
+  const copy = normalizeReasonMessage('ineligible_port')
+  expect(copy).not.toMatch(/not accepting/i)
+  expect(copy).toMatch(/docking service/i)
 })
 
 test('affordance: legacy in-flight (moving/returning) → in_transit', () => {

@@ -15,6 +15,7 @@
 // coordinate command, port-to-port travel, migrations, or production data. Server-authoritative only.
 
 import type { SpatialState } from '../map/mainshipApi'
+import { isDockablePortForDisplay, type LocationType } from '../map/mapTypes'
 
 // ── The RPC name literals (single source shared with the API layer and the tests) ──────────────────────
 export const COMMISSION_RPC = 'commission_first_main_ship' as const
@@ -98,6 +99,39 @@ export interface PortEntryShipState {
   fleetStatus: string | null // active linked fleet: 'present' | 'moving' | 'returning' | null
   fleetLocationMode: string | null // 'location' when present at a named port
   hasActivePresence: boolean // an active location_presence for the linked fleet
+  presentLocationId: string | null // fleets.current_location_id when legacy-present (already on the fetched row)
+}
+
+// ── Present-location display info (drives the waypoint-vs-port affordance split) ───────────────────────
+// A minimal view of a world-map location: enough to name it and classify it for DISPLAY. Structurally
+// satisfied by the map feature's MapLocation, so callers thread the already-polled get_world_map list.
+export interface PortEntryKnownLocation {
+  id: string
+  name: string
+  location_type: LocationType
+}
+
+export interface PresentLocationDisplay {
+  name: string
+  isDockablePort: boolean
+}
+
+/**
+ * Resolve the legacy-present ship's location from the already-polled world map (NO new read). Returns null
+ * when unknown (state not loaded, not present anywhere, no locations threaded, or the id isn't in the
+ * visible map) — and unknown deliberately falls back to the pre-existing 'normalize' affordance below, so
+ * a classification gap can only ever show the old button, never hide docking at a real port; the server
+ * (target_legal) still rejects any wrong guess.
+ */
+export function resolvePresentLocation(
+  state: PortEntryShipState | null,
+  locations: readonly PortEntryKnownLocation[] | undefined,
+): PresentLocationDisplay | null {
+  const id = state?.presentLocationId
+  if (!id || !locations) return null
+  const loc = locations.find((l) => l.id === id)
+  if (!loc) return null
+  return { name: loc.name, isDockablePort: isDockablePortForDisplay(loc.location_type) }
 }
 
 // ── Affordance: the SINGLE control (or safe explanation) the UI should present ─────────────────────────
@@ -105,7 +139,8 @@ export interface PortEntryShipState {
 export type PortEntryAffordance =
   | { kind: 'loading' }
   | { kind: 'commission' } // no ship → Claim First Ship (commission_first_main_ship)
-  | { kind: 'normalize' } // legacy_present at a port → Finish Docking (normalize_main_ship_dock)
+  | { kind: 'normalize' } // legacy_present at a dockable port → Finish Docking (normalize_main_ship_dock)
+  | { kind: 'at_waypoint'; locationName: string } // legacy_present at a NON-dock waypoint → honest read-only explanation
   | { kind: 'docked' } // canonical at_location → no action; ordinary dock experience
   | { kind: 'at_home' } // home / legacy_home → explain; no in-place docking path exists yet
   | { kind: 'in_transit' } // traveling / returning → explain; act only from a stable state
@@ -119,8 +154,16 @@ export type PortEntryAffordance =
  * server normalizes IN PLACE. home / legacy_home ships DO NOT get a normalize button (the server would
  * reject them with needs_compat_route); they are shown a safe 'at_home' explanation instead, so the UI
  * never offers an action that structurally cannot succeed. (See the PORT-ENTRY-UI scope note.)
+ *
+ * UX-CLEANUP item 2: when `presentLocation` classifies the legacy-present location as a NON-dock waypoint
+ * (isDockablePortForDisplay — display heuristic; server target_legal stays the authority), the doomed
+ * Finish-Docking button is replaced by the honest read-only 'at_waypoint' explanation. An UNKNOWN location
+ * (null) keeps the pre-existing 'normalize' behavior — the server still rejects a wrong guess.
  */
-export function derivePortEntryAffordance(state: PortEntryShipState | null): PortEntryAffordance {
+export function derivePortEntryAffordance(
+  state: PortEntryShipState | null,
+  presentLocation?: PresentLocationDisplay | null,
+): PortEntryAffordance {
   if (state === null) return { kind: 'loading' }
   if (!state.hasShip) return { kind: 'commission' }
 
@@ -142,7 +185,13 @@ export function derivePortEntryAffordance(state: PortEntryShipState | null): Por
       // Legacy ship (spatial_state IS NULL): classify from the linked-fleet shape.
       if (state.fleetStatus === 'present') {
         // Only a COHERENT present-at-named-port shape is the normalizable legacy_present state.
-        if (state.fleetLocationMode === 'location' && state.hasActivePresence) return { kind: 'normalize' }
+        if (state.fleetLocationMode === 'location' && state.hasActivePresence) {
+          // Known NON-dock waypoint → honest explanation instead of a doomed Finish-Docking button.
+          if (presentLocation && !presentLocation.isDockablePort) {
+            return { kind: 'at_waypoint', locationName: presentLocation.name }
+          }
+          return { kind: 'normalize' }
+        }
         return { kind: 'unavailable', detail: 'indeterminate' }
       }
       if (state.fleetStatus === 'moving' || state.fleetStatus === 'returning') return { kind: 'in_transit' }
@@ -168,7 +217,8 @@ export const NORMALIZE_REASON_COPY: Record<NormalizeReason, string> = {
   not_authenticated: 'You must be signed in to finish docking.',
   no_ship: 'You do not have a ship to dock yet.',
   not_normalizable: 'This ship cannot be docked from its current state.',
-  ineligible_port: 'This port is not accepting docking right now.',
+  // Fail-closed fallback for a display/server disagreement — must never claim the location is a "port".
+  ineligible_port: "You can't dock here — this location has no docking service.",
   malformed: 'Received an unexpected response. Please try again.',
 }
 

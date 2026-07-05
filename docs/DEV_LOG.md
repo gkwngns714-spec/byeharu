@@ -5,6 +5,54 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 2) — honest docking UX at non-dock waypoints (frontend-only; server eligibility untouched)
+
+**Request.** Fix the misleading docking rejection per the movement→arrival→dock diagnosis: a
+dockability-blind "Finish Docking" affordance was offered for ANY legacy-present ship, so arriving at a
+non-dock waypoint (Refuge, Lull) offered docking, the click hit `normalize_main_ship_dock` →
+`mainship_space_location_target_legal` failing at `target_unsupported_role` (0067:89 — waypoints are
+`physical_role='unclassified'`), and 0084 collapsed that to blanket `ineligible_port`, rendered as the red
+*"This port is not accepting docking right now."* Revealed real ports dock fine (OSN arrivals dock
+directly via Dock-0; legacy port arrivals pass target_legal) — the defect was purely the player-facing
+surface.
+
+**Fix (frontend-only; NO migration, RPC, eligibility, flag, or reveal change).**
+- `src/features/map/mapTypes.ts` — `isDockablePortForDisplay(locationType)`: the ONE client classifier
+  (dockable port ⇔ `location_type==='trade_outpost'`; waypoints are `safe_zone`/`pirate_hunt`).
+  **Authority/retirement note (also in-line):** this is a DISPLAY heuristic exploiting the seed's clean
+  `location_type` ↔ dockability coupling (0066: role city/port + active docking service ⇔ trade_outpost);
+  server `target_legal` remains the sole enforcement authority (UI fails closed — a wrong guess still gets
+  the server rejection). If that coupling ever changes (a non-dockable trade_outpost, or dockability
+  exposed via get_world_map), update/retire THIS function; the literal is deliberately not scattered.
+- `src/features/portentry/portEntryApi.ts` — `PortEntryShipState.presentLocationId` from
+  `fleets.current_location_id` on the ALREADY-fetched active-fleet row (zero new reads).
+- `src/features/portentry/portEntry.ts` — new read-only affordance `{kind:'at_waypoint', locationName}`:
+  a coherent legacy-present ship at a location classified NON-dockable gets an honest explanation instead
+  of the doomed Finish-Docking button; `resolvePresentLocation(state, locations)` resolves the location
+  from the threaded world map. UNKNOWN location (map not loaded / id not visible) deliberately keeps the
+  pre-existing `'normalize'` behavior — a classification gap can only show the old button (server still
+  rejects), never hide docking at a real port. Finish Docking at dockable ports is byte-identical.
+  Reworded `ineligible_port` copy (the fail-closed fallback for a display/server disagreement):
+  *"You can't dock here — this location has no docking service."* — never claims a "port".
+- `src/features/portentry/usePortEntry.ts` + `PortEntryPanel.tsx` — optional `locations` threading (the
+  parent's already-polled `get_world_map` list; no new fetch) + the `at_waypoint` card (reuses the
+  existing `CARD` idiom; port names in the hint are DERIVED via the same classifier — no hardcoded names).
+- `src/features/dashboard/Dashboard.tsx` — passes `game.locations` (already in scope from useGameState).
+
+**Tests (tests/portEntry.spec.ts).** New: legacy-present at waypoint → `at_waypoint` (NOT normalize);
+legacy-present at dockable port → still `normalize`; unknown location / no map → pre-existing `normalize`
+fallback; classifier truth table; `ineligible_port` copy asserted to never say "not accepting" and to name
+the real cause. Existing affordance/parser/controller tests unchanged (fixture gains
+`presentLocationId: null`).
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — confirmed: no table, writer, flag, RPC, or
+cross-system edge changed; this is client display logic over existing owner-reads.
+
+**Verify.** `npm run build` green; `verify:portentry` (pure-logic unit spec, no DB) green — results in the
+step report. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 4) — one-word location names (forward-only data migration 0148 + every caller updated same step)
 
 **Request.** Player-facing UX/cleanup pass, slice 2: rename every seeded location to a single evocative,

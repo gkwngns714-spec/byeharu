@@ -64,11 +64,11 @@ export async function fetchPortEntryShipState(): Promise<PortEntryShipState> {
     .select('main_ship_id, status, spatial_state')
     .maybeSingle() // owner-read RLS → the caller's single ship, or null
   if (error) {
-    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false }
+    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null }
   }
   const ship = (data as MainShipStateRow) ?? null
   if (!ship) {
-    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false }
+    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null }
   }
 
   // Only read the linked fleet/presence when a ship exists (mirrors useGalaxyMapData's ordering).
@@ -84,5 +84,8 @@ export async function fetchPortEntryShipState(): Promise<PortEntryShipState> {
     fleetStatus: fleet?.status ?? null,
     fleetLocationMode: fleet?.location_mode ?? null,
     hasActivePresence,
+    // UX-CLEANUP item 2: the legacy-present location, from the fleet row ALREADY fetched above (no new
+    // read) — drives the display-only waypoint-vs-port affordance split.
+    presentLocationId: fleet?.status === 'present' ? (fleet.current_location_id ?? null) : null,
   }
 }

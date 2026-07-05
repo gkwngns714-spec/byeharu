@@ -78,8 +78,9 @@ export function Dashboard() {
             unitTypes={game.unitTypes}
           />
           {/* PORT-ENTRY: onboarding claim + finish-docking. Self-hides unless the caller's own ship state
-              needs an action (server-authoritative; not flag-gated). Refreshes the command center on success. */}
-          <PortEntryPanel deps={{ onChanged: game.refresh }} />
+              needs an action (server-authoritative; not flag-gated). Refreshes the command center on success.
+              `locations` = the already-polled world map, for the display-only waypoint-vs-port split. */}
+          <PortEntryPanel deps={{ onChanged: game.refresh }} locations={game.locations} />
           {/* Phase 10H: main-ship status in Command Center, gated by the master flag (hidden until launch). */}
           {game.mainshipSendEnabled && (
             <MainShipPanel

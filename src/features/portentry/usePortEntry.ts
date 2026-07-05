@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
-  derivePortEntryAffordance, type PortEntryAffordance, type PortEntryShipState,
+  derivePortEntryAffordance, resolvePresentLocation,
+  type PortEntryAffordance, type PortEntryShipState, type PortEntryKnownLocation,
   type CommissionResult, type NormalizeResult,
 } from './portEntry'
 import {
@@ -32,7 +33,13 @@ export interface UsePortEntry {
   reset: () => void
 }
 
-export function usePortEntry(overrides?: UsePortEntryOverrides): UsePortEntry {
+// `locations` (optional): the parent's already-polled get_world_map list, used ONLY to classify the
+// legacy-present location for display (waypoint vs dockable port). No fetch happens here; omitted/unknown
+// falls back to the pre-existing 'normalize' affordance (the server still rejects a wrong guess).
+export function usePortEntry(
+  overrides?: UsePortEntryOverrides,
+  locations?: readonly PortEntryKnownLocation[],
+): UsePortEntry {
   const fetchState = overrides?.fetchState ?? fetchPortEntryShipState
   const commission = overrides?.commission ?? commissionFirstMainShip
   const normalize = overrides?.normalize ?? normalizeMainShipDock
@@ -86,7 +93,7 @@ export function usePortEntry(overrides?: UsePortEntryOverrides): UsePortEntry {
   const reset = useCallback(() => controller.reset(), [controller])
 
   return {
-    affordance: derivePortEntryAffordance(state),
+    affordance: derivePortEntryAffordance(state, resolvePresentLocation(state, locations)),
     phase: cmd.phase,
     actionKind: cmd.kind,
     message: cmd.message,
