@@ -5,6 +5,47 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 5, slice D) — market surface on the design system (COMPLETES item 5's screen coverage; presentational-only)
+
+**Request.** Final item-5 slice: convert `MarketPanel` + `ShipSwitcher` to the shared tokens/primitives.
+Market is DARK behind `trade_market_enabled` (client `TRADE_MARKET_ENABLED` + server rejection), so this
+is the allowed incidental-styling application to a dark surface — the flag is NOT flipped; production
+stays byte-invisible until the human lights it. No RPC, data flow, gate, buy/sell/selection logic, or
+`data-testid` change.
+
+**Converted (the overlay-block idiom; warning tone = the trade identity).**
+- `MarketPanel` — token container; wallet/cargo readouts and all prices/quantities on `font-mono
+  tabular-nums` (the numeric token); offers table on `edge` borders with `ink-faint` headers; the qty
+  input on `surface-2`/`edge` tokens; **Buy → the shared `Button` `success` variant / Sell → `primary`**
+  (testids preserved via prop spread; per-row disable while in flight unchanged); row errors
+  `text-danger`; the fail-closed unavailable note `ink-faint`. The buy/sell column-naming comment kept
+  verbatim.
+- `ShipSwitcher` — token container; sole-ship entry as a soft `warning/15` chip; N-ship selection buttons
+  (selected `bg-warning text-app`, idle `surface-2` with hover); `ShipMeta` now inherits the entry's text
+  color at reduced opacity instead of a fixed gray (correct on both selected and idle backgrounds).
+
+**One shared addition, no duplication:** `Button` gained the `success` variant (token-driven,
+`bg-success text-app` + hover step) — added ONCE in `src/components/ui/` for the Buy action; no one-off
+styles introduced. (An early draft overrode Button padding per-row; removed — conflicting utilities have
+no guaranteed order. Standard `sm` sizing used.)
+
+**Preservation (proof).** `data-testid` counts byte-identical before/after (stash comparison:
+MarketPanel 6, ShipSwitcher 4); grep-proven zero old palette literals in both files; all conditional
+states/behavior unchanged.
+
+**ITEM 5 SCREEN COVERAGE COMPLETE:** Command Center (A) · Galaxy Map + map-look elevation (B) ·
+dock/port (C) · market (D) — all on the ONE design system (`@theme` tokens + `src/components/ui/`).
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — confirmed: presentation only. This entry
+added.
+
+**Verify.** `npm run build` green; `tradeReasonMessage` + `mainshipStatusLabel` specs 12/12 (the market
+surface's pure-logic suites); `verify:m2`/`verify:m3` unaffected — results in the step report. Visual
+drive not possible without a flag change (correctly not made) — build + specs are the machine proof.
+SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 5, slice C) — dock/port surfaces on the design system (presentational-only)
 
 **Request.** Apply the slice-A tokens/primitives to the dock/port screens: `DockServicesPanel`,

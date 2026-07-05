@@ -15,7 +15,8 @@ function ShipMeta({ ship }: { ship: SelectableShip }) {
   return (
     <>
       <span className="truncate font-medium">{ship.name}</span>
-      <span className="ml-2 shrink-0 text-[10px] text-slate-400">
+      {/* Inherits the entry's text color (selected vs idle) at reduced emphasis — no fixed gray. */}
+      <span className="ml-2 shrink-0 text-[10px] opacity-75">
         {mainShipInstanceStatusLabel(ship.status)} · {ship.cargo_capacity_m3.toFixed(0)} m³
       </span>
     </>
@@ -40,14 +41,15 @@ export function ShipSwitcher({
   return (
     <div
       data-testid="ship-switcher"
-      className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/5 p-4 text-sm text-slate-200"
+      // UX-CLEANUP item 5: design-system tokens (warning tone = the trade identity), the overlay-block idiom.
+      className="mt-3 rounded-lg border border-warning/25 bg-surface-2/50 p-4 text-sm text-ink"
     >
-      <h3 className="mb-2 font-medium">🚀 Ships</h3>
+      <h3 className="mb-2 font-medium text-ink">🚀 Ships</h3>
       {soleShip ? (
         <div
           data-testid={`ship-entry-${soleShip.main_ship_id}`}
           aria-current="true"
-          className="flex items-center justify-between rounded bg-amber-600/70 px-2 py-1 text-left text-xs text-white"
+          className="flex items-center justify-between rounded border border-warning/30 bg-warning/15 px-2 py-1 text-left text-xs text-ink"
         >
           <ShipMeta ship={soleShip} />
         </div>
@@ -62,8 +64,8 @@ export function ShipSwitcher({
                   data-testid={`ship-entry-${ship.main_ship_id}`}
                   aria-current={isSel}
                   onClick={() => selectShip(ship.main_ship_id)}
-                  className={`flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs ${
-                    isSel ? 'bg-amber-600/80 text-white' : 'bg-slate-800/80 text-slate-200 hover:bg-slate-700'
+                  className={`flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs transition ${
+                    isSel ? 'bg-warning text-app font-medium' : 'bg-surface-2 text-ink-muted hover:bg-edge hover:text-ink'
                   }`}
                 >
                   <ShipMeta ship={ship} />

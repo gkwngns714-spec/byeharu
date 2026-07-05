@@ -3,7 +3,7 @@ import type { ButtonHTMLAttributes } from 'react'
 // Design-system Button. Consumes tokens only (see src/index.css @theme + README.md).
 // `buttonClasses` is exported so router <Link>s can wear the exact same skin without a wrapper.
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'warning'
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'warning' | 'success'
 export type ButtonSize = 'sm' | 'md' | 'icon'
 
 const VARIANT: Record<ButtonVariant, string> = {
@@ -13,6 +13,7 @@ const VARIANT: Record<ButtonVariant, string> = {
   ghost: 'text-ink-muted hover:bg-surface-2 hover:text-ink',
   danger: 'bg-danger text-app font-medium hover:bg-danger-hover',
   warning: 'bg-warning text-app font-medium hover:bg-warning-hover',
+  success: 'bg-success text-app font-medium hover:bg-success-hover',
 }
 
 const SIZE: Record<ButtonSize, string> = {

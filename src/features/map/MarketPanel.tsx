@@ -11,6 +11,7 @@ import {
 } from './tradeApi'
 import { tradeReasonMessage } from './tradeReasonMessage'
 import type { SelectableShip } from './useMainShipSelection'
+import { Button } from '../../components/ui'
 
 // TRADE-UI-1 — trade surface for the SELECTED ship. Shows the ship's name, wallet balance, occupied cargo
 // volume vs capacity (m³, from the ship_cargo_lots lot-sum — the authoritative volume model), and the docked
@@ -24,8 +25,8 @@ import type { SelectableShip } from './useMainShipSelection'
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-3">
-      <dt className="text-slate-400">{label}</dt>
-      <dd className="text-right text-slate-200">{value}</dd>
+      <dt className="text-ink-faint">{label}</dt>
+      <dd className="text-right font-mono tabular-nums text-ink">{value}</dd>
     </div>
   )
 }
@@ -108,11 +109,12 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
   return (
     <div
       data-testid="market-panel"
-      className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/5 p-4 text-sm text-slate-200"
+      // UX-CLEANUP item 5: design-system tokens (warning tone = the trade identity), the overlay-block idiom.
+      className="mt-3 rounded-lg border border-warning/25 bg-surface-2/50 p-4 text-sm text-ink"
     >
-      <h3 className="font-medium">🪙 Market — {selectedShip.name}</h3>
+      <h3 className="font-medium text-ink">🪙 Market — {selectedShip.name}</h3>
 
-      {loading && <p className="mt-2 text-xs text-slate-500">Loading…</p>}
+      {loading && <p className="mt-2 text-xs text-ink-faint">Loading…</p>}
 
       {!loading && (
         <>
@@ -122,9 +124,9 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
           </dl>
 
           {offers && offers.ok ? (
-            <div className="mt-3 border-t border-slate-700/60 pt-3">
+            <div className="mt-3 border-t border-edge pt-3">
               <table data-testid="market-offers" className="w-full text-left text-xs">
-                <thead className="text-slate-400">
+                <thead className="text-ink-faint">
                   <tr>
                     <th className="pb-1 font-medium">Good</th>
                     <th className="pb-1 text-right font-medium">Buy</th>
@@ -138,13 +140,13 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
                     const err = rowError[o.good_id]
                     return (
                       <Fragment key={o.offer_id}>
-                        <tr className="border-t border-slate-800/60">
-                          <td className="py-1 text-slate-200">{o.good_id.replace(/_/g, ' ')}</td>
+                        <tr className="border-t border-edge/60">
+                          <td className="py-1 capitalize text-ink">{o.good_id.replace(/_/g, ' ')}</td>
                           {/* Column name != field name: the "Buy" column shows the offer's sell_price (what the
                               buyer PAYS — what market_buy charges), and "Sell" shows buy_price (what the seller
                               RECEIVES — what market_sell pays). Do NOT "correct" these back to matching names. */}
-                          <td className="py-1 text-right text-slate-300">{o.sell_price.toLocaleString()}</td>
-                          <td className="py-1 text-right text-slate-300">{o.buy_price.toLocaleString()}</td>
+                          <td className="py-1 text-right font-mono tabular-nums text-ink-muted">{o.sell_price.toLocaleString()}</td>
+                          <td className="py-1 text-right font-mono tabular-nums text-ink-muted">{o.buy_price.toLocaleString()}</td>
                           <td className="py-1 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <input
@@ -160,26 +162,26 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
                                     [o.good_id]: Number.isNaN(parsed) || parsed < 1 ? 1 : parsed,
                                   }))
                                 }}
-                                className="w-14 rounded bg-slate-800/80 px-1 py-0.5 text-right text-slate-200"
+                                className="w-14 rounded border border-edge bg-surface-2 px-1 py-0.5 text-right font-mono tabular-nums text-ink"
                               />
-                              <button
-                                type="button"
+                              <Button
+                                variant="success"
+                                size="sm"
                                 data-testid={`trade-buy-${o.good_id}`}
                                 disabled={isPending}
                                 onClick={() => void submit('buy', o.good_id)}
-                                className="rounded bg-emerald-600/80 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
                               >
                                 Buy
-                              </button>
-                              <button
-                                type="button"
+                              </Button>
+                              <Button
+                                variant="primary"
+                                size="sm"
                                 data-testid={`trade-sell-${o.good_id}`}
                                 disabled={isPending}
                                 onClick={() => void submit('sell', o.good_id)}
-                                className="rounded bg-sky-600/80 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-sky-500 disabled:opacity-50"
                               >
                                 Sell
-                              </button>
+                              </Button>
                             </div>
                           </td>
                         </tr>
@@ -188,7 +190,7 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
                             <td
                               colSpan={4}
                               data-testid={`trade-error-${o.good_id}`}
-                              className="pb-1 text-right text-[10px] text-rose-300"
+                              className="pb-1 text-right text-[10px] text-danger"
                             >
                               {err}
                             </td>
@@ -201,7 +203,7 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
               </table>
             </div>
           ) : (
-            <p className="mt-3 border-t border-slate-700/60 pt-3 text-center text-xs text-slate-500">
+            <p className="mt-3 border-t border-edge pt-3 text-center text-xs text-ink-faint">
               {unavailableNote(offers)}
             </p>
           )}
