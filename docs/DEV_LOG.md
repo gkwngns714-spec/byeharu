@@ -5,6 +5,93 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 4) — one-word location names (forward-only data migration 0148 + every caller updated same step)
+
+**Request.** Player-facing UX/cleanup pass, slice 2: rename every seeded location to a single evocative,
+unique word (display data only), via ONE forward-only migration, keeping every name-referencing script,
+test, and doc consistent in the same step.
+
+**The mapping (all 8 seeded locations — 0002 waypoints by unique (zone_id, name) key, 0066 ports by fixed UUID).**
+| old | new | key |
+|---|---|---|
+| Safe Rally Point | **Refuge** | Wreck Belt waypoint |
+| Pirate Ambush Point | **Snare** | Wreck Belt waypoint |
+| Raider Outpost | **Reaver** | Wreck Belt waypoint |
+| Quiet Drift | **Lull** | Ion Storm Route waypoint |
+| Pirate Den | **Blackden** | Ion Storm Route waypoint |
+| Haven Reach | **Haven** | `b1a00001-0066-…-000000000001` |
+| Slagworks Anchorage | **Slagworks** | `b1a00002-0066-…-000000000002` |
+| Driftmarch Waypost | **Driftmarch** | `b1a00003-0066-…-000000000003` |
+
+**Migration `20260618000148_location_names_single_word.sql`** — data-only, forward-only (0002/0066 NOT
+edited; 0066 documents `name` as mutable display data — every functional lookup is UUID-keyed). One atomic
+fail-closed do-block: ports updated by fixed UUID, waypoints by zone-scoped current name; aborts with no
+partial rename if any row is missing, any old name survives, or ANY location keeps a multi-word name.
+Idempotent re-run tolerated. unique(zone_id, name) holds (new names distinct per zone). **NOT applied to
+any database** — the human applies it; the reveal gate (`reveal_starter_ports`, human-gated) is untouched.
+
+**Every caller updated (grep-proven; the substring hazard is the real finding).** The new port name
+`Haven` is a SUBSTRING of the sector name `Outer Haven`, so every world-map presence/absence text check
+was converted from bare-word matching to FIELD-ANCHORED matching (`"name" *: *"Haven"` against
+`get_world_map()::text`, which is jsonb): `postreveal-verify.sql` (MAP_PORT_NAMES),
+`osn-hub1a-production-catalog-verify.sql` + `worldhub1b-a-production-catalog-verify.sh` (MAP_LEAK),
+`portlaunch2b-realchain-fixtures.sql` (pre-reveal absence + post-reveal presence),
+`worldhub1b-a-realchain-proof.sql` (hidden-leak check). Other updates:
+- **src (player-facing copy):** `portEntryCommand.ts` commission success copy, `PortEntryPanel.tsx` claim
+  copy → "Haven". (Recon note correction: these two hardcoded strings existed after all.)
+- **tests:** `portEntry.spec.ts` (asserts the copy), plus fixtures in `dockServicesUi.uispec.ts`,
+  `mainshipStatusLabel.spec.ts`, `osnPortNavUi.uispec.ts` → new names.
+- **scripts:** name literals/labels/comments in `osn-enablement-1b-journey.sh`,
+  `portlaunch1a-realchain-concurrency.sh`, `port-entry-1-proof.sh/.sql`,
+  `reveal-starter-ports-operation.sql`, `trade-economy-bootstrap-proof.sql`, `trade-fleet-0c-proof.sql`,
+  `trade-market-1-proof.sql`, `postreveal-verify.sh/.sql`, `osn-postenable-verify.sh/.sql`,
+  `portlaunch2b-realchain-fixtures.sql`, `worldhub1b-a-realchain-proof.sql` (incl. its
+  `name='Haven Reach'`→`'Haven'` functional lookup and expected-VALUES rows),
+  `osn-hub1a-production-catalog-verify.sql`, `worldhub1b-a-production-catalog-verify.sh` (P*_NAME).
+- **Self-binding catalog verifiers kept coherent:** `worldhub1b-a-production-catalog-verify.sh` and
+  `osn-hub1a-production-catalog-verify.sh` grep their expected literals from the checked-out migrations
+  ("derived-from-migration"). The 0066 grep lists KEEP the old seed names (they verify the historical
+  file's verbatim content); the CURRENT display names now bind to `0148` (new `MIG148` greps added), and
+  the live-DB assertions use the new names.
+- **workflows (dispatch-only; nothing dispatched):** name mentions in comments/messages of
+  `osn3-anchor1b-realchain-proof.yml`, `portlaunch2b-realchain-proof.yml` (all UUID-keyed functionally).
+- **docs (current-fact, dated per the established idiom):** `README.md` "Current status" port line
+  (renamed + dated note), `REVEAL_STARTER_PORTS_RUNBOOK.md` (table + dated note),
+  `BYEHARU_PROJECT_GUIDE.md` (dated parenthetical), `TRADE_FLEET_0A_IMPACT_AUDIT.md` (illustrative
+  example). *(Review fix 2026-07-05: README was initially missed because the sweep grep listed
+  `src/ scripts/ tests/ docs/ .github/` and never the REPO ROOT — the re-run sweep below greps the whole
+  tree from `.` so root-level files can no longer escape.)*
+- **Intentionally NOT touched (reported):** shipped migrations 0002/0066/0068/0072/0077/0078/0080/0085
+  (forward-only; their old-name mentions are comments/exception text — functional lookups are UUID-keyed)
+  and DEV_LOG history.
+- **Whole-tree post-sweep (from repo root, excluding only node_modules/dist/.git/test artifacts,
+  git-ignored `*.local.md`, DEV_LOG history, and the shipped 2026-06 migrations):** exactly FOUR old-name
+  mentions survive, all intentional — the two dated "formerly …" annotations themselves (`README.md`,
+  `REVEAL_STARTER_PORTS_RUNBOOK.md`) and the two `osn-hub1a-production-catalog-verify.sh` lines that grep
+  the HISTORICAL 0066 migration file for its verbatim seed literals.
+
+**Ordering note for the human.** The updated name-asserting verifiers (`postreveal-verify`,
+`osn-postenable-verify`, the catalog verifiers) expect the POST-0148 names — apply 0148 before
+dispatching them; until then they would report the old names (and vice versa the pre-edit scripts would
+break after 0148). Same-step atomicity is the point: migration + all callers ship together.
+
+**Engine verify scripts are name-INDEPENDENT (grep-proven).** `verify-m2/m3/m4/m45/m5` select locations
+by `location_type` (`safe_zone` / `pirate_hunt`) and UUIDs — zero name references — so they stay green on
+both sides of 0148 by construction. `docs/SYSTEM_BOUNDARIES.md` needs NO change: no table, writer, flag,
+or cross-system edge changed (it contains no location names — confirmed by grep). Confirmed.
+
+**Verify (real runs, live DB — which still has pre-0148 names; applying 0148 is human-gated).**
+`npm run build` green. `verify:m3` **13/13 PASSED** (dispatched by `location_type='safe_zone'` — it found
+"Safe Rally Point" by TYPE, not name, proving the suites stay green on both sides of 0148; throwaway
+`m3test.…@example.com` rows are covered by the established `%test%` cleanup path). `verify:m2` 10/11 with
+ONE **PRE-EXISTING, name-independent** failure: `5 locations — got 8` — the human has revealed the three
+starter ports in production, so `get_world_map()` now returns 8 active locations while m2 still pins the
+pre-reveal count (its type-counts line still passes). NOT caused by this rename and NOT silently patched
+here (changing the engine pin belongs to the OSN/port-subsystem diagnosis step, flagged for it). Local
+note: Node needed `--use-system-ca` for TLS on this machine (environmental only).
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 1) — retire the legacy Train Ships / Training Queue / map ExpeditionCommand UI (frontend-only; backend RPCs intentionally untouched)
 
 **Request.** Player-facing UX/cleanup pass, slice 1 of 6: remove the three superseded legacy UI surfaces

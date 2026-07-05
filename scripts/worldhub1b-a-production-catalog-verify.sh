@@ -33,14 +33,17 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CA_FILE="$REPO_ROOT/scripts/supabase-prod-ca.crt"
 EXPECTED_CA_SHA256="807025ad50d4ed219d2c9c7d299c004f824eb00cf7f65afef607d07b72e6cafa"  # Supabase Root 2021 CA
 MIG_FILE="$REPO_ROOT/supabase/migrations/20260618000066_worldhub1b_a_hidden_ports_eligibility.sql"
+MIG148_FILE="$REPO_ROOT/supabase/migrations/20260618000148_location_names_single_word.sql"
 EXPECT_MIG="20260618000066"
 
-# ── Expected fixed catalog values. BOUND to migration 0066: assert_migration() (below) fails closed unless
-#    every literal appears verbatim in the checked-out migration, so this verifier can never drift from the
-#    catalog it checks. (Derived-from-migration requirement.) ─────────────────────────────────────────────
-P1_ID="b1a00001-0066-4a00-8a00-000000000001"; P1_NAME="Haven Reach";         P1_ROLE="city"; P1_SEC="Outer Haven";   P1_SIDX=1; P1_ZONE="Wreck Belt";      P1_X="-50"; P1_Y="-30"; A1_ID="b1a0a001-0066-4a00-8a00-0000000000a1"; S1_ID="b1a05001-0066-4a00-8a00-000000000051"
-P2_ID="b1a00002-0066-4a00-8a00-000000000002"; P2_NAME="Slagworks Anchorage"; P2_ROLE="port"; P2_SEC="Crimson Nebula"; P2_SIDX=2; P2_ZONE="Ion Storm Route"; P2_X="70";  P2_Y="-10"; A2_ID="b1a0a002-0066-4a00-8a00-0000000000a2"; S2_ID="b1a05002-0066-4a00-8a00-000000000052"
-P3_ID="b1a00003-0066-4a00-8a00-000000000003"; P3_NAME="Driftmarch Waypost";  P3_ROLE="port"; P3_SEC="Crimson Nebula"; P3_SIDX=2; P3_ZONE="Ion Storm Route"; P3_X="10";  P3_Y="80";  A3_ID="b1a0a003-0066-4a00-8a00-0000000000a3"; S3_ID="b1a05003-0066-4a00-8a00-000000000053"
+# ── Expected fixed catalog values. BOUND to the catalog migrations: assert_migration() (below) fails closed
+#    unless every literal appears verbatim in the checked-out migration that owns it, so this verifier can
+#    never drift from the catalog it checks. (Derived-from-migration requirement.) Identity/structure
+#    literals are owned by 0066; the DISPLAY NAMES were renamed 2026-07-05 by forward-only migration 0148
+#    (UX cleanup item 4 — one-word names; UUIDs unchanged), so the name literals bind to 0148. ────────────
+P1_ID="b1a00001-0066-4a00-8a00-000000000001"; P1_NAME="Haven";      P1_ROLE="city"; P1_SEC="Outer Haven";   P1_SIDX=1; P1_ZONE="Wreck Belt";      P1_X="-50"; P1_Y="-30"; A1_ID="b1a0a001-0066-4a00-8a00-0000000000a1"; S1_ID="b1a05001-0066-4a00-8a00-000000000051"
+P2_ID="b1a00002-0066-4a00-8a00-000000000002"; P2_NAME="Slagworks";  P2_ROLE="port"; P2_SEC="Crimson Nebula"; P2_SIDX=2; P2_ZONE="Ion Storm Route"; P2_X="70";  P2_Y="-10"; A2_ID="b1a0a002-0066-4a00-8a00-0000000000a2"; S2_ID="b1a05002-0066-4a00-8a00-000000000052"
+P3_ID="b1a00003-0066-4a00-8a00-000000000003"; P3_NAME="Driftmarch"; P3_ROLE="port"; P3_SEC="Crimson Nebula"; P3_SIDX=2; P3_ZONE="Ion Storm Route"; P3_X="10";  P3_Y="80";  A3_ID="b1a0a003-0066-4a00-8a00-0000000000a3"; S3_ID="b1a05003-0066-4a00-8a00-000000000053"
 
 # ── Fail-closed validators / connection helpers (logic identical to the established ANCHOR spotchecks) ────
 validate_ref() { printf '%s' "${1:-}" | grep -qE '^[a-z0-9]{20}$' || fail "invalid/empty project ref"; }
@@ -72,14 +75,19 @@ require_pooler_binding() {  # $1=host $2=port $3=user $4=ref
 build_verifier_conn() { printf 'host=%s port=5432 user=postgres.%s dbname=postgres sslmode=verify-full sslrootcert=%s' "$1" "$2" "$3"; }
 mval() { printf '%s\n' "$1" | grep -E "^$2=" | head -1 | cut -d= -f2-; }
 
-# ── Migration binding: every expected literal MUST be present verbatim in the checked-out migration 0066 ──
+# ── Migration binding: every expected literal MUST be present verbatim in the checked-out migration that
+#    owns it — identity/structure in 0066, the 0148-renamed display names in 0148. ────────────────────────
 assert_migration() {
   [ -f "$MIG_FILE" ] || fail "migration 0066 not found in checkout"
+  [ -f "$MIG148_FILE" ] || fail "migration 0148 not found in checkout"
   local lit
-  for lit in "$P1_ID" "$P1_NAME" "$P2_ID" "$P2_NAME" "$P3_ID" "$P3_NAME" \
+  for lit in "$P1_ID" "$P2_ID" "$P3_ID" \
              "$A1_ID" "$A2_ID" "$A3_ID" "$S1_ID" "$S2_ID" "$S3_ID" \
              "is_home_port_eligible" "assign_home_port" "player_home_port_eligibility"; do
     grep -qF "$lit" "$MIG_FILE" || fail "expected literal not present in migration 0066: $lit"
+  done
+  for lit in "'$P1_NAME'" "'$P2_NAME'" "'$P3_NAME'"; do
+    grep -qF "$lit" "$MIG148_FILE" || fail "expected name literal not present in migration 0148: $lit"
   done
 }
 
@@ -102,8 +110,8 @@ SELECT 'S1_OK='||((EXISTS(SELECT 1 FROM public.location_services WHERE id='${S1_
 SELECT 'S2_OK='||((EXISTS(SELECT 1 FROM public.location_services WHERE id='${S2_ID}' AND location_id='${P2_ID}' AND service='docking' AND status='active')) AND (SELECT count(*) FROM public.location_services WHERE location_id='${P2_ID}' AND service='docking' AND status='active')=1)::int;
 SELECT 'S3_OK='||((EXISTS(SELECT 1 FROM public.location_services WHERE id='${S3_ID}' AND location_id='${P3_ID}' AND service='docking' AND status='active')) AND (SELECT count(*) FROM public.location_services WHERE location_id='${P3_ID}' AND service='docking' AND status='active')=1)::int;
 SELECT 'N_SVC_UNEXP='||count(*) FROM public.location_services WHERE id NOT IN ('${S1_ID}','${S2_ID}','${S3_ID}');
-SELECT 'N_ORIG='||count(*) FROM public.locations WHERE name IN ('Safe Rally Point','Quiet Drift','Pirate Ambush Point','Raider Outpost','Pirate Den') AND physical_role='unclassified' AND status='active';
-SELECT 'MAP_LEAK='||(public.get_world_map()::text ~ '(Haven Reach|Slagworks Anchorage|Driftmarch Waypost)')::int;
+SELECT 'N_ORIG='||count(*) FROM public.locations WHERE name IN ('Refuge','Lull','Snare','Reaver','Blackden') AND physical_role='unclassified' AND status='active';
+SELECT 'MAP_LEAK='||(public.get_world_map()::text ~ '"name" *: *"(Haven|Slagworks|Driftmarch)"')::int;
 SELECT 'MAP_LEAK_ID='||(public.get_world_map()::text ~ 'b1a0000[123]-0066')::int;
 SELECT 'ELIG1='||public.is_home_port_eligible('${P1_ID}')::int;
 SELECT 'ELIG2='||public.is_home_port_eligible('${P2_ID}')::int;

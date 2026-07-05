@@ -62,7 +62,7 @@ export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
           <div className={`${CARD} border-indigo-400/30 bg-indigo-500/10 text-indigo-100`} data-testid="port-entry-claim">
             <p className="font-medium text-indigo-200">Commission your first ship</p>
             <p className="mt-1 text-indigo-100/80">
-              Claim your main ship. It will begin docked at <span className="font-medium">Haven Reach</span>, ready to explore.
+              Claim your main ship. It will begin docked at <span className="font-medium">Haven</span>, ready to explore.
             </p>
             {errorText && actionKind === 'commission' && (
               <p data-testid="port-entry-error" className="mt-2 text-rose-300">{errorText}</p>

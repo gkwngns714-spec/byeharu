@@ -150,7 +150,7 @@ test('controller: successful commission → success phase + onSettled called exa
   await c.submit('commission')
   expect(c.getState().phase).toBe('success')
   expect(c.getState().kind).toBe('commission')
-  expect(c.getState().message).toContain('Haven Reach')
+  expect(c.getState().message).toContain('Haven')
   expect(settled).toBe(1)
 })
 

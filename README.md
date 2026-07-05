@@ -11,8 +11,9 @@ ranking points and grow stronger. Server-authoritative, web-first.
 
 ## Current status (2026-06-29)
 
-- **Production migration head: `0070`.** Three starter ports (Haven Reach, Slagworks Anchorage, Driftmarch
-  Waypost) are **active/public**.
+- **Production migration head: `0070`.** Three starter ports (Haven, Slagworks, Driftmarch) are
+  **active/public**. *(Renamed 2026-07-05 by forward-only migration `0148` — UX cleanup item 4, one-word
+  display names; formerly Haven Reach / Slagworks Anchorage / Driftmarch Waypost. Fixed UUIDs unchanged.)*
 - **OSN port-to-port travel is enabled** — a ship docked at a port can travel port-to-port. **Free
   arbitrary-coordinate travel is server-disabled by default** (`mainship_coordinate_travel_enabled = false`).
 - **Phase 9 is live:** a read-only **docked-port surface** (`get_my_current_dock_services()` + `DockServicesPanel`)

@@ -1,6 +1,6 @@
 -- PORT-LAUNCH-2B — REAL-CHAIN reveal-precondition + first-player onboarding proof on the ACTUAL chain
 -- (through 0068). Disposable only. Proves, in order: (1) dark baseline, (2) reveal semantics, (3) the REAL
--- HOME → Haven Reach legacy main-ship onboarding via the existing send_main_ship_expedition contract →
+-- HOME → Haven legacy main-ship onboarding via the existing send_main_ship_expedition contract →
 -- standard movement/arrival → coherent legacy_present → mainship_space_resolve_origin = anchored →
 -- get_osn_movement_readiness anchored/osn_available=false, (5) non-combat/non-reward behaviour, then (6)
 -- REVERTS the world to fully hidden with no fixtures and no net world/player change.
@@ -15,9 +15,9 @@
 -- Fixed 0066 identities.
 create temp table pl2b_id(k text primary key, id uuid) on commit preserve rows;
 insert into pl2b_id values
-  ('p1','b1a00001-0066-4a00-8a00-000000000001'),   -- Haven Reach (city)
-  ('p2','b1a00002-0066-4a00-8a00-000000000002'),   -- Slagworks Anchorage (port)
-  ('p3','b1a00003-0066-4a00-8a00-000000000003'),   -- Driftmarch Waypost (port)
+  ('p1','b1a00001-0066-4a00-8a00-000000000001'),   -- Haven (city)
+  ('p2','b1a00002-0066-4a00-8a00-000000000002'),   -- Slagworks (port)
+  ('p3','b1a00003-0066-4a00-8a00-000000000003'),   -- Driftmarch (port)
   ('a1','b1a0a001-0066-4a00-8a00-0000000000a1'),
   ('s1svc','b1a05001-0066-4a00-8a00-000000000051');
 
@@ -59,9 +59,10 @@ begin
         and location_id in (select id from pl2b_id where k in ('p1','p2','p3'))) <> 3 then
     raise exception 'BASELINE FAIL: expected exactly 3 active docking services'; end if;
 
-  -- absent from get_world_map() (no name, no id leak)
+  -- absent from get_world_map() (no name, no id leak). Name checks are field-anchored ("name": "…"):
+  -- the bare word Haven would also match the sector 'Outer Haven'.
   wm := public.get_world_map()::text;
-  if wm ~ '(Haven Reach|Slagworks Anchorage|Driftmarch Waypost)' or wm ~ 'b1a0000[123]-0066' then
+  if wm ~ '"name" *: *"(Haven|Slagworks|Driftmarch)"' or wm ~ 'b1a0000[123]-0066' then
     raise exception 'BASELINE FAIL: a hidden starter port leaks through get_world_map()'; end if;
 
   -- no pre-existing interaction state for the fixed ports (the exact precondition the prod verifier mirrors)
@@ -92,7 +93,7 @@ begin
 
   -- all 3 now visible through get_world_map()
   wm := public.get_world_map()::text;
-  if not (wm like '%Haven Reach%' and wm like '%Slagworks Anchorage%' and wm like '%Driftmarch Waypost%') then
+  if not (wm ~ '"name" *: *"Haven"' and wm ~ '"name" *: *"Slagworks"' and wm ~ '"name" *: *"Driftmarch"') then
     raise exception '(2) REVEAL FAIL: a revealed port is not visible through get_world_map()'; end if;
 
   -- anchors/services unchanged; ports remain ordinary trade_outpost / activity_type='none'
@@ -112,7 +113,7 @@ begin
   raise notice '(2) reveal ok: exactly 3 ports active + visible; anchors/services/flags/player-state unchanged';
 end $$;
 
--- ════════ (3)+(5) REAL HOME → Haven Reach onboarding via send_main_ship_expedition ════════
+-- ════════ (3)+(5) REAL HOME → Haven onboarding via send_main_ship_expedition ════════
 do $$
 declare u uuid; s uuid; p1 uuid := (select id from pl2b_id where k='p1');
         v_send jsonb; v_fleet uuid; v_move uuid;
@@ -130,7 +131,7 @@ begin
   update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null where main_ship_id=s;
   insert into pl2b_id values ('u', u), ('s', s);
 
-  -- (3.1)+(3.2) the EXISTING command contract accepts the now-active Haven Reach; no special port writer,
+  -- (3.1)+(3.2) the EXISTING command contract accepts the now-active Haven; no special port writer,
   -- no teleport, no base anchor, no home-port assignment. The server derives the player from auth.uid().
   perform set_config('request.jwt.claims', json_build_object('sub', u::text)::text, true);
   v_send := public.send_main_ship_expedition(jsonb_build_array(s::text), p1);
@@ -143,7 +144,7 @@ begin
      or (select count(*) from public.space_anchors where kind='base' and base_id in (select id from public.bases where player_id=u)) <> 0 then
     raise exception '(3) SEND FAIL: send created a home-port or base anchor (must not)'; end if;
 
-  -- (3.3) standard legacy movement/arrival processing reaches Haven Reach. Make the movement DUE by moving
+  -- (3.3) standard legacy movement/arrival processing reaches Haven. Make the movement DUE by moving
   -- its whole window into the past (preserving the arrive_at > depart_at table check), then run the real engine.
   update public.fleet_movements
     set depart_at = now() - interval '2 hours', arrive_at = now() - interval '1 hour' where id = v_move;
@@ -152,9 +153,9 @@ begin
   -- (3.4) coherent legacy-present state
   if (select status from public.fleets where id=v_fleet) <> 'present'
      or (select current_location_id from public.fleets where id=v_fleet) <> p1 then
-    raise exception '(3) ARRIVE FAIL: fleet not present at Haven Reach'; end if;
+    raise exception '(3) ARRIVE FAIL: fleet not present at Haven'; end if;
   if (select count(*) from public.location_presence where fleet_id=v_fleet and status='active' and location_id=p1) <> 1 then
-    raise exception '(3) ARRIVE FAIL: no active presence at Haven Reach'; end if;
+    raise exception '(3) ARRIVE FAIL: no active presence at Haven'; end if;
   if (select count(*) from public.fleet_movements where fleet_id=v_fleet and status='moving') <> 0 then
     raise exception '(3) ARRIVE FAIL: an active legacy movement remains'; end if;
   if (select count(*) from public.main_ship_space_movements where main_ship_id=s and status='moving') <> 0 then
@@ -166,7 +167,7 @@ begin
   v_origin := public.mainship_space_resolve_origin(s);
   if (v_origin->>'ok')::boolean is not true or v_origin->>'origin_kind' <> 'location'
      or (v_origin->>'origin_location_id')::uuid <> p1 then
-    raise exception '(3) ORIGIN FAIL: resolve_origin not anchored at Haven Reach: %', v_origin; end if;
+    raise exception '(3) ORIGIN FAIL: resolve_origin not anchored at Haven: %', v_origin; end if;
 
   -- (3.6) readiness: anchored, osn_available=false, generic dark reason, ONLY the other visible ports, no leak
   v_ready := public.get_osn_movement_readiness();
@@ -179,7 +180,7 @@ begin
 
   -- (5) non-combat / non-reward: a 'none' port spawns no combat/hunt, generates no combat report or reward
   if (select activity_type from public.locations where id=p1) <> 'none' then
-    raise exception '(5) NONCOMBAT FAIL: Haven Reach activity_type changed from none'; end if;
+    raise exception '(5) NONCOMBAT FAIL: Haven activity_type changed from none'; end if;
   select count(*) into n from public.combat_reports where player_id = u or location_id = p1;
   if n <> 0 then raise exception '(5) NONCOMBAT FAIL: a combat report was generated for a none-port trip (%)', n; end if;
 

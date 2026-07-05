@@ -40,7 +40,7 @@ export interface PortEntryCommandController {
 
 const INITIAL: PortEntryCommandState = { phase: 'idle', kind: null, message: null }
 
-const COMMISSION_SUCCESS_COPY = 'Your ship is commissioned and docked at Haven Reach.'
+const COMMISSION_SUCCESS_COPY = 'Your ship is commissioned and docked at Haven.'
 const COMMISSION_ALREADY_COPY = 'Your ship is already commissioned and docked.'
 const NORMALIZE_SUCCESS_COPY = 'Docking complete — your ship is now docked at this port.'
 const NORMALIZE_ALREADY_COPY = 'Your ship is already docked at this port.'

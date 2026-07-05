@@ -72,10 +72,11 @@ the **Glossary** (§12).
 > frontend coordinate UI is now driven SOLELY by that runtime capability (**OSN-COORD-ENABLE-1B/1C**, migrations
 > `0071`, PRs #57–#59) — the old `OSN_COORDINATE_TRAVEL_ENABLED` compile-time const is retired, so flipping the
 > server flag later lights up the UI with **no redeploy**; until then it stays hidden. `mainship_send_enabled = true`.
-> The three starter ports (Haven Reach, Slagworks Anchorage, Driftmarch Waypost) are **active/public**; **Phase 9**
+> The three starter ports (Haven, Slagworks, Driftmarch — one-word display names since migration `0148`,
+> 2026-07-05 UX cleanup; UUIDs unchanged) are **active/public**; **Phase 9**
 > dock-service read surface (`get_my_current_dock_services()` + `DockServicesPanel`, `0069`) is **[Implemented]**.
 > **PORT-ENTRY-1 (migration `0072`, PR #61) is DEPLOYED** — first-ship commissioning (`commission_first_main_ship()`,
-> docked at Haven Reach), same-location normalization (`normalize_main_ship_dock()`), and the service-role-only
+> docked at Haven), same-location normalization (`normalize_main_ship_dock()`), and the service-role-only
 > `port_entry_commission_writer(uuid)`; additive function-only, concurrency-proven, **no player-facing UI yet**. A
 > dedicated read-only production verifier (**PORT-ENTRY-1-VERIFY-1**, PR #62) is **merged but not yet run**. **Phase 10
 > Trading V1** is **fully designed/calibrated but NOT built**. Immediate next work: the player-facing **Claim First

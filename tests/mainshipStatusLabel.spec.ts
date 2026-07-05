@@ -8,7 +8,7 @@ import type { MainShipSpaceMovement } from '../src/features/map/mainshipApi'
 // label and NEVER surfaces a name/id/coordinate. Run: `npx playwright test mainshipStatusLabel.spec.ts`.
 
 const PUBLIC = [
-  { id: 'loc-haven', name: 'Haven Reach' },
+  { id: 'loc-haven', name: 'Haven' },
   { id: 'loc-port', name: 'Old Port' },
 ]
 
@@ -39,7 +39,7 @@ test('in_space → "Parked in open space"', () => {
 
 test('docked at a VISIBLE location → "Docked at <name>"', () => {
   expect(resolveMainShipStatusLabel({ marker: marker('present'), spaceMovement: null, publicLocations: PUBLIC, dockedLocationId: 'loc-haven' }))
-    .toBe('Docked at Haven Reach')
+    .toBe('Docked at Haven')
 })
 
 test('docked at a HIDDEN/unknown location → generic "Docked" (no name/id leak)', () => {
