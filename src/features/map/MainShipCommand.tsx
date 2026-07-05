@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { MapLocation } from './mapTypes'
 import type { MainShipLite } from './useGalaxyMapData'
 import { deriveMainShipStatus, moveMainShipToLocation, sendMainShipExpedition, type MainShipFleet } from './mainshipApi'
+import { Button, Notice, SectionLabel } from '../../components/ui'
 
 // Phase 10D/10H — main-ship send/move surface. Deliberately SEPARATE from the retired legacy
 // ExpeditionCommand (disposable-fleet send, removed in the UX cleanup pass): no unit pickers,
@@ -74,76 +75,80 @@ export function MainShipCommand({
   }
 
   return (
-    <div data-testid="mainship-command" className="mt-3 rounded-md border border-sky-500/30 bg-sky-500/5 p-3">
-      <p className="text-xs uppercase tracking-wide text-sky-300/80">🛰 Send main ship</p>
+    <div data-testid="mainship-command" className="mt-3 rounded-lg border border-accent/20 bg-surface-2/50 p-3">
+      <SectionLabel className="mb-0 text-accent/90">🛰 Send main ship</SectionLabel>
 
       {/* No commissioned ship → neutral read-only note (NO commission action in 10D). */}
       {!mainShip ? (
-        <p data-testid="mainship-command-none" className="mt-2 text-sm text-slate-400">No main ship yet.</p>
+        <p data-testid="mainship-command-none" className="mt-2 text-sm text-ink-muted">No main ship yet.</p>
       ) : isCombat ? (
-        <p data-testid="mainship-command-combat" className="mt-2 text-sm text-slate-400">
+        <p data-testid="mainship-command-combat" className="mt-2 text-sm text-ink-muted">
           Main ships can't enter combat zones yet.
         </p>
       ) : (
         <>
-          <p className="mt-1 text-sm text-slate-200">
+          <p className="mt-1 text-sm text-ink">
             Destination: <span className="font-medium">{location.name}</span>
           </p>
 
           {success && (
-            <p data-testid="mainship-send-success" className="mt-3 rounded border border-emerald-600/40 bg-emerald-500/10 px-2 py-1.5 text-sm text-emerald-300">
+            <Notice tone="success" data-testid="mainship-send-success" className="mt-3">
               ✓ {success}
-            </p>
+            </Notice>
           )}
           {error && (
-            <p data-testid="mainship-send-error" className="mt-3 rounded border border-rose-600/40 bg-rose-500/10 px-2 py-1.5 text-sm text-rose-300">
+            <Notice tone="danger" data-testid="mainship-send-error" className="mt-3">
               {error}
-            </p>
+            </Notice>
           )}
 
           {isHere ? (
-            <p data-testid="mainship-already-here" className="mt-3 text-center text-xs text-slate-400">
+            <p data-testid="mainship-already-here" className="mt-3 text-center text-xs text-ink-muted">
               Main ship is already here.
             </p>
           ) : status === 'destroyed' ? (
-            <p data-testid="mainship-send-disabled" className="mt-3 text-center text-xs text-amber-300/80">
+            <p data-testid="mainship-send-disabled" className="mt-3 text-center text-xs text-warning/90">
               Main ship is disabled. Repair it before sending.
             </p>
           ) : !actionable ? (
-            <p data-testid="mainship-send-unavailable" className="mt-3 text-center text-xs text-slate-500">
+            <p data-testid="mainship-send-unavailable" className="mt-3 text-center text-xs text-ink-faint">
               Main ship is currently {status}.
             </p>
           ) : !confirming ? (
-            <button
+            <Button
+              variant="primary"
               data-testid="mainship-send"
-              disabled={sending}
+              busy={sending}
+              busyLabel="Working…"
               onClick={() => { setSuccess(null); setError(null); setConfirming(true) }}
-              className="mt-3 w-full rounded-md bg-sky-500 py-2 text-sm font-medium text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700/60 disabled:text-slate-500"
+              className="mt-3 w-full"
             >
-              {sending ? 'Working…' : actionLabel}
-            </button>
+              {actionLabel}
+            </Button>
           ) : (
-            <div className="mt-3 rounded border border-sky-500/40 bg-sky-500/5 p-2.5">
-              <p className="text-sm text-slate-200">
+            <div className="mt-3 rounded-lg border border-accent/30 bg-surface-2/60 p-2.5">
+              <p className="text-sm text-ink">
                 {actionVerb} your main ship to <span className="font-medium">{location.name}</span>?
               </p>
               <div className="mt-2 flex gap-2">
-                <button
+                <Button
+                  variant="primary"
                   data-testid="mainship-send-confirm"
-                  disabled={sending}
+                  busy={sending}
+                  busyLabel="Working…"
                   onClick={doAction}
-                  className="flex-1 rounded-md bg-sky-500 py-1.5 text-sm font-medium text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex-1"
                 >
-                  {sending ? 'Working…' : 'Confirm'}
-                </button>
-                <button
+                  Confirm
+                </Button>
+                <Button
                   data-testid="mainship-send-cancel"
                   disabled={sending}
                   onClick={() => setConfirming(false)}
-                  className="flex-1 rounded-md border border-slate-600 py-1.5 text-sm text-slate-300 transition hover:bg-slate-700/50 disabled:opacity-50"
+                  className="flex-1"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           )}

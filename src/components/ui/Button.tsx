@@ -4,7 +4,7 @@ import type { ButtonHTMLAttributes } from 'react'
 // `buttonClasses` is exported so router <Link>s can wear the exact same skin without a wrapper.
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'warning'
-export type ButtonSize = 'sm' | 'md'
+export type ButtonSize = 'sm' | 'md' | 'icon'
 
 const VARIANT: Record<ButtonVariant, string> = {
   // Filled variants put dark app-colored text on the bright token fill (~8:1 contrast).
@@ -18,6 +18,7 @@ const VARIANT: Record<ButtonVariant, string> = {
 const SIZE: Record<ButtonSize, string> = {
   sm: 'px-3 py-1 text-xs',
   md: 'px-4 py-2 text-sm',
+  icon: 'h-8 w-8 p-0 text-base', // square icon button (map zoom cluster etc.)
 }
 
 export function buttonClasses(variant: ButtonVariant = 'secondary', size: ButtonSize = 'md', extra = ''): string {

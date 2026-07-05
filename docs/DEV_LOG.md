@@ -5,6 +5,54 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 5, slice B) — Galaxy Map on the design system + map-look elevation (presentational-only)
+
+**Request.** Apply the slice-A tokens/primitives to the Galaxy Map (the goal's explicit "improve the
+galaxy-map look") — no new palette, no parallel styling system; presentational ONLY (no RPC, data flow,
+flag, movement/selection logic, or `data-testid` change).
+
+**Screen chrome → primitives/tokens.** `GalaxyMapScreen` (header nav → `buttonClasses`, states/aside/
+overlay bar → tokens), `MainShipPreview` (Card/Badge/Notice/Button — recall stays disabled-gated),
+`MainShipCommand` (Button/Notice/SectionLabel; confirm/cancel flow identical), `SpaceStopControls`
+(warning-toned surface + the shared warning Button). `Button` gained ONE size, `icon` (square), consumed
+by the map's zoom cluster — no other primitive additions were needed.
+
+**Map canvas elevation (all token-driven — SVG consumes the same @theme tokens via `var(--color-*)`,
+which Tailwind v4 emits as `:root` custom properties; NO new tokens were needed).**
+- Backdrop: subtle deep-space radial glow (`surface`→`app`) + a faint `edge` grid pattern — replaces the
+  flat hex fill; the container wears the standard `rounded-card border-edge shadow-card` chrome.
+- Location markers (`LocationMarker`): semantic identity — hostile (`pirate_hunt`/`pirate_den`) →
+  `danger`, safe (`safe_zone`) → `success`, dockable port (`trade_outpost`) → `accent` **plus a second
+  "hub" ring** so ports read differently from waypoints at any zoom; resource/event → `warning`;
+  derelict → muted. Each node: soft always-on identity halo + core dot + app-colored stroke; NEW
+  hover halo (`group-hover`) and a solid selected ring; labels carry an app-colored paint-order halo for
+  legibility over the grid.
+- Routes: `FleetMovementLine` outbound → `warning`, return → `accent` (ETA labels haloed);
+  `SpaceRouteLine` outbound token + haloed ETA. In-transit emphasis is consistent across both families.
+- Main-ship marker: state-toned chevron (outbound `warning` / returning `accent` / settled `success`)
+  inside an always-accent "this is YOU" halo ring — the player reads distinctly at any zoom. Home base
+  diamond + label → accent tokens.
+- NEW compact legend (bottom-left, pointer-inert) mirroring the marker semantics exactly: safe · hostile
+  · port · home, merged with the existing hint line.
+
+**Behavior/structure preserved (proof).** SVG coordinate math, camera, gesture/selection handlers, and
+every flag-gated mount untouched; `data-testid` counts byte-identical before/after per file (stash
+comparison: GalaxyMapScreen 5, LocationMarker 1, MainShipMarker 1, FleetMovementLine 1, SpaceRouteLine 2,
+SpaceStopControls 4, MainShipPreview 7, MainShipCommand 11). Grep-proven ZERO old palette/hex literals in
+any converted map file. The only spec-pinned visual attributes (`fill="none"` on the S6C crosshair + dev
+preview) are untouched. PortNavPanel / DockServicesPanel / MarketPanel / the dark activity panels stay on
+their current styling — the dock/port and market slices remain next.
+
+**Doc-sync.** `docs/SYSTEM_BOUNDARIES.md` needs NO change — confirmed: presentation only, no
+table/writer/flag/RPC/edge. This entry added.
+
+**Verify.** `npm run build` green; ALL map-related unit specs green — 129/129 across
+spaceRouteModel/spaceRouteLine/galaxyShipLayer/spaceStopCommand/resolveMainShipMarker/spaceMoveTarget/
+galaxyCamera/mainshipStatusLabel/devFixedSpacePreview/openSpaceTransform; `verify:m2`/`verify:m3`
+unaffected (results in the step report). SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 5, slice A) — the ONE shared design system + Command Center conversion (presentational-only)
 
 **Request.** Final goal item, foundation slice: establish the single source of truth for styling (tokens +
