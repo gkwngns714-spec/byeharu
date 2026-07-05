@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useGalaxyMapData } from './useGalaxyMapData'
 import { GalaxyMap } from './GalaxyMap'
-import { ExpeditionCommand } from './ExpeditionCommand'
 import { MainShipPreview } from './MainShipPreview'
 import { MainShipCommand } from './MainShipCommand'
 import { PortNavPanel } from './PortNavPanel'
@@ -20,12 +19,12 @@ import { ModulesPanel } from '../modules/ModulesPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 
 // Galaxy Map screen. Shows the world, the player's main ship, ports, and active movements; selecting a
-// location opens its detail panel + the main-ship expedition/move surface. When the main ship is docked at a
-// port, the read-only DockServicesPanel shows that port's active services.
+// location opens its detail panel + the flag-gated main-ship send/move surface (MainShipCommand). When the
+// main ship is docked at a port, the read-only DockServicesPanel shows that port's active services.
 
 export function GalaxyMapScreen() {
   const {
-    loading, error, locations, meta, base, mainShip, movements, locationStates, baseUnits, unitTypes,
+    loading, error, locations, meta, base, mainShip, movements, locationStates,
     mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement, refresh,
   } = useGalaxyMapData()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -221,16 +220,9 @@ export function GalaxyMapScreen() {
               {selState && <Row label="Danger mod" value={selState.danger_modifier.toFixed(2)} />}
               {selState && <Row label="Active fleets" value={String(selState.active_fleets)} />}
             </dl>
-            <ExpeditionCommand
-              key={selected.id}
-              location={selected}
-              base={base}
-              units={baseUnits}
-              unitTypes={unitTypes}
-              onSent={refresh}
-            />
-            {/* Phase 10D: separate main-ship send surface, ONLY when the flag is on. The old
-                disposable fleet send above stays untouched and always available. */}
+            {/* Phase 10D: main-ship send surface, ONLY when the flag is on. (The legacy disposable
+                fleet send — ExpeditionCommand — was retired in the UX cleanup pass; its RPC remains
+                server-side.) */}
             {mainshipSendEnabled && (
               <MainShipCommand
                 key={`ms-${selected.id}`}

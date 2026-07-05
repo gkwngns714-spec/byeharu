@@ -5,6 +5,58 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP (item 1) — retire the legacy Train Ships / Training Queue / map ExpeditionCommand UI (frontend-only; backend RPCs intentionally untouched)
+
+**Request.** Player-facing UX/cleanup pass, slice 1 of 6: remove the three superseded legacy UI surfaces
+(`TrainShipsPanel`, `BuildQueuePanel` in the Command Center; `ExpeditionCommand` in the Galaxy Map detail
+panel) plus everything that becomes dead SOLELY as a result. UI-only retirement — no migration, RPC, cron,
+or flag change.
+
+**Removed (each verified zero-reference by grep before deletion).**
+- Mounts + imports: `Dashboard.tsx` (TrainShipsPanel, BuildQueuePanel), `GalaxyMapScreen.tsx`
+  (ExpeditionCommand); no wrapper markup existed beyond the JSX elements themselves.
+- Component files: `src/features/production/TrainShipsPanel.tsx`, `src/features/production/BuildQueuePanel.tsx`,
+  `src/features/map/ExpeditionCommand.tsx`.
+- Dead-code chain orphaned by the above (all grep-verified zero remaining consumers):
+  `src/features/production/productionApi.ts` (`fetchBuildOrders`/`trainUnits`/`cancelBuildOrder`) +
+  `productionTypes.ts` (`BuildOrder`) → `src/features/production/` now empty, directory removed;
+  `src/game/production/buildPreview.ts` (preview helpers) → `src/game/production/` removed;
+  `buildOrders` state/fetch in `useGameState.ts`; `baseUnits` + `unitTypes` state/fetch in
+  `useGalaxyMapData.ts` (only ExpeditionCommand consumed them); `sendFleetToLocation` + `SelectedUnit`
+  in `fleets/fleetApi.ts` and `DispatchResult` in `fleets/fleetTypes.ts`.
+- Kept (still consumed elsewhere, verified): `lib/time` `formatDuration`/`formatCountdown`,
+  `baseApi.fetchBaseUnits`, `catalog.fetchUnitTypes`, `ExpeditionLauncher` (a nav link, no fleet API use),
+  `MainShipCommand` (the deliberate Phase 10D/10H replacement surface — stale comment updated),
+  `fleetApi.requestLeaveLocation` (FleetStatusPanel).
+- Tests: `tests/m45.spec.ts` (M4.5 Train/Queue browser acceptance) and `tests/galaxy9b.spec.ts` (9B map
+  expedition send) existed ENTIRELY to drive the removed UI → deleted, with their npm scripts
+  (`verify:m45:browser`, `verify:galaxy9b:browser`). `tests/galaxy.spec.ts` (9A read-only smoke) adjusted:
+  now asserts the legacy expedition surface is ABSENT and keeps the no-fleet-created invariants.
+- Workflow dangling-reference cleanup (both dispatch-only, human-triggered; nothing dispatched):
+  `.github/workflows/browser.yml` deleted (its only test step ran the removed `verify:m45:browser`);
+  the 9B step removed from `browser-galaxy.yml` (its 9A step + cleanup step remain). NOTE: workflows were
+  outside the locked MAY-touch list — flagged here for explicit human review; `cleanup-m45-orphans.yml`
+  (DB row cleanup) kept, it does not reference the spec.
+
+**Backend intentionally intact.** `train_units`, `cancel_build_order`, `send_fleet_to_location`, the
+`process-build-queue` + `process-fleet-movements` 30s crons, and all tables/writers are untouched and now
+simply unreferenced from the client. The backend `verify:m45` (node) engine script and M2/M3/M4 suites are
+unaffected. `docs/SYSTEM_BOUNDARIES.md` needs NO change: no table, writer, flag, or cross-system edge
+changed — the ownership matrix documents the (unchanged) server surfaces, not client mounts. Confirmed.
+
+**Doc-sync (same step).** Stale current-tense references to the retired surfaces annotated with dated
+notes (historical text preserved, not rewritten): `docs/MAINSHIP_TRANSITION.md` §2 frontend-touchpoints
+("the only send surface") + its tests-pin line + §7 ("keeps … galaxy9b green") + a new **10D (2026-07-05
+update)** bullet in the implemented-vs-planned reconciliation note; `docs/ARCHITECTURE.md` §16 M7 row
+("Train Ships + Training Queue UI" → client UI retired, server RPCs/cron remain). Repo-wide doc grep
+confirms no other doc states the removed files/specs as current fact (remaining mentions are DEV_LOG
+history and dated recon snapshots).
+
+**Verify.** `npm run build` (tsc -b + vite) green after the removals; 160 modules, no unused-import or
+type errors. SAFE FOR HUMAN MERGE REVIEW.
+
+---
+
 ## 2026-07-05 — RANKING-P17 POST-AUDIT FIX (item 5) — schedule the ranking-accrual cron; world-tick already scheduled, no redundant cron (migration 0147)
 
 **Request.** Item (5), the deferred background schedulers: add the ranking-accrual cron, and document

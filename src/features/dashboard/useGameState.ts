@@ -12,8 +12,6 @@ import {
   fetchFleets,
 } from '../fleets/fleetApi'
 import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from '../fleets/fleetTypes'
-import { fetchBuildOrders } from '../production/productionApi'
-import type { BuildOrder } from '../production/productionTypes'
 
 export interface GameState {
   loading: boolean
@@ -29,7 +27,6 @@ export interface GameState {
   movements: FleetMovement[]
   presences: LocationPresence[]
   locationStates: Record<string, LocationState>
-  buildOrders: BuildOrder[]
   // Phase 10H: the player's main ship (owner-read) + the master flag (read-only, for panel gating).
   // The active main-ship fleet + its movement are derived from `fleets`/`movements` in the panel.
   mainShip: MainShipView | null
@@ -50,7 +47,6 @@ const EMPTY: GameState = {
   movements: [],
   presences: [],
   locationStates: {},
-  buildOrders: [],
   mainShip: null,
   mainshipSendEnabled: false,
 }
@@ -83,7 +79,7 @@ export function useGameState(pollMs = 3000) {
       }
 
       const base = await fetchBase()
-      const [units, resources, fleets, fleetUnits, movements, presences, locationStates, buildOrders, mainShip] =
+      const [units, resources, fleets, fleetUnits, movements, presences, locationStates, mainShip] =
         await Promise.all([
           base ? fetchBaseUnits(base.id) : Promise.resolve([]),
           base ? fetchBaseResources(base.id) : Promise.resolve([]),
@@ -92,7 +88,6 @@ export function useGameState(pollMs = 3000) {
           fetchActiveMovements(),
           fetchActivePresences(),
           fetchLocationStates(),
-          fetchBuildOrders(),
           fetchMyMainShip().catch(() => null), // non-fatal: a main-ship read hiccup must not break the Command Center
         ])
 
@@ -107,7 +102,6 @@ export function useGameState(pollMs = 3000) {
         movements,
         presences,
         locationStates,
-        buildOrders,
         mainShip,
         mainshipSendEnabled: staticRef.current.mainshipSendEnabled,
         unitTypes: staticRef.current.unitTypes,

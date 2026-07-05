@@ -3,8 +3,9 @@ import type { MapLocation } from './mapTypes'
 import type { MainShipLite } from './useGalaxyMapData'
 import { deriveMainShipStatus, moveMainShipToLocation, sendMainShipExpedition, type MainShipFleet } from './mainshipApi'
 
-// Phase 10D/10H — main-ship send/move surface. Deliberately SEPARATE from ExpeditionCommand: no
-// unit pickers, never touches old fleet_units. Non-combat only (activity_type === 'none').
+// Phase 10D/10H — main-ship send/move surface. Deliberately SEPARATE from the retired legacy
+// ExpeditionCommand (disposable-fleet send, removed in the UX cleanup pass): no unit pickers,
+// never touches old fleet_units. Non-combat only (activity_type === 'none').
 // INVARIANT (Phase 10E): this is the ONLY main-ship send/move surface.
 //   • Home (no active fleet)      → send_main_ship_expedition (depart from base)
 //   • Present at another location → move_main_ship_to_location (depart current location directly, 10H)

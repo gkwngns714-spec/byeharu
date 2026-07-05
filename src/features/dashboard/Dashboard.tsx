@@ -4,8 +4,6 @@ import { useGameState } from './useGameState'
 import { BasePanel } from '../base/BasePanel'
 import { PortEntryPanel } from '../portentry/PortEntryPanel'
 import { MainShipPanel } from './MainShipPanel'
-import { TrainShipsPanel } from '../production/TrainShipsPanel'
-import { BuildQueuePanel } from '../production/BuildQueuePanel'
 import { ExpeditionLauncher } from '../map/ExpeditionLauncher'
 import { FleetStatusPanel } from '../fleets/FleetStatusPanel'
 import { useCombat } from '../combat/useCombat'
@@ -92,20 +90,6 @@ export function Dashboard() {
               onChanged={game.refresh}
             />
           )}
-          <TrainShipsPanel
-            base={game.base}
-            units={game.units}
-            resources={game.resources}
-            unitTypes={game.unitTypes}
-            config={game.config}
-            onTrained={game.refresh}
-          />
-          <BuildQueuePanel
-            orders={game.buildOrders}
-            unitTypes={game.unitTypes}
-            config={game.config}
-            onChanged={game.refresh}
-          />
           {combat.encounters.map((enc) => (
             <ActiveCombatPanel
               key={enc.id}
