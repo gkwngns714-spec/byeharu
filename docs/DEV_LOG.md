@@ -5,6 +5,72 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-05 — UX CLEANUP PASS COMPLETE — final consolidation: full-suite check + PR-ready handoff (no product changes)
+
+**The goal, delivered on `autopilot/20260703-064048` (every slice individually reviewed and passed):**
+1. **Legacy UI retired** — TrainShipsPanel / BuildQueuePanel / ExpeditionCommand removed with their whole
+   dead-code chain; backend RPCs (`train_units`, `cancel_build_order`, `send_fleet_to_location`) + crons
+   intentionally intact, now client-unreferenced.
+2. **Honest docking UX** — waypoint-aware Finish-Docking affordance (`at_waypoint`), truthful
+   `ineligible_port` copy; server `target_legal` untouched as sole authority (frontend-only).
+3. **Consistent in-transit stop** — fleet-domain halt→symmetric-return-home
+   (`command_main_ship_stop_transit`, **0149**) + the OSN PortNav stop hardening; ONE shared stop
+   UI/controller for all families.
+4. **One-word location names** — forward-only data migration **0148** (Refuge/Snare/Reaver/Lull/Blackden
+   + Haven/Slagworks/Driftmarch); every caller/test/doc updated same-step; world-map name checks
+   field-anchored against the Haven⊂"Outer Haven" substring hazard.
+5. **Cohesive visual modernization** — the ONE design system (`@theme` tokens +
+   `src/components/ui/` primitives + README rule) across all four most-seen screens: Command Center ·
+   Galaxy Map (incl. the elevated map look: deep-space backdrop, semantic markers, legend) · dock/port ·
+   market (dark; incidental-styling exception).
+6. **On-demand arrival settlement** — both movement families (`command_main_ship_settle_arrival` **0150**;
+   `movement_settle_arrival` extraction + `command_main_ship_settle_arrival_legacy` **0151**), cron
+   primitives reused verbatim, idempotent by state, unified client due-trigger (~34s → ~an RPC round-trip).
+
+**Migrations 0148–0151: authored, reviewed, NOT applied to any database (the human gate).** No feature
+flag was flipped anywhere in the pass; every new capability gates on its domain's EXISTING flag. Nothing
+merged or deployed.
+
+**Final full-suite state (this consolidation run; exact counts).**
+- `npm run build` — green.
+- `verify:m2` — **13/13 PASSED**.
+- `verify:m3` — **13/13 PASSED**.
+- `verify:m4` — **36/40**: the SAME four pre-existing combat-pacing failures as every run this goal
+  (`wave pacing — max 0 ticks/wave` · `damage-no-loss — not observed` · `wave HP decreasing — no
+  mid-wave tick found` · `not one-shot — wave HP <= player damage`). Pre-existing/out-of-locked-scope
+  (combat/reward correctness untouched; 0148–0151 are additive AND unapplied, so the deployed engine is
+  byte-identical to before the goal). **No NEW failure anywhere.**
+- `verify:m45` / `verify:m5` — **NOT EXECUTABLE in this environment** (honest report, not a pass claim):
+  both hard-require `SUPABASE_SERVICE_ROLE_KEY`, which `.env.local` here deliberately lacks (anon-only),
+  and no CI workflow runs the engine suites (they have always run with the human's server-side key).
+  **No-regression argument by construction:** m45 exercises `train_units`/`process_build_queue`/
+  `cancel_build_order` and m5 exercises `worldstate_tick` — this goal changed NEITHER surface (item 1
+  removed only client UI + the browser spec; the m45 NODE engine script is untouched), and the live DB
+  the suites run against is unchanged by the goal (all migrations unapplied). Their outcome today is
+  therefore identical to before the goal; the human should run both once with their key as part of the
+  merge check below.
+
+**REGRESSIONS ATTRIBUTABLE TO THIS GOAL: NONE** (every runnable suite green or at its documented
+pre-existing baseline; the two non-runnable suites are argued unchanged by construction and delegated).
+
+**Human-gated remainder (the explicit handoff):**
+1. Run `verify:m45` + `verify:m5` once with the service-role key (pre-merge confirmation).
+2. Apply migrations **0148 → 0151** (forward-only, in order) to the database; then re-run the
+   DB-dependent proofs that probe-skip today — `verify-mainship-move.mjs` §11 (stop-transit), §12 (OSN
+   on-demand settle), §13 (legacy on-demand settle) — and the name-asserting verifiers
+   (`postreveal-verify`, `osn-postenable-verify`, catalog verifiers), which expect post-0148 names.
+3. Retire the `verify:m2` rename-pair TRANSITIONAL (collapse each old/new name pair to the new name)
+   once 0148 is applied to every verified environment — the retirement condition recorded in-line.
+4. Visual smoke-check the four converted screens (Command Center, Galaxy Map, dock/port, market — the
+   last needs a local-only trade-flag enable to see).
+5. Decide the `verify:m4` combat-pacing baseline (out of this goal's locked scope by design).
+6. The merge itself.
+
+**Docs.** `docs/SYSTEM_BOUNDARIES.md` needs NO change in this step (verification + documentation only) —
+confirmed. Branch state: **SAFE FOR HUMAN MERGE REVIEW.**
+
+---
+
 ## 2026-07-05 — UX CLEANUP (item 5, slice D) — market surface on the design system (COMPLETES item 5's screen coverage; presentational-only)
 
 **Request.** Final item-5 slice: convert `MarketPanel` + `ShipSwitcher` to the shared tokens/primitives.
