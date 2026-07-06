@@ -90,6 +90,27 @@ test('a retry of the SAME destination reuses the request id; a CHANGED destinati
   expect(seen[2]).toBe('req-2')
 })
 
+test('a SUCCESS consumes the request id — re-travelling to the SAME destination sends a fresh command', async () => {
+  let n = 0
+  const seen: string[] = []
+  const rpc: PortMoveControllerDeps['rpc'] = async (loc, requestId) => {
+    seen.push(requestId)
+    return { ok: true, target_location_id: loc, arrive_at: '2026-07-06T13:00:00Z' }
+  }
+  const ctrl = createPortMoveController({ rpc, genRequestId: () => `req-${++n}` })
+
+  ctrl.selectPort(port('p1'))
+  await ctrl.submit() // trip 1 succeeds
+  expect(ctrl.getState().phase).toBe('success')
+  // The key was consumed: keeping it would make the next same-destination travel replay trip 1's
+  // server receipt (no new movement — a silent no-op).
+  expect(ctrl.getState().requestId).toBe(null)
+
+  ctrl.selectPort(port('p1')) // later: travel to the SAME port again (e.g. after a round trip)
+  await ctrl.submit()
+  expect(seen).toEqual(['req-1', 'req-2']) // a DIFFERENT key — a real second command
+})
+
 // ── sanitized errors + no local position mutation on rejection (F10) ────────────────────────────────────
 test('a server rejection surfaces sanitized copy and keeps the selection (no client repair/mutation)', async () => {
   const rpc: PortMoveControllerDeps['rpc'] = async () => ({ ok: false, code: 'origin_not_anchored', message: 'raw-db-detail-should-not-show' })

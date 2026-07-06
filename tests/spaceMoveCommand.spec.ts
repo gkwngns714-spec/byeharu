@@ -164,6 +164,25 @@ test('confirm calls the rpc once with the canonical target + a request id; succe
   const s = c.getState()
   expect(s.phase).toBe('success')
   expect(s.serverTarget).toEqual({ x: 251, y: -251 }) // reconciled from the server response
+  // The success CONSUMES the key: keeping it would make the next confirmed move replay this
+  // command's server receipt (no new movement — a silent no-op).
+  expect(s.requestId).toBe(null)
+})
+
+// ── A SUCCESS consumes the request id: the next confirmed move is a fresh command, never a replay ─────
+test('after a successful move the next submit sends a DIFFERENT request id', async () => {
+  const { rpc, calls } = makeRpc((t) => ({ ok: true, target_x: t.x, target_y: t.y }))
+  const { gen, count } = makeIds()
+  const c = createSpaceMoveController({ rpc, genRequestId: gen, isEnabled: () => true })
+  c.selectTarget({ x: 100, y: 100 })
+  await c.submit() // move #1 succeeds
+  expect(c.getState().phase).toBe('success')
+  c.selectTarget({ x: 100, y: 100 }) // SAME destination again (e.g. return to a held point later)
+  await c.submit() // move #2 — must be a distinct idempotent command
+  expect(calls.length).toBe(2)
+  expect(calls[0].requestId).toBe('req-1')
+  expect(calls[1].requestId).toBe('req-2')
+  expect(count()).toBe(2)
 })
 
 // ── Duplicate confirm blocked while a request is in flight ────────────────────────────────────────────

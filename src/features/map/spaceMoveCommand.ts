@@ -108,7 +108,7 @@ export interface SpaceMoveState {
   phase: SpaceMovePhase
   target: WorldCoord | null // canonical integer target (out-of-bounds only when phase==='rejected')
   targetWithinBounds: boolean
-  requestId: string | null // current idempotency key (one per confirmed command; reused on retry)
+  requestId: string | null // current idempotency key (reused on in-error retry; consumed/cleared on success)
   serverTarget: WorldCoord | null // canonical target reconciled from a successful response
   errorCode: string | null
   errorMessage: string | null
@@ -181,6 +181,7 @@ export function createSpaceMoveController(deps: SpaceMoveControllerDeps): SpaceM
         set({
           phase: 'success',
           serverTarget: { x: res.target_x, y: res.target_y }, // reconcile to the server's canonical target
+          requestId: null, // consumed by this success — the next confirmed move sends a fresh command
           errorCode: null,
           errorMessage: null,
         })

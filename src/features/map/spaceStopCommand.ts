@@ -139,14 +139,15 @@ export function createSpaceStopController(deps: SpaceStopControllerDeps): SpaceS
 
   async function submit(): Promise<void> {
     if (state.phase === 'submitting') return // block duplicate submit while a request is in flight
-    // Reuse the existing key for a retry (idempotent); generate one otherwise. Stop carries no target, so
-    // there is no payload to invalidate the key — a retry of the same Stop reuses the same request id.
+    // The key is reused ONLY for an in-error retry (idempotent) and is consumed (cleared) on success,
+    // so the next Stop on a new transit is a fresh idempotent command — a consumed key would only
+    // replay the first Stop's server receipt (a silent no-op on the new movement).
     const requestId = state.requestId ?? deps.genRequestId()
     set({ phase: 'submitting', requestId, errorCode: null, errorMessage: null })
     try {
       const res = await deps.rpc(requestId)
       if (res.ok) {
-        set({ phase: 'done', outcome: res.outcome, errorCode: null, errorMessage: null })
+        set({ phase: 'done', outcome: res.outcome, requestId: null, errorCode: null, errorMessage: null })
       } else {
         set({ phase: 'error', errorCode: res.code, errorMessage: res.message ?? spaceStopErrorMessage(res.code) })
       }

@@ -5,6 +5,58 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — STOP/MOVE FIX, slice 1: consumed idempotency keys cleared on success (client-only)
+
+**Bug (LIVE — the reported "second Stop no-ops"):** the three pure OSN command controllers kept
+their idempotency `requestId` after a SUCCESS. The server receipt idempotency is correct-by-design
+(`mainship_space_stop` replays the stored `result_json` verbatim for a matching
+`(main_ship_id, request_id)` — 0067:695-704 — and Stop's canonical payload hash is CONSTANT, so a
+stale key can't even conflict), and the controller instances survive across trips (memoized on
+`[mainShipId]`; PortNavPanel/GalaxyMap stay mounted, returning `null` between trips). So the second
+Stop on a NEW transit resubmitted the FIRST stop's consumed key → the server replayed trip 1's
+success envelope → the new movement kept flying while the UI showed "Stopped in open space." — a
+silent no-op. Full root-cause trace: `STOP_UIRESTRUCTURE_RECON.local.md` §D. Same class, siblings:
+`portMoveCommand` (re-travel to the SAME destination after a success replayed the old receipt → no
+new movement; live-reachable) and `spaceMoveCommand` (identical idiom; dark behind the 0070
+coordinate gate). The legacy stop (`useLegacyStopTransitCommand` → 0149) does NOT share the class:
+per-trip fleet keying + idempotent-by-state server (no receipts) — clean post-0152, untouched.
+
+**Fix (client-only; NO migration, NO server code, NO flag — the server behaves as designed):**
+each controller's `submit()` success branch now ALSO sets `requestId: null` — the key is consumed
+by the success. Error/catch branches still keep the key, so a retry-after-error stays idempotent
+(same key), while the NEXT command after a completed one always generates a fresh key.
+- `src/features/map/spaceStopCommand.ts` — `createSpaceStopController.submit` `res.ok` branch
+  (+ the now-corrected key-lifecycle comment). ONE shared controller serves BOTH
+  `useSpaceStopCommand` (the live-reachable OSN stop — PortNavPanel/GalaxyMap) and
+  `useLegacyStopTransitCommand`, so this single change repairs the reported second-leg OSN stop.
+- `src/features/map/portMoveCommand.ts` — `createPortMoveController.submit` `res.ok` branch
+  (+ the `PortMoveState.requestId` comment).
+- `src/features/map/spaceMoveCommand.ts` — `createSpaceMoveController.submit` `res.ok` branch,
+  preserving the existing `serverTarget` reconciliation (+ the `SpaceMoveState.requestId` comment).
+
+**Deliberate omissions (considered, NOT done):** (1) movement-id re-keying of the OSN stop hook —
+redundant once the consumed key is cleared on success (every trip already gets a fresh key);
+speculative plumbing out of this slice's scope. (2) A shared "idempotent submit" helper across the
+three controllers — they are pre-existing independent surfaces with distinct state shapes; a
+one-field `requestId: null` in each controller's own success branch is not a duplicated
+non-trivial block.
+
+**Tests (updated to the corrected contract):** `tests/spaceStopCommand.spec.ts` /
+`tests/portMoveCommand.spec.ts` / `tests/spaceMoveCommand.spec.ts` — after a successful `submit()`
+`state.requestId` is `null`, and the NEXT submit (new trip / re-selected SAME destination) calls
+`genRequestId` again and sends a DIFFERENT key; the pre-existing error/catch retry cases (same key
+reused) are unchanged and still pass.
+
+**Verification (honest):** `npm run build` (tsc + vite) green; `npm run lint` green on the five
+touched files (the suite's 22 pre-existing errors in untouched files are unchanged);
+`verify:osn:osn4` + `verify:osn:port` + `verify:osn:s6c` (the three controller spec files) green.
+No DB needed — this slice is pure client logic. `docs/SYSTEM_BOUNDARIES.md` unchanged (no table,
+writer, constraint, or cross-system call changed). **NEXT SLICE:** the end-to-end
+`send → stop → send → stop` verifier (`verify:stop-roundtrip`, both families — see the recon §D.2
+assertion list).
+
+---
+
 ## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 3: the end-to-end round-trip verifier
 
 **New verifier `scripts/verify-mainship-legacy-dock-travel.mjs`** (+ `package.json` script

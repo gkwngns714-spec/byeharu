@@ -52,7 +52,7 @@ export type PortMovePhase = 'idle' | 'selected' | 'submitting' | 'success' | 'er
 export interface PortMoveState {
   phase: PortMovePhase
   selected: MapLocation | null
-  requestId: string | null // current idempotency key (one per chosen destination; reused on retry)
+  requestId: string | null // current idempotency key (reused on in-error retry; consumed/cleared on success)
   errorCode: string | null
   errorMessage: string | null
 }
@@ -109,7 +109,9 @@ export function createPortMoveController(deps: PortMoveControllerDeps): PortMove
     try {
       const res = await deps.rpc(locationId, requestId)
       if (res.ok) {
-        set({ phase: 'success', errorCode: null, errorMessage: null })
+        // The key is consumed by this success: clear it so re-travelling to the SAME destination later
+        // sends a fresh command instead of replaying this trip's server receipt (a silent no-op).
+        set({ phase: 'success', requestId: null, errorCode: null, errorMessage: null })
       } else {
         // keep requestId + selected so a retry reuses the same idempotency key
         set({ phase: 'error', errorCode: res.code, errorMessage: portMoveErrorMessage(res.code, res.message) })
