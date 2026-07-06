@@ -4,6 +4,7 @@ import { useGameState } from '../features/dashboard/useGameState'
 import { useCombat } from '../features/combat/useCombat'
 import { useGalaxyMapData } from '../features/map/useGalaxyMapData'
 import { useSettleDueArrival } from '../features/map/useSettleDueArrival'
+import { selectActiveLegacyMovement } from '../features/map/spaceStopCommand'
 
 // UI-REBUILD (2b) — the persistent four-destination shell. ONE mobile-first bottom tab bar
 // (Map · Ship · Port · Command; active tab derived from the router) over a single shared data
@@ -28,10 +29,8 @@ export function AppShell() {
   const combat = useCombat()
 
   // Both settle legs in one mount (see header). The legacy leg needs the active main-ship fleet's
-  // moving row — the same derivation the old screens used.
-  const legacyMove = map.mainShipFleet
-    ? (map.movements.find((mv) => mv.fleet_id === map.mainShipFleet?.id && mv.status === 'moving') ?? null)
-    : null
+  // moving row — the ONE shared selector (MapScreen's stop CTA uses the same one).
+  const legacyMove = selectActiveLegacyMovement(map.mainShipFleet, map.movements)
   useSettleDueArrival({
     mainShipId: map.mainShip?.main_ship_id ?? null,
     movement: map.mainShipSpaceMovement,

@@ -3,28 +3,57 @@ import { useShellState } from '../../app/shellState'
 import { GalaxyMap } from './GalaxyMap'
 import { PortNavPanel } from './PortNavPanel'
 import { SpaceStopControls } from './SpaceStopControls'
-import { isActiveLegacyOutboundTransit } from './spaceStopCommand'
+import { isActiveLegacyOutboundTransit, selectActiveLegacyMovement } from './spaceStopCommand'
 import { useLegacyStopTransitCommand } from './useSpaceStopCommand'
 import { MainShipCommand } from './MainShipCommand'
+import type { LocationType, MapLocation } from './mapTypes'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { MiningPanel } from '../mining/MiningPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
+import { Badge, StatRow, type BadgeTone } from '../../components/ui'
 
-// UI-REBUILD (2b) — the Map destination: THE primary play surface and the single route to the
-// galaxy. See the ship, move, Stop, dock, and select a destination → send (MainShipCommand in the
-// detail panel — the send flow lives IN the map; the retired ExpeditionLauncher had nothing to
-// fold). Panel interiors are relocated UNCHANGED this slice; shared polled data comes from the
-// shell (useShellState), and the on-demand arrival settle lives in AppShell — never here.
+// UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
+// stays the hero; the location detail panel now speaks the shared design language (IDENTITY →
+// RIGHT NOW → DETAILS, StatRow rows, plain player language — the raw status/difficulty/tier/
+// pressure/coordinate internals are humanized or dropped, see locationDisplay below), and the
+// server-lit feature panels ride ONE overlay rail instead of floating as raw flow cards. Shared
+// polled data comes from the shell; the arrival settle lives in AppShell — never here.
 //
 // NO-SOFTLOCK: every stop/recovery surface stays on this always-reachable destination — the
 // legacy transit stop CTA below, PortNavPanel's own OSN stop + the held-in-space re-departure
 // surface, and GalaxyMap's coordinate-transit stop CTA — all mounted independent of feature flags
 // (their own state predicates decide, exactly as before).
 
+// ── Player-facing location display (design decision; the ONLY place these mappings live) ────────
+// Humanized: location_type → a plain kind; base_difficulty → a danger word; reward_tier → a reward
+// word. DROPPED as dev-internal noise: raw coordinates, `status` (get_world_map returns only
+// active rows — the row could never read anything else), pressure/danger_modifier decimals, and
+// the active-fleets debug count.
+const TYPE_LABEL: Record<LocationType, string> = {
+  pirate_hunt: 'Pirate hunting ground',
+  pirate_den: 'Pirate den',
+  mining_site: 'Mining site',
+  derelict_station: 'Derelict station',
+  trade_outpost: 'Trade port',
+  rally_point: 'Rally point',
+  safe_zone: 'Safe waypoint',
+  event_site: 'Event site',
+}
+const typeBadge = (l: MapLocation): { tone: BadgeTone; text: string } =>
+  l.location_type === 'trade_outpost'
+    ? { tone: 'accent', text: 'Port' }
+    : l.activity_type === 'none'
+      ? { tone: 'success', text: 'Safe' }
+      : { tone: 'danger', text: 'Hostile' }
+const dangerLabel = (difficulty: number): string =>
+  difficulty <= 0 ? 'None — safe space' : difficulty <= 10 ? 'Low' : difficulty <= 20 ? 'Moderate' : 'High'
+const rewardLabel = (tier: number): string =>
+  tier <= 0 ? 'None' : tier === 1 ? 'Modest' : tier === 2 ? 'Good' : 'Rich'
+
 export function MapScreen() {
   const {
     map: {
-      loading, error, locations, meta, base, mainShip, movements, locationStates,
+      loading, error, locations, meta, base, mainShip, movements,
       mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement, refresh,
     },
   } = useShellState()
@@ -32,25 +61,25 @@ export function MapScreen() {
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
-  const selState = selectedId ? locationStates[selectedId] : undefined
 
   // UX-CLEANUP item 3 — stop for a LEGACY in-transit main-ship move (MainShipCommand sends create
   // fleet_movements, invisible to the OSN stop mounts). Reuses the ONE stop controller/CTA, wired to
   // command_main_ship_stop_transit (0149: halt → symmetric return home; server-gated on
   // mainship_send_enabled, idempotent by state). Renders only for an OUTBOUND transit of the main-ship
-  // fleet — a return leg has nothing to stop.
-  const legacyMove = mainShipFleet
-    ? (movements.find((mv) => mv.fleet_id === mainShipFleet.id && mv.status === 'moving') ?? null)
-    : null
+  // fleet — a return leg has nothing to stop. The moving-row derivation is the shared selector
+  // (selectActiveLegacyMovement — AppShell's settle wiring uses the same one).
+  const legacyMove = selectActiveLegacyMovement(mainShipFleet, movements)
   const inLegacyOutboundTransit = isActiveLegacyOutboundTransit({
     fleetStatus: mainShipFleet?.status,
     missionType: legacyMove?.mission_type,
   })
   const legacyStop = useLegacyStopTransitCommand(inLegacyOutboundTransit ? (mainShipFleet?.id ?? null) : null)
 
+  const panelLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
+
   return (
     <div data-testid="galaxy-map-screen" className="relative flex h-full flex-col overflow-hidden md:flex-row">
-      {/* Map area */}
+      {/* Map area — the hero */}
       <div className="relative flex-1 p-2">
         {loading && (
           <div data-testid="galaxy-map-loading" className="flex h-full items-center justify-center text-ink-muted">
@@ -84,8 +113,8 @@ export function MapScreen() {
               selectedId={selectedId}
               onSelect={setSelectedId}
             />
-            {/* PORT-LAUNCH-1B — dark port-to-port navigation. Server-gated (osn_available + anchored): it
-                renders nothing while production is dark, so today's player experience is unchanged. */}
+            {/* PORT-LAUNCH-1B — dark port-to-port navigation (top-left overlay, its own token
+                styling). Server-gated (osn_available + anchored): renders nothing while dark. */}
             <PortNavPanel
               visibleLocations={locations}
               shipStatus={mainShip?.status}
@@ -95,9 +124,9 @@ export function MapScreen() {
               mainShipId={mainShip?.main_ship_id ?? null}
               onCommitted={refresh}
             />
-            {/* UX-CLEANUP item 3 — the legacy in-transit stop CTA (see the hook block above). Same
-                component/controller as the OSN stops; mutually exclusive with them by state (one active
-                movement owner per ship). Refreshes the polled data after the command settles. */}
+            {/* UX-CLEANUP item 3 — the legacy in-transit stop CTA (bottom-right overlay; see the
+                hook block above). Same component/controller as the OSN stops; mutually exclusive
+                with them by state (one active movement owner per ship). */}
             {inLegacyOutboundTransit && (
               <SpaceStopControls
                 phase={legacyStop.state.phase}
@@ -109,60 +138,65 @@ export function MapScreen() {
                 stoppedMessage="Turning around — returning home."
               />
             )}
-            {/* EXPLORATION-P11 — dark exploration surface (scan + discoveries). SERVER-driven
-                visibility: it renders ONLY when get_my_exploration_discoveries answers ok; while
-                the server returns exploration_disabled it renders nothing, so today's player
-                experience is unchanged. Scan itself is legal only settled in space; the server
-                rejects everything else (fail-closed both sides). */}
-            <ExplorationPanel
-              lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
-              mainShipId={mainShip?.main_ship_id ?? null}
-              shipStatus={mainShip?.status}
-              shipSpatialState={mainShip?.spatial_state}
-            />
-            {/* MINING-P12 — dark mining surface (extract + extraction history). SERVER-driven
-                visibility: it renders ONLY when get_my_mining_extractions answers ok; while
-                the server returns mining_disabled it renders nothing, so today's player
-                experience is unchanged. Extract itself is legal only settled in space; the
-                server rejects everything else (fail-closed both sides). */}
-            <MiningPanel
-              lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
-              mainShipId={mainShip?.main_ship_id ?? null}
-              shipStatus={mainShip?.status}
-              shipSpatialState={mainShip?.spatial_state}
-            />
-            {/* PHASE20-POLISH — dark World Events display (read-only, presentational). SERVER-driven
-                visibility: it renders ONLY when get_world_events returns live events; while
-                phase20_polish_enabled is false the server empties the feed, so it renders nothing and
-                today's player experience is unchanged. No actions — the server (flag gate + live-window
-                filter) is the sole control. Same lifecycleKey as its siblings (a re-fetch trigger). */}
-            <WorldEventsPanel
-              lifecycleKey={`${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`}
-            />
+            {/* SERVER-LIT overlay rail (bottom-left): the dark feature panels ride ONE positioned,
+                scrollable stack so that WHEN a capability lights they read as coherent map
+                overlays instead of raw flow cards breaking the canvas layout. All three keep
+                their server-lit `return null` gates verbatim (dark today → the rail renders
+                empty and, being pointer-events-none, never intercepts map gestures). */}
+            <div className="pointer-events-none absolute bottom-2 left-2 z-10 max-h-[50%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
+              <div className="pointer-events-auto flex flex-col gap-2">
+                {/* EXPLORATION-P11 — dark scan + discoveries; legal only settled in space. */}
+                <ExplorationPanel
+                  lifecycleKey={panelLifecycleKey}
+                  mainShipId={mainShip?.main_ship_id ?? null}
+                  shipStatus={mainShip?.status}
+                  shipSpatialState={mainShip?.spatial_state}
+                />
+                {/* MINING-P12 — dark extract + extraction history; legal only settled in space. */}
+                <MiningPanel
+                  lifecycleKey={panelLifecycleKey}
+                  mainShipId={mainShip?.main_ship_id ?? null}
+                  shipStatus={mainShip?.status}
+                  shipSpatialState={mainShip?.spatial_state}
+                />
+                {/* PHASE20-POLISH — dark world-events feed (read-only; server empties it while dark). */}
+                <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
+              </div>
+            </div>
           </>
         )}
       </div>
 
-      {/* Read-only detail panel + the ONE send/move flow (pick a destination on the map → send). */}
+      {/* Location detail panel — IDENTITY → RIGHT NOW (the one send/travel CTA) → DETAILS.
+          Bottom sheet on phones (capped height, scrollable), side panel on md+. */}
       {selected && (
-        <aside data-testid="galaxy-location-detail-panel" className="border-t border-edge bg-surface p-4 md:w-80 md:border-l md:border-t-0">
-          <div className="flex items-start justify-between">
-            <h2 className="text-base font-semibold text-ink">{selected.name}</h2>
-            <button onClick={() => setSelectedId(null)} className="text-ink-faint transition hover:text-ink" aria-label="Close details">✕</button>
+        <aside
+          data-testid="galaxy-location-detail-panel"
+          className="max-h-[45dvh] overflow-y-auto border-t border-edge bg-surface p-4 md:max-h-none md:w-80 md:border-l md:border-t-0"
+        >
+          {/* 1 · IDENTITY */}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-ink">{selected.name}</h2>
+              <p className="mt-0.5 text-xs text-ink-muted">
+                {TYPE_LABEL[selected.location_type] ?? selected.location_type.replace(/_/g, ' ')}
+                {selMeta && <> · {selMeta.zoneName}</>}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Badge tone={typeBadge(selected).tone}>{typeBadge(selected).text}</Badge>
+              <button
+                onClick={() => setSelectedId(null)}
+                className="flex min-h-6 min-w-6 items-center justify-center text-ink-faint transition hover:text-ink"
+                aria-label="Close details"
+              >
+                ✕
+              </button>
+            </div>
           </div>
-          <dl className="mt-3 space-y-1.5 text-sm">
-            <Row label="Type" value={selected.location_type.replace(/_/g, ' ')} />
-            {selMeta && <Row label="Sector" value={selMeta.sectorName} />}
-            {selMeta && <Row label="Zone" value={selMeta.zoneName} />}
-            <Row label="Coordinates" value={`${Math.round(selected.x)}, ${Math.round(selected.y)}`} />
-            <Row label="Status" value={selected.status} />
-            <Row label="Difficulty" value={String(selected.base_difficulty)} />
-            <Row label="Reward tier" value={String(selected.reward_tier)} />
-            {selState && <Row label="Pressure" value={selState.pressure.toFixed(2)} />}
-            {selState && <Row label="Danger mod" value={selState.danger_modifier.toFixed(2)} />}
-            {selState && <Row label="Active fleets" value={String(selState.active_fleets)} />}
-          </dl>
-          {/* Phase 10D: main-ship send surface, ONLY when the flag is on. */}
+
+          {/* 2 · RIGHT NOW — THE send/travel flow (pick a destination on the map → send). Renders
+              its own can't-send reasons; flag-dark → omitted entirely (no dead placeholder). */}
           {mainshipSendEnabled && (
             <MainShipCommand
               key={`ms-${selected.id}`}
@@ -172,17 +206,15 @@ export function MapScreen() {
               onSent={refresh}
             />
           )}
+
+          {/* 3 · DETAILS — humanized, decision-relevant facts only */}
+          <dl className="mt-4 space-y-1.5 text-sm">
+            <StatRow label="Danger" value={dangerLabel(selected.base_difficulty)} />
+            <StatRow label="Rewards" value={rewardLabel(selected.reward_tier)} />
+            {selMeta && <StatRow label="Region" value={selMeta.sectorName} />}
+          </dl>
         </aside>
       )}
-    </div>
-  )
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between gap-3">
-      <dt className="text-ink-faint">{label}</dt>
-      <dd className="text-right text-ink">{value}</dd>
     </div>
   )
 }

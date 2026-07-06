@@ -5,6 +5,51 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — UI REBUILD (2b): Map interior — detail panel humanized, overlays organized, selector dedup
+
+**The Map destination's interior rebuilt** — the galaxy canvas stays the hero; the location detail
+panel and the feature overlays now speak the shared design language (identity → right-now →
+details, `StatRow`, tokens only, plain player language):
+
+- **Detail panel hierarchy:** IDENTITY (location name + a humanized kind + its zone, with one
+  Badge: Port / Safe / Hostile) → RIGHT NOW (`MainShipCommand` — THE pick-a-destination → send
+  flow, unchanged logic/testids, full-width primary CTA; flag-dark → omitted entirely) → DETAILS
+  (humanized `StatRow`s). Phone-friendly: the aside is now a capped, scrollable bottom sheet
+  (`max-h-[45dvh]`) below md. The local `Row` component is deleted (the shared `StatRow` rule).
+- **The dev-jargon → player-language mapping (design decision, lives ONLY in MapScreen):**
+  `location_type` → "Trade port / Pirate hunting ground / Pirate den / Safe waypoint / Mining
+  site / Derelict station / Rally point / Event site"; `base_difficulty` → Danger "None — safe
+  space / Low (≤10) / Moderate (≤20) / High"; `reward_tier` → Rewards "None / Modest / Good /
+  Rich"; zone + sector shown as plain words (subtitle + a "Region" row). **DROPPED as
+  dev-internal noise:** raw coordinates, raw `status` (get_world_map returns only active rows —
+  the field could never read anything else), `pressure`/`danger_modifier` decimals, and the
+  active-fleets debug count. The map data layer is untouched (locationStates stay polled;
+  presentation simply no longer surfaces them).
+- **Overlay organization (no logic/wiring/gating change):** PortNavPanel (top-left) and the stop
+  CTAs (bottom-right) keep their existing token-styled overlay positions; the three server-lit
+  feature panels (Exploration / Mining / WorldEvents) now ride ONE bottom-left overlay rail
+  (positioned, scrollable, `pointer-events-none` shell) so that WHEN a capability lights they read
+  as coherent map overlays instead of raw flow cards breaking the canvas layout — dark today, the
+  rail renders empty and never intercepts map gestures. All server-lit `return null` gates
+  verbatim. **No-softlock preserved verbatim:** legacy transit Stop, PortNav's OSN stop + the
+  held-in-space re-departure surface, and GalaxyMap's coordinate-transit Stop all stay mounted on
+  this destination, flag-independent by their own state predicates exactly as before.
+- **Reviewer-flagged duplication fixed:** the "active legacy movement row of the main-ship fleet"
+  derivation, previously computed in BOTH `AppShell` (settle wiring) and `MapScreen` (stop CTA),
+  is now ONE shared selector — `selectActiveLegacyMovement` in `spaceStopCommand.ts` (the pure
+  map-logic module) — called from both sites. Pure refactor, identical behavior;
+  `spaceStopCommand.spec.ts` re-run green (10/10).
+
+**Verification (honest):** `npm run build` green; `npm run lint` at the exact 22-error
+pre-existing baseline (zero on touched files); zero raw palette literals on all touched surfaces
+(grep-verified); preserved test ids (`galaxy-map-screen`, `galaxy-map-loading`/`-error`,
+`galaxy-location-detail-panel`, all `mainship-*` command ids). The dark Map panels can't be
+exercised live from this sandbox (server-lit; no service key + blocked egress) — their gates were
+not modified. `docs/SYSTEM_BOUNDARIES.md` unchanged (client-only presentation over unchanged
+server ownership).
+
+---
+
 ## 2026-07-06 — UI REBUILD (2b): Command interior — home base in the shared design language
 
 **The Command destination rebuilt** (identity → right-now → details, `StatRow` rows, tokens only,

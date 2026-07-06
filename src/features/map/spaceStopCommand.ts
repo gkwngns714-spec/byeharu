@@ -59,6 +59,20 @@ export function isActiveCoordinateTransit(input: {
 // command_main_ship_stop_transit (0149) halts such a transit and returns the ship home symmetrically.
 export const STOP_TRANSIT_RPC = 'command_main_ship_stop_transit' as const
 
+/**
+ * THE one selector for "the active legacy movement row of the main-ship fleet" (the fleet's single
+ * status='moving' fleet_movements row — at most one exists by the 0007 partial unique index).
+ * Shared by AppShell (the consolidated arrival-settle wiring) and MapScreen (the legacy stop CTA
+ * predicate) so the derivation lives in exactly one place. Generic so each caller keeps its own
+ * movement row type.
+ */
+export function selectActiveLegacyMovement<M extends { fleet_id: string; status: string }>(
+  fleet: { id: string } | null | undefined,
+  movements: readonly M[],
+): M | null {
+  return fleet ? (movements.find((mv) => mv.fleet_id === fleet.id && mv.status === 'moving') ?? null) : null
+}
+
 // Visibility predicate: the caller's main-ship fleet is 'moving' on an OUTBOUND (non-return) mission.
 // Mirrors isActiveCoordinateTransit's shape; the server (flag gate + state guards) stays authoritative —
 // a stale Stop safely no-ops or rejects without mutation.
