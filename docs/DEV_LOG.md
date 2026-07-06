@@ -5,6 +5,67 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — MAP DECLUTTER: waypoint relocation (migration 0154, data-only)
+
+**Problem (root cause, full trace in `MAP_DECLUTTER_RECON.local.md`):** the 0002 waypoints were
+seeded 1–3.6 world units apart on the tiny legacy map scale, while the 0066 starter ports sit on
+the OSN scale (−50…80). The content-fit camera (galaxyCamera `fitCameraToWorldPoints`, MAX_K=1024)
+frames the 120-unit port spread, compressing the two waypoint clusters to ~8–20 screen px — with
+counter-scaled constant-size markers/labels that means overlapping halos and unreadable labels at
+default zoom (min pairwise separation 1.2% of the content span vs the ~9% no-overlap threshold).
+
+**Migration `20260618000154_map_declutter_waypoints.sql` (forward-only; no shipped file touched):**
+relocates ONLY the five waypoint `locations` rows, matched by their post-0148 one-word zone-scoped
+`(zone_id, name)` key — the exact 0148 idiom (single fail-closed atomic do-block; presence check,
+GET DIAGNOSTICS exactly-5-rows guard, exact-coordinate read-back, ports-untouched guard;
+idempotent re-run — a same-value UPDATE still matches all five and the read-back accepts
+already-at-target):
+
+| waypoint | zone | before | after |
+|---|---|---|---|
+| Refuge (safe) | Wreck Belt | (11, 5) | (−30, 15) |
+| Snare (pirate d10) | Wreck Belt | (12, 6) | (−15, 40) |
+| Reaver (pirate d15) | Wreck Belt | (9, 4) | (−45, 40) |
+| Lull (safe) | Ion Storm Route | (31, 22) | (40, 30) |
+| Blackden (pirate d25) | Ion Storm Route | (33, 23) | (65, 55) |
+
+The content bbox (x −50…70, y −30…80) is unchanged, so the default zoom is unchanged; min pairwise
+separation over all nine map points (8 locations + the (0,0) home base) becomes **29.2 world units
+≈ 24% of span** (≈163 px at default fit vs the ≈60 px label requirement — >2.5× margin,
+viewport-independent). Distance-from-home now orders by difficulty (Refuge 33.5 < Snare 42.7 <
+Lull 50 < Reaver 60.2 < Blackden 85.1 — the old seed had the d15 site as the CLOSEST point of all
+at 9.85u); zone geography preserved (Wreck Belt trio west with Haven, Ion Storm pair east with
+Slagworks/Driftmarch).
+
+**Deliberately untouched (the recon's blast-radius proof):** NO port row, NO `space_anchors` row
+(the waypoints have none; the unmoved ports keep the 0066 anchor==location alignment, guarded
+in-migration), NO `fleet_movements`/`main_ship_space_movements` snapshot backfill (per-trip
+snapshots settle by IDs; rewriting in-flight geometry would teleport moving ships), NO function,
+flag, config, or grant. Dock-0's exact-match compares the ANCHOR to the movement snapshot
+(0067:564-572) and locations.x/y is consulted NOWHERE in the OSN domain — so docking holds by
+construction. Legacy sends read `l.x/l.y` LIVE at send time, so future waypoint trips get ~2.8×
+longer on average; `travel_scale` / `min_travel_seconds` remain the human-owned pacing knobs (no
+value changed here). **STANDING INVARIANT for any FUTURE port relocation:** move `locations.x/y`
+and retire+insert the port's anchor in ONE migration (0063 lifecycle), same values both places
+(0066 invariant), accepting `target_anchor_changed` terminal failures for routes in flight at
+apply time — deliberate, never a silent redirect.
+
+**Verification (honest; environmental precedent unchanged — 0148–0153 "authored, reviewed, NOT
+applied"):** no service-role key in this sandbox and network egress is blocked, so the migration
+was verified statically: one balanced `do $$ … $$;` block; the five-row GET DIAGNOSTICS guard;
+exact-coordinate read-back for all five; the three fixed-UUID port rows asserted still at their
+0066 coords; idempotent-re-run semantics reasoned through (same-value update → count 5 → read-back
+passes). `verify:m2` asserts waypoint NAMES + types only (scripts/verify-m2.mjs:77-93), never
+coordinates — it stays green post-apply. `docs/SYSTEM_BOUNDARIES.md` unchanged (Map remains the
+sole writer of `locations`; no writer/table/constraint/cross-system call changed).
+**HUMAN CHECKLIST (the owner's gate):** (1) apply 0154 after 0148–0153, forward-only; (2) re-run
+`verify:m2` + `verify:mainship-legacy-dock` + `verify:stop-roundtrip` (ports/anchors unmoved —
+both stop families unaffected); (3) visual pass of the galaxy map at default zoom (five separated,
+labeled waypoints); (4) optionally retune `travel_scale`/`min_travel_seconds` if the ~2.8× longer
+legacy waypoint trips should keep their old wall-clock feel.
+
+---
+
 ## 2026-07-06 — STOP/MOVE FIX, slice 2: the send→stop→send→stop verifier
 
 **New verifier `scripts/verify-stop-roundtrip.mjs`** (+ `package.json` script `verify:stop-roundtrip`)
