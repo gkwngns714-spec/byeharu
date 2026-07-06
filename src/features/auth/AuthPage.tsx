@@ -1,6 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
+import { Button, Card, CardHeader, Notice } from '../../components/ui'
+
+// Shared token-based input chrome (both fields are identical); touch-sized for mobile.
+const INPUT_CLASSES =
+  'min-h-11 w-full rounded-lg border border-edge bg-surface-2 px-3 py-3 text-sm text-ink ' +
+  'placeholder:text-ink-faint outline-none transition focus:border-accent focus:ring-1 focus:ring-accent/40'
 
 type Mode = 'signin' | 'signup'
 
@@ -39,14 +45,12 @@ export function AuthPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur">
-        <h1 className="mb-1 text-center text-3xl font-semibold tracking-tight text-indigo-200">
-          Byeharu
-        </h1>
-        <p className="mb-6 text-center text-sm text-white/50">
-          {mode === 'signin' ? 'Welcome back, commander.' : 'Claim your first colony.'}
-        </p>
+    <div className="flex min-h-screen items-center justify-center bg-app px-4 text-ink">
+      <Card className="w-full max-w-sm">
+        <CardHeader
+          title="Byeharu"
+          subtitle={mode === 'signin' ? 'Welcome back, commander.' : 'Claim your first colony.'}
+        />
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <input
@@ -55,7 +59,7 @@ export function AuthPage() {
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+            className={INPUT_CLASSES}
           />
           <input
             type="password"
@@ -64,34 +68,38 @@ export function AuthPage() {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+            className={INPUT_CLASSES}
           />
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
-          {notice && <p className="text-sm text-emerald-400">{notice}</p>}
+          {error && <Notice tone="danger">{error}</Notice>}
+          {notice && <Notice tone="success">{notice}</Notice>}
 
-          <button
+          <Button
             type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-indigo-500 py-2 text-sm font-medium text-white transition hover:bg-indigo-400 disabled:opacity-50"
+            variant="primary"
+            busy={busy}
+            busyLabel="Working…"
+            className="w-full"
           >
-            {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : 'Create account'}
-          </button>
+            {mode === 'signin' ? 'Sign in' : 'Create account'}
+          </Button>
         </form>
 
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-4 w-full"
           onClick={() => {
             setMode((m) => (m === 'signin' ? 'signup' : 'signin'))
             setError(null)
             setNotice(null)
           }}
-          className="mt-4 w-full text-center text-xs text-white/50 hover:text-white/80"
         >
           {mode === 'signin'
             ? "Don't have an account? Sign up"
             : 'Already have an account? Sign in'}
-        </button>
-      </div>
+        </Button>
+      </Card>
     </div>
   )
 }

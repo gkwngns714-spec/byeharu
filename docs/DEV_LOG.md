@@ -5,6 +5,24 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — VISUAL FOLLOW-ON item 1: AuthPage restyled onto the shared design system
+
+**Request:** follow-on to the 2026-07-05 visual-modernization pass (item 5) — convert the remaining
+un-modernized surfaces, starting with the sign-in/sign-up screen.
+
+**Done:** `src/features/auth/AuthPage.tsx` now composes the design-system primitives per the
+`src/components/ui/README.md` rule — `Card`/`CardHeader` panel, `Button` (submit `primary` with
+`busy`/`busyLabel`; mode-toggle `ghost sm`), `Notice` (`danger` error / `success` notice), and
+token-only input chrome (`bg-surface-2` / `border-edge` / `text-ink` / accent focus, touch-sized
+`min-h-11`). Zero raw palette literals remain in the file (grep-verified).
+
+**Presentational-only:** no behavior change — mode toggle, `handleSubmit`, `authStore` signIn/signUp,
+signup notice + auto-switch, `navigate('/', { replace: true })`, `busy` disable, `required`/
+`minLength={6}` all preserved. No flag, route, RPC, or backend change; `src/components/ui/**` and
+`@theme` tokens untouched. `npm run build` green.
+
+---
+
 ## 2026-07-05 — UX CLEANUP PASS COMPLETE — final consolidation: full-suite check + PR-ready handoff (no product changes)
 
 **The goal, delivered on `autopilot/20260703-064048` (every slice individually reviewed and passed):**
