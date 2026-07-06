@@ -5,6 +5,62 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 2: legacy arrival docks the ship (migration 0153)
+
+**Gap closed:** `movement_settle_arrival`'s location branch (0151) settled the FLEET (`fleet_set_present`
++ `presence_create`) but never the SHIP — a legacy-arrived main ship sat `status='traveling'`,
+`spatial_state=NULL` while "present" (decision-doc §2 writer #6). Post-0152 a docked→send→arrive trip
+would end in `legacy_present` instead of returning to the canonical docked pair.
+
+**Migration `20260618000153_mainship_legacy_arrival_docks_ship.sql` (forward-only; no shipped file touched).**
+1. **`mainship_mark_docked_at_location(p_main_ship_id)`** — THE one canonical docked-ship write
+   (`status='stationary', spatial_state='at_location', space_x/y=NULL`; Main-Ship-owned leaf; SECURITY
+   DEFINER; service_role-only, clients revoked) — the arrival-side mirror of 0152's
+   `mainship_mark_legacy_in_flight`. Shared by BOTH docking routes (the OSN Dock-0 writer AND the legacy
+   arrival settle); the docked-pair write now exists in exactly ONE place. **RETIREMENT:** when the legacy
+   `fleet_movements` main-ship family is replaced by the OSN coordinate domain, Dock-0 becomes the sole
+   caller and the write may fold back inline (same condition as 0152's helper).
+2. **`mainship_space_dock_at_location` re-created from its LATEST shipped body (0067:499 — the anchor-backed
+   Dock-0 re-creation; the 0061 birth body is superseded — the 0152 latest-body precedent)** with ONLY the
+   dock-branch inline ship write (0067:618-621) swapped for the helper call; the terminal-failure `in_space`
+   write and everything else are byte-identical (scripted diff: two hunks — the swap and the honestly
+   amended settlement-timestamp comment). **Accepted micro-delta (documented in-file):** the dock branch's
+   SHIP `updated_at` is now stamped `now()` by the shared helper instead of `v_settled_at` —
+   bookkeeping-only; the settlement record (movement `resolved_at` + fleets stamps) keeps `v_settled_at`
+   exactly.
+3. **`movement_settle_arrival` re-created from 0151 body-verbatim** (scripted diff: two hunks — the
+   `v_main_ship uuid` declare and the new block) with the location branch gaining, after `presence_create`:
+   look up `fleets.main_ship_id`; if non-NULL AND `mainship_space_location_target_legal(target)` passes →
+   `mainship_mark_docked_at_location(ship)` (coherent `at_location`: `fleet_set_present` already set
+   present/location-mode/`active_movement_id=NULL`, presence matches); otherwise write NOTHING — a
+   main-ship fleet at an active `'none'` but NON-dockable target (seed safe-zones Safe Rally Point / Quiet
+   Drift — the reachable §3 case) stays in the constraint-legal `legacy_present` NULL representation from
+   its 0152 departure write, and ordinary unit fleets (`main_ship_id` NULL) are untouched. The
+   `target_type='base'` branch, `process_fleet_movements`, `process_mainship_space_arrivals`, and both
+   on-demand settle RPCs are UNTOUCHED — they delegate here and inherit the fix.
+4. **Execute surface:** CREATE OR REPLACE preserves grants on the two re-created internals (both were
+   client-revoked at creation); only the NEW helper is locked (revoke public/anon/authenticated → grant
+   service_role). `movement_settle_arrival`'s new call to the service_role predicate runs as function owner
+   inside SECURITY DEFINER — NO client grant surface changes anywhere.
+
+**Verification (honest; environmental precedent unchanged — 0148–0152 "authored, reviewed, NOT applied"):**
+no psql/docker/supabase CLI in this sandbox and network egress is blocked (supabase host probe → HTTP 000),
+so `verify:m*` cannot reach any database from here. Statically verified: the two scripted per-function
+diffs above (only the intended hunks); 3 `create or replace` / 3 `$$;` / SECURITY DEFINER +
+`set search_path = public` on all 3; exactly TWO `update main_ship_instances` in the file (the helper's
+docked write + the verbatim terminal-failure `in_space` write); the docked-pair write appears exactly ONCE;
+grant statements touch ONLY the new helper; no blanket re-lock.
+**HUMAN CHECKLIST (the owner's gate — never this loop):** (1) apply 0153 after 0152, forward-only;
+(2) re-run `verify:m2..m5,m45` + `verify:mainship-send` / `verify:mainship-move` + the OSN settle verifier;
+(3) confirm no client execute grants changed post-apply (the four legacy RPCs keep `authenticated`; the two
+re-created internals and both helpers stay client-revoked); (4) confirm a commissioned ship's
+docked→send→travel→arrive-at-port trip ends `status='stationary', spatial_state='at_location'` with no
+CHECK violation, and an arrival at Safe Rally Point / Quiet Drift ends `legacy_present`
+(`spatial_state=NULL`). **NEXT STEP (not in 0153):** the docked→send→travel→arrive→docked round-trip
+verifier (dark-phase verifier pattern).
+
+---
+
 ## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 1: departure/halt pair-writes (migration 0152)
 
 **Bug (LIVE):** every legacy main-ship status writer was spatial_state-blind. Commissioned ships are

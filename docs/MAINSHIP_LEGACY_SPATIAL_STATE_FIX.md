@@ -1,8 +1,9 @@
 # MAINSHIP LEGACY SPATIAL-STATE FIX — Recon, Audit & Design Decision
 
 **Status:** DECIDED · slice 1 (DEPARTURE/HALT pair-writes) IMPLEMENTED in migration 0152
-(`20260618000152_mainship_legacy_in_flight_spatial_state.sql`); slice 2 (ARRIVAL settle + shared docking
-helper) NOT YET implemented
+(`20260618000152_mainship_legacy_in_flight_spatial_state.sql`) · slice 2 (ARRIVAL settle + shared
+docked-ship helper) IMPLEMENTED in migration 0153
+(`20260618000153_mainship_legacy_arrival_docks_ship.sql`); the round-trip verifier is the remaining step
 **Date:** 2026-07-06 · **Branch:** `autopilot/20260703-064048` · **Migration head:** `20260618000151_legacy_settle_arrival_on_demand.sql` (0151)
 
 ---
@@ -189,9 +190,19 @@ call graph preserved (legacy arrival calls a Main-Ship-owned leaf helper downwar
    grants; only the new helper was grant-locked. Doc-sync shipped in the same step
    (`docs/SYSTEM_BOUNDARIES.md` "Legacy in-flight spatial representation" blockquote + `docs/DEV_LOG.md`
    2026-07-06 entry). No data-repair (§4).
-2. **NEXT — the ARRIVAL half** (one forward-only migration): extract the shared ship-docking transition
-   helper from the 0061/0067 dock writer and re-emit that dock writer calling it; re-emit
-   `movement_settle_arrival`'s location branch with the §5 dock/non-dock ship settle.
+2. **DONE — migration 0153** (`20260618000153_mainship_legacy_arrival_docks_ship.sql`): the ARRIVAL half.
+   New Main-Ship-owned leaf `mainship_mark_docked_at_location(ship)` (service_role-only; the ONE canonical
+   docked-pair write), extracted from the OSN Dock-0 writer's dock branch: `mainship_space_dock_at_location`
+   re-created from its LATEST shipped body (0067:499 — supersedes the 0061 birth body cited in §5) with only
+   that inline ship write swapped for the helper (terminal-failure `in_space` write untouched;
+   diff-proven), and `movement_settle_arrival` re-created from 0151 body-verbatim with the location branch
+   gaining the §5 dock/non-dock ship settle: `fleets.main_ship_id` non-NULL +
+   `mainship_space_location_target_legal` pass → helper; otherwise no ship write (non-dockable 'none'
+   targets stay coherent `legacy_present` — the reachable §3 case; unit fleets untouched). Accepted
+   documented micro-delta: the dock branch's ship `updated_at` stamps `now()` via the shared helper instead
+   of `v_settled_at` (bookkeeping-only; movement `resolved_at` + fleets stamps keep `v_settled_at`).
+   Doc-sync shipped same-step (SYSTEM_BOUNDARIES "Canonical docked-ship write (0153)" blockquote;
+   DEV_LOG 2026-07-06 slice-2 entry).
 3. **NEXT — the verifier** proving docked → send → travel → arrive → docked with the 0055 CHECKs never
    violated (dark-phase verifier pattern), plus same-step doc sync (`docs/MAINSHIP_TRANSITION.md` gets the
    legacy ss=NULL rule when the family is complete; `docs/DEV_LOG.md` entry; `docs/SYSTEM_BOUNDARIES.md`
