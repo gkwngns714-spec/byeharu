@@ -5,6 +5,71 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — GOAL WRAP-UP: stop fix + UI rebuild + map declutter — final verification & the ONE apply-time checklist
+
+**Scope of the goal (all three items implementation-complete on this branch; docs-only final pass):**
+(1) the Stop bug, (2) the full UI rebuild, (3) the map declutter. Whole-branch verification ran
+clean — no remnant found, nothing fixed in this slice.
+
+**Final verification results (honest; this sandbox):**
+- `npm run build` → green. `npm run lint` → exactly the 22 pre-existing errors (all in files this
+  goal never touched; ZERO on any goal surface). `node --check scripts/verify-stop-roundtrip.mjs`
+  → OK. Controller unit specs (`spaceStopCommand` / `portMoveCommand` / `spaceMoveCommand`) →
+  **40/40 green** (includes the consumed-key regression cases).
+- DB-dependent verifiers **defer here by design** (no service-role key + blocked egress — the
+  0148–0154 precedent): `verify:stop-roundtrip` exits 2 without the key; `verify:m2..m5,m45`,
+  `verify:mainship-legacy-dock` need the target DB. They are the human apply gate below.
+- **Remnant sweep clean:** no live import/JSX reference anywhere in `src/` to any deleted surface
+  (ExpeditionLauncher, FleetStatusPanel, Dashboard, GalaxyMapScreen, CombatReportPage,
+  CombatReportsView, MainShipPanel, MainShipPreview, DockServicesPanel, fleetGuards,
+  lib/location — historical comments only); exactly ONE galaxy route (`/map`; `/`, `/galaxy`,
+  `/reports`, `*` all resolve into the shell) and NO fleets UI (features/fleets holds only the
+  api/types the data layer reads); ZERO raw palette literals across the shell, all four screens,
+  and the shared primitives (full numeric-scale + hex grep). Jargon spot-check: player copy is
+  humanized on all four destinations; `MainShipCommand`'s "currently {status}" interpolates plain
+  English words (traveling/present/returning/home — fine); noted, not changed: `ActiveCombatPanel`
+  (visible only during a live battle) kept its pre-goal interior — a candidate for a future combat
+  polish slice, not a goal remnant.
+
+**Goal exit criteria — met, with evidence:**
+1. **Stop works on every leg.** Root cause: the consumed idempotency key survived success and
+   replayed the first receipt (recon §D). Fix: `requestId: null` on the success branch of all
+   three controllers (spaceStopCommand/portMoveCommand/spaceMoveCommand — slice 1, unit-proven);
+   end-to-end proof authored: `verify:stop-roundtrip` (send→stop→send→stop on BOTH families + the
+   consumed-key replay probe asserting the server settles nothing on a stale key).
+2. **Navigation genuinely restructured.** ONE persistent mobile-first four-destination shell
+   (Map · Ship · Port · Command; AppShell + nested routes; shared state fetched once; the arrival
+   settle consolidated to one mount); the duplicate map path (ExpeditionLauncher) and ALL legacy
+   fleets UI (FleetStatusPanel + the client legacy-leave affordance) DELETED with server plumbing
+   untouched; all four interiors rebuilt in one design language (identity → right-now → details,
+   StatRow/Meter, plain player language, no-softlock chain preserved, dark panels server-lit only).
+3. **Map readable.** Migration `20260618000154` relocates exactly the five clustered waypoints to
+   ≥29.2-world-unit pairwise separation (≈24% of the content span vs the ~9% no-overlap threshold),
+   waypoints-only: ports/anchors/snapshots untouched, Dock-0 exact-match holds by construction
+   (recon-proven; the migration guards it).
+
+**THE CONSOLIDATED HUMAN APPLY-TIME CHECKLIST (in order — the owner's gate, never this loop):**
+1. Apply migration **`20260618000154_map_declutter_waypoints.sql`** forward-only, after 0153
+   (0152/0153 themselves are still pending apply per their own entries — apply 0152 → 0153 → 0154).
+2. Run the engine suite: `npm run verify:m2 && npm run verify:m3 && npm run verify:m4 &&
+   npm run verify:m5 && npm run verify:m45`.
+3. Run `npm run verify:mainship-legacy-dock` (the 0152/0153 round-trip + constraint guards), then
+   **`npm run verify:stop-roundtrip`** (send→stop→send→stop on both families + the consumed-key
+   regression probe; a family whose flag is dark on that DB skips loudly with exit 2).
+4. Visual map-readability pass at default zoom: five separated, labeled waypoints + three ports +
+   home — no overlapping labels/markers.
+5. Mobile-width (~390px) walkthrough of the four destinations: **Map** — select a destination →
+   send; Stop visible mid-transit; dock at a port; **Ship** — repair reachable (disable via the
+   dev path if desired), countdown while traveling, Return home when away; **Port** — docked shows
+   the port card, undocked shows the friendly empty state; **Command** — base + battle history
+   (reports), sign-out in the footer.
+
+`docs/SYSTEM_BOUNDARIES.md` — confirmed unchanged across the WHOLE goal: client presentation +
+a data-only waypoint relocation (Map stays sole writer of `locations`) + a client-only stop fix;
+no server writer/table/constraint/cross-system call changed anywhere in these slices.
+
+---
+
 ## 2026-07-06 — UI REBUILD (2b): Map interior — detail panel humanized, overlays organized, selector dedup
 
 **The Map destination's interior rebuilt** — the galaxy canvas stays the hero; the location detail
