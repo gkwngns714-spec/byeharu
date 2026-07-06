@@ -3,7 +3,8 @@
 **Status:** DECIDED · slice 1 (DEPARTURE/HALT pair-writes) IMPLEMENTED in migration 0152
 (`20260618000152_mainship_legacy_in_flight_spatial_state.sql`) · slice 2 (ARRIVAL settle + shared
 docked-ship helper) IMPLEMENTED in migration 0153
-(`20260618000153_mainship_legacy_arrival_docks_ship.sql`); the round-trip verifier is the remaining step
+(`20260618000153_mainship_legacy_arrival_docks_ship.sql`) · slice 3 (round-trip verifier)
+IMPLEMENTED as `scripts/verify-mainship-legacy-dock-travel.mjs` (`npm run verify:mainship-legacy-dock`)
 **Date:** 2026-07-06 · **Branch:** `autopilot/20260703-064048` · **Migration head:** `20260618000151_legacy_settle_arrival_on_demand.sql` (0151)
 
 ---
@@ -203,7 +204,17 @@ call graph preserved (legacy arrival calls a Main-Ship-owned leaf helper downwar
    of `v_settled_at` (bookkeeping-only; movement `resolved_at` + fleets stamps keep `v_settled_at`).
    Doc-sync shipped same-step (SYSTEM_BOUNDARIES "Canonical docked-ship write (0153)" blockquote;
    DEV_LOG 2026-07-06 slice-2 entry).
-3. **NEXT — the verifier** proving docked → send → travel → arrive → docked with the 0055 CHECKs never
-   violated (dark-phase verifier pattern), plus same-step doc sync (`docs/MAINSHIP_TRANSITION.md` gets the
-   legacy ss=NULL rule when the family is complete; `docs/DEV_LOG.md` entry; `docs/SYSTEM_BOUNDARIES.md`
-   again only if a writer/ownership fact changes).
+3. **DONE — the verifier** `scripts/verify-mainship-legacy-dock-travel.mjs`
+   (`npm run verify:mainship-legacy-dock`; mirrors the `verify-mainship-move.mjs` idiom, shared
+   `teardownVerifier`): proves docked → send → travel → arrive → docked end-to-end with the 0055 CHECKs
+   never violated — commission → canonical docked start; regression guards for BOTH live bugs (docked
+   departure via `move_main_ship_to_location`, docked return via `request_main_ship_return`); re-dock at a
+   dockable port; `legacy_present` fallback at a non-dockable `'none'` safe-zone; plus BEHAVIORAL probes
+   that all six 0055 constraints still exist and enforce (illegal direct writes rejected BY NAME —
+   PostgREST exposes no `pg_constraint` path, so enforcement-by-rejection is the guard, strictly stronger
+   than metadata presence). Deployment probes SKIP loudly until 0152/0153 are applied. DB execution sits
+   in the DEV_LOG slice-3 apply checklist (this sandbox has no service key/egress — the 0148–0153
+   precedent). Doc-sync shipped same-step (DEV_LOG slice-3 entry + apply checklist; this section).
+   `docs/MAINSHIP_TRANSITION.md` gets the legacy ss=NULL rule when the family-completion pass lands;
+   `docs/SYSTEM_BOUNDARIES.md` unchanged this slice (no writer/ownership fact changed — the verifier only
+   reads/exercises).

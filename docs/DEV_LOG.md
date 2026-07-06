@@ -5,6 +5,65 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 3: the end-to-end round-trip verifier
+
+**New verifier `scripts/verify-mainship-legacy-dock-travel.mjs`** (+ `package.json` script
+`verify:mainship-legacy-dock`) — proves the EXACT live scenario the hotfix targets, end-to-end:
+
+1. `commission_first_main_ship` (NOT `ensure_main_ship_for_player`) → asserts the canonical DOCKED start
+   (`status='stationary', spatial_state='at_location', space_x/y NULL`) — the state the live bug fired from.
+2. Picks destinations from the world map via `mainship_space_location_target_legal` (admin RPC): a
+   DOCKABLE port `D` (`ok:true`, distinct from the current dock) AND a NON-dockable active `'none'`
+   safe-zone `N` (`ok:false` — Safe Rally Point / Quiet Drift); dies loudly if either kind is missing.
+3. **Regression guard 1 (the reported live bug):** docked → `move_main_ship_to_location(fleet, D)` returns
+   NO error (pre-0152: `ss_at_location_status` violation) and the ship drops to legacy in-flight
+   (`traveling` / `spatial_state NULL` / coords NULL — `mainship_mark_legacy_in_flight`).
+4. Settles the arrival (on-demand legacy settle + cron-poll backstop) → fleet present at `D`, active
+   presence at `D`, and the SHIP re-docked canonically (0153's shared `mainship_mark_docked_at_location`)
+   — the docked→send→travel→arrive→docked loop closed with zero constraint violation.
+5. **Non-dock fallback:** `D`→`N` settles with the fleet present at `N` and the ship staying
+   `spatial_state=NULL` (coherent `legacy_present`; nothing writes the ship).
+6. **Regression guard 2 (the second live bug):** re-docks at `D`, then `request_main_ship_return` from the
+   DOCKED ship returns NO error → ship `returning` / `spatial_state NULL` → settles home (fleet completed).
+7. **Constraint guard (BEHAVIORAL — documented in the script header):** PostgREST exposes no `pg_constraint`
+   path and the repo ships no introspection RPC, so instead of a metadata query the guard attempts each
+   illegal direct write (service-role — bypasses RLS, never CHECKs) and asserts Postgres REJECTS it naming
+   the constraint. Each probe runs from a ship state where EXACTLY ONE lifecycle constraint is violated,
+   so the reported constraint name is deterministic (a docked ship's `spatial_state→in_transit/home/
+   destroyed` would violate `stationary_spatial_state` too — ambiguous which fires): from DOCKED —
+   `ss_at_location_status` (the verbatim pre-0152 live write `status→traveling`) and
+   `stationary_spatial_state` (`spatial_state→NULL`); from in-flight TRAVELING — `ss_home_status`,
+   `ss_destroyed_status`, and `ss_in_space_status` (`in_space` carries coords 1,1 so the 0054
+   `space_coords` rule is satisfied and only the lifecycle rule fires); from RETURNING —
+   `ss_in_transit_status` (from `traveling` that write would be the LEGAL OSN pair and would succeed).
+   All SIX covered — proving they still EXIST and ENFORCE (strictly stronger than presence). The fix
+   corrected the WRITERS, never the constraints.
+
+**Proof principle (script header):** every RPC returning without error across steps 3–6 IS the
+constraint-never-violated proof — a violating write raises inside the RPC and fails it (that raise WAS the
+live bug). **Idiom:** mirrors `verify-mainship-move.mjs` (`loadEnv`/admin/`newUser`/`poll`/`setCfg`,
+up-front capture of `mainship_send_enabled`/`travel_scale`/`min_travel_seconds`, shared
+`teardownVerifier` restore in `finally` — no re-implemented teardown; NO OSN flag is toggled). Deployment
+probes SKIP loudly (§11–§13 idiom) when 0152/0153's helpers or commissioning (starter ports) are absent.
+
+**Verification of this step (honest):** `node --check` → OK. `npm run lint` → 22 errors, ALL pre-existing
+in `src/`/`tests/` ts+tsx files this step never touched (ESLint's config lints `**/*.{ts,tsx}` only — the
+new `.mjs` is outside its coverage; `git status` shows zero src/tests modifications, so HEAD lints
+identically). DB execution deferred: no `SUPABASE_SERVICE_ROLE_KEY` in this sandbox AND network egress is
+blocked (the 0148–0153 precedent) — the verifier exits 2 by design without the key.
+
+**MIGRATION-APPLY VERIFICATION CHECKLIST (the human owner's gate — supersedes the slice-1/2 lists):**
+1. Apply migrations **0152 → 0153** (forward-only, in order, after 0148–0151).
+2. `npm run verify:m2 && npm run verify:m3 && npm run verify:m4 && npm run verify:m5 && npm run verify:m45`
+   (suite stays green), plus `npm run verify:mainship-send` / `npm run verify:mainship-move`.
+3. **`npm run verify:mainship-legacy-dock`** — confirms a docked ship departs/returns and re-docks with no
+   CHECK violation (regression guards for both live bugs), the non-dock fallback, and all six 0055
+   constraints still enforcing.
+4. Confirm no client execute grants changed (the four legacy RPCs keep `authenticated`; both 0152/0153
+   helpers and the re-created internals stay client-revoked).
+
+---
+
 ## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 2: legacy arrival docks the ship (migration 0153)
 
 **Gap closed:** `movement_settle_arrival`'s location branch (0151) settled the FLEET (`fleet_set_present`
@@ -51,13 +110,14 @@ diffs above (only the intended hunks); 3 `create or replace` / 3 `$$;` / SECURIT
 docked write + the verbatim terminal-failure `in_space` write); the docked-pair write appears exactly ONCE;
 grant statements touch ONLY the new helper; no blanket re-lock.
 **HUMAN CHECKLIST (the owner's gate — never this loop):** (1) apply 0153 after 0152, forward-only;
-(2) re-run `verify:m2..m5,m45` + `verify:mainship-send` / `verify:mainship-move` + the OSN settle verifier;
-(3) confirm no client execute grants changed post-apply (the four legacy RPCs keep `authenticated`; the two
-re-created internals and both helpers stay client-revoked); (4) confirm a commissioned ship's
-docked→send→travel→arrive-at-port trip ends `status='stationary', spatial_state='at_location'` with no
-CHECK violation, and an arrival at Safe Rally Point / Quiet Drift ends `legacy_present`
-(`spatial_state=NULL`). **NEXT STEP (not in 0153):** the docked→send→travel→arrive→docked round-trip
-verifier (dark-phase verifier pattern).
+(2) re-run `verify:m2..m5,m45` + `verify:mainship-send` / `verify:mainship-move` + the OSN settle verifier,
+and run **`npm run verify:mainship-legacy-dock`** (slice 3 — the round-trip + regression-guard verifier;
+see the slice-3 entry's canonical checklist); (3) confirm no client execute grants changed post-apply (the
+four legacy RPCs keep `authenticated`; the two re-created internals and both helpers stay client-revoked);
+(4) confirm a commissioned ship's docked→send→travel→arrive-at-port trip ends
+`status='stationary', spatial_state='at_location'` with no CHECK violation, and an arrival at
+Safe Rally Point / Quiet Drift ends `legacy_present` (`spatial_state=NULL`) — item (4) is exactly what the
+slice-3 verifier automates.
 
 ---
 
