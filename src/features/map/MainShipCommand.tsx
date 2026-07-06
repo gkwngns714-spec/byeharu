@@ -10,6 +10,8 @@ import { Button, Notice, SectionLabel } from '../../components/ui'
 // INVARIANT (Phase 10E): this is the ONLY main-ship send/move surface.
 //   • Home (no active fleet)      → send_main_ship_expedition (depart from base)
 //   • Present at another location → move_main_ship_to_location (depart current location directly, 10H)
+//   • Held in open space (Slice D1) → move_main_ship_to_location (depart from the held point; the
+//                                     Slice-B held-departure branch, addressed by the held fleet id)
 //   • Current location            → no button ("Main ship is already here")
 //   • Moving / returning          → unavailable (accurate status text; Return Home is optional, not required)
 //   • Destroyed                   → unavailable ("repair it first")
@@ -20,11 +22,13 @@ export function MainShipCommand({
   location,
   mainShip,
   fleet,
+  heldFleet,
   onSent,
 }: {
   location: MapLocation
   mainShip: MainShipLite | null
   fleet: MainShipFleet | null
+  heldFleet: MainShipFleet | null
   onSent: () => Promise<void>
 }) {
   const [confirming, setConfirming] = useState(false)
@@ -42,7 +46,10 @@ export function MainShipCommand({
   const presentFleet = fleet && fleet.status === 'present' ? fleet : null
   const isHere = !!presentFleet && presentFleet.current_location_id === location.id
   const canMoveHere = !!presentFleet && !isHere
-  const actionable = canSendFromHome || canMoveHere
+  // Held in open space (Slice D1) → depart from the held point via the held fleet id. Gated on the ship
+  // being genuinely held (spatial_state='in_space', no active fleet) AND its held fleet being resolved.
+  const canSendFromHold = !!mainShip && mainShip.spatial_state === 'in_space' && !fleet && !!heldFleet
+  const actionable = canSendFromHome || canMoveHere || canSendFromHold
   const actionLabel = canMoveHere ? 'Move main ship here' : 'Send main ship'
   const actionVerb = canMoveHere ? 'Move' : 'Send'
 
@@ -60,6 +67,9 @@ export function MainShipCommand({
       } else if (canSendFromHome && mainShip) {
         await sendMainShipExpedition(mainShip.main_ship_id, location.id) // verified 10C RPC (from base)
         setSuccess(`Main ship dispatched to ${location.name}.`)
+      } else if (canSendFromHold && heldFleet) {
+        await moveMainShipToLocation(heldFleet.id, location.id) // Slice B: depart from the held point
+        setSuccess(`Main ship departing to ${location.name}.`)
       } else {
         return // not actionable (state changed under us) — server would reject anyway
       }

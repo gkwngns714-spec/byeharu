@@ -106,6 +106,9 @@ export interface MainShipFleet {
 
 const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
 
+// The ONE MainShipFleet column list — shared by every fleet owner-read below (no second copy).
+const MAIN_SHIP_FLEET_COLS = 'id, status, current_location_id, location_mode, active_movement_id, active_space_movement_id'
+
 /**
  * Owner-read the caller's active main-ship fleet (the one tagged with this ship), if any.
  * Returns null when the ship is idle at home (no in-flight linked fleet).
@@ -113,13 +116,36 @@ const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
 export async function fetchActiveMainShipFleet(mainShipId: string): Promise<MainShipFleet | null> {
   const { data, error } = await supabase
     .from('fleets')
-    .select('id, status, current_location_id, location_mode, active_movement_id, active_space_movement_id')
+    .select(MAIN_SHIP_FLEET_COLS)
     .eq('main_ship_id', mainShipId)
     .in('status', ACTIVE_FLEET_STATUSES)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (error) return null // non-fatal: treat as no active fleet (home)
+  return (data as MainShipFleet) ?? null
+}
+
+/**
+ * Owner-read the HELD ship's current fleet — its most-recent `fleets` row in status 'completed'.
+ * Legacy fleets are created solely at home-departure and the SAME fleet persists across
+ * move→stop→hold→resume (Slice B reuses p_fleet), so while the ship is HELD in open space its latest
+ * completed fleet IS the held one (0155 settles the stopped fleet to 'completed'). The caller invokes
+ * this ONLY when the ship is held (spatial_state='in_space'); that gate is what distinguishes a held
+ * ship's completed fleet from a returned-home ship's completed fleet. It exists to address
+ * move_main_ship_to_location's held-departure branch (Slice B) by fleet id. Null on error/none (non-fatal,
+ * the fetchActiveMainShipFleet idiom).
+ */
+export async function fetchHeldMainShipFleet(mainShipId: string): Promise<MainShipFleet | null> {
+  const { data, error } = await supabase
+    .from('fleets')
+    .select(MAIN_SHIP_FLEET_COLS)
+    .eq('main_ship_id', mainShipId)
+    .eq('status', 'completed')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null // non-fatal: treat as no held fleet
   return (data as MainShipFleet) ?? null
 }
 
