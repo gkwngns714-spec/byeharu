@@ -5,6 +5,48 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — UI REBUILD (2b): Port interior — one docked-services surface, DockServicesPanel folded
+
+**The Port destination rebuilt in the Ship-established design language** (identity → right-now →
+details, `StatRow` rows, tokens only, plain player language, mobile-first single column):
+- **NOT DOCKED:** one clear, friendly empty state ("Not docked / Dock at a port to access its
+  services" + a travel-via-Map hint; testid `port-not-docked`) — keyed off the SAME
+  server-authoritative dock projection as everything else (`useDockServices` → `isDocked`), no
+  second source of docked truth, never a broken/blank screen.
+- **DOCKED:** the new `src/features/port/DockedPortCard.tsx` — IDENTITY (the port's name as the
+  title + "Docked" badge), RIGHT NOW ("Berth secured…" + the leave-via-Map hint; docking is a
+  passive service, so the port's action surfaces are the server-lit panels below), DETAILS (each
+  ACTIVE service as a plain-language `StatRow`: Docking → "Berth secured", Market → "Buy & sell
+  goods", …; only what the server reported — never an inactive service).
+
+**DockServicesPanel FOLDED and deleted:** its presentation became `DockedPortCard` (the old
+absolute map-overlay styling died with the overlay mount — it had been floating wrongly inside the
+Port flow since the shell slice); its dock read is now PortScreen's single `useDockServices` call —
+this also retires the shell-slice double-read debt (the screen no longer reads the projection once
+for the branch and again inside the panel). All test ids preserved (`dock-services-panel` /
+`-title` / `-list` / `dock-service-<s>` / `-none`); the fail-closed `isDocked` render gate is kept
+verbatim inside the card. `StatRow` gained rest-prop passthrough (the Card convention) so rows can
+carry test ids — no new primitive added.
+
+**Rendered-proof suite kept honest:** `tests/harness/dockServicesHarness.tsx` now mounts the REAL
+composition PortScreen uses (`useDockServices` → `DockedPortCard`, same injected fetcher + `__fail`
+path), and `tests/dockServicesUi.uispec.ts`'s copy assertions track the new presentation (the port
+name IS the title; the old map-overlay half-width comment corrected). Dark panels
+(`InvestmentPanel`, `MarketPanel` behind `TRADE_MARKET_ENABLED`) keep their server-lit gates
+verbatim — surfaced only when lit, omitted otherwise. No flag, no command logic, no RPC change.
+
+**Verification (honest):** `npm run build` green; `npm run lint` at the exact 22-error
+pre-existing baseline (the harness's two immutability errors are pre-existing, line-shifted); zero
+raw palette literals on all touched surfaces (grep-verified). The `.uispec.ts` rendered suites are
+deliberately outside the default Playwright testMatch and need the CI browser runner (documented
+precedent — this sandbox lacks it); attempted anyway ("No tests found" under the default config),
+so the harness was additionally TYPE-CHECKED standalone (clean — only the expected standalone-tsc
+`import.meta.env` vite-types gap, unrelated). Dark Port panels can't be exercised live
+(server-lit; no service key + blocked egress). `docs/SYSTEM_BOUNDARIES.md` unchanged (client-only
+presentation over unchanged server ownership).
+
+---
+
 ## 2026-07-06 — UI REBUILD (2b): Ship interior — the MainShipPreview + MainShipPanel MERGE
 
 **The audit-mandated collapse, done:** `MainShipPreview` (card + repair + the only recall) and

@@ -12,7 +12,7 @@ import { Card, Button } from '../../components/ui'
 //   • legacy_present at a dockable port → "Finish Docking" (normalize_main_ship_dock)
 //   • legacy_present at a non-dock waypoint → a read-only explanation (no doomed docking button;
 //     display-classified via isDockablePortForDisplay — the server target_legal stays the authority)
-//   • at_location        → nothing (the ordinary docked experience is the Phase-9 DockServicesPanel)
+//   • at_location        → nothing (the ordinary docked experience is the Port destination’s DockedPortCard)
 //   • home / legacy_home → a read-only explanation (no in-place docking path exists yet — travel to a port)
 //   • in_transit / in_space / destroyed / contradictory → a read-only safe explanation, no action
 //
