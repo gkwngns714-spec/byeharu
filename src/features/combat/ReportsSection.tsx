@@ -1,38 +1,31 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
-import { Badge, Button, Card, Notice, PageHeader, buttonClasses } from '../../components/ui'
-import { fetchUnitTypes, type UnitType } from '../../lib/catalog'
-import { fetchWorldMap } from '../map/mapApi'
+import { useState, type ReactNode } from 'react'
+import { Badge, Button, Card, CardHeader, Notice } from '../../components/ui'
+import type { UnitType } from '../../lib/catalog'
+import type { MapLocation } from '../map/mapTypes'
 import { formatDateTime, formatDuration } from '../../lib/time'
-import { fetchCombatReports, fetchTicksForEncounter } from './combatApi'
+import { fetchTicksForEncounter } from './combatApi'
 import { RoundLog } from './RoundLog'
 import type { CombatReport, CombatTick } from './combatTypes'
 
-// M6: dedicated combat history page (/reports). Read-only. Lists every battle and,
-// on expand, loads that encounter's real combat_ticks into the player-facing RoundLog.
-export function CombatReportPage() {
-  const [reports, setReports] = useState<CombatReport[]>([])
-  const [locNames, setLocNames] = useState<Record<string, string>>({})
-  const [unitTypes, setUnitTypes] = useState<UnitType[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+// UI-REBUILD (2b) — the ONE combat-reports surface, mounted in the Command destination. Merges the
+// old /reports page (CombatReportPage) and the inline dashboard list (CombatReportsView): the M6
+// report list + on-expand real combat_ticks RoundLog, presented as a section. Reports/locations/
+// unit types come from the shell's already-polled state (no own polling); only the expanded
+// encounter's ticks are fetched on demand, exactly as the old page did.
 
+export function ReportsSection({
+  reports,
+  locations,
+  unitTypes,
+}: {
+  reports: CombatReport[]
+  locations: MapLocation[]
+  unitTypes: UnitType[]
+}) {
+  const [error, setError] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [ticks, setTicks] = useState<CombatTick[]>([])
   const [ticksLoading, setTicksLoading] = useState(false)
-
-  useEffect(() => {
-    Promise.all([fetchCombatReports(), fetchWorldMap(), fetchUnitTypes()])
-      .then(([reps, world, uts]) => {
-        setReports(reps)
-        setUnitTypes(uts)
-        const names: Record<string, string> = {}
-        world.sectors.forEach((s) => s.zones.forEach((z) => z.locations.forEach((l) => { names[l.id] = l.name })))
-        setLocNames(names)
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false))
-  }, [])
 
   async function toggle(r: CombatReport) {
     if (openId === r.encounter_id) {
@@ -61,35 +54,26 @@ export function CombatReportPage() {
     const m = obj?.metal ?? 0
     return m > 0 ? `${m} metal` : 'none'
   }
-  const locName = (id: string | null) => (id && locNames[id]) || 'unknown'
+  const locName = (id: string | null) =>
+    (id && locations.find((l) => l.id === id)?.name) || 'unknown'
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
-      <PageHeader
-        title="Combat reports"
-        subtitle="Byeharu — battle history"
-        actions={
-          <Link to="/" className={buttonClasses('ghost', 'sm')}>
-            ← Command center
-          </Link>
-        }
-      />
+    <section data-testid="combat-reports-section">
+      <Card>
+        <CardHeader title="Combat reports" subtitle="Battle history" className="mb-2" />
+        {error && (
+          <Notice tone="danger" className="mb-3">{error}</Notice>
+        )}
+        {reports.length === 0 && !error && (
+          <p className="text-sm text-ink-muted">No battles fought yet.</p>
+        )}
 
-      {loading && <Notice>Loading reports…</Notice>}
-      {error && (
-        <Notice tone="danger" className="mb-6">{error}</Notice>
-      )}
-      {!loading && reports.length === 0 && !error && (
-        <Notice>No battles fought yet. Send an expedition to a pirate hunt from the Galaxy Map to begin.</Notice>
-      )}
-
-      <ul className="space-y-3">
-        {reports.map((r) => {
-          const won = r.result === 'escaped' || r.result === 'completed'
-          const open = openId === r.encounter_id
-          return (
-            <li key={r.id}>
-              <Card>
+        <ul className="space-y-3">
+          {reports.map((r) => {
+            const won = r.result === 'escaped' || r.result === 'completed'
+            const open = openId === r.encounter_id
+            return (
+              <li key={r.id} className="rounded-lg border border-edge bg-surface-2/50 p-3">
                 <button
                   onClick={() => toggle(r)}
                   className="flex w-full items-center justify-between gap-3 text-left"
@@ -130,12 +114,12 @@ export function CombatReportPage() {
                     </div>
                   )}
                 </div>
-              </Card>
-            </li>
-          )
-        })}
-      </ul>
-    </div>
+              </li>
+            )
+          })}
+        </ul>
+      </Card>
+    </section>
   )
 }
 

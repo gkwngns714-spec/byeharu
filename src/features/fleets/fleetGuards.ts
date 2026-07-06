@@ -13,9 +13,11 @@ import type { Fleet } from './fleetTypes'
 //     must NEVER operate on a main-ship fleet. It derives speed from fleet_speed(), which is
 //     NULL for a unit-less main-ship fleet and crashes movement_create
 //     ("invalid fleet speed <NULL>") — the exact live bug fixed in Phase 10D (cfe59f6).
+//     (The UI-rebuild removed every player-facing legacy fleet surface — no client call path to
+//     request_leave_location remains; the server RPC and this invariant are unchanged.)
 //
-// Use this predicate everywhere a legacy fleet-action surface filters or renders actionable
-// fleets, and as the basis for the defense-in-depth guard in fleetApi.requestLeaveLocation.
+// Use this predicate everywhere a fleet-derived surface must isolate the main-ship fleet
+// (e.g. MainShipPanel picking the active main-ship fleet out of the owner's fleets rows).
 export function isMainShipFleet(f: Pick<Fleet, 'main_ship_id'>): boolean {
   return !!f.main_ship_id
 }

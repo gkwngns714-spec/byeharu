@@ -5,6 +5,72 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — UI REBUILD (2b): the persistent four-destination nav shell (structure + navigation)
+
+**The restructure (not a re-skin):** ONE persistent, mobile-first bottom tab bar — **Map · Ship ·
+Port · Command** — replaces the old link-hopping between three sibling routes. Audit + locked
+target: `UIREBUILD_AUDIT.local.md`. This slice is structure/navigation + the two deletions; each
+destination's interior redesign is the following per-screen slices (panels were RELOCATED
+unchanged).
+
+**BEFORE → AFTER screen inventory (the 2e before→after record):**
+- **Routes before:** `/` Dashboard (base + port-entry + main-ship status + combat + expedition
+  launcher + fleets list + inline reports + dark ranking), `/galaxy` GalaxyMapScreen (map + preview
+  overlay + port-nav + stops + dock services + 8 dark panels + detail/send), `/reports`
+  CombatReportPage, `/auth`, `*`→`/`. Navigation was three header links; no persistent nav.
+- **Routes after:** `/map`, `/ship`, `/port`, `/command` under the ONE `AppShell` (bottom tab bar,
+  ≥44px targets, tokens only, active tab from the router); `/` → `/map` (the primary play surface);
+  legacy `/galaxy` → `/map` and `/reports` → `/command` redirects keep old bookmarks working;
+  `/auth` + `*` fallback unchanged.
+- **Map** (`src/features/map/MapScreen.tsx`): galaxy canvas + location detail with the ONE in-map
+  send flow (MainShipCommand) + PortNavPanel (travel + OSN stop + the held-in-space re-departure
+  surface) + the legacy transit Stop CTA + dark coordinate targeting + dark Exploration / Mining /
+  WorldEvents (server-lit gates verbatim).
+- **Ship** (`src/features/ship/ShipScreen.tsx`): MainShipPreview (card + repair + the ONLY recall)
+  and MainShipPanel (status + destination countdown) relocated side by side — their MERGE into one
+  surface is the Ship interior slice; dark Modules / Captains / RecruitCaptain / ShipSwitcher
+  (server-lit gates verbatim; omitted while dark, never dead panels).
+- **Port** (`src/features/port/PortScreen.tsx`): docked-only — DockServicesPanel + dark Investment
+  / Market, keyed off the SAME server docked projection (`isDocked`); when not docked, a friendly
+  "Not docked — dock at a port to access its services" empty state (never a broken screen).
+- **Command** (`src/features/command/CommandScreen.tsx`): BasePanel + PortEntryPanel onboarding +
+  ActiveCombatPanel(s) + the MERGED reports section + dark RankingPanel + sign-out.
+- **DELETED (the two user-reported failures):** `ExpeditionLauncher` (the duplicate map path — a
+  Card that only linked to /galaxy; the send flow already lives IN the map, so nothing to fold) and
+  `FleetStatusPanel` (ALL legacy fleets UI, including the client legacy-leave affordance
+  `fleetApi.requestLeaveLocation` — no client call path to `request_leave_location` remains). The
+  server-side `fleets` rows, RPCs, and movement plumbing are UNTOUCHED (load-bearing main-ship
+  plumbing; `fleetGuards.isMainShipFleet` stays, used by MainShipPanel).
+- **MERGED:** the `/reports` CombatReportPage + the inline CombatReportsView → ONE
+  `ReportsSection` in Command (list + on-expand round-log fetch, fed from the shell's polled combat
+  state instead of its own triple fetch). Empty shells deleted: Dashboard.tsx, GalaxyMapScreen.tsx,
+  CombatReportPage.tsx, CombatReportsView.tsx.
+
+**Shared state lifted (fetched once):** the three polled hooks (`useGalaxyMapData`, `useGameState`,
+`useCombat`) mount exactly once in `AppShell` and reach destinations via `useShellState`
+(`src/app/shellState.ts`) — no destination mounts its own copy. **Consolidated arrival settle:**
+the old Dashboard mounted `useSettleDueArrival` for the legacy leg and GalaxyMapScreen for the OSN
+leg — safe only while those routes were mutually exclusive; with a persistent shell that invariant
+is gone, so the hook now mounts EXACTLY ONCE in AppShell covering BOTH `legacyMovement` and the OSN
+`movement`, and both per-screen mountings are removed.
+
+**Dark stays dark:** every dark panel keeps its server-lit `return null` gate verbatim and is
+surfaced only when already lit — no flag flipped, no capability activated, no server change.
+**No-softlock preserved:** all three Stop CTAs + PortNav re-departure live on Map (mounted
+flag-independent, state-predicated as before); repair (MainShipPreview) mounts UNGATED on Ship.
+
+**Verification (honest):** `npm run build` green (bundle −7 kB from the deletions);
+`npm run lint` back to the exact 22-error pre-existing baseline (zero errors in any new/touched
+file; one new-file react-refresh hit was fixed by moving the context/hook into `shellState.ts`).
+Zero raw palette literals on all new/kept surfaces (grep-verified). The deployed-site browser
+smoke (`tests/galaxy.spec.ts`) was updated to the new flow (sign-in lands directly on Map; the
+"Galaxy map" link/heading assertions are gone) — it runs against the DEPLOYED site, so it passes
+only once this UI deploys; dark panels/flows could not be exercised live from this sandbox
+(server-lit; no service key + blocked egress). `docs/SYSTEM_BOUNDARIES.md` unchanged — client-only
+navigation over unchanged server ownership (no table/writer/constraint/cross-system call changed).
+
+---
+
 ## 2026-07-06 — MAP DECLUTTER: waypoint relocation (migration 0154, data-only)
 
 **Problem (root cause, full trace in `MAP_DECLUTTER_RECON.local.md`):** the 0002 waypoints were
