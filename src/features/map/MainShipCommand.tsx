@@ -13,7 +13,7 @@ import { Button, Notice, SectionLabel } from '../../components/ui'
 //   • Current location            → no button ("Main ship is already here")
 //   • Moving / returning          → unavailable (accurate status text; Return Home is optional, not required)
 //   • Destroyed                   → unavailable ("repair it first")
-// Rendered by GalaxyMapScreen ONLY when mainship_send_enabled is true. The server re-validates all
+// Rendered by MapScreen ONLY when mainship_send_enabled is true. The server re-validates all
 // of flag / ownership / state / non-combat / same-location — this UI gate is convenience, not trust.
 
 export function MainShipCommand({

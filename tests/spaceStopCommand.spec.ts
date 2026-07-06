@@ -104,11 +104,36 @@ test('OSN-4: controller submit is idempotent (one request id reused across retri
   const c = createSpaceStopController({ rpc, genRequestId: () => `req-${++n}` })
   await c.submit()
   expect(c.getState().phase).toBe('error')
+  expect(c.getState().requestId).toBe('req-1') // in-error retry keeps its key
   await c.submit() // retry
   expect(c.getState().phase).toBe('done')
   expect(c.getState().outcome).toBe('stopped')
   // SAME request id reused for the retry (idempotency key stable across retries of the same Stop).
   expect(ids).toEqual(['req-1', 'req-1'])
+  // The success CONSUMES the key: a consumed key kept here would make the next Stop (a new transit)
+  // replay this Stop's server receipt — the "second Stop no-ops" live bug.
+  expect(c.getState().requestId).toBe(null)
+})
+
+// ── The regression: a second Stop on a NEW transit must be a FRESH idempotent command, never a replay
+//    of the consumed key (the server replays the receipt for a (ship, request_id) pair verbatim). ─────
+test('OSN-4: after a successful stop the next submit sends a DIFFERENT request id', async () => {
+  const ids: string[] = []
+  const rpc = async (requestId: string): Promise<SpaceStopResult> => {
+    ids.push(requestId)
+    return { ok: true, outcome: 'stopped', movement_id: `m${ids.length}` }
+  }
+  let n = 0
+  const gen = () => `req-${++n}`
+  const c = createSpaceStopController({ rpc, genRequestId: gen })
+  await c.submit() // stop #1 (trip 1)
+  expect(c.getState().phase).toBe('done')
+  await c.submit() // stop #2 (trip 2 — the controller instance survives across transits)
+  expect(c.getState().phase).toBe('done')
+  // genRequestId ran again: the second Stop is a distinct command, not a receipt replay.
+  expect(n).toBe(2)
+  expect(ids).toEqual(['req-1', 'req-2'])
+  expect(ids[0]).not.toBe(ids[1])
 })
 
 // ── Controller maps an 'arrived' outcome (due-at-stop boundary) and a feature_disabled rejection ──────

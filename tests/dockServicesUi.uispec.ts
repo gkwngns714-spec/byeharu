@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
-// PHASE 9 — RENDERED docked-port surface proof. Drives the REAL <DockServicesPanel> (mounted by
+// PHASE 9 — RENDERED docked-port surface proof. Drives the REAL docked-port composition
+// (useDockServices → <DockedPortCard>, exactly what PortScreen composes; mounted by
 // tests/harness/dock.html) across server states. ok[8] docked → port + active service labels; ok[9] every
 // non-docked state → no port surface. The injected fetcher models the server; nothing connects.
 
@@ -19,7 +20,7 @@ test('dock-services UI: docked shows port + active services; every non-docked st
   // ok[8] — docked at a port → panel visible with the port name + only the ACTIVE service labels
   await boot(page, docked(['docking']))
   await expect(page.getByTestId('dock-services-panel')).toBeVisible()
-  await expect(page.getByTestId('dock-services-title')).toContainText('Main ship docked at Haven')
+  await expect(page.getByTestId('dock-services-title')).toContainText('Haven') // the port name IS the title now
   await expect(page.getByTestId('dock-service-docking')).toBeVisible()
   await expect(page.getByTestId('dock-service-market')).toHaveCount(0) // no inactive/absent service shown
 
@@ -60,9 +61,9 @@ test('narrow mobile-width layout: panel stays within its half and does not overf
   const box = await panel.boundingBox()
   expect(box).not.toBeNull()
   if (box) {
-    // Harness-honest layout check (the bare harness compiles no Tailwind): the panel renders within the
-    // narrow viewport with no horizontal overflow. The half-width cap that prevents overlap with the left OSN
-    // panel is the component's `max-w-[calc(50vw-0.75rem)]` class, compiled in the production build.
+    // Harness-honest layout check (the bare harness compiles no Tailwind): the card renders within the
+    // narrow viewport with no horizontal overflow. (The old map-overlay half-width cap is gone — the card
+    // now lives full-width in the Port destination's single-column flow.)
     expect(box.x).toBeGreaterThanOrEqual(0)
     expect(box.x + box.width).toBeLessThanOrEqual(360)
   }

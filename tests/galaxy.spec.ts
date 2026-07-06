@@ -2,10 +2,11 @@ import { test, expect, type Page } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
 // Phase 9A — read-only Galaxy Map smoke test against the live app. Setup creates a
-// throwaway user (anon signUp); the browser signs in via the UI, opens /galaxy, and
-// confirms the map renders, a location is selectable, and the detail panel opens. The
-// legacy Send Expedition surface (ExpeditionCommand) was retired in the UX cleanup pass,
-// so its absence is asserted. It also asserts NO fleet/expedition was created.
+// throwaway user (anon signUp); the browser signs in via the UI, lands on the Map
+// destination (the UI-rebuild shell routes `/` → /map), and confirms the map renders, a
+// location is selectable, and the detail panel opens. The legacy Send Expedition surface
+// (ExpeditionCommand) was retired in the UX cleanup pass, so its absence is asserted.
+// It also asserts NO fleet/expedition was created.
 
 const URL_ = process.env.VITE_SUPABASE_URL!
 const ANON = process.env.VITE_SUPABASE_ANON_KEY!
@@ -38,12 +39,11 @@ test('Phase 9A — read-only galaxy map smoke', async ({ page }) => {
   await page.getByPlaceholder('Email').fill(email)
   await page.getByPlaceholder('Password').fill(password)
   await page.getByRole('button', { name: 'Sign in' }).click()
-  // land on the Command Center, then click the Galaxy map nav link (client-side route)
-  await page.getByRole('link', { name: /Galaxy map/i }).first().click()
 
-  // 3. galaxy screen + header visible
+  // 3. UI-rebuild shell: `/` lands directly on the Map destination (the primary play surface);
+  //    the persistent bottom nav is visible with the Map tab active.
   await expect(page.getByTestId('galaxy-map-screen')).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Galaxy Map' })).toBeVisible()
+  await expect(page.getByTestId('app-nav')).toBeVisible()
 
   // 4. at least one location marker renders (after loading resolves)
   const markers = page.getByTestId('galaxy-location-marker')

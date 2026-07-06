@@ -2,10 +2,16 @@ import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { RequireAuth } from './RequireAuth'
+import { AppShell } from './AppShell'
 import { AuthPage } from '../features/auth/AuthPage'
-import { Dashboard } from '../features/dashboard/Dashboard'
-import { GalaxyMapScreen } from '../features/map/GalaxyMapScreen'
-import { CombatReportPage } from '../features/combat/CombatReportPage'
+import { MapScreen } from '../features/map/MapScreen'
+import { ShipScreen } from '../features/ship/ShipScreen'
+import { PortScreen } from '../features/port/PortScreen'
+import { CommandScreen } from '../features/command/CommandScreen'
+
+// UI-REBUILD (2b) — four destinations under the ONE persistent shell (AppShell). `/` lands on the
+// Map (the primary play surface); the legacy `/galaxy` and `/reports` routes redirect so old
+// bookmarks resolve into the new navigation.
 
 export function App() {
   const init = useAuthStore((s) => s.init)
@@ -21,30 +27,22 @@ export function App() {
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
         <Route
-          path="/"
           element={
             <RequireAuth>
-              <Dashboard />
+              <AppShell />
             </RequireAuth>
           }
-        />
-        <Route
-          path="/galaxy"
-          element={
-            <RequireAuth>
-              <GalaxyMapScreen />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/reports"
-          element={
-            <RequireAuth>
-              <CombatReportPage />
-            </RequireAuth>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        >
+          <Route path="/map" element={<MapScreen />} />
+          <Route path="/ship" element={<ShipScreen />} />
+          <Route path="/port" element={<PortScreen />} />
+          <Route path="/command" element={<CommandScreen />} />
+        </Route>
+        {/* Root + legacy routes resolve into the new shell (bookmarks keep working). */}
+        <Route path="/" element={<Navigate to="/map" replace />} />
+        <Route path="/galaxy" element={<Navigate to="/map" replace />} />
+        <Route path="/reports" element={<Navigate to="/command" replace />} />
+        <Route path="*" element={<Navigate to="/map" replace />} />
       </Routes>
     </BrowserRouter>
   )

@@ -59,6 +59,20 @@ export function isActiveCoordinateTransit(input: {
 // command_main_ship_stop_transit (0149) halts such a transit and returns the ship home symmetrically.
 export const STOP_TRANSIT_RPC = 'command_main_ship_stop_transit' as const
 
+/**
+ * THE one selector for "the active legacy movement row of the main-ship fleet" (the fleet's single
+ * status='moving' fleet_movements row — at most one exists by the 0007 partial unique index).
+ * Shared by AppShell (the consolidated arrival-settle wiring) and MapScreen (the legacy stop CTA
+ * predicate) so the derivation lives in exactly one place. Generic so each caller keeps its own
+ * movement row type.
+ */
+export function selectActiveLegacyMovement<M extends { fleet_id: string; status: string }>(
+  fleet: { id: string } | null | undefined,
+  movements: readonly M[],
+): M | null {
+  return fleet ? (movements.find((mv) => mv.fleet_id === fleet.id && mv.status === 'moving') ?? null) : null
+}
+
 // Visibility predicate: the caller's main-ship fleet is 'moving' on an OUTBOUND (non-return) mission.
 // Mirrors isActiveCoordinateTransit's shape; the server (flag gate + state guards) stays authoritative —
 // a stale Stop safely no-ops or rejects without mutation.
@@ -139,14 +153,15 @@ export function createSpaceStopController(deps: SpaceStopControllerDeps): SpaceS
 
   async function submit(): Promise<void> {
     if (state.phase === 'submitting') return // block duplicate submit while a request is in flight
-    // Reuse the existing key for a retry (idempotent); generate one otherwise. Stop carries no target, so
-    // there is no payload to invalidate the key — a retry of the same Stop reuses the same request id.
+    // The key is reused ONLY for an in-error retry (idempotent) and is consumed (cleared) on success,
+    // so the next Stop on a new transit is a fresh idempotent command — a consumed key would only
+    // replay the first Stop's server receipt (a silent no-op on the new movement).
     const requestId = state.requestId ?? deps.genRequestId()
     set({ phase: 'submitting', requestId, errorCode: null, errorMessage: null })
     try {
       const res = await deps.rpc(requestId)
       if (res.ok) {
-        set({ phase: 'done', outcome: res.outcome, errorCode: null, errorMessage: null })
+        set({ phase: 'done', outcome: res.outcome, requestId: null, errorCode: null, errorMessage: null })
       } else {
         set({ phase: 'error', errorCode: res.code, errorMessage: res.message ?? spaceStopErrorMessage(res.code) })
       }

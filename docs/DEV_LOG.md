@@ -5,6 +5,471 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — GOAL WRAP-UP: stop fix + UI rebuild + map declutter — final verification & the ONE apply-time checklist
+
+**Scope of the goal (all three items implementation-complete on this branch; docs-only final pass):**
+(1) the Stop bug, (2) the full UI rebuild, (3) the map declutter. Whole-branch verification ran
+clean — no remnant found, nothing fixed in this slice.
+
+**Final verification results (honest; this sandbox):**
+- `npm run build` → green. `npm run lint` → exactly the 22 pre-existing errors (all in files this
+  goal never touched; ZERO on any goal surface). `node --check scripts/verify-stop-roundtrip.mjs`
+  → OK. Controller unit specs (`spaceStopCommand` / `portMoveCommand` / `spaceMoveCommand`) →
+  **40/40 green** (includes the consumed-key regression cases).
+- DB-dependent verifiers **defer here by design** (no service-role key + blocked egress — the
+  0148–0154 precedent): `verify:stop-roundtrip` exits 2 without the key; `verify:m2..m5,m45`,
+  `verify:mainship-legacy-dock` need the target DB. They are the human apply gate below.
+- **Remnant sweep clean:** no live import/JSX reference anywhere in `src/` to any deleted surface
+  (ExpeditionLauncher, FleetStatusPanel, Dashboard, GalaxyMapScreen, CombatReportPage,
+  CombatReportsView, MainShipPanel, MainShipPreview, DockServicesPanel, fleetGuards,
+  lib/location — historical comments only); exactly ONE galaxy route (`/map`; `/`, `/galaxy`,
+  `/reports`, `*` all resolve into the shell) and NO fleets UI (features/fleets holds only the
+  api/types the data layer reads); ZERO raw palette literals across the shell, all four screens,
+  and the shared primitives (full numeric-scale + hex grep). Jargon spot-check: player copy is
+  humanized on all four destinations; `MainShipCommand`'s "currently {status}" interpolates plain
+  English words (traveling/present/returning/home — fine); noted, not changed: `ActiveCombatPanel`
+  (visible only during a live battle) kept its pre-goal interior — a candidate for a future combat
+  polish slice, not a goal remnant.
+
+**Goal exit criteria — met, with evidence:**
+1. **Stop works on every leg.** Root cause: the consumed idempotency key survived success and
+   replayed the first receipt (recon §D). Fix: `requestId: null` on the success branch of all
+   three controllers (spaceStopCommand/portMoveCommand/spaceMoveCommand — slice 1, unit-proven);
+   end-to-end proof authored: `verify:stop-roundtrip` (send→stop→send→stop on BOTH families + the
+   consumed-key replay probe asserting the server settles nothing on a stale key).
+2. **Navigation genuinely restructured.** ONE persistent mobile-first four-destination shell
+   (Map · Ship · Port · Command; AppShell + nested routes; shared state fetched once; the arrival
+   settle consolidated to one mount); the duplicate map path (ExpeditionLauncher) and ALL legacy
+   fleets UI (FleetStatusPanel + the client legacy-leave affordance) DELETED with server plumbing
+   untouched; all four interiors rebuilt in one design language (identity → right-now → details,
+   StatRow/Meter, plain player language, no-softlock chain preserved, dark panels server-lit only).
+3. **Map readable.** Migration `20260618000154` relocates exactly the five clustered waypoints to
+   ≥29.2-world-unit pairwise separation (≈24% of the content span vs the ~9% no-overlap threshold),
+   waypoints-only: ports/anchors/snapshots untouched, Dock-0 exact-match holds by construction
+   (recon-proven; the migration guards it).
+
+**THE CONSOLIDATED HUMAN APPLY-TIME CHECKLIST (in order — the owner's gate, never this loop):**
+1. Apply migration **`20260618000154_map_declutter_waypoints.sql`** forward-only, after 0153
+   (0152/0153 themselves are still pending apply per their own entries — apply 0152 → 0153 → 0154).
+2. Run the engine suite: `npm run verify:m2 && npm run verify:m3 && npm run verify:m4 &&
+   npm run verify:m5 && npm run verify:m45`.
+3. Run `npm run verify:mainship-legacy-dock` (the 0152/0153 round-trip + constraint guards), then
+   **`npm run verify:stop-roundtrip`** (send→stop→send→stop on both families + the consumed-key
+   regression probe; a family whose flag is dark on that DB skips loudly with exit 2).
+4. Visual map-readability pass at default zoom: five separated, labeled waypoints + three ports +
+   home — no overlapping labels/markers.
+5. Mobile-width (~390px) walkthrough of the four destinations: **Map** — select a destination →
+   send; Stop visible mid-transit; dock at a port; **Ship** — repair reachable (disable via the
+   dev path if desired), countdown while traveling, Return home when away; **Port** — docked shows
+   the port card, undocked shows the friendly empty state; **Command** — base + battle history
+   (reports), sign-out in the footer.
+
+`docs/SYSTEM_BOUNDARIES.md` — confirmed unchanged across the WHOLE goal: client presentation +
+a data-only waypoint relocation (Map stays sole writer of `locations`) + a client-only stop fix;
+no server writer/table/constraint/cross-system call changed anywhere in these slices.
+
+---
+
+## 2026-07-06 — UI REBUILD (2b): Map interior — detail panel humanized, overlays organized, selector dedup
+
+**The Map destination's interior rebuilt** — the galaxy canvas stays the hero; the location detail
+panel and the feature overlays now speak the shared design language (identity → right-now →
+details, `StatRow`, tokens only, plain player language):
+
+- **Detail panel hierarchy:** IDENTITY (location name + a humanized kind + its zone, with one
+  Badge: Port / Safe / Hostile) → RIGHT NOW (`MainShipCommand` — THE pick-a-destination → send
+  flow, unchanged logic/testids, full-width primary CTA; flag-dark → omitted entirely) → DETAILS
+  (humanized `StatRow`s). Phone-friendly: the aside is now a capped, scrollable bottom sheet
+  (`max-h-[45dvh]`) below md. The local `Row` component is deleted (the shared `StatRow` rule).
+- **The dev-jargon → player-language mapping (design decision, lives ONLY in MapScreen):**
+  `location_type` → "Trade port / Pirate hunting ground / Pirate den / Safe waypoint / Mining
+  site / Derelict station / Rally point / Event site"; `base_difficulty` → Danger "None — safe
+  space / Low (≤10) / Moderate (≤20) / High"; `reward_tier` → Rewards "None / Modest / Good /
+  Rich"; zone + sector shown as plain words (subtitle + a "Region" row). **DROPPED as
+  dev-internal noise:** raw coordinates, raw `status` (get_world_map returns only active rows —
+  the field could never read anything else), `pressure`/`danger_modifier` decimals, and the
+  active-fleets debug count. The map data layer is untouched (locationStates stay polled;
+  presentation simply no longer surfaces them).
+- **Overlay organization (no logic/wiring/gating change):** PortNavPanel (top-left) and the stop
+  CTAs (bottom-right) keep their existing token-styled overlay positions; the three server-lit
+  feature panels (Exploration / Mining / WorldEvents) now ride ONE bottom-left overlay rail
+  (positioned, scrollable, `pointer-events-none` shell) so that WHEN a capability lights they read
+  as coherent map overlays instead of raw flow cards breaking the canvas layout — dark today, the
+  rail renders empty and never intercepts map gestures. All server-lit `return null` gates
+  verbatim. **No-softlock preserved verbatim:** legacy transit Stop, PortNav's OSN stop + the
+  held-in-space re-departure surface, and GalaxyMap's coordinate-transit Stop all stay mounted on
+  this destination, flag-independent by their own state predicates exactly as before.
+- **Reviewer-flagged duplication fixed:** the "active legacy movement row of the main-ship fleet"
+  derivation, previously computed in BOTH `AppShell` (settle wiring) and `MapScreen` (stop CTA),
+  is now ONE shared selector — `selectActiveLegacyMovement` in `spaceStopCommand.ts` (the pure
+  map-logic module) — called from both sites. Pure refactor, identical behavior;
+  `spaceStopCommand.spec.ts` re-run green (10/10).
+
+**Verification (honest):** `npm run build` green; `npm run lint` at the exact 22-error
+pre-existing baseline (zero on touched files); zero raw palette literals on all touched surfaces
+(grep-verified); preserved test ids (`galaxy-map-screen`, `galaxy-map-loading`/`-error`,
+`galaxy-location-detail-panel`, all `mainship-*` command ids). The dark Map panels can't be
+exercised live from this sandbox (server-lit; no service key + blocked egress) — their gates were
+not modified. `docs/SYSTEM_BOUNDARIES.md` unchanged (client-only presentation over unchanged
+server ownership).
+
+---
+
+## 2026-07-06 — UI REBUILD (2b): Command interior — home base in the shared design language
+
+**The Command destination rebuilt** (identity → right-now → details, `StatRow` rows, tokens only,
+plain player language, mobile-first single column):
+- **RIGHT-NOW focus rule (one focus per state, top-down):** pending onboarding first
+  (`PortEntryPanel` — server-authoritative self-hide kept verbatim; its accent card is the screen's
+  focus when the server says an action is needed) → any LIVE battle (`ActiveCombatPanel`, wiring
+  untouched) → otherwise the base card's quiet all-clear line ("All quiet — nothing here needs
+  your attention" + a set-out-from-the-Map hint), which CommandScreen suppresses while a battle is
+  live so the combat panels hold the focus alone. No wall of equal-weight cards.
+- **BasePanel interior rebuilt** (same file/props + a new `quiet` flag; presentation only, no RPC —
+  the panel never had one): IDENTITY (base name + "Your home base"; the dev-jargon "(0, 0)"
+  coordinate label dropped) → the right-now all-clear → DETAILS ("Stored resources" and "Garrison"
+  as `StatRow` lists with mono tabular numbers; plain empty-states). **Honest scope note:** NO
+  client production/build surface exists today — `train_units`/`cancel_build_order` have zero
+  client call sites (the training UI was retired with the legacy fleet surfaces) — so no build
+  section was invented (a new command surface is a capability decision, not presentation); the
+  right-now third state is therefore the quiet state.
+- **ReportsSection** adopted `StatRow` for its report facts (the local `Fact` label/value row
+  deleted — the no-local-row rule); list/expand/round-log behavior unchanged. Dark `RankingPanel`
+  keeps its server-lit `return null` gate verbatim — omitted while dark, never a placeholder.
+- **Sign-out re-placed** as a quiet account footer (email + small ghost button) — a secondary
+  affordance that no longer competes with base actions; behavior unchanged (no test id existed).
+- **Dead code removed with its last caller:** `src/lib/location.ts` (`formatLocationLabel`) — its
+  final imports died with FleetStatusPanel (nav-shell slice) and BasePanel's dropped coordinate
+  label; zero call sites remained.
+
+**Verification (honest):** `npm run build` green; `npm run lint` at the exact 22-error
+pre-existing baseline (zero on touched files); zero raw palette literals on all touched surfaces
+(grep-verified). The dark Command surface (Ranking) can't be exercised live from this sandbox
+(server-lit; no service key + blocked egress) — its gate was not modified.
+`docs/SYSTEM_BOUNDARIES.md` unchanged (client-only presentation over unchanged server ownership).
+
+---
+
+## 2026-07-06 — UI REBUILD (2b): Port interior — one docked-services surface, DockServicesPanel folded
+
+**The Port destination rebuilt in the Ship-established design language** (identity → right-now →
+details, `StatRow` rows, tokens only, plain player language, mobile-first single column):
+- **NOT DOCKED:** one clear, friendly empty state ("Not docked / Dock at a port to access its
+  services" + a travel-via-Map hint; testid `port-not-docked`) — keyed off the SAME
+  server-authoritative dock projection as everything else (`useDockServices` → `isDocked`), no
+  second source of docked truth, never a broken/blank screen.
+- **DOCKED:** the new `src/features/port/DockedPortCard.tsx` — IDENTITY (the port's name as the
+  title + "Docked" badge), RIGHT NOW ("Berth secured…" + the leave-via-Map hint; docking is a
+  passive service, so the port's action surfaces are the server-lit panels below), DETAILS (each
+  ACTIVE service as a plain-language `StatRow`: Docking → "Berth secured", Market → "Buy & sell
+  goods", …; only what the server reported — never an inactive service).
+
+**DockServicesPanel FOLDED and deleted:** its presentation became `DockedPortCard` (the old
+absolute map-overlay styling died with the overlay mount — it had been floating wrongly inside the
+Port flow since the shell slice); its dock read is now PortScreen's single `useDockServices` call —
+this also retires the shell-slice double-read debt (the screen no longer reads the projection once
+for the branch and again inside the panel). All test ids preserved (`dock-services-panel` /
+`-title` / `-list` / `dock-service-<s>` / `-none`); the fail-closed `isDocked` render gate is kept
+verbatim inside the card. `StatRow` gained rest-prop passthrough (the Card convention) so rows can
+carry test ids — no new primitive added.
+
+**Rendered-proof suite kept honest:** `tests/harness/dockServicesHarness.tsx` now mounts the REAL
+composition PortScreen uses (`useDockServices` → `DockedPortCard`, same injected fetcher + `__fail`
+path), and `tests/dockServicesUi.uispec.ts`'s copy assertions track the new presentation (the port
+name IS the title; the old map-overlay half-width comment corrected). Dark panels
+(`InvestmentPanel`, `MarketPanel` behind `TRADE_MARKET_ENABLED`) keep their server-lit gates
+verbatim — surfaced only when lit, omitted otherwise. No flag, no command logic, no RPC change.
+
+**Verification (honest):** `npm run build` green; `npm run lint` at the exact 22-error
+pre-existing baseline (the harness's two immutability errors are pre-existing, line-shifted); zero
+raw palette literals on all touched surfaces (grep-verified). The `.uispec.ts` rendered suites are
+deliberately outside the default Playwright testMatch and need the CI browser runner (documented
+precedent — this sandbox lacks it); attempted anyway ("No tests found" under the default config),
+so the harness was additionally TYPE-CHECKED standalone (clean — only the expected standalone-tsc
+`import.meta.env` vite-types gap, unrelated). Dark Port panels can't be exercised live
+(server-lit; no service key + blocked egress). `docs/SYSTEM_BOUNDARIES.md` unchanged (client-only
+presentation over unchanged server ownership).
+
+---
+
+## 2026-07-06 — UI REBUILD (2b): Ship interior — the MainShipPreview + MainShipPanel MERGE
+
+**The audit-mandated collapse, done:** `MainShipPreview` (card + repair + the only recall) and
+`MainShipPanel` (derived status + destination countdown) are MERGED into ONE surface —
+`src/features/ship/ShipStatusCard.tsx` — and both old files are DELETED (they had no other mount
+after the shell slice). The union of capabilities is preserved: repair, recall ("Return home"),
+live travel countdown + progress, hull integrity, cargo/fittings, the no-ship starter-hull teaser.
+Same RPCs verbatim (`repair_main_ship` / `request_main_ship_return`), same double-submit guards,
+same testids (`mainship-repair` / `mainship-recall` / error notes) — presentation restructure only.
+
+**The hierarchy (the design language the other destinations will reuse):** (1) IDENTITY — ship
+name + hull subtitle + one state Badge + a hull-integrity Meter; (2) RIGHT NOW — one prominent
+primary-action block for the current state (Repair when disabled · the live countdown + progress
+when under way, with a "use Stop on the Map" hint · Return-home when away · a quiet "ready to fly"
+line at home); (3) DETAILS — plain-language stat rows (Cargo hold / Speed / Captain seats / Module
+slots). Dev-jargon labels replaced ("Readiness (HP)" → hull integrity; raw status words → player
+sentences). Mobile-first: single column at ~390px, full-width ≥44px action buttons.
+
+**Data/wiring:** the card is fed from the shell's already-polled state (`game.mainShip` +
+`map.mainShipFleet`/`movements`) — the old preview's self-fetch existed only because the pre-shell
+overlay had no shared state; no new fetch, no polling change, no command-logic change.
+**No-softlock:** Repair now renders whenever the ship is disabled, INDEPENDENT of the send flag —
+matching the server's deliberately ungated repair safelock (0052:120); previously the preview's
+repair block sat inside its send-flag branch. Return-home stays send-flag-gated exactly as before
+(its RPC is flag-gated server-side). Dark Ship panels (Modules / Captains / Recruit / ShipSwitcher)
+keep their server-lit `return null` gates verbatim — surfaced only when lit, omitted otherwise.
+
+**New shared primitive (ONE, needed now):** `src/components/ui/StatRow.tsx` — the label/value
+stat row (inside a `<dl>`), exported from the ui index. Ship uses it first; Port/Command/Map
+detail lists adopt it in their interior slices (each still carries a local Row/Fact copy of this
+exact pattern — to be replaced, not duplicated). No other abstraction added.
+
+**Dead code removed with its last caller:** `src/features/fleets/fleetGuards.ts`
+(`isMainShipFleet`) — its final import died with MainShipPanel; the Phase-10E legacy/main-ship UI
+isolation it guarded is now STRUCTURAL (no legacy fleet surface exists in the client at all; the
+server RPCs and their guards are untouched).
+
+**Verification (honest):** `npm run build` green; `npm run lint` at the exact 22-error
+pre-existing baseline (zero on touched files); zero raw palette literals on all touched surfaces
+(grep-verified). Dark Ship panels can't be exercised live from this sandbox (server-lit; no
+service key + blocked egress) — their gates were not modified. `docs/SYSTEM_BOUNDARIES.md`
+unchanged (client-only presentation over unchanged server ownership).
+
+---
+
+## 2026-07-06 — UI REBUILD (2b): the persistent four-destination nav shell (structure + navigation)
+
+**The restructure (not a re-skin):** ONE persistent, mobile-first bottom tab bar — **Map · Ship ·
+Port · Command** — replaces the old link-hopping between three sibling routes. Audit + locked
+target: `UIREBUILD_AUDIT.local.md`. This slice is structure/navigation + the two deletions; each
+destination's interior redesign is the following per-screen slices (panels were RELOCATED
+unchanged).
+
+**BEFORE → AFTER screen inventory (the 2e before→after record):**
+- **Routes before:** `/` Dashboard (base + port-entry + main-ship status + combat + expedition
+  launcher + fleets list + inline reports + dark ranking), `/galaxy` GalaxyMapScreen (map + preview
+  overlay + port-nav + stops + dock services + 8 dark panels + detail/send), `/reports`
+  CombatReportPage, `/auth`, `*`→`/`. Navigation was three header links; no persistent nav.
+- **Routes after:** `/map`, `/ship`, `/port`, `/command` under the ONE `AppShell` (bottom tab bar,
+  ≥44px targets, tokens only, active tab from the router); `/` → `/map` (the primary play surface);
+  legacy `/galaxy` → `/map` and `/reports` → `/command` redirects keep old bookmarks working;
+  `/auth` + `*` fallback unchanged.
+- **Map** (`src/features/map/MapScreen.tsx`): galaxy canvas + location detail with the ONE in-map
+  send flow (MainShipCommand) + PortNavPanel (travel + OSN stop + the held-in-space re-departure
+  surface) + the legacy transit Stop CTA + dark coordinate targeting + dark Exploration / Mining /
+  WorldEvents (server-lit gates verbatim).
+- **Ship** (`src/features/ship/ShipScreen.tsx`): MainShipPreview (card + repair + the ONLY recall)
+  and MainShipPanel (status + destination countdown) relocated side by side — their MERGE into one
+  surface is the Ship interior slice; dark Modules / Captains / RecruitCaptain / ShipSwitcher
+  (server-lit gates verbatim; omitted while dark, never dead panels).
+- **Port** (`src/features/port/PortScreen.tsx`): docked-only — DockServicesPanel + dark Investment
+  / Market, keyed off the SAME server docked projection (`isDocked`); when not docked, a friendly
+  "Not docked — dock at a port to access its services" empty state (never a broken screen).
+- **Command** (`src/features/command/CommandScreen.tsx`): BasePanel + PortEntryPanel onboarding +
+  ActiveCombatPanel(s) + the MERGED reports section + dark RankingPanel + sign-out.
+- **DELETED (the two user-reported failures):** `ExpeditionLauncher` (the duplicate map path — a
+  Card that only linked to /galaxy; the send flow already lives IN the map, so nothing to fold) and
+  `FleetStatusPanel` (ALL legacy fleets UI, including the client legacy-leave affordance
+  `fleetApi.requestLeaveLocation` — no client call path to `request_leave_location` remains). The
+  server-side `fleets` rows, RPCs, and movement plumbing are UNTOUCHED (load-bearing main-ship
+  plumbing; `fleetGuards.isMainShipFleet` stays, used by MainShipPanel).
+- **MERGED:** the `/reports` CombatReportPage + the inline CombatReportsView → ONE
+  `ReportsSection` in Command (list + on-expand round-log fetch, fed from the shell's polled combat
+  state instead of its own triple fetch). Empty shells deleted: Dashboard.tsx, GalaxyMapScreen.tsx,
+  CombatReportPage.tsx, CombatReportsView.tsx.
+
+**Shared state lifted (fetched once):** the three polled hooks (`useGalaxyMapData`, `useGameState`,
+`useCombat`) mount exactly once in `AppShell` and reach destinations via `useShellState`
+(`src/app/shellState.ts`) — no destination mounts its own copy. **Consolidated arrival settle:**
+the old Dashboard mounted `useSettleDueArrival` for the legacy leg and GalaxyMapScreen for the OSN
+leg — safe only while those routes were mutually exclusive; with a persistent shell that invariant
+is gone, so the hook now mounts EXACTLY ONCE in AppShell covering BOTH `legacyMovement` and the OSN
+`movement`, and both per-screen mountings are removed.
+
+**Dark stays dark:** every dark panel keeps its server-lit `return null` gate verbatim and is
+surfaced only when already lit — no flag flipped, no capability activated, no server change.
+**No-softlock preserved:** all three Stop CTAs + PortNav re-departure live on Map (mounted
+flag-independent, state-predicated as before); repair (MainShipPreview) mounts UNGATED on Ship.
+
+**Verification (honest):** `npm run build` green (bundle −7 kB from the deletions);
+`npm run lint` back to the exact 22-error pre-existing baseline (zero errors in any new/touched
+file; one new-file react-refresh hit was fixed by moving the context/hook into `shellState.ts`).
+Zero raw palette literals on all new/kept surfaces (grep-verified). The deployed-site browser
+smoke (`tests/galaxy.spec.ts`) was updated to the new flow (sign-in lands directly on Map; the
+"Galaxy map" link/heading assertions are gone) — it runs against the DEPLOYED site, so it passes
+only once this UI deploys; dark panels/flows could not be exercised live from this sandbox
+(server-lit; no service key + blocked egress). `docs/SYSTEM_BOUNDARIES.md` unchanged — client-only
+navigation over unchanged server ownership (no table/writer/constraint/cross-system call changed).
+
+---
+
+## 2026-07-06 — MAP DECLUTTER: waypoint relocation (migration 0154, data-only)
+
+**Problem (root cause, full trace in `MAP_DECLUTTER_RECON.local.md`):** the 0002 waypoints were
+seeded 1–3.6 world units apart on the tiny legacy map scale, while the 0066 starter ports sit on
+the OSN scale (−50…80). The content-fit camera (galaxyCamera `fitCameraToWorldPoints`, MAX_K=1024)
+frames the 120-unit port spread, compressing the two waypoint clusters to ~8–20 screen px — with
+counter-scaled constant-size markers/labels that means overlapping halos and unreadable labels at
+default zoom (min pairwise separation 1.2% of the content span vs the ~9% no-overlap threshold).
+
+**Migration `20260618000154_map_declutter_waypoints.sql` (forward-only; no shipped file touched):**
+relocates ONLY the five waypoint `locations` rows, matched by their post-0148 one-word zone-scoped
+`(zone_id, name)` key — the exact 0148 idiom (single fail-closed atomic do-block; presence check,
+GET DIAGNOSTICS exactly-5-rows guard, exact-coordinate read-back, ports-untouched guard;
+idempotent re-run — a same-value UPDATE still matches all five and the read-back accepts
+already-at-target):
+
+| waypoint | zone | before | after |
+|---|---|---|---|
+| Refuge (safe) | Wreck Belt | (11, 5) | (−30, 15) |
+| Snare (pirate d10) | Wreck Belt | (12, 6) | (−15, 40) |
+| Reaver (pirate d15) | Wreck Belt | (9, 4) | (−45, 40) |
+| Lull (safe) | Ion Storm Route | (31, 22) | (40, 30) |
+| Blackden (pirate d25) | Ion Storm Route | (33, 23) | (65, 55) |
+
+The content bbox (x −50…70, y −30…80) is unchanged, so the default zoom is unchanged; min pairwise
+separation over all nine map points (8 locations + the (0,0) home base) becomes **29.2 world units
+≈ 24% of span** (≈163 px at default fit vs the ≈60 px label requirement — >2.5× margin,
+viewport-independent). Distance-from-home now orders by difficulty (Refuge 33.5 < Snare 42.7 <
+Lull 50 < Reaver 60.2 < Blackden 85.1 — the old seed had the d15 site as the CLOSEST point of all
+at 9.85u); zone geography preserved (Wreck Belt trio west with Haven, Ion Storm pair east with
+Slagworks/Driftmarch).
+
+**Deliberately untouched (the recon's blast-radius proof):** NO port row, NO `space_anchors` row
+(the waypoints have none; the unmoved ports keep the 0066 anchor==location alignment, guarded
+in-migration), NO `fleet_movements`/`main_ship_space_movements` snapshot backfill (per-trip
+snapshots settle by IDs; rewriting in-flight geometry would teleport moving ships), NO function,
+flag, config, or grant. Dock-0's exact-match compares the ANCHOR to the movement snapshot
+(0067:564-572) and locations.x/y is consulted NOWHERE in the OSN domain — so docking holds by
+construction. Legacy sends read `l.x/l.y` LIVE at send time, so future waypoint trips get ~2.8×
+longer on average; `travel_scale` / `min_travel_seconds` remain the human-owned pacing knobs (no
+value changed here). **STANDING INVARIANT for any FUTURE port relocation:** move `locations.x/y`
+and retire+insert the port's anchor in ONE migration (0063 lifecycle), same values both places
+(0066 invariant), accepting `target_anchor_changed` terminal failures for routes in flight at
+apply time — deliberate, never a silent redirect.
+
+**Verification (honest; environmental precedent unchanged — 0148–0153 "authored, reviewed, NOT
+applied"):** no service-role key in this sandbox and network egress is blocked, so the migration
+was verified statically: one balanced `do $$ … $$;` block; the five-row GET DIAGNOSTICS guard;
+exact-coordinate read-back for all five; the three fixed-UUID port rows asserted still at their
+0066 coords; idempotent-re-run semantics reasoned through (same-value update → count 5 → read-back
+passes). `verify:m2` asserts waypoint NAMES + types only (scripts/verify-m2.mjs:77-93), never
+coordinates — it stays green post-apply. `docs/SYSTEM_BOUNDARIES.md` unchanged (Map remains the
+sole writer of `locations`; no writer/table/constraint/cross-system call changed).
+**HUMAN CHECKLIST (the owner's gate):** (1) apply 0154 after 0148–0153, forward-only; (2) re-run
+`verify:m2` + `verify:mainship-legacy-dock` + `verify:stop-roundtrip` (ports/anchors unmoved —
+both stop families unaffected); (3) visual pass of the galaxy map at default zoom (five separated,
+labeled waypoints); (4) optionally retune `travel_scale`/`min_travel_seconds` if the ~2.8× longer
+legacy waypoint trips should keep their old wall-clock feel.
+
+---
+
+## 2026-07-06 — STOP/MOVE FIX, slice 2: the send→stop→send→stop verifier
+
+**New verifier `scripts/verify-stop-roundtrip.mjs`** (+ `package.json` script `verify:stop-roundtrip`)
+— proves goal item (1) end-to-end: Stop works on EVERY in-transit leg, not just the first. It proves
+the SERVER-side contract the slice-1 client fix relies on (each stop sent with a FRESH request id
+halts exactly ITS OWN leg); slice-1's controller unit tests prove the client now emits that fresh key
+per leg — the two layers together close the goal. Covers BOTH stop families plus the regression probe:
+
+1. **Legacy family** (`fleet_movements` / `command_main_ship_stop_transit`): commissioned-docked
+   departure (`move_main_ship_to_location`) → stop 1 transforms THE leg-1 row in place to
+   `mission_type='return_home'` (target = home base), fleet `returning`, ship `returning/NULL` →
+   settles home (on-demand 0151 settle + cron-poll backstop, ship reconciled `home` by the 0050 cron)
+   → `send_main_ship_expedition` leg 2 (asserted a FRESH fleet row) → stop 2 transforms the leg-2 row
+   identically — each stop owns exactly its own trip, twice over.
+2. **OSN family** (the live-reachable defect; `main_ship_space_movements` /
+   `command_main_ship_space_stop`): anchored departure via `command_main_ship_space_move_to_location`
+   → stop 1 with a fresh key (`outcome:'stopped'`, movement `stopped/player_stop`, ship HELD
+   `stationary/in_space` at its own coordinates) → leg 2 re-departs FROM the held-in-space state as a
+   NEW movement → stop 2 with a second fresh key halts the SECOND movement (its own `movement_id`) —
+   the exact reported "second leg" scenario, proven to stop. Wrapper calls try the 0083
+   (`p_main_ship_id`) shape first and fall back to the pre-0083 shape (schema-cache-miss fallback).
+3. **Regression probe (documents WHY slice 1 was required):** on the fresh in-transit leg 2, a stop
+   submitted with the PREVIOUSLY-CONSUMED leg-1 key is asserted to REPLAY the leg-1 receipt verbatim
+   (the OLD `movement_id` in the envelope) and to settle NOTHING — leg 2 stays `moving`. That replay
+   was the live "second Stop no-ops" bug; the probe pins the server contract (receipts are
+   correct-by-design idempotency) so the fresh-key-per-leg client fix is provably the right layer.
+   The probe is OSN-only by nature: the legacy stop carries no request key (idempotent by state).
+
+**Idiom (mirrors `verify-mainship-legacy-dock-travel.mjs` verbatim):** `loadEnv`/admin/`newUser`/
+`poll`/`setCfg`, up-front capture of `travel_scale`/`min_travel_seconds` (set fast for the run,
+restored in `finally`), shared `teardownVerifier` for user cleanup, §11–§13 SKIP-loudly probes
+(commissioning absent, target-legal probe absent, no second dockable port). **NO capability flag is
+toggled — stricter than the sibling:** `mainship_send_enabled` and `mainship_space_movement_enabled`
+are READ ONLY; a family whose flag is dark on the target DB is SKIPPED loudly instead of
+force-enabled (`teardownVerifier` is passed `flag: null`). Exit contract: 1 on any failed assertion;
+**2 when anything was skipped** (required capability absent / a family dark — "not fully proven");
+0 only when both families ran green.
+
+**Verification of this step (honest):** `node --check scripts/verify-stop-roundtrip.mjs` → OK.
+`npm run build` green. `npm run lint` → the same 22 pre-existing errors in untouched files (the new
+`.mjs` sits outside ESLint's `**/*.{ts,tsx}` coverage; no ts/tsx file touched this slice). **DB
+execution deferred:** no `SUPABASE_SERVICE_ROLE_KEY` in this sandbox AND network egress is blocked
+(the 0148–0153 precedent) — the verifier exits 2 by design without the key. Authored + statically
+reviewed only. `docs/SYSTEM_BOUNDARIES.md` unchanged (verifier-only slice — no table, writer,
+constraint, or cross-system call changed).
+
+**MIGRATION-APPLY / ENABLE-TIME CHECKLIST ADDITION (the human owner's gate):** after applying the
+pending migrations (0152→0153) and/or whenever the stop families are enabled on the target DB, ALSO
+run **`npm run verify:stop-roundtrip`** — confirms `send → stop → send → stop` lands on both
+families and the consumed-key replay settles nothing. (Supplements the slice-3 checklist in the
+MAINSHIP LEGACY SPATIAL-STATE FIX entry below; a family dark on that DB skips loudly with exit 2.)
+
+---
+
+## 2026-07-06 — STOP/MOVE FIX, slice 1: consumed idempotency keys cleared on success (client-only)
+
+**Bug (LIVE — the reported "second Stop no-ops"):** the three pure OSN command controllers kept
+their idempotency `requestId` after a SUCCESS. The server receipt idempotency is correct-by-design
+(`mainship_space_stop` replays the stored `result_json` verbatim for a matching
+`(main_ship_id, request_id)` — 0067:695-704 — and Stop's canonical payload hash is CONSTANT, so a
+stale key can't even conflict), and the controller instances survive across trips (memoized on
+`[mainShipId]`; PortNavPanel/GalaxyMap stay mounted, returning `null` between trips). So the second
+Stop on a NEW transit resubmitted the FIRST stop's consumed key → the server replayed trip 1's
+success envelope → the new movement kept flying while the UI showed "Stopped in open space." — a
+silent no-op. Full root-cause trace: `STOP_UIRESTRUCTURE_RECON.local.md` §D. Same class, siblings:
+`portMoveCommand` (re-travel to the SAME destination after a success replayed the old receipt → no
+new movement; live-reachable) and `spaceMoveCommand` (identical idiom; dark behind the 0070
+coordinate gate). The legacy stop (`useLegacyStopTransitCommand` → 0149) does NOT share the class:
+per-trip fleet keying + idempotent-by-state server (no receipts) — clean post-0152, untouched.
+
+**Fix (client-only; NO migration, NO server code, NO flag — the server behaves as designed):**
+each controller's `submit()` success branch now ALSO sets `requestId: null` — the key is consumed
+by the success. Error/catch branches still keep the key, so a retry-after-error stays idempotent
+(same key), while the NEXT command after a completed one always generates a fresh key.
+- `src/features/map/spaceStopCommand.ts` — `createSpaceStopController.submit` `res.ok` branch
+  (+ the now-corrected key-lifecycle comment). ONE shared controller serves BOTH
+  `useSpaceStopCommand` (the live-reachable OSN stop — PortNavPanel/GalaxyMap) and
+  `useLegacyStopTransitCommand`, so this single change repairs the reported second-leg OSN stop.
+- `src/features/map/portMoveCommand.ts` — `createPortMoveController.submit` `res.ok` branch
+  (+ the `PortMoveState.requestId` comment).
+- `src/features/map/spaceMoveCommand.ts` — `createSpaceMoveController.submit` `res.ok` branch,
+  preserving the existing `serverTarget` reconciliation (+ the `SpaceMoveState.requestId` comment).
+
+**Deliberate omissions (considered, NOT done):** (1) movement-id re-keying of the OSN stop hook —
+redundant once the consumed key is cleared on success (every trip already gets a fresh key);
+speculative plumbing out of this slice's scope. (2) A shared "idempotent submit" helper across the
+three controllers — they are pre-existing independent surfaces with distinct state shapes; a
+one-field `requestId: null` in each controller's own success branch is not a duplicated
+non-trivial block.
+
+**Tests (updated to the corrected contract):** `tests/spaceStopCommand.spec.ts` /
+`tests/portMoveCommand.spec.ts` / `tests/spaceMoveCommand.spec.ts` — after a successful `submit()`
+`state.requestId` is `null`, and the NEXT submit (new trip / re-selected SAME destination) calls
+`genRequestId` again and sends a DIFFERENT key; the pre-existing error/catch retry cases (same key
+reused) are unchanged and still pass.
+
+**Verification (honest):** `npm run build` (tsc + vite) green; `npm run lint` green on the five
+touched files (the suite's 22 pre-existing errors in untouched files are unchanged);
+`verify:osn:osn4` + `verify:osn:port` + `verify:osn:s6c` (the three controller spec files) green.
+No DB needed — this slice is pure client logic. `docs/SYSTEM_BOUNDARIES.md` unchanged (no table,
+writer, constraint, or cross-system call changed). **NEXT SLICE:** the end-to-end
+`send → stop → send → stop` verifier (`verify:stop-roundtrip`, both families — see the recon §D.2
+assertion list).
+
+---
+
 ## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 3: the end-to-end round-trip verifier
 
 **New verifier `scripts/verify-mainship-legacy-dock-travel.mjs`** (+ `package.json` script

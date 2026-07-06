@@ -5,7 +5,7 @@ import { mainShipInstanceStatusLabel } from './mainshipStatusLabel'
 // (name + status label + cargo capacity) and lets the player choose which ship the trade surface addresses,
 // by calling selectShip(id). It owns NO server truth: selection is client display state (useMainShipSelection),
 // and every per-ship RPC still passes the chosen id explicitly + is server-validated. Mounted only behind the
-// TRADE_MARKET_ENABLED gate (GalaxyMapScreen), so nothing renders while the trade surface is dark.
+// TRADE_MARKET_ENABLED gate (ShipScreen), so nothing renders while the trade surface is dark.
 //
 // N-ready but dark-single-ship-graceful: today every player has exactly one ship, so the sole ship renders as a
 // non-interactive already-selected entry (no pointless picker). The moment the add-ship capability flips on and
