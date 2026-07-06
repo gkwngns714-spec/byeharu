@@ -5,6 +5,57 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — STOP = HOLD, Slice B: RESUME from the held point (migration 0156)
+
+**Request.** Complete the Stop-hold fix: Slice A (0155) made Stop park the ship in open space, but nothing
+could then Send it onward — recon confirmed no legacy Send accepts a `spatial_state='in_space'` fleet
+(`send_main_ship_expedition` needs ship `status='home'`; `move_main_ship_to_location` /
+`request_main_ship_return` need fleet `status='present'` + active presence). This slice adds the resume.
+
+**Design decision (self-approved): ONE send path, not a parallel resume RPC.** Extend
+`move_main_ship_to_location` to depart from EITHER validated departure state — "present at a location" OR the
+new "held in open space" — deriving the movement ORIGIN accordingly. "Depart from a held point" is just a
+different origin for the same location-target `rally` movement, so the one RPC keeps ONE movement path and
+reuses its destination-validation / speed / `movement_create` / in-flight-marking machinery.
+
+**Change (Slice B — migration `20260618000156_mainship_legacy_depart_from_hold.sql`):**
+1. **`fleet_movements.origin_type` domain extended** (forward-only, additive): drop + re-add the inline
+   column CHECK → `origin_type in ('base','location','zone','space')`. A `'space'` origin = departed from a
+   held open-space coordinate with NO base/location/zone anchor (`origin_*_id` all NULL, `origin_x/y` = the
+   held coordinates). **Safe because `origin_type` is provenance metadata only** — settlement branches solely
+   on `target_type` (`process_fleet_movements` 0030:53,60,74; `movement_settle_arrival` 0151/0153); nothing
+   anywhere reads `origin_type` to decide (verified across migrations + `src/`). Same table, same sole writer
+   (Movement), same `target_type`-driven arrival — **not** the OSN coordinate domain (`main_ship_space_movements`
+   untouched).
+2. **`move_main_ship_to_location` generalized** (0152 body): present-departure path preserved; a **held-departure
+   branch** is selected when the fleet is not present — it requires the exact 0155 held shape
+   (`main_ship_instances` status='stationary', spatial_state='in_space', space_x/y NOT NULL) and departs from
+   those raw coordinates (`origin_type='space'`, no presence to close). Destination validation (active,
+   `activity_type='none'`, non-combat) + speed + `movement_create` + the in-flight mark are **shared** — the
+   ONLY per-branch difference is how the origin is derived (and `presence_complete` on the present branch).
+   The fleet flip to `moving` is ONE shared guarded UPDATE (present: `status='present'`; hold:
+   `status='completed'`; both `active_movement_id IS NULL`), raise+rollback on miss (0053 discipline). The
+   ship is marked in-flight via the **same 0152 helper** the present branch already uses
+   (`mainship_mark_legacy_in_flight(ship,'traveling')`) — no inline duplication; for a held departure that
+   same write clears the held coordinates as the ship leaves the hold point.
+
+**Accepted micro-deltas on the present path (documented; observable behavior preserved — 0153 precedent):**
+the shared fleet-flip guard adds a NO-OP `active_movement_id IS NULL` for present and generalizes the
+race-only raise message; `presence_complete` now runs just after `movement_create` (independent tables, same
+atomic txn); the success envelope gains an additive `from` marker ('present' | 'hold') with existing keys
+unchanged (`from_location_id` NULL for a held departure).
+
+**No flag flip, no OSN touch, no new table, no new RPC, no `send_main_ship_expedition` change.** Movement
+stays sole writer of `fleet_movements`; Main Ship sole writer of `main_ship_instances`; non-combat
+destinations only. **Slice C** updates the client (find/select the held fleet + the `from` marker) and
+rewrites the stop-roundtrip verifier's legacy section to send→stop(held)→send→stop(held).
+
+**Verification (this sandbox, honest).** `npm run build` → green. No JS touched (`node --check` n/a).
+`docs/SYSTEM_BOUNDARIES.md` synced same step (origin_type domain + `move_main_ship_to_location` departs
+present OR held). DB-dependent verifiers defer here by design (no service-role key + blocked egress — the
+0148–0154 precedent); the send→stop(held)→send→stop(held) run is Slice C's rewritten verifier at the human
+apply gate.
+
 ## 2026-07-06 — STOP = HOLD-IN-OPEN-SPACE (legacy), Slice A: stop settlement (migration 0155)
 
 **Request.** "Stop must HOLD, not return home." The visible Stop button drove
