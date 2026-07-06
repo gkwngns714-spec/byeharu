@@ -5,6 +5,40 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — VISUAL FOLLOW-ON item 4 (final sweep): palette-literal inventory; last live straggler converted
+
+**Sweep:** grepped `src/` (`*.ts`/`*.tsx`) for `white/`, `black/`, plain `text/bg/border-white|black`,
+`slate-`, `indigo-`, `rose-`, `red-`, `emerald-`, `amber-`, `cyan-`, `sky-`, `violet-`, `zinc-`,
+`gray-`, and raw hex in JSX attributes. Every hit classified live-visible vs. dark before touching
+anything (each dark panel's fail-closed server-lit gate re-verified at its `return null` site).
+
+**Converted (the ONLY live-visible straggler):** `src/app/RequireAuth.tsx` — the auth-gate loading
+screen's `text-white/40` → `text-ink-muted`. One class; no logic touched.
+
+**ACKNOWLEDGED DEBT (standing note — intentionally NOT converted):** the dark, flag-gated panels retain
+incidental palette literals because they render `null` in production (server-rejected capability +
+client fail-closed gate), so they have zero visual surface today:
+- `investment/InvestmentPanel.tsx` (22 hits; `location_investment_enabled` dark)
+- `modules/ModulesPanel.tsx` (20; `module_crafting_enabled`/`module_fitting_enabled` dark)
+- `map/SpaceMoveTarget.tsx` (18; mounts only behind `canTarget` — server
+  `coordinate_travel_available` + `mainship_space_movement_enabled`, both dark)
+- `mining/MiningPanel.tsx` (11; `mining_enabled` dark)
+- `exploration/ExplorationPanel.tsx` (10; `exploration_enabled` dark)
+- `captains/CaptainsPanel.tsx` (9; `captain_assignment_enabled` dark)
+- `events/WorldEventsPanel.tsx` (8; `phase20_polish_enabled` dark — feed empties, panel nulls)
+- `captains/RecruitCaptainPanel.tsx` (7; captain-system server-lit visibility, dark)
+- `map/DevFixedSpacePreview.tsx` (3 hex SVG strokes; `import.meta.env.DEV`-only — statically
+  compile-time eliminated from `vite build`, never shipped at all)
+**RETIREMENT CONDITION:** each panel is converted to the design system in the SAME change that lights
+its capability flag (the "lit-path" work for that feature) — a panel must not go live wearing
+off-system chrome. Until lit, do not restyle them speculatively.
+
+**Presentational-only:** no behavior/handler/`data-testid`/route/flag/backend change anywhere in the
+sweep; `src/components/ui/**` and `@theme` tokens untouched. Post-sweep grep: the only remaining
+palette-literal files are exactly the nine listed above. `npm run build` (incl. `tsc -b`) green.
+
+---
+
 ## 2026-07-06 — VISUAL FOLLOW-ON item 3: CombatReportPage restyled onto the shared design system
 
 **Done:** `src/features/combat/CombatReportPage.tsx` (`/reports`) now composes the design-system
