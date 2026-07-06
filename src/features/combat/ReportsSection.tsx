@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react'
-import { Badge, Button, Card, CardHeader, Notice } from '../../components/ui'
+import { useState } from 'react'
+import { Badge, Button, Card, CardHeader, Notice, StatRow } from '../../components/ui'
 import type { UnitType } from '../../lib/catalog'
 import type { MapLocation } from '../map/mapTypes'
 import { formatDateTime, formatDuration } from '../../lib/time'
@@ -85,20 +85,20 @@ export function ReportsSection({
                 </button>
 
                 <div className="mt-3 border-t border-edge pt-3 text-xs text-ink-muted">
-                  <Fact label="Reported" value={formatDateTime(r.created_at)} />
-                  <div>Waves cleared: {r.waves_cleared} · lasted {formatDuration(r.duration_seconds)}</div>
-                  {won ? (
-                    <>
-                      <Fact label="Ships recovered" value={ships(r.survivors_json)} />
-                      <Fact label="Ships lost" value={ships(r.total_losses_json)} />
-                      <Fact label="Rewards" value={metal(r.total_rewards_json)} note="secured on safe return" />
-                    </>
-                  ) : (
-                    <>
-                      <Fact label="Ships lost" value={ships(r.total_losses_json)} />
-                      <div className="text-danger">Rewards forfeited — lost with the fleet.</div>
-                    </>
-                  )}
+                  <dl className="space-y-1">
+                    <StatRow label="Reported" value={formatDateTime(r.created_at)} />
+                    <StatRow label="Waves cleared" value={`${r.waves_cleared} · lasted ${formatDuration(r.duration_seconds)}`} />
+                    {won ? (
+                      <>
+                        <StatRow label="Ships recovered" value={ships(r.survivors_json)} />
+                        <StatRow label="Ships lost" value={ships(r.total_losses_json)} />
+                        <StatRow label="Rewards" value={metal(r.total_rewards_json)} hint="(secured on safe return)" />
+                      </>
+                    ) : (
+                      <StatRow label="Ships lost" value={ships(r.total_losses_json)} />
+                    )}
+                  </dl>
+                  {!won && <div className="mt-1 text-danger">Rewards forfeited — lost with the fleet.</div>}
 
                   <Button variant="ghost" size="sm" className="mt-2" onClick={() => toggle(r)}>
                     {open ? 'Hide round log' : 'Show round log'}
@@ -120,15 +120,5 @@ export function ReportsSection({
         </ul>
       </Card>
     </section>
-  )
-}
-
-// "Label: value" report-detail line — the ONE chrome for this idiom across the row facts.
-function Fact({ label, value, note }: { label: string; value: ReactNode; note?: string }) {
-  return (
-    <div>
-      {label}: <span className="text-ink">{value}</span>
-      {note && <span className="text-ink-faint"> ({note})</span>}
-    </div>
   )
 }

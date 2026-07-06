@@ -7,12 +7,14 @@ import { ReportsSection } from '../combat/ReportsSection'
 import { RankingPanel } from '../ranking/RankingPanel'
 import { PageHeader, Notice, buttonClasses } from '../../components/ui'
 
-// UI-REBUILD (2b) — the Command destination: home base. Relocates the Dashboard's kept panels
-// unchanged (base/production/resources, port-entry onboarding, live combat, dark ranking) and
-// hosts the ONE merged Reports section (the old /reports page + the inline dashboard list folded
-// into ReportsSection — reports come from the shell's combat state, expandable round logs fetch
-// on demand). The retired surfaces (ExpeditionLauncher — the duplicate map path; FleetStatusPanel
-// — all legacy fleets UI) are DELETED, not relocated. Shared polled data comes from the shell.
+// UI-REBUILD (2b, Command interior) — the home-base destination in the shared design language.
+// ONE focus per state, top-down: pending onboarding first (PortEntryPanel — server-authoritative
+// self-hide, prominent accent card when an action is needed), then any LIVE battle
+// (ActiveCombatPanel), then the base card (identity → quiet all-clear line → resources/garrison —
+// the all-clear is suppressed while a battle holds the focus). Secondary sections follow: the ONE
+// merged Reports history and the dark Ranking board (server-lit gate verbatim — omitted while
+// dark, never a placeholder). Sign-out is a quiet account footer, not a primary action.
+// Presentation only: every panel keeps its wiring/gating exactly; shared polled data from the shell.
 
 export function CommandScreen() {
   const { game, combat } = useShellState()
@@ -20,19 +22,12 @@ export function CommandScreen() {
   const signOut = useAuthStore((s) => s.signOut)
   const locName = (id: string | null) =>
     (id && game.locations.find((l) => l.id === id)?.name) || 'unknown'
+  const underAttack = combat.encounters.length > 0
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-4 py-4 sm:px-6">
-        <PageHeader
-          title="Command"
-          subtitle={user?.email}
-          actions={
-            <button onClick={signOut} className={buttonClasses('ghost', 'sm')}>
-              Sign out
-            </button>
-          }
-        />
+        <PageHeader title="Command" subtitle="Home base" />
 
         {game.error && (
           <Notice tone="danger" className="mb-6">
@@ -41,20 +36,14 @@ export function CommandScreen() {
         )}
 
         {game.loading && !game.base ? (
-          <p className="text-ink-muted">Loading command center…</p>
+          <p className="text-ink-muted">Loading your base…</p>
         ) : !game.base ? (
           <p className="text-ink-muted">No base found. Try reloading.</p>
         ) : (
-          <div className="space-y-6">
-            <BasePanel
-              base={game.base}
-              units={game.units}
-              resources={game.resources}
-              unitTypes={game.unitTypes}
-            />
-            {/* PORT-ENTRY: onboarding claim + finish-docking. Self-hides unless the caller's own ship state
-                needs an action (server-authoritative; not flag-gated). Refreshes on success. */}
+          <div className="space-y-4">
+            {/* RIGHT NOW #1 — onboarding (self-hides unless the server says an action is needed). */}
             <PortEntryPanel deps={{ onChanged: game.refresh }} locations={game.locations} />
+            {/* RIGHT NOW #2 — live battles (only while an encounter exists). */}
             {combat.encounters.map((enc) => (
               <ActiveCombatPanel
                 key={enc.id}
@@ -71,10 +60,26 @@ export function CommandScreen() {
                 }}
               />
             ))}
+            {/* The base: identity → all-clear (suppressed during a battle) → resources/garrison. */}
+            <BasePanel
+              base={game.base}
+              units={game.units}
+              resources={game.resources}
+              unitTypes={game.unitTypes}
+              quiet={!underAttack}
+            />
             {/* The ONE reports surface (merged /reports page + inline dashboard list). */}
             <ReportsSection reports={combat.reports} locations={game.locations} unitTypes={game.unitTypes} />
             {/* RANKING-P17 (dark, server-lit only): renders null while ranking_enabled is false. */}
             <RankingPanel lifecycleKey={user?.id ?? 'anon'} />
+
+            {/* Quiet account footer — secondary by design (never competes with base actions). */}
+            <footer className="flex items-center justify-between border-t border-edge pt-3 text-xs text-ink-faint">
+              <span className="truncate">{user?.email}</span>
+              <button onClick={signOut} className={buttonClasses('ghost', 'sm')}>
+                Sign out
+              </button>
+            </footer>
           </div>
         )}
       </div>

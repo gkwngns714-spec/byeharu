@@ -5,6 +5,41 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — UI REBUILD (2b): Command interior — home base in the shared design language
+
+**The Command destination rebuilt** (identity → right-now → details, `StatRow` rows, tokens only,
+plain player language, mobile-first single column):
+- **RIGHT-NOW focus rule (one focus per state, top-down):** pending onboarding first
+  (`PortEntryPanel` — server-authoritative self-hide kept verbatim; its accent card is the screen's
+  focus when the server says an action is needed) → any LIVE battle (`ActiveCombatPanel`, wiring
+  untouched) → otherwise the base card's quiet all-clear line ("All quiet — nothing here needs
+  your attention" + a set-out-from-the-Map hint), which CommandScreen suppresses while a battle is
+  live so the combat panels hold the focus alone. No wall of equal-weight cards.
+- **BasePanel interior rebuilt** (same file/props + a new `quiet` flag; presentation only, no RPC —
+  the panel never had one): IDENTITY (base name + "Your home base"; the dev-jargon "(0, 0)"
+  coordinate label dropped) → the right-now all-clear → DETAILS ("Stored resources" and "Garrison"
+  as `StatRow` lists with mono tabular numbers; plain empty-states). **Honest scope note:** NO
+  client production/build surface exists today — `train_units`/`cancel_build_order` have zero
+  client call sites (the training UI was retired with the legacy fleet surfaces) — so no build
+  section was invented (a new command surface is a capability decision, not presentation); the
+  right-now third state is therefore the quiet state.
+- **ReportsSection** adopted `StatRow` for its report facts (the local `Fact` label/value row
+  deleted — the no-local-row rule); list/expand/round-log behavior unchanged. Dark `RankingPanel`
+  keeps its server-lit `return null` gate verbatim — omitted while dark, never a placeholder.
+- **Sign-out re-placed** as a quiet account footer (email + small ghost button) — a secondary
+  affordance that no longer competes with base actions; behavior unchanged (no test id existed).
+- **Dead code removed with its last caller:** `src/lib/location.ts` (`formatLocationLabel`) — its
+  final imports died with FleetStatusPanel (nav-shell slice) and BasePanel's dropped coordinate
+  label; zero call sites remained.
+
+**Verification (honest):** `npm run build` green; `npm run lint` at the exact 22-error
+pre-existing baseline (zero on touched files); zero raw palette literals on all touched surfaces
+(grep-verified). The dark Command surface (Ranking) can't be exercised live from this sandbox
+(server-lit; no service key + blocked egress) — its gate was not modified.
+`docs/SYSTEM_BOUNDARIES.md` unchanged (client-only presentation over unchanged server ownership).
+
+---
+
 ## 2026-07-06 — UI REBUILD (2b): Port interior — one docked-services surface, DockServicesPanel folded
 
 **The Port destination rebuilt in the Ship-established design language** (identity → right-now →
