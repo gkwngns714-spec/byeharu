@@ -44,7 +44,7 @@
 
 -- ── 1) THE one canonical docked-ship write (Main-Ship-owned leaf; service_role/internal only) ──────────────
 -- This helper is the ONE place expressing "main ship → canonically docked at a location" (the at_location /
--- stationary pair; at_location REQUIRES NULL coordinates — main_ship_instances_space_coords, 0055). It is
+-- stationary pair; at_location REQUIRES NULL coordinates — main_ship_instances_space_coords, 0054). It is
 -- shared by BOTH docking routes:
 --   • the OSN Dock-0 writer mainship_space_dock_at_location (recreated below), and
 --   • the legacy arrival settle movement_settle_arrival (recreated below);
