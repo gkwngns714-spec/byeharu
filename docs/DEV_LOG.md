@@ -5,6 +5,33 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — VISUAL FOLLOW-ON item 2: legacy `/map` list view retired (fully superseded by `/galaxy`)
+
+**Decision (human design authority):** the M2-era read-only list browser at `/map` is fully superseded —
+`/galaxy` (GalaxyMapScreen) shows the same world data plus the main ship, movements, dock services, stop
+controls, and a detail panel covering every metadata field `/map` showed (type/sector/zone/coordinates/
+status/difficulty/reward tier/worldstate). Keeping a second, un-modernized map surface is split-brain
+debt; clean deletion (like the prior pass's retired legacy UI) over restyling a redundant page.
+
+**Deleted (whole dead-code chain, each importer-verified to zero remaining callers first):**
+- `src/features/map/MapPage.tsx` (the `/map` screen)
+- `src/features/map/LocationPanel.tsx` (imported ONLY by MapPage)
+- `src/game/worldstate/danger.ts` (+ its now-empty `worldstate/` dir) — its only importers were
+  MapPage and LocationPanel; its former send-fleet consumer (ExpeditionCommand) was retired 2026-07-05.
+
+**Removed references:** the `/map` route + `MapPage` import in `src/app/App.tsx`; the two "List view"
+links (`Dashboard.tsx`, `GalaxyMapScreen.tsx` headers — action rows remain well-formed).
+
+**Kept (still live):** `mapApi.ts` (`fetchWorldMap`/`fetchLocationStates` — used by useGameState,
+useGalaxyMapData, CombatReportPage) and `mapTypes.ts` (used across map/dashboard/combat/fleets/portentry).
+
+**Presentational/dead-code removal only:** no backend, RPC, migration, or flag change; `/galaxy`
+behavior untouched. Grep confirms zero remaining `src/`+`tests/`+`scripts/` references to `/map`,
+`MapPage`, `LocationPanel`, or `worldstate/danger`. `npm run build` (incl. `tsc -b`) green; bundle
+579.99 kB → 573.58 kB.
+
+---
+
 ## 2026-07-06 — VISUAL FOLLOW-ON item 1: AuthPage restyled onto the shared design system
 
 **Request:** follow-on to the 2026-07-05 visual-modernization pass (item 5) — convert the remaining

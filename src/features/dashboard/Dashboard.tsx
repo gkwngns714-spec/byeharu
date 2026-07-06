@@ -51,9 +51,6 @@ export function Dashboard() {
             <Link to="/galaxy" className={buttonClasses('primary', 'sm')}>
               🗺 Galaxy map
             </Link>
-            <Link to="/map" className={buttonClasses('ghost', 'sm')}>
-              List view
-            </Link>
             <Link to="/reports" className={buttonClasses('ghost', 'sm')}>
               Reports
             </Link>

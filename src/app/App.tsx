@@ -4,7 +4,6 @@ import { useAuthStore } from '../store/authStore'
 import { RequireAuth } from './RequireAuth'
 import { AuthPage } from '../features/auth/AuthPage'
 import { Dashboard } from '../features/dashboard/Dashboard'
-import { MapPage } from '../features/map/MapPage'
 import { GalaxyMapScreen } from '../features/map/GalaxyMapScreen'
 import { CombatReportPage } from '../features/combat/CombatReportPage'
 
@@ -26,14 +25,6 @@ export function App() {
           element={
             <RequireAuth>
               <Dashboard />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/map"
-          element={
-            <RequireAuth>
-              <MapPage />
             </RequireAuth>
           }
         />

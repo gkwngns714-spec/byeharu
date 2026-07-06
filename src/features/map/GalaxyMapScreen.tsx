@@ -84,7 +84,6 @@ export function GalaxyMapScreen() {
             🛰 Main Ship
           </button>
           <Link to="/" className={buttonClasses('ghost', 'sm')}>Command Center</Link>
-          <Link to="/map" className={buttonClasses('ghost', 'sm')}>List view</Link>
         </nav>
       </header>
 
