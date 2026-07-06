@@ -5,6 +5,23 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — VISUAL FOLLOW-ON item 3: CombatReportPage restyled onto the shared design system
+
+**Done:** `src/features/combat/CombatReportPage.tsx` (`/reports`) now composes the design-system
+primitives — `PageHeader` (title/subtitle + `buttonClasses('ghost','sm')` back link, matching the
+Dashboard idiom), one `Card` per battle row, `Badge` win/loss pill (`success` won / `danger` lost),
+`Notice` for loading/empty (`neutral`) and error (`danger`) callouts, `Button ghost sm` round-log
+toggle, and a single local `Fact` helper for the repeated "Label: value" detail lines. Nested round-log
+container on the `surface-2`/`edge` layer ramp. Zero raw palette literals remain (grep-verified).
+
+**Presentational-only:** `toggle()` per `encounter_id`, ticks load into `RoundLog` on expand (RoundLog
+itself untouched — out of scope), won-detection (`escaped`/`completed`), ships/metal/locName formatters,
+`formatDateTime`/`formatDuration`, and loading/empty states all preserved; no `data-testid` existed in
+the file. No route, backend, RPC, flag, or `src/components/ui/**` change. `npm run build` (incl.
+`tsc -b`) green.
+
+---
+
 ## 2026-07-06 — VISUAL FOLLOW-ON item 2: legacy `/map` list view retired (fully superseded by `/galaxy`)
 
 **Decision (human design authority):** the M2-era read-only list browser at `/map` is fully superseded —
