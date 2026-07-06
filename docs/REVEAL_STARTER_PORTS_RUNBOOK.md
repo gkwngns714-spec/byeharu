@@ -14,9 +14,13 @@ The operation targets ONLY the three fixed ids owned by `reveal_starter_ports()`
 
 | id | name | role |
 |----|------|------|
-| `b1a00001-0066-4a00-8a00-000000000001` | Haven Reach | city |
-| `b1a00002-0066-4a00-8a00-000000000002` | Slagworks Anchorage | port |
-| `b1a00003-0066-4a00-8a00-000000000003` | Driftmarch Waypost | port |
+| `b1a00001-0066-4a00-8a00-000000000001` | Haven | city |
+| `b1a00002-0066-4a00-8a00-000000000002` | Slagworks | port |
+| `b1a00003-0066-4a00-8a00-000000000003` | Driftmarch | port |
+
+> **Names updated 2026-07-05** by forward-only migration `0148` (UX cleanup item 4 — one-word display
+> names; formerly Haven Reach / Slagworks Anchorage / Driftmarch Waypost). The fixed UUIDs — the only
+> identity the reveal operation uses — are unchanged.
 
 These are the same constants the reveal function uses internally. The workflow accepts **no** port list,
 SQL, flag, environment, host, or ref input — there is nothing to inject.

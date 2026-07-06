@@ -7,6 +7,7 @@ import {
   type MainShipFleet,
   type MainShipView,
 } from './mainshipApi'
+import { Card, Badge, Button, Notice } from '../../components/ui'
 
 // Main-ship overlay. Phase 10B: READ-ONLY view (name, hull, status, readiness, speed, cargo,
 // captain/module slots) — NO support craft, NO support capacity, NO loadout. Phase 10D adds an
@@ -18,8 +19,8 @@ import {
 function Row({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex justify-between">
-      <dt className="text-slate-400">{label}</dt>
-      <dd className="text-slate-200">{value}</dd>
+      <dt className="text-ink-faint">{label}</dt>
+      <dd className="text-ink">{value}</dd>
     </div>
   )
 }
@@ -94,7 +95,7 @@ export function MainShipPreview({
     setRepairing(true)
     setRepairError(null)
     try {
-      await repairMainShip() // 10F recovery RPC (auth.uid()-scoped; own ship only)
+      await repairMainShip(ship?.main_ship_id ?? null) // §2.5: explicit ship id; server asserts ownership (own ship only); null → shim
       if (onChanged) await onChanged()
       await load() // refresh this panel's own view → home + full hp
     } catch (e) {
@@ -106,16 +107,14 @@ export function MainShipPreview({
   }
 
   return (
-    <div data-testid="mainship-preview" className="rounded-xl border border-sky-400/20 bg-sky-500/5 p-4 text-sm text-slate-200">
+    <Card tone="accent" data-testid="mainship-preview" className="text-sm">
       <div className="flex items-center justify-between">
-        <h3 className="font-medium">🛰 Main Ship</h3>
-        <span className="rounded bg-slate-700/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
-          {sendEnabled ? 'Command' : 'Read-only'}
-        </span>
+        <h3 className="font-medium text-ink">🛰 Main Ship</h3>
+        <Badge tone="neutral">{sendEnabled ? 'Command' : 'Read-only'}</Badge>
       </div>
 
-      {loading && <p className="mt-2 text-xs text-slate-500">Loading…</p>}
-      {error && <p className="mt-2 text-rose-300">{error}</p>}
+      {loading && <p className="mt-2 text-xs text-ink-faint">Loading…</p>}
+      {error && <p className="mt-2 text-danger">{error}</p>}
 
       {!loading && !error && view && (
         view.has_ship && ship ? (
@@ -134,43 +133,48 @@ export function MainShipPreview({
 
             {/* Flag-on control block: 10F repair (when disabled) OR 10D recall (otherwise). */}
             {sendEnabled && (
-              <div className="mt-3 border-t border-slate-700/60 pt-3">
+              <div className="mt-3 border-t border-edge pt-3">
                 {isDisabled ? (
                   <>
-                    <p data-testid="mainship-disabled-note" className="mb-2 rounded border border-amber-600/40 bg-amber-500/10 px-2 py-1.5 text-sm text-amber-200">
+                    <Notice tone="warning" data-testid="mainship-disabled-note" className="mb-2">
                       🛠 Your main ship was disabled and must be repaired before it can travel again.
-                    </p>
+                    </Notice>
                     {repairError && (
-                      <p data-testid="mainship-repair-error" className="mb-2 rounded border border-rose-600/40 bg-rose-500/10 px-2 py-1.5 text-sm text-rose-300">
+                      <Notice tone="danger" data-testid="mainship-repair-error" className="mb-2">
                         {repairError}
-                      </p>
+                      </Notice>
                     )}
-                    <button
+                    <Button
+                      variant="warning"
                       data-testid="mainship-repair"
-                      disabled={repairing}
+                      busy={repairing}
+                      busyLabel="Repairing…"
                       onClick={doRepair}
-                      className="w-full rounded-md bg-amber-500 py-2 text-sm font-medium text-white transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-700/60 disabled:text-slate-500"
+                      className="w-full"
                     >
-                      {repairing ? 'Repairing…' : 'Repair main ship'}
-                    </button>
+                      Repair main ship
+                    </Button>
                   </>
                 ) : (
                   <>
                     {recallError && (
-                      <p data-testid="mainship-recall-error" className="mb-2 rounded border border-rose-600/40 bg-rose-500/10 px-2 py-1.5 text-sm text-rose-300">
+                      <Notice tone="danger" data-testid="mainship-recall-error" className="mb-2">
                         {recallError}
-                      </p>
+                      </Notice>
                     )}
-                    <button
+                    <Button
+                      variant="primary"
                       data-testid="mainship-recall"
-                      disabled={!canRecall || recalling}
+                      disabled={!canRecall}
+                      busy={recalling}
+                      busyLabel="Recalling…"
                       onClick={doRecall}
-                      className="w-full rounded-md bg-sky-500 py-2 text-sm font-medium text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700/60 disabled:text-slate-500"
+                      className="w-full"
                     >
-                      {recalling ? 'Recalling…' : 'Recall main ship'}
-                    </button>
+                      Recall main ship
+                    </Button>
                     {!canRecall && (
-                      <p data-testid="mainship-recall-note" className="mt-2 text-center text-xs text-slate-500">
+                      <p data-testid="mainship-recall-note" className="mt-2 text-center text-xs text-ink-faint">
                         {displayStatus === 'home'
                           ? 'Main ship is home.'
                           : `Recall is available once the ship is present (currently ${displayStatus}).`}
@@ -183,7 +187,7 @@ export function MainShipPreview({
           </>
         ) : (
           <div className="mt-3">
-            <p className="text-xs text-slate-400">No main ship commissioned yet — showing the starter hull.</p>
+            <p className="text-xs text-ink-muted">No main ship commissioned yet — showing the starter hull.</p>
             {hull && (
               <dl className="mt-2 space-y-1.5">
                 <Row label="Hull" value={hull.name} />
@@ -197,6 +201,6 @@ export function MainShipPreview({
           </div>
         )
       )}
-    </div>
+    </Card>
   )
 }

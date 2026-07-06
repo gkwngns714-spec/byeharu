@@ -18,14 +18,18 @@ const SERVICE_LABELS: Record<string, string> = {
 
 export function DockServicesPanel({
   lifecycleKey,
+  mainShipId = null,
   deps,
 }: {
   // Re-validates the dock surface whenever the main-ship lifecycle changes.
   lifecycleKey: string
+  // TRADE-FLEET-0C §2.5: the current/sole main-ship id, threaded to the dock read as an explicit
+  // p_main_ship_id. Optional (defaults null → server sole-ship shim → behavior-identical while single-ship).
+  mainShipId?: string | null
   // Injection seam for tests; defaults to the real authenticated server read.
   deps?: { fetcher?: () => Promise<DockServices> }
 }) {
-  const dock = useDockServices(lifecycleKey, { fetcher: deps?.fetcher })
+  const dock = useDockServices(lifecycleKey, { mainShipId, fetcher: deps?.fetcher })
 
   // Not docked (in transit / in space / destroyed / no ship / home / legacy / contradictory) → no port surface.
   if (!isDocked(dock)) return null
@@ -35,9 +39,11 @@ export function DockServicesPanel({
       data-testid="dock-services-panel"
       // Top-right; capped to under half the viewport so it never overlaps the top-left OSN PortNav panel on
       // narrow mobile widths (both can show at once while docked). Name truncates rather than overflowing.
-      className="pointer-events-auto absolute right-2 top-2 z-10 w-56 max-w-[calc(50vw-0.75rem)] rounded-lg border border-emerald-500/30 bg-slate-900/90 p-2 text-slate-100"
+      // UX-CLEANUP item 5: design-system tokens (success tone = the "safely docked" state), matching the
+      // compact map-overlay idiom (token-styled container, primitives for interactive elements).
+      className="pointer-events-auto absolute right-2 top-2 z-10 w-56 max-w-[calc(50vw-0.75rem)] rounded-lg border border-success/25 bg-surface/90 p-2 text-ink shadow-card"
     >
-      <p data-testid="dock-services-title" className="truncate text-[11px] font-medium text-emerald-300">
+      <p data-testid="dock-services-title" className="truncate text-[11px] font-medium text-success">
         Main ship docked at {dock.locationName ?? 'this port'}
       </p>
       {dock.services.length > 0 ? (
@@ -46,14 +52,14 @@ export function DockServicesPanel({
             <li
               key={s}
               data-testid={`dock-service-${s}`}
-              className="rounded bg-slate-800/80 px-2 py-0.5 text-[10px] text-slate-200"
+              className="rounded bg-surface-2 px-2 py-0.5 text-[10px] text-ink-muted"
             >
               {SERVICE_LABELS[s] ?? s}
             </li>
           ))}
         </ul>
       ) : (
-        <p data-testid="dock-services-none" className="mt-1 text-[10px] text-slate-400">
+        <p data-testid="dock-services-none" className="mt-1 text-[10px] text-ink-faint">
           No services available at this port yet.
         </p>
       )}

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { Badge, Button, Card, Notice, PageHeader, buttonClasses } from '../../components/ui'
 import { fetchUnitTypes, type UnitType } from '../../lib/catalog'
 import { fetchWorldMap } from '../map/mapApi'
 import { formatDateTime, formatDuration } from '../../lib/time'
@@ -64,25 +65,22 @@ export function CombatReportPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-10">
-      <header className="mb-8 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-indigo-200">Combat reports</h1>
-          <p className="text-sm text-white/40">Byeharu — battle history</p>
-        </div>
-        <Link
-          to="/"
-          className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/5"
-        >
-          ← Command center
-        </Link>
-      </header>
+      <PageHeader
+        title="Combat reports"
+        subtitle="Byeharu — battle history"
+        actions={
+          <Link to="/" className={buttonClasses('ghost', 'sm')}>
+            ← Command center
+          </Link>
+        }
+      />
 
-      {loading && <p className="text-white/40">Loading reports…</p>}
+      {loading && <Notice>Loading reports…</Notice>}
       {error && (
-        <div className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{error}</div>
+        <Notice tone="danger" className="mb-6">{error}</Notice>
       )}
       {!loading && reports.length === 0 && !error && (
-        <p className="text-white/40">No battles fought yet. Send an expedition to a pirate hunt from the Galaxy Map to begin.</p>
+        <Notice>No battles fought yet. Send an expedition to a pirate hunt from the Galaxy Map to begin.</Notice>
       )}
 
       <ul className="space-y-3">
@@ -90,54 +88,63 @@ export function CombatReportPage() {
           const won = r.result === 'escaped' || r.result === 'completed'
           const open = openId === r.encounter_id
           return (
-            <li key={r.id} className="rounded-lg border border-white/10 bg-white/5">
-              <button
-                onClick={() => toggle(r)}
-                className="flex w-full items-center justify-between px-4 py-3 text-left"
-              >
-                <span className="text-sm text-white/80">{locName(r.location_id)}</span>
-                <span className={`text-xs font-semibold uppercase ${won ? 'text-emerald-300' : 'text-red-300'}`}>
-                  {won ? 'Battle complete' : 'Fleet destroyed'}
-                </span>
-              </button>
-
-              <div className="border-t border-white/10 px-4 py-3 text-xs text-white/55">
-                <div>Reported: <span className="text-white/75">{formatDateTime(r.created_at)}</span></div>
-                <div>Waves cleared: {r.waves_cleared} · lasted {formatDuration(r.duration_seconds)}</div>
-                {won ? (
-                  <>
-                    <div>Ships recovered: <span className="text-white/75">{ships(r.survivors_json)}</span></div>
-                    <div>Ships lost: <span className="text-white/75">{ships(r.total_losses_json)}</span></div>
-                    <div>Rewards: <span className="text-white/75">{metal(r.total_rewards_json)}</span> <span className="text-white/35">(secured on safe return)</span></div>
-                  </>
-                ) : (
-                  <>
-                    <div>Ships lost: <span className="text-white/75">{ships(r.total_losses_json)}</span></div>
-                    <div className="text-red-300/70">Rewards forfeited — lost with the fleet.</div>
-                  </>
-                )}
-
+            <li key={r.id}>
+              <Card>
                 <button
                   onClick={() => toggle(r)}
-                  className="mt-2 text-[11px] uppercase tracking-wide text-indigo-300/80 transition hover:text-indigo-200"
+                  className="flex w-full items-center justify-between gap-3 text-left"
                 >
-                  {open ? 'Hide round log' : 'Show round log'}
+                  <span className="text-sm text-ink">{locName(r.location_id)}</span>
+                  <Badge tone={won ? 'success' : 'danger'}>
+                    {won ? 'Battle complete' : 'Fleet destroyed'}
+                  </Badge>
                 </button>
 
-                {open && (
-                  <div className="mt-2 rounded-lg border border-white/10 bg-black/20 p-3">
-                    {ticksLoading ? (
-                      <p className="text-white/40">Loading rounds…</p>
-                    ) : (
-                      <RoundLog ticks={ticks} unitTypes={unitTypes} limit={100} />
-                    )}
-                  </div>
-                )}
-              </div>
+                <div className="mt-3 border-t border-edge pt-3 text-xs text-ink-muted">
+                  <Fact label="Reported" value={formatDateTime(r.created_at)} />
+                  <div>Waves cleared: {r.waves_cleared} · lasted {formatDuration(r.duration_seconds)}</div>
+                  {won ? (
+                    <>
+                      <Fact label="Ships recovered" value={ships(r.survivors_json)} />
+                      <Fact label="Ships lost" value={ships(r.total_losses_json)} />
+                      <Fact label="Rewards" value={metal(r.total_rewards_json)} note="secured on safe return" />
+                    </>
+                  ) : (
+                    <>
+                      <Fact label="Ships lost" value={ships(r.total_losses_json)} />
+                      <div className="text-danger">Rewards forfeited — lost with the fleet.</div>
+                    </>
+                  )}
+
+                  <Button variant="ghost" size="sm" className="mt-2" onClick={() => toggle(r)}>
+                    {open ? 'Hide round log' : 'Show round log'}
+                  </Button>
+
+                  {open && (
+                    <div className="mt-2 rounded-lg border border-edge bg-surface-2 p-3">
+                      {ticksLoading ? (
+                        <p className="text-ink-muted">Loading rounds…</p>
+                      ) : (
+                        <RoundLog ticks={ticks} unitTypes={unitTypes} limit={100} />
+                      )}
+                    </div>
+                  )}
+                </div>
+              </Card>
             </li>
           )
         })}
       </ul>
+    </div>
+  )
+}
+
+// "Label: value" report-detail line — the ONE chrome for this idiom across the row facts.
+function Fact({ label, value, note }: { label: string; value: ReactNode; note?: string }) {
+  return (
+    <div>
+      {label}: <span className="text-ink">{value}</span>
+      {note && <span className="text-ink-faint"> ({note})</span>}
     </div>
   )
 }

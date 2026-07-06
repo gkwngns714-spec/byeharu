@@ -67,11 +67,11 @@ jobs:
               -- must net-zero back to this baseline (no fixture-owned anchor rows remain).
               select count(*) into n from public.space_anchors; if n<>3 then raise exception '0067 anchor baseline drift: % rows (expected exactly 3 WORLD-HUB-1B-A port anchors)', n; end if;
               perform 1 from public.space_anchors where id='b1a0a001-0066-4a00-8a00-0000000000a1' and kind='location' and location_id='b1a00001-0066-4a00-8a00-000000000001' and base_id is null and space_x=-50 and space_y=-30 and status='active';
-              if not found then raise exception 'baseline anchor 1 (Haven Reach) missing or altered'; end if;
+              if not found then raise exception 'baseline anchor 1 (Haven) missing or altered'; end if;
               perform 1 from public.space_anchors where id='b1a0a002-0066-4a00-8a00-0000000000a2' and kind='location' and location_id='b1a00002-0066-4a00-8a00-000000000002' and base_id is null and space_x=70 and space_y=-10 and status='active';
-              if not found then raise exception 'baseline anchor 2 (Slagworks Anchorage) missing or altered'; end if;
+              if not found then raise exception 'baseline anchor 2 (Slagworks) missing or altered'; end if;
               perform 1 from public.space_anchors where id='b1a0a003-0066-4a00-8a00-0000000000a3' and kind='location' and location_id='b1a00003-0066-4a00-8a00-000000000003' and base_id is null and space_x=10 and space_y=80 and status='active';
-              if not found then raise exception 'baseline anchor 3 (Driftmarch Waypost) missing or altered'; end if;
+              if not found then raise exception 'baseline anchor 3 (Driftmarch) missing or altered'; end if;
               select count(*) into n from public.space_anchors where id not in ('b1a0a001-0066-4a00-8a00-0000000000a1','b1a0a002-0066-4a00-8a00-0000000000a2','b1a0a003-0066-4a00-8a00-0000000000a3'); if n<>0 then raise exception '% unexpected anchor row(s) beyond the approved WORLD-HUB baseline', n; end if;
               raise notice 'post-run ok: space_movement=false, no fixtures, space_anchors == exactly the 3 WORLD-HUB-1B-A baseline port anchors';
             end \$\$;"

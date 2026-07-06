@@ -5,7 +5,7 @@ name: PORT-LAUNCH-2B — reveal-precondition + onboarding proof (disposable Supa
 # CLI (real tables/CHECKs/RLS/grants/triggers/pg_cron + the real anon/authenticated/service_role roles),
 # mirrors the LIVE flag state on the disposable stack (mainship_send_enabled=true) so the real
 # send_main_ship_expedition path runs, keeps the OSN movement flag dark (false), then proves: dark baseline →
-# reveal semantics → HOME→Haven Reach legacy send→arrival→legacy_present→anchored origin→readiness
+# reveal semantics → HOME→Haven legacy send→arrival→legacy_present→anchored origin→readiness
 # (anchored/osn_available=false, only the other visible ports) → non-combat/non-reward → full revert. The
 # fixtures REVERT the world to fully hidden (no net world/player change, no fixtures left). reveal_starter_ports()
 # is invoked ONLY inside the disposable proof. NEVER the shared/live DB.

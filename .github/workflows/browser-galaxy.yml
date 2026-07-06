@@ -38,13 +38,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PLAYWRIGHT_BASE_URL: https://gkwngns714-spec.github.io/byeharu/
         run: npm run verify:galaxy:browser
-      - name: Run galaxy 9B send test
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          PLAYWRIGHT_BASE_URL: https://gkwngns714-spec.github.io/byeharu/
-        run: npm run verify:galaxy9b:browser
+      # (The galaxy 9B send test was removed with the legacy ExpeditionCommand UI — UX cleanup pass.)
       # Scope cleanup to GALAXY test users only (%galaxytest%) so it can never delete a
       # concurrent verify run's in-flight data (those use m*/p* test emails).
       - name: Clean up galaxy test runtime rows (always)

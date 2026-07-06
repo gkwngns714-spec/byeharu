@@ -153,7 +153,7 @@ insurance/loss economics; ship-to-ship transfer; warehouses. None are needed for
 
 Target future state that must be permitted:
 ```
-Ship A: docked at Haven Reach, trading
+Ship A: docked at Haven, trading
 Ship B: travelling toward Slagworks
 Ship C: docked at Driftmarch with separate cargo
 ```

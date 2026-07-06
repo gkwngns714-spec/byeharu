@@ -32,6 +32,7 @@ SQL_FILE="$REPO_ROOT/scripts/osn-hub1a-production-catalog-verify.sql"
 MIG68="$REPO_ROOT/supabase/migrations/20260618000068_portlaunch1a_reveal_readiness.sql"
 MIG67="$REPO_ROOT/supabase/migrations/20260618000067_osn_hub1a_canonical_location_targets.sql"
 MIG66="$REPO_ROOT/supabase/migrations/20260618000066_worldhub1b_a_hidden_ports_eligibility.sql"
+MIG148="$REPO_ROOT/supabase/migrations/20260618000148_location_names_single_word.sql"
 EXPECT_MIG="20260618000068"
 EXPECT_AUTH_SURFACE="bootstrap_me,cancel_build_order,command_main_ship_space_move,command_main_ship_space_move_to_location,command_main_ship_space_stop,get_combat_reports,get_my_expedition_preview,get_osn_movement_readiness,get_world_map,move_main_ship_to_location,repair_main_ship,request_leave_location,request_main_ship_return,request_retreat,send_fleet_to_location,send_main_ship_expedition,train_units"
 PARITY_TAGS="legal core begin resolve dock stop cmd reveal readiness"
@@ -102,6 +103,12 @@ assert_migration() {
              "b1a00003-0066-4a00-8a00-000000000003" "Driftmarch Waypost" "b1a0a001-0066-4a00-8a00-0000000000a1" \
              "b1a05001-0066-4a00-8a00-000000000051" "is_home_port_eligible" "assign_home_port"; do
     grep -qF "$lit" "$MIG66" || fail "expected literal absent from migration 0066: $lit"
+  done
+  # 2026-07-05 UX cleanup item 4: display names renamed by forward-only 0148 (0066 keeps the seed names
+  # verbatim above; the CURRENT names the .sql asserts against the live DB bind to 0148).
+  [ -f "$MIG148" ] || fail "migration 0148 not found in checkout"
+  for lit in "'Haven'" "'Slagworks'" "'Driftmarch'"; do
+    grep -qF "$lit" "$MIG148" || fail "expected name literal absent from migration 0148: $lit"
   done
   for lit in "mainship_space_location_target_legal" "mainship_space_begin_move_core" "mainship_space_dock_at_location" \
              "mainship_space_stop" "command_main_ship_space_move_to_location" "clock_timestamp()" "activity <> 'none'"; do

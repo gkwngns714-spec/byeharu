@@ -1,12 +1,17 @@
 import { useRef } from 'react'
 import { usePortEntry, type UsePortEntryOverrides } from './usePortEntry'
+import type { PortEntryKnownLocation } from './portEntry'
+import { isDockablePortForDisplay } from '../map/mapTypes'
 import type { PortEntryActionKind } from './portEntryCommand'
+import { Card, Button } from '../../components/ui'
 
 // PORT-ENTRY player UI — the single onboarding / finish-docking surface for the caller's OWN main ship.
 //
 // Renders exactly ONE affordance derived from server-authoritative state:
 //   • no ship            → "Claim First Ship"  (commission_first_main_ship)
-//   • legacy_present     → "Finish Docking"    (normalize_main_ship_dock)
+//   • legacy_present at a dockable port → "Finish Docking" (normalize_main_ship_dock)
+//   • legacy_present at a non-dock waypoint → a read-only explanation (no doomed docking button;
+//     display-classified via isDockablePortForDisplay — the server target_legal stays the authority)
 //   • at_location        → nothing (the ordinary docked experience is the Phase-9 DockServicesPanel)
 //   • home / legacy_home → a read-only explanation (no in-place docking path exists yet — travel to a port)
 //   • in_transit / in_space / destroyed / contradictory → a read-only safe explanation, no action
@@ -16,10 +21,16 @@ import type { PortEntryActionKind } from './portEntryCommand'
 // is disabled while working. On success the panel re-reads authoritative state and notifies the parent. It
 // NEVER fabricates eligibility or performs a client-side transition — the server is the sole authority.
 
-const CARD = 'rounded-xl border p-4 text-sm'
-
-export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
-  const pe = usePortEntry(deps)
+export function PortEntryPanel({
+  deps,
+  locations,
+}: {
+  deps?: UsePortEntryOverrides
+  // The parent's already-polled get_world_map list (Dashboard has it in scope) — display classification
+  // only, no fetch here. Optional: omitted → the pre-existing affordance behavior.
+  locations?: readonly PortEntryKnownLocation[]
+}) {
+  const pe = usePortEntry(deps, locations)
   const { affordance, phase, actionKind, message } = pe
   const busy = phase === 'submitting'
   const sendingRef = useRef(false)
@@ -39,16 +50,12 @@ export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
   if (phase === 'success') {
     return (
       <div data-testid="port-entry-panel">
-        <div className={`${CARD} border-emerald-500/30 bg-emerald-500/10 text-emerald-200`} data-testid="port-entry-success">
+        <Card tone="success" className="text-sm text-success" data-testid="port-entry-success">
           <p data-testid="port-entry-success-message">{message}</p>
-          <button
-            data-testid="port-entry-success-dismiss"
-            onClick={() => pe.reset()}
-            className="mt-3 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-emerald-100 transition hover:bg-emerald-500/20"
-          >
+          <Button size="sm" data-testid="port-entry-success-dismiss" onClick={() => pe.reset()} className="mt-3">
             Done
-          </button>
-        </div>
+          </Button>
+        </Card>
       </div>
     )
   }
@@ -59,68 +66,92 @@ export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
     case 'commission':
       return (
         <div data-testid="port-entry-panel">
-          <div className={`${CARD} border-indigo-400/30 bg-indigo-500/10 text-indigo-100`} data-testid="port-entry-claim">
-            <p className="font-medium text-indigo-200">Commission your first ship</p>
-            <p className="mt-1 text-indigo-100/80">
-              Claim your main ship. It will begin docked at <span className="font-medium">Haven Reach</span>, ready to explore.
+          <Card tone="accent" className="text-sm" data-testid="port-entry-claim">
+            <p className="font-medium text-accent">Commission your first ship</p>
+            <p className="mt-1 text-ink-muted">
+              Claim your main ship. It will begin docked at <span className="font-medium text-ink">Haven</span>, ready to explore.
             </p>
             {errorText && actionKind === 'commission' && (
-              <p data-testid="port-entry-error" className="mt-2 text-rose-300">{errorText}</p>
+              <p data-testid="port-entry-error" className="mt-2 text-danger">{errorText}</p>
             )}
-            <button
+            <Button
+              variant="primary"
               data-testid="port-entry-claim-button"
-              disabled={busy}
+              busy={busy}
+              busyLabel="Claiming…"
               onClick={() => void run('commission')}
-              className="mt-3 rounded-lg border border-indigo-400/40 px-3 py-1.5 text-indigo-50 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-3"
             >
-              {busy ? 'Claiming…' : 'Claim First Ship'}
-            </button>
-          </div>
+              Claim First Ship
+            </Button>
+          </Card>
         </div>
       )
 
     case 'normalize':
       return (
         <div data-testid="port-entry-panel">
-          <div className={`${CARD} border-emerald-500/30 bg-emerald-500/10 text-emerald-100`} data-testid="port-entry-finish-docking">
-            <p className="font-medium text-emerald-200">Finish docking</p>
-            <p className="mt-1 text-emerald-100/80">
+          <Card tone="success" className="text-sm" data-testid="port-entry-finish-docking">
+            <p className="font-medium text-success">Finish docking</p>
+            <p className="mt-1 text-ink-muted">
               Your ship is at a port but not fully docked. Complete docking to use this port’s services.
             </p>
             {errorText && actionKind === 'normalize' && (
-              <p data-testid="port-entry-error" className="mt-2 text-rose-300">{errorText}</p>
+              <p data-testid="port-entry-error" className="mt-2 text-danger">{errorText}</p>
             )}
-            <button
+            <Button
+              variant="primary"
               data-testid="port-entry-finish-docking-button"
-              disabled={busy}
+              busy={busy}
+              busyLabel="Docking…"
               onClick={() => void run('normalize')}
-              className="mt-3 rounded-lg border border-emerald-400/40 px-3 py-1.5 text-emerald-50 transition hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-3"
             >
-              {busy ? 'Docking…' : 'Finish Docking'}
-            </button>
-          </div>
+              Finish Docking
+            </Button>
+          </Card>
         </div>
       )
+
+    case 'at_waypoint': {
+      // Honest read-only state: holding position at a non-dock waypoint. Port names come from the SAME
+      // classifier over the threaded world map — no hardcoded location names.
+      const portNames = (locations ?? [])
+        .filter((l) => isDockablePortForDisplay(l.location_type))
+        .map((l) => l.name)
+      const portHint = portNames.length > 0 ? ` (${portNames.join(', ')})` : ''
+      return (
+        <div data-testid="port-entry-panel">
+          <Card className="text-sm text-ink-muted" data-testid="port-entry-at-waypoint">
+            <p className="font-medium text-ink">Holding position at {affordance.locationName}</p>
+            <p className="mt-1">
+              This is a waypoint, not a port — there is no docking here. Travel to a port{portHint} to dock
+              and use port services.
+            </p>
+          </Card>
+        </div>
+      )
+    }
 
     case 'at_home':
       return (
         <div data-testid="port-entry-panel">
-          <div className={`${CARD} border-white/10 bg-white/5 text-white/70`} data-testid="port-entry-at-home">
-            <p className="font-medium text-white/80">Ship at home base</p>
+          <Card className="text-sm text-ink-muted" data-testid="port-entry-at-home">
+            <p className="font-medium text-ink">Ship at home base</p>
             <p className="mt-1">
               Your ship is at your home base. Travel to a port before it can be docked there.
             </p>
-          </div>
+          </Card>
         </div>
       )
 
     case 'in_transit':
       return (
         <div data-testid="port-entry-panel">
-          <div className={`${CARD} border-white/10 bg-white/5 text-white/70`} data-testid="port-entry-in-transit">
-            <p className="font-medium text-white/80">Ship in transit</p>
+          <Card className="text-sm text-ink-muted" data-testid="port-entry-in-transit">
+            <p className="font-medium text-ink">Ship in transit</p>
             <p className="mt-1">Your ship is travelling. It can be docked once it has arrived at a port.</p>
-          </div>
+          </Card>
         </div>
       )
 
@@ -133,10 +164,10 @@ export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
             : 'Your ship is not in a state where it can be docked right now.'
       return (
         <div data-testid="port-entry-panel">
-          <div className={`${CARD} border-white/10 bg-white/5 text-white/70`} data-testid="port-entry-unavailable">
-            <p className="font-medium text-white/80">Docking unavailable</p>
+          <Card className="text-sm text-ink-muted" data-testid="port-entry-unavailable">
+            <p className="font-medium text-ink">Docking unavailable</p>
             <p className="mt-1">{detailText}</p>
-          </div>
+          </Card>
         </div>
       )
     }

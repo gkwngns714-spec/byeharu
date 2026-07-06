@@ -127,7 +127,12 @@ Statuses: `active → retreating → completed`; also `active → destroyed/expi
 foundation supports many activities without rewriting movement:
 
 - MVP: `process_combat_ticks()` (for `hunt_pirates`), `none` (safe zones).
-- Later: `process_mining_ticks()`, `process_exploration_ticks()`, `process_trade_ticks()`.
+- As-built (Phase 11): exploration shipped **OSN-native**, outside this presence dispatch — its own
+  `process_exploration_securing()` cron secures pending discoveries (dark behind
+  `exploration_enabled='false'`; see `docs/ACTIVITIES.md` §2 as-built clarification). The
+  `explore_derelict` presence branch stays deliberately unwired.
+- Later: `process_mining_ticks()`, `process_trade_ticks()`, and a presence-domain
+  `process_exploration_ticks()` if exploration ever gets a location-presence form.
 
 ---
 
@@ -240,6 +245,8 @@ data is owner-only.
 | `process_fleet_movements()` | every 30s | resolves arrivals (outbound + return) |
 | `process_combat_ticks()` | every 10–15s | one round per due encounter |
 | `process_location_state_ticks()` | every 60s | pirate pressure / danger drift |
+| `process_exploration_securing()` | every 60s | deposits pending exploration discovery bundles via `reward_grant('exploration', discovery_id, …)` once the carrying main ship settles safe (home / `at_location`); deliberately ignores `exploration_enabled` (in-flight safety) — pg_cron job `process-exploration-securing`, migration 0100 |
+| `process_mining_securing()` | every 60s | deposits pending mining extraction bundles via `reward_grant('mining', extraction_id, …)` once the carrying main ship settles safe (home / `at_location`); deliberately ignores `mining_enabled` (in-flight safety) — pg_cron job `process-mining-securing`, migration 0105 |
 
 Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 `15.1.1.61`+ — so sub-minute cadence is native. Only server/cron calls processors.
@@ -312,7 +319,7 @@ Supabase Cron (pg_cron) supports **seconds-granularity** schedules on Postgres
 | **M4** | `combat_encounters`/`combat_rounds`/`combat_reports`; `process_combat_ticks()`; wave scaling; `request_leave_location()` + retreat; reports | full pirate-hunt loop |
 | **M5** | `process_location_state_ticks()` + zone/location dynamics; wire all cron jobs; balance | living world, unattended ticks |
 | **M6** | Frontend depth: location panel, send-fleet panel + preview math, fleet status, active-combat panel, round log, report page | polished playable loop |
-| **M7** | **Training / ship production** (Production system): `unit_types.metal_cost`; `build_orders` + `train_units()` + `process_build_queue()`; spend metal via `base_spend_resources`, deposit via `base_merge_units`; Train Ships + Training Queue UI | spend metal → train ships → stronger fleet |
+| **M7** | **Training / ship production** (Production system): `unit_types.metal_cost`; `build_orders` + `train_units()` + `process_build_queue()`; spend metal via `base_spend_resources`, deposit via `base_merge_units`; Train Ships + Training Queue UI *(client UI retired 2026-07-05 in the UX cleanup pass — server RPCs/cron remain)* | spend metal → train ships → stronger fleet |
 
 ### Migration order (timestamp-prefixed, one system per file)
 `…0001_init_profiles` (done) → `world_map` → `bases` → `units` → `config` →

@@ -16,7 +16,7 @@ import { formatCountdown } from '../../lib/time'
 // state interpretation: coherence is decided solely by `resolveActiveSpaceRoute`. The presentation renders
 // strictly from that validated model.
 
-const ROUTE_COLOR = '#fbbf24' // outbound (the only S6B-ROUTE state)
+const ROUTE_COLOR = 'var(--color-warning)' // outbound (the only S6B-ROUTE state) — design-system token
 
 // ── Pure presentation (hook-free → directly unit-testable, like the S6C marker) ───────────────────────
 export function SpaceRoutePresentation({ route, k }: { route: ActiveSpaceRoute; k: number }) {
@@ -51,10 +51,20 @@ export function SpaceRoutePresentation({ route, k }: { route: ActiveSpaceRoute; 
           player-selected target, and it exposes NO selection control. */}
       <g data-testid="space-route-destination">
         <circle cx={b.x} cy={b.y} r={ring} fill="none" stroke={ROUTE_COLOR} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-        <circle cx={b.x} cy={b.y} r={dot} fill={ROUTE_COLOR} stroke="#0b1220" strokeWidth={0.5} vectorEffect="non-scaling-stroke" />
+        <circle cx={b.x} cy={b.y} r={dot} fill={ROUTE_COLOR} stroke="var(--color-app)" strokeWidth={0.5} vectorEffect="non-scaling-stroke" />
       </g>
       {/* display-only status/ETA at the route midpoint */}
-      <text x={mx} y={my - 4 / k} fontSize={10 / k} textAnchor="middle" fill={ROUTE_COLOR} style={{ userSelect: 'none' }}>
+      <text
+        x={mx}
+        y={my - 4 / k}
+        fontSize={10 / k}
+        textAnchor="middle"
+        fill={ROUTE_COLOR}
+        stroke="var(--color-app)"
+        strokeWidth={3 / k}
+        paintOrder="stroke"
+        style={{ userSelect: 'none' }}
+      >
         {label}
       </text>
     </g>

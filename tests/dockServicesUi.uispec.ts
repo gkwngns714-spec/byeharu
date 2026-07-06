@@ -6,7 +6,7 @@ import { test, expect, type Page } from '@playwright/test'
 
 const P1 = 'b1a00001-0066-4a00-8a00-000000000001'
 const docked = (services: string[]) => ({
-  state: 'at_location', docked: true, locationId: P1, locationName: 'Haven Reach', services,
+  state: 'at_location', docked: true, locationId: P1, locationName: 'Haven', services,
 })
 const notDocked = (state: string) => ({ state, docked: false, locationId: null, locationName: null, services: [] })
 
@@ -19,7 +19,7 @@ test('dock-services UI: docked shows port + active services; every non-docked st
   // ok[8] — docked at a port → panel visible with the port name + only the ACTIVE service labels
   await boot(page, docked(['docking']))
   await expect(page.getByTestId('dock-services-panel')).toBeVisible()
-  await expect(page.getByTestId('dock-services-title')).toContainText('Main ship docked at Haven Reach')
+  await expect(page.getByTestId('dock-services-title')).toContainText('Main ship docked at Haven')
   await expect(page.getByTestId('dock-service-docking')).toBeVisible()
   await expect(page.getByTestId('dock-service-market')).toHaveCount(0) // no inactive/absent service shown
 
@@ -36,19 +36,19 @@ test('dock-services UI: docked shows port + active services; every non-docked st
 
 test('stale-data protection: a previously-docked port never lingers after a lifecycle change', async ({ page }) => {
   await boot(page, docked(['docking']))
-  await expect(page.getByTestId('dock-services-title')).toContainText('Haven Reach')
+  await expect(page.getByTestId('dock-services-title')).toContainText('Haven')
   // movement begins → not docked → the prior port must NOT remain visible
   await page.evaluate((d) => (window as unknown as { __set: (x: unknown) => void }).__set({ dock: d }), notDocked('in_transit'))
   await expect(page.getByTestId('dock-services-panel')).toHaveCount(0)
   // dock at a DIFFERENT port → shows the new port only, never the stale one
-  const slag = { state: 'at_location', docked: true, locationId: 'b1a00002-0066-4a00-8a00-000000000002', locationName: 'Slagworks Anchorage', services: ['docking'] }
+  const slag = { state: 'at_location', docked: true, locationId: 'b1a00002-0066-4a00-8a00-000000000002', locationName: 'Slagworks', services: ['docking'] }
   await page.evaluate((d) => (window as unknown as { __set: (x: unknown) => void }).__set({ dock: d }), slag)
-  await expect(page.getByTestId('dock-services-title')).toContainText('Slagworks Anchorage')
-  await expect(page.getByTestId('dock-services-title')).not.toContainText('Haven Reach')
+  await expect(page.getByTestId('dock-services-title')).toContainText('Slagworks')
+  await expect(page.getByTestId('dock-services-title')).not.toContainText('Haven')
 })
 
 test('safe failure: a dock fetch error degrades to no panel', async ({ page }) => {
-  await boot(page, { state: 'at_location', docked: true, locationId: 'b1a00001-0066-4a00-8a00-000000000001', locationName: 'Haven Reach', services: ['docking'], __fail: true })
+  await boot(page, { state: 'at_location', docked: true, locationId: 'b1a00001-0066-4a00-8a00-000000000001', locationName: 'Haven', services: ['docking'], __fail: true })
   await expect(page.getByTestId('dock-services-panel')).toHaveCount(0)
 })
 

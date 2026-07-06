@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase'
 import { SPACE_MOVE_RPC, buildSpaceMoveRpcArgs, type SpaceMoveResult } from './spaceMoveCommand'
-import { SPACE_STOP_RPC, buildSpaceStopRpcArgs, type SpaceStopResult } from './spaceStopCommand'
+import { SPACE_STOP_RPC, STOP_TRANSIT_RPC, buildSpaceStopRpcArgs, parseStopTransitResult, type SpaceStopResult } from './spaceStopCommand'
+import { SETTLE_ARRIVAL_RPC, LEGACY_SETTLE_ARRIVAL_RPC, parseSettleArrivalResult, type SettleArrivalResult } from './settleArrival'
 import { parseOsnReadiness, OSN_NOT_ACTIONABLE, type OsnReadiness } from './osnReadiness'
 import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockServices'
 
@@ -22,6 +23,7 @@ import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockSer
 export type SpatialState = 'home' | 'at_location' | 'in_transit' | 'in_space' | 'destroyed'
 
 export interface MainShipRow {
+  main_ship_id: string
   name: string
   status: string
   hp: number
@@ -49,6 +51,7 @@ export interface MainShipView {
 }
 
 const HULL_COLS = 'hull_type_id, name, base_hp, base_speed, base_cargo_capacity, base_captain_slots, base_module_slots'
+const SHIP_COLS = 'main_ship_id, name, status, hp, max_hp, cargo_capacity, captain_slots, module_slots, hull_type_id'
 
 async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
   const { data } = await supabase.from('main_ship_hull_types').select(HULL_COLS).eq('hull_type_id', hullTypeId).maybeSingle()
@@ -59,7 +62,7 @@ async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
 export async function fetchMyMainShip(): Promise<MainShipView> {
   const { data: ship, error } = await supabase
     .from('main_ship_instances')
-    .select('name, status, hp, max_hp, cargo_capacity, captain_slots, module_slots, hull_type_id')
+    .select(SHIP_COLS)
     .maybeSingle() // owner-read RLS → the caller's single ship, or null
   if (error) throw new Error(error.message)
 
@@ -69,6 +72,21 @@ export async function fetchMyMainShip(): Promise<MainShipView> {
   }
   // no ship commissioned yet → read-only starter-hull teaser
   return { has_ship: false, hull: await fetchHull('starter_frigate') }
+}
+
+/**
+ * FITTING-P14 — owner-read ALL of the caller's ships (the multi-ship-ready LIST variant of
+ * fetchMyMainShip; same owner-read RLS, same columns — kept inside this module so there is ONE
+ * ship-select convention, never a second copy elsewhere). Used by the fitting section's ship
+ * picker. Returns [] on error (non-fatal; the picker degrades to nothing).
+ */
+export async function fetchMyMainShips(): Promise<MainShipRow[]> {
+  const { data, error } = await supabase
+    .from('main_ship_instances')
+    .select(SHIP_COLS)
+    .order('created_at', { ascending: true })
+  if (error) return []
+  return (data ?? []) as MainShipRow[]
 }
 
 // ── Phase 10D: main-ship send/return + live status ────────────────────────────────
@@ -181,10 +199,12 @@ export function deriveMainShipStatus(fleet: { status: string } | null): MainShip
   return 'traveling' // 'moving'
 }
 
-// PHASE 9 — read the player's current docked-port surface (zero-arg authenticated RPC; everything derived
-// server-side from auth.uid()). Errors / pre-deploy collapse to the no-dock default so nothing renders.
-export async function fetchMyCurrentDockServices(): Promise<DockServices> {
-  const { data, error } = await supabase.rpc('get_my_current_dock_services')
+// PHASE 9 / TRADE-FLEET-0C §2.5 — read the current docked-port surface for the EXPLICIT selected/sole main
+// ship (p_main_ship_id; null → server sole-ship shim → behavior-identical while every player has exactly one
+// ship). The player is still derived from auth.uid(); no other input is sent. Errors / pre-deploy collapse to
+// the no-dock default so nothing renders (unchanged).
+export async function fetchMyCurrentDockServices(mainShipId?: string | null): Promise<DockServices> {
+  const { data, error } = await supabase.rpc('get_my_current_dock_services', { p_main_ship_id: mainShipId ?? null })
   if (error) return DOCK_NOT_DOCKED
   return parseDockServices(data)
 }
@@ -230,11 +250,13 @@ export async function moveMainShipToLocation(fleetId: string, locationId: string
   return data as MainShipMoveResult
 }
 
-// Phase 10F — repair a disabled main ship (status='destroyed' = disabled/needs-repair for a
-// PERSISTENT ship; never deletion). The only normal player recovery path; instant + free, restores
-// hp=max_hp and status='home'. Not routed through any legacy fleet API.
-export async function repairMainShip(): Promise<{ main_ship_id: string; status: string; hp: number; max_hp: number }> {
-  const { data, error } = await supabase.rpc('repair_main_ship', {})
+// Phase 10F / TRADE-FLEET-0C §2.5 — repair a disabled main ship (status='destroyed' = disabled/needs-repair
+// for a PERSISTENT ship; never deletion). The only normal player recovery path; instant + free, restores
+// hp=max_hp and status='home'. Not routed through any legacy fleet API. Passes the EXPLICIT selected/sole
+// main-ship id (p_main_ship_id); the server asserts ownership (so it can only ever repair the caller's own
+// ship), and a null id preserves the sole-ship shim (behavior-identical while every player has exactly one).
+export async function repairMainShip(mainShipId?: string | null): Promise<{ main_ship_id: string; status: string; hp: number; max_hp: number }> {
+  const { data, error } = await supabase.rpc('repair_main_ship', { p_main_ship_id: mainShipId ?? null })
   if (error) throw new Error(error.message)
   return data as { main_ship_id: string; status: string; hp: number; max_hp: number }
 }
@@ -251,45 +273,97 @@ export async function commandMainShipSpaceMove(targetX: number, targetY: number,
   return data as SpaceMoveResult
 }
 
-// OSN-4 — thin client wrapper over the public Stop boundary (command_main_ship_space_stop). It sends ONLY
-// an idempotency key (no coordinates — the server interpolates the current stop point and derives the ship
-// from auth.uid()). It writes no table directly. The server is the final authority; an in-flight ship can
-// stop even after an emergency flag disable, while a ship NOT in coordinate transit safely rejects.
-export async function commandMainShipSpaceStop(requestId: string): Promise<SpaceStopResult> {
-  const { data, error } = await supabase.rpc(SPACE_STOP_RPC, buildSpaceStopRpcArgs(requestId))
+// OSN-4 / TRADE-FLEET-0C §2.5 — thin client wrapper over the public Stop boundary (command_main_ship_space_stop).
+// It sends an idempotency key AND the explicit selected/sole main-ship id (p_main_ship_id) — no coordinates (the
+// server interpolates the current stop point). The server asserts ownership of that ship (UI selection is never
+// trusted); a null id preserves the sole-ship shim (behavior-identical while every player has exactly one ship).
+// It writes no table directly. The server is the final authority; an in-flight ship can stop even after an
+// emergency flag disable, while a ship NOT in coordinate transit safely rejects.
+export async function commandMainShipSpaceStop(requestId: string, mainShipId?: string | null): Promise<SpaceStopResult> {
+  const { data, error } = await supabase.rpc(SPACE_STOP_RPC, { ...buildSpaceStopRpcArgs(requestId), p_main_ship_id: mainShipId ?? null })
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceStopResult
 }
 
-// OSN-HUB-1A — thin client wrapper over the public canonical location-target boundary
-// (command_main_ship_space_move_to_location). It sends ONLY a destination LOCATION id + an idempotency key —
-// never a coordinate, ship/player id, or target_kind. The server derives the ship from auth.uid(), resolves
-// the destination coordinate from the location's canonical anchor, and is the sole authority. While the
-// feature flag is dark it returns {ok:false, code:'feature_disabled'} BEFORE resolving the target (so a hidden
-// port's existence can never be probed). NOT wired to any UI control while the flag is off (no command issued).
+// UX-CLEANUP item 6 (part A) — thin client wrapper over the on-demand OSN arrival settle
+// (command_main_ship_settle_arrival, 0150). Sends ONLY the explicit selected/sole main-ship id (§2.5;
+// null → server sole-ship shim). The server re-validates flag/ownership/coherence/due-ness under the
+// arrival cron's own locks and settles via the cron's own primitives — an early/duplicate/raced call is a
+// clean {settled:false} no-op, so this wrapper needs no idempotency key.
+export async function commandMainShipSettleArrival(mainShipId?: string | null): Promise<SettleArrivalResult> {
+  try {
+    const { data, error } = await supabase.rpc(SETTLE_ARRIVAL_RPC, { p_main_ship_id: mainShipId ?? null })
+    if (error) return { ok: false, reason: error.message }
+    return parseSettleArrivalResult(data)
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : 'unavailable' }
+  }
+}
+
+// UX-CLEANUP item 6 (part B) — thin client wrapper over the on-demand LEGACY arrival settle
+// (command_main_ship_settle_arrival_legacy, 0151). Sends ONLY the caller's own in-flight main-ship fleet
+// id (null → server sole-in-flight-fleet resolution, the 0081 fail-closed shape). The server re-validates
+// flag/ownership/main-ship predicate/due-ness and settles via the cron's extracted movement_settle_arrival
+// helper — an early/duplicate/raced call is a clean {settled:false} no-op, so no idempotency key needed.
+export async function commandMainShipSettleArrivalLegacy(fleetId?: string | null): Promise<SettleArrivalResult> {
+  try {
+    const { data, error } = await supabase.rpc(LEGACY_SETTLE_ARRIVAL_RPC, { p_fleet: fleetId ?? null })
+    if (error) return { ok: false, reason: error.message }
+    return parseSettleArrivalResult(data)
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : 'unavailable' }
+  }
+}
+
+// UX-CLEANUP item 3 — thin client wrapper over the LEGACY transit halt (command_main_ship_stop_transit,
+// 0149). Sends ONLY the fleet id of the caller's own in-transit main-ship fleet — no coordinates, ids, or
+// timing (the server interpolates the halt point and fixes the symmetric return time). Idempotent by
+// state server-side (no request key needed: a duplicate/late stop is a clean {stopped:false} no-op). The
+// result is mapped onto the shared SpaceStopResult so the ONE stop controller/CTA is reused unchanged.
+export async function commandMainShipStopTransit(fleetId: string): Promise<SpaceStopResult> {
+  const { data, error } = await supabase.rpc(STOP_TRANSIT_RPC, { p_fleet: fleetId })
+  if (error) return { ok: false, code: 'unavailable', message: error.message }
+  return parseStopTransitResult(data)
+}
+
+// OSN-HUB-1A / TRADE-FLEET-0C §2.5 — thin client wrapper over the public canonical location-target boundary
+// (command_main_ship_space_move_to_location). It sends a destination LOCATION id, an idempotency key, and the
+// EXPLICIT selected/sole main-ship id (p_main_ship_id) — never a coordinate, player id, or target_kind. The
+// server asserts ownership of that ship (UI selection is never trusted) and resolves the destination coordinate
+// from the location's canonical anchor; it remains the sole authority. A null id preserves the sole-ship shim
+// (behavior-identical while every player has exactly one ship). While the feature flag is dark it returns
+// {ok:false, code:'feature_disabled'} BEFORE resolving the target (so a hidden port's existence can never be
+// probed). NOT wired to any UI control while the flag is off (no command issued).
 export type SpaceMoveToLocationResult =
   | { ok: true; movement_id: string; main_ship_id: string; target_location_id: string; target_x: number; target_y: number; depart_at: string; arrive_at: string }
   | { ok: false; code: string; message: string }
 
-export async function commandMainShipSpaceMoveToLocation(locationId: string, requestId: string): Promise<SpaceMoveToLocationResult> {
+export async function commandMainShipSpaceMoveToLocation(
+  locationId: string,
+  requestId: string,
+  mainShipId?: string | null,
+): Promise<SpaceMoveToLocationResult> {
   const { data, error } = await supabase.rpc('command_main_ship_space_move_to_location', {
     p_location: locationId,
     p_request_id: requestId,
+    p_main_ship_id: mainShipId ?? null,
   })
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceMoveToLocationResult
 }
 
-// PORT-LAUNCH-1B — typed, read-only integration of the authenticated readiness projection
-// (get_osn_movement_readiness()). Sends NO arguments beyond the authenticated session context (the server
-// derives the player from auth.uid()) — no ship/player/anchor/coordinate/location input. The returned
-// jsonb is validated at THIS boundary (parseOsnReadiness): only the documented generic categories are
-// accepted, and any malformed / incomplete / failed response collapses to OSN_NOT_ACTIONABLE so a raw
-// RPC/DB error is never surfaced to the player and the client never reconstructs anchor legality. While
-// production is dark the server returns osn_available=false; the client renders nothing actionable.
-export async function fetchOsnMovementReadiness(): Promise<OsnReadiness> {
+// PORT-LAUNCH-1B / TRADE-FLEET-0C §2.5 — typed, read-only integration of the authenticated readiness
+// projection (get_osn_movement_readiness). Sends the EXPLICIT selected/sole main-ship id (p_main_ship_id) so
+// the projection is scoped to that OWNED ship (null → server sole-ship shim → behavior-identical while every
+// player has exactly one ship); the player still comes from auth.uid(), and NO anchor/coordinate/location
+// input is sent. The returned jsonb is validated at THIS boundary (parseOsnReadiness): only the documented
+// generic categories are accepted, and any malformed / incomplete / failed response collapses to
+// OSN_NOT_ACTIONABLE so a raw RPC/DB error is never surfaced to the player and the client never reconstructs
+// anchor legality. While production is dark the server returns osn_available=false (unchanged); the client
+// renders nothing actionable.
+export async function fetchOsnMovementReadiness(mainShipId?: string | null): Promise<OsnReadiness> {
   try {
-    const { data, error } = await supabase.rpc('get_osn_movement_readiness', {})
+    const { data, error } = await supabase.rpc('get_osn_movement_readiness', { p_main_ship_id: mainShipId ?? null })
     if (error) return OSN_NOT_ACTIONABLE
     return parseOsnReadiness(data)
   } catch {

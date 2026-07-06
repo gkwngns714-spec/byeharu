@@ -3,8 +3,9 @@ import { createClient } from '@supabase/supabase-js'
 
 // Phase 9A — read-only Galaxy Map smoke test against the live app. Setup creates a
 // throwaway user (anon signUp); the browser signs in via the UI, opens /galaxy, and
-// confirms the map renders, a location is selectable, the detail panel opens, and the
-// Send Expedition button is disabled. It also asserts NO fleet/expedition was created.
+// confirms the map renders, a location is selectable, and the detail panel opens. The
+// legacy Send Expedition surface (ExpeditionCommand) was retired in the UX cleanup pass,
+// so its absence is asserted. It also asserts NO fleet/expedition was created.
 
 const URL_ = process.env.VITE_SUPABASE_URL!
 const ANON = process.env.VITE_SUPABASE_ANON_KEY!
@@ -53,25 +54,19 @@ test('Phase 9A — read-only galaxy map smoke', async ({ page }) => {
   // 5. select one marker
   await markers.first().click()
 
-  // 6. detail panel + command area open
+  // 6. detail panel opens; the retired legacy expedition surface must NOT render
   const panel = page.getByTestId('galaxy-location-detail-panel')
   await expect(panel).toBeVisible()
-  await expect(page.getByTestId('galaxy-expedition-command')).toBeVisible()
-
-  // 7. Send button present but DISABLED before any loadout is chosen (read-only until acted on)
-  const sendBtn = page.getByTestId('galaxy-send-expedition')
-  await expect(sendBtn).toBeVisible()
-  await expect(sendBtn).toBeDisabled()
+  await expect(page.getByTestId('galaxy-expedition-command')).toHaveCount(0)
   await shot(page, '02-detail-panel')
 
-  // 8. no write / no expedition: nothing on the screen created a fleet for this user.
-  await sendBtn.click({ force: true }).catch(() => {}) // disabled → no-op
+  // 7. no write / no expedition: nothing on the read-only screen created a fleet for this user.
   await page.waitForTimeout(1500)
   const fleetsAfter = ((await admin.from('fleets').select('id').eq('player_id', userId)).data ?? []).length
   expect(fleetsAfter, 'no expedition/fleet should be created from the read-only map').toBe(0)
   const movesAfter = ((await admin.from('fleet_movements').select('id').eq('player_id', userId)).data ?? []).length
   expect(movesAfter, 'no movement should be created').toBe(0)
 
-  // 9. no serious console/page errors
+  // 8. no serious console/page errors
   expect(errors, errors.join('\n')).toEqual([])
 })

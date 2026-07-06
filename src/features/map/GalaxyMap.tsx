@@ -18,6 +18,7 @@ import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTrans
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
 import { useOsnReadiness } from './useOsnReadiness'
 import { isCoordinateTargetingActionable, type OsnReadiness } from './osnReadiness'
+import { Button } from '../../components/ui'
 
 // Read-only 2D galaxy map (plain SVG — no canvas/WebGL). UNIFIED fixed-coordinate frame (S6B-PRES):
 // EVERY spatial object — named locations, base/home, movement lines, legacy + open-space ship states,
@@ -74,7 +75,7 @@ export function GalaxyMap({
   const sm = useSpaceMoveCommand()
   // OSN-4 — Stop safety. The CTA mounts ONLY for a real active coordinate transit and is INDEPENDENT of the
   // initiation flag (in-flight safety): an emergency flag disable must never strand an in-flight ship.
-  const stop = useSpaceStopCommand()
+  const stop = useSpaceStopCommand({ mainShipId: mainShip?.main_ship_id ?? null })
   const inCoordinateTransit = isActiveCoordinateTransit({
     spatialState: mainShip?.spatial_state,
     spaceMovementStatus: mainShipSpaceMovement?.status,
@@ -97,7 +98,7 @@ export function GalaxyMap({
   // a coordinate command completes. While production stays dark (mainship_coordinate_travel_enabled=false) the
   // server returns coordinate_travel_available=false → canTarget is false → the whole surface stays unmounted.
   const readinessLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
-  const { readiness, refresh: refreshReadiness } = useOsnReadiness(readinessLifecycleKey, { fetcher: deps?.readinessFetcher })
+  const { readiness, refresh: refreshReadiness } = useOsnReadiness(readinessLifecycleKey, { mainShipId: mainShip?.main_ship_id ?? null, fetcher: deps?.readinessFetcher })
   const spaceMoveEnabled = deps?.spaceMoveEnabled ?? sm.enabled
   const canTarget = isCoordinateTargetingActionable(readiness, spaceMoveEnabled, eligibility)
   // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a target tap; drags
@@ -246,12 +247,12 @@ export function GalaxyMap({
   const homePt = base ? norm({ x: base.x, y: base.y }) : null
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-lg border border-slate-700 bg-[#070b14]">
+    <div className="relative h-full w-full overflow-hidden rounded-card border border-edge bg-app shadow-card">
       {/* zoom controls */}
       <div className="absolute right-2 top-2 z-10 flex flex-col gap-1">
-        <button onClick={() => zoomBtn(1.25)} className="h-8 w-8 rounded bg-slate-800/90 text-lg text-slate-200 hover:bg-slate-700" aria-label="Zoom in">+</button>
-        <button onClick={() => zoomBtn(1 / 1.25)} className="h-8 w-8 rounded bg-slate-800/90 text-lg text-slate-200 hover:bg-slate-700" aria-label="Zoom out">−</button>
-        <button onClick={reset} className="h-8 w-8 rounded bg-slate-800/90 text-xs text-slate-200 hover:bg-slate-700" aria-label="Reset view">⟲</button>
+        <Button size="icon" onClick={() => zoomBtn(1.25)} aria-label="Zoom in">+</Button>
+        <Button size="icon" onClick={() => zoomBtn(1 / 1.25)} aria-label="Zoom out">−</Button>
+        <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>
       </div>
 
       <svg
@@ -268,8 +269,27 @@ export function GalaxyMap({
         onClick={() => onSelect(null)}
       >
         {/* Static backdrop (NOT transformed): the map area always renders a deliberate background,
-            even at the camera bounds. Visual safety layer only — not a map-layer framework. */}
-        <rect x={0} y={0} width={VIEW} height={VIEW} fill="#070b14" pointerEvents="none" />
+            even at the camera bounds. Visual safety layer only — not a map-layer framework.
+            UX-CLEANUP item 5: a subtle token-driven deep-space treatment (soft radial glow + faint
+            grid) instead of a flat fill — colors come ONLY from the @theme tokens. */}
+        <defs>
+          <radialGradient id="bh-space-bg" cx="50%" cy="42%" r="75%">
+            <stop offset="0%" stopColor="var(--color-surface)" />
+            <stop offset="55%" stopColor="var(--color-app)" />
+            <stop offset="100%" stopColor="var(--color-app)" />
+          </radialGradient>
+          <pattern id="bh-space-grid" width={VIEW / 10} height={VIEW / 10} patternUnits="userSpaceOnUse">
+            <path
+              d={`M ${VIEW / 10} 0 L 0 0 0 ${VIEW / 10}`}
+              fill="none"
+              stroke="var(--color-edge)"
+              strokeWidth={0.5}
+              opacity={0.35}
+            />
+          </pattern>
+        </defs>
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-bg)" pointerEvents="none" />
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-grid)" pointerEvents="none" />
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.k})`}>
           {/* movement paths (under markers) */}
           {movements.map((m) => {
@@ -297,14 +317,23 @@ export function GalaxyMap({
                 y={homePt.y - 6 / view.k}
                 width={12 / view.k}
                 height={12 / view.k}
-                fill="#22d3ee"
-                stroke="#0b1220"
-                strokeWidth={1}
+                fill="var(--color-accent)"
+                stroke="var(--color-app)"
+                strokeWidth={1.5}
                 vectorEffect="non-scaling-stroke"
                 transform={`rotate(45 ${homePt.x} ${homePt.y})`}
               />
               {showLabels && (
-                <text x={homePt.x} y={homePt.y + 16 / view.k} fontSize={11 / view.k} textAnchor="middle" fill="#67e8f9">
+                <text
+                  x={homePt.x}
+                  y={homePt.y + 16 / view.k}
+                  fontSize={11 / view.k}
+                  textAnchor="middle"
+                  fill="var(--color-accent)"
+                  stroke="var(--color-app)"
+                  strokeWidth={3 / view.k}
+                  paintOrder="stroke"
+                >
                   {base?.name ?? 'Home'}
                   {mainShip ? ` · ${mainShip.name}` : ''}
                 </text>
@@ -387,8 +416,23 @@ export function GalaxyMap({
         />
       )}
 
-      <div className="pointer-events-none absolute bottom-2 left-2 z-10 text-[10px] text-slate-500">
-        {locations.length} locations · {movements.length} moving · drag to pan · scroll/buttons to zoom
+      {/* compact legend + hint row (token-driven; the legend mirrors the marker semantics exactly) */}
+      <div className="pointer-events-none absolute bottom-2 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-faint">
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 rounded-full bg-success" /> safe
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 rounded-full bg-danger" /> hostile
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 rounded-full border border-accent bg-accent/40" /> port
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 rotate-45 bg-accent" /> home
+        </span>
+        <span>
+          {locations.length} locations · {movements.length} moving · drag to pan · scroll/buttons to zoom
+        </span>
       </div>
     </div>
   )

@@ -9,10 +9,12 @@ import {
 
 // PORT-ENTRY player UI — client API.
 //
-// Two authenticated, zero-arg, auth.uid()-scoped RPCs (migration 0072) + a small owner-read that assembles
-// the DISPLAY state used to choose the affordance. The client sends NO player/ship/port id, coordinates,
-// status, or lifecycle data — the server derives everything and is the sole authority. Nothing here touches
-// coordinate travel, its flag/gate, port-to-port travel, migrations, or production data.
+// One zero-arg authenticated RPC (commission_first_main_ship) + one that takes the explicit selected/sole
+// main-ship id (normalize_main_ship_dock — TRADE-FLEET-0C §2.5: p_main_ship_id, null → server sole-ship shim,
+// ownership server-asserted) + a small owner-read that assembles the DISPLAY state used to choose the
+// affordance. Aside from that ship id, the client sends NO player/port id, coordinates, status, or lifecycle
+// data — the server derives everything and is the sole authority. Nothing here touches coordinate travel, its
+// flag/gate, port-to-port travel, migrations, or production data.
 
 /**
  * Claim the caller's FIRST main ship (commission_first_main_ship). Zero-arg; the server race-serializes on
@@ -30,12 +32,14 @@ export async function commissionFirstMainShip(): Promise<CommissionResult> {
 }
 
 /**
- * Finish docking the caller's legacy-present ship IN PLACE (normalize_main_ship_dock). Zero-arg; idempotent
+ * Finish docking the caller's legacy-present ship IN PLACE (normalize_main_ship_dock). TRADE-FLEET-0C §2.5:
+ * sends the EXPLICIT selected/sole main-ship id (p_main_ship_id); the server asserts ownership (own ship only)
+ * and a null id preserves the sole-ship shim (behavior-identical while single-ship). Idempotent
  * (already-canonical → normalized:false). Errors collapse to a safe failure result — this never throws.
  */
-export async function normalizeMainShipDock(): Promise<NormalizeResult> {
+export async function normalizeMainShipDock(mainShipId?: string | null): Promise<NormalizeResult> {
   try {
-    const { data, error } = await supabase.rpc(NORMALIZE_RPC, {})
+    const { data, error } = await supabase.rpc(NORMALIZE_RPC, { p_main_ship_id: mainShipId ?? null })
     if (error) return { ok: false, reason: 'not_normalizable' }
     return parseNormalizeResult(data)
   } catch {
@@ -60,11 +64,11 @@ export async function fetchPortEntryShipState(): Promise<PortEntryShipState> {
     .select('main_ship_id, status, spatial_state')
     .maybeSingle() // owner-read RLS → the caller's single ship, or null
   if (error) {
-    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false }
+    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null }
   }
   const ship = (data as MainShipStateRow) ?? null
   if (!ship) {
-    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false }
+    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null }
   }
 
   // Only read the linked fleet/presence when a ship exists (mirrors useGalaxyMapData's ordering).
@@ -74,10 +78,14 @@ export async function fetchPortEntryShipState(): Promise<PortEntryShipState> {
 
   return {
     hasShip: true,
+    main_ship_id: ship.main_ship_id, // §2.5: surfaced so the normalize path can send an explicit p_main_ship_id
     spatialState: ship.spatial_state,
     shipStatus: ship.status,
     fleetStatus: fleet?.status ?? null,
     fleetLocationMode: fleet?.location_mode ?? null,
     hasActivePresence,
+    // UX-CLEANUP item 2: the legacy-present location, from the fleet row ALREADY fetched above (no new
+    // read) — drives the display-only waypoint-vs-port affordance split.
+    presentLocationId: fleet?.status === 'present' ? (fleet.current_location_id ?? null) : null,
   }
 }

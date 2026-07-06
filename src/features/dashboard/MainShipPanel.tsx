@@ -4,6 +4,7 @@ import type { Fleet, FleetMovement } from '../fleets/fleetTypes'
 import { isMainShipFleet } from '../fleets/fleetGuards'
 import type { MapLocation } from '../map/mapTypes'
 import { formatCountdown } from '../../lib/time'
+import { Card, CardHeader, Badge, Notice, Button, Meter } from '../../components/ui'
 
 // Phase 10H — read-only Command Center view of the player's main ship: name/hull, derived status
 // (home / traveling / on-station / returning / disabled), HP + needs-repair state, active
@@ -42,7 +43,7 @@ export function MainShipPanel({
     setRepairing(true)
     setRepairError(null)
     try {
-      await repairMainShip() // 10F recovery RPC (ungated; auth.uid()-scoped, own ship only)
+      await repairMainShip(mainShip?.ship?.main_ship_id ?? null) // §2.5: explicit ship id; server asserts ownership (own ship only); null → shim
       onChanged()
     } catch (e) {
       setRepairError(e instanceof Error ? e.message : String(e))
@@ -58,10 +59,10 @@ export function MainShipPanel({
 
   if (!ship) {
     return (
-      <section data-testid="dashboard-mainship-panel" className="rounded-2xl border border-sky-400/15 bg-sky-500/5 p-4 sm:p-6">
-        <h2 className="text-lg font-medium">🛰 Main Ship</h2>
-        <p className="mt-1 text-sm text-white/45">No main ship commissioned yet.</p>
-      </section>
+      <Card tone="accent" data-testid="dashboard-mainship-panel">
+        <h2 className="text-lg font-semibold text-ink">🛰 Main Ship</h2>
+        <p className="mt-1 text-sm text-ink-muted">No main ship commissioned yet.</p>
+      </Card>
     )
   }
 
@@ -97,32 +98,33 @@ export function MainShipPanel({
     : 'Home'
 
   return (
-    <section data-testid="dashboard-mainship-panel" className="rounded-2xl border border-sky-400/15 bg-sky-500/5 p-4 sm:p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-medium">🛰 Main Ship</h2>
-        <span className={'rounded px-2 py-0.5 text-[10px] uppercase tracking-wide ' + (isDisabled ? 'bg-amber-500/15 text-amber-300' : 'bg-sky-500/15 text-sky-200')}>
-          {statusLabel}
-        </span>
-      </div>
+    <Card tone="accent" data-testid="dashboard-mainship-panel">
+      <CardHeader
+        title="🛰 Main Ship"
+        aside={<Badge tone={isDisabled ? 'warning' : 'accent'}>{statusLabel}</Badge>}
+        className="mb-3"
+      />
 
       {isDisabled && (
         <div className="mb-3">
-          <p className="rounded border border-amber-600/40 bg-amber-500/10 px-2 py-1.5 text-sm text-amber-200">
+          <Notice tone="warning">
             🛠 Your main ship was disabled and must be repaired before it can travel again.
-          </p>
+          </Notice>
           {repairError && (
-            <p data-testid="mainship-repair-error" className="mt-2 rounded border border-rose-600/40 bg-rose-500/10 px-2 py-1.5 text-sm text-rose-300">
+            <Notice tone="danger" data-testid="mainship-repair-error" className="mt-2">
               {repairError}
-            </p>
+            </Notice>
           )}
-          <button
+          <Button
+            variant="warning"
             data-testid="mainship-repair"
-            disabled={repairing}
+            busy={repairing}
+            busyLabel="Repairing…"
             onClick={doRepair}
-            className="mt-2 w-full rounded-md bg-amber-500 py-2 text-sm font-medium text-white transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-slate-700/60 disabled:text-slate-500"
+            className="mt-2 w-full"
           >
-            {repairing ? 'Repairing…' : 'Repair main ship'}
-          </button>
+            Repair main ship
+          </Button>
         </div>
       )}
 
@@ -135,20 +137,16 @@ export function MainShipPanel({
         {countdown && <Row label="Arriving in" value={countdown} />}
       </dl>
 
-      {progress !== null && (
-        <div className="mt-3 h-1.5 w-full overflow-hidden rounded bg-white/10">
-          <div className="h-full bg-sky-400 transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} />
-        </div>
-      )}
-    </section>
+      {progress !== null && <Meter pct={progress * 100} tone="accent" className="mt-3 h-1.5" />}
+    </Card>
   )
 }
 
 function Row({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex justify-between gap-3">
-      <dt className="text-white/45">{label}</dt>
-      <dd className="text-right text-white/80">{value}</dd>
+      <dt className="text-ink-faint">{label}</dt>
+      <dd className="text-right text-ink">{value}</dd>
     </div>
   )
 }

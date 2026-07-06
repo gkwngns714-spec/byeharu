@@ -1,0 +1,24 @@
+-- Byeharu — TRADE-FLEET-0C: drop main_ship_instances.player_id UNIQUE (the multi-ship blocker).
+--
+-- Step 6b — the tiny, isolated removal of the single load-bearing multi-ship blocker (0A §8.1):
+-- the column-level UNIQUE on main_ship_instances.player_id, auto-named
+-- `main_ship_instances_player_id_key` (Postgres `<table>_<column>_key` convention for an inline
+-- column UNIQUE, seeded at `…0043…:47`).
+--
+-- SAFE NOW because 6a (0078) re-anchored BOTH commission writers off the row-level
+-- `on conflict (player_id)` serialization onto an advisory lock + explicit zero-ship guard, so
+-- neither writer depends on this unique index any longer (verified: no final-state
+-- `on conflict (player_id)` against main_ship_instances remains). What is RETAINED and NOT touched:
+--   • `player_id NOT NULL` — kept.
+--   • the FK to auth.users, `main_ship_instances_player_id_fkey` (ON DELETE CASCADE) — kept.
+--   • owner-read RLS `player_id = auth.uid()` — unchanged and correct for N rows.
+--   • abstract columns, every command signature, every function, every flag — untouched.
+--
+-- POST-DROP RUNTIME REALITY: multi-ship is now STRUCTURALLY POSSIBLE at the schema level, but
+--   (a) no implicit path creates a 2nd ship — both writers are zero-ship-guarded; and
+--   (b) no explicit add-ship RPC exists yet (commission_additional_main_ship lands in a later step),
+-- so at runtime every player still has ≤ 1 ship, and the single-ship-derivation readers
+-- (get_main_ship, the movement/dock commands) remain correct until they are converted to explicit
+-- `p_main_ship_id` in the upcoming §2.5 slice. Capability stays DARK.
+
+alter table public.main_ship_instances drop constraint if exists main_ship_instances_player_id_key;

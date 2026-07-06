@@ -1,5 +1,5 @@
 import { supabase } from '../../lib/supabase'
-import type { DispatchResult, Fleet, FleetMovement, FleetUnit, LocationPresence } from './fleetTypes'
+import type { Fleet, FleetMovement, FleetUnit, LocationPresence } from './fleetTypes'
 import { isMainShipFleet } from './fleetGuards'
 
 // Fleet/Movement/Presence client API. The client only REQUESTS actions through
@@ -30,25 +30,6 @@ export async function fetchActivePresences(): Promise<LocationPresence[]> {
   const { data, error } = await supabase.from('location_presence').select('*').eq('status', 'active')
   if (error) throw new Error(error.message)
   return (data as LocationPresence[]) ?? []
-}
-
-export interface SelectedUnit {
-  unit_type_id: string
-  quantity: number
-}
-
-export async function sendFleetToLocation(
-  baseId: string,
-  locationId: string,
-  units: SelectedUnit[],
-): Promise<DispatchResult> {
-  const { data, error } = await supabase.rpc('send_fleet_to_location', {
-    p_base: baseId,
-    p_location: locationId,
-    p_units: units,
-  })
-  if (error) throw new Error(error.message)
-  return data as DispatchResult
 }
 
 // Legacy fleet leave/return. Phase 10E defense-in-depth: the caller MUST pass the fleet behind

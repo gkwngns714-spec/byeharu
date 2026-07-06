@@ -60,6 +60,18 @@ The **Expedition Engine** (Movement + Presence + Return) owns, for ALL activitie
 
 The engine knows the *lifecycle*; it does NOT know any activity's internal rules.
 
+> **Phase 11 as-built clarification (2026-07-04 — reconciliation, not a new design).** The
+> "secured deposit on home arrival" wording in this section is the **fleet_movements-domain** form
+> (combat today): the pending bundle rides `movement_attach_cargo` and `process_fleet_movements`
+> deposits it on return arrival. **OSN-native activities** (Exploration now) never traverse
+> `fleet_movements`, so they secure the same way one level down: the activity accrues pending value
+> on its own state and its OWN processor calls `reward_grant('<activity>', <state-row-id>, …)` —
+> the same sole depositor — when the carrying ship next settles SAFE (home or docked `at_location`
+> per the 0055 state model); destruction-forfeiture for OSN-native pending value is deferred.
+> Additionally, Exploration v1 is OSN-native ONLY: the `activity_start`/`explore_derelict`
+> location-presence dispatch is deliberately NOT wired in Phase 11 (ROADMAP: "scan in OSN proximity
+> … where applicable") — an explicit scope decision, not an unfinished branch.
+
 ## 3. Activity Ownership Boundaries (one owner per activity)
 
 | Activity | Owns ONLY | Produces (pending) |

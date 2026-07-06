@@ -58,17 +58,24 @@ export function MainShipMarker({
   // provenance via the shared pure helper (legacy → dynamic `norm`; open-space → S6B1 fixed transform).
   // The existing camera <g> applies pan/zoom afterward. This is the exact function the S6B4 tests exercise.
   const p = markerViewBoxPoint(marker, norm)
-  // OSN-2b note: in_space reuses the existing default marker colour (no new main-ship visual
-  // language introduced here). A distinct parked-in-space colour is a future approved visual decision.
+  // UX-CLEANUP item 5: design-system tokens — returning = accent, outbound = warning (matches the
+  // movement lines), settled = success. A soft accent halo marks this as THE player at any zoom.
   const color =
-    marker.state === 'returning' ? '#38bdf8' : marker.state === 'outbound' ? '#fbbf24' : '#34d399'
+    marker.state === 'returning'
+      ? 'var(--color-accent)'
+      : marker.state === 'outbound'
+        ? 'var(--color-warning)'
+        : 'var(--color-success)'
   const r = 7 / k
-  // Upward chevron/triangle — distinct from the cyan home diamond and the location dots.
+  // Upward chevron/triangle — distinct from the accent home diamond and the location dots.
   const points = `${p.x},${p.y - r} ${p.x + r * 0.8},${p.y + r * 0.7} ${p.x - r * 0.8},${p.y + r * 0.7}`
 
   return (
     <g data-testid="mainship-marker" style={{ pointerEvents: 'none' }}>
-      <polygon points={points} fill={color} stroke="#0b1220" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      {/* "this is YOU" halo — accent-toned regardless of travel state */}
+      <circle cx={p.x} cy={p.y} r={r * 1.8} fill="var(--color-accent)" opacity={0.12} />
+      <circle cx={p.x} cy={p.y} r={r * 1.8} fill="none" stroke="var(--color-accent)" strokeWidth={1} vectorEffect="non-scaling-stroke" opacity={0.45} />
+      <polygon points={points} fill={color} stroke="var(--color-app)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
     </g>
   )
 }

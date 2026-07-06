@@ -55,9 +55,3 @@ export interface LocationPresence {
   status: string
   entered_at: string
 }
-
-export interface DispatchResult {
-  fleet_id: string
-  movement_id: string
-  arrive_at: string
-}

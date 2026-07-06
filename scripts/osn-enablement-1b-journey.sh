@@ -13,9 +13,9 @@ MODE="${1:-}"
 fail() { echo "FAIL: $1" >&2; exit 1; }
 case "$MODE" in selftest|local) : ;; *) echo "usage: $0 <selftest|local>" >&2; exit 2;; esac
 SELF="${BASH_SOURCE[0]}"
-P1='b1a00001-0066-4a00-8a00-000000000001'   # Haven Reach  (origin)
-P2='b1a00002-0066-4a00-8a00-000000000002'   # Slagworks Anchorage (destination)
-P3='b1a00003-0066-4a00-8a00-000000000003'   # Driftmarch Waypost  (conflicting payload)
+P1='b1a00001-0066-4a00-8a00-000000000001'   # Haven  (origin)
+P2='b1a00002-0066-4a00-8a00-000000000002'   # Slagworks (destination)
+P3='b1a00003-0066-4a00-8a00-000000000003'   # Driftmarch  (conflicting payload)
 
 # ── SELFTEST (DB-free) — prove this harness exercises the real boundary and is disposable/reversible ───────
 if [ "$MODE" = "selftest" ]; then
@@ -54,7 +54,7 @@ echo "   post-reveal semantics confirmed: 3 ports active + visible via get_world
 # unschedule the arrival cron for deterministic settlement (mirrors the dock-0 proof)
 su "select cron.unschedule(jobid) from cron.job where jobname='process-mainship-space-arrivals';" >/dev/null 2>&1 || true
 
-echo "── setup: a disposable authenticated user + main ship ANCHORED (present/at_location) at Haven Reach ──"
+echo "── setup: a disposable authenticated user + main ship ANCHORED (present/at_location) at Haven ──"
 su "insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','osn1bjourney.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','');" >/dev/null
 U="$(su "select id from auth.users where email like 'osn1bjourney.%@example.com' order by created_at desc limit 1;")"
@@ -72,7 +72,7 @@ begin
 end \$\$;" >/dev/null
 S="$(su "select main_ship_id from public.main_ship_instances where player_id='$U' limit 1;")"
 [ -n "$S" ] || fail "main ship not created/anchored"
-echo "   user=$U ship=$S anchored at Haven Reach ($P1)"
+echo "   user=$U ship=$S anchored at Haven ($P1)"
 
 # ok[1] flag OFF rejects creation with NO write
 flag mainship_space_movement_enabled false
@@ -89,7 +89,7 @@ R2="$(authrpc "$U" "public.command_main_ship_space_move_to_location('$P2','22222
 echo "$R2" | grep -q '"ok": *true' || { echo "$R2"; fail "ok[2]: authenticated move was not accepted"; }
 [ "$(mov_n "$S")" = "1" ] || fail "ok[2]: expected exactly one movement row"
 MID="$(moving_id "$S")"; [ -n "$MID" ] || fail "ok[2]: no moving movement"
-su "select 1 from public.main_ship_space_movements where id='$MID' and target_kind='location' and target_location_id='$P2';" | grep -q 1 || fail "ok[2]: movement does not target Slagworks Anchorage"
+su "select 1 from public.main_ship_space_movements where id='$MID' and target_kind='location' and target_location_id='$P2';" | grep -q 1 || fail "ok[2]: movement does not target Slagworks"
 echo "ok[2] flag-on accepts one authenticated port-to-port movement (ok=true; 1 moving movement → $P2)"
 
 # ok[3] duplicate same request id is idempotent
@@ -117,7 +117,7 @@ su "select 1 from public.main_ship_space_movements where id='$MID' and status='a
 su "select 1 from public.main_ship_instances where main_ship_id='$S' and status='stationary' and spatial_state='at_location' and space_x is null and space_y is null;" | grep -q 1 || fail "ok[6]: ship not docked/at_location"
 su "select 1 from public.fleets where main_ship_id='$S' and status='present' and location_mode='location' and current_location_id='$P2' and active_space_movement_id is null and active_movement_id is null;" | grep -q 1 || fail "ok[6]: fleet not present at Slagworks"
 [ "$(su "select count(*) from public.location_presence lp join public.fleets f on f.id=lp.fleet_id where f.main_ship_id='$S' and lp.status='active' and lp.location_id='$P2';")" = "1" ] || fail "ok[6]: not exactly one active presence at Slagworks"
-echo "ok[6] arrival docks at Slagworks Anchorage / becomes present (one active presence; at_location)"
+echo "ok[6] arrival docks at Slagworks / becomes present (one active presence; at_location)"
 
 # ok[7] no overlapping legacy and OSN movement ownership
 [ "$(su "select count(*) from public.fleet_movements fm join public.fleets f on f.id=fm.fleet_id where f.main_ship_id='$S';")" = "0" ] || fail "ok[7]: a legacy fleet_movements row exists for the ship"

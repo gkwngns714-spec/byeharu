@@ -24,7 +24,7 @@ export function RoundLog({
       .join(', ')
 
   const ordered = ticks.slice().sort((a, b) => b.tick_number - a.tick_number).slice(0, limit)
-  if (ordered.length === 0) return <p className="text-sm text-white/40">No rounds yet.</p>
+  if (ordered.length === 0) return <p className="text-sm text-ink-faint">No rounds yet.</p>
 
   return (
     <ol className="space-y-1.5">
@@ -34,34 +34,34 @@ export function RoundLog({
         let line: ReactNode
 
         if (t.result === 'next_wave_incoming') {
-          line = <span className="text-amber-300/70">Wave {t.wave_number} incoming…</span>
+          line = <span className="text-warning/80">Wave {t.wave_number} incoming…</span>
         } else if (t.result === 'wave_cleared') {
           line = (
             <span>
-              <span className="text-emerald-300">Wave {t.wave_number} cleared.</span> You dealt{' '}
+              <span className="text-success">Wave {t.wave_number} cleared.</span> You dealt{' '}
               {Math.round(t.player_damage)} damage
-              {metal > 0 && <span className="text-amber-300/80"> · +{metal} metal pending</span>}
+              {metal > 0 && <span className="text-warning/90"> · +{metal} metal pending</span>}
               {losses && <> · lost {losses}</>}
             </span>
           )
         } else if (t.result === 'escaped' || t.result === 'completed') {
-          line = <span className="text-amber-300">Fleet escaped — returning to base.</span>
+          line = <span className="text-warning">Fleet escaped — returning to base.</span>
         } else if (t.result === 'defeat') {
-          line = <span className="text-red-300">Fleet destroyed.</span>
+          line = <span className="text-danger">Fleet destroyed.</span>
         } else {
           // 'ongoing'
           line = (
             <span>
-              Wave {t.wave_number}: you dealt <span className="text-indigo-300">{Math.round(t.player_damage)}</span>,
-              pirates dealt <span className="text-red-300">{Math.round(t.enemy_damage)}</span>
+              Wave {t.wave_number}: you dealt <span className="text-accent">{Math.round(t.player_damage)}</span>,
+              pirates dealt <span className="text-danger">{Math.round(t.enemy_damage)}</span>
               {losses ? <> · lost {losses}</> : ' · no ships lost'}
             </span>
           )
         }
 
         return (
-          <li key={t.id} className="flex gap-2 text-xs text-white/60">
-            <span className="tabular-nums text-white/30">
+          <li key={t.id} className="flex gap-2 text-xs text-ink-muted">
+            <span className="font-mono tabular-nums text-ink-faint/80">
               #{t.tick_number} · {formatShortTime(t.resolved_at)}
             </span>
             <span>{line}</span>

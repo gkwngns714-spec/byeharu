@@ -6,8 +6,8 @@
 
 create temp table pe1(k text primary key, v uuid) on commit preserve rows;
 insert into pe1 values
-  ('haven','b1a00001-0066-4a00-8a00-000000000001'),     -- Haven Reach (designated spawn)
-  ('slag', 'b1a00002-0066-4a00-8a00-000000000002'),     -- Slagworks Anchorage (a different active port)
+  ('haven','b1a00001-0066-4a00-8a00-000000000001'),     -- Haven (designated spawn)
+  ('slag', 'b1a00002-0066-4a00-8a00-000000000002'),     -- Slagworks (a different active port)
   ('slag_svc','b1a05002-0066-4a00-8a00-000000000052');  -- Slagworks docking service (for the ineligible-port case)
 
 -- caller helper: set the authenticated subject then run an RPC, returning its jsonb.

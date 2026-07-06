@@ -21,7 +21,7 @@ if [ "$MODE" = "selftest" ]; then
   CLEAN="$(sed -E 's/--.*//' "$MIG")"
   grep -q "'stationary', 'at_location'" "$MIG" || fail "writer does not insert canonical at_location shape"
   printf '%s' "$CLEAN" | grep -q "ensure_main_ship_for_player" && fail "writer must NOT use ensure_main_ship_for_player" || true
-  grep -q "b1a00001-0066-4a00-8a00-000000000001" "$MIG" || fail "Haven Reach spawn port not server-fixed"
+  grep -q "b1a00001-0066-4a00-8a00-000000000001" "$MIG" || fail "Haven spawn port not server-fixed"
   grep -q "auth.uid()" "$MIG" || fail "RPCs do not derive caller from auth.uid()"
   grep -c "security definer" "$MIG" | grep -q "3" || fail "expected all 3 functions SECURITY DEFINER"
   # both RPCs assert canonical at_location via validate_context; normalizer never calls resolve_origin

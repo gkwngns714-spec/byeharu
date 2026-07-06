@@ -21,7 +21,8 @@ export function FleetMovementLine({
   isReturn: boolean
   arriveAt: string
 }) {
-  const color = isReturn ? '#38bdf8' : '#fbbf24'
+  // Design-system tokens: outbound = warning (in-transit emphasis), return-home = accent.
+  const color = isReturn ? 'var(--color-accent)' : 'var(--color-warning)'
   const mx = (x1 + x2) / 2
   const my = (y1 + y2) / 2
   const eta = formatCountdown(arriveAt)
@@ -29,11 +30,21 @@ export function FleetMovementLine({
 
   return (
     <g data-testid="galaxy-movement-line" style={{ pointerEvents: 'none' }}>
-      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity={0.85} />
+      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity={0.75} />
       {/* travelling fleet dot near the destination end */}
-      <circle cx={x2 - (x2 - x1) * 0.12} cy={y2 - (y2 - y1) * 0.12} r={dotR} fill={color} stroke="#0b1220" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      <circle cx={x2 - (x2 - x1) * 0.12} cy={y2 - (y2 - y1) * 0.12} r={dotR} fill={color} stroke="var(--color-app)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
       {eta && (
-        <text x={mx} y={my - 4 / k} fontSize={10 / k} textAnchor="middle" fill={color} style={{ userSelect: 'none' }}>
+        <text
+          x={mx}
+          y={my - 4 / k}
+          fontSize={10 / k}
+          textAnchor="middle"
+          fill={color}
+          stroke="var(--color-app)"
+          strokeWidth={3 / k}
+          paintOrder="stroke"
+          style={{ userSelect: 'none' }}
+        >
           {isReturn ? '↩ ' : '→ '}
           {eta}
         </text>

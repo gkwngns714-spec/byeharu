@@ -148,6 +148,14 @@ ships**" (§6). For main-ship expeditions, defeat will apply consequences + poss
 destruction (Phase 10E), never an account lock.
 
 ### Frontend touchpoints (unit selection / fleet send)
+
+> **Retired 2026-07-05 (UX cleanup pass, item 1 — see DEV_LOG):** the legacy client surfaces
+> below were removed — `ExpeditionCommand.tsx` (+ its `sendFleetToLocation` client wrapper),
+> `src/features/production/*` (TrainShipsPanel/BuildQueuePanel/productionApi/productionTypes),
+> and the `base_units`/`unit_types`/build-order plumbing that only fed them. **UI only:** the
+> engine RPCs (`send_fleet_to_location`, `train_units`, `cancel_build_order`) and their crons
+> remain server-side per the standing law. The list below is the 2026-06-18 snapshot.
+
 - `src/features/map/ExpeditionCommand.tsx` — **the only send surface** (`sendFleetToLocation`,
   unit picker).
 - `src/features/map/useGalaxyMapData.ts` — loads `base_units` + `unit_types` (picker) +
@@ -161,6 +169,8 @@ destruction (Phase 10E), never an account lock.
 ### Tests pinning old unit/fleet behavior (must stay green)
 `verify-m2/m3/m4/m45/m5` (send · combat · return · rewards), `tests/m45.spec.ts` (training
 queue), `tests/galaxy9b.spec.ts` (unit-loadout send).
+*(2026-07-05: the two browser specs were removed with the retired UI they drove; the
+`verify-m2/m3/m4/m45/m5` backend engine suites remain the pin and must stay green.)*
 
 ---
 
@@ -300,7 +310,9 @@ destruction-&-safelock phase** — **not in 10C** (10C is non-combat-only and cr
 
 Every phase keeps `verify-m2..m5`, `m45`, `galaxy9b` green. **Nothing is deleted or renamed.**
 **The 10C–10F contracts are shaped (ship-id-parameterized, group-ready) so 10G+ adds ships
-without rewrites** (★ vision).
+without rewrites** (★ vision). *(2026-07-05: the `galaxy9b` browser spec was retired with the
+legacy `ExpeditionCommand` UI — see the reconciliation note below; the backend `verify-m2..m5`
++ `m45` engine suites remain the standing pin.)*
 
 > **Implemented-vs-planned reconciliation (added 2026-06-20 — historical; labels preserved, NOT renamed).**
 > The §7 table above is the *original plan*. What was actually built diverged, and some numbers were
@@ -316,6 +328,11 @@ without rewrites** (★ vision).
 >   commits `a5975ac`/`d7e6f83`, `verify-mainship-move` 17/17). Also unnumbered: canonical
 >   `resolve_fleet_movement_speed` (migration 0051).
 > - **10G** remains *planned multi-ship* (this doc), unbuilt. **Main-ship combat was never built.**
+> - **10D (2026-07-05 update)** — *planned:* `ExpeditionCommand` switches its send to the main-ship
+>   RPC. *Built instead:* a deliberately **separate** `MainShipCommand` surface (10D/10H), and the
+>   legacy `ExpeditionCommand` UI (with the `src/features/production/*` training panels) was later
+>   **retired client-side in the UX cleanup pass (2026-07-05, see DEV_LOG)** — UI only; the
+>   `send_fleet_to_location` / `train_units` / `cancel_build_order` engine RPCs and crons remain.
 >
 > **Product direction (2026-06-20): prioritize Open-Space Navigation (OSN, §12) before new main-ship
 > combat work, so future combat should be designed to consume the same coordinate and proximity model

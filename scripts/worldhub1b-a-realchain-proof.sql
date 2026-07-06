@@ -25,9 +25,9 @@ begin
   -- exact-content check, keyed on the FIXED LITERAL location UUIDs (identity, not the mutable name)
   for r in
     select * from (values
-      ('b1a00001-0066-4a00-8a00-000000000001'::uuid,'Haven Reach',        'city','Outer Haven',   1,'Wreck Belt',     -50::float8,-30::float8),
-      ('b1a00002-0066-4a00-8a00-000000000002'::uuid,'Slagworks Anchorage','port','Crimson Nebula',2,'Ion Storm Route', 70::float8,-10::float8),
-      ('b1a00003-0066-4a00-8a00-000000000003'::uuid,'Driftmarch Waypost', 'port','Crimson Nebula',2,'Ion Storm Route', 10::float8, 80::float8)
+      ('b1a00001-0066-4a00-8a00-000000000001'::uuid,'Haven',        'city','Outer Haven',   1,'Wreck Belt',     -50::float8,-30::float8),
+      ('b1a00002-0066-4a00-8a00-000000000002'::uuid,'Slagworks','port','Crimson Nebula',2,'Ion Storm Route', 70::float8,-10::float8),
+      ('b1a00003-0066-4a00-8a00-000000000003'::uuid,'Driftmarch', 'port','Crimson Nebula',2,'Ion Storm Route', 10::float8, 80::float8)
     ) as v(id, name, role, sector_name, sector_index, zone_name, x, y)
   loop
     select count(*) into n
@@ -106,8 +106,9 @@ end $$;
 do $$
 declare t text;
 begin
+  -- Field-anchored ("name": "…"): the bare word Haven would also match the sector 'Outer Haven'.
   t := public.get_world_map()::text;
-  if t like '%Haven Reach%' or t like '%Slagworks Anchorage%' or t like '%Driftmarch Waypost%' then
+  if t ~ '"name" *: *"Haven"' or t ~ '"name" *: *"Slagworks"' or t ~ '"name" *: *"Driftmarch"' then
     raise exception 'hidden port leaked into get_world_map()';
   end if;
   raise notice 'hidden ports absent from get_world_map ok';
@@ -119,7 +120,7 @@ do $$
 declare n int;
 begin
   select count(*) into n from public.locations
-    where name in ('Safe Rally Point','Pirate Ambush Point','Raider Outpost','Quiet Drift','Pirate Den')
+    where name in ('Refuge','Snare','Reaver','Lull','Blackden')
       and physical_role = 'unclassified' and status = 'active';
   if n <> 5 then raise exception 'an original seed location was modified/repurposed (intact=% of 5)', n; end if;
   raise notice 'original 5 locations unchanged ok';
@@ -166,7 +167,7 @@ do $$
 declare v_loc uuid; v_hidden uuid; v_u uuid;
 begin
   select id into v_loc from public.locations where name='worldhub1ba-port';
-  select id into v_hidden from public.locations where name='Haven Reach';
+  select id into v_hidden from public.locations where name='Haven';
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1ba.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_u;
 
@@ -188,7 +189,7 @@ do $$
 declare v_loc uuid; v_hidden uuid; v_u uuid;
 begin
   select id into v_loc from public.locations where name='worldhub1ba-port';
-  select id into v_hidden from public.locations where name='Haven Reach';
+  select id into v_hidden from public.locations where name='Haven';
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at, confirmation_token, recovery_token, email_change_token_new, email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated','worldhub1ba.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','') returning id into v_u;
 

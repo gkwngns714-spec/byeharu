@@ -90,7 +90,7 @@ reconcile() { local OUT="$1"; RECON_PASS=1
   ck "$(mval "$OUT" CANON_EXIST)" 3 "3 canonical ports exist"
   ck "$(mval "$OUT" CANON_ACTIVE)" 3 "3 canonical ports active"
   ck "$(mval "$OUT" CANON_HIDDEN)" 0 "0 canonical ports hidden"
-  ck "$(mval "$OUT" P1_OK)" 1 "Haven Reach active+identity"; ck "$(mval "$OUT" P2_OK)" 1 "Slagworks active+identity"; ck "$(mval "$OUT" P3_OK)" 1 "Driftmarch active+identity"
+  ck "$(mval "$OUT" P1_OK)" 1 "Haven active+identity"; ck "$(mval "$OUT" P2_OK)" 1 "Slagworks active+identity"; ck "$(mval "$OUT" P3_OK)" 1 "Driftmarch active+identity"
   ck "$(mval "$OUT" N_ROLED)" 3 "exactly 3 role-bearing locations"; ck "$(mval "$OUT" N_ROLED_UNEXP)" 0 "no unexpected role-bearing location"
   ck "$(mval "$OUT" MAP_CANON_VISIBLE)" 3 "3 canonical ports in get_world_map"
   ck "$(mval "$OUT" MAP_UNEXPECTED_STARTER)" 0 "no unexpected starter id in the map"

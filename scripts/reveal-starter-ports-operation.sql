@@ -35,9 +35,9 @@ do $$
 declare
   -- The fixed canonical starter-port set OWNED BY reveal_starter_ports() (migration 0066/0068). NOT
   -- operator-supplied. Kept identical to the function's internal constants by contract.
-  c_p1 constant uuid := 'b1a00001-0066-4a00-8a00-000000000001';  -- Haven Reach (city)
-  c_p2 constant uuid := 'b1a00002-0066-4a00-8a00-000000000002';  -- Slagworks Anchorage (port)
-  c_p3 constant uuid := 'b1a00003-0066-4a00-8a00-000000000003';  -- Driftmarch Waypost (port)
+  c_p1 constant uuid := 'b1a00001-0066-4a00-8a00-000000000001';  -- Haven (city)
+  c_p2 constant uuid := 'b1a00002-0066-4a00-8a00-000000000002';  -- Slagworks (port)
+  c_p3 constant uuid := 'b1a00003-0066-4a00-8a00-000000000003';  -- Driftmarch (port)
   v_ports uuid[] := array[c_p1, c_p2, c_p3];
   v_count_canonical   int;
   v_hidden_before     int;

@@ -13,8 +13,9 @@
 
 export const SPACE_STOP_RPC = 'command_main_ship_space_stop' as const
 
-// Exact RPC args: the idempotency key ONLY. No coordinate/ship/player id — the server derives the ship
-// from auth.uid() and computes the stop point itself.
+// The idempotency-key portion of the RPC args — this pure builder's ONLY responsibility (no coordinates; the
+// server computes the stop point itself). TRADE-FLEET-0C §2.5: the explicit p_main_ship_id is added at the
+// wrapper boundary (commandMainShipSpaceStop), not in this builder, so the builder + its unit test stay intact.
 export interface SpaceStopRpcArgs {
   p_request_id: string
 }
@@ -51,6 +52,42 @@ export function isActiveCoordinateTransit(input: {
     input.spaceMovementStatus === 'moving' &&
     input.spaceMovementTargetKind === 'space'
   )
+}
+
+// ── UX-CLEANUP item 3 — LEGACY fleet-domain transit stop (halt → return home) ────────────────────────
+// MainShipCommand sends travel as legacy fleet_movements (0050/0053) — invisible to the OSN stop above.
+// command_main_ship_stop_transit (0149) halts such a transit and returns the ship home symmetrically.
+export const STOP_TRANSIT_RPC = 'command_main_ship_stop_transit' as const
+
+// Visibility predicate: the caller's main-ship fleet is 'moving' on an OUTBOUND (non-return) mission.
+// Mirrors isActiveCoordinateTransit's shape; the server (flag gate + state guards) stays authoritative —
+// a stale Stop safely no-ops or rejects without mutation.
+export function isActiveLegacyOutboundTransit(input: {
+  fleetStatus: string | null | undefined
+  missionType: string | null | undefined
+}): boolean {
+  return input.fleetStatus === 'moving' && input.missionType != null && input.missionType !== 'return_home'
+}
+
+/**
+ * Map the stop-transit server envelope ({ok:true, stopped, reason?} | {ok:false, code, message}) onto the
+ * SAME SpaceStopResult the shared stop controller consumes: a successful halt → outcome 'stopped'; every
+ * idempotent no-op (already_settled / already_returning / arrived) → outcome 'arrived' (the trip is being
+ * settled by its normal path — nothing was halted). Malformed input fails closed to a safe error.
+ */
+export function parseStopTransitResult(raw: unknown): SpaceStopResult {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, code: 'unavailable', message: spaceStopErrorMessage('unavailable') }
+  }
+  const o = raw as Record<string, unknown>
+  if (o.ok === true) {
+    return { ok: true, outcome: o.stopped === true ? 'stopped' : 'arrived' }
+  }
+  if (o.ok === false && typeof o.code === 'string' && o.code.length > 0) {
+    const message = typeof o.message === 'string' && o.message.length > 0 ? o.message : spaceStopErrorMessage(o.code)
+    return { ok: false, code: o.code, message }
+  }
+  return { ok: false, code: 'unavailable', message: spaceStopErrorMessage('unavailable') }
 }
 
 // Player-facing copy for the narrow set of codes the wrapper can return.

@@ -12,10 +12,10 @@ q() { PGAPPNAME="${2:-mon}" psql "$DB_URL" -X -q -t -A -c "$1"; }
 P1='b1a00001-0066-4a00-8a00-000000000001'
 P2='b1a00002-0066-4a00-8a00-000000000002'
 P3='b1a00003-0066-4a00-8a00-000000000003'
-A1='b1a0a001-0066-4a00-8a00-0000000000a1'   # Haven Reach canonical anchor
-S1='b1a05001-0066-4a00-8a00-000000000051'   # Haven Reach docking service
+A1='b1a0a001-0066-4a00-8a00-0000000000a1'   # Haven canonical anchor
+S1='b1a05001-0066-4a00-8a00-000000000051'   # Haven docking service
 ZONE1=$(q "select zone_id from locations where id='$P1'")
-[ -n "$ZONE1" ] || { echo "FAIL: could not resolve Haven Reach zone"; exit 1; }
+[ -n "$ZONE1" ] || { echo "FAIL: could not resolve Haven zone"; exit 1; }
 
 FIFOA=$(mktemp -u); FIFOB=$(mktemp -u)
 cleanup() {
@@ -78,12 +78,12 @@ phantom_insert_test() {
   sleep 0.3
 }
 
-# fresh non-fixed UUIDs; valid-looking ACTIVE rows for Haven Reach (p1) satisfying every NOT NULL / type /
+# fresh non-fixed UUIDs; valid-looking ACTIVE rows for Haven (p1) satisfying every NOT NULL / type /
 # owner / in-bounds-coord precondition, so the ONLY thing each violates is the existing-active uniqueness.
 phantom_insert_test "insert into space_anchors (id,kind,location_id,space_x,space_y,status) values (gen_random_uuid(),'location','$P1',1,1,'active');" \
-            "space_anchors_one_active_per_location" "2nd active anchor for Haven Reach"
+            "space_anchors_one_active_per_location" "2nd active anchor for Haven"
 phantom_insert_test "insert into location_services (id,location_id,service,status) values (gen_random_uuid(),'$P1','docking','active');" \
-            "location_services_one_per_kind" "2nd active docking service for Haven Reach"
+            "location_services_one_per_kind" "2nd active docking service for Haven"
 
 # verify NO net change + phantom protection held: ports hidden; canonical rows intact; EXACTLY one active anchor
 # and one active docking service per starter port; NO phantom child row survived (rows == only the 3 fixed ids).
