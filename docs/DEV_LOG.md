@@ -5,6 +5,40 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — STOP = HOLD, Slice C: verifier proves the legacy hold round-trip
+
+**Request.** Make `scripts/verify-stop-roundtrip.mjs` prove the NEW legacy Stop=HOLD contract (Slices A/B),
+replacing its stale legacy section which still asserted the removed return-home behavior.
+
+**Change (verifier only — no migration, no client runtime).** Rewrote the LEGACY family (L1–L10) to prove
+**send → stop(HELD) → send-from-held → stop(HELD)**: leg 1 departs present; **stop 1** halts and holds
+(`{stopped:true, held:true}` + halt coords; leg-1 `fleet_movements` row → terminal `'cancelled'`; ship
+`stationary`/`in_space` at its own coordinates; fleet `completed` with `active_movement_id` cleared); a
+**duplicate stop** is an idempotent `{stopped:false, reason:'already_held'}` no-op with no drift; **leg 2
+RESUMES** from the held point via `move_main_ship_to_location` on the SAME fleet (new movement,
+`origin_type='space'`); **stop 2** holds the resumed leg again. Also fixed the OSN re-dock bridge: the ship
+now ends HELD (not home) after the legacy family, so the anchored OSN origin is re-established by sending the
+HELD ship to a dockable port via the one legacy held-departure path (was `send_main_ship_expedition`, which
+requires `home`). New helpers: `active_movement_id` added to the fleet read, `origin_type` to the movement
+read, and `isLegacyHeldFleet`; removed the now-unused `pollShipHome` (a held ship never goes home).
+
+**The OSN family (O1–O10) and the consumed-key regression probe are UNCHANGED** — they already prove the OSN
+true-hold + the receipt-replay pin, and stay valid.
+
+**Assertion-shape note (honest):** the 0155 hold envelope carries `{ok, stopped, held, main_ship_id, space_x,
+space_y}` — deliberately NO `movement_id` (Slice A spec). So the stop assertions check those fields, and
+per-leg identity is proven the stronger way — the specific `mvL1`/`mvL2` `fleet_movements` row going
+`'cancelled'` in the DB — rather than a self-reported envelope id. No migration was changed for this (Slice C
+is verifier + re-dock only).
+
+The before/after Stop semantics and why return-home was removed are recorded in the Slice A (0155) and Slice
+B (0156) entries below — not duplicated here.
+
+**Verification (this sandbox, honest).** `node --check scripts/verify-stop-roundtrip.mjs` → OK.
+`npm run build` → green (no `src/` touched). The end-to-end DB run **defers here by design** (needs
+`SUPABASE_SERVICE_ROLE_KEY` + egress — the 0148–0154 precedent; the script exits 2 without the key). It runs
+at the human apply gate.
+
 ## 2026-07-06 — STOP = HOLD, Slice B: RESUME from the held point (migration 0156)
 
 **Request.** Complete the Stop-hold fix: Slice A (0155) made Stop park the ship in open space, but nothing
