@@ -5,6 +5,60 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — STOP/MOVE FIX, slice 2: the send→stop→send→stop verifier
+
+**New verifier `scripts/verify-stop-roundtrip.mjs`** (+ `package.json` script `verify:stop-roundtrip`)
+— proves goal item (1) end-to-end: Stop works on EVERY in-transit leg, not just the first. It proves
+the SERVER-side contract the slice-1 client fix relies on (each stop sent with a FRESH request id
+halts exactly ITS OWN leg); slice-1's controller unit tests prove the client now emits that fresh key
+per leg — the two layers together close the goal. Covers BOTH stop families plus the regression probe:
+
+1. **Legacy family** (`fleet_movements` / `command_main_ship_stop_transit`): commissioned-docked
+   departure (`move_main_ship_to_location`) → stop 1 transforms THE leg-1 row in place to
+   `mission_type='return_home'` (target = home base), fleet `returning`, ship `returning/NULL` →
+   settles home (on-demand 0151 settle + cron-poll backstop, ship reconciled `home` by the 0050 cron)
+   → `send_main_ship_expedition` leg 2 (asserted a FRESH fleet row) → stop 2 transforms the leg-2 row
+   identically — each stop owns exactly its own trip, twice over.
+2. **OSN family** (the live-reachable defect; `main_ship_space_movements` /
+   `command_main_ship_space_stop`): anchored departure via `command_main_ship_space_move_to_location`
+   → stop 1 with a fresh key (`outcome:'stopped'`, movement `stopped/player_stop`, ship HELD
+   `stationary/in_space` at its own coordinates) → leg 2 re-departs FROM the held-in-space state as a
+   NEW movement → stop 2 with a second fresh key halts the SECOND movement (its own `movement_id`) —
+   the exact reported "second leg" scenario, proven to stop. Wrapper calls try the 0083
+   (`p_main_ship_id`) shape first and fall back to the pre-0083 shape (schema-cache-miss fallback).
+3. **Regression probe (documents WHY slice 1 was required):** on the fresh in-transit leg 2, a stop
+   submitted with the PREVIOUSLY-CONSUMED leg-1 key is asserted to REPLAY the leg-1 receipt verbatim
+   (the OLD `movement_id` in the envelope) and to settle NOTHING — leg 2 stays `moving`. That replay
+   was the live "second Stop no-ops" bug; the probe pins the server contract (receipts are
+   correct-by-design idempotency) so the fresh-key-per-leg client fix is provably the right layer.
+   The probe is OSN-only by nature: the legacy stop carries no request key (idempotent by state).
+
+**Idiom (mirrors `verify-mainship-legacy-dock-travel.mjs` verbatim):** `loadEnv`/admin/`newUser`/
+`poll`/`setCfg`, up-front capture of `travel_scale`/`min_travel_seconds` (set fast for the run,
+restored in `finally`), shared `teardownVerifier` for user cleanup, §11–§13 SKIP-loudly probes
+(commissioning absent, target-legal probe absent, no second dockable port). **NO capability flag is
+toggled — stricter than the sibling:** `mainship_send_enabled` and `mainship_space_movement_enabled`
+are READ ONLY; a family whose flag is dark on the target DB is SKIPPED loudly instead of
+force-enabled (`teardownVerifier` is passed `flag: null`). Exit contract: 1 on any failed assertion;
+**2 when anything was skipped** (required capability absent / a family dark — "not fully proven");
+0 only when both families ran green.
+
+**Verification of this step (honest):** `node --check scripts/verify-stop-roundtrip.mjs` → OK.
+`npm run build` green. `npm run lint` → the same 22 pre-existing errors in untouched files (the new
+`.mjs` sits outside ESLint's `**/*.{ts,tsx}` coverage; no ts/tsx file touched this slice). **DB
+execution deferred:** no `SUPABASE_SERVICE_ROLE_KEY` in this sandbox AND network egress is blocked
+(the 0148–0153 precedent) — the verifier exits 2 by design without the key. Authored + statically
+reviewed only. `docs/SYSTEM_BOUNDARIES.md` unchanged (verifier-only slice — no table, writer,
+constraint, or cross-system call changed).
+
+**MIGRATION-APPLY / ENABLE-TIME CHECKLIST ADDITION (the human owner's gate):** after applying the
+pending migrations (0152→0153) and/or whenever the stop families are enabled on the target DB, ALSO
+run **`npm run verify:stop-roundtrip`** — confirms `send → stop → send → stop` lands on both
+families and the consumed-key replay settles nothing. (Supplements the slice-3 checklist in the
+MAINSHIP LEGACY SPATIAL-STATE FIX entry below; a family dark on that DB skips loudly with exit 2.)
+
+---
+
 ## 2026-07-06 — STOP/MOVE FIX, slice 1: consumed idempotency keys cleared on success (client-only)
 
 **Bug (LIVE — the reported "second Stop no-ops"):** the three pure OSN command controllers kept

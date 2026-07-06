@@ -37,6 +37,7 @@
     "verify:speed-resolver": "node scripts/verify-speed-resolver.mjs",
     "verify:mainship-repair": "node scripts/verify-mainship-repair.mjs",
     "verify:mainship-legacy-dock": "node scripts/verify-mainship-legacy-dock-travel.mjs",
+    "verify:stop-roundtrip": "node scripts/verify-stop-roundtrip.mjs",
     "verify:mainship-move": "node scripts/verify-mainship-move.mjs",
     "verify:osn2": "node scripts/verify-osn2.mjs",
     "verify:exploration": "node scripts/verify-exploration.mjs",
