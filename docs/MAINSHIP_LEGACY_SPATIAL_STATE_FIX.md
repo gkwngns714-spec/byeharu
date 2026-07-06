@@ -1,6 +1,8 @@
 # MAINSHIP LEGACY SPATIAL-STATE FIX — Recon, Audit & Design Decision
 
-**Status:** DECIDED (recon only — no migration/code written in this step)
+**Status:** DECIDED · slice 1 (DEPARTURE/HALT pair-writes) IMPLEMENTED in migration 0152
+(`20260618000152_mainship_legacy_in_flight_spatial_state.sql`); slice 2 (ARRIVAL settle + shared docking
+helper) NOT YET implemented
 **Date:** 2026-07-06 · **Branch:** `autopilot/20260703-064048` · **Migration head:** `20260618000151_legacy_settle_arrival_on_demand.sql` (0151)
 
 ---
@@ -176,14 +178,21 @@ call graph preserved (legacy arrival calls a Main-Ship-owned leaf helper downwar
 
 ---
 
-## 6. What the implementation steps after this doc will do (for the record)
+## 6. Implementation plan & status
 
-1. One forward-only migration: extract the shared docking-transition helper from the 0061/0067 dock writer
-   and re-emit it calling the helper; re-emit the four legacy writers (#1, #2, #4, #5) with the paired
-   `spatial_state=NULL, space_x=NULL, space_y=NULL` writes; re-emit `movement_settle_arrival`'s location
-   branch with the dock/non-dock ship settle. No data-repair (§4).
-2. Verifier proving docked → send → travel → arrive → docked with the 0055 CHECKs never violated
-   (dark-phase verifier pattern).
-3. Same-step doc sync: `docs/MAINSHIP_TRANSITION.md` (legacy ss=NULL rule), `docs/DEV_LOG.md` entry,
-   `docs/SYSTEM_BOUNDARIES.md` only if a sole-writer/ownership fact actually changes (none is expected —
-   Main Ship remains the sole writer of `main_ship_instances` state via its existing functions).
+1. **DONE — migration 0152** (`20260618000152_mainship_legacy_in_flight_spatial_state.sql`): the
+   DEPARTURE/HALT half. New Main-Ship-owned leaf `mainship_mark_legacy_in_flight(ship, status)`
+   (service_role-only; `status ∈ ('traveling','returning')` guarded; one statement writes
+   `status + spatial_state=NULL + space_x/y=NULL`), and the four legacy writers (#1, #2, #4, #5 of the §2
+   audit) re-created body-verbatim from 0051/0053/0149 with only the bare status UPDATE swapped for the
+   helper call (diff-proven, one hunk per function). CREATE OR REPLACE preserved the four RPCs' client
+   grants; only the new helper was grant-locked. Doc-sync shipped in the same step
+   (`docs/SYSTEM_BOUNDARIES.md` "Legacy in-flight spatial representation" blockquote + `docs/DEV_LOG.md`
+   2026-07-06 entry). No data-repair (§4).
+2. **NEXT — the ARRIVAL half** (one forward-only migration): extract the shared ship-docking transition
+   helper from the 0061/0067 dock writer and re-emit that dock writer calling it; re-emit
+   `movement_settle_arrival`'s location branch with the §5 dock/non-dock ship settle.
+3. **NEXT — the verifier** proving docked → send → travel → arrive → docked with the 0055 CHECKs never
+   violated (dark-phase verifier pattern), plus same-step doc sync (`docs/MAINSHIP_TRANSITION.md` gets the
+   legacy ss=NULL rule when the family is complete; `docs/DEV_LOG.md` entry; `docs/SYSTEM_BOUNDARIES.md`
+   again only if a writer/ownership fact changes).

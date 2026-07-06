@@ -141,6 +141,23 @@ server-side functions — **never** by directly changing another system's tables
 > movement/fleet/ship/presence state). The client fires it once per movement id at `arrive_at`
 > (`useSettleDueArrival` due-trigger); poll cadences and the cron are untouched.
 
+> **Legacy in-flight spatial representation (0152).** `mainship_mark_legacy_in_flight(ship, status)` is THE
+> ONE write expressing "legacy movement family → ship in the NULL (legacy) spatial representation":
+> `status ∈ ('traveling','returning')` (raises on anything else) + `spatial_state=NULL` + `space_x/y=NULL`
+> in one statement — a Main-Ship-owned leaf, service_role/internal only (its SECURITY DEFINER callers invoke
+> it as owner). Its four callers — `send_main_ship_expedition` / `move_main_ship_to_location` (departure) and
+> `request_main_ship_return` / `command_main_ship_stop_transit` (halt/return) — were re-created in 0152
+> body-verbatim with ONLY that one ship write changed (CREATE OR REPLACE preserves their client grants).
+> RECORD CORRECTED: `main_ship_instances.spatial_state` is NOT written only by the OSN-3/4 coordinate
+> writers — the legacy movement family also writes it, always to NULL (the legacy domain; it never claims
+> `in_transit`/`in_space`, whose coordinate-movement linkage `mainship_space_validate_context` enforces).
+> This closed the LIVE `ss_at_location_status` violations: a canonically-docked (`at_location`) ship
+> departing or returning via the legacy surface now drops cleanly into the legacy domain. The 0055 lifecycle
+> CHECKs are unchanged. RETIREMENT: the helper retires together with its four callers when the legacy
+> `fleet_movements` main-ship family is replaced by the OSN coordinate domain. The remaining half — settling
+> the ship on legacy ARRIVAL (`movement_settle_arrival`'s location branch, through a docking transition
+> shared with the OSN dock writer) — is the NEXT slice (`docs/MAINSHIP_LEGACY_SPATIAL_STATE_FIX.md` §5/§6).
+
 > **Trade fan-out is acyclic.** Trade Market → {Wallet, Trade Cargo}, Trade Market → Main Ship (read-only, via
 > `mainship_resolve_docked_location`), and Main Ship → Wallet are all one-directional DOWNWARD edges. Wallet and
 > Trade Cargo are leaves — each writes only its own table and calls nothing above it. (The Trade Market →

@@ -5,6 +5,54 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 1: departure/halt pair-writes (migration 0152)
+
+**Bug (LIVE):** every legacy main-ship status writer was spatial_state-blind. Commissioned ships are
+canonically docked (`status='stationary', spatial_state='at_location'` — 0072, ungated/live) with their
+fleet `'present'`, which is exactly what the legacy send surface accepts — so
+`move_main_ship_to_location` (0053:105, sets `'traveling'`) and `request_main_ship_return` (0051:213,
+sets `'returning'`) left `spatial_state='at_location'` behind and tripped the 0055
+`ss_at_location_status` CHECK, aborting the whole RPC. Full recon/audit + design decision:
+`docs/MAINSHIP_LEGACY_SPATIAL_STATE_FIX.md` (the constraints are CORRECT; the writers were the defect).
+
+**Migration `20260618000152_mainship_legacy_in_flight_spatial_state.sql` (forward-only; no shipped file touched).**
+1. **`mainship_mark_legacy_in_flight(p_main_ship_id, p_status)`** — THE one legacy in-flight ship write
+   (Main-Ship-owned leaf; SECURITY DEFINER; service_role-only, clients revoked): guards
+   `p_status ∈ ('traveling','returning')` (raises otherwise), then one statement sets
+   `status = p_status, spatial_state = NULL, space_x = NULL, space_y = NULL, updated_at = now()`.
+   The legacy family lives entirely in the `spatial_state=NULL` domain (decision doc §5) — it never
+   claims `in_transit`/`in_space`. **RETIREMENT CONDITION:** the helper retires together with its four
+   callers when the legacy `fleet_movements` main-ship family is replaced by the OSN coordinate domain.
+2. **Four writers re-created body-VERBATIM with ONLY the bare status UPDATE swapped for the helper call**
+   (scripted extraction + `diff` against 0051/0053/0149 shows exactly one hunk per function — the swap
+   itself; every gate, precondition, comment, and signature is byte-identical):
+   `send_main_ship_expedition` + `request_main_ship_return` (0051 bodies),
+   `move_main_ship_to_location` (0053 body), `command_main_ship_stop_transit` (0149 body).
+   The `mainship_send_enabled` gate lines are verbatim-unchanged (no flag created/read differently/flipped).
+3. **Execute surface:** CREATE OR REPLACE on an existing function PRESERVES owner + grants, so the four
+   RPCs keep their `authenticated` EXECUTE automatically — deliberately NO blanket
+   `revoke execute on all functions` re-lock (that idiom is for migrations adding NEW client RPCs). Only
+   the NEW helper is locked: revoke from public/anon/authenticated, grant to service_role.
+
+**Verification (honest; environmental precedent unchanged from 0148–0151 "authored, reviewed, NOT
+applied"):** no psql/docker/supabase CLI in this sandbox AND network egress is blocked (`verify:m2`/`m3`
+fail with `fetch failed` on plain world-map reads; `example.com` is equally unreachable — the suite
+cannot reach ANY database from here, and the handful of m2 "write blocked ✓" lines are fetch-failure
+false positives, not assertions). The migration was therefore verified statically: the per-function
+diff proof above; 5 `create or replace` / 5 `$$;` terminators / SECURITY DEFINER +
+`set search_path = public` on all 5 / exactly 4 helper call sites / exactly ONE
+`update main_ship_instances` in the file (inside the helper); grant statements touch ONLY the helper.
+**HUMAN CHECKLIST (the owner's gate — never this loop):** (1) apply 0152 after 0148–0151, forward-only;
+(2) re-run `verify:m2..m5,m45` + `verify:mainship-send` / `verify:mainship-move`; (3) confirm the four
+RPCs still hold `authenticated` EXECUTE post-apply (ACL query or an authenticated call probe) — expected
+preserved by CREATE OR REPLACE semantics; (4) confirm a commissioned (`at_location`) ship can now
+depart/return via the legacy surface without a CHECK violation. **NEXT SLICE (not in 0152):** the
+ARRIVAL half — `movement_settle_arrival`'s location branch settling the ship (docked pair via a
+transition shared with the OSN dock writer; legacy fallback for non-dockable 'none' targets) + the
+docked→send→travel→arrive→docked verifier.
+
+---
+
 ## 2026-07-06 — VISUAL FOLLOW-ON item 4 (final sweep): palette-literal inventory; last live straggler converted
 
 **Sweep:** grepped `src/` (`*.ts`/`*.tsx`) for `white/`, `black/`, plain `text/bg/border-white|black`,
