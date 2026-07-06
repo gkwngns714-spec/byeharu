@@ -342,10 +342,11 @@ export async function commandMainShipSettleArrivalLegacy(fleetId?: string | null
 }
 
 // UX-CLEANUP item 3 — thin client wrapper over the LEGACY transit halt (command_main_ship_stop_transit,
-// 0149). Sends ONLY the fleet id of the caller's own in-transit main-ship fleet — no coordinates, ids, or
-// timing (the server interpolates the halt point and fixes the symmetric return time). Idempotent by
-// state server-side (no request key needed: a duplicate/late stop is a clean {stopped:false} no-op). The
-// result is mapped onto the shared SpaceStopResult so the ONE stop controller/CTA is reused unchanged.
+// 0155). Sends ONLY the fleet id of the caller's own in-transit main-ship fleet — no coordinates, ids, or
+// timing (the server interpolates the halt point and holds the ship in open space there). Idempotent by
+// state server-side (no request key needed: a duplicate/late stop on a held ship is a clean {stopped:false,
+// reason:'already_held'} no-op). The result is mapped onto the shared SpaceStopResult so the ONE stop
+// controller/CTA is reused unchanged.
 export async function commandMainShipStopTransit(fleetId: string): Promise<SpaceStopResult> {
   const { data, error } = await supabase.rpc(STOP_TRANSIT_RPC, { p_fleet: fleetId })
   if (error) return { ok: false, code: 'unavailable', message: error.message }

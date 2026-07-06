@@ -5,6 +5,38 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-07 — STOP = HOLD, Slice D2: client copy/comments now match the hold semantics
+
+**Request.** Replace the now-false "return home" wording in the visible Stop UI (and the stale in-code
+comments) so the client matches the server hold behavior — the last frontend piece of the goal.
+
+**Change (frontend copy + comments only — no logic).** Legacy Stop CTA (`MapScreen.tsx`):
+`stopLabel` "Stop — return home" → "Stop — hold here"; `stoppedMessage` "Turning around — returning home."
+→ "Holding position in open space."; its block comment rewritten from "0149: halt → symmetric return home"
+to "0155: halt an in-transit legacy move and HOLD the ship in open space; re-depart to a new leg from the
+held position via MainShipCommand". Comment/doc sync in the stop wrappers: `spaceStopCommand.ts`
+(`STOP_TRANSIT_RPC` header → hold; `parseStopTransitResult` no-op list `already_returning` → `already_held`,
+the 0155 reason rename — the `{stopped:false}→'arrived'` mapping is unchanged and still correct),
+`mainshipApi.ts` (`commandMainShipStopTransit` 0149 → 0155, "symmetric return time" → "holds the ship in open
+space", reason example → `already_held`), `SpaceStopControls.tsx` (header example → "Stop — hold here"),
+`useSpaceStopCommand.ts` (0149 → 0155, hold semantics, and corrected the stale "each legacy trip is a fresh
+fleet" note — hold/resume reuses the SAME fleet, and the per-leg reset comes from the CTA's outbound-only
+mount dropping the fleet id to null and back). The held-send success copy in `MainShipCommand.tsx` was
+already the refined "Main ship departing to …" from Slice D1 (matches the siblings moving/dispatched) — no
+change needed.
+
+**Deliberately UNCHANGED (out of scope):** the OSN stop copy defaults, the stop-controller logic, and the
+still-valid **recall** feature (`request_main_ship_return`, the Ship screen's "Return home" button) — recall
+genuinely returns a present ship home and is not the removed stop-return-home.
+
+The server before/after (why return-home was removed) is in the Slice A (0155) / Slice B (0156) entries — not
+duplicated here. With D2 the Stop=HOLD goal is implementation-complete on this branch (server 0155/0156 +
+verifier + frontend wiring D1 + copy D2), PR-ready for human merge review.
+
+**Verification (this sandbox, honest).** `npm run build` → green. `npm run lint` → the pre-existing 22-error
+baseline, zero new on touched files. `grep -rniE 'return home|returning home|symmetric return'` over `src/`
+shows NO remaining Stop wording (only the unrelated recall button/screen, correctly left).
+
 ## 2026-07-06 — STOP = HOLD, Slice C: verifier proves the legacy hold round-trip
 
 **Request.** Make `scripts/verify-stop-roundtrip.mjs` prove the NEW legacy Stop=HOLD contract (Slices A/B),

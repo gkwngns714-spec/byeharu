@@ -54,9 +54,10 @@ export function isActiveCoordinateTransit(input: {
   )
 }
 
-// ── UX-CLEANUP item 3 — LEGACY fleet-domain transit stop (halt → return home) ────────────────────────
+// ── UX-CLEANUP item 3 — LEGACY fleet-domain transit stop (halt → hold in open space) ─────────────────
 // MainShipCommand sends travel as legacy fleet_movements (0050/0053) — invisible to the OSN stop above.
-// command_main_ship_stop_transit (0149) halts such a transit and returns the ship home symmetrically.
+// command_main_ship_stop_transit (0155) halts such a transit and HOLDS the ship in open space at the
+// interpolated point (no return home; the player re-departs from the held position via MainShipCommand).
 export const STOP_TRANSIT_RPC = 'command_main_ship_stop_transit' as const
 
 /**
@@ -86,7 +87,7 @@ export function isActiveLegacyOutboundTransit(input: {
 /**
  * Map the stop-transit server envelope ({ok:true, stopped, reason?} | {ok:false, code, message}) onto the
  * SAME SpaceStopResult the shared stop controller consumes: a successful halt → outcome 'stopped'; every
- * idempotent no-op (already_settled / already_returning / arrived) → outcome 'arrived' (the trip is being
+ * idempotent no-op (already_settled / already_held / arrived) → outcome 'arrived' (the trip is being
  * settled by its normal path — nothing was halted). Malformed input fails closed to a safe error.
  */
 export function parseStopTransitResult(raw: unknown): SpaceStopResult {
