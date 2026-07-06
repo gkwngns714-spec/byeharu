@@ -5,6 +5,51 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — UI REBUILD (2b): Ship interior — the MainShipPreview + MainShipPanel MERGE
+
+**The audit-mandated collapse, done:** `MainShipPreview` (card + repair + the only recall) and
+`MainShipPanel` (derived status + destination countdown) are MERGED into ONE surface —
+`src/features/ship/ShipStatusCard.tsx` — and both old files are DELETED (they had no other mount
+after the shell slice). The union of capabilities is preserved: repair, recall ("Return home"),
+live travel countdown + progress, hull integrity, cargo/fittings, the no-ship starter-hull teaser.
+Same RPCs verbatim (`repair_main_ship` / `request_main_ship_return`), same double-submit guards,
+same testids (`mainship-repair` / `mainship-recall` / error notes) — presentation restructure only.
+
+**The hierarchy (the design language the other destinations will reuse):** (1) IDENTITY — ship
+name + hull subtitle + one state Badge + a hull-integrity Meter; (2) RIGHT NOW — one prominent
+primary-action block for the current state (Repair when disabled · the live countdown + progress
+when under way, with a "use Stop on the Map" hint · Return-home when away · a quiet "ready to fly"
+line at home); (3) DETAILS — plain-language stat rows (Cargo hold / Speed / Captain seats / Module
+slots). Dev-jargon labels replaced ("Readiness (HP)" → hull integrity; raw status words → player
+sentences). Mobile-first: single column at ~390px, full-width ≥44px action buttons.
+
+**Data/wiring:** the card is fed from the shell's already-polled state (`game.mainShip` +
+`map.mainShipFleet`/`movements`) — the old preview's self-fetch existed only because the pre-shell
+overlay had no shared state; no new fetch, no polling change, no command-logic change.
+**No-softlock:** Repair now renders whenever the ship is disabled, INDEPENDENT of the send flag —
+matching the server's deliberately ungated repair safelock (0052:120); previously the preview's
+repair block sat inside its send-flag branch. Return-home stays send-flag-gated exactly as before
+(its RPC is flag-gated server-side). Dark Ship panels (Modules / Captains / Recruit / ShipSwitcher)
+keep their server-lit `return null` gates verbatim — surfaced only when lit, omitted otherwise.
+
+**New shared primitive (ONE, needed now):** `src/components/ui/StatRow.tsx` — the label/value
+stat row (inside a `<dl>`), exported from the ui index. Ship uses it first; Port/Command/Map
+detail lists adopt it in their interior slices (each still carries a local Row/Fact copy of this
+exact pattern — to be replaced, not duplicated). No other abstraction added.
+
+**Dead code removed with its last caller:** `src/features/fleets/fleetGuards.ts`
+(`isMainShipFleet`) — its final import died with MainShipPanel; the Phase-10E legacy/main-ship UI
+isolation it guarded is now STRUCTURAL (no legacy fleet surface exists in the client at all; the
+server RPCs and their guards are untouched).
+
+**Verification (honest):** `npm run build` green; `npm run lint` at the exact 22-error
+pre-existing baseline (zero on touched files); zero raw palette literals on all touched surfaces
+(grep-verified). Dark Ship panels can't be exercised live from this sandbox (server-lit; no
+service key + blocked egress) — their gates were not modified. `docs/SYSTEM_BOUNDARIES.md`
+unchanged (client-only presentation over unchanged server ownership).
+
+---
+
 ## 2026-07-06 — UI REBUILD (2b): the persistent four-destination nav shell (structure + navigation)
 
 **The restructure (not a re-skin):** ONE persistent, mobile-first bottom tab bar — **Map · Ship ·
