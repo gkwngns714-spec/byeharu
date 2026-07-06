@@ -141,6 +141,41 @@ server-side functions — **never** by directly changing another system's tables
 > movement/fleet/ship/presence state). The client fires it once per movement id at `arrive_at`
 > (`useSettleDueArrival` due-trigger); poll cadences and the cron are untouched.
 
+> **Legacy in-flight spatial representation (0152).** `mainship_mark_legacy_in_flight(ship, status)` is THE
+> ONE write expressing "legacy movement family → ship in the NULL (legacy) spatial representation":
+> `status ∈ ('traveling','returning')` (raises on anything else) + `spatial_state=NULL` + `space_x/y=NULL`
+> in one statement — a Main-Ship-owned leaf, service_role/internal only (its SECURITY DEFINER callers invoke
+> it as owner). Its four callers — `send_main_ship_expedition` / `move_main_ship_to_location` (departure) and
+> `request_main_ship_return` / `command_main_ship_stop_transit` (halt/return) — were re-created in 0152
+> body-verbatim with ONLY that one ship write changed (CREATE OR REPLACE preserves their client grants).
+> RECORD CORRECTED: `main_ship_instances.spatial_state` is NOT written only by the OSN-3/4 coordinate
+> writers — the legacy movement family also writes it, always to NULL (the legacy domain; it never claims
+> `in_transit`/`in_space`, whose coordinate-movement linkage `mainship_space_validate_context` enforces).
+> This closed the LIVE `ss_at_location_status` violations: a canonically-docked (`at_location`) ship
+> departing or returning via the legacy surface now drops cleanly into the legacy domain. The 0055 lifecycle
+> CHECKs are unchanged. RETIREMENT: the helper retires together with its four callers when the legacy
+> `fleet_movements` main-ship family is replaced by the OSN coordinate domain. The other half — settling the
+> ship on legacy ARRIVAL — shipped in 0153 (next blockquote).
+
+> **Canonical docked-ship write (0153).** `mainship_mark_docked_at_location(ship)` is THE ONE write
+> expressing "main ship → canonically docked" (`status='stationary', spatial_state='at_location',
+> space_x/y=NULL`) — a Main-Ship-owned leaf, service_role/internal only, with exactly TWO callers, both
+> DOWNWARD: the OSN Dock-0 writer `mainship_space_dock_at_location` (0067 body re-created in 0153 with its
+> inline dock-branch ship write swapped for the helper; its terminal-failure `in_space` write is unchanged)
+> and legacy Movement's `movement_settle_arrival` (0151 body re-created in 0153: after `fleet_set_present` +
+> `presence_create`, a main-ship fleet's location-arrival now settles the SHIP — to the canonical docked pair
+> when `mainship_space_location_target_legal` passes, or to NOTHING when the target is an active `'none'` but
+> NON-dockable location, leaving the ship in the constraint-legal `legacy_present` NULL representation from
+> its 0152 departure write; the `main_ship_id IS NOT NULL` gate keeps ordinary unit fleets untouched). NO
+> second writer to `main_ship_instances`: both docking routes go through this one helper, and the docked-pair
+> write exists NOWHERE else. NEW CALL EDGE (read-only, downward): `movement_settle_arrival` →
+> `mainship_space_location_target_legal` (the STABLE dockability predicate leaf, 0067) — both new edges point
+> at leaves that call nothing, so the call graph stays acyclic. `process_mainship_space_arrivals` /
+> `process_fleet_movements` / `command_main_ship_settle_arrival[_legacy]` are untouched — they delegate to
+> the two re-created functions and inherit the fix. RETIREMENT: with the legacy `fleet_movements` main-ship
+> family's replacement by the OSN coordinate domain, Dock-0 becomes the helper's only caller and the write
+> may fold back inline (same condition as 0152's in-flight helper).
+
 > **Trade fan-out is acyclic.** Trade Market → {Wallet, Trade Cargo}, Trade Market → Main Ship (read-only, via
 > `mainship_resolve_docked_location`), and Main Ship → Wallet are all one-directional DOWNWARD edges. Wallet and
 > Trade Cargo are leaves — each writes only its own table and calls nothing above it. (The Trade Market →

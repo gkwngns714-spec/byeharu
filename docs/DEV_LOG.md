@@ -5,6 +5,170 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 3: the end-to-end round-trip verifier
+
+**New verifier `scripts/verify-mainship-legacy-dock-travel.mjs`** (+ `package.json` script
+`verify:mainship-legacy-dock`) — proves the EXACT live scenario the hotfix targets, end-to-end:
+
+1. `commission_first_main_ship` (NOT `ensure_main_ship_for_player`) → asserts the canonical DOCKED start
+   (`status='stationary', spatial_state='at_location', space_x/y NULL`) — the state the live bug fired from.
+2. Picks destinations from the world map via `mainship_space_location_target_legal` (admin RPC): a
+   DOCKABLE port `D` (`ok:true`, distinct from the current dock) AND a NON-dockable active `'none'`
+   safe-zone `N` (`ok:false` — Safe Rally Point / Quiet Drift); dies loudly if either kind is missing.
+3. **Regression guard 1 (the reported live bug):** docked → `move_main_ship_to_location(fleet, D)` returns
+   NO error (pre-0152: `ss_at_location_status` violation) and the ship drops to legacy in-flight
+   (`traveling` / `spatial_state NULL` / coords NULL — `mainship_mark_legacy_in_flight`).
+4. Settles the arrival (on-demand legacy settle + cron-poll backstop) → fleet present at `D`, active
+   presence at `D`, and the SHIP re-docked canonically (0153's shared `mainship_mark_docked_at_location`)
+   — the docked→send→travel→arrive→docked loop closed with zero constraint violation.
+5. **Non-dock fallback:** `D`→`N` settles with the fleet present at `N` and the ship staying
+   `spatial_state=NULL` (coherent `legacy_present`; nothing writes the ship).
+6. **Regression guard 2 (the second live bug):** re-docks at `D`, then `request_main_ship_return` from the
+   DOCKED ship returns NO error → ship `returning` / `spatial_state NULL` → settles home (fleet completed).
+7. **Constraint guard (BEHAVIORAL — documented in the script header):** PostgREST exposes no `pg_constraint`
+   path and the repo ships no introspection RPC, so instead of a metadata query the guard attempts each
+   illegal direct write (service-role — bypasses RLS, never CHECKs) and asserts Postgres REJECTS it naming
+   the constraint. Each probe runs from a ship state where EXACTLY ONE lifecycle constraint is violated,
+   so the reported constraint name is deterministic (a docked ship's `spatial_state→in_transit/home/
+   destroyed` would violate `stationary_spatial_state` too — ambiguous which fires): from DOCKED —
+   `ss_at_location_status` (the verbatim pre-0152 live write `status→traveling`) and
+   `stationary_spatial_state` (`spatial_state→NULL`); from in-flight TRAVELING — `ss_home_status`,
+   `ss_destroyed_status`, and `ss_in_space_status` (`in_space` carries coords 1,1 so the 0054
+   `space_coords` rule is satisfied and only the lifecycle rule fires); from RETURNING —
+   `ss_in_transit_status` (from `traveling` that write would be the LEGAL OSN pair and would succeed).
+   All SIX covered — proving they still EXIST and ENFORCE (strictly stronger than presence). The fix
+   corrected the WRITERS, never the constraints.
+
+**Proof principle (script header):** every RPC returning without error across steps 3–6 IS the
+constraint-never-violated proof — a violating write raises inside the RPC and fails it (that raise WAS the
+live bug). **Idiom:** mirrors `verify-mainship-move.mjs` (`loadEnv`/admin/`newUser`/`poll`/`setCfg`,
+up-front capture of `mainship_send_enabled`/`travel_scale`/`min_travel_seconds`, shared
+`teardownVerifier` restore in `finally` — no re-implemented teardown; NO OSN flag is toggled). Deployment
+probes SKIP loudly (§11–§13 idiom) when 0152/0153's helpers or commissioning (starter ports) are absent.
+
+**Verification of this step (honest):** `node --check` → OK. `npm run lint` → 22 errors, ALL pre-existing
+in `src/`/`tests/` ts+tsx files this step never touched (ESLint's config lints `**/*.{ts,tsx}` only — the
+new `.mjs` is outside its coverage; `git status` shows zero src/tests modifications, so HEAD lints
+identically). DB execution deferred: no `SUPABASE_SERVICE_ROLE_KEY` in this sandbox AND network egress is
+blocked (the 0148–0153 precedent) — the verifier exits 2 by design without the key.
+
+**MIGRATION-APPLY VERIFICATION CHECKLIST (the human owner's gate — supersedes the slice-1/2 lists):**
+1. Apply migrations **0152 → 0153** (forward-only, in order, after 0148–0151).
+2. `npm run verify:m2 && npm run verify:m3 && npm run verify:m4 && npm run verify:m5 && npm run verify:m45`
+   (suite stays green), plus `npm run verify:mainship-send` / `npm run verify:mainship-move`.
+3. **`npm run verify:mainship-legacy-dock`** — confirms a docked ship departs/returns and re-docks with no
+   CHECK violation (regression guards for both live bugs), the non-dock fallback, and all six 0055
+   constraints still enforcing.
+4. Confirm no client execute grants changed (the four legacy RPCs keep `authenticated`; both 0152/0153
+   helpers and the re-created internals stay client-revoked).
+
+---
+
+## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 2: legacy arrival docks the ship (migration 0153)
+
+**Gap closed:** `movement_settle_arrival`'s location branch (0151) settled the FLEET (`fleet_set_present`
++ `presence_create`) but never the SHIP — a legacy-arrived main ship sat `status='traveling'`,
+`spatial_state=NULL` while "present" (decision-doc §2 writer #6). Post-0152 a docked→send→arrive trip
+would end in `legacy_present` instead of returning to the canonical docked pair.
+
+**Migration `20260618000153_mainship_legacy_arrival_docks_ship.sql` (forward-only; no shipped file touched).**
+1. **`mainship_mark_docked_at_location(p_main_ship_id)`** — THE one canonical docked-ship write
+   (`status='stationary', spatial_state='at_location', space_x/y=NULL`; Main-Ship-owned leaf; SECURITY
+   DEFINER; service_role-only, clients revoked) — the arrival-side mirror of 0152's
+   `mainship_mark_legacy_in_flight`. Shared by BOTH docking routes (the OSN Dock-0 writer AND the legacy
+   arrival settle); the docked-pair write now exists in exactly ONE place. **RETIREMENT:** when the legacy
+   `fleet_movements` main-ship family is replaced by the OSN coordinate domain, Dock-0 becomes the sole
+   caller and the write may fold back inline (same condition as 0152's helper).
+2. **`mainship_space_dock_at_location` re-created from its LATEST shipped body (0067:499 — the anchor-backed
+   Dock-0 re-creation; the 0061 birth body is superseded — the 0152 latest-body precedent)** with ONLY the
+   dock-branch inline ship write (0067:618-621) swapped for the helper call; the terminal-failure `in_space`
+   write and everything else are byte-identical (scripted diff: two hunks — the swap and the honestly
+   amended settlement-timestamp comment). **Accepted micro-delta (documented in-file):** the dock branch's
+   SHIP `updated_at` is now stamped `now()` by the shared helper instead of `v_settled_at` —
+   bookkeeping-only; the settlement record (movement `resolved_at` + fleets stamps) keeps `v_settled_at`
+   exactly.
+3. **`movement_settle_arrival` re-created from 0151 body-verbatim** (scripted diff: two hunks — the
+   `v_main_ship uuid` declare and the new block) with the location branch gaining, after `presence_create`:
+   look up `fleets.main_ship_id`; if non-NULL AND `mainship_space_location_target_legal(target)` passes →
+   `mainship_mark_docked_at_location(ship)` (coherent `at_location`: `fleet_set_present` already set
+   present/location-mode/`active_movement_id=NULL`, presence matches); otherwise write NOTHING — a
+   main-ship fleet at an active `'none'` but NON-dockable target (seed safe-zones Safe Rally Point / Quiet
+   Drift — the reachable §3 case) stays in the constraint-legal `legacy_present` NULL representation from
+   its 0152 departure write, and ordinary unit fleets (`main_ship_id` NULL) are untouched. The
+   `target_type='base'` branch, `process_fleet_movements`, `process_mainship_space_arrivals`, and both
+   on-demand settle RPCs are UNTOUCHED — they delegate here and inherit the fix.
+4. **Execute surface:** CREATE OR REPLACE preserves grants on the two re-created internals (both were
+   client-revoked at creation); only the NEW helper is locked (revoke public/anon/authenticated → grant
+   service_role). `movement_settle_arrival`'s new call to the service_role predicate runs as function owner
+   inside SECURITY DEFINER — NO client grant surface changes anywhere.
+
+**Verification (honest; environmental precedent unchanged — 0148–0152 "authored, reviewed, NOT applied"):**
+no psql/docker/supabase CLI in this sandbox and network egress is blocked (supabase host probe → HTTP 000),
+so `verify:m*` cannot reach any database from here. Statically verified: the two scripted per-function
+diffs above (only the intended hunks); 3 `create or replace` / 3 `$$;` / SECURITY DEFINER +
+`set search_path = public` on all 3; exactly TWO `update main_ship_instances` in the file (the helper's
+docked write + the verbatim terminal-failure `in_space` write); the docked-pair write appears exactly ONCE;
+grant statements touch ONLY the new helper; no blanket re-lock.
+**HUMAN CHECKLIST (the owner's gate — never this loop):** (1) apply 0153 after 0152, forward-only;
+(2) re-run `verify:m2..m5,m45` + `verify:mainship-send` / `verify:mainship-move` + the OSN settle verifier,
+and run **`npm run verify:mainship-legacy-dock`** (slice 3 — the round-trip + regression-guard verifier;
+see the slice-3 entry's canonical checklist); (3) confirm no client execute grants changed post-apply (the
+four legacy RPCs keep `authenticated`; the two re-created internals and both helpers stay client-revoked);
+(4) confirm a commissioned ship's docked→send→travel→arrive-at-port trip ends
+`status='stationary', spatial_state='at_location'` with no CHECK violation, and an arrival at
+Safe Rally Point / Quiet Drift ends `legacy_present` (`spatial_state=NULL`) — item (4) is exactly what the
+slice-3 verifier automates.
+
+---
+
+## 2026-07-06 — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 1: departure/halt pair-writes (migration 0152)
+
+**Bug (LIVE):** every legacy main-ship status writer was spatial_state-blind. Commissioned ships are
+canonically docked (`status='stationary', spatial_state='at_location'` — 0072, ungated/live) with their
+fleet `'present'`, which is exactly what the legacy send surface accepts — so
+`move_main_ship_to_location` (0053:105, sets `'traveling'`) and `request_main_ship_return` (0051:213,
+sets `'returning'`) left `spatial_state='at_location'` behind and tripped the 0055
+`ss_at_location_status` CHECK, aborting the whole RPC. Full recon/audit + design decision:
+`docs/MAINSHIP_LEGACY_SPATIAL_STATE_FIX.md` (the constraints are CORRECT; the writers were the defect).
+
+**Migration `20260618000152_mainship_legacy_in_flight_spatial_state.sql` (forward-only; no shipped file touched).**
+1. **`mainship_mark_legacy_in_flight(p_main_ship_id, p_status)`** — THE one legacy in-flight ship write
+   (Main-Ship-owned leaf; SECURITY DEFINER; service_role-only, clients revoked): guards
+   `p_status ∈ ('traveling','returning')` (raises otherwise), then one statement sets
+   `status = p_status, spatial_state = NULL, space_x = NULL, space_y = NULL, updated_at = now()`.
+   The legacy family lives entirely in the `spatial_state=NULL` domain (decision doc §5) — it never
+   claims `in_transit`/`in_space`. **RETIREMENT CONDITION:** the helper retires together with its four
+   callers when the legacy `fleet_movements` main-ship family is replaced by the OSN coordinate domain.
+2. **Four writers re-created body-VERBATIM with ONLY the bare status UPDATE swapped for the helper call**
+   (scripted extraction + `diff` against 0051/0053/0149 shows exactly one hunk per function — the swap
+   itself; every gate, precondition, comment, and signature is byte-identical):
+   `send_main_ship_expedition` + `request_main_ship_return` (0051 bodies),
+   `move_main_ship_to_location` (0053 body), `command_main_ship_stop_transit` (0149 body).
+   The `mainship_send_enabled` gate lines are verbatim-unchanged (no flag created/read differently/flipped).
+3. **Execute surface:** CREATE OR REPLACE on an existing function PRESERVES owner + grants, so the four
+   RPCs keep their `authenticated` EXECUTE automatically — deliberately NO blanket
+   `revoke execute on all functions` re-lock (that idiom is for migrations adding NEW client RPCs). Only
+   the NEW helper is locked: revoke from public/anon/authenticated, grant to service_role.
+
+**Verification (honest; environmental precedent unchanged from 0148–0151 "authored, reviewed, NOT
+applied"):** no psql/docker/supabase CLI in this sandbox AND network egress is blocked (`verify:m2`/`m3`
+fail with `fetch failed` on plain world-map reads; `example.com` is equally unreachable — the suite
+cannot reach ANY database from here, and the handful of m2 "write blocked ✓" lines are fetch-failure
+false positives, not assertions). The migration was therefore verified statically: the per-function
+diff proof above; 5 `create or replace` / 5 `$$;` terminators / SECURITY DEFINER +
+`set search_path = public` on all 5 / exactly 4 helper call sites / exactly ONE
+`update main_ship_instances` in the file (inside the helper); grant statements touch ONLY the helper.
+**HUMAN CHECKLIST (the owner's gate — never this loop):** (1) apply 0152 after 0148–0151, forward-only;
+(2) re-run `verify:m2..m5,m45` + `verify:mainship-send` / `verify:mainship-move`; (3) confirm the four
+RPCs still hold `authenticated` EXECUTE post-apply (ACL query or an authenticated call probe) — expected
+preserved by CREATE OR REPLACE semantics; (4) confirm a commissioned (`at_location`) ship can now
+depart/return via the legacy surface without a CHECK violation. **NEXT SLICE (not in 0152):** the
+ARRIVAL half — `movement_settle_arrival`'s location branch settling the ship (docked pair via a
+transition shared with the OSN dock writer; legacy fallback for non-dockable 'none' targets) + the
+docked→send→travel→arrive→docked verifier.
+
+---
+
 ## 2026-07-06 — VISUAL FOLLOW-ON item 4 (final sweep): palette-literal inventory; last live straggler converted
 
 **Sweep:** grepped `src/` (`*.ts`/`*.tsx`) for `white/`, `black/`, plain `text/bg/border-white|black`,
