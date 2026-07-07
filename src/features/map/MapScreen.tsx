@@ -54,7 +54,7 @@ export function MapScreen() {
   const {
     map: {
       loading, error, locations, meta, base, mainShip, movements,
-      mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement, refresh,
+      mainshipSendEnabled, mainShipFleet, mainShipHeldFleet, mainShipPresence, mainShipSpaceMovement, refresh,
     },
   } = useShellState()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -64,10 +64,11 @@ export function MapScreen() {
 
   // UX-CLEANUP item 3 — stop for a LEGACY in-transit main-ship move (MainShipCommand sends create
   // fleet_movements, invisible to the OSN stop mounts). Reuses the ONE stop controller/CTA, wired to
-  // command_main_ship_stop_transit (0149: halt → symmetric return home; server-gated on
-  // mainship_send_enabled, idempotent by state). Renders only for an OUTBOUND transit of the main-ship
-  // fleet — a return leg has nothing to stop. The moving-row derivation is the shared selector
-  // (selectActiveLegacyMovement — AppShell's settle wiring uses the same one).
+  // command_main_ship_stop_transit (0155: halt an in-transit legacy move and HOLD the ship in open space
+  // at the interpolated point — no return home; the player re-departs to a new leg from the held position
+  // via MainShipCommand, Slice B/D1). Server-gated on mainship_send_enabled, idempotent by state. Renders
+  // only for an OUTBOUND transit of the main-ship fleet — a return leg has nothing to stop. The moving-row
+  // derivation is the shared selector (selectActiveLegacyMovement — AppShell's settle wiring uses the same one).
   const legacyMove = selectActiveLegacyMovement(mainShipFleet, movements)
   const inLegacyOutboundTransit = isActiveLegacyOutboundTransit({
     fleetStatus: mainShipFleet?.status,
@@ -134,8 +135,8 @@ export function MapScreen() {
                 outcome={legacyStop.state.outcome}
                 onStop={() => void legacyStop.submit().finally(() => void refresh())}
                 title="Main ship in transit"
-                stopLabel="Stop — return home"
-                stoppedMessage="Turning around — returning home."
+                stopLabel="Stop — hold here"
+                stoppedMessage="Holding position in open space."
               />
             )}
             {/* SERVER-LIT overlay rail (bottom-left): the dark feature panels ride ONE positioned,
@@ -203,6 +204,7 @@ export function MapScreen() {
               location={selected}
               mainShip={mainShip}
               fleet={mainShipFleet}
+              heldFleet={mainShipHeldFleet}
               onSent={refresh}
             />
           )}

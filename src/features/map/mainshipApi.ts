@@ -106,6 +106,9 @@ export interface MainShipFleet {
 
 const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
 
+// The ONE MainShipFleet column list — shared by every fleet owner-read below (no second copy).
+const MAIN_SHIP_FLEET_COLS = 'id, status, current_location_id, location_mode, active_movement_id, active_space_movement_id'
+
 /**
  * Owner-read the caller's active main-ship fleet (the one tagged with this ship), if any.
  * Returns null when the ship is idle at home (no in-flight linked fleet).
@@ -113,13 +116,36 @@ const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
 export async function fetchActiveMainShipFleet(mainShipId: string): Promise<MainShipFleet | null> {
   const { data, error } = await supabase
     .from('fleets')
-    .select('id, status, current_location_id, location_mode, active_movement_id, active_space_movement_id')
+    .select(MAIN_SHIP_FLEET_COLS)
     .eq('main_ship_id', mainShipId)
     .in('status', ACTIVE_FLEET_STATUSES)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (error) return null // non-fatal: treat as no active fleet (home)
+  return (data as MainShipFleet) ?? null
+}
+
+/**
+ * Owner-read the HELD ship's current fleet — its most-recent `fleets` row in status 'completed'.
+ * Legacy fleets are created solely at home-departure and the SAME fleet persists across
+ * move→stop→hold→resume (Slice B reuses p_fleet), so while the ship is HELD in open space its latest
+ * completed fleet IS the held one (0155 settles the stopped fleet to 'completed'). The caller invokes
+ * this ONLY when the ship is held (spatial_state='in_space'); that gate is what distinguishes a held
+ * ship's completed fleet from a returned-home ship's completed fleet. It exists to address
+ * move_main_ship_to_location's held-departure branch (Slice B) by fleet id. Null on error/none (non-fatal,
+ * the fetchActiveMainShipFleet idiom).
+ */
+export async function fetchHeldMainShipFleet(mainShipId: string): Promise<MainShipFleet | null> {
+  const { data, error } = await supabase
+    .from('fleets')
+    .select(MAIN_SHIP_FLEET_COLS)
+    .eq('main_ship_id', mainShipId)
+    .eq('status', 'completed')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return null // non-fatal: treat as no held fleet
   return (data as MainShipFleet) ?? null
 }
 
@@ -316,10 +342,11 @@ export async function commandMainShipSettleArrivalLegacy(fleetId?: string | null
 }
 
 // UX-CLEANUP item 3 — thin client wrapper over the LEGACY transit halt (command_main_ship_stop_transit,
-// 0149). Sends ONLY the fleet id of the caller's own in-transit main-ship fleet — no coordinates, ids, or
-// timing (the server interpolates the halt point and fixes the symmetric return time). Idempotent by
-// state server-side (no request key needed: a duplicate/late stop is a clean {stopped:false} no-op). The
-// result is mapped onto the shared SpaceStopResult so the ONE stop controller/CTA is reused unchanged.
+// 0155). Sends ONLY the fleet id of the caller's own in-transit main-ship fleet — no coordinates, ids, or
+// timing (the server interpolates the halt point and holds the ship in open space there). Idempotent by
+// state server-side (no request key needed: a duplicate/late stop on a held ship is a clean {stopped:false,
+// reason:'already_held'} no-op). The result is mapped onto the shared SpaceStopResult so the ONE stop
+// controller/CTA is reused unchanged.
 export async function commandMainShipStopTransit(fleetId: string): Promise<SpaceStopResult> {
   const { data, error } = await supabase.rpc(STOP_TRANSIT_RPC, { p_fleet: fleetId })
   if (error) return { ok: false, code: 'unavailable', message: error.message }

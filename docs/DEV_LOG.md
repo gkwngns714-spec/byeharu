@@ -5,6 +5,187 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-07 — STOP = HOLD, Slice D2: client copy/comments now match the hold semantics
+
+**Request.** Replace the now-false "return home" wording in the visible Stop UI (and the stale in-code
+comments) so the client matches the server hold behavior — the last frontend piece of the goal.
+
+**Change (frontend copy + comments only — no logic).** Legacy Stop CTA (`MapScreen.tsx`):
+`stopLabel` "Stop — return home" → "Stop — hold here"; `stoppedMessage` "Turning around — returning home."
+→ "Holding position in open space."; its block comment rewritten from "0149: halt → symmetric return home"
+to "0155: halt an in-transit legacy move and HOLD the ship in open space; re-depart to a new leg from the
+held position via MainShipCommand". Comment/doc sync in the stop wrappers: `spaceStopCommand.ts`
+(`STOP_TRANSIT_RPC` header → hold; `parseStopTransitResult` no-op list `already_returning` → `already_held`,
+the 0155 reason rename — the `{stopped:false}→'arrived'` mapping is unchanged and still correct),
+`mainshipApi.ts` (`commandMainShipStopTransit` 0149 → 0155, "symmetric return time" → "holds the ship in open
+space", reason example → `already_held`), `SpaceStopControls.tsx` (header example → "Stop — hold here"),
+`useSpaceStopCommand.ts` (0149 → 0155, hold semantics, and corrected the stale "each legacy trip is a fresh
+fleet" note — hold/resume reuses the SAME fleet, and the per-leg reset comes from the CTA's outbound-only
+mount dropping the fleet id to null and back). The held-send success copy in `MainShipCommand.tsx` was
+already the refined "Main ship departing to …" from Slice D1 (matches the siblings moving/dispatched) — no
+change needed.
+
+**Deliberately UNCHANGED (out of scope):** the OSN stop copy defaults, the stop-controller logic, and the
+still-valid **recall** feature (`request_main_ship_return`, the Ship screen's "Return home" button) — recall
+genuinely returns a present ship home and is not the removed stop-return-home.
+
+The server before/after (why return-home was removed) is in the Slice A (0155) / Slice B (0156) entries — not
+duplicated here. With D2 the Stop=HOLD goal is implementation-complete on this branch (server 0155/0156 +
+verifier + frontend wiring D1 + copy D2), PR-ready for human merge review.
+
+**Verification (this sandbox, honest).** `npm run build` → green. `npm run lint` → the pre-existing 22-error
+baseline, zero new on touched files. `grep -rniE 'return home|returning home|symmetric return'` over `src/`
+shows NO remaining Stop wording (only the unrelated recall button/screen, correctly left).
+
+## 2026-07-06 — STOP = HOLD, Slice C: verifier proves the legacy hold round-trip
+
+**Request.** Make `scripts/verify-stop-roundtrip.mjs` prove the NEW legacy Stop=HOLD contract (Slices A/B),
+replacing its stale legacy section which still asserted the removed return-home behavior.
+
+**Change (verifier only — no migration, no client runtime).** Rewrote the LEGACY family (L1–L10) to prove
+**send → stop(HELD) → send-from-held → stop(HELD)**: leg 1 departs present; **stop 1** halts and holds
+(`{stopped:true, held:true}` + halt coords; leg-1 `fleet_movements` row → terminal `'cancelled'`; ship
+`stationary`/`in_space` at its own coordinates; fleet `completed` with `active_movement_id` cleared); a
+**duplicate stop** is an idempotent `{stopped:false, reason:'already_held'}` no-op with no drift; **leg 2
+RESUMES** from the held point via `move_main_ship_to_location` on the SAME fleet (new movement,
+`origin_type='space'`); **stop 2** holds the resumed leg again. Also fixed the OSN re-dock bridge: the ship
+now ends HELD (not home) after the legacy family, so the anchored OSN origin is re-established by sending the
+HELD ship to a dockable port via the one legacy held-departure path (was `send_main_ship_expedition`, which
+requires `home`). New helpers: `active_movement_id` added to the fleet read, `origin_type` to the movement
+read, and `isLegacyHeldFleet`; removed the now-unused `pollShipHome` (a held ship never goes home).
+
+**The OSN family (O1–O10) and the consumed-key regression probe are UNCHANGED** — they already prove the OSN
+true-hold + the receipt-replay pin, and stay valid.
+
+**Assertion-shape note (honest):** the 0155 hold envelope carries `{ok, stopped, held, main_ship_id, space_x,
+space_y}` — deliberately NO `movement_id` (Slice A spec). So the stop assertions check those fields, and
+per-leg identity is proven the stronger way — the specific `mvL1`/`mvL2` `fleet_movements` row going
+`'cancelled'` in the DB — rather than a self-reported envelope id. No migration was changed for this (Slice C
+is verifier + re-dock only).
+
+The before/after Stop semantics and why return-home was removed are recorded in the Slice A (0155) and Slice
+B (0156) entries below — not duplicated here.
+
+**Verification (this sandbox, honest).** `node --check scripts/verify-stop-roundtrip.mjs` → OK.
+`npm run build` → green (no `src/` touched). The end-to-end DB run **defers here by design** (needs
+`SUPABASE_SERVICE_ROLE_KEY` + egress — the 0148–0154 precedent; the script exits 2 without the key). It runs
+at the human apply gate.
+
+## 2026-07-06 — STOP = HOLD, Slice B: RESUME from the held point (migration 0156)
+
+**Request.** Complete the Stop-hold fix: Slice A (0155) made Stop park the ship in open space, but nothing
+could then Send it onward — recon confirmed no legacy Send accepts a `spatial_state='in_space'` fleet
+(`send_main_ship_expedition` needs ship `status='home'`; `move_main_ship_to_location` /
+`request_main_ship_return` need fleet `status='present'` + active presence). This slice adds the resume.
+
+**Design decision (self-approved): ONE send path, not a parallel resume RPC.** Extend
+`move_main_ship_to_location` to depart from EITHER validated departure state — "present at a location" OR the
+new "held in open space" — deriving the movement ORIGIN accordingly. "Depart from a held point" is just a
+different origin for the same location-target `rally` movement, so the one RPC keeps ONE movement path and
+reuses its destination-validation / speed / `movement_create` / in-flight-marking machinery.
+
+**Change (Slice B — migration `20260618000156_mainship_legacy_depart_from_hold.sql`):**
+1. **`fleet_movements.origin_type` domain extended** (forward-only, additive): drop + re-add the inline
+   column CHECK → `origin_type in ('base','location','zone','space')`. A `'space'` origin = departed from a
+   held open-space coordinate with NO base/location/zone anchor (`origin_*_id` all NULL, `origin_x/y` = the
+   held coordinates). **Safe because `origin_type` is provenance metadata only** — settlement branches solely
+   on `target_type` (`process_fleet_movements` 0030:53,60,74; `movement_settle_arrival` 0151/0153); nothing
+   anywhere reads `origin_type` to decide (verified across migrations + `src/`). Same table, same sole writer
+   (Movement), same `target_type`-driven arrival — **not** the OSN coordinate domain (`main_ship_space_movements`
+   untouched).
+2. **`move_main_ship_to_location` generalized** (0152 body): present-departure path preserved; a **held-departure
+   branch** is selected when the fleet is not present — it requires the exact 0155 held shape
+   (`main_ship_instances` status='stationary', spatial_state='in_space', space_x/y NOT NULL) and departs from
+   those raw coordinates (`origin_type='space'`, no presence to close). Destination validation (active,
+   `activity_type='none'`, non-combat) + speed + `movement_create` + the in-flight mark are **shared** — the
+   ONLY per-branch difference is how the origin is derived (and `presence_complete` on the present branch).
+   The fleet flip to `moving` is ONE shared guarded UPDATE (present: `status='present'`; hold:
+   `status='completed'`; both `active_movement_id IS NULL`), raise+rollback on miss (0053 discipline). The
+   ship is marked in-flight via the **same 0152 helper** the present branch already uses
+   (`mainship_mark_legacy_in_flight(ship,'traveling')`) — no inline duplication; for a held departure that
+   same write clears the held coordinates as the ship leaves the hold point.
+
+**Accepted micro-deltas on the present path (documented; observable behavior preserved — 0153 precedent):**
+the shared fleet-flip guard adds a NO-OP `active_movement_id IS NULL` for present and generalizes the
+race-only raise message; `presence_complete` now runs just after `movement_create` (independent tables, same
+atomic txn); the success envelope gains an additive `from` marker ('present' | 'hold') with existing keys
+unchanged (`from_location_id` NULL for a held departure).
+
+**No flag flip, no OSN touch, no new table, no new RPC, no `send_main_ship_expedition` change.** Movement
+stays sole writer of `fleet_movements`; Main Ship sole writer of `main_ship_instances`; non-combat
+destinations only. **Slice C** updates the client (find/select the held fleet + the `from` marker) and
+rewrites the stop-roundtrip verifier's legacy section to send→stop(held)→send→stop(held).
+
+**Verification (this sandbox, honest).** `npm run build` → green. No JS touched (`node --check` n/a).
+`docs/SYSTEM_BOUNDARIES.md` synced same step (origin_type domain + `move_main_ship_to_location` departs
+present OR held). DB-dependent verifiers defer here by design (no service-role key + blocked egress — the
+0148–0154 precedent); the send→stop(held)→send→stop(held) run is Slice C's rewritten verifier at the human
+apply gate.
+
+## 2026-07-06 — STOP = HOLD-IN-OPEN-SPACE (legacy), Slice A: stop settlement (migration 0155)
+
+**Request.** "Stop must HOLD, not return home." The visible Stop button drove
+`command_main_ship_stop_transit`, whose head-of-branch body (0149, re-created verbatim in 0152) HALTED an
+outbound legacy main-ship transit and then flew the ship **all the way back to its origin base** — it
+transformed the moving `fleet_movements` row in place into the `return_home` shape (symmetric turnaround),
+stepped the fleet moving→returning, and set the ship 'returning'. That is the wrong semantic: the player
+asked to stop *where they are*, not to abandon the trip and travel the whole way home. (The prior 2026-07-06
+"stop fix" was a client-only idempotency-key fix — orthogonal; return-home was still live.)
+
+**Change (Slice A — migration `20260618000155_mainship_legacy_stop_holds_in_space.sql`).** Re-create
+`command_main_ship_stop_transit` with everything up to the halt-point interpolation UNCHANGED (auth · the
+EXISTING `mainship_send_enabled` gate, unchanged · owned-main-ship-fleet checks · claim the `status='moving'`
+`fleet_movements` row FOR UPDATE in the cron's lock order · the `arrived` due-row no-op that leaves settlement
+to the cron · the `v_frac`/`v_turn_x`/`v_turn_y` math). Only the **settlement** changes, to a true HOLD:
+- **`fleet_movements` row →** `status='cancelled', resolved_at=now()` (a first-class terminal in the 0007
+  status domain `moving|arrived|cancelled|failed`). 'cancelled' is the honest terminal for a player halt —
+  the ship did NOT reach `target_x/target_y` (so not `'arrived'`), and it is not an error (`'failed'`). Once
+  non-'moving', the cron's `status='moving'` scan skips it forever; no arrival, no base/location deposit
+  (main-ship legacy targets carry no reward — 0149:35-37).
+- **`fleets` row →** `status='completed', location_mode='movement', active_movement_id=NULL, current_*=NULL`
+  — the movement-less settled terminal, guarded `where status='moving' and active_movement_id=m.id` (raise +
+  roll back on miss, 0149's discipline). This is the EXACT shape the OSN stop leaves a fleet held in open
+  space (0064:312-317); it mirrors a normal legacy settlement (`fleet_complete`→'completed') but points at
+  no base/location because the ship stopped out in space.
+- **`main_ship_instances` row →** the held-in-open-space shape `status='stationary', spatial_state='in_space',
+  space_x=v_turn_x, space_y=v_turn_y` (was `status='returning'`). **This reuses the EXISTING legal
+  `(stationary, in_space)` representation** — legal under the 0055 lifecycle CHECKs (in_space⇒stationary
+  0055:143-144; stationary⇒in_space|at_location 0055:159-161) + the 0054 coordinate rule (in_space REQUIRES
+  both finite coordinates). It is the SAME canonical shape OSN's stop writes (0064:319-322). Written inline
+  to match 0149/0152's established style; the shared invariant is the constraint set (single source of truth
+  for what "held in open space" legally is), not a helper — each domain settles its OWN movement inline.
+
+**Idempotency / replay.** A stop grants nothing → no receipt. The old `already_returning` no-op is gone
+(Stop no longer produces a `return_home` row): a duplicate Stop now finds no moving row and, since the ship
+is already `(stationary, in_space)`, returns `{ok:true, stopped:false, reason:'already_held'}`;
+`already_settled` (no moving row, not held) and `arrived` (due row left for the cron) are unchanged.
+
+**Response shape changed:** a successful hold returns `{ok:true, stopped:true, held:true, main_ship_id,
+space_x, space_y}` — NO `arrive_at` (the ship is parked, not arriving). **Slice C** updates the client copy /
+handling to this shape.
+
+**No constraint edit, no new table, no flag change, OSN untouched.** Movement stays sole writer of
+`fleet_movements`; Main Ship stays sole writer of `main_ship_instances`; the OSN coordinate domain and its
+`mainship_space_movement_enabled` flag are not touched; `mainship_send_enabled` is unchanged. **Slice B**
+(next) adds legacy **re-departure (Send) from the held position** — recon confirmed no existing legacy Send
+can resume from a `spatial_state='in_space'` fleet (`send_main_ship_expedition` needs `status='home'`;
+`move_main_ship_to_location`/`request_main_ship_return` need `status='present'` + active presence).
+
+**Verification (this sandbox, honest).** `npm run build` → green. `docs/SYSTEM_BOUNDARIES.md` synced in the
+same step (Movement matrix cell + the `command_main_ship_stop_transit` flow section rewritten from
+return-home → hold-in-open-space; the 0152 helper-callers blockquote corrected — Stop is no longer a
+`mainship_mark_legacy_in_flight` caller; ownership rows unchanged). No JS touched (`node --check` n/a).
+DB-dependent verifiers defer here by design (no service-role key + blocked egress — the 0148–0154 precedent).
+
+**Known stale test, retired in Slice B (flagged, not fake-fixed):** `scripts/verify-stop-roundtrip.mjs`'s
+LEGACY section (L3/L4/L9/L10) still asserts the OLD return-home shape (`mission_type='return_home'`, ship
+`returning`/`spatial_state` NULL) and its leg-2 re-departure relies on the ship settling HOME between trips —
+a path 0155 removes. It is NOT rewritten here: the correct legacy assertions are the held-in-space +
+re-departure pattern the verifier's OSN section already uses (O4/O5/O10), and leg-2 re-departure only becomes
+reachable once Slice B adds legacy Send-from-held. Slice B rewrites the legacy section to
+send→stop(**held**)→send→stop(**held**) and it runs at the human apply gate. (Retirement condition:
+Slice B lands the resume path + the rewritten verifier.)
+
 ## 2026-07-06 — GOAL WRAP-UP: stop fix + UI rebuild + map declutter — final verification & the ONE apply-time checklist
 
 **Scope of the goal (all three items implementation-complete on this branch; docs-only final pass):**

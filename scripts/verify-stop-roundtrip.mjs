@@ -14,9 +14,12 @@
 //      command_main_ship_space_stop on main_ship_space_movements. Leg 1 stops with a fresh key
 //      (outcome 'stopped', movement terminal, ship held in_space); leg 2 (a re-departure from the
 //      held-in-space state) stops with a SECOND fresh key and halts the SECOND movement.
-//   2. Legacy fleet family: send_main_ship_expedition / move_main_ship_to_location →
-//      command_main_ship_stop_transit on fleet_movements. Each stop transforms ITS OWN trip's row to
-//      mission_type='return_home' and turns the ship home; the return settles home between trips.
+//   2. Legacy fleet family: move_main_ship_to_location → command_main_ship_stop_transit on
+//      fleet_movements. Each stop HALTS the ship and HOLDS it in open space (movement row → terminal
+//      'cancelled'; ship → stationary/in_space at its own coordinates; fleet → completed with
+//      active_movement_id cleared). Leg 2 is a re-departure FROM the held point via
+//      move_main_ship_to_location (origin_type 'space', the SAME fleet — hold/resume keeps fleet
+//      identity); a duplicate stop on a held ship is an idempotent 'already_held' no-op.
 //   3. REGRESSION PROBE (OSN — receipts are the OSN idempotency mechanism; the legacy stop is
 //      idempotent by state and carries no key): on a fresh in-transit leg, a stop submitted with the
 //      PREVIOUSLY-CONSUMED key must REPLAY the earlier receipt (the OLD movement_id in the envelope)
@@ -65,9 +68,9 @@ async function poll(fn, { timeoutMs = 75000, intervalMs = 3000 } = {}) {
 const setCfg = (k, v) => admin.rpc('set_game_config', { p_key: k, p_value: v })
 const cfgVal = async (k) => (await admin.from('game_config').select('value').eq('key', k).maybeSingle()).data?.value
 const cfgOn = (v) => String(v) === 'true'
-const fleetRow = async (id) => (await admin.from('fleets').select('status,current_location_id,main_ship_id').eq('id', id).maybeSingle()).data
+const fleetRow = async (id) => (await admin.from('fleets').select('status,current_location_id,main_ship_id,active_movement_id').eq('id', id).maybeSingle()).data
 const shipRow = async (id) => (await admin.from('main_ship_instances').select('status,spatial_state,space_x,space_y').eq('main_ship_id', id).maybeSingle()).data
-const legacyMvRow = async (id) => (await admin.from('fleet_movements').select('status,mission_type,target_type,arrive_at').eq('id', id).maybeSingle()).data
+const legacyMvRow = async (id) => (await admin.from('fleet_movements').select('status,mission_type,target_type,origin_type,arrive_at').eq('id', id).maybeSingle()).data
 const spaceMvRow = async (id) => (await admin.from('main_ship_space_movements').select('status,target_kind,terminal_reason,target_location_id').eq('id', id).maybeSingle()).data
 const NOT_DEPLOYED = /could not find|does not exist|schema cache/i
 
@@ -75,6 +78,8 @@ const NOT_DEPLOYED = /could not find|does not exist|schema cache/i
 const isDocked = (s) => s?.status === 'stationary' && s?.spatial_state === 'at_location' && s?.space_x === null && s?.space_y === null
 const isLegacyInFlight = (s, st) => s?.status === st && s?.spatial_state === null && s?.space_x === null && s?.space_y === null
 const isHeldInSpace = (s) => s?.status === 'stationary' && s?.spatial_state === 'in_space' && s?.space_x !== null && s?.space_y !== null
+// Legacy held fleet (0155 Stop-hold shape): the movement-less terminal — completed, pointer cleared.
+const isLegacyHeldFleet = (f) => f?.status === 'completed' && f?.active_movement_id === null
 
 // The OSN public wrappers gained p_main_ship_id in 0083; older deployments carry the pre-0083 shape.
 // Try each argument shape in order; a schema-cache miss on one shape falls through to the next.
@@ -102,9 +107,6 @@ async function settleLegacy(client, fleetId, arriveAt, wantStatus) {
   if (error && !NOT_DEPLOYED.test(error.message)) die(`legacy settle failed: ${error.message}`)
   return poll(async () => { const f = await fleetRow(fleetId); return f?.status === wantStatus ? f : null })
 }
-// The 0050 reconciler cron (30s) homes the ship once its fleet completed; send #2 requires status='home'.
-const pollShipHome = (shipId) =>
-  poll(async () => { const s = await shipRow(shipId); return s?.status === 'home' ? s : null })
 
 let origScale, origMin
 const createdUserIds = []
@@ -152,52 +154,58 @@ async function main() {
   if (!sendEnabled) {
     skip('LEGACY family dark (mainship_send_enabled=false) — flag NOT toggled; family not proven here')
   } else {
-    // Leg L1 departs the commissioned docked state (fleet present → move_main_ship_to_location).
+    // Leg L1 departs the commissioned docked/present state (move_main_ship_to_location).
     const { data: mvL1, error: e1 } = await u.client.rpc('move_main_ship_to_location', { p_fleet: fleet0.id, p_location: A.id })
     if (e1) die(`legacy leg 1 send failed: ${e1.message}`)
     isLegacyInFlight(await shipRow(shipId), 'traveling')
       ? ok('L1. legacy leg 1 in flight (traveling / spatial_state NULL)')
       : bad('L1. leg 1 in-flight shape', JSON.stringify(await shipRow(shipId)))
 
+    // Stop 1 → HALT AND HOLD (0155): no return home; the ship parks at its own coordinates. (The hold
+    // envelope carries no movement_id; leg identity is proven by the specific mvL1 row going 'cancelled'.)
     const { data: st1, error: se1 } = await u.client.rpc('command_main_ship_stop_transit', { p_fleet: fleet0.id })
     if (se1) die(`legacy stop 1 failed: ${se1.message}`)
-    st1?.ok === true && st1?.stopped === true && st1?.movement_id === mvL1.movement_id
-      ? ok('L2. stop 1 halted ITS OWN trip (stopped:true, the leg-1 movement id)')
+    st1?.ok === true && st1?.stopped === true && st1?.held === true && st1?.space_x != null && st1?.space_y != null
+      ? ok('L2. stop 1 HELD the ship in open space (stopped:true, held:true, halt coordinates returned)')
       : bad('L2. stop 1', JSON.stringify(st1))
-    const r1 = await legacyMvRow(mvL1.movement_id)
-    r1?.mission_type === 'return_home' && r1?.target_type === 'base'
-      ? ok("L3. leg-1 row transformed in place to mission_type='return_home' (target = home base)")
-      : bad('L3. leg-1 transform', JSON.stringify(r1))
-    isLegacyInFlight(await shipRow(shipId), 'returning')
-      ? ok('L4. ship heading home (returning / spatial_state NULL)')
-      : bad('L4. returning shape', JSON.stringify(await shipRow(shipId)))
+    ;(await legacyMvRow(mvL1.movement_id))?.status === 'cancelled'
+      ? ok("L3. leg-1 movement terminal 'cancelled' (its OWN trip; NOT return_home, NOT moving — the cron never reprocesses it)")
+      : bad('L3. leg-1 terminal', JSON.stringify(await legacyMvRow(mvL1.movement_id)))
+    isHeldInSpace(await shipRow(shipId))
+      ? ok('L4. ship HELD at its own coordinates (stationary / in_space) — not returning home')
+      : bad('L4. held shape', JSON.stringify(await shipRow(shipId)))
+    isLegacyHeldFleet(await fleetRow(fleet0.id))
+      ? ok('L5. fleet settled to the movement-less terminal (completed / active_movement_id cleared)')
+      : bad('L5. held fleet shape', JSON.stringify(await fleetRow(fleet0.id)))
 
-    const homed1 = await settleLegacy(u.client, fleet0.id, st1?.arrive_at, 'completed')
-    homed1 ? ok('L5. stop-1 return settled — fleet completed at home') : bad('L5. settle home', 'fleet never completed')
-    ;(await pollShipHome(shipId)) ? ok('L6. ship reconciled home (0050 cron)') : bad('L6. ship home', JSON.stringify(await shipRow(shipId)))
+    // Duplicate stop on a held ship → idempotent no-op (a stop grants nothing; the hold must not drift).
+    const { data: st1dup, error: se1d } = await u.client.rpc('command_main_ship_stop_transit', { p_fleet: fleet0.id })
+    if (se1d) die(`legacy duplicate stop failed: ${se1d.message}`)
+    st1dup?.ok === true && st1dup?.stopped === false && st1dup?.reason === 'already_held' && isHeldInSpace(await shipRow(shipId))
+      ? ok("L6. duplicate stop is an idempotent no-op ({stopped:false, reason:'already_held'}); ship still held")
+      : bad('L6. already_held no-op', JSON.stringify({ st1dup, ship: await shipRow(shipId) }))
 
-    // Leg L2: a FRESH trip (send_main_ship_expedition inserts a NEW fleet + movement) — then stop again.
-    const { data: mvL2, error: e2 } = await u.client.rpc('send_main_ship_expedition', { p_ships: [shipId], p_location: A.id })
-    if (e2) die(`legacy leg 2 send failed: ${e2.message}`)
-    mvL2.fleet_id !== fleet0.id
-      ? ok('L7. leg 2 is a fresh trip (new fleet row)')
-      : bad('L7. fresh fleet', 'leg 2 reused the completed leg-1 fleet id')
+    // Leg L2 = RESUME from the held point: the SAME fleet re-departs with origin_type 'space' (0156).
+    const { data: mvL2, error: e2 } = await u.client.rpc('move_main_ship_to_location', { p_fleet: fleet0.id, p_location: A.id })
+    if (e2) die(`legacy leg 2 (resume from held) failed: ${e2.message}`)
+    const r2moving = await legacyMvRow(mvL2.movement_id)
+    mvL2.movement_id !== mvL1.movement_id && isLegacyInFlight(await shipRow(shipId), 'traveling')
+      && r2moving?.origin_type === 'space' && r2moving?.status === 'moving'
+      ? ok("L7. leg 2 RESUMED from the held point (same fleet, new movement, origin_type 'space', ship traveling)")
+      : bad('L7. resume-from-held shape', JSON.stringify({ mvL1: mvL1.movement_id, mvL2: mvL2.movement_id, r2moving, ship: await shipRow(shipId) }))
 
-    const { data: st2, error: se2 } = await u.client.rpc('command_main_ship_stop_transit', { p_fleet: mvL2.fleet_id })
+    // Stop 2 → THE ROUND-TRIP PROOF: the resumed leg is stoppable and holds again.
+    const { data: st2, error: se2 } = await u.client.rpc('command_main_ship_stop_transit', { p_fleet: fleet0.id })
     if (se2) die(`legacy stop 2 failed: ${se2.message}`)
-    st2?.ok === true && st2?.stopped === true && st2?.movement_id === mvL2.movement_id
-      ? ok('L8. THE ROUND-TRIP PROOF: stop 2 halted the SECOND trip (stopped:true, the leg-2 movement id)')
+    st2?.ok === true && st2?.stopped === true && st2?.held === true && st2?.space_x != null && st2?.space_y != null
+      ? ok('L8. THE ROUND-TRIP PROOF: stop 2 HELD the resumed trip (stopped:true, held:true)')
       : bad('L8. stop 2', JSON.stringify(st2))
-    const r2 = await legacyMvRow(mvL2.movement_id)
-    r2?.mission_type === 'return_home' && r2?.target_type === 'base'
-      ? ok("L9. leg-2 row transformed to mission_type='return_home' — each stop owns exactly its own trip")
-      : bad('L9. leg-2 transform', JSON.stringify(r2))
-    isLegacyInFlight(await shipRow(shipId), 'returning')
-      ? ok('L10. ship heading home again')
-      : bad('L10. returning shape (leg 2)', JSON.stringify(await shipRow(shipId)))
-    const homed2 = await settleLegacy(u.client, mvL2.fleet_id, st2?.arrive_at, 'completed')
-    homed2 ? ok('L11. stop-2 return settled — fleet completed at home') : bad('L11. settle home (leg 2)', 'fleet never completed')
-    ;(await pollShipHome(shipId)) ? ok('L12. ship reconciled home again') : bad('L12. ship home (leg 2)', JSON.stringify(await shipRow(shipId)))
+    ;(await legacyMvRow(mvL2.movement_id))?.status === 'cancelled'
+      ? ok("L9. leg-2 movement terminal 'cancelled' — each stop owns exactly its own trip")
+      : bad('L9. leg-2 terminal', JSON.stringify(await legacyMvRow(mvL2.movement_id)))
+    isHeldInSpace(await shipRow(shipId))
+      ? ok('L10. ship HELD in space again — every leg stoppable; send → stop(held) → send-from-held → stop(held) closed')
+      : bad('L10. final held shape', JSON.stringify(await shipRow(shipId)))
   }
 
   // ════ 2. OSN family: send → stop → send → stop + the consumed-key regression probe ══════════════════
@@ -215,12 +223,13 @@ async function main() {
   }
   if (dockables.length === 0) { skip('no dockable port on this DB — OSN family needs one to anchor at'); return }
 
-  // The OSN origin must be ANCHORED. If the legacy family ran, the ship ended HOME (not anchored) —
-  // re-dock via the proven legacy arrival path (0153 docks the ship canonically). If the legacy family
-  // was skipped, the ship is still in its commissioned dock and no re-dock is needed.
+  // The OSN origin must be ANCHORED. If the legacy family ran, the ship ended HELD in open space (not
+  // anchored) — re-establish an anchored origin by sending the HELD ship to a dockable port via the one
+  // legacy path (move_main_ship_to_location departs from the held state; 0153 docks it canonically on
+  // arrival). If the legacy family was skipped, the ship is still in its commissioned dock — no re-dock.
   if (sendEnabled && !isDocked(await shipRow(shipId))) {
     const D = dockables[0]
-    const { data: mvD, error: eD } = await u.client.rpc('send_main_ship_expedition', { p_ships: [shipId], p_location: D.id })
+    const { data: mvD, error: eD } = await u.client.rpc('move_main_ship_to_location', { p_fleet: fleet0.id, p_location: D.id })
     if (eD) die(`re-dock send failed: ${eD.message}`)
     const atD = await settleLegacy(u.client, mvD.fleet_id, mvD.arrive_at, 'present')
     if (!atD) die('re-dock leg never settled')

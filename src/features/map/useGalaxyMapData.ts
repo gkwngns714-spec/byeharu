@@ -8,7 +8,7 @@ import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import { fetchMainshipSendEnabled } from '../../lib/catalog'
 import {
-  fetchActiveMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
+  fetchActiveMainShipFleet, fetchHeldMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
   type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
 
@@ -48,6 +48,10 @@ export interface GalaxyMapData {
   // Phase 10D: feature flag (read once) + the ship's active linked fleet (polled, for status).
   mainshipSendEnabled: boolean
   mainShipFleet: MainShipFleet | null
+  // Slice D1: the HELD ship's current fleet (its most-recent 'completed' fleet), read only while the
+  // ship is held (spatial_state='in_space'). Addresses move_main_ship_to_location's held-departure
+  // branch so a held ship can Send again. Null unless the ship is genuinely held.
+  mainShipHeldFleet: MainShipFleet | null
   // OSN-2b: the active location-presence for the main-ship fleet (polled), used by the resolver to
   // validate a named-location marker. Null unless the fleet is genuinely present at a location.
   mainShipPresence: MainShipPresence | null
@@ -78,6 +82,7 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   locationStates: {},
   mainshipSendEnabled: false,
   mainShipFleet: null,
+  mainShipHeldFleet: null,
   mainShipPresence: null,
   mainShipSpaceMovement: null,
 }
@@ -119,6 +124,12 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
       // The active linked fleet (zero units) drives the live main-ship status. Only read it
       // when a ship exists; absent ship or no in-flight fleet → null (home).
       const mainShipFleet = mainShip ? await fetchActiveMainShipFleet(mainShip.main_ship_id) : null
+      // Slice D1: only a HELD ship (spatial_state='in_space') has a held fleet to re-send — fetch its
+      // current 'completed' fleet then (and only then), mirroring the present→presence conditional below.
+      const mainShipHeldFleet =
+        mainShip && mainShip.spatial_state === 'in_space'
+          ? await fetchHeldMainShipFleet(mainShip.main_ship_id)
+          : null
       // OSN-2b: only a PRESENT fleet can validate a named-location marker — fetch its active
       // presence then (and only then). Any other state needs no presence read.
       const mainShipPresence =
@@ -141,6 +152,7 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         locationStates,
         mainshipSendEnabled: staticRef.current.mainshipSendEnabled,
         mainShipFleet,
+        mainShipHeldFleet,
         mainShipPresence,
         mainShipSpaceMovement,
       })

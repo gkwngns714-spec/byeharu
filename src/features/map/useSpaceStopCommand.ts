@@ -44,10 +44,12 @@ export function useSpaceStopCommand(overrides?: {
 }
 
 // UX-CLEANUP item 3 — React adapter for the LEGACY fleet-domain transit halt (command_main_ship_stop_transit,
-// 0149). Deliberately a THIN sibling of useSpaceStopCommand, not a copy: all submit/duplicate-guard/outcome
-// logic is the SAME shared createSpaceStopController; only the wired RPC differs (fleet-id-addressed, and
-// idempotent by server state so the controller's request id is simply unused by the wrapper). Recreated when
-// the in-transit fleet changes (each legacy trip is a fresh fleet), which correctly resets the lifecycle.
+// 0155: halt → hold the ship in open space, no return home). Deliberately a THIN sibling of useSpaceStopCommand,
+// not a copy: all submit/duplicate-guard/outcome logic is the SAME shared createSpaceStopController; only the
+// wired RPC differs (fleet-id-addressed, and idempotent by server state so the controller's request id is
+// simply unused by the wrapper). Recreated when the passed fleet id changes — the CTA only mounts during an
+// OUTBOUND transit, so a hold (then a resume from the held point on the SAME fleet) drops the id to null and
+// back, correctly resetting the lifecycle per leg.
 export function useLegacyStopTransitCommand(
   fleetId: string | null,
   overrides?: { rpc?: (fleetId: string) => Promise<SpaceStopResult> },

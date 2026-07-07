@@ -6,7 +6,7 @@ import { Button } from '../../components/ui'
 // It exposes a single Stop action; the server interpolates the current point and is the final authority.
 // Hook-free so the unit tests can call it directly and inspect the returned element tree.
 // UX-CLEANUP item 3: the copy props (defaults = the original OSN strings) let the SAME component serve the
-// legacy transit halt ("Stop — return home") — one stop control, no parallel component.
+// legacy transit halt ("Stop — hold here") — one stop control, no parallel component.
 export function SpaceStopControls({
   phase,
   errorMessage,
