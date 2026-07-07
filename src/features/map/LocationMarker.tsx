@@ -45,7 +45,7 @@ export function LocationMarker({
 }) {
   const color = TYPE_TOKEN[location.location_type] ?? FALLBACK_TOKEN
   const isPort = location.location_type === 'trade_outpost'
-  const r = 7 / k
+  const r = 10 / k
   const label = location.name.length > 18 ? `${location.name.slice(0, 17)}…` : location.name
 
   return (
@@ -88,7 +88,7 @@ export function LocationMarker({
         <text
           x={x}
           y={y - r * (isPort ? 1.75 : 1.45) - 3 / k}
-          fontSize={11 / k}
+          fontSize={14 / k}
           textAnchor="middle"
           fill="var(--color-ink)"
           stroke="var(--color-app)"

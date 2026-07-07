@@ -313,10 +313,10 @@ export function GalaxyMap({
           {homePt && (
             <g style={{ pointerEvents: 'none' }}>
               <rect
-                x={homePt.x - 6 / view.k}
-                y={homePt.y - 6 / view.k}
-                width={12 / view.k}
-                height={12 / view.k}
+                x={homePt.x - 8 / view.k}
+                y={homePt.y - 8 / view.k}
+                width={16 / view.k}
+                height={16 / view.k}
                 fill="var(--color-accent)"
                 stroke="var(--color-app)"
                 strokeWidth={1.5}
@@ -327,7 +327,7 @@ export function GalaxyMap({
                 <text
                   x={homePt.x}
                   y={homePt.y + 16 / view.k}
-                  fontSize={11 / view.k}
+                  fontSize={14 / view.k}
                   textAnchor="middle"
                   fill="var(--color-accent)"
                   stroke="var(--color-app)"
