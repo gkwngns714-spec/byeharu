@@ -22,7 +22,6 @@ const coherent: MarkerInputs = {
   movements: [],
   presence: null,
   spaceMovement: { id: 'mv1', main_ship_id: 'ship-1', fleet_id: 'f1', origin_x: 1000, origin_y: 2000, target_x: 3000, target_y: -4000, target_kind: 'space', status: 'moving', depart_at: DEP, arrive_at: ARR },
-  base: { x: 100, y: 200 },
   locations: [{ id: 'loc-A', x: 300, y: 400 }],
 }
 
@@ -33,7 +32,6 @@ const legacy: MarkerInputs = {
   movements: [{ id: 'lm1', fleet_id: 'f1', status: 'moving', target_type: 'location', origin_x: 1, origin_y: 2, target_x: 3, target_y: 4, depart_at: DEP, arrive_at: ARR } as unknown as MarkerInputs['movements'][number]],
   presence: null,
   spaceMovement: null,
-  base: { x: 100, y: 200 },
   locations: [{ id: 'loc-A', x: 300, y: 400 }],
 }
 

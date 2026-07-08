@@ -6,7 +6,6 @@ import { worldToViewBox } from '../src/features/map/openSpaceTransform'
 // OSN-1 / OSN-2b / OSN-3-S1 — pure unit test for the single main-ship marker resolver. No browser/page.
 // Run: `npm run verify:osn:resolver`.
 
-const BASE = { x: 100, y: 200 }
 const LOC = { id: 'loc-A', x: 300, y: 400 }
 const DEP = '2026-01-01T00:00:00Z'
 const ARR = '2026-01-01T00:10:00Z'
@@ -40,7 +39,6 @@ const inputs = (over: Partial<MarkerInputs> = {}): MarkerInputs => ({
   movements: [],
   presence: null,
   spaceMovement: null,
-  base: BASE,
   locations: [LOC],
   ...over,
 })

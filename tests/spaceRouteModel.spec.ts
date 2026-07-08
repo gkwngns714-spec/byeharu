@@ -8,7 +8,6 @@ import type { MarkerInputs } from '../src/features/map/resolveMainShipMarker'
 // thing only: an active OUTBOUND movement to a committed arbitrary open-space coordinate (no returning/base
 // presentation). Run: `npm run verify:osn:s6b-route`.
 
-const BASE = { x: 100, y: 200 }
 const LOC = { id: 'loc-A', x: 300, y: 400 }
 const DEP = '2026-01-01T00:00:00Z'
 const ARR = '2026-01-01T00:10:00Z'
@@ -35,7 +34,7 @@ const spaceMv = (over: Partial<SpaceMv> = {}): SpaceMv => ({
 
 const base = (over: Partial<MarkerInputs> = {}): MarkerInputs => ({
   mainShip: ship(), mainShipFleet: null, movements: [], presence: null, spaceMovement: null,
-  base: BASE, locations: [LOC], ...over,
+  locations: [LOC], ...over,
 })
 
 // A fully-coherent open-space coordinate transit (resolver §C → open_space_fixed), target_kind='space'.

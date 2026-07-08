@@ -67,14 +67,13 @@ export function fitCameraToWorldPoints(points: readonly WorldCoord[]): Camera {
 // ── Deterministic focus policy (rule: documented in code + tested) ───────────────────────────────────
 //   • If the player's main ship is IN OPEN SPACE / IN TRANSIT, focus on the ship and its active
 //     movement segment (origin→target) so the player is always visible — named content is NOT mixed in.
-//   • Otherwise, focus on the active named locations + base/home content.
+//   • Otherwise, focus on the active named locations.
 export interface FocusInputs {
   /** the ship's current open-space / in-transit WORLD point, or null when not in open space */
   shipWorld: WorldCoord | null
   /** the active coordinate-move origin/target (WORLD), or null when not in transit */
   movementSegment: readonly [WorldCoord, WorldCoord] | null
   locations: readonly WorldCoord[]
-  base: WorldCoord | null
 }
 
 /** The WORLD points the initial/reset camera should frame, per the deterministic focus policy. */
@@ -85,9 +84,7 @@ export function focusWorldPoints(f: FocusInputs): WorldCoord[] {
     if (f.shipWorld) pts.push(f.shipWorld)
     return pts
   }
-  const pts: WorldCoord[] = [...f.locations]
-  if (f.base) pts.push(f.base)
-  return pts
+  return [...f.locations]
 }
 
 /** The content-fit camera for the current focus (player-priority when in open space). */

@@ -38,14 +38,13 @@ export interface MarkerInputs {
   presence: MainShipPresence | null
   // OSN-3 S1: the active coordinate movement (status='moving') for this ship, or null.
   spaceMovement: MainShipSpaceMovement | null
-  base: { x: number; y: number } | null
   locations: Pick<MapLocation, 'id' | 'x' | 'y'>[]
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
 
 export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMarker | null {
-  const { mainShip, mainShipFleet: fleet, movements, presence, spaceMovement, base, locations } = inp
+  const { mainShip, mainShipFleet: fleet, movements, presence, spaceMovement, locations } = inp
   if (!mainShip) return null
   // `coordinateSpace` is a REQUIRED parameter: every return path must declare its provenance explicitly
   // (no default), so a forgotten branch is a TypeScript error rather than a silent legacy fallback.

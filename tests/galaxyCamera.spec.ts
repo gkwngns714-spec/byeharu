@@ -113,7 +113,6 @@ test('S6B-PRES: open-space / in-transit ship takes focus priority over named loc
     shipWorld: ship,
     movementSegment: [{ x: 4000, y: -4000 }, { x: 6000, y: -6000 }],
     locations: [{ x: 11, y: 5 }, { x: 33, y: 23 }], // near origin — must be ignored while in open space
-    base: { x: 0, y: 0 },
   }
   expect(focusWorldPoints(f)).not.toContainEqual({ x: 11, y: 5 }) // named content excluded
   expect(focusWorldPoints(f)).toContainEqual(ship)
@@ -122,8 +121,8 @@ test('S6B-PRES: open-space / in-transit ship takes focus priority over named loc
   for (const w of [ship, { x: 4000, y: -4000 }, { x: 6000, y: -6000 }])
     expect(inView(applyCamera(cam, worldToViewBox(w)), 1)).toBeTruthy()
   // Otherwise (no ship in open space) we fall back to named + base.
-  const named: FocusInputs = { shipWorld: null, movementSegment: null, locations: [{ x: 11, y: 5 }], base: { x: 0, y: 0 } }
-  expect(focusWorldPoints(named)).toEqual([{ x: 11, y: 5 }, { x: 0, y: 0 }])
+  const named: FocusInputs = { shipWorld: null, movementSegment: null, locations: [{ x: 11, y: 5 }] }
+  expect(focusWorldPoints(named)).toEqual([{ x: 11, y: 5 }])
 })
 
 // ── 4c. Initial/reset camera — WIDELY distributed future points: fits within bounds, all in view. ────
@@ -156,7 +155,7 @@ test('S6B-PRES: zoom cap is bounded (finite) and enforced; single-point fit clam
 // ── 5. Camera/focus logic is PURE GEOMETRY with NO coupling to any feature flag or command surface
 //       (dark flag-off behavior cannot be affected by this slice). ───────────────────────────────────
 test('S6B-PRES: camera/focus depends only on world geometry (no flag/command coupling)', () => {
-  const f: FocusInputs = { shipWorld: { x: 1, y: 2 }, movementSegment: null, locations: [], base: null }
+  const f: FocusInputs = { shipWorld: { x: 1, y: 2 }, movementSegment: null, locations: [] }
   // Deterministic + referentially stable for identical inputs (no hidden global/flag state).
   expect(focusCamera(f)).toEqual(focusCamera(f))
   // Inverse-transform sanity: the fit camera's framing is reversible through the fixed domain.
