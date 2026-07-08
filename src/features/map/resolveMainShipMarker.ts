@@ -121,15 +121,9 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
     return make('present', 'legacy_dynamic', loc.x, loc.y)
   }
 
-  // §E (OSN-3 S1) — home: authoritative base coordinates, no active state.
-  if (ss === 'home') {
-    if (mainShip.status !== 'home') return null
-    if (fleet) return null
-    if (presenceActive) return null
-    if (coordMoving) return null
-    if (!base || !finite(base.x) || !finite(base.y)) return null
-    return make('home', 'legacy_dynamic', base.x, base.y)
-  }
+  // §E (OSN-3 S1) — home: port-centric has no home base. A ship "at home" (the legacy 0,0 idle state)
+  // is NOT drawn on the port map — it appears only once it is traveling or docked at a port.
+  if (ss === 'home') return null
 
   // §F — legacy (spatial_state IS NULL): unchanged derivation.
   if (ss === null) {
@@ -156,10 +150,7 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
       if (!loc || !finite(loc.x) || !finite(loc.y)) return null
       return make('present', 'legacy_dynamic', loc.x, loc.y)
     }
-    // Genuinely home: no active fleet AND ship 'home' AND base resolves.
-    if (!fleet && mainShip.status === 'home' && base && finite(base.x) && finite(base.y)) {
-      return make('home', 'legacy_dynamic', base.x, base.y)
-    }
+    // Genuinely home (legacy 0,0 idle): not drawn on the port map in the port-centric model.
     return null
   }
 

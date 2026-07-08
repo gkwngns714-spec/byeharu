@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import {
   deriveMainShipStatus,
   repairMainShip,
-  requestMainShipReturn,
   type MainShipFleet,
   type MainShipView,
 } from '../map/mainshipApi'
@@ -33,14 +32,12 @@ export function ShipStatusCard({
   fleet,
   movements,
   locations,
-  sendEnabled,
   onChanged,
 }: {
   mainShip: MainShipView | null
   fleet: MainShipFleet | null
   movements: FleetMovement[]
   locations: MapLocation[]
-  sendEnabled: boolean
   onChanged: () => Promise<void>
 }) {
   // 1s tick for a smooth countdown/progress bar (the backend stays the source of truth).
@@ -53,9 +50,6 @@ export function ShipStatusCard({
   const [repairing, setRepairing] = useState(false)
   const [repairError, setRepairError] = useState<string | null>(null)
   const repairRef = useRef(false)
-  const [recalling, setRecalling] = useState(false)
-  const [recallError, setRecallError] = useState<string | null>(null)
-  const recallRef = useRef(false)
 
   const ship = mainShip?.has_ship ? mainShip.ship : undefined
   const hull = mainShip?.hull
@@ -73,22 +67,6 @@ export function ShipStatusCard({
     } finally {
       repairRef.current = false
       setRepairing(false)
-    }
-  }
-
-  async function doRecall() {
-    if (recallRef.current || !fleet) return // synchronous double-submit guard
-    recallRef.current = true
-    setRecalling(true)
-    setRecallError(null)
-    try {
-      await requestMainShipReturn(fleet.id) // verified 10C RPC
-      await onChanged()
-    } catch (e) {
-      setRecallError(e instanceof Error ? e.message : String(e))
-    } finally {
-      recallRef.current = false
-      setRecalling(false)
     }
   }
 
@@ -157,7 +135,6 @@ export function ShipStatusCard({
           : { tone: 'neutral', text: 'Ready to launch' }
 
   const hpPct = ship.max_hp > 0 ? (ship.hp / ship.max_hp) * 100 : 0
-  const canRecall = sendEnabled && !isDisabled && displayStatus === 'present' && !!fleet
 
   return (
     <Card tone="accent" data-testid="ship-status-card">
@@ -200,7 +177,7 @@ export function ShipStatusCard({
         ) : move ? (
           <>
             <p className="text-sm text-ink">
-              {heading ? 'Returning to base' : <>Traveling to <span className="font-medium">{destination}</span></>}
+              {heading ? 'Returning' : <>Traveling to <span className="font-medium">{destination}</span></>}
             </p>
             {countdown && (
               <p data-testid="ship-travel-countdown" className="mt-1 text-2xl font-semibold tabular-nums text-ink">
@@ -215,28 +192,10 @@ export function ShipStatusCard({
         ) : displayStatus === 'present' ? (
           <>
             <p className="text-sm text-ink">
-              Your ship is at <span className="font-medium">{destination ?? 'a location'}</span>.
+              Your ship is docked at <span className="font-medium">{destination ?? 'a port'}</span>.
             </p>
-            {recallError && (
-              <Notice tone="danger" data-testid="mainship-recall-error" className="mt-2">
-                {recallError}
-              </Notice>
-            )}
-            {sendEnabled && (
-              <Button
-                variant="primary"
-                data-testid="mainship-recall"
-                disabled={!canRecall}
-                busy={recalling}
-                busyLabel="Recalling…"
-                onClick={doRecall}
-                className="mt-2 min-h-11 w-full"
-              >
-                Recall ship
-              </Button>
-            )}
             <p className="mt-2 text-center text-xs text-ink-faint">
-              Or pick the next destination on the Map.
+              Pick your next destination on the Map to set out.
             </p>
           </>
         ) : (
