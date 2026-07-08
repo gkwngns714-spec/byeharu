@@ -137,9 +137,9 @@ export function PortEntryPanel({
       return (
         <div data-testid="port-entry-panel">
           <Card className="text-sm text-ink-muted" data-testid="port-entry-at-home">
-            <p className="font-medium text-ink">Ship at home base</p>
+            <p className="font-medium text-ink">Ship not yet docked</p>
             <p className="mt-1">
-              Your ship is at your home base. Travel to a port before it can be docked there.
+              Your ship hasn't docked yet. Travel to a port to dock there.
             </p>
           </Card>
         </div>

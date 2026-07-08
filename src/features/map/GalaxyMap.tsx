@@ -248,8 +248,6 @@ export function GalaxyMap({
     setView(pts.length ? focusCamera(focusInputs) : { k: 1, tx: 0, ty: 0 })
   }
 
-  const homePt = base ? norm({ x: base.x, y: base.y }) : null
-
   return (
     <div className="relative h-full w-full overflow-hidden rounded-card border border-edge bg-app shadow-card">
       {/* zoom controls */}
@@ -311,38 +309,6 @@ export function GalaxyMap({
               />
             )
           })}
-
-          {/* home base + main-ship anchor */}
-          {homePt && (
-            <g style={{ pointerEvents: 'none' }}>
-              <rect
-                x={homePt.x - 8 / view.k}
-                y={homePt.y - 8 / view.k}
-                width={16 / view.k}
-                height={16 / view.k}
-                fill="var(--color-accent)"
-                stroke="var(--color-app)"
-                strokeWidth={1.5}
-                vectorEffect="non-scaling-stroke"
-                transform={`rotate(45 ${homePt.x} ${homePt.y})`}
-              />
-              {showLabels && (
-                <text
-                  x={homePt.x}
-                  y={homePt.y + 16 / view.k}
-                  fontSize={14 / view.k}
-                  textAnchor="middle"
-                  fill="var(--color-accent)"
-                  stroke="var(--color-app)"
-                  strokeWidth={3 / view.k}
-                  paintOrder="stroke"
-                >
-                  {base?.name ?? 'Home'}
-                  {mainShip ? ` · ${mainShip.name}` : ''}
-                </text>
-              )}
-            </g>
-          )}
 
           {/* locations */}
           {locations.map((loc) => {
@@ -429,9 +395,6 @@ export function GalaxyMap({
         </span>
         <span className="flex items-center gap-1">
           <span className="inline-block h-2 w-2 rounded-full border border-accent bg-accent/40" /> port
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 rotate-45 bg-accent" /> home
         </span>
         <span>
           {locations.length} locations · {movements.length} moving · drag to pan · scroll/buttons to zoom
