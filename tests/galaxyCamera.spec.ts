@@ -10,8 +10,10 @@ import {
 } from '../src/features/map/openSpaceTransform'
 import {
   VIEW,
+  PAD,
   MIN_K,
   MAX_K,
+  DEGENERATE_SPAN,
   clampK,
   clampPan,
   fitCameraToWorldPoints,
@@ -138,15 +140,19 @@ test('S6B-PRES: content-fit frames widely distributed points within bounds', () 
 
 // ── 4d. Bounded zoom policy — cap is finite and enforced on both ends; degenerate (single point)
 //        fit clamps to MAX_K (does not blow up). ─────────────────────────────────────────────────────
-test('S6B-PRES: zoom cap is bounded (finite) and enforced; single-point fit clamps to MAX_K', () => {
+test('S6B-PRES: zoom cap is bounded (finite) and enforced; single-point fit → comfortable zoom (not MAX_K)', () => {
   expect(Number.isFinite(MAX_K)).toBeTruthy()
   expect(MAX_K).toBeGreaterThan(8) // raised from the old unusable 8
   expect(clampK(1e9)).toBe(MAX_K) // never unbounded
   expect(clampK(1e-9)).toBe(MIN_K)
   expect(clampK(Number.POSITIVE_INFINITY)).toBe(MIN_K) // non-finite → safe MIN_K
   expect(clampK(Number.NaN)).toBe(MIN_K)
+  // A single focus point (e.g. a ship parked after Stop) frames a fixed neighbourhood (DEGENERATE_SPAN) —
+  // a gentle deterministic zoom, NOT a slam to MAX_K.
   const single = fitCameraToWorldPoints([{ x: 100, y: -200 }])
-  expect(single.k).toBe(MAX_K)
+  expect(single.k).toBeCloseTo((VIEW * (1 - 2 * PAD)) / DEGENERATE_SPAN)
+  expect(single.k).toBeGreaterThan(MIN_K)
+  expect(single.k).toBeLessThan(MAX_K)
   expect(Number.isFinite(single.tx) && Number.isFinite(single.ty)).toBeTruthy()
   // empty input → identity (no crash)
   expect(fitCameraToWorldPoints([])).toEqual({ k: 1, tx: 0, ty: 0 })

@@ -18,6 +18,12 @@ export const PAD = 0.08
 export const MIN_K = 0.4
 export const MAX_K = 1024
 
+// A single focus point (e.g. a ship parked in open space right after Stop) has ZERO bounding-box span.
+// Rather than slam to MAX_K (a jarring max zoom-in), frame a fixed neighbourhood around it: this synthetic
+// viewBox span yields a gentle, deterministic zoom (~10× → roughly a 2000-world-unit window), so Stop /
+// an already-held ship on load / Reset all recenter smoothly instead of zooming to maximum.
+export const DEGENERATE_SPAN = 84
+
 export interface Camera {
   k: number
   tx: number
@@ -39,7 +45,8 @@ export function clampPan(tx: number, ty: number, k: number): { tx: number; ty: n
 
 /** Fit WORLD points into the camera so their FIXED-domain bounding box fills ~(1 − 2·PAD) of the
  *  view, centered. Presentation only: returns `{k, tx, ty}`; never returns/mutates world coordinates.
- *  Empty input → identity camera. Degenerate bbox (single point / zero span) → MAX_K, centered.
+ *  Empty input → identity camera. Degenerate bbox (single point / zero span) → a fixed comfortable
+ *  neighbourhood zoom (DEGENERATE_SPAN), centered — never MAX_K.
  *  Non-finite points are ignored. tx/ty are NOT pan-clamped here (initial/reset frames content
  *  exactly; GalaxyMap clamps only live drag/zoom). */
 export function fitCameraToWorldPoints(points: readonly WorldCoord[]): Camera {
@@ -56,7 +63,7 @@ export function fitCameraToWorldPoints(points: readonly WorldCoord[]): Camera {
   }
   const span = Math.max(maxX - minX, maxY - minY)
   const inner = VIEW * (1 - 2 * PAD)
-  const k = clampK(span > 0 ? inner / span : MAX_K)
+  const k = clampK(inner / (span > 0 ? span : DEGENERATE_SPAN))
   const cx = (minX + maxX) / 2
   const cy = (minY + maxY) / 2
   // Camera <g transform="translate(tx ty) scale(k)"> maps a viewBox point P → k·P + t. Center the
