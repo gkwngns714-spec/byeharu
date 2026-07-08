@@ -1,8 +1,10 @@
 import { useShellState } from '../../app/shellState'
 import { DockedPortCard } from './DockedPortCard'
+import { StationHangar } from './StationHangar'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { MarketPanel } from '../map/MarketPanel'
 import { useDockServices } from '../map/useDockServices'
+import { useDockStore } from '../map/useDockStore'
 import { isDocked } from '../map/dockServices'
 import { useMainShipSelection } from '../map/useMainShipSelection'
 import { TRADE_MARKET_ENABLED } from '../map/osnReleaseGates'
@@ -20,6 +22,8 @@ export function PortScreen() {
   const { map } = useShellState()
   const lifecycleKey = `${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
   const dock = useDockServices(lifecycleKey, { mainShipId: map.mainShip?.main_ship_id ?? null })
+  // STATION-STORAGE — the docked port's own hangar (dark by default; server returns empty while the flag is off).
+  const store = useDockStore(lifecycleKey)
   // TRADE-UI-1 — selected-ship model for the DARK MarketPanel (compile-gated false + server-rejected).
   const shipSelection = useMainShipSelection()
 
@@ -46,6 +50,9 @@ export function PortScreen() {
           <>
             {/* The docked-port surface (identity → right now → service details). */}
             <DockedPortCard dock={dock} />
+            {/* STATION-STORAGE — this port's own hangar (per-port, per-player storage). Dark by default:
+                get_my_docked_store returns empty while station_storage_enabled is off → renders null. */}
+            <StationHangar store={store} />
             {/* LOCATION-INVEST-P18 (dark, server-lit only): docked-port investment. Renders null
                 unless the server lit get_location_development, so production is byte-unchanged. */}
             <InvestmentPanel
