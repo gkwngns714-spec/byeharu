@@ -13,7 +13,7 @@ import type { MapLocation } from './mapTypes'
 // returns `null`. This is a DISPLAY resolver only — NOT the future server-side authoritative origin
 // resolver.
 
-export type MainShipMarkerState = 'home' | 'present' | 'outbound' | 'returning' | 'in_space'
+export type MainShipMarkerState = 'present' | 'outbound' | 'returning' | 'in_space'
 
 // OSN-3 S6B2 — which coordinate-space layer renders this marker. Legacy/named states project through the
 // map's dynamic buildNormalizer (`norm`); open-space states (in_space, coordinate in_transit) project

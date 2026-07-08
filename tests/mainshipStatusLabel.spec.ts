@@ -19,7 +19,7 @@ const marker = (state: MainShipMarkerState): ShipMarker => ({
   x: 0,
   y: 0,
   state,
-  coordinateSpace: state === 'present' || state === 'home' ? 'legacy_dynamic' : 'open_space_fixed',
+  coordinateSpace: state === 'present' ? 'legacy_dynamic' : 'open_space_fixed',
 })
 
 const mv = (over: Partial<MainShipSpaceMovement> = {}): MainShipSpaceMovement => ({
@@ -70,11 +70,6 @@ test('traveling to a HIDDEN location target → generic "Traveling" (no leak)', 
 test('traveling to an open-space coordinate → "Traveling to open space"', () => {
   expect(resolveMainShipStatusLabel({ marker: marker('outbound'), spaceMovement: mv({ target_kind: 'space' }), publicLocations: PUBLIC }))
     .toBe('Traveling to open space')
-})
-
-test('home → "Ready to launch"', () => {
-  expect(resolveMainShipStatusLabel({ marker: marker('home'), spaceMovement: null, publicLocations: PUBLIC }))
-    .toBe('Ready to launch')
 })
 
 // TRADE-UI-1 — the raw main_ship_instances.status enum labeler consumed by the ship-switcher (migration 0043).
