@@ -30,7 +30,7 @@ export interface MainShipStatusLabelInputs {
  *  - in_space             → "Parked in open space"
  *  - present (docked)     → "Docked at <name>" for a VISIBLE location, else a generic "Docked" (no leak)
  *  - outbound/returning   → "Traveling to <name>" for a VISIBLE 'location' target, else "Traveling to open space"
- *  - home                 → "At home base"
+ *  - home                 → "Ready to launch"
  * Hidden/unknown destinations and dock locations NEVER surface a name, id, or coordinate.
  */
 export function resolveMainShipStatusLabel(inp: MainShipStatusLabelInputs): string | null {
@@ -59,7 +59,7 @@ export function resolveMainShipStatusLabel(inp: MainShipStatusLabelInputs): stri
       return 'Traveling to open space'
     }
     case 'home':
-      return 'At home base'
+      return 'Ready to launch'
     default:
       return null
   }
@@ -71,7 +71,7 @@ export function resolveMainShipStatusLabel(inp: MainShipStatusLabelInputs): stri
 // carries only this activity-status string, so labeling lives here to keep ALL main-ship status labels in one
 // module. Pure (no marker/movement/location inputs), and it exposes no location name — nothing to leak.
 const INSTANCE_STATUS_LABELS: Record<string, string> = {
-  home: 'At home base',
+  home: 'Ready to launch',
   traveling: 'Traveling',
   hunting: 'Hunting',
   trading: 'Trading',

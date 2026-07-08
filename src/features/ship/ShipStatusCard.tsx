@@ -130,7 +130,7 @@ export function ShipStatusCard({
   const locName = (id: string | null | undefined) => (id && locations.find((l) => l.id === id)?.name) || null
   const destination = move
     ? move.target_type === 'base'
-      ? 'home base'
+      ? 'base'
       : (locName(move.target_location_id) ?? 'its destination')
     : displayStatus === 'present'
       ? locName(fleet?.current_location_id)
@@ -149,12 +149,12 @@ export function ShipStatusCard({
   const badge: { tone: BadgeTone; text: string } = isDisabled
     ? { tone: 'warning', text: 'Needs repair' }
     : displayStatus === 'traveling'
-      ? { tone: 'accent', text: heading ? 'Heading home' : 'Under way' }
+      ? { tone: 'accent', text: heading ? 'Returning' : 'Under way' }
       : displayStatus === 'returning'
-        ? { tone: 'accent', text: 'Heading home' }
+        ? { tone: 'accent', text: 'Returning' }
         : displayStatus === 'present'
           ? { tone: 'success', text: destination ? `At ${destination}` : 'On station' }
-          : { tone: 'neutral', text: 'At home base' }
+          : { tone: 'neutral', text: 'Ready to launch' }
 
   const hpPct = ship.max_hp > 0 ? (ship.hp / ship.max_hp) * 100 : 0
   const canRecall = sendEnabled && !isDisabled && displayStatus === 'present' && !!fleet
@@ -200,7 +200,7 @@ export function ShipStatusCard({
         ) : move ? (
           <>
             <p className="text-sm text-ink">
-              {heading ? 'Heading back to home base' : <>Traveling to <span className="font-medium">{destination}</span></>}
+              {heading ? 'Returning to base' : <>Traveling to <span className="font-medium">{destination}</span></>}
             </p>
             {countdown && (
               <p data-testid="ship-travel-countdown" className="mt-1 text-2xl font-semibold tabular-nums text-ink">
@@ -228,11 +228,11 @@ export function ShipStatusCard({
                 data-testid="mainship-recall"
                 disabled={!canRecall}
                 busy={recalling}
-                busyLabel="Heading home…"
+                busyLabel="Recalling…"
                 onClick={doRecall}
                 className="mt-2 min-h-11 w-full"
               >
-                Return home
+                Recall ship
               </Button>
             )}
             <p className="mt-2 text-center text-xs text-ink-faint">

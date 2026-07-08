@@ -208,7 +208,7 @@ export const COMMISSION_REASON_COPY: Record<CommissionReason, string> = {
   not_authenticated: 'You must be signed in to claim a ship.',
   commission_unavailable: 'Could not commission your ship right now. Please try again in a moment.',
   needs_normalization: 'Your ship is at a port but not fully docked yet — use Finish Docking.',
-  needs_compat_route: 'Your ship is at your home base. Travel to a port before it can be docked.',
+  needs_compat_route: 'Your ship has not docked yet. Travel to a port before it can be docked.',
   not_provisionable: 'Your ship is not in a state where it can be commissioned.',
   malformed: 'Received an unexpected response. Please try again.',
 }
