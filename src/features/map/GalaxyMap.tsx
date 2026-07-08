@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type WheelEvent as RWheelEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import type { MapLocation } from './mapTypes'
 import type { Base } from '../base/baseTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
@@ -212,9 +212,9 @@ export function GalaxyMap({
     drag.current = null
     tap.current = null
   }
-  const onWheel = (e: RWheelEvent) => {
+  // Zoom by a factor around the viewBox centre (shared by the wheel + the +/− buttons).
+  const zoomByFactor = useCallback((factor: number) => {
     userMovedRef.current = true // player took camera control → freeze auto-fit
-    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
     setView((v) => {
       const k = clampK(v.k * factor)
       const ratio = k / v.k
@@ -223,17 +223,21 @@ export function GalaxyMap({
       const cy = VIEW / 2
       return { k, ...clampPan(cx - (cx - v.tx) * ratio, cy - (cy - v.ty) * ratio, k) }
     })
-  }
-  const zoomBtn = (factor: number) => {
-    userMovedRef.current = true // player took camera control → freeze auto-fit
-    setView((v) => {
-      const k = clampK(v.k * factor)
-      const ratio = k / v.k
-      const cx = VIEW / 2
-      const cy = VIEW / 2
-      return { k, ...clampPan(cx - (cx - v.tx) * ratio, cy - (cy - v.ty) * ratio, k) }
-    })
-  }
+  }, [])
+
+  // Wheel zoom via a NATIVE, non-passive listener so we can preventDefault — otherwise the wheel event
+  // bubbles to the browser and scrolls/zooms the whole page while the pointer is over the map. (React's
+  // synthetic onWheel is registered passive, so preventDefault there is ignored — hence the manual bind.)
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault()
+      zoomByFactor(e.deltaY < 0 ? 1.15 : 1 / 1.15)
+    }
+    svg.addEventListener('wheel', onWheelNative, { passive: false })
+    return () => svg.removeEventListener('wheel', onWheelNative)
+  }, [zoomByFactor])
   // Reset re-enables the deterministic content-fit camera (frames the player ship / active movement,
   // else named content). NOT k=1/origin — at k=1 the fixed frame would show current seed content as a
   // tiny central cluster.
@@ -250,8 +254,8 @@ export function GalaxyMap({
     <div className="relative h-full w-full overflow-hidden rounded-card border border-edge bg-app shadow-card">
       {/* zoom controls */}
       <div className="absolute right-2 top-2 z-10 flex flex-col gap-1">
-        <Button size="icon" onClick={() => zoomBtn(1.25)} aria-label="Zoom in">+</Button>
-        <Button size="icon" onClick={() => zoomBtn(1 / 1.25)} aria-label="Zoom out">−</Button>
+        <Button size="icon" onClick={() => zoomByFactor(1.25)} aria-label="Zoom in">+</Button>
+        <Button size="icon" onClick={() => zoomByFactor(1 / 1.25)} aria-label="Zoom out">−</Button>
         <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>
       </div>
 
@@ -265,7 +269,6 @@ export function GalaxyMap({
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerLeave}
         onPointerCancel={onPointerLeave}
-        onWheel={onWheel}
         onClick={() => onSelect(null)}
       >
         {/* Static backdrop (NOT transformed): the map area always renders a deliberate background,
