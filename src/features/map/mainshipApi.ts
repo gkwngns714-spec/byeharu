@@ -4,6 +4,7 @@ import { SPACE_STOP_RPC, STOP_TRANSIT_RPC, buildSpaceStopRpcArgs, parseStopTrans
 import { SETTLE_ARRIVAL_RPC, LEGACY_SETTLE_ARRIVAL_RPC, parseSettleArrivalResult, type SettleArrivalResult } from './settleArrival'
 import { parseOsnReadiness, OSN_NOT_ACTIONABLE, type OsnReadiness } from './osnReadiness'
 import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockServices'
+import { parseDockedStore, DOCK_STORE_EMPTY, type DockedStore } from './dockStore'
 
 // Main-ship client API.
 //
@@ -233,6 +234,15 @@ export async function fetchMyCurrentDockServices(mainShipId?: string | null): Pr
   const { data, error } = await supabase.rpc('get_my_current_dock_services', { p_main_ship_id: mainShipId ?? null })
   if (error) return DOCK_NOT_DOCKED
   return parseDockServices(data)
+}
+
+// STATION-STORAGE — the per-port hangar for the docked port (get_my_docked_store(); no args, server derives the
+// ship + validated dock). Any error collapses to the empty store default (panel hidden), like the dock-services
+// read above. Dark by default (server gates on station_storage_enabled).
+export async function fetchMyDockedStore(): Promise<DockedStore> {
+  const { data, error } = await supabase.rpc('get_my_docked_store')
+  if (error) return DOCK_STORE_EMPTY
+  return parseDockedStore(data)
 }
 
 export interface MainShipSendResult {
