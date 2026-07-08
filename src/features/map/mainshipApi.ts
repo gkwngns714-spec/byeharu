@@ -262,13 +262,6 @@ export async function sendMainShipExpedition(shipId: string, locationId: string)
   return data as MainShipSendResult
 }
 
-/** Recall a main-ship fleet that is currently present at a location (10C RPC). */
-export async function requestMainShipReturn(fleetId: string): Promise<{ return_movement_id: string; main_ship_id: string }> {
-  const { data, error } = await supabase.rpc('request_main_ship_return', { p_fleet: fleetId })
-  if (error) throw new Error(error.message)
-  return data as { return_movement_id: string; main_ship_id: string }
-}
-
 // Move a PRESENT main-ship fleet directly from its current location to another valid non-combat
 // location — no forced return home (move_main_ship_to_location RPC). Server re-validates present +
 // non-combat + not-the-current-location.

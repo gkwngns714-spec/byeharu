@@ -72,15 +72,15 @@ test('traveling to an open-space coordinate → "Traveling to open space"', () =
     .toBe('Traveling to open space')
 })
 
-test('home → "At home base"', () => {
+test('home → "Ready to launch"', () => {
   expect(resolveMainShipStatusLabel({ marker: marker('home'), spaceMovement: null, publicLocations: PUBLIC }))
-    .toBe('At home base')
+    .toBe('Ready to launch')
 })
 
 // TRADE-UI-1 — the raw main_ship_instances.status enum labeler consumed by the ship-switcher (migration 0043).
 test('instance status: every enum value maps to a non-raw human label', () => {
   const cases: Record<string, string> = {
-    home: 'At home base', traveling: 'Traveling', hunting: 'Hunting', trading: 'Trading',
+    home: 'Ready to launch', traveling: 'Traveling', hunting: 'Hunting', trading: 'Trading',
     exploring: 'Exploring', mining: 'Mining', retreating: 'Retreating', returning: 'Returning',
     repairing: 'Repairing', destroyed: 'Disabled',
   }
