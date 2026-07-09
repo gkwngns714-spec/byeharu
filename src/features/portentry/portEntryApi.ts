@@ -1,6 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import {
-  fetchActiveMainShipFleet, fetchActiveMainShipPresence, type SpatialState,
+  fetchActiveMainShipFleet, fetchActiveMainShipPresence, resolveOwnedShip, type SpatialState,
 } from '../map/mainshipApi'
 import {
   COMMISSION_RPC, NORMALIZE_RPC, parseCommissionResult, parseNormalizeResult,
@@ -58,15 +58,18 @@ interface MainShipStateRow {
  * status, and (only when a ship exists) the linked-fleet shape used to distinguish legacy_present from
  * legacy_home. All owner-read RLS; no RPC mutation, no writes. Any read error fails closed to "no ship".
  */
-export async function fetchPortEntryShipState(): Promise<PortEntryShipState> {
+export async function fetchPortEntryShipState(mainShipId?: string | null): Promise<PortEntryShipState> {
+  // Plural-safe owner-read: read ALL owned ships and resolve deterministically (never `.maybeSingle()`, which
+  // errors at N≥2 → fails closed to "no ship"). Null resolution (none, or ambiguous >1 without a selection)
+  // → the no-ship affordance, never an arbitrary ship's state.
   const { data, error } = await supabase
     .from('main_ship_instances')
     .select('main_ship_id, status, spatial_state')
-    .maybeSingle() // owner-read RLS → the caller's single ship, or null
+    .order('created_at', { ascending: true }) // stable enumeration only; the pick is resolver-decided, not first-row
   if (error) {
     return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null }
   }
-  const ship = (data as MainShipStateRow) ?? null
+  const ship = resolveOwnedShip((data ?? []) as MainShipStateRow[], mainShipId)
   if (!ship) {
     return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null }
   }

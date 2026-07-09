@@ -3,6 +3,7 @@ import { ShellStateContext } from './shellState'
 import { useGameState } from '../features/dashboard/useGameState'
 import { useCombat } from '../features/combat/useCombat'
 import { useGalaxyMapData } from '../features/map/useGalaxyMapData'
+import { useMainShipSelection } from '../features/map/useMainShipSelection'
 import { useSettleDueArrival } from '../features/map/useSettleDueArrival'
 import { selectActiveLegacyMovement } from '../features/map/spaceStopCommand'
 
@@ -27,6 +28,9 @@ export function AppShell() {
   const map = useGalaxyMapData()
   const game = useGameState()
   const combat = useCombat()
+  // A0: the ONE selected-ship model, mounted exactly once here (was duplicated per-screen). Every destination
+  // reads/writes the same selection through useShellState().selection.
+  const selection = useMainShipSelection()
 
   // Both settle legs in one mount (see header). The legacy leg needs the active main-ship fleet's
   // moving row — the ONE shared selector (MapScreen's stop CTA uses the same one).
@@ -43,7 +47,7 @@ export function AppShell() {
   })
 
   return (
-    <ShellStateContext.Provider value={{ game, combat, map }}>
+    <ShellStateContext.Provider value={{ game, combat, map, selection }}>
       <div className="flex h-[100dvh] flex-col bg-app text-ink">
         {/* Destination content gets the full viewport minus the tab bar; each screen owns its scroll. */}
         <main className="min-h-0 flex-1 overflow-hidden">

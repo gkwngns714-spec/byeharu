@@ -7,6 +7,7 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import { fetchMainshipSendEnabled } from '../../lib/catalog'
 import {
   fetchActiveMainShipFleet, fetchHeldMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
+  resolveOwnedShip,
   type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
 
@@ -58,14 +59,16 @@ export interface GalaxyMapData {
   refresh: () => Promise<void>
 }
 
-async function fetchMainShip(): Promise<MainShipLite | null> {
-  // Owner-read RLS returns only the caller's ship (or nothing if not created yet).
+async function fetchMainShip(mainShipId?: string | null): Promise<MainShipLite | null> {
+  // Owner-read RLS returns only the caller's ship(s). Plural-safe: read ALL and resolve deterministically
+  // (never `.maybeSingle()`, which errors at N≥2 → ghosts the ship). Null when none, or ambiguous >1 without
+  // a selection — the map then renders no main-ship marker rather than an arbitrary one.
   const { data, error } = await supabase
     .from('main_ship_instances')
     .select('main_ship_id, name, status, hull_type_id, hp, max_hp, cargo_capacity, spatial_state, space_x, space_y')
-    .maybeSingle()
+    .order('created_at', { ascending: true }) // stable enumeration only; the pick is resolver-decided, not first-row
   if (error) return null // non-fatal: ship is optional in Phase 9A
-  return (data as MainShipLite) ?? null
+  return resolveOwnedShip((data ?? []) as MainShipLite[], mainShipId)
 }
 
 const EMPTY: Omit<GalaxyMapData, 'refresh'> = {

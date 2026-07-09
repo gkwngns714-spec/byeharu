@@ -4,7 +4,6 @@ import { ModulesPanel } from '../modules/ModulesPanel'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
 import { ShipSwitcher } from '../map/ShipSwitcher'
-import { useMainShipSelection } from '../map/useMainShipSelection'
 import { TRADE_MARKET_ENABLED } from '../map/osnReleaseGates'
 import { PageHeader } from '../../components/ui'
 
@@ -17,12 +16,10 @@ import { PageHeader } from '../../components/ui'
 // matching the server's ungated repair safelock (0052).
 
 export function ShipScreen() {
-  const { game, map } = useShellState()
+  const { game, map, selection: shipSelection } = useShellState()
   const lifecycleKey = `${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
-  // TRADE-UI-1 — client selected-ship model. Consumed by the DARK ShipSwitcher only (compile-gated
-  // false + server-rejected). NOTE for the trade lit-path: MarketPanel (Port) mounts its own
-  // selection instance — lift the selection to the shell in the SAME change that lights the flag.
-  const shipSelection = useMainShipSelection()
+  // TRADE-UI-1 — client selected-ship model, now the ONE shell instance (A0 lifted it here; Port's MarketPanel
+  // reads the SAME selection). Consumed by the DARK ShipSwitcher only (compile-gated false + server-rejected).
 
   return (
     <div className="h-full overflow-y-auto">
