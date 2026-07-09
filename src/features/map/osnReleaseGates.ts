@@ -24,3 +24,12 @@ export const OSN_COORDINATE_TRAVEL_ENABLED = false as const
 // server still rejects until its own flag is on.
 export const TRADE_MARKET_ENABLED = false as const
 export const MAINSHIP_ADDITIONAL_ENABLED = false as const
+
+// ── TEAM-COMMAND Slice A — team-roster surface release gate (compile-time; UI fail-closed control). ──
+// "group" is the backend/DB/code word (ship_groups, main_ship_instances.group_id); "team" is the UI word —
+// this constant is the UI-side mirror of the server game_config flag `team_command_enabled` (seeded false in
+// migration 0160). The CommandScreen team roster stays invisible (and its owner-reads never run — the panel is
+// not mounted while this is false) until a HUMAN flips BOTH the server flag AND this constant. Default OFF
+// (DARK). Do NOT set true here — a human owns activation. Slice A ships only a READ-ONLY roster scaffold: no
+// team travel, no team combat, no ship commissioning.
+export const TEAM_COMMAND_ENABLED = false as const

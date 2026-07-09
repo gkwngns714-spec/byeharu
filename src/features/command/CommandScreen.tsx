@@ -4,6 +4,8 @@ import { PortEntryPanel } from '../portentry/PortEntryPanel'
 import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
 import { ReportsSection } from '../combat/ReportsSection'
 import { RankingPanel } from '../ranking/RankingPanel'
+import { TeamRosterPanel } from './TeamRosterPanel'
+import { TEAM_COMMAND_ENABLED } from '../map/osnReleaseGates'
 import { PageHeader, Notice, buttonClasses } from '../../components/ui'
 
 // UI-REBUILD (2b, Command interior) — the home-base destination in the shared design language.
@@ -57,6 +59,10 @@ export function CommandScreen() {
               />
             ))}
             {/* Resources & garrison now live in the docked port's Hangar (Port tab). */}
+            {/* TEAM-COMMAND Slice A (dark): read-only team roster. Not mounted while TEAM_COMMAND_ENABLED is
+                false, so it never renders and its owner-reads never run — CommandScreen is visually unchanged
+                for players until a human lights the gate. */}
+            {TEAM_COMMAND_ENABLED && <TeamRosterPanel />}
             {/* The ONE reports surface (merged /reports page + inline dashboard list). */}
             <ReportsSection reports={combat.reports} locations={game.locations} unitTypes={game.unitTypes} />
             {/* RANKING-P17 (dark, server-lit only): renders null while ranking_enabled is false. */}
