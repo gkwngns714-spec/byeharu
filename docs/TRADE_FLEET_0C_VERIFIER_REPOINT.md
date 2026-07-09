@@ -314,3 +314,27 @@ pin above is a **deploy-time human repoint**, out of the loop's locked scope; th
 by the forthcoming TRADE-FLEET verifier. The PORT-ENTRY D2 inventory
 (`scripts/port-entry-1-production-verify.sql:96-113`) stays frozen and is repointed wholesale at the deploy
 gate.
+
+---
+
+## A0 FOUNDATION FIXUP — two additional owned-ship conversions (migration 0159)
+
+Pre-team-command audit. The same trailing `p_main_ship_id uuid default null` + `mainship_resolve_owned_ship`
+conversion applied to two SECURITY DEFINER reads that were still written with the unguarded sole-ship
+derivation `... from main_ship_instances where player_id = auth.uid()` — a real arbitrary-ship bug once a
+player owns >1 ship. Backward compatible (existing zero-/two-arg callers → default null → sole-ship shim);
+DARK (multi-ship still off). Post-0C surface proven by the forthcoming TRADE-FLEET verifier; both pins below
+are a **deploy-time human repoint**, out of this fixup's locked scope.
+
+### `get_my_expedition_preview(jsonb, text)` → `get_my_expedition_preview(jsonb, text, uuid)`  *(migration 0159)*
+
+| file:line | pinned expression | repoint to |
+|---|---|---|
+| `scripts/port-entry-1-production-verify.sql:98` | `('public.get_my_expedition_preview(jsonb, text)')` (D2 exact-RPC inventory) | `('public.get_my_expedition_preview(jsonb, text, uuid)')` |
+
+### `get_my_docked_store()` → `get_my_docked_store(uuid)`  *(migration 0159)*
+
+**No signature-resolving pin — nothing to repoint.** The only reference is a ZERO-ARG call
+(`scripts/verify-station-storage.mjs:91` — `rpc('get_my_docked_store')`), which still resolves via the default
+param (per the "Zero-arg CALLS" rule above). `get_my_docked_store` was added in migration 0158, after the 0072
+freeze, so it is not in the PORT-ENTRY D2 inventory at all.

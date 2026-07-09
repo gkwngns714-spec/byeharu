@@ -6,7 +6,6 @@ import { MarketPanel } from '../map/MarketPanel'
 import { useDockServices } from '../map/useDockServices'
 import { useDockStore } from '../map/useDockStore'
 import { isDocked } from '../map/dockServices'
-import { useMainShipSelection } from '../map/useMainShipSelection'
 import { TRADE_MARKET_ENABLED } from '../map/osnReleaseGates'
 import { Card, PageHeader } from '../../components/ui'
 
@@ -19,13 +18,13 @@ import { Card, PageHeader } from '../../components/ui'
 // differently, no command logic changed — presentation only.
 
 export function PortScreen() {
-  const { map } = useShellState()
+  const { map, selection: shipSelection } = useShellState()
   const lifecycleKey = `${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
   const dock = useDockServices(lifecycleKey, { mainShipId: map.mainShip?.main_ship_id ?? null })
   // STATION-STORAGE — the docked port's own hangar (dark by default; server returns empty while the flag is off).
   const store = useDockStore(lifecycleKey)
-  // TRADE-UI-1 — selected-ship model for the DARK MarketPanel (compile-gated false + server-rejected).
-  const shipSelection = useMainShipSelection()
+  // TRADE-UI-1 — selected-ship model for the DARK MarketPanel, now the ONE shell instance (A0 lifted it; Ship
+  // reads the SAME selection). Compile-gated false + server-rejected today.
 
   return (
     <div className="h-full overflow-y-auto">

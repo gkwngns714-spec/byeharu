@@ -59,19 +59,39 @@ async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
   return (data as HullRow) ?? undefined
 }
 
-/** Read the caller's own main ship (owner-read RLS) + its hull. No writes; no support data. */
-export async function fetchMyMainShip(): Promise<MainShipView> {
-  const { data: ship, error } = await supabase
+/**
+ * The ONE client owned-ship resolution rule — mirrors the backend `mainship_resolve_owned_ship`: an explicit
+ * `mainShipId` selects that owned ship; otherwise the SOLE ship, and ONLY when the player owns exactly one.
+ * Zero or >1 (ambiguous, once multi-ship is live) → null (fail closed). Never picks an arbitrary/first ship,
+ * never relies on row order. Callers pass the shell-selected id once multi-ship lights up; today (dark) every
+ * player owns exactly one ship, so a null id resolves to it — behavior unchanged.
+ */
+export function resolveOwnedShip<T extends { main_ship_id: string }>(
+  ships: T[],
+  mainShipId?: string | null,
+): T | null {
+  if (mainShipId) return ships.find((s) => s.main_ship_id === mainShipId) ?? null
+  return ships.length === 1 ? ships[0] : null
+}
+
+/**
+ * Read the caller's own main ship (owner-read RLS) + its hull. No writes; no support data. Plural-safe: reads
+ * ALL owned ships and resolves via resolveOwnedShip (never `.maybeSingle()`, which errors at N≥2). A null
+ * resolution (no ship, or ambiguous >1 without a selection) falls through to the read-only starter-hull teaser.
+ */
+export async function fetchMyMainShip(mainShipId?: string | null): Promise<MainShipView> {
+  const { data, error } = await supabase
     .from('main_ship_instances')
     .select(SHIP_COLS)
-    .maybeSingle() // owner-read RLS → the caller's single ship, or null
+    .order('created_at', { ascending: true }) // stable enumeration only; the pick is resolver-decided, not first-row
   if (error) throw new Error(error.message)
 
+  const ship = resolveOwnedShip((data ?? []) as MainShipRow[], mainShipId)
   if (ship) {
-    const hull = await fetchHull((ship as MainShipRow).hull_type_id)
-    return { has_ship: true, ship: ship as MainShipRow, hull }
+    const hull = await fetchHull(ship.hull_type_id)
+    return { has_ship: true, ship, hull }
   }
-  // no ship commissioned yet → read-only starter-hull teaser
+  // no resolvable ship (none commissioned, or ambiguous >1 without a selection) → read-only starter-hull teaser
   return { has_ship: false, hull: await fetchHull('starter_frigate') }
 }
 
