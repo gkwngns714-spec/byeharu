@@ -30,7 +30,6 @@ export interface MainShipStatusLabelInputs {
  *  - in_space             → "Parked in open space"
  *  - present (docked)     → "Docked at <name>" for a VISIBLE location, else a generic "Docked" (no leak)
  *  - outbound/returning   → "Traveling to <name>" for a VISIBLE 'location' target, else "Traveling to open space"
- *  - home                 → "Ready to launch"
  * Hidden/unknown destinations and dock locations NEVER surface a name, id, or coordinate.
  */
 export function resolveMainShipStatusLabel(inp: MainShipStatusLabelInputs): string | null {
@@ -58,8 +57,6 @@ export function resolveMainShipStatusLabel(inp: MainShipStatusLabelInputs): stri
       }
       return 'Traveling to open space'
     }
-    case 'home':
-      return 'Ready to launch'
     default:
       return null
   }

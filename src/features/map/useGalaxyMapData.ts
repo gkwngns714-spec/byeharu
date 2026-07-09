@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { fetchWorldMap, fetchLocationStates } from './mapApi'
 import type { LocationState, MapLocation } from './mapTypes'
-import { fetchBase } from '../base/baseApi'
-import type { Base } from '../base/baseTypes'
 import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import { fetchMainshipSendEnabled } from '../../lib/catalog'
@@ -41,7 +39,6 @@ export interface GalaxyMapData {
   error: string | null
   locations: MapLocation[]
   meta: Record<string, LocationMeta>
-  base: Base | null
   mainShip: MainShipLite | null
   movements: FleetMovement[]
   locationStates: Record<string, LocationState>
@@ -76,7 +73,6 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   error: null,
   locations: [],
   meta: {},
-  base: null,
   mainShip: null,
   movements: [],
   locationStates: {},
@@ -92,15 +88,14 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
   const staticRef = useRef<{
     locations: MapLocation[]
     meta: Record<string, LocationMeta>
-    base: Base | null
     mainshipSendEnabled: boolean
   } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [world, base, mainshipSendEnabled] = await Promise.all([
-          fetchWorldMap(), fetchBase(), fetchMainshipSendEnabled(),
+        const [world, mainshipSendEnabled] = await Promise.all([
+          fetchWorldMap(), fetchMainshipSendEnabled(),
         ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -112,10 +107,9 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
             }
           }
         }
-        staticRef.current = { locations, meta, base, mainshipSendEnabled }
+        staticRef.current = { locations, meta, mainshipSendEnabled }
       }
 
-      const base = staticRef.current.base
       const [movements, locationStates, mainShip] = await Promise.all([
         fetchActiveMovements(),
         fetchLocationStates(),
@@ -146,7 +140,6 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         error: null,
         locations: staticRef.current.locations,
         meta: staticRef.current.meta,
-        base,
         mainShip,
         movements,
         locationStates,

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import type { MapLocation } from './mapTypes'
-import type { Base } from '../base/baseTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MainShipLite } from './useGalaxyMapData'
 import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
@@ -32,7 +31,6 @@ const norm = (p: { x: number; y: number }): { x: number; y: number } => worldToV
 
 export function GalaxyMap({
   locations,
-  base,
   mainShip,
   mainShipFleet,
   mainShipPresence,
@@ -44,7 +42,6 @@ export function GalaxyMap({
   deps,
 }: {
   locations: MapLocation[]
-  base: Base | null
   mainShip: MainShipLite | null
   mainShipFleet: MainShipFleet | null
   mainShipPresence: MainShipPresence | null
@@ -128,9 +125,8 @@ export function GalaxyMap({
       shipWorld,
       movementSegment: seg,
       locations: locations.map((l) => ({ x: l.x, y: l.y })),
-      base: base ? { x: base.x, y: base.y } : null,
     }
-  }, [mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations, base])
+  }, [mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations])
 
   // Stable focus signature: changes only on a MEANINGFUL focus change (open-space mode / active
   // movement id / parked point / named-content set), never per animation frame — so the fit is applied
@@ -140,8 +136,8 @@ export function GalaxyMap({
       const seg = mainShipSpaceMovement?.status === 'moving' ? mainShipSpaceMovement.id : 'noseg'
       return `os:${mainShip?.spatial_state ?? 'n'}:${seg}:${mainShip?.space_x ?? 'n'},${mainShip?.space_y ?? 'n'}`
     }
-    return `named:${locations.map((l) => l.id).join(',')}|${base ? `${base.x},${base.y}` : ''}`
-  }, [focusInputs, mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations, base])
+    return `named:${locations.map((l) => l.id).join(',')}`
+  }, [focusInputs, mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations])
 
   // Apply the content-fit camera for the INITIAL view (once per focus change), never after the player
   // has interacted. Explicit reset re-enables it.
@@ -335,7 +331,7 @@ export function GalaxyMap({
               The single helper is what the GalaxyMap-wiring unit test exercises (no duplicated wiring). */}
           {shipLayer({
             mainshipSendEnabled,
-            inputs: { mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, base, locations },
+            inputs: { mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, locations },
             norm,
             k: view.k,
           })}

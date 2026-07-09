@@ -29,13 +29,12 @@ export function ShipScreen() {
       <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 sm:px-6">
         <PageHeader title="Ship" subtitle="Your main ship" />
         {/* THE ship surface: identity + hull integrity, the one right-now action (repair /
-            countdown / return home), cargo & fittings. Repair/recall wiring unchanged. */}
+            travel countdown), cargo & fittings. Port-centric: no recall/return-home. */}
         <ShipStatusCard
           mainShip={game.mainShip}
           fleet={map.mainShipFleet}
           movements={map.movements}
           locations={game.locations}
-          sendEnabled={map.mainshipSendEnabled}
           onChanged={async () => {
             await Promise.all([game.refresh(), map.refresh()])
           }}

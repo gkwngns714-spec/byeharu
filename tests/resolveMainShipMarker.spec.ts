@@ -6,7 +6,6 @@ import { worldToViewBox } from '../src/features/map/openSpaceTransform'
 // OSN-1 / OSN-2b / OSN-3-S1 — pure unit test for the single main-ship marker resolver. No browser/page.
 // Run: `npm run verify:osn:resolver`.
 
-const BASE = { x: 100, y: 200 }
 const LOC = { id: 'loc-A', x: 300, y: 400 }
 const DEP = '2026-01-01T00:00:00Z'
 const ARR = '2026-01-01T00:10:00Z'
@@ -40,7 +39,6 @@ const inputs = (over: Partial<MarkerInputs> = {}): MarkerInputs => ({
   movements: [],
   presence: null,
   spaceMovement: null,
-  base: BASE,
   locations: [LOC],
   ...over,
 })
@@ -55,8 +53,8 @@ const mv = (over: Record<string, unknown> = {}) =>
 
 // ── Legacy (spatial_state IS NULL) — unchanged ──────────────────────────────────────────────────
 
-test('legacy: home → base coordinates', () => {
-  expect(resolveMainShipMarker(inputs(), Date.now())).toMatchObject({ state: 'home', x: 100, y: 200 })
+test('legacy: home → null (port-centric: no home base marker)', () => {
+  expect(resolveMainShipMarker(inputs(), Date.now())).toBeNull()
 })
 
 test('legacy: valid named-location presence → location coords', () => {
@@ -214,9 +212,8 @@ test('at_location: residual movement pointer → null', () => {
 
 // ── home (OSN-3 S1, non-null spatial_state) ─────────────────────────────────────────────────────
 
-test('home (spatial_state=home): valid → base coords', () => {
-  expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'home', spatial_state: 'home' }) }), Date.now()))
-    .toMatchObject({ state: 'home', x: 100, y: 200 })
+test('home (spatial_state=home): → null (port-centric: no home base marker)', () => {
+  expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'home', spatial_state: 'home' }) }), Date.now())).toBeNull()
 })
 
 test('home (spatial_state=home): with active fleet / presence / coordinate movement → null', () => {
@@ -259,9 +256,7 @@ test('does not mutate the input object', () => {
 // add the provenance contract: legacy/named → 'legacy_dynamic'; in_space + coordinate in_transit →
 // 'open_space_fixed'; stale/incoherent coordinate data → null (never a guessed legacy fallback).
 
-test('S6B2: legacy / home / at-location states → coordinateSpace legacy_dynamic', () => {
-  expect(resolveMainShipMarker(inputs(), Date.now())?.coordinateSpace).toBe('legacy_dynamic') // legacy null-home
-  expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'home', spatial_state: 'home' }) }), Date.now())?.coordinateSpace).toBe('legacy_dynamic') // §E home
+test('S6B2: at-location / present states → coordinateSpace legacy_dynamic (home has no marker)', () => {
   expect(resolveMainShipMarker(atLocInputs(), Date.now())?.coordinateSpace).toBe('legacy_dynamic') // §D at_location
   expect(resolveMainShipMarker(inputs({ mainShip: ship({ status: 'traveling' }), mainShipFleet: fleet({ status: 'present', current_location_id: 'loc-A' }), presence: pres() }), Date.now())?.coordinateSpace).toBe('legacy_dynamic') // §F present
 })
@@ -299,8 +294,6 @@ test('S6B2: destroyed / repair-unavailable never produce a fixed-space marker', 
 
 test('S6B2: no legacy / home / at-location / travel path can acquire open_space_fixed', () => {
   const legacyCases = [
-    inputs(),
-    inputs({ mainShip: ship({ status: 'home', spatial_state: 'home' }) }),
     atLocInputs(),
     inputs({ mainShip: ship({ status: 'traveling' }), mainShipFleet: fleet({ status: 'moving' }), movements: [mv()] }),
     inputs({ mainShip: ship({ status: 'returning' }), mainShipFleet: fleet({ status: 'returning' }), movements: [mv({ target_type: 'base' })] }),
