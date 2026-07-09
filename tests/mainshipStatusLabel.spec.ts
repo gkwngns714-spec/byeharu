@@ -19,7 +19,7 @@ const marker = (state: MainShipMarkerState): ShipMarker => ({
   x: 0,
   y: 0,
   state,
-  coordinateSpace: state === 'present' || state === 'home' ? 'legacy_dynamic' : 'open_space_fixed',
+  coordinateSpace: state === 'present' ? 'legacy_dynamic' : 'open_space_fixed',
 })
 
 const mv = (over: Partial<MainShipSpaceMovement> = {}): MainShipSpaceMovement => ({
@@ -72,15 +72,10 @@ test('traveling to an open-space coordinate → "Traveling to open space"', () =
     .toBe('Traveling to open space')
 })
 
-test('home → "At home base"', () => {
-  expect(resolveMainShipStatusLabel({ marker: marker('home'), spaceMovement: null, publicLocations: PUBLIC }))
-    .toBe('At home base')
-})
-
 // TRADE-UI-1 — the raw main_ship_instances.status enum labeler consumed by the ship-switcher (migration 0043).
 test('instance status: every enum value maps to a non-raw human label', () => {
   const cases: Record<string, string> = {
-    home: 'At home base', traveling: 'Traveling', hunting: 'Hunting', trading: 'Trading',
+    home: 'Ready to launch', traveling: 'Traveling', hunting: 'Hunting', trading: 'Trading',
     exploring: 'Exploring', mining: 'Mining', retreating: 'Retreating', returning: 'Returning',
     repairing: 'Repairing', destroyed: 'Disabled',
   }

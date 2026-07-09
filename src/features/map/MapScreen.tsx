@@ -53,7 +53,7 @@ const rewardLabel = (tier: number): string =>
 export function MapScreen() {
   const {
     map: {
-      loading, error, locations, meta, base, mainShip, movements,
+      loading, error, locations, meta, mainShip, movements,
       mainshipSendEnabled, mainShipFleet, mainShipHeldFleet, mainShipPresence, mainShipSpaceMovement, refresh,
     },
   } = useShellState()
@@ -104,7 +104,6 @@ export function MapScreen() {
           <>
             <GalaxyMap
               locations={locations}
-              base={base}
               mainShip={mainShip}
               mainShipFleet={mainShipFleet}
               mainShipPresence={mainShipPresence}

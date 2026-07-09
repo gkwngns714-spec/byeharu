@@ -3,8 +3,8 @@ import { fetchGameConfig, fetchMainshipSendEnabled, fetchUnitTypes, type UnitTyp
 import { fetchMyMainShip, type MainShipView } from '../map/mainshipApi'
 import { fetchLocationStates, fetchWorldMap } from '../map/mapApi'
 import type { LocationState, MapLocation } from '../map/mapTypes'
-import { ensureBase, fetchBase, fetchBaseResources, fetchBaseUnits } from '../base/baseApi'
-import type { Base, BaseResource, BaseUnit } from '../base/baseTypes'
+import { ensureBase, fetchBase } from '../base/baseApi'
+import type { Base } from '../base/baseTypes'
 import {
   fetchActiveMovements,
   fetchActivePresences,
@@ -17,8 +17,6 @@ export interface GameState {
   loading: boolean
   error: string | null
   base: Base | null
-  units: BaseUnit[]
-  resources: BaseResource[]
   unitTypes: UnitType[]
   locations: MapLocation[]
   config: Record<string, number>
@@ -37,8 +35,6 @@ const EMPTY: GameState = {
   loading: true,
   error: null,
   base: null,
-  units: [],
-  resources: [],
   unitTypes: [],
   locations: [],
   config: {},
@@ -79,10 +75,8 @@ export function useGameState(pollMs = 3000) {
       }
 
       const base = await fetchBase()
-      const [units, resources, fleets, fleetUnits, movements, presences, locationStates, mainShip] =
+      const [fleets, fleetUnits, movements, presences, locationStates, mainShip] =
         await Promise.all([
-          base ? fetchBaseUnits(base.id) : Promise.resolve([]),
-          base ? fetchBaseResources(base.id) : Promise.resolve([]),
           fetchFleets(),
           fetchFleetUnits(),
           fetchActiveMovements(),
@@ -95,8 +89,6 @@ export function useGameState(pollMs = 3000) {
         loading: false,
         error: null,
         base,
-        units,
-        resources,
         fleets,
         fleetUnits,
         movements,

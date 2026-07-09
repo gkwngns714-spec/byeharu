@@ -170,7 +170,7 @@ test('parseNormalize: documented failures (+state) and malformed', () => {
 // ── Player-facing copy exists for every reason ─────────────────────────────────────────────────────────
 test('reason copy is non-empty and distinct per surface', () => {
   expect(commissionReasonMessage('needs_normalization')).toContain('Finish Docking')
-  expect(commissionReasonMessage('needs_compat_route')).toContain('home base')
+  expect(commissionReasonMessage('needs_compat_route')).toContain('Travel to a port')
   expect(normalizeReasonMessage('ineligible_port').length).toBeGreaterThan(0)
   expect(normalizeReasonMessage('no_ship').length).toBeGreaterThan(0)
 })

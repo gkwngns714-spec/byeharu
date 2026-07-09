@@ -13,7 +13,7 @@ import type { MapLocation } from './mapTypes'
 // returns `null`. This is a DISPLAY resolver only — NOT the future server-side authoritative origin
 // resolver.
 
-export type MainShipMarkerState = 'home' | 'present' | 'outbound' | 'returning' | 'in_space'
+export type MainShipMarkerState = 'present' | 'outbound' | 'returning' | 'in_space'
 
 // OSN-3 S6B2 — which coordinate-space layer renders this marker. Legacy/named states project through the
 // map's dynamic buildNormalizer (`norm`); open-space states (in_space, coordinate in_transit) project
@@ -38,14 +38,13 @@ export interface MarkerInputs {
   presence: MainShipPresence | null
   // OSN-3 S1: the active coordinate movement (status='moving') for this ship, or null.
   spaceMovement: MainShipSpaceMovement | null
-  base: { x: number; y: number } | null
   locations: Pick<MapLocation, 'id' | 'x' | 'y'>[]
 }
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
 
 export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMarker | null {
-  const { mainShip, mainShipFleet: fleet, movements, presence, spaceMovement, base, locations } = inp
+  const { mainShip, mainShipFleet: fleet, movements, presence, spaceMovement, locations } = inp
   if (!mainShip) return null
   // `coordinateSpace` is a REQUIRED parameter: every return path must declare its provenance explicitly
   // (no default), so a forgotten branch is a TypeScript error rather than a silent legacy fallback.
@@ -121,15 +120,9 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
     return make('present', 'legacy_dynamic', loc.x, loc.y)
   }
 
-  // §E (OSN-3 S1) — home: authoritative base coordinates, no active state.
-  if (ss === 'home') {
-    if (mainShip.status !== 'home') return null
-    if (fleet) return null
-    if (presenceActive) return null
-    if (coordMoving) return null
-    if (!base || !finite(base.x) || !finite(base.y)) return null
-    return make('home', 'legacy_dynamic', base.x, base.y)
-  }
+  // §E (OSN-3 S1) — home: port-centric has no home base. A ship "at home" (the legacy 0,0 idle state)
+  // is NOT drawn on the port map — it appears only once it is traveling or docked at a port.
+  if (ss === 'home') return null
 
   // §F — legacy (spatial_state IS NULL): unchanged derivation.
   if (ss === null) {
@@ -156,10 +149,7 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
       if (!loc || !finite(loc.x) || !finite(loc.y)) return null
       return make('present', 'legacy_dynamic', loc.x, loc.y)
     }
-    // Genuinely home: no active fleet AND ship 'home' AND base resolves.
-    if (!fleet && mainShip.status === 'home' && base && finite(base.x) && finite(base.y)) {
-      return make('home', 'legacy_dynamic', base.x, base.y)
-    }
+    // Genuinely home (legacy 0,0 idle): not drawn on the port map in the port-centric model.
     return null
   }
 
