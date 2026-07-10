@@ -65,6 +65,16 @@ export function resolveOwnedGroup(groups: GroupRow[], groupId?: string | null): 
   return groups.length === 1 ? groups[0].group_id : null
 }
 
+// The lowest unused team slot (group_index) in 1..3, or null when all three exist. Drives the "Create team"
+// affordance: null → creation is capped (hide/disable the control). Mirrors the DECLARATIVE 1..3 cap that
+// upsert_ship_group leans on (the (player_id, group_index) unique key × the CHECK) — so the UI never offers a
+// 4th team. Ignores unordered/duplicate input; never returns a value outside 1..3.
+export function nextTeamSlot(groups: GroupRow[]): number | null {
+  const used = new Set(groups.map((g) => g.group_index))
+  for (let i = 1; i <= 3; i++) if (!used.has(i)) return i
+  return null
+}
+
 export type CommissionReason = 'ok' | 'gate_dark' | 'cap_reached'
 
 // Client-side mirror of commission_additional_main_ship()'s reject order (migration 0080/0091): the DARK gate

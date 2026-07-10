@@ -1,24 +1,48 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useShellState } from '../../app/shellState'
-import { Card, CardHeader, Badge, SectionLabel } from '../../components/ui'
-import { fetchMyShipGroups, fetchMyShipGroupMap } from './teamApi'
-import { buildTeamRoster, type GroupRow, type RosterShip } from './teamRoster'
+import { Card, CardHeader, Badge, SectionLabel, Button, Notice } from '../../components/ui'
+import {
+  fetchMyShipGroups,
+  fetchMyShipGroupMap,
+  upsertShipGroup,
+  assignShipToGroup,
+  deleteShipGroup,
+  type TeamRpcResult,
+} from './teamApi'
+import { buildTeamRoster, nextTeamSlot, type GroupRow, type RosterShip } from './teamRoster'
+import { groupUpsertAvailability } from './teamMutations'
 
-// TEAM-COMMAND Slice A — READ-ONLY team roster (backend "group" == UI "team").
+// TEAM-COMMAND Slice B1 — INTERACTIVE team roster (backend "group" == UI "team").
 //
-// DARK: mounted only behind TEAM_COMMAND_ENABLED (see CommandScreen); tree-shaken while false, so nothing here
-// renders or fetches in production yet. Scope is visibility ONLY — it lists the player's ships grouped into
-// teams and lets the player pick which ship is selected. It initiates NO team travel and NO combat (later
-// slices). Selection is the ONE shell source (shellState.selection): the roster reads `ships`/`selectedShipId`
-// from it and calls `selectShip` — it never mounts a second selection source. Group membership + team names
-// (which the shell selection does not carry) are fetched here and merged for display only.
+// DARK: mounted only behind TEAM_COMMAND_ENABLED (see CommandScreen); not mounted while false, so nothing here
+// renders or fetches in production yet. B0 added the server write RPCs; B1 wires them: create / rename / delete
+// a team and assign / unassign a ship. It still initiates NO team travel and NO combat (later slices).
+//
+// Selection is the ONE shell source (shellState.selection): the ship LIST + the "selected ship" pointer come
+// from it; assign actions target a ship id taken straight from that list — no second selection source. Group
+// metadata + membership (which the shell selection doesn't carry) are fetched here. NO optimistic UI: every
+// mutation awaits the server then refetches BOTH group reads, so the view can never diverge from server truth
+// (a deleted team's ships reappear as ungrouped via ON DELETE SET NULL).
 
 export function TeamRosterPanel() {
   const { selection } = useShellState()
   const [groups, setGroups] = useState<GroupRow[]>([])
   const [groupMap, setGroupMap] = useState<Record<string, string | null>>({})
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null) // key of the mutation in flight (blocks double-submit)
+  const [notice, setNotice] = useState<string | null>(null) // reason of the last failed mutation (dark ⇒ rare)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null) // group_id pending delete confirm
+  const [drafts, setDrafts] = useState<Record<string, string>>({}) // per-team rename input, keyed by group_id
 
+  const reload = useCallback(async () => {
+    const [g, m] = await Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap()])
+    setGroups(g)
+    setGroupMap(m)
+    setLoading(false)
+  }, [])
+
+  // Initial load: inline .then so setState lands in an async callback, not synchronously in the effect body
+  // (react-hooks/set-state-in-effect). reload() reuses the same two fetches after every mutation.
   useEffect(() => {
     let active = true
     void Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap()]).then(([g, m]) => {
@@ -32,6 +56,21 @@ export function TeamRosterPanel() {
     }
   }, [])
 
+  // Run a mutation: block re-entry, clear stale notice, await the server, surface any reject, THEN refetch
+  // server truth (never optimistic). All mutation controls disable while any run is in flight.
+  const run = async (key: string, op: () => Promise<TeamRpcResult>) => {
+    if (busy) return
+    setBusy(key)
+    setNotice(null)
+    try {
+      const res = await op()
+      if (!res.ok) setNotice(res.reason)
+      await reload()
+    } finally {
+      setBusy(null) // never wedge the panel, even if a wrapper unexpectedly rejects
+    }
+  }
+
   // Merge the shell's ship list (the ONE selection source) with the fetched membership map → roster shapes.
   const rosterShips: RosterShip[] = selection.ships.map((s) => ({
     main_ship_id: s.main_ship_id,
@@ -40,23 +79,53 @@ export function TeamRosterPanel() {
     group_id: groupMap[s.main_ship_id] ?? null,
   }))
   const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
+  const openSlot = nextTeamSlot(groups)
 
-  const shipButton = (s: RosterShip) => {
+  const shipRow = (s: RosterShip) => {
     const selected = s.main_ship_id === selection.selectedShipId
+    const targets = groups.filter((g) => g.group_id !== s.group_id) // teams this ship isn't already in
     return (
-      <button
+      <div
         key={s.main_ship_id}
-        onClick={() => selection.selectShip(s.main_ship_id)}
-        className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm ${
-          selected ? 'border-accent/40 bg-accent/5' : 'border-edge bg-surface hover:border-edge-strong'
+        className={`rounded-md border px-3 py-2 ${
+          selected ? 'border-accent/40 bg-accent/5' : 'border-edge bg-surface'
         }`}
       >
-        <span className="truncate text-ink">{s.name}</span>
-        <span className="ml-3 flex shrink-0 items-center gap-2">
-          <span className="text-xs text-ink-faint">{s.status}</span>
-          {selected && <Badge tone="accent">Selected</Badge>}
-        </span>
-      </button>
+        <div className="flex items-center justify-between">
+          <button onClick={() => selection.selectShip(s.main_ship_id)} className="truncate text-left text-sm text-ink">
+            {s.name}
+          </button>
+          <span className="ml-3 flex shrink-0 items-center gap-2">
+            <span className="text-xs text-ink-faint">{s.status}</span>
+            {selected && <Badge tone="accent">Selected</Badge>}
+          </span>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {targets.map((g) => (
+            <Button
+              key={g.group_id}
+              size="sm"
+              variant="ghost"
+              busy={busy === `assign:${s.main_ship_id}`}
+              disabled={busy !== null}
+              onClick={() => void run(`assign:${s.main_ship_id}`, () => assignShipToGroup(s.main_ship_id, g.group_id))}
+            >
+              → {g.name}
+            </Button>
+          ))}
+          {s.group_id != null && (
+            <Button
+              size="sm"
+              variant="ghost"
+              busy={busy === `assign:${s.main_ship_id}`}
+              disabled={busy !== null}
+              onClick={() => void run(`assign:${s.main_ship_id}`, () => assignShipToGroup(s.main_ship_id, null))}
+            >
+              Unassign
+            </Button>
+          )}
+        </div>
+      </div>
     )
   }
 
@@ -64,25 +133,100 @@ export function TeamRosterPanel() {
     <Card>
       <CardHeader
         title="Teams"
-        subtitle="Command roster — select a ship. Team travel & combat arrive in later slices."
+        subtitle="Create, rename, delete teams and assign ships. Team travel & combat arrive in later slices."
         aside={<Badge tone="warning">Preview</Badge>}
       />
+
+      {notice && (
+        <Notice tone="warning" className="mb-3">
+          Couldn’t complete that action ({notice}).
+        </Notice>
+      )}
+
       {loading ? (
         <p className="text-sm text-ink-muted">Loading roster…</p>
       ) : (
         <div className="space-y-4">
-          {teams.map(({ group, ships }) => (
-            <div key={group.group_id} className="space-y-2">
-              <SectionLabel>
-                {group.name} · Team {group.group_index} · {ships.length} ship{ships.length === 1 ? '' : 's'}
-              </SectionLabel>
-              {ships.length === 0 ? (
-                <p className="text-xs text-ink-faint">No ships assigned.</p>
-              ) : (
-                <div className="space-y-1.5">{ships.map(shipButton)}</div>
-              )}
-            </div>
-          ))}
+          {openSlot !== null && (
+            <Button
+              size="sm"
+              variant="secondary"
+              busy={busy === 'create'}
+              disabled={busy !== null}
+              onClick={() => void run('create', () => upsertShipGroup(openSlot, 'Team'))}
+            >
+              + Create team
+            </Button>
+          )}
+
+          {teams.map(({ group, ships }) => {
+            const draft = drafts[group.group_id] ?? group.name
+            const nameOk = groupUpsertAvailability({ gateEnabled: true, groupIndex: group.group_index, name: draft }).canUpsert
+            return (
+              <div key={group.group_id} className="space-y-2 rounded-lg border border-edge/60 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <SectionLabel>
+                    Team {group.group_index} · {ships.length} ship{ships.length === 1 ? '' : 's'}
+                  </SectionLabel>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      value={draft}
+                      onChange={(e) => setDrafts((d) => ({ ...d, [group.group_id]: e.target.value }))}
+                      className="w-28 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-ink"
+                      aria-label={`Rename team ${group.group_index}`}
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      busy={busy === `rename:${group.group_id}`}
+                      disabled={busy !== null || !nameOk || draft === group.name}
+                      onClick={() => void run(`rename:${group.group_id}`, () => upsertShipGroup(group.group_index, draft))}
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy !== null}
+                      onClick={() => setConfirmDelete(group.group_id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+
+                {confirmDelete === group.group_id && (
+                  <Notice tone="danger">
+                    Delete this team? Its ships stay — they’re just un-grouped.
+                    <span className="ml-2 inline-flex gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        busy={busy === `delete:${group.group_id}`}
+                        disabled={busy !== null}
+                        onClick={() =>
+                          void run(`delete:${group.group_id}`, () => deleteShipGroup(group.group_id)).then(() =>
+                            setConfirmDelete(null),
+                          )
+                        }
+                      >
+                        Delete
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setConfirmDelete(null)}>
+                        Cancel
+                      </Button>
+                    </span>
+                  </Notice>
+                )}
+
+                {ships.length === 0 ? (
+                  <p className="text-xs text-ink-faint">No ships assigned.</p>
+                ) : (
+                  <div className="space-y-1.5">{ships.map(shipRow)}</div>
+                )}
+              </div>
+            )
+          })}
 
           <div className="space-y-2">
             <SectionLabel>
@@ -91,7 +235,7 @@ export function TeamRosterPanel() {
             {ungrouped.length === 0 ? (
               <p className="text-xs text-ink-faint">All ships are assigned to a team.</p>
             ) : (
-              <div className="space-y-1.5">{ungrouped.map(shipButton)}</div>
+              <div className="space-y-1.5">{ungrouped.map(shipRow)}</div>
             )}
           </div>
         </div>

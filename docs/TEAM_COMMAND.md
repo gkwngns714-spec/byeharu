@@ -27,9 +27,10 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
 ## Slice status
 
 - **Slice A — team/group data model + multi-ship enablement foundation (DARK). Done (migration 0160).**
-- **Slice B0 — DARK group create/assign write path (the writer A omitted). ← this slice (migration 0161).**
-- Slice B — send/stop **by team** (generalize `send_main_ship_expedition` to N ships over the fleets spine;
-  plus the group **delete** RPC and the interactive team UI). *Not started.*
+- **Slice B0 — DARK group create/assign write path (the writer A omitted). Done (migration 0161).**
+- **Slice B1 — DARK group delete RPC + interactive team UI. ← this slice (migration 0162).**
+- Slice B — send/stop **by team** (generalize `send_main_ship_expedition` to N ships over the fleets spine).
+  *Not started.*
 - Slice C — captains (wire the dark CAPTAIN-P15/P16 system; captain skills → team skillset via
   `calculate_expedition_stats`; bump `main_ship_hull_types.base_captain_slots` 2 → 6–8). *Not started.*
 - Slice D — team combat (largest; main-ship combat was never built — resolve a team into the existing combat
@@ -94,6 +95,27 @@ Frontend (still dark; UI deferred to Slice B):
   (`npm run verify:team:unit` now runs both team specs). **No `teamApi` wrappers and no interactive assign/rename
   UI this slice** — those land with Slice B's team UI so the roster stays read-only until then.
 
+## Slice B1 — what shipped
+
+Migration `supabase/migrations/20260618000162_slice_b1_group_delete.sql` + the interactive (still dark) UI:
+
+- **`delete_ship_group(p_group_id)`** — DARK, owner-scoped delete of a team slot. Order: auth →
+  `cfg_bool('team_command_enabled')` gate → resolve owned group → **lock `FOR UPDATE` + revalidate `FOUND`** →
+  delete → `{ok, reason}`. Members are un-grouped by the 0160 `ON DELETE SET NULL` FK — **no manual member
+  update**. Reject vocab: `not_authenticated` → `team_command_disabled` → `group_not_found` → `ok`. The
+  `FOR UPDATE` conflicts with B0 assign's `FOR SHARE`, so assign and delete **serialize** (and both lock the
+  group row before touching child ship rows → no deadlock); a double-delete loser re-reads zero rows under the
+  lock and fails closed. ACL: `authenticated`-only. No flag flipped, no `game_config` write.
+- **`teamApi` write wrappers** — `upsertShipGroup`, `assignShipToGroup`, `deleteShipGroup` over the B0/B1 RPCs
+  (normalize-don't-throw, the dark-RPC style). Server is the sole authority; `{ok:false}` is a normal outcome.
+- **`TeamRosterPanel` is now interactive** (still behind `TEAM_COMMAND_ENABLED`): create a team (only when a
+  slot 1–3 is free, via `nextTeamSlot`), rename, delete (with an inline confirm), and assign/unassign a ship.
+  **No optimistic UI** — every mutation awaits the server then refetches both group reads, so the view can't
+  diverge from server truth. Still uses the ONE shell selection for the ship list + selected-ship pointer — no
+  second selection source; no team travel/combat.
+- **`nextTeamSlot` pure helper** (in `teamRoster.ts`) — lowest free slot 1–3 or null (capped), unit-tested in
+  `tests/teamRoster.spec.ts`.
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -113,11 +135,12 @@ the cap so it is not the binding limit once multi-ship is later lit.
 - **Group creation / assignment RPC** → **DONE in Slice B0** (`upsert_ship_group` / `assign_ship_to_group` +
   `mainship_resolve_owned_group`; same-player gap closed via dual same-`auth.uid()` resolution; dark behind
   `team_command_enabled`; no client UI yet).
-- **Group DELETE RPC + interactive team UI (`teamApi` wrappers, assign/rename controls)** → Slice B. The delete
-  RPC must lock the group row `FOR UPDATE` and rely on `ON DELETE SET NULL` to un-group members.
-- **CI `.mjs` verifier** for the write path → lands with Slice B's verify step (must flip
-  `team_command_enabled` true in an ephemeral/rolled-back txn, exercise upsert/assign/unassign + every reject,
-  and assert player A cannot assign A's ship to B's group).
+- **Group DELETE RPC + interactive team UI** → **DONE in Slice B1** (`delete_ship_group` + `teamApi` write
+  wrappers + create/rename/delete/assign controls in `TeamRosterPanel`, still dark).
+- **CI `.mjs` verifier** for the write path → lands with Slice B's verify step. Must flip `team_command_enabled`
+  true in an ephemeral/rolled-back txn and exercise upsert/assign/unassign/**delete** + every reject, assert
+  player A cannot assign A's ship to B's group **nor delete B's group**, and cover the **double-delete** and
+  **assign-vs-delete** races.
 - **`base_captain_slots` 2 → 6–8** → Slice C (needed only when captains are wired; not needed by the group
   model).
 - **Folding `ModulesPanel.shipPick` into the shell selection** → deferred. It changes module-fitting behavior
