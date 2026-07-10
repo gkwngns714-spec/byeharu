@@ -31,3 +31,42 @@ export async function fetchMyShipGroupMap(): Promise<Record<string, string | nul
   }
   return map
 }
+
+// ── Slice B1 — owner-scoped group WRITE wrappers over the B0/B1 SECURITY DEFINER RPCs (DARK). ──
+// Thin: send only ids/values; the server derives the player from auth.uid(), re-checks the gate + ownership,
+// and is the SOLE authority. {ok:false} is a NORMAL (dark) outcome → normalized, never thrown (the
+// mainshipApi dark-RPC style). These run ONLY from TeamRosterPanel (mounted behind TEAM_COMMAND_ENABLED=false),
+// so they never execute in production.
+
+export type TeamRpcResult = { ok: true; [k: string]: unknown } | { ok: false; reason: string }
+
+// upsert_ship_group (0161) — create OR rename the slot group_index (1..3). Rename = pass an existing team's
+// group_index; the (player_id, group_index) upsert updates its name. group_id is server-assigned.
+export async function upsertShipGroup(groupIndex: number, name: string): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('upsert_ship_group', {
+    p_group_index: groupIndex,
+    p_name: name,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
+// assign_ship_to_group (0161) — assign an owned ship to an owned team, or UNASSIGN (groupId null).
+export async function assignShipToGroup(
+  mainShipId: string,
+  groupId: string | null,
+): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('assign_ship_to_group', {
+    p_main_ship_id: mainShipId,
+    p_group_id: groupId,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
+// delete_ship_group (0162) — delete an owned team; its ships are un-grouped by ON DELETE SET NULL server-side.
+export async function deleteShipGroup(groupId: string): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('delete_ship_group', { p_group_id: groupId })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}

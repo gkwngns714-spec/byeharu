@@ -3,6 +3,7 @@ import {
   buildTeamRoster,
   resolveOwnedGroup,
   commissionAvailability,
+  nextTeamSlot,
   type GroupRow,
   type RosterShip,
 } from '../src/features/command/teamRoster'
@@ -124,4 +125,24 @@ test('commissionAvailability: gate on + under cap → ok', () => {
     canCommission: true,
     reason: 'ok',
   })
+})
+
+// ── nextTeamSlot — lowest free team slot 1..3, or null when capped at 3 (Slice B1) ─────────────────
+test('nextTeamSlot: empty → 1', () => {
+  expect(nextTeamSlot([])).toBe(1)
+})
+
+test('nextTeamSlot: fills the lowest GAP, not the next number', () => {
+  expect(nextTeamSlot([group({ group_index: 1 }), group({ group_index: 3 })])).toBe(2)
+  expect(nextTeamSlot([group({ group_index: 2 }), group({ group_index: 3 })])).toBe(1)
+})
+
+test('nextTeamSlot: all three slots used → null (never offers a 4th team)', () => {
+  const three = [group({ group_index: 1 }), group({ group_index: 2 }), group({ group_index: 3 })]
+  expect(nextTeamSlot(three)).toBeNull()
+})
+
+test('nextTeamSlot: tolerates unordered + duplicate input, stays within 1..3', () => {
+  const slot = nextTeamSlot([group({ group_index: 3 }), group({ group_index: 3 }), group({ group_index: 1 })])
+  expect(slot).toBe(2)
 })
