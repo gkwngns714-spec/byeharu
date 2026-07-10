@@ -30,10 +30,10 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
 - **Slice B0 — DARK group create/assign write path (the writer A omitted). Done (migration 0161).**
 - **Slice B1 — DARK group delete RPC + interactive team UI. Done (migration 0162).**
 - Slice B — send/stop **by team**, over the existing fleets spine. Broken into sub-slices:
-  - **B-send — DARK group-send RPC (`send_ship_group_expedition`, loops the *unmodified* live send). ← this
-    slice (migration 0163).**
-  - B-stop — DARK group-stop RPC (loop `command_main_ship_stop_transit` per member fleet). *Not started —
-    prereq: A0-fix the sole-ship selects in the OSN space move/stop wrappers.*
+  - **B-send — DARK group-send RPC (`send_ship_group_expedition`, loops the *unmodified* live send). Done
+    (migration 0163).**
+  - **B-stop — DARK group-stop RPC (`stop_ship_group_transit`, loops the *unmodified* live stop per member
+    fleet). ← this slice (migration 0164).**
   - B-ui — team send/stop controls (dark). *Not started.*
   - B-verify — CI `.mjs` verifier for send/stop + races. *Not started.*
 - Slice C — captains (wire the dark CAPTAIN-P15/P16 system; captain skills → team skillset via
@@ -142,6 +142,26 @@ DARK, and **without editing any live function**:
 - **Frontend:** `src/features/command/teamSend.ts` — pure `groupSendAvailability` mirror (dispatchable-or-not),
   unit-tested in `tests/teamSend.spec.ts`. **No UI this slice.**
 
+## Slice B (B-stop) — what shipped
+
+Migration `supabase/migrations/20260618000164_slice_b_group_stop.sql` — the STOP twin of B-send, DARK, no live
+function edited:
+
+- **`stop_ship_group_transit(p_group_id)`** — resolves an owned team and **loops the unmodified live
+  `command_main_ship_stop_transit(fleet)`** (STOP=HOLD, 0155) once per member's in-flight fleet. Same pre-read
+  guards as B-send (auth → `team_command_enabled` gate → resolve group → group `FOR SHARE` + revalidate →
+  gather members → member ships `FOR UPDATE`).
+- **Best-effort, NOT all-or-nothing** (the deliberate difference from send): stop is idempotent + monotonic, so
+  each member runs in its own subtransaction and a member with no in-flight fleet (home/docked/OSN-parked) or
+  already held is a legitimate **skip**, not a team abort. Result is always `ok:true` past the pre-read checks,
+  with an aggregate `{results[], stopped, skipped, failed}`. "Stop the team" = halt every haltable
+  (moving/returning → held in open space), skip the rest, report the breakdown.
+- **Dual gate:** outer `team_command_enabled` (dark) keeps a team-stop from ever driving the inner live stop,
+  which has its own `mainship_send_enabled` gate. No second movement engine; writes no movement row directly;
+  the client never supplies a fleet id (fleets are derived from owned members only). ACL `authenticated`-only.
+- **Frontend:** `src/features/command/teamStop.ts` — pure `groupStopAvailability` mirror (pre-read order only),
+  unit-tested in `tests/teamStop.spec.ts`. **No UI this slice.**
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -176,9 +196,14 @@ the cap so it is not the binding limit once multi-ship is later lit.
   live send instead, so the live single-ship path is byte-for-byte unchanged.
 - **`max_active_fleets` raise** → deferred. It is LIVE and shared with old fleets, so a team of >3 members
   currently rolls back on the 4th; raising it would alter live behavior and belongs with lighting team-send.
-- **A0-fix for the OSN sole-ship selects** (`command_main_ship_space_move` / `command_main_ship_space_stop`
-  derive the ship with an unguarded `where player_id = …` → arbitrary at N>1) → prereq for B-stop and for any
-  multi-ship commissioning.
-- **B-send CI `.mjs` verifier** → with B-verify: flip `team_command_enabled`, exercise group-send + every
-  reject, assert all-or-nothing rollback, the double-send and send-vs-delete races, and cross-player rejection.
+- **A0-fix for the raw OSN coordinate move** — `command_main_ship_space_move` (0070) still derives the ship
+  with an unguarded `where player_id = …` (arbitrary at N>1), but it rejects on `mainship_space_movement_enabled`
+  + `mainship_coordinate_travel_enabled` (both false) *before* that read → unreachable. NOTE:
+  `command_main_ship_space_stop` was ALREADY resolver-guarded in migration 0083 — it is NOT unguarded. Neither
+  is on B-stop's path (the legacy stop is fleet-addressed), so the A0-fix is **not** a B-stop prereq; retire it
+  when coordinate-travel AND multi-ship commissioning are both lit.
+- **B-send/B-stop CI `.mjs` verifier** → with B-verify: flip `team_command_enabled`, exercise group-send +
+  every reject, assert all-or-nothing send rollback + the double-send/send-vs-delete races; AND group-stop —
+  every pre-read reject, the **best-effort aggregate** on a mixed-state group (some moving, some docked), and
+  the stop-vs-cron / stop-vs-delete / stop-vs-send / double-stop races; plus cross-player rejection for both.
 - **Send/stop-by-team UI, captains, team combat** → later B sub-slices / Slices C/D.
