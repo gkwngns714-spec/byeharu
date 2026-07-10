@@ -28,9 +28,14 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
 
 - **Slice A — team/group data model + multi-ship enablement foundation (DARK). Done (migration 0160).**
 - **Slice B0 — DARK group create/assign write path (the writer A omitted). Done (migration 0161).**
-- **Slice B1 — DARK group delete RPC + interactive team UI. ← this slice (migration 0162).**
-- Slice B — send/stop **by team** (generalize `send_main_ship_expedition` to N ships over the fleets spine).
-  *Not started.*
+- **Slice B1 — DARK group delete RPC + interactive team UI. Done (migration 0162).**
+- Slice B — send/stop **by team**, over the existing fleets spine. Broken into sub-slices:
+  - **B-send — DARK group-send RPC (`send_ship_group_expedition`, loops the *unmodified* live send). ← this
+    slice (migration 0163).**
+  - B-stop — DARK group-stop RPC (loop `command_main_ship_stop_transit` per member fleet). *Not started —
+    prereq: A0-fix the sole-ship selects in the OSN space move/stop wrappers.*
+  - B-ui — team send/stop controls (dark). *Not started.*
+  - B-verify — CI `.mjs` verifier for send/stop + races. *Not started.*
 - Slice C — captains (wire the dark CAPTAIN-P15/P16 system; captain skills → team skillset via
   `calculate_expedition_stats`; bump `main_ship_hull_types.base_captain_slots` 2 → 6–8). *Not started.*
 - Slice D — team combat (largest; main-ship combat was never built — resolve a team into the existing combat
@@ -116,6 +121,27 @@ Migration `supabase/migrations/20260618000162_slice_b1_group_delete.sql` + the i
 - **`nextTeamSlot` pure helper** (in `teamRoster.ts`) — lowest free slot 1–3 or null (capped), unit-tested in
   `tests/teamRoster.spec.ts`.
 
+## Slice B (B-send) — what shipped
+
+Migration `supabase/migrations/20260618000163_slice_b_group_send.sql` — the first movement-touching team slice,
+DARK, and **without editing any live function**:
+
+- **`send_ship_group_expedition(p_group_id, p_location)`** — resolves an owned team and **loops the unmodified
+  live `send_main_ship_expedition` once per member**, inside ONE all-or-nothing subtransaction. It writes **no**
+  `fleets`/movement row directly — every movement write is delegated to the live send, so there is no second
+  movement engine (anti-spaghetti #2). Order: auth → `cfg_bool('team_command_enabled')` gate → resolve owned
+  group → lock group `FOR SHARE` + revalidate → gather members → lock member ships `FOR UPDATE` → loop-send in
+  a subtransaction. Reject vocab: `not_authenticated` → `team_command_disabled` → `group_not_found` →
+  `empty_group` → `member_send_failed` → `ok`. ACL `authenticated`-only.
+- **Why a wrapper, not an N-ship generalization:** `send_main_ship_expedition` is LIVE (gated
+  `mainship_send_enabled=true`) and hard-clamps to exactly one ship; widening it would mutate the live
+  single-ship path. The wrapper leaves it byte-for-byte unchanged.
+- **Atomicity + concurrency:** any member's send raising rolls back the whole team (never half-sent). Group-row
+  `FOR SHARE` serializes vs `delete_ship_group`'s `FOR UPDATE`; member-ship `FOR UPDATE` closes the concurrent
+  double-send window the live single-ship send leaves open; group-first-then-ships lock order → no deadlock.
+- **Frontend:** `src/features/command/teamSend.ts` — pure `groupSendAvailability` mirror (dispatchable-or-not),
+  unit-tested in `tests/teamSend.spec.ts`. **No UI this slice.**
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -146,4 +172,13 @@ the cap so it is not the binding limit once multi-ship is later lit.
 - **Folding `ModulesPanel.shipPick` into the shell selection** → deferred. It changes module-fitting behavior
   (per-instance pick → global selection) inside the dark trade/modules feature and is not adjacent to the team
   model; folding it here would be scope creep into a behavior change.
-- **Send/stop by team, captains, team combat** → Slices B/C/D.
+- **N-ship generalization of `send_main_ship_expedition`** → explicitly NOT done. B-send wraps the unmodified
+  live send instead, so the live single-ship path is byte-for-byte unchanged.
+- **`max_active_fleets` raise** → deferred. It is LIVE and shared with old fleets, so a team of >3 members
+  currently rolls back on the 4th; raising it would alter live behavior and belongs with lighting team-send.
+- **A0-fix for the OSN sole-ship selects** (`command_main_ship_space_move` / `command_main_ship_space_stop`
+  derive the ship with an unguarded `where player_id = …` → arbitrary at N>1) → prereq for B-stop and for any
+  multi-ship commissioning.
+- **B-send CI `.mjs` verifier** → with B-verify: flip `team_command_enabled`, exercise group-send + every
+  reject, assert all-or-nothing rollback, the double-send and send-vs-delete races, and cross-player rejection.
+- **Send/stop-by-team UI, captains, team combat** → later B sub-slices / Slices C/D.
