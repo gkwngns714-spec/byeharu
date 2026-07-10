@@ -26,9 +26,10 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
 
 ## Slice status
 
-- **Slice A — team/group data model + multi-ship enablement foundation (DARK). ← this slice.**
+- **Slice A — team/group data model + multi-ship enablement foundation (DARK). Done (migration 0160).**
+- **Slice B0 — DARK group create/assign write path (the writer A omitted). ← this slice (migration 0161).**
 - Slice B — send/stop **by team** (generalize `send_main_ship_expedition` to N ships over the fleets spine;
-  this is also where group **creation/assignment** RPCs land). *Not started.*
+  plus the group **delete** RPC and the interactive team UI). *Not started.*
 - Slice C — captains (wire the dark CAPTAIN-P15/P16 system; captain skills → team skillset via
   `calculate_expedition_stats`; bump `main_ship_hull_types.base_captain_slots` 2 → 6–8). *Not started.*
 - Slice D — team combat (largest; main-ship combat was never built — resolve a team into the existing combat
@@ -64,6 +65,35 @@ Frontend (all behind the gate below):
   carry. **No team travel, no combat, no commissioning.**
 - `src/features/command/CommandScreen.tsx` — mounts the roster behind `TEAM_COMMAND_ENABLED`.
 
+## Slice B0 — what shipped
+
+Migration `supabase/migrations/20260618000161_slice_b0_group_write_path.sql` — the DARK, owner-scoped **write
+path** Slice A deliberately omitted (Slice A created `ship_groups` empty with no writer):
+
+- **`mainship_resolve_owned_group(p_player, p_group_id)`** — internal owned-group resolver mirroring
+  `mainship_resolve_owned_ship`, but **explicit-only**: it has NO sole-group shim on `null`, because for
+  assignment `null` means *unassign*, not *resolve the sole group*. Returns a group only when it exists and
+  belongs to `p_player`. No client grant.
+- **`upsert_ship_group(p_group_index, p_name)`** — create/rename a team slot (`group_index ∈ 1..3`). Upserts
+  on the `(player_id, group_index)` unique key; the unique constraint × the 1..3 CHECK cap a player at three
+  teams **declaratively**, so no lock/`count(*)`. Validates index + name in-RPC to exactly match the column
+  CHECKs (never accept-then-violate).
+- **`assign_ship_to_group(p_main_ship_id, p_group_id)`** — assign an owned ship to an owned team, or
+  **unassign** (`p_group_id null`). Resolves the ship via `mainship_resolve_owned_ship` and the group via
+  `mainship_resolve_owned_group`, **both against the same `auth.uid()`** — this closes Slice A's single-column-FK
+  **same-player gap** by construction (as the sole write path, a cross-player pairing is unreachable).
+
+Both client RPCs **reject-before-read** on `cfg_bool('team_command_enabled')` (still `false`) — dark, no flag
+flipped, no `game_config` write. Reject vocabulary: `not_authenticated` → `team_command_disabled` →
+`invalid_group_index`/`invalid_name` (upsert) or `ship_not_found`/`group_not_found` (assign) → `ok`.
+
+Frontend (still dark; UI deferred to Slice B):
+
+- `src/features/command/teamMutations.ts` — pure client mirror of the two RPCs' reject order
+  (`groupUpsertAvailability`, `assignAvailability`), display-only. Unit-tested in `tests/teamMutations.spec.ts`
+  (`npm run verify:team:unit` now runs both team specs). **No `teamApi` wrappers and no interactive assign/rename
+  UI this slice** — those land with Slice B's team UI so the roster stays read-only until then.
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -78,11 +108,16 @@ The cap raise (24) is **inert** while `mainship_additional_commission_enabled` i
 `commission_additional_main_ship()` rejects at the gate before it ever reads the cap. The raise only pre-sizes
 the cap so it is not the binding limit once multi-ship is later lit.
 
-## Explicitly deferred (NOT in Slice A)
+## Explicitly deferred
 
-- **Group creation / assignment RPC** → Slice B (pairs with send/stop-by-team; will assert same-player
-  ownership via the `mainship_resolve_owned_ship` contract). Until then `ship_groups` stays empty and the
-  roster shows every ship as unassigned — the valid dark foundation state.
+- **Group creation / assignment RPC** → **DONE in Slice B0** (`upsert_ship_group` / `assign_ship_to_group` +
+  `mainship_resolve_owned_group`; same-player gap closed via dual same-`auth.uid()` resolution; dark behind
+  `team_command_enabled`; no client UI yet).
+- **Group DELETE RPC + interactive team UI (`teamApi` wrappers, assign/rename controls)** → Slice B. The delete
+  RPC must lock the group row `FOR UPDATE` and rely on `ON DELETE SET NULL` to un-group members.
+- **CI `.mjs` verifier** for the write path → lands with Slice B's verify step (must flip
+  `team_command_enabled` true in an ephemeral/rolled-back txn, exercise upsert/assign/unassign + every reject,
+  and assert player A cannot assign A's ship to B's group).
 - **`base_captain_slots` 2 → 6–8** → Slice C (needed only when captains are wired; not needed by the group
   model).
 - **Folding `ModulesPanel.shipPick` into the shell selection** → deferred. It changes module-fitting behavior
