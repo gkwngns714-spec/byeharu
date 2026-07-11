@@ -143,7 +143,7 @@ export function TeamMemberCaptains({
               onChange={(e) => setPick(e.target.value)}
               disabled={anyPending}
               aria-label={`Assign a captain to ${mainShipId}`}
-              className="rounded-md border border-edge bg-surface px-2 py-1 text-xs text-ink"
+              className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
             >
               <option value="">Assign captain…</option>
               {unassigned.map((c) => (

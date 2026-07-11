@@ -3,7 +3,7 @@ import { usePortEntry, type UsePortEntryOverrides } from './usePortEntry'
 import type { PortEntryKnownLocation } from './portEntry'
 import { isDockablePortForDisplay } from '../map/mapTypes'
 import type { PortEntryActionKind } from './portEntryCommand'
-import { Card, Button } from '../../components/ui'
+import { Card, Button, Notice } from '../../components/ui'
 
 // PORT-ENTRY player UI — the single onboarding / finish-docking surface for the caller's OWN main ship.
 //
@@ -71,8 +71,9 @@ export function PortEntryPanel({
             <p className="mt-1 text-ink-muted">
               Claim your main ship. It will begin docked at <span className="font-medium text-ink">Haven</span>, ready to explore.
             </p>
+            {/* UI R4: the ONE error callout (Notice) instead of a hand-rolled line — same testid/string. */}
             {errorText && actionKind === 'commission' && (
-              <p data-testid="port-entry-error" className="mt-2 text-danger">{errorText}</p>
+              <Notice tone="danger" data-testid="port-entry-error" className="mt-2">{errorText}</Notice>
             )}
             <Button
               variant="primary"
@@ -97,7 +98,7 @@ export function PortEntryPanel({
               Your ship is at a port but not fully docked. Complete docking to use this port’s services.
             </p>
             {errorText && actionKind === 'normalize' && (
-              <p data-testid="port-entry-error" className="mt-2 text-danger">{errorText}</p>
+              <Notice tone="danger" data-testid="port-entry-error" className="mt-2">{errorText}</Notice>
             )}
             <Button
               variant="primary"

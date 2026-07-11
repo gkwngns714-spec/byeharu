@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useShellState } from '../../app/shellState'
-import { Card, CardHeader, Badge, SectionLabel, Button, Notice } from '../../components/ui'
+import { Card, CardHeader, Badge, SectionLabel, Button, Notice, Skeleton } from '../../components/ui'
 import {
   fetchMyShipGroups,
   fetchMyShipGroupMap,
@@ -135,7 +135,7 @@ export function TeamRosterPanel() {
     return (
       <div
         key={s.main_ship_id}
-        className={`rounded-md border px-3 py-2 ${
+        className={`rounded-lg border px-3 py-2 ${
           selected ? 'border-accent/40 bg-accent/5' : 'border-edge bg-surface'
         }`}
       >
@@ -205,7 +205,12 @@ export function TeamRosterPanel() {
       )}
 
       {loading ? (
-        <p className="text-sm text-ink-muted">Loading roster…</p>
+        // UI R4: design-system Skeleton rows instead of bare loading text (same condition).
+        <div aria-busy="true">
+          <Skeleton className="h-8 w-32 rounded-lg" />
+          <Skeleton className="mt-3 h-16 w-full rounded-lg" />
+          <span className="sr-only">Loading roster…</span>
+        </div>
       ) : (
         <div className="space-y-4">
           {openSlot !== null && (
@@ -237,7 +242,7 @@ export function TeamRosterPanel() {
                     <input
                       value={draft}
                       onChange={(e) => setDrafts((d) => ({ ...d, [group.group_id]: e.target.value }))}
-                      className="w-28 rounded-md border border-edge bg-surface px-2 py-1 text-xs text-ink"
+                      className="w-28 rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
                       aria-label={`Rename team ${group.group_index}`}
                     />
                     <Button
@@ -298,7 +303,7 @@ export function TeamRosterPanel() {
                     onChange={(e) => setDestChoice((d) => ({ ...d, [group.group_id]: e.target.value }))}
                     disabled={busy !== null}
                     aria-label={`Send destination for team ${group.group_index}`}
-                    className="rounded-md border border-edge bg-surface px-2 py-1 text-xs text-ink"
+                    className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
                   >
                     <option value="">Destination…</option>
                     {destinations.map((d) => (

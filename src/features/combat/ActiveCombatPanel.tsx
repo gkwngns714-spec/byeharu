@@ -74,14 +74,16 @@ export function ActiveCombatPanel({
   }
 
   return (
-    <Card tone="danger">
+    // UI R4: the existing bh-fade-in entrance when a battle takes the screen (one-shot, no loop);
+    // wave/danger/cleared counters read as mono ops telemetry. Strings/logic untouched.
+    <Card tone="danger" className="bh-fade-in">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-danger">⚔️ Combat — {locationName}</h2>
           <p className="text-sm text-ink-muted">
-            Wave <span className="text-ink">{encounter.wave_number}</span> · Danger{' '}
-            <span className="text-ink">{encounter.danger_level}</span> ·{' '}
-            <span className="text-ink">{encounter.waves_cleared}</span> waves cleared ·{' '}
+            Wave <span className="font-mono tabular-nums text-ink">{encounter.wave_number}</span> · Danger{' '}
+            <span className="font-mono tabular-nums text-ink">{encounter.danger_level}</span> ·{' '}
+            <span className="font-mono tabular-nums text-ink">{encounter.waves_cleared}</span> waves cleared ·{' '}
             <span className="text-ink">
               {retreating ? 'Retreating' : waveCleared ? 'Next wave incoming' : 'In combat'}
             </span>
@@ -156,12 +158,12 @@ export function ActiveCombatPanel({
           {retreating ? (
             <>
               <p className="text-warning/90">Your fleet is retreating — weapons disengaged.</p>
-              <p className="text-ink-muted">Pirates dealt <span className="text-danger">{Math.round(latest.enemy_damage)}</span> damage during disengagement.</p>
+              <p className="text-ink-muted">Pirates dealt <span className="font-mono tabular-nums text-danger">{Math.round(latest.enemy_damage)}</span> damage during disengagement.</p>
             </>
           ) : (
             <>
-              <p className="text-ink-muted">You dealt <span className="text-accent">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
-              <p className="text-ink-muted">Pirates dealt <span className="text-danger">{Math.round(latest.enemy_damage)}</span> damage.</p>
+              <p className="text-ink-muted">You dealt <span className="font-mono tabular-nums text-accent">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
+              <p className="text-ink-muted">Pirates dealt <span className="font-mono tabular-nums text-danger">{Math.round(latest.enemy_damage)}</span> damage.</p>
             </>
           )}
           <p className="text-ink-faint">{lossText(latest.player_losses_json)}</p>
@@ -174,7 +176,7 @@ export function ActiveCombatPanel({
         </SectionLabel>
         <p className="text-sm">
           {rewards.length === 0 ? <span className="text-ink-faint">none yet</span>
-            : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-ink-muted">{code}: {amt}</span>)}
+            : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-ink-muted">{code}: <span className="font-mono tabular-nums">{amt}</span></span>)}
         </p>
         <p className="mt-1 text-[11px] text-ink-faint">
           {retreating

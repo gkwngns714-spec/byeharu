@@ -11,7 +11,7 @@ import {
 } from './tradeApi'
 import { tradeReasonMessage } from './tradeReasonMessage'
 import type { SelectableShip } from './useMainShipSelection'
-import { Button } from '../../components/ui'
+import { Button, Skeleton } from '../../components/ui'
 
 // TRADE-UI-1 — trade surface for the SELECTED ship. Shows the ship's name, wallet balance, occupied cargo
 // volume vs capacity (m³, from the ship_cargo_lots lot-sum — the authoritative volume model), and the docked
@@ -114,7 +114,14 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
     >
       <h3 className="font-medium text-ink">🪙 Market — {selectedShip.name}</h3>
 
-      {loading && <p className="mt-2 text-xs text-ink-faint">Loading…</p>}
+      {loading && (
+        // UI R4: design-system Skeleton rows instead of bare loading text (same condition).
+        <div className="mt-3" aria-busy="true">
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="mt-2 h-4 w-1/2" />
+          <span className="sr-only">Loading…</span>
+        </div>
+      )}
 
       {!loading && (
         <>

@@ -69,7 +69,7 @@ export function TeamPreviewSection({
           onChange={(e) => setActivity(e.target.value)}
           disabled={busy}
           aria-label={`Preview activity for team ${groupIndex}`}
-          className="rounded-md border border-edge bg-surface px-2 py-1 text-xs text-ink"
+          className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
         >
           {PREVIEW_ACTIVITY_TYPES.map((a) => (
             <option key={a} value={a}>
@@ -90,7 +90,7 @@ export function TeamPreviewSection({
       {current && current.ok && (() => {
         const agg = aggregateTeamStats(current.members)
         return (
-          <div className="space-y-2 rounded-md border border-edge bg-surface px-3 py-2">
+          <div className="space-y-2 rounded-lg border border-edge bg-surface-2/50 px-3 py-2">
             <p className="text-[10px] text-ink-faint">
               Expedition preview · {current.activity_type} · {agg.validCount} valid / {agg.invalidCount} invalid of{' '}
               {agg.memberCount} member{agg.memberCount === 1 ? '' : 's'} · estimate, display-only

@@ -28,13 +28,17 @@ export function Card({
   )
 }
 
-/** Card title row: title (+ optional subtitle) on the left, an aside (badge/action/meta) on the right. */
+/** Card title row: title (+ optional subtitle) on the left, an aside (badge/action/meta) on the right.
+ * `eyebrow` (UI R4) — the same mono ops-console micro-designator PageHeader carries, for the rare
+ * card that IS the screen (e.g. the auth focus card): one idiom, defined once, never hand-rolled. */
 export function CardHeader({
+  eyebrow,
   title,
   subtitle,
   aside,
   className = '',
 }: {
+  eyebrow?: ReactNode
   title: ReactNode
   subtitle?: ReactNode
   aside?: ReactNode
@@ -43,6 +47,9 @@ export function CardHeader({
   return (
     <div className={`mb-4 flex items-start justify-between gap-3 ${className}`}>
       <div>
+        {eyebrow && (
+          <p className="mb-0.5 font-mono text-xs uppercase tracking-wider text-ink-faint">{eyebrow}</p>
+        )}
         <h2 className="text-lg font-semibold text-ink">{title}</h2>
         {subtitle && <p className="mt-0.5 text-sm text-ink-muted">{subtitle}</p>}
       </div>

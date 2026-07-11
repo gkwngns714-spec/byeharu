@@ -39,7 +39,8 @@ export function RoundLog({
           line = (
             <span>
               <span className="text-success">Wave {t.wave_number} cleared.</span> You dealt{' '}
-              {Math.round(t.player_damage)} damage
+              {/* UI R4: damage numerals in mono (ops telemetry) — rendered text unchanged. */}
+              <span className="font-mono tabular-nums">{Math.round(t.player_damage)}</span> damage
               {metal > 0 && <span className="text-warning/90"> · +{metal} metal pending</span>}
               {losses && <> · lost {losses}</>}
             </span>
@@ -52,8 +53,8 @@ export function RoundLog({
           // 'ongoing'
           line = (
             <span>
-              Wave {t.wave_number}: you dealt <span className="text-accent">{Math.round(t.player_damage)}</span>,
-              pirates dealt <span className="text-danger">{Math.round(t.enemy_damage)}</span>
+              Wave {t.wave_number}: you dealt <span className="font-mono tabular-nums text-accent">{Math.round(t.player_damage)}</span>,
+              pirates dealt <span className="font-mono tabular-nums text-danger">{Math.round(t.enemy_damage)}</span>
               {losses ? <> · lost {losses}</> : ' · no ships lost'}
             </span>
           )

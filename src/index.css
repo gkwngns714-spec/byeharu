@@ -101,3 +101,11 @@ body {
 .bh-fade-in {
   animation: bh-fade-in 0.25s ease-out;
 }
+
+/* Respect reduced-motion: entrance fades become instant (Skeleton's pulse is Tailwind's, which
+   already honors this via its own media query in v4). */
+@media (prefers-reduced-motion: reduce) {
+  .bh-fade-in {
+    animation: none;
+  }
+}

@@ -1,4 +1,5 @@
 import type { CombatEvent } from './combatTypes'
+import { SectionLabel } from '../../components/ui'
 
 // COSMETIC ONLY. Animates the server-generated combat_events into a readable feed.
 // Decides nothing — all values come from the server.
@@ -48,7 +49,8 @@ export function CombatEventLayer({ events }: { events: CombatEvent[] }) {
 
   return (
     <div>
-      <h4 className="mb-2 text-xs uppercase tracking-wide text-ink-faint">Battle feed</h4>
+      {/* UI R4: the ONE micro-label primitive instead of the hand-rolled heading (same string). */}
+      <SectionLabel>Battle feed</SectionLabel>
       {recent.length === 0 ? (
         <p className="text-xs text-ink-faint">awaiting combat events…</p>
       ) : (
@@ -62,7 +64,8 @@ export function CombatEventLayer({ events }: { events: CombatEvent[] }) {
               >
                 <span>{d.icon}</span>
                 <span className="text-ink-muted">{d.text}</span>
-                <span className="ml-auto text-ink-faint/70">t{e.tick_number}</span>
+                {/* UI R4: ops telemetry — tick stamps read in mono numerals. */}
+                <span className="ml-auto font-mono tabular-nums text-ink-faint/70">t{e.tick_number}</span>
               </li>
             )
           })}
