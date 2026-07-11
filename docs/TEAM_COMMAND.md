@@ -46,8 +46,18 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
     dark, frontend-only, no migration). Done. ← this slice.**
   - C2 — captain progression wiring / lit-time polish (and any 6 → 8 slot raise). *Not started.*
 - Slice D — team combat (largest; main-ship combat was never built — resolve a team into the existing combat
-  engine per the law; defines the AUTHORITATIVE server-side team stats beside the combat consumer). *Not
-  started.*
+  engine per the law). Broken into sub-slices:
+  - **D0 — DARK authoritative group expedition stats. Done (migration 0166; RPC-only, no flag flipped, no
+    data change).** `calculate_group_expedition_stats` (service_role-only team-stats authority: per-member
+    delegation to the *unmodified* `calculate_expedition_stats`, team-level folding ONLY — the eight additive
+    0122 stat keys summed, `speed = min` member speed; **STRICT**: any member's refuse-don't-clamp raise
+    refuses the WHOLE team context) + `get_my_group_expedition_totals` (thin gated client wrapper; any
+    authority raise → one opaque `stats_invalid`). **Strict vs preview:** C0's
+    `get_my_group_expedition_preview` stays the *friendly* per-member surface (`valid:false` + error per
+    member); D0 is the *authoritative* context the combat consumer will read — it never clamps, never
+    partial-totals, never leaks member detail.
+  - D1–D4 — resolve a team into the existing `fleet_units`/`combat_units` input and run the existing combat
+    engine (the consumers of D0's totals; chartered when D1 starts). *Not started.*
 
 ---
 
@@ -264,6 +274,40 @@ which is not mounted while `TEAM_COMMAND_ENABLED = false`):
 - **RecruitCaptainPanel stays on ShipScreen** (untouched); the 6 → 8 slot raise and progression wiring stay
   C2; the captain-slot 2 → 6 activation bump stays deferred (see "Explicitly deferred").
 
+## Slice D0 — what shipped
+
+Migration `supabase/migrations/20260618000166_slice_d0_group_stats_authority.sql` — the authoritative
+server-side team stats 0165/C1 explicitly deferred to Slice D. Fully DARK, **RPC-only, zero data change,
+no frontend** (a migration+proof slice):
+
+- **`calculate_group_expedition_stats(p_player, p_group_id, p_activity_type)`** — the internal,
+  **service_role-only** authority (the exact 0122 ACL posture). Per member ship of the owned group
+  (membership via `main_ship_instances.group_id`, resolution via `mainship_resolve_owned_group` — explicit-only,
+  fail closed) it delegates to the **unmodified** `calculate_expedition_stats` (0122 — support craft + modules +
+  captains behind their hard caps) and performs **team-level folding only**: the eight additive 0122 stat keys
+  (`combat_power`, `survival`, `repair`, `retreat_safety`, `scouting`, `mining_yield`, `cargo_capacity`,
+  `pirate_attention`) summed; `speed = min` member speed (members travel individually — the client
+  `slowestSpeed` semantics). Zero re-implemented per-ship stat arithmetic. **STRICT** (0122's
+  refuse-don't-clamp law, deliberately diverging from 0165's per-member `{valid:false}` preview idiom): any
+  member's raise (over-capacity etc.) raises the WHOLE function — an illegal member state means the team has
+  NO defined stats. Nonexistent/empty inputs raise clear exceptions (`group_not_found` / `empty_group`), the
+  0122 internal posture. Returns `{group_id, activity_type, member_count, members:[{main_ship_id, stats}],
+  totals:{speed, …the eight additive keys}}`.
+- **`get_my_group_expedition_totals(p_group_id, p_activity_type default 'none')`** — the thin, DARK, gated
+  client wrapper over the same truth. Reject vocab (gate FIRST, before any read — the 0165 structure):
+  `not_authenticated` → `team_command_disabled` → `invalid_activity` (exactly the 0122/0165 set) →
+  `group_not_found` → `empty_group` → `stats_invalid` (ANY authority raise, folded into ONE opaque envelope —
+  no member detail leaks; the C0 preview is the friendly diagnosing surface) → `ok`. Read-only, **no locks**
+  (the 0165 MVCC posture). ACL `authenticated`-only (new-function-only grant idiom); the internal authority has
+  no client grant.
+- **Proof:** `scripts/team-command-proof.{sql,sh}` gained the `TEAMCMD_PASS_TEAMSTATS` block — dark reject
+  before the in-txn flag flip; every reject token; and the **delegation pin**: every additive total must EQUAL
+  the proof's own independent per-member sum over *direct* `calculate_expedition_stats` calls (plus
+  `totals.speed = min`, and per-member `stats` byte-parity with the direct adapter call), so the totals RPC can
+  only be folding the ONE adapter's outputs; and the strict-vs-preview split — one over-capacity member →
+  totals answers opaque `stats_invalid` while the C0 preview still answers `ok` with that member
+  `valid:false`. The selftest greps enforce the delegation-pin forms.
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -303,9 +347,10 @@ the cap so it is not the binding limit once multi-ship is later lit.
    where i.hull_type_id = h.hull_type_id and i.captain_slots < h.base_captain_slots;
   ```
   Any later 6 → 8 raise is a separate additive C2 migration, decided at lit-time balance.
-- **Authoritative server-side team stats** → Slice D, defined beside the combat consumer.
-  `get_my_group_expedition_preview` deliberately does zero arithmetic, and `aggregateTeamStats` is
-  display-only — neither is a source of team-stat truth.
+- **Authoritative server-side team stats** → **DONE in Slice D0** (`calculate_group_expedition_stats` +
+  `get_my_group_expedition_totals`, migration 0166 — strict, delegation-only, dark).
+  `get_my_group_expedition_preview` still deliberately does zero arithmetic, and `aggregateTeamStats` is
+  still display-only — neither is a source of team-stat truth; D0's authority is.
 - **Captain UI in the roster** (assign/unassign per member ship, captain list) → **DONE in Slice C1**
   (dark, frontend-only; reuses the CAPTAIN-P15 commands verbatim — no new server authority). Captain
   progression wiring / lit-time polish (and any 6 → 8 slot raise) → Slice C2.

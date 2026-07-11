@@ -1,5 +1,5 @@
 -- TEAM-COMMAND B-VERIFY — disposable REAL-CHAIN proof of the DARK team send/stop surface (slices
--- 0160..0164) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
+-- 0160..0166) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
 -- proof runs inside ONE transaction that ROLLBACKs — it persists NO ship, group, fleet, flag flip, or
 -- fixture user. No production access. No COMMIT anywhere.
 --
@@ -31,6 +31,13 @@
 --            delta. Captains are provisioned ONLY via the sole writers (captains_mint_instance /
 --            captain_assign_apply — the sole-writer law; NEVER a direct insert into
 --            captain_instances / ship_captain_assignments).
+--   TEAMSTATS (Slice D0, 0166) — get_my_group_expedition_totals rejects dark BEFORE the team-flag
+--            flip; invalid_activity / group_not_found (random + cross-player) / empty_group; on the
+--            happy path every additive total EQUALS the proof's OWN independent per-member sum over
+--            direct calculate_expedition_stats calls (the delegation-not-reimplementation pin) and
+--            totals.speed = min member speed; and the STRICT posture: one over-capacity member →
+--            the totals RPC refuses WHOLE with an opaque stats_invalid (no member detail) while the
+--            C0 preview still answers ok with that member valid:false (strict-vs-preview).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -122,11 +129,15 @@ begin
   -- with a random id and a VALID activity, so only the gate can be what answers.
   r := pg_temp.call_as(uA, 'public.get_my_group_expedition_preview(gen_random_uuid(), ''none'')');
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL preview: %', r; end if;
+  -- Slice D0 (0166): the authoritative-totals wrapper rejects dark too — asserted BEFORE the
+  -- team-flag flip below, with a random id and a VALID activity, so only the gate can be what answers.
+  r := pg_temp.call_as(uA, 'public.get_my_group_expedition_totals(gen_random_uuid(), ''none'')');
+  if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL totals: %', r; end if;
 
   select count(*) into n from public.ship_groups;
   if n <> 0 then raise exception 'DARK FAIL: % ship_groups rows written while dark (want 0)', n; end if;
 
-  raise notice 'TEAMCMD_PASS_DARK ok: all 6 team RPCs reject-before-read with team_command_disabled; 0 rows written';
+  raise notice 'TEAMCMD_PASS_DARK ok: all 7 team RPCs reject-before-read with team_command_disabled; 0 rows written';
 end $$;
 
 -- enable the dark capabilities ONLY inside this rolled-back txn (committed/production values stay false).
@@ -394,6 +405,95 @@ begin
   raise notice 'TEAMCMD_PASS_CAPTAINS ok: preview rejects (invalid_activity/group_not_found×2/empty_group), captain fold +8 with 2/6 slots, uncaptained parity with solo preview, unassign reverts';
 end $$;
 
+-- ════════ BLOCK TEAMSTATS (Slice D0, 0166): authoritative totals = delegation, strict-vs-preview ════════
+-- get_my_group_expedition_totals is the AUTHORITATIVE team-stats surface (0166). Its dark reject was
+-- already asserted in BLOCK DARK, before the flag flips. This block pins:
+--   (a) the reject vocabulary (invalid_activity / group_not_found random + cross-player / empty_group);
+--   (b) DELEGATION-NOT-REIMPLEMENTATION: every additive total must EQUAL this proof's OWN independent
+--       per-member sum over DIRECT calculate_expedition_stats calls (this privileged psql context can
+--       call the service_role-only adapter), and totals.speed = min member speed — so the totals RPC
+--       can only be folding the ONE adapter's outputs, never recomputing stats;
+--   (c) the STRICT posture (deliberate divergence from the C0 preview): one over-capacity member makes
+--       the totals RPC refuse WHOLE with an OPAQUE stats_invalid (no members/detail leaked), while the
+--       preview still answers ok:true with that member valid:false — strict authority vs friendly preview.
+-- Runs on the CAPTAINS-block fixtures (gA1 = {a1, a2}, both home, captains all unassigned) and restores
+-- them exactly before BLOCK SEND. Captains provisioned ONLY via the sole writers, as everywhere.
+do $$
+declare r jsonb; p jsonb; s1 jsonb; s2 jsonb; mem jsonb; n int; gid uuid; cap1 uuid; sk text;
+  uA uuid := (select v from tcmd where k='uA'); uB uuid := (select v from tcmd where k='uB');
+  a1 uuid := (select v from tcmd where k='a1'); a2 uuid := (select v from tcmd where k='a2');
+  gA1 uuid := (select v from tcmd where k='gA1');
+begin
+  -- (a) reject vocabulary, in the RPC's order (gate already proven in BLOCK DARK):
+  -- invalid_activity — validated BEFORE any row read, so even a real owned group answers the same.
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_totals(%L::uuid, ''warp_speed'')', gA1));
+  if (r->>'reason') is distinct from 'invalid_activity' then raise exception 'TEAMSTATS FAIL invalid activity: %', r; end if;
+  -- group_not_found — a random uuid, and uB cross-player-probing uA's real group (no ownership oracle).
+  r := pg_temp.call_as(uA, 'public.get_my_group_expedition_totals(gen_random_uuid(), ''none'')');
+  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'TEAMSTATS FAIL random group: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.get_my_group_expedition_totals(%L::uuid, ''none'')', gA1));
+  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'TEAMSTATS FAIL cross-player probe: %', r; end if;
+  -- empty_group — uA's memberless slot 3 (created in CAPTAINS; upsert is idempotent on the slot).
+  r := pg_temp.call_as(uA, 'public.upsert_ship_group(3, ''D0Empty'')');
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMSTATS FAIL empty-slot upsert: %', r; end if;
+  gid := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_totals(%L::uuid, ''none'')', gid));
+  if (r->>'reason') is distinct from 'empty_group' then raise exception 'TEAMSTATS FAIL empty_group: %', r; end if;
+
+  -- (b) HAPPY PATH on gA1 = {a1, a2}. Re-captain a1 via the SOLE WRITERS so the two members genuinely
+  -- differ — a captained/uncaptained split would expose a totals path that ignored the captain fold.
+  cap1 := public.captains_mint_instance(uA, 'gunnery_veteran', 'tcmd-d0-1');
+  if cap1 is null then raise exception 'TEAMSTATS FAIL: mint returned null'; end if;
+  perform public.captain_assign_apply(uA, cap1, a1);
+
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_totals(%L::uuid, ''none'')', gA1));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMSTATS FAIL happy path: %', r; end if;
+  if (r->>'member_count')::int is distinct from 2 or jsonb_array_length(r->'members') is distinct from 2 then
+    raise exception 'TEAMSTATS FAIL member count/length: %', r; end if;
+
+  -- the INDEPENDENT SUM: this proof calls the ONE adapter DIRECTLY per member (same inputs the totals
+  -- RPC delegates with: empty loadout, 'none') and requires each additive total to EQUAL its own sum.
+  s1 := public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none');
+  s2 := public.calculate_expedition_stats(uA, a2, '[]'::jsonb, 'none');
+  foreach sk in array array['combat_power','survival','repair','retreat_safety','scouting','mining_yield','cargo_capacity','pirate_attention'] loop
+    if (r->'totals'->>sk)::numeric is distinct from (s1->>sk)::numeric + (s2->>sk)::numeric then
+      raise exception 'TEAMSTATS FAIL: totals.% is % (want independent sum % + %)', sk, r->'totals'->>sk, s1->>sk, s2->>sk; end if;
+  end loop;
+  -- speed is NOT additive: members travel individually → the team moves at its slowest member's pace.
+  if (r->'totals'->>'speed')::numeric is distinct from least((s1->>'speed')::numeric, (s2->>'speed')::numeric) then
+    raise exception 'TEAMSTATS FAIL: totals.speed % (want min(%, %))', r->'totals'->>'speed', s1->>'speed', s2->>'speed'; end if;
+  -- and each members[] stats object is byte-identical to the direct adapter call (pure delegation).
+  select e->'stats' into mem from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a1::text;
+  if mem is distinct from s1 then raise exception 'TEAMSTATS FAIL: a1 member stats diverge from direct adapter: % vs %', mem, s1; end if;
+  select e->'stats' into mem from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a2::text;
+  if mem is distinct from s2 then raise exception 'TEAMSTATS FAIL: a2 member stats diverge from direct adapter: % vs %', mem, s2; end if;
+
+  -- (c) STRICT posture: shrink a1's captain_slots below its used count (legal ≥0 CHECK; the same
+  -- direct main_ship_instances fixture surgery the normalization step uses — NOT a Captain-table
+  -- write) → 0122's over-capacity refuse-don't-clamp raise for a1 → the totals RPC refuses WHOLE,
+  -- opaquely (no members/detail — the preview is the diagnosing surface)…
+  update public.main_ship_instances set captain_slots = 0, updated_at = now() where main_ship_id = a1;
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_totals(%L::uuid, ''none'')', gA1));
+  if (r->>'reason') is distinct from 'stats_invalid' then raise exception 'TEAMSTATS FAIL strict refuse: %', r; end if;
+  if r ? 'members' or r ? 'totals' or r ? 'detail' then
+    raise exception 'TEAMSTATS FAIL: stats_invalid envelope leaks member detail: %', r; end if;
+  -- …while the C0 PREVIEW still answers ok:true with exactly that member valid:false (strict-vs-preview).
+  p := pg_temp.call_as(uA, format('public.get_my_group_expedition_preview(%L::uuid, ''none'')', gA1));
+  if (p->>'ok')::boolean is not true then raise exception 'TEAMSTATS FAIL preview during invalid member: %', p; end if;
+  select count(*) into n from jsonb_array_elements(p->'members') e
+    where e->>'main_ship_id' = a1::text and (e->>'valid')::boolean is false;
+  if n <> 1 then raise exception 'TEAMSTATS FAIL: preview did not mark a1 valid:false: %', p->'members'; end if;
+
+  -- restore the CAPTAINS-block fixture shape for the SEND/STOP blocks: slots back to the in-txn
+  -- activation value, captain unassigned (sole writer), and totals answers ok again.
+  update public.main_ship_instances set captain_slots = 6, updated_at = now() where main_ship_id = a1;
+  perform public.captain_assign_apply(uA, cap1, null);
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_totals(%L::uuid, ''none'')', gA1));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMSTATS FAIL post-restore totals: %', r; end if;
+
+  raise notice 'TEAMCMD_PASS_TEAMSTATS ok: rejects (invalid_activity/group_not_found×2/empty_group), totals = independent per-member adapter sums with speed=min, strict opaque stats_invalid vs preview valid:false, fixtures restored';
+end $$;
+
 -- ════════ BLOCK SEND: empty group, foreign group, real 2-ship send, and ALL-OR-NOTHING ════════
 do $$
 declare r jsonb; n int; gC1 uuid;
@@ -542,6 +642,6 @@ begin
   raise notice 'TEAMCMD_PASS_DELETE ok: members SET-NULL un-grouped, ships survive, double-delete fails closed';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; all-or-nothing send; best-effort stop; SET-NULL delete)' as result;
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

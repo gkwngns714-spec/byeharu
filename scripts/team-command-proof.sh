@@ -3,13 +3,15 @@
 # (slices 0160..0164: ship_groups + upsert/assign/delete + group send/stop) plus the Slice-C0 captain
 # block (0165: get_my_group_expedition_preview — an RPC-ONLY migration with NO data change; the
 # captain_slots=6 hull bump is DEFERRED to activation, so the proof applies it in-txn before its
-# captain commissions. Captains are provisioned only via the 0118/0119 sole writers).
+# captain commissions. Captains are provisioned only via the 0118/0119 sole writers) plus the
+# Slice-D0 teamstats block (0166: get_my_group_expedition_totals — the AUTHORITATIVE team totals;
+# proven by an independent per-member sum over direct adapter calls, and strict-vs-preview).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
-#              RPCs (and captains via the sole writers, never direct inserts), exercises all six team
+#              RPCs (and captains via the sole writers, never direct inserts), exercises all seven team
 #              RPCs + every reject token, and asserts the all-or-nothing / stop-aggregate /
-#              held-in-space / SET-NULL / captain-fold specifics.
+#              held-in-space / SET-NULL / captain-fold / D0-delegation specifics.
 #   local    — run the write-then-ROLLBACK proof against a disposable DB_URL (the actual behavior proof),
 #              then verify the COMMITTED team_command_enabled flag is still 'false'.
 # The shared blocks (arg scaffold / self-rolling-back / flag-inside-txn / out-of-scope / local psql+markers)
@@ -20,7 +22,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -33,8 +35,9 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
   grep -q "public.commission_additional_main_ship()" "$SQL" || fail "harness does not exercise commission_additional_main_ship"
 
-  # ── all SIX team RPCs are exercised (the five B-surface RPCs + the C0 group preview). ─────────────
-  for fn in upsert_ship_group assign_ship_to_group delete_ship_group send_ship_group_expedition stop_ship_group_transit get_my_group_expedition_preview; do
+  # ── all SEVEN team RPCs are exercised (the five B-surface RPCs + the C0 group preview + the D0
+  #    authoritative totals). ──────────────────────────────────────────────────────────────────────
+  for fn in upsert_ship_group assign_ship_to_group delete_ship_group send_ship_group_expedition stop_ship_group_transit get_my_group_expedition_preview get_my_group_expedition_totals; do
     grep -q "public.$fn(" "$SQL" || fail "harness does not exercise the '$fn' RPC"
   done
 
@@ -52,9 +55,19 @@ if [ "$MODE" = "selftest" ]; then
   # ── every reject token is asserted (dark gate, validation, fail-closed resolves, send outcomes). Pin the
   #    ASSERT FORM (`is distinct from '<tok>'`), not a bare token match — a bare grep would also match the
   #    SQL header comments, so a gutted .sql that only mentions the tokens in prose could false-green. ────
-  for tok in team_command_disabled invalid_group_index invalid_name ship_not_found group_not_found empty_group member_send_failed invalid_activity; do
+  for tok in team_command_disabled invalid_group_index invalid_name ship_not_found group_not_found empty_group member_send_failed invalid_activity stats_invalid; do
     grep -q "is distinct from '$tok'" "$SQL" || fail "harness does not ASSERT the '$tok' reject (is distinct from form)"
   done
+
+  # ── D0 (0166) delegation pin: the TEAMSTATS block must compute its OWN independent per-member sums
+  #    via DIRECT calculate_expedition_stats calls and assert the totals against them (sum + min-speed
+  #    forms) — a totals RPC that re-implemented stat arithmetic could not be caught by token greps. ──
+  grep -qF "public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none')" "$SQL" \
+    || fail "harness does not call the adapter directly for the independent sum (delegation pin)"
+  grep -qF "(r->'totals'->>sk)::numeric is distinct from (s1->>sk)::numeric + (s2->>sk)::numeric" "$SQL" \
+    || fail "harness does not ASSERT totals = the independent per-member sum"
+  grep -qF "least((s1->>'speed')::numeric, (s2->>'speed')::numeric)" "$SQL" \
+    || fail "harness does not ASSERT totals.speed = min member speed"
 
   # ── C0 capacity: the preview's captain_slots_limit=6 is asserted in assert form. 0165 is RPC-only, so
   #    the proof applies the deferred activation hull bump IN-TXN before commissioning — assert both. ──
@@ -73,14 +86,14 @@ if [ "$MODE" = "selftest" ]; then
   grep -qi "on delete set null" "$SQL"                                || fail "harness does not assert the delete SET-NULL member un-grouping"
   grep -q "group_id is null" "$SQL"                                   || fail "harness does not assert members are un-grouped after delete"
 
-  # ── all six block PASS markers present. ───────────────────────────────────────────────────────────
+  # ── all seven block PASS markers present. ───────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains; 6 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold specifics)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains; 7 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation specifics)"
   exit 0
 fi
 
