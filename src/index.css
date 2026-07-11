@@ -7,12 +7,18 @@
    tokens. Tailwind v4 @theme turns each token into utilities (bg-surface, text-ink-muted,
    border-edge, text-accent, rounded-card, shadow-card, …).
 
-   Layers   app < surface < surface-2 — a soft near-black-blue ramp (never pure black).
-   Text     ink (primary) / ink-muted (secondary, AA on surface) / ink-faint (small labels).
-   Accent   the ONE interactive family (sky). Semantic: success / warning / danger — all the
+   Skin     "Mission Control" (UI R0) — dense ops-console: graphite-teal layers, cyan accent,
+            mono micro-labels/numerics. Re-skinned HERE ONLY; token names never change.
+
+   Layers   app < surface < surface-2 — a graphite-teal near-black ramp (never pure black).
+   Text     ink (primary) / ink-muted (secondary, AA on surface) / ink-faint (small labels,
+            AA ≥4.8:1 on every layer — verified against app/surface/surface-2).
+   Accent   the ONE interactive family (cyan). Semantic: success / warning / danger — all the
             light-400 weights so they hold WCAG-AA contrast on the dark surfaces; each has a
-            -hover step for filled buttons (dark text on the bright fill: ~8:1).
-   Type     system sans stack + a mono token for numeric/coordinate readouts. Scale = the
+            -hover step for filled buttons (dark text on the bright fill: ~8:1) and a -soft
+            alpha tint for panel backgrounds.
+   Type     Inter (self-hosted via @fontsource, imported in src/main.tsx) + JetBrains Mono for
+            numeric/coordinate readouts and SectionLabel micro-labels. Scale = the
             default Tailwind steps with these conventions: page title text-2xl font-semibold ·
             panel title text-lg font-semibold · body text-sm · metadata text-xs ·
             micro-labels text-xs uppercase tracking-wide text-ink-faint.
@@ -21,19 +27,19 @@
    ═══════════════════════════════════════════════════════════════════════════════════════════ */
 @theme {
   /* color layers */
-  --color-app: #0b1120;
-  --color-surface: #131c31;
-  --color-surface-2: #1c2742;
-  --color-edge: #283551;
+  --color-app: #05080f;
+  --color-surface: #0c1220;
+  --color-surface-2: #141d31;
+  --color-edge: #22304d;
 
   /* text */
-  --color-ink: #e6ecf9;
-  --color-ink-muted: #94a1bc;
-  --color-ink-faint: #7887a1;
+  --color-ink: #e6edf8;
+  --color-ink-muted: #99a8c3;
+  --color-ink-faint: #7a8aa6;
 
   /* accent + semantic (light-400 family on dark surfaces) */
-  --color-accent: #38bdf8;
-  --color-accent-hover: #7dd3fc;
+  --color-accent: #22d3ee;
+  --color-accent-hover: #67e8f9;
   --color-success: #34d399;
   --color-success-hover: #6ee7b7;
   --color-warning: #fbbf24;
@@ -41,13 +47,25 @@
   --color-danger: #f87171;
   --color-danger-hover: #fca5a5;
 
-  /* typography */
+  /* soft alpha tints — subtle panel/back-plate washes (bg-accent-soft, …). Derived via color-mix so
+     they TRACK their semantic token: retune --color-accent once and these follow, no rgb to keep in sync. */
+  --color-accent-soft: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  --color-success-soft: color-mix(in srgb, var(--color-success) 8%, transparent);
+  --color-warning-soft: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  --color-danger-soft: color-mix(in srgb, var(--color-danger) 8%, transparent);
+
+  /* map aliases (R1 galaxy-map overlays consume these, never raw hex) — track the accent token */
+  --color-map-grid: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  --color-map-halo: color-mix(in srgb, var(--color-accent) 28%, transparent);
+
+  /* typography (both families self-hosted via @fontsource — imported in src/main.tsx) */
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace;
 
   /* shape + elevation */
   --radius-card: 1rem;
   --shadow-card: inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 10px 30px -18px rgb(0 0 0 / 0.7);
+  --shadow-overlay: 0 16px 48px -16px rgb(0 0 0 / 0.85), 0 0 0 1px color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 
 :root {
