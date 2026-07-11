@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Badge, Button, Card, CardHeader, Notice, StatRow } from '../../components/ui'
+import { Badge, Button, Card, CardHeader, Notice, Skeleton, StatRow } from '../../components/ui'
 import type { UnitType } from '../../lib/catalog'
 import type { MapLocation } from '../map/mapTypes'
 import { formatDateTime, formatDuration } from '../../lib/time'
@@ -107,7 +107,12 @@ export function ReportsSection({
                   {open && (
                     <div className="mt-2 rounded-lg border border-edge bg-surface-2 p-3">
                       {ticksLoading ? (
-                        <p className="text-ink-muted">Loading rounds…</p>
+                        // R3: design-system placeholder instead of bare loading text (same state).
+                        <div aria-busy="true">
+                          <Skeleton className="h-4 w-2/3" />
+                          <Skeleton className="mt-2 h-4 w-1/2" />
+                          <span className="sr-only">Loading rounds…</span>
+                        </div>
                       ) : (
                         <RoundLog ticks={ticks} unitTypes={unitTypes} limit={100} />
                       )}
