@@ -1,0 +1,56 @@
+name: TEAM-COMMAND — B-verify disposable proof (dark team send/stop RPCs; no production)
+
+# Runs the TEAM-COMMAND B-verify disposable proof on a throwaway local Supabase — NEVER production:
+#   1. a DB-free selftest: the proof harness is well-formed, self-rolling-back (opens a txn, toggles the
+#      dark team/commission/send flags ONLY inside it, provisions via the real commission RPCs, and ends
+#      in ROLLBACK with NO COMMIT — so it persists nothing and leaves every committed flag = false);
+#   2. a disposable local Supabase (full chain incl. slices 0160..0164) running the real-chain matrix:
+#      dark reject-before-read on all five team RPCs, the group write/assign integrity (incl. the
+#      same-player gap), the all-or-nothing team send, the best-effort team stop aggregate + held-in-space
+#      shape, and the SET-NULL group delete — then a committed-flag check that team_command_enabled is
+#      STILL 'false' after the run.
+# The proof flips NO committed flag: it enables the dark capabilities only inside the rolled-back txn.
+# No `environment:` on any job — none can read production secrets. Disposable local Supabase only.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'slice-**'
+      - 'autopilot/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: team-command-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/team-command-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: TEAM-COMMAND B-verify real-chain matrix
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/team-command-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
