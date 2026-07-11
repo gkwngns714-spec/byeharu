@@ -11,7 +11,10 @@
 # plus the Slice-D2 team-hunt block (0168: send_ship_group_hunt → ONE fleet + frozen sortie manifest →
 # member encounter routing — snapshots equal the proof's own direct adapter calls, speed equals the
 # independent D0 totals.speed, tick damage equals Σ attack_snapshot, and the manifest-wins law; the
-# manifest's sole writer is the RPC — never a direct insert, grep-enforced below).
+# manifest's sole writer is the RPC — never a direct insert, grep-enforced below) plus the Slice-D3
+# team-settle block (0169: the escape tick marks surviving members 'returning', the reconciler
+# re-homes them ONLY once the manifest fleet is finished — mid-combat/in-transit race guards — the
+# manifest is retained, defeat + repair recovery, and the M1 single-send race-closure guard).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -28,7 +31,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_TEAMSETTLE"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -143,14 +146,35 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "alive_count = 0 and attack_snapshot = 0 and defense_snapshot = 0 and hp_current = 0" "$SQL" \
     || fail "harness does not ASSERT the degraded member row shape (alive_count=0 / zero snapshots)"
 
-  # ── all nine block PASS markers present. ────────────────────────────────────────────────────────────
+  # ── D3 (0169) team-settle pins, in assert form (a gutted .sql that only mentions them in prose
+  #    cannot false-green): the escape's returning-status delta (pair-shape), the reconciler re-home
+  #    in the legacy write shape, BOTH reconciler race guards (mid-combat + in-transit), the manifest
+  #    retention decision, the M1 hunting-reject WITHOUT a lost update, and the repair revival. ──────
+  grep -qF "and status = 'returning' and spatial_state is null" "$SQL" \
+    || fail "harness does not ASSERT the D3 returning-status delta (pair-shape form)"
+  grep -qF "(want 2 home/legacy-shape after the reconciler)" "$SQL" \
+    || fail "harness does not ASSERT the reconciler re-home (legacy write shape)"
+  grep -qF "reconciler touched a mid-combat member (race guard)" "$SQL" \
+    || fail "harness does not ASSERT the mid-combat reconciler race guard"
+  grep -qF "reconciler yanked a returning member home mid-flight (guard breach)" "$SQL" \
+    || fail "harness does not ASSERT the in-transit reconciler race guard"
+  grep -qF "(want 2 retained)" "$SQL" \
+    || fail "harness does not ASSERT the manifest retention decision"
+  grep -qF "live single send ACCEPTED a hunting ship (M1)" "$SQL" \
+    || fail "harness does not ASSERT the M1 hunting-reject pin"
+  grep -qF "the rejected single send moved the hunting ship (lost update)" "$SQL" \
+    || fail "harness does not ASSERT the no-lost-update half of the M1 pin"
+  grep -qF "repair did not revive the destroyed member (want home @ max_hp)" "$SQL" \
+    || fail "harness does not ASSERT the repair revival (recovery pin)"
+
+  # ── all ten block PASS markers present. ─────────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest; 8 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt specifics)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest; 8 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/D3-team-settle specifics)"
   exit 0
 fi
 

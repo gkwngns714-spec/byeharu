@@ -73,10 +73,15 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
     (raise-free by construction: a bad member DEGRADES to an inert `alive_count=0` row, never
     poisoning the settle cron), routed by a single manifest-gated branch in the re-created
     `combat_create_encounter` (head 0023, diff-verified).
-  - D3–D4 — sortie settle/return (reconcile `'hunting'` ships home after defeat/escape/return —
-    today a returned sortie's ships stay `'hunting'` until D3's reconciler; the 0050 reconciler
-    deliberately ignores `'hunting'`) and the frontend mirrors + dark Hunt UI (the client consumers
-    of D0's totals). *Not started.*
+  - **D3 — team sortie settle semantics. Done (migration 0169; dark, no flag flipped, no
+    frontend).** The member lifecycle loop closes: the combat tick's escape/forced-extract branch
+    marks surviving members `'returning'` (via the ONE 0152 in-flight leaf), the 0050 reconciler
+    re-homes members once their MANIFEST fleet is finished (with the exact-complement race guard:
+    a `'moving'`/`'present'`/`'returning'` manifest fleet pins its members untouched), manifest
+    rows are RETAINED (they die with their fleet via 0047's retention cascade — the sole-writer
+    law keeps the reconciler off the manifest), retreat verified verbatim for team encounters, and
+    the **M1 activation blocker is FIXED** (the live single send's ship write is now race-proof).
+  - D4 — the frontend mirrors + dark Hunt UI (the client consumers of D0's totals). *Not started.*
 
 ---
 
@@ -479,6 +484,66 @@ migration**); the FIRST writer of the member `combat_units` rows D1 prepared:
   (fleet destroyed, ship combat-destroyed by the D1 member loop). Selftest greps bind the key
   asserts in assert form + the manifest sole-writer negative grep.
 
+## Slice D3 — what shipped
+
+Migration `supabase/migrations/20260618000169_slice_d3_group_settle.sql` — the sortie settle
+semantics D2 deferred. Fully DARK (**no flag flipped, no frontend, no backfill, no edit to any
+shipped migration, no cron change**); three re-creates from grep-verified TRUE heads, each
+diff-verified to exactly its marked hunks:
+
+- **`process_combat_ticks` (head 0167 — the D1 re-create):** ONE hunk in the end branch (the single
+  site that creates the `'return_home'` movement, covering both `'escaped'` and forced
+  `'completed'`): surviving members (`alive_count > 0`) are marked `'returning'` through the ONE
+  0152 leaf `mainship_mark_legacy_in_flight` (`'returning'` is inside its hard domain; the leaf
+  gains a fifth caller, never a widening). `alive_count` — not `hp_current` — is the survival
+  predicate: a tick-killed member (alive floored to 0) or a D2-degraded member (born 0) is NOT
+  flying anything; it stays `'hunting'` hp=0 until the reconciler re-homes it at fleet completion —
+  exactly the "zero-hp `'home'` ship" D2's send guard anticipates. The DEFEAT branches were
+  verified to already settle members via D1's `mainship_mark_combat_destroyed` — untouched.
+- **`process_mainship_expeditions` (head 0050 — its only create site):** two member-only deltas.
+  (1) The legacy branch gains a guard — skip a ship whose MANIFEST fleet is still live — because a
+  team member marked `'returning'` has no `main_ship_id`-tagged fleet, so the head's not-exists is
+  vacuously true and would yank it home MID-FLIGHT (freeing it to join a second sortie, breaking
+  D2's one-live-sortie law). Once the manifest fleet finishes, the guard opens and the unchanged
+  legacy write re-homes the member (`status='home'`, spatial_state stays NULL — the clean
+  legacy_home every legacy expedition ship has always reconciled to). (2) A new team CTE re-homes
+  `'hunting'` ships whose manifest fleet is finished — `'hunting'` has exactly ONE writer (D2's
+  send), so it can never touch a legacy ship; it also SELF-HEALS partial states (fleet destroyed
+  but the D1 loop missed the ship, or the fleet row deleted entirely) — the reconciler NEVER
+  destroys a ship. **Race pin:** both predicates test the manifest fleet against exactly
+  `('moving','present','returning')` — outbound, mid-combat, in transit home — the exact
+  complement of "finished or gone".
+- **Manifest retention decision:** `group_sortie_members` rows for a finished sortie are RETAINED,
+  not deleted — fleets are not immortal (the 0047 retention cron deletes terminal fleets >14d and
+  the manifest CASCADEs with them), deleting would add a second manifest writer (the sole-writer
+  law is grep-enforced), and a completed fleet is never reused (no completed→moving edge), so a
+  retained manifest can never re-route an encounter. Consequence: every D3 manifest predicate is
+  LIVE-scoped (join `fleets.status`), never a bare EXISTS.
+- **M1 fix (`send_main_ship_expedition`, head 0152):** the ship write re-claims the row **under a
+  `FOR UPDATE` lock re-verifying `status='home'`** immediately before the 0152 leaf call, rejecting
+  a miss with the function's own pre-existing not-available raise. The shared leaf is NOT widened —
+  the conditional lives in the caller. RACE-CLOSURE-ONLY: every non-racing caller locks instantly
+  and performs the byte-identical write/rejects on the byte-identical paths; only a true concurrent
+  interleaving (previously a silent `'hunting'` → `'traveling'` lost update) now rejects. No
+  lock-order cycle: the single send holds no other existing-row lock, B-send's wrapper already
+  holds the same ship lock (re-lock is a no-op), and no movement row is ever locked here.
+- **Retreat:** verified verbatim — `request_retreat` (head 0019) is presence-addressed +
+  owner-checked and reads nothing team-shaped; exercised live on a team encounter in the proof.
+  NO change.
+- **Proof:** `scripts/team-command-proof.{sql,sh}` gained the `TEAMCMD_PASS_TEAMSETTLE` block
+  (after TEAMHUNT, inside the ONE rolled-back txn): both reconciler race guards (mid-combat +
+  in-transit), the escape marking survivors `'returning'` with the member hull return speed
+  (`fleet_speed` NULL → the D1 coalesce fallback), a member-keyed report, damage persisted, the
+  return settle depositing the carried bundle (reward_grants + base metal delta), the reconciler
+  re-home in the legacy shape with the manifest retained, a REAL alive-member defeat
+  (boosted-enemy surgery) with the D1 destruction loop + `repair_main_ship` revival, the M1 pin
+  (a `'hunting'` ship rejects the live single send with its own error and is NOT moved; a legal
+  single send still works), and both self-heal re-homes. The selftest greps bind every pin in
+  assert form.
+
+**What remains:** D4 (client mirrors + dark Hunt UI), then the activation checklist (flag flips +
+the deferred captain-slot bump — human-gated, never part of a slice).
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -525,16 +590,15 @@ the cap so it is not the binding limit once multi-ship is later lit.
 - **Captain UI in the roster** (assign/unassign per member ship, captain list) → **DONE in Slice C1**
   (dark, frontend-only; reuses the CAPTAIN-P15 commands verbatim — no new server authority). Captain
   progression wiring / lit-time polish (and any 6 → 8 slot raise) → Slice C2.
-- **M1 — ACTIVATION BLOCKER (fix in D3, before `team_command_enabled` is ever flipped):** the live
-  single send's ship write is a plain read + **unconditional** UPDATE
-  (`send_main_ship_expedition`, 0050:87-94 + 146-147 / 0152:100-107 + 150) — it takes no ship lock,
-  so a single send that read `status='home'` concurrently with a committing team hunt-send can
-  overwrite `'hunting'` → `'traveling'` (a lost update that desyncs the ship from its live sortie).
-  Sequentially it already rejects (`not available (status hunting)`), and while dark the team send
-  can never run, so nothing is exposed today. Fix (a live-function edit, out of D2's charter):
-  re-create the single send's ship write with `and status='home'` + a `FOUND` check (raising the
-  send's own not-available error on miss). D2 documents the honest race scope in migration 0168's
-  header.
+- **M1 — ACTIVATION BLOCKER → DONE in Slice D3 (migration 0169):** the live single send's ship
+  write was a plain read + **unconditional** UPDATE (`send_main_ship_expedition`, 0050:87-94 +
+  146-147 / 0152:100-107 + 150) — no ship lock, so a single send that read `status='home'`
+  concurrently with a committing team hunt-send could overwrite `'hunting'` → `'traveling'` (a lost
+  update desyncing the ship from its live sortie). **Fix shipped:** the re-created send (head 0152)
+  re-claims the ship row under a `FOR UPDATE` lock re-verifying `status='home'` immediately before
+  the 0152 leaf call and rejects a miss with the send's own not-available raise — the shared leaf
+  is NOT widened (conditional in the caller). Race-closure-only: every non-racing caller is
+  byte-identical; `team_command_enabled` no longer has this blocker.
 - **Every flag flip (`team_command_enabled`, `captain_assignment_enabled`, …) = human activation**, never
   part of a slice. All C0 behavior stays dark behind `team_command_enabled=false` (and the captain fold
   behind `captain_assignment_enabled=false`).
