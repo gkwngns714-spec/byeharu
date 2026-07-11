@@ -122,6 +122,17 @@ update public.game_config set value='true'::jsonb where key='team_command_enable
 update public.game_config set value='true'::jsonb where key='mainship_additional_commission_enabled';
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 
+-- Fund the fixture wallets BEFORE any additional-commission call. commission_first_main_ship is free, but
+-- every ADDITIONAL commission DEBITS a price (1000 credits/ship, 0091) from player_wallet — and fresh
+-- fixtures have zero balance, so uA's 3rd ship (and uC's 2nd) fail 'insufficient_credits' without this.
+-- Kept AFTER the DARK block (which must stay unfunded/unprovisioned) and INSIDE the txn (rolled back with
+-- everything). Direct owner insert mirrors trade-market-1-proof.sql; 1,000,000 is ample headroom and
+-- perturbs no assertion (B-verify makes none about balances). player_wallet is lazy, so on_conflict
+-- covers a row a signup/ensure path may already have created.
+insert into public.player_wallet (player_id, balance)
+select v, 1000000 from tcmd where k in ('uA','uB','uC')
+on conflict (player_id) do update set balance = excluded.balance;
+
 -- ════════ PROVISION via the REAL commission RPCs, then the ONE fixture normalization ════════
 do $$
 declare r jsonb; n int;
