@@ -6,6 +6,7 @@ import { formatDateTime, formatDuration } from '../../lib/time'
 import { fetchTicksForEncounter } from './combatApi'
 import { RoundLog } from './RoundLog'
 import type { CombatReport, CombatTick } from './combatTypes'
+import { combatUnitLabel } from './combatLabels'
 
 // UI-REBUILD (2b) — the ONE combat-reports surface, mounted in the Command destination. Merges the
 // old /reports page (CombatReportPage) and the inline dashboard list (CombatReportsView): the M6
@@ -45,7 +46,10 @@ export function ReportsSection({
     }
   }
 
-  const typeName = (id: string) => unitTypes.find((t) => t.id === id)?.name ?? id
+  // Slice D4: survivors/losses jsonb keys are coalesce(unit_type_id, main_ship_id::text) since D1 —
+  // the ONE combatUnitLabel helper resolves catalog names first and renders uuid-shaped member keys
+  // as a "Team ship" label. Data-dark today → legacy report rendering byte-identical.
+  const typeName = (id: string) => combatUnitLabel(id, unitTypes)
   const ships = (obj: Record<string, number>) => {
     const e = Object.entries(obj ?? {}).filter(([, v]) => v > 0)
     return e.length ? e.map(([k, v]) => `${v} ${typeName(k)}`).join(', ') : 'none'

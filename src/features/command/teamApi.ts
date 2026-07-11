@@ -126,3 +126,49 @@ export async function fetchGroupExpeditionPreview(
   if (error) return { ok: false, reason: 'unavailable' }
   return data as GroupPreviewResult
 }
+
+// ── Slice D4 — team COMBAT wrappers over the D0/D2 dark RPCs. ──
+// Same posture as everything above: thin, normalize-don't-throw, server is the SOLE authority, and
+// callers exist only inside TeamRosterPanel (mounted behind TEAM_COMMAND_ENABLED=false) — never
+// executed in production while dark.
+
+// send_ship_group_hunt (0168) — the combat twin of sendShipGroup: ONE fleet for the whole team to an
+// active hunt_pirates location. Success carries { fleet_id, movement_id, arrive_at, member_count };
+// rejects arrive as the 0168 envelope vocabulary (see teamCombat.ts for the mirrored prefix + the
+// server-only tail).
+export async function sendShipGroupHunt(groupId: string, locationId: string): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('send_ship_group_hunt', {
+    p_group_id: groupId,
+    p_location: locationId,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
+// get_my_group_expedition_totals's envelope (0166): the AUTHORITATIVE team totals — the D0 strict
+// authority's folding (Σ the additive 0122 keys, speed = min member speed), opaque on ANY member
+// raise (reason:'stats_invalid'; the C0 preview is the friendly per-member diagnosing surface).
+// totals carries `speed` + the eight additive stat keys; members[] echoes the per-member stats.
+export type GroupTotalsResult =
+  | {
+      ok: true
+      group_id: string
+      activity_type: string
+      member_count: number
+      members: { main_ship_id: string; stats?: Record<string, number> }[]
+      totals: Record<string, number>
+    }
+  | { ok: false; reason: string }
+
+// get_my_group_expedition_totals (0166) — DARK, read-only authoritative team totals.
+export async function fetchGroupExpeditionTotals(
+  groupId: string,
+  activityType: string,
+): Promise<GroupTotalsResult> {
+  const { data, error } = await supabase.rpc('get_my_group_expedition_totals', {
+    p_group_id: groupId,
+    p_activity_type: activityType,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as GroupTotalsResult
+}

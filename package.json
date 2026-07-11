@@ -15,7 +15,7 @@
     "verify:m45": "node scripts/verify-m45.mjs",
     "verify:galaxy:browser": "playwright test galaxy.spec.ts",
     "verify:osn1:unit": "playwright test resolveMainShipMarker.spec.ts",
-    "verify:team:unit": "playwright test teamRoster.spec.ts teamMutations.spec.ts teamSend.spec.ts teamStop.spec.ts teamSkillset.spec.ts teamCaptains.spec.ts",
+    "verify:team:unit": "playwright test teamRoster.spec.ts teamMutations.spec.ts teamSend.spec.ts teamStop.spec.ts teamSkillset.spec.ts teamCaptains.spec.ts teamCombat.spec.ts",
     "verify:osn:resolver": "playwright test resolveMainShipMarker.spec.ts",
     "verify:osn:s6b": "playwright test openSpaceTransform.spec.ts",
     "verify:osn:s6b3": "playwright test devFixedSpacePreview.spec.ts",

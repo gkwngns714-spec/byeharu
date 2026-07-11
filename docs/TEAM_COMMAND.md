@@ -81,7 +81,9 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
     rows are RETAINED (they die with their fleet via 0047's retention cascade — the sole-writer
     law keeps the reconciler off the manifest), retreat verified verbatim for team encounters, and
     the **M1 activation blocker is FIXED** (the live single send's ship write is now race-proof).
-  - D4 — the frontend mirrors + dark Hunt UI (the client consumers of D0's totals). *Not started.*
+  - **D4 — the frontend mirrors + dark Hunt UI (the client consumers of D0's totals). Done
+    (frontend-only, no migration, no flag flipped).** Slice D is COMPLETE — the whole team-command
+    roadmap (A → D4) is built and dark; what remains is the human-gated ACTIVATION CHECKLIST below.
 
 ---
 
@@ -541,8 +543,87 @@ diff-verified to exactly its marked hunks:
   single send still works), and both self-heal re-homes. The selftest greps bind every pin in
   assert form.
 
-**What remains:** D4 (client mirrors + dark Hunt UI), then the activation checklist (flag flips +
-the deferred captain-slot bump — human-gated, never part of a slice).
+## Slice D4 — what shipped
+
+Frontend-only (**no migration, no flag flipped, no `game_config` write**) — the client consumers of
+D0's totals and D2's hunt send, completing Slice D. Everything below is DARK: rendered only from
+`TeamRosterPanel`, which is not mounted while `TEAM_COMMAND_ENABLED = false`; the combat-panel type
+widening is data-dark (member `combat_units` rows have no prod writer), so live rendering is
+byte-identical today.
+
+- **`src/features/command/teamCombat.ts`** — pure (no I/O, the teamSend/teamStop idiom):
+  `huntableDestinations(locations)` (the `sendableDestinations` twin for COMBAT — keeps
+  `status='active' AND activity_type='hunt_pirates'`, the exact 0168 destination predicate; projects
+  `{id,name}`, sorted; may legitimately be EMPTY) and `groupHuntAvailability` (display-only mirror of
+  `send_ship_group_hunt`'s reject ORDER — the client-mirrorable prefix `gate_dark` →
+  `group_not_found` → `empty_group` → `invalid_location` → `member_not_ready` → `ok`;
+  `fleet_limit_reached` / `stats_invalid` / `power_below_required` / `no_home_base` are SERVER-ONLY,
+  the teamSend precedent — they need fleet rows / the 0122 adapter / min-power / base state the
+  client doesn't mirror). Unit-tested in `tests/teamCombat.spec.ts` (`npm run verify:team:unit`,
+  which the spec joined) — full reject-order table plus the server-only-rejects documentation pin.
+- **`teamApi` wrappers** — `sendShipGroupHunt(groupId, locationId)` over 0168 and
+  `fetchGroupExpeditionTotals(groupId, activity)` over 0166 (normalize-don't-throw, the file's
+  dark-RPC style; transport error → `{ok:false, reason:'unavailable'}`).
+- **`TeamRosterPanel`** gains a per-team **Hunt** control beside Send/Stop: a hunt-zone `<select>`
+  over `huntableDestinations(game.locations)` + a TWO-CLICK send (combat commits ships): **Hunt**
+  arms an inline confirm (the confirmDelete idiom — a danger `Notice` with **Confirm hunt** /
+  **Cancel**); retargeting the select disarms a pending confirm. Confirm submits through the
+  existing `run()` (await → refetch, busy-guarded, never optimistic); success notice
+  `Sent N ships hunting at X.` Availability per the `groupHuntAvailability` mirror (readiness folds
+  what the roster knows — every member `status='home'`; hp is the server's under-lock truth). An
+  EMPTY hunt list (no `hunt_pirates` location revealed yet) degrades to a disabled select + a
+  subtle hint — never hidden, never a crash.
+- **`TeamPreviewSection`** gains the authoritative twin beside the C1 estimate: a **Server totals**
+  affordance fetches D0's `get_my_group_expedition_totals` for the SAME activity select value and
+  renders the server's folded totals (the eight additive keys + `speed = min member speed`) labeled
+  **authoritative**; the client aggregate keeps its **estimate** label. Same busy guard, same
+  `rosterVersion` staleness discipline; the strict surface stays OPAQUE on any member raise
+  (`stats_invalid`) — the preview remains the friendly per-member diagnosing surface.
+- **Combat panel null-safety (data-dark)** — `CombatUnit` (combatTypes.ts) mirrors the D1 widening:
+  `unit_type_id: string | null` + optional `main_ship_id` / `attack_snapshot` / `defense_snapshot`.
+  `ActiveCombatPanel` sorts/labels units on the client twin of the server's unit key
+  (`unit_type_id ?? main_ship_id`). ALL THREE report/tick surfaces — `RoundLog`,
+  `ActiveCombatPanel`, and `ReportsSection` (survivors/losses) — resolve jsonb keys through the ONE
+  `combatUnitLabel` helper (combatLabels.ts): catalog name first, uuid-shaped member key (catalog
+  ids are slugs, never uuids) → `Team ship xxxxxxxx` instead of a raw uuid. No member row can exist
+  in prod today → legacy rendering byte-identical.
+
+## ACTIVATION CHECKLIST — the single source of truth
+
+Every item below is **human-gated activation work, never part of a slice**. The dark build is
+complete (A → D4); nothing lights up until these are done deliberately, together, and in order.
+
+1. **Flag flips (the switch itself):**
+   - `team_command_enabled` (game_config) → `true` — lights every team RPC (B0/B1/B-send/B-stop/
+     C0/D0/D2's gates all reject-before-read on it).
+   - `TEAM_COMMAND_ENABLED` (`src/features/map/osnReleaseGates.ts`) → `true` — mounts
+     `TeamRosterPanel` (the entire team UI, including D4's Hunt surface).
+   - `captain_assignment_enabled` → `true` **only if captains are wanted at launch** — without it the
+     C1 captain sub-surface stays byte-invisible (fail-closed) and teams fight uncaptained.
+2. **The deferred captain-slots migration (run WITH the captain flag, idempotent + monotonic):**
+   the hull bump `main_ship_hull_types.base_captain_slots` 2 → 6 **and** the existing-instance
+   `captain_slots` backfill — the exact SQL is pinned under "Explicitly deferred" below. Deferred
+   through C0-D4 because the "Captain seats" row renders both values ungated.
+3. **Pre-activation blockers — all CLOSED:** M1 (the live single send's lost-update race) was fixed
+   in D3 (migration 0169); nothing else on the blocker list.
+4. **Optional pre-activation cleanup:** the **Low-2 lock-ordering polish** from D3's adversarial
+   review (Low severity — harmonizing the residual lock-order asymmetry noted there; correctness is
+   already proven by the D3 pins, so this is polish, not a gate).
+5. **Balance items deliberately deferred to lit-time (decide before or shortly after the flip):**
+   - **enemy scaling vs team power** — encounters currently scale exactly as legacy fleets; a
+     3-8-ship team's summed `combat_power` may trivialize existing hunt zones.
+   - **partial-destruction policy** — today a defeated team is destroyed per the D1 member loop and
+     revived per-ship via `repair_main_ship`; decide if that's the wanted lit economy.
+   - **`retreat_safety` modulation** — the folded team `retreat_safety` is summed but retreat still
+     runs the legacy per-encounter curve; decide how team size should modulate it.
+   - **`max_active_fleets`** — LIVE and shared with legacy fleets; a team is ONE fleet (D2), but
+     players running teams + legacy fleets may hit the cap. Raising it changes live behavior →
+     belongs here, not in a slice.
+6. **Post-flip smoke:** run the disposable proof (`scripts/team-command-proof.sh`) once against the
+   lit environment — every block (`TEAMCMD_PASS_*`) must still pass with the real flag on.
+
+Deliberately NOT on this list: C2 (captain progression wiring / 6 → 8 slots) and
+`mainship_additional_commission_enabled` (multi-ship commissioning) — separate, later decisions.
 
 ## Dark state / gate decisions
 

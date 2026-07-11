@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { Button, Notice, StatRow } from '../../components/ui'
-import { fetchGroupExpeditionPreview, type GroupPreviewResult } from './teamApi'
+import {
+  fetchGroupExpeditionPreview,
+  fetchGroupExpeditionTotals,
+  type GroupPreviewResult,
+  type GroupTotalsResult,
+} from './teamApi'
 import { ADDITIVE_STAT_KEYS, aggregateTeamStats, groupPreviewAvailability } from './teamSkillset'
 import { isPreviewActivity, PREVIEW_ACTIVITY_TYPES } from './teamCaptains'
 
@@ -13,6 +18,12 @@ import { isPreviewActivity, PREVIEW_ACTIVITY_TYPES } from './teamCaptains'
 // roster version it was computed at and only renders while CURRENT: any panel reload (membership
 // change ⇒ stale members) bumps the version and the cached preview disappears — no effect-driven
 // clearing, pure derivation.
+//
+// Slice D4 adds the AUTHORITATIVE twin beside the estimate: "Server totals" fetches D0's
+// get_my_group_expedition_totals (0166) for the SAME activity select value and renders the server's
+// folded totals labeled 'authoritative' (the estimate keeps its 'estimate' label). Same busy guard,
+// same rosterVersion staleness discipline. The strict surface is OPAQUE on any member raise
+// (stats_invalid) — the estimate/preview stays the friendly per-member diagnosing surface.
 
 // Pretty label for a stats key ('captain_slots_used' → 'captain slots used').
 const statLabel = (k: string) => k.replace(/_/g, ' ')
@@ -35,6 +46,7 @@ export function TeamPreviewSection({
   const [activity, setActivity] = useState<string>('none')
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<{ version: number; res: GroupPreviewResult } | null>(null)
+  const [totals, setTotals] = useState<{ version: number; res: GroupTotalsResult } | null>(null)
 
   // C0's availability mirror verbatim: the panel is only mounted behind the compile-time gate
   // (gateEnabled true here), the group is an owned roster row (resolved), so the live inputs are
@@ -57,8 +69,21 @@ export function TeamPreviewSection({
     }
   }
 
+  // D4 — the authoritative twin (same busy guard, same version stamp; see module header).
+  const runTotals = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const res = await fetchGroupExpeditionTotals(groupId, activity)
+      setTotals({ version: rosterVersion, res })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // Only a preview computed at the CURRENT roster version renders — a reload invalidates it.
   const current = preview !== null && preview.version === rosterVersion ? preview.res : null
+  const currentTotals = totals !== null && totals.version === rosterVersion ? totals.res : null
   const shipName = (id: string) => ships.find((s) => s.main_ship_id === id)?.name ?? id
 
   return (
@@ -81,10 +106,39 @@ export function TeamPreviewSection({
           Preview
         </Button>
         <span className="text-[10px] text-ink-faint">Estimate — display-only.</span>
+        {/* D4 — same availability mirror (0166 shares 0165's client-mirrorable reject prefix). */}
+        <Button size="sm" variant="ghost" busy={busy} disabled={busy || !canPreview} onClick={() => void runTotals()}>
+          Server totals
+        </Button>
       </div>
 
       {current && !current.ok && (
         <Notice tone="warning">Couldn’t preview this team ({current.reason}).</Notice>
+      )}
+
+      {currentTotals && !currentTotals.ok && (
+        <Notice tone="warning">Couldn’t fetch server totals ({currentTotals.reason}).</Notice>
+      )}
+
+      {currentTotals && currentTotals.ok && (
+        <div className="space-y-2 rounded-lg border border-edge bg-surface-2/50 px-3 py-2">
+          <p className="text-[10px] text-ink-faint">
+            Server totals · {currentTotals.activity_type} · {currentTotals.member_count} member
+            {currentTotals.member_count === 1 ? '' : 's'} · authoritative
+          </p>
+          <dl className="space-y-0.5 text-xs">
+            {/* Only the keys the D0 authority folds (the eight additive 0122 keys); captain-slot
+                bookkeeping keys are preview-only and never appear in totals. */}
+            {ADDITIVE_STAT_KEYS.filter((k) => typeof currentTotals.totals[k] === 'number').map((k) => (
+              <StatRow key={k} label={statLabel(k)} value={currentTotals.totals[k]} />
+            ))}
+            <StatRow
+              label="speed"
+              value={typeof currentTotals.totals.speed === 'number' ? currentTotals.totals.speed : '—'}
+              hint={typeof currentTotals.totals.speed === 'number' ? '(min member speed)' : undefined}
+            />
+          </dl>
+        </div>
       )}
 
       {current && current.ok && (() => {

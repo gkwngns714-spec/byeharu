@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { UnitType } from '../../lib/catalog'
 import { formatShortTime } from '../../lib/time'
 import type { CombatTick } from './combatTypes'
+import { combatUnitLabel } from './combatLabels'
 
 // M6: player-facing round-by-round log. Built ONLY from real combat_ticks fields
 // (player_damage, enemy_damage, wave_number, player_losses_json, reward_delta_json,
@@ -16,7 +17,10 @@ export function RoundLog({
   unitTypes: UnitType[]
   limit?: number
 }) {
-  const typeName = (id: string) => unitTypes.find((t) => t.id === id)?.name ?? id
+  // Slice D4: player_losses_json keys are coalesce(unit_type_id, main_ship_id::text) since D1 —
+  // resolved by the ONE combatUnitLabel helper (catalog name first, uuid-shaped member key → "Team
+  // ship" label). Data-dark today (member rows have no prod writer) → legacy output byte-identical.
+  const typeName = (id: string) => combatUnitLabel(id, unitTypes)
   const lossText = (j: Record<string, number>) =>
     Object.entries(j ?? {})
       .filter(([, v]) => v > 0)

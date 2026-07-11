@@ -4,6 +4,7 @@ import { CombatEventLayer } from './CombatEventLayer'
 import { RoundLog } from './RoundLog'
 import { requestRetreat } from './combatApi'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
+import { combatUnitLabel } from './combatLabels'
 import { Card, Button, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
 
 // Display-only combat panel. All values are server-authoritative; the only action
@@ -37,7 +38,10 @@ export function ActiveCombatPanel({
   }, [])
 
   const retreating = encounter.status === 'retreating'
-  const typeName = (id: string) => unitTypes.find((t) => t.id === id)?.name ?? id
+  // Slice D4: tick jsonb keys are coalesce(unit_type_id, main_ship_id::text) since D1 — resolved by
+  // the ONE combatUnitLabel helper (catalog name first, uuid-shaped member key → "Team ship" label).
+  // Data-dark: member rows/keys can't exist in prod today, so legacy rendering is byte-identical.
+  const typeName = (id: string) => combatUnitLabel(id, unitTypes)
   const rewards = Object.entries(encounter.total_rewards_json ?? {})
 
   const playerPct = encounter.player_integrity_max > 0
@@ -135,13 +139,16 @@ export function ActiveCombatPanel({
         <SectionLabel>Fleet units</SectionLabel>
         <div className="space-y-2">
           {units.length === 0 && <p className="text-sm text-ink-faint">no units</p>}
-          {units.slice().sort((a, b) => a.unit_type_id.localeCompare(b.unit_type_id)).map((u) => {
+          {/* Slice D4 null-safety: a unit is keyed by coalesce(unit_type_id, main_ship_id) since D1 —
+              sort + label on that coalesced key so a member row (null unit_type_id, dark today) can
+              never crash the panel; legacy rows sort/label byte-identically. */}
+          {units.slice().sort((a, b) => unitKey(a).localeCompare(unitKey(b))).map((u) => {
             const pct = u.hp_max > 0 ? (u.hp_current / u.hp_max) * 100 : 0
             const lost = u.initial_count - u.alive_count
             return (
               <Bar
                 key={u.id}
-                label={`${typeName(u.unit_type_id)} — ${u.alive_count}/${u.initial_count} ships${lost > 0 ? ` (${lost} lost)` : ''}`}
+                label={`${typeName(unitKey(u))} — ${u.alive_count}/${u.initial_count} ships${lost > 0 ? ` (${lost} lost)` : ''}`}
                 pct={pct}
                 text={`${pct.toFixed(0)}% · ${Math.round(u.hp_current)}/${Math.round(u.hp_max)} HP`}
                 tone={u.alive_count === 0 ? 'neutral' : 'success'}
@@ -196,6 +203,10 @@ export function ActiveCombatPanel({
     </Card>
   )
 }
+
+// Slice D4: the client-side twin of the server's coalesce(unit_type_id, main_ship_id) unit key —
+// non-empty for every legal row (the D1 CHECK guarantees exactly one identity is set).
+const unitKey = (u: CombatUnit) => u.unit_type_id ?? u.main_ship_id ?? ''
 
 function Bar({ label, pct, text, tone }: { label: string; pct: number; text: string; tone: MeterTone }) {
   return (

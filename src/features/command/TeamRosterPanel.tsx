@@ -9,6 +9,7 @@ import {
   deleteShipGroup,
   sendShipGroup,
   stopShipGroup,
+  sendShipGroupHunt,
   type ShipGroupMapEntry,
   type TeamRpcResult,
 } from './teamApi'
@@ -16,6 +17,7 @@ import { buildTeamRoster, nextTeamSlot, type GroupRow, type RosterShip } from '.
 import { groupUpsertAvailability } from './teamMutations'
 import { sendableDestinations, groupSendAvailability } from './teamSend'
 import { groupStopAvailability } from './teamStop'
+import { huntableDestinations, groupHuntAvailability } from './teamCombat'
 import { captainsByShip } from './teamCaptains'
 import { TeamMemberCaptains } from './TeamMemberCaptains'
 import { TeamPreviewSection } from './TeamPreviewSection'
@@ -42,6 +44,15 @@ import { isServerLit } from '../../lib/useActivityPanelGuards'
 //     control). Captain mutations await-then-refetch the captain roster — no optimistic UI.
 //   • per-team expedition preview (TeamPreviewSection) — display-only estimate over C0's preview RPC; a
 //     rosterVersion stamp invalidates any cached preview whenever the panel reloads (membership ⇒ stale).
+//
+// Slice D4 adds the team COMBAT surface (same compile-time mount gate; the server additionally rejects
+// team_command_disabled while dark):
+//   • per-team Hunt — destination <select> over huntableDestinations + a TWO-CLICK send (combat commits
+//     ships): 'Hunt' arms an inline confirm (the confirmDelete idiom) whose 'Confirm hunt' submits
+//     send_ship_group_hunt via the same run() (await → refetch, never optimistic). Availability per the
+//     groupHuntAvailability mirror; an EMPTY hunt list (no hunt_pirates location revealed) degrades to a
+//     disabled control + hint, never hides.
+//   • TeamPreviewSection gains the authoritative "Server totals" line (D0's totals RPC).
 
 export function TeamRosterPanel() {
   const { selection, game } = useShellState()
@@ -56,6 +67,8 @@ export function TeamRosterPanel() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null) // group_id pending delete confirm
   const [drafts, setDrafts] = useState<Record<string, string>>({}) // per-team rename input, keyed by group_id
   const [destChoice, setDestChoice] = useState<Record<string, string>>({}) // per-team send destination id
+  const [huntChoice, setHuntChoice] = useState<Record<string, string>>({}) // per-team hunt destination id
+  const [confirmHunt, setConfirmHunt] = useState<string | null>(null) // group_id pending hunt confirm (D4)
 
   const reload = useCallback(async () => {
     const [g, m, cr] = await Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances()])
@@ -123,6 +136,7 @@ export function TeamRosterPanel() {
   const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
   const openSlot = nextTeamSlot(groups)
   const destinations = sendableDestinations(game.locations) // active, non-combat targets (server re-validates)
+  const huntZones = huntableDestinations(game.locations) // active hunt_pirates targets — may be EMPTY today
 
   // FAIL CLOSED (Slice C1): the captain sub-surface exists ONLY when the server affirmatively lit
   // get_my_captain_instances — captain_assignment_disabled (and any transport error) → null → the
@@ -194,7 +208,7 @@ export function TeamRosterPanel() {
     <Card>
       <CardHeader
         title="Teams"
-        subtitle="Create, rename, delete teams and assign ships. Team travel & combat arrive in later slices."
+        subtitle="Create, rename, delete teams, assign ships, and dispatch team expeditions or pirate hunts."
         aside={<Badge tone="warning">Preview</Badge>}
       />
 
@@ -232,6 +246,20 @@ export function TeamRosterPanel() {
             const destName = destinations.find((d) => d.id === destId)?.name ?? ''
             const sendOk = groupSendAvailability({ gateEnabled: true, groupResolved: true, memberCount: ships.length }).canSend
             const stopOk = groupStopAvailability({ gateEnabled: true, groupResolved: true, memberCount: ships.length }).canStop
+            const huntId = huntChoice[group.group_id] ?? ''
+            const huntName = huntZones.find((d) => d.id === huntId)?.name ?? ''
+            // The D4 mirror (client-mirrorable prefix of 0168; fleet cap/power/stats are server-only —
+            // see teamCombat.ts). Readiness folds what the roster knows: every member status 'home'
+            // (hp isn't carried here; the server's under-lock hp>0 check is the truth).
+            const huntOk = groupHuntAvailability({
+              gateEnabled: true,
+              groupResolved: true,
+              memberCount: ships.length,
+              // RESOLVED destination, the send-gate convention: a chosen id that later drops out of
+              // game.locations (poll marks it inactive/non-combat) must disarm Hunt too.
+              locationValid: huntZones.some((d) => d.id === huntId),
+              allMembersReady: ships.every((s) => s.status === 'home'),
+            }).canHunt
             return (
               <div key={group.group_id} className="space-y-2 rounded-lg border border-edge/60 p-3">
                 <div className="flex items-center justify-between gap-2">
@@ -349,6 +377,71 @@ export function TeamRosterPanel() {
                     Stop
                   </Button>
                 </div>
+
+                {/* Slice D4 — team hunt (dark): the COMBAT send. Two-click by design (combat commits
+                    ships): Hunt arms an inline confirm below (the confirmDelete idiom); Confirm hunt
+                    submits via run() (await → refetch, busy-guarded, never optimistic). An empty hunt
+                    list (no hunt_pirates location revealed yet) degrades: disabled select + hint. */}
+                <div className="flex flex-wrap items-center gap-1.5 border-t border-edge/60 pt-2">
+                  <select
+                    value={huntId}
+                    onChange={(e) => {
+                      setHuntChoice((d) => ({ ...d, [group.group_id]: e.target.value }))
+                      // retargeting disarms a pending confirm — it must never commit to a stale zone
+                      setConfirmHunt((c) => (c === group.group_id ? null : c))
+                    }}
+                    disabled={busy !== null || huntZones.length === 0}
+                    aria-label={`Hunt zone for team ${group.group_index}`}
+                    className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
+                  >
+                    <option value="">Hunt zone…</option>
+                    {huntZones.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy !== null || !huntOk || confirmHunt === group.group_id}
+                    onClick={() => setConfirmHunt(group.group_id)}
+                  >
+                    Hunt
+                  </Button>
+                  {huntZones.length === 0 && (
+                    <span className="text-[10px] text-ink-faint">No hunt zones revealed yet.</span>
+                  )}
+                </div>
+
+                {confirmHunt === group.group_id && (
+                  <Notice tone="danger">
+                    Confirm hunt? The whole team commits to combat at {huntName || 'the selected zone'}.
+                    <span className="ml-2 inline-flex gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        busy={busy === `hunt:${group.group_id}`}
+                        disabled={busy !== null || !huntOk}
+                        onClick={() =>
+                          void run(
+                            `hunt:${group.group_id}`,
+                            () => sendShipGroupHunt(group.group_id, huntId),
+                            (res) => {
+                              const n = (res.member_count as number | undefined) ?? ships.length
+                              return `Sent ${n} ship${n === 1 ? '' : 's'} hunting at ${huntName}.`
+                            },
+                          ).then(() => setConfirmHunt(null))
+                        }
+                      >
+                        Confirm hunt
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setConfirmHunt(null)}>
+                        Cancel
+                      </Button>
+                    </span>
+                  </Notice>
+                )}
 
                 {/* Slice C1 — per-team expedition preview (display-only estimate; Slice D owns truth).
                     rosterVersion invalidates a cached preview on every reload (membership ⇒ stale). */}
