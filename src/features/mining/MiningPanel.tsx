@@ -6,6 +6,7 @@ import {
   miningExtractErrorMessage,
   type GetMyMiningExtractionsResult,
 } from './miningTypes'
+import { Button, OverlayPanel } from '../../components/ui'
 
 // MINING-P12 — the dark mining surface: one Extract action + the player's extraction history.
 // SERVER-DRIVEN visibility (no client flag constant): the panel reads get_my_mining_extractions
@@ -76,62 +77,62 @@ export function MiningPanel({
   if (!isServerLit(result)) return null
 
   return (
-    <div
-      data-testid="mining-panel"
-      // UI R1: self-positioning dropped — rides MapScreen's top-left OverlayRail (stacks below PortNav +
-      // Exploration in a flex column, no magic left-[17rem] offset). pointer-events-auto stays so it's
-      // interactive inside the pointer-transparent rail. Inner skin (amber/slate) is R2's tokenization pass.
-      className="pointer-events-auto w-64 rounded-lg border border-amber-500/30 bg-slate-900/90 p-2 text-slate-100"
-    >
-      <p className="text-[11px] font-medium text-amber-300">Mining</p>
-      <button
-        type="button"
+    // UI R2: the OverlayPanel primitive owns the chrome (warning tone = the mining identity;
+    // ex-amber). Rides MapScreen's top-left OverlayRail (UI R1) — no self-positioning; the primitive
+    // keeps it interactive inside the pointer-transparent rail. Tokens only.
+    <OverlayPanel tone="warning" data-testid="mining-panel" className="w-64 text-ink">
+      <p className="text-[11px] font-medium text-warning">Mining</p>
+      <Button
+        variant="warning"
+        size="sm"
         data-testid="mining-extract-button"
-        disabled={!settled || !mainShipId || extractPending}
+        disabled={!settled || !mainShipId}
+        busy={extractPending}
+        busyLabel="Extracting…"
         onClick={() => void extract()}
-        className="mt-1 rounded bg-amber-600/90 px-3 py-1 text-xs font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+        className="mt-1"
       >
-        {extractPending ? 'Extracting…' : 'Extract minerals'}
-      </button>
+        Extract minerals
+      </Button>
       {!settled && (
-        <p data-testid="mining-extract-hint" className="mt-1 text-[10px] text-slate-400">
+        <p data-testid="mining-extract-hint" className="mt-1 text-[10px] text-ink-faint">
           Stop in open space to extract.
         </p>
       )}
       {extractNote && (
-        <p data-testid="mining-extract-note" className="mt-1 text-[10px] text-amber-200/90">
+        <p data-testid="mining-extract-note" className="mt-1 text-[10px] text-warning">
           {extractNote}
         </p>
       )}
       {result.extractions.length > 0 ? (
-        <ul data-testid="mining-extractions" className="mt-2 space-y-1 border-t border-slate-700/60 pt-2">
+        <ul data-testid="mining-extractions" className="mt-2 space-y-1 border-t border-edge pt-2">
           {result.extractions.map((e) => (
             <li key={e.extraction_id} data-testid={`mining-extraction-${e.extraction_id}`} className="text-[10px]">
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-slate-200">{e.field_name}</span>
+                <span className="truncate text-ink">{e.field_name}</span>
                 <span
                   data-testid={`mining-extraction-badge-${e.extraction_id}`}
                   className={`rounded px-1.5 py-0.5 text-[9px] ${
-                    e.secured_at ? 'bg-emerald-600/30 text-emerald-300' : 'bg-amber-600/30 text-amber-300'
+                    e.secured_at ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'
                   }`}
                 >
                   {e.secured_at ? 'Secured' : 'Pending'}
                 </span>
               </div>
-              <p className="text-slate-400">
+              <p className="text-ink-muted">
                 {(e.bundle.items ?? []).map((it) => `${it.item_id} ×${it.quantity}`).join(' · ') || '—'}
               </p>
-              <p className="text-slate-500">
+              <p className="font-mono text-ink-faint">
                 {Math.round(e.space_x)}, {Math.round(e.space_y)} · {new Date(e.extracted_at).toLocaleString()}
               </p>
             </li>
           ))}
         </ul>
       ) : (
-        <p data-testid="mining-extractions-none" className="mt-2 border-t border-slate-700/60 pt-2 text-[10px] text-slate-400">
+        <p data-testid="mining-extractions-none" className="mt-2 border-t border-edge pt-2 text-[10px] text-ink-muted">
           No extractions yet.
         </p>
       )}
-    </div>
+    </OverlayPanel>
   )
 }

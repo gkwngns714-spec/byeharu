@@ -6,6 +6,7 @@ import {
   explorationScanErrorMessage,
   type GetMyExplorationDiscoveriesResult,
 } from './explorationTypes'
+import { Button, OverlayPanel } from '../../components/ui'
 
 // EXPLORATION-P11 — the dark exploration surface: one Scan action + the player's discoveries list.
 // SERVER-DRIVEN visibility (no client flag constant): the panel reads get_my_exploration_discoveries
@@ -69,59 +70,59 @@ export function ExplorationPanel({
   if (!isServerLit(result)) return null
 
   return (
-    <div
-      data-testid="exploration-panel"
-      // UI R1: self-positioning dropped — this now rides MapScreen's top-left OverlayRail, which stacks
-      // co-corner overlays in a flex column (no more magic offsets). Keeps pointer-events-auto so it stays
-      // interactive inside the pointer-transparent rail. Inner skin (violet/slate) is R2's tokenization pass.
-      className="pointer-events-auto w-64 rounded-lg border border-violet-500/30 bg-slate-900/90 p-2 text-slate-100"
-    >
-      <p className="text-[11px] font-medium text-violet-300">Exploration</p>
-      <button
-        type="button"
+    // UI R2: the OverlayPanel primitive owns the chrome (accent tone = the exploration identity;
+    // ex-violet). Rides MapScreen's top-left OverlayRail (UI R1) — no self-positioning; the primitive
+    // keeps it interactive inside the pointer-transparent rail. Tokens only.
+    <OverlayPanel tone="accent" data-testid="exploration-panel" className="w-64 text-ink">
+      <p className="text-[11px] font-medium text-accent">Exploration</p>
+      <Button
+        variant="primary"
+        size="sm"
         data-testid="exploration-scan-button"
-        disabled={!settled || !mainShipId || scanPending}
+        disabled={!settled || !mainShipId}
+        busy={scanPending}
+        busyLabel="Scanning…"
         onClick={() => void scan()}
-        className="mt-1 rounded bg-violet-600/90 px-3 py-1 text-xs font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+        className="mt-1"
       >
-        {scanPending ? 'Scanning…' : 'Scan for signals'}
-      </button>
+        Scan for signals
+      </Button>
       {!settled && (
-        <p data-testid="exploration-scan-hint" className="mt-1 text-[10px] text-slate-400">
+        <p data-testid="exploration-scan-hint" className="mt-1 text-[10px] text-ink-faint">
           Stop in open space to scan.
         </p>
       )}
       {scanNote && (
-        <p data-testid="exploration-scan-note" className="mt-1 text-[10px] text-violet-200/90">
+        <p data-testid="exploration-scan-note" className="mt-1 text-[10px] text-accent">
           {scanNote}
         </p>
       )}
       {result.discoveries.length > 0 ? (
-        <ul data-testid="exploration-discoveries" className="mt-2 space-y-1 border-t border-slate-700/60 pt-2">
+        <ul data-testid="exploration-discoveries" className="mt-2 space-y-1 border-t border-edge pt-2">
           {result.discoveries.map((d) => (
             <li key={d.discovery_id} data-testid={`exploration-discovery-${d.discovery_id}`} className="text-[10px]">
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-slate-200">{d.site_name}</span>
+                <span className="truncate text-ink">{d.site_name}</span>
                 <span
                   data-testid={`exploration-discovery-badge-${d.discovery_id}`}
                   className={`rounded px-1.5 py-0.5 text-[9px] ${
-                    d.secured_at ? 'bg-emerald-600/30 text-emerald-300' : 'bg-amber-600/30 text-amber-300'
+                    d.secured_at ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'
                   }`}
                 >
                   {d.secured_at ? 'Secured' : 'Pending'}
                 </span>
               </div>
-              <p className="text-slate-500">
+              <p className="font-mono text-ink-faint">
                 {Math.round(d.space_x)}, {Math.round(d.space_y)} · {new Date(d.discovered_at).toLocaleString()}
               </p>
             </li>
           ))}
         </ul>
       ) : (
-        <p data-testid="exploration-discoveries-none" className="mt-2 border-t border-slate-700/60 pt-2 text-[10px] text-slate-400">
+        <p data-testid="exploration-discoveries-none" className="mt-2 border-t border-edge pt-2 text-[10px] text-ink-muted">
           No discoveries yet.
         </p>
       )}
-    </div>
+    </OverlayPanel>
   )
 }
