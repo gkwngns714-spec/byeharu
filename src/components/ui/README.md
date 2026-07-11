@@ -39,9 +39,18 @@ body `text-sm` · metadata `text-xs` · micro-labels via `<SectionLabel>`.
   layouts. Screens never hand-copy this frame.
 - **`EmptyState`** — Card-based "nothing here" surface: icon slot + title + optional body/action.
 - **`Skeleton`** — pulsing tokenized loading block; size via className.
+- **`OverlayPanel` / `OverlayRail`** — the map-overlay chrome + per-corner slot layout (UI R1).
+  `OverlayPanel` = `bg-surface/90` + tone border + `shadow-overlay` + `backdrop-blur`; give it a
+  `slot` (`top-left | top-right | bottom-left | bottom-right | top-center`) when it is the corner's
+  only occupant, or omit `slot` and stack several panels inside an `OverlayRail slot=…` (a
+  pointer-transparent positioned flex column) so co-corner overlays never collide. `inert` renders
+  a panel pointer-transparent (e.g. the map legend). `overlayPanelClass`/`overlayRailClass` are the
+  pure class builders (unit-tested in `tests/uiPrimitives.spec.ts`).
 - **`Icon`** — the ONE inline-SVG line-icon set (`./icons.ts` holds the glyph data:
   `map ship anchor command combat repair compass chevron close plus`). `currentColor` strokes —
   icons wear token text colors, never their own palette. `size` prop (px, default 20).
 
 Add a primitive ONLY when a screen needs it (no speculative components). Converted so far:
-**Command Center** (Dashboard + its panels). Next: galaxy map, dock/port, market screens.
+**Command Center** (Dashboard + its panels), **Galaxy map** (UI R1: backdrop/markers/labels via the
+pure `features/map/markerStyle.ts` policy + the OverlayPanel slot system). Next: dock/port, market
+screens (incl. the map feature panels' INNER skins — R2).

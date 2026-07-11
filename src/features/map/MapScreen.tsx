@@ -10,7 +10,7 @@ import type { LocationType, MapLocation } from './mapTypes'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { MiningPanel } from '../mining/MiningPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
-import { Badge, StatRow, type BadgeTone } from '../../components/ui'
+import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
 // stays the hero; the location detail panel now speaks the shared design language (IDENTITY →
@@ -83,8 +83,12 @@ export function MapScreen() {
       {/* Map area — the hero */}
       <div className="relative flex-1 p-2">
         {loading && (
-          <div data-testid="galaxy-map-loading" className="flex h-full items-center justify-center text-ink-muted">
-            <span className="animate-pulse">Loading galaxy…</span>
+          // UI R1: the design-system Skeleton stands in for the map canvas while the world loads.
+          <div data-testid="galaxy-map-loading" className="relative h-full w-full">
+            <Skeleton className="h-full w-full rounded-card" />
+            <p className="absolute inset-0 flex items-center justify-center text-sm text-ink-muted" role="status">
+              Loading galaxy…
+            </p>
           </div>
         )}
         {!loading && error && (
@@ -101,7 +105,9 @@ export function MapScreen() {
           </div>
         )}
         {!loading && !error && locations.length > 0 && (
-          <>
+          // ONE positioned wrapper the size of the map canvas: every screen-level overlay shares the
+          // SAME slot coordinate frame as GalaxyMap's own overlays (UI R1 overlay-slot layout).
+          <div className="relative h-full w-full">
             <GalaxyMap
               locations={locations}
               mainShip={mainShip}
@@ -113,22 +119,48 @@ export function MapScreen() {
               selectedId={selectedId}
               onSelect={setSelectedId}
             />
-            {/* PORT-LAUNCH-1B — dark port-to-port navigation (top-left overlay, its own token
-                styling). Server-gated (osn_available + anchored): renders nothing while dark. */}
-            <PortNavPanel
-              visibleLocations={locations}
-              shipStatus={mainShip?.status}
-              shipSpatialState={mainShip?.spatial_state}
-              spaceMovement={mainShipSpaceMovement}
-              currentDockedLocationId={mainShipPresence?.location_id}
-              mainShipId={mainShip?.main_ship_id ?? null}
-              onCommitted={refresh}
-            />
-            {/* UX-CLEANUP item 3 — the legacy in-transit stop CTA (bottom-right overlay; see the
-                hook block above). Same component/controller as the OSN stops; mutually exclusive
-                with them by state (one active movement owner per ship). */}
+            {/* top-left overlay rail: the server-lit command/feature panels ride ONE stacked,
+                scrollable slot so that WHEN a capability lights they read as coherent map overlays
+                instead of colliding at hand-tuned offsets. All keep their server-lit `return null`
+                gates verbatim (dark today → the rail renders empty and, being pointer-transparent,
+                never intercepts map gestures). GalaxyMap owns top-right (zoom + coordinate move),
+                bottom-left (legend) and bottom-right (coordinate stop); WorldEvents takes top-center. */}
+            <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
+              {/* PORT-LAUNCH-1B — dark port-to-port navigation. Server-gated (osn_available +
+                  anchored): renders nothing while dark. */}
+              <PortNavPanel
+                visibleLocations={locations}
+                shipStatus={mainShip?.status}
+                shipSpatialState={mainShip?.spatial_state}
+                spaceMovement={mainShipSpaceMovement}
+                currentDockedLocationId={mainShipPresence?.location_id}
+                mainShipId={mainShip?.main_ship_id ?? null}
+                onCommitted={refresh}
+              />
+              {/* EXPLORATION-P11 — dark scan + discoveries; legal only settled in space. */}
+              <ExplorationPanel
+                lifecycleKey={panelLifecycleKey}
+                mainShipId={mainShip?.main_ship_id ?? null}
+                shipStatus={mainShip?.status}
+                shipSpatialState={mainShip?.spatial_state}
+              />
+              {/* MINING-P12 — dark extract + extraction history; legal only settled in space. */}
+              <MiningPanel
+                lifecycleKey={panelLifecycleKey}
+                mainShipId={mainShip?.main_ship_id ?? null}
+                shipStatus={mainShip?.status}
+                shipSpatialState={mainShip?.spatial_state}
+              />
+            </OverlayRail>
+            {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
+            <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
+            {/* UX-CLEANUP item 3 — the legacy in-transit stop CTA (bottom-right slot; see the hook
+                block above). Same component/controller as the OSN stops; mutually exclusive with
+                them by state (one active movement owner per ship), so the shared bottom-right slot
+                can never double-book. */}
             {inLegacyOutboundTransit && (
               <SpaceStopControls
+                slot="bottom-right"
                 phase={legacyStop.state.phase}
                 errorMessage={legacyStop.state.errorMessage}
                 outcome={legacyStop.state.outcome}
@@ -138,32 +170,7 @@ export function MapScreen() {
                 stoppedMessage="Holding position in open space."
               />
             )}
-            {/* SERVER-LIT overlay rail (bottom-left): the dark feature panels ride ONE positioned,
-                scrollable stack so that WHEN a capability lights they read as coherent map
-                overlays instead of raw flow cards breaking the canvas layout. All three keep
-                their server-lit `return null` gates verbatim (dark today → the rail renders
-                empty and, being pointer-events-none, never intercepts map gestures). */}
-            <div className="pointer-events-none absolute bottom-2 left-2 z-10 max-h-[50%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
-              <div className="pointer-events-auto flex flex-col gap-2">
-                {/* EXPLORATION-P11 — dark scan + discoveries; legal only settled in space. */}
-                <ExplorationPanel
-                  lifecycleKey={panelLifecycleKey}
-                  mainShipId={mainShip?.main_ship_id ?? null}
-                  shipStatus={mainShip?.status}
-                  shipSpatialState={mainShip?.spatial_state}
-                />
-                {/* MINING-P12 — dark extract + extraction history; legal only settled in space. */}
-                <MiningPanel
-                  lifecycleKey={panelLifecycleKey}
-                  mainShipId={mainShip?.main_ship_id ?? null}
-                  shipStatus={mainShip?.status}
-                  shipSpatialState={mainShip?.spatial_state}
-                />
-                {/* PHASE20-POLISH — dark world-events feed (read-only; server empties it while dark). */}
-                <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
-              </div>
-            </div>
-          </>
+          </div>
         )}
       </div>
 
@@ -174,6 +181,8 @@ export function MapScreen() {
           data-testid="galaxy-location-detail-panel"
           className="max-h-[45dvh] overflow-y-auto border-t border-edge bg-surface p-4 md:max-h-none md:w-80 md:border-l md:border-t-0"
         >
+          {/* bottom-sheet drag-handle affordance (phones only — the md+ side panel doesn't sheet) */}
+          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-edge md:hidden" aria-hidden="true" />
           {/* 1 · IDENTITY */}
           <div className="flex items-start justify-between gap-3">
             <div>

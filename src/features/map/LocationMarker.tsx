@@ -1,30 +1,16 @@
-import type { LocationType, MapLocation } from './mapTypes'
+import type { MapLocation } from './mapTypes'
+import { markerStyle } from './markerStyle'
 
-// Read-only SVG marker for one location. Positions are in normalized 0..1000 space;
-// radius/label are counter-scaled by the zoom factor `k` so they stay a constant on-screen
-// size. Selecting only highlights — it never sends an expedition.
+// Read-only SVG marker for one location. Positions are in normalized 0..1000 space; radius/label are
+// counter-scaled by the zoom factor `k` so they stay a constant on-screen size. Selecting only
+// highlights — it never sends an expedition.
 //
-// UX-CLEANUP item 5: colors come ONLY from the design-system tokens (var(--color-*), emitted by the
-// @theme block in src/index.css) so the map reads by the SAME semantic language as the rest of the UI:
-//   danger  → hostile (pirate_hunt / pirate_den)
-//   success → safe (safe_zone)
-//   accent  → dockable port (trade_outpost; gets a second "hub" ring) + rally
-//   warning → resource/event (mining_site / event_site)
-//   muted   → derelict / unknown
-// Hover shows a soft halo (group-hover), selection a solid ring; labels carry an app-colored halo
-// (paint-order stroke) so they stay legible over the grid/backdrop.
-
-const TYPE_TOKEN: Record<LocationType, string> = {
-  pirate_hunt: 'var(--color-danger)',
-  pirate_den: 'var(--color-danger)',
-  mining_site: 'var(--color-warning)',
-  trade_outpost: 'var(--color-accent)',
-  derelict_station: 'var(--color-ink-muted)',
-  rally_point: 'var(--color-accent)',
-  safe_zone: 'var(--color-success)',
-  event_site: 'var(--color-warning)',
-}
-const FALLBACK_TOKEN = 'var(--color-ink-faint)'
+// UI R1: this is a THIN renderer — every size/glyph/halo/label decision comes from the pure
+// markerStyle policy (./markerStyle.ts, unit-tested), tokens only:
+//   • glyph shape by type: diamond = dockable port (+ hub ring), triangle = combat/hazard, circle = waypoint
+//   • sized + haloed by importance (reward/danger bands), so the hierarchy reads at a glance
+//   • selection = an accent scan reticle (ring + crosshair ticks) over a --color-map-halo wash
+//   • labels wear a paint-order halo so they stay legible over the grid/starfield
 
 export function LocationMarker({
   x,
@@ -43,10 +29,30 @@ export function LocationMarker({
   showLabel: boolean
   onSelect: (id: string) => void
 }) {
-  const color = TYPE_TOKEN[location.location_type] ?? FALLBACK_TOKEN
-  const isPort = location.location_type === 'trade_outpost'
-  const r = 10 / k
+  const s = markerStyle(location)
+  const r = s.radius / k
   const label = location.name.length > 18 ? `${location.name.slice(0, 17)}…` : location.name
+
+  // Selection reticle geometry (ring radius + the four crosshair ticks reaching outward).
+  const ringR = r * 2.2
+  const tick = r * 0.8
+
+  // Hit target is ONE invisible constant-radius disc (~19px, matching pre-R1 parity); every visible
+  // element below is pointer-transparent so the glyph size/halo/reticle are presentation only and never
+  // change what's clickable (no shrunk tap targets, no halo occluding a neighbor, no reticle eating
+  // the deselect/empty-space tap). Selection stays a pure highlight.
+  const hitR = 19 / k
+
+  // Core glyph by shape (all wear the app-colored knockout stroke so they pop off the halo).
+  const glyphStroke = { stroke: 'var(--color-app)', strokeWidth: 1.5, vectorEffect: 'non-scaling-stroke' as const, style: { pointerEvents: 'none' as const } }
+  const glyph =
+    s.shape === 'diamond' ? (
+      <polygon points={`${x},${y - r} ${x + r},${y} ${x},${y + r} ${x - r},${y}`} fill={s.color} {...glyphStroke} />
+    ) : s.shape === 'triangle' ? (
+      <polygon points={`${x},${y - r} ${x + r * 0.9},${y + r * 0.75} ${x - r * 0.9},${y + r * 0.75}`} fill={s.color} {...glyphStroke} />
+    ) : (
+      <circle cx={x} cy={y} r={r} fill={s.color} {...glyphStroke} />
+    )
 
   return (
     <g
@@ -61,38 +67,48 @@ export function LocationMarker({
       }}
       style={{ cursor: 'pointer' }}
     >
-      {/* soft identity halo — always on, so type/danger reads at a glance even zoomed out */}
-      <circle cx={x} cy={y} r={r * 1.9} fill={color} opacity={0.14} />
+      {/* invisible constant-radius hit target — the ONLY pointer-interactive element (parity with pre-R1) */}
+      <circle cx={x} cy={y} r={hitR} fill="transparent" />
+      {/* soft identity halo — always on, sized/weighted by importance, so type/danger reads zoomed out */}
+      <circle cx={x} cy={y} r={r * s.haloRadius} fill={s.color} opacity={s.haloOpacity} style={{ pointerEvents: 'none' }} />
       {/* hover halo (presentation only) */}
       <circle
         cx={x}
         cy={y}
-        r={r * 2.4}
+        r={r * 2.6}
         fill="none"
-        stroke={color}
-        strokeWidth={1}
+        stroke="var(--color-map-halo)"
+        strokeWidth={1.5}
         vectorEffect="non-scaling-stroke"
-        className="opacity-0 transition-opacity group-hover:opacity-50"
+        className="opacity-0 transition-opacity group-hover:opacity-100"
+        style={{ pointerEvents: 'none' }}
       />
-      {/* selected ring */}
+      {/* selection reticle — accent scan ring + crosshair ticks over a map-halo wash (presentation only) */}
       {selected && (
-        <circle cx={x} cy={y} r={r * 2.1} fill="none" stroke={color} strokeWidth={2} vectorEffect="non-scaling-stroke" opacity={0.95} />
+        <g data-testid="galaxy-marker-reticle" opacity={0.95} style={{ pointerEvents: 'none' }}>
+          <circle cx={x} cy={y} r={ringR} fill="var(--color-map-halo)" />
+          <circle cx={x} cy={y} r={ringR} fill="none" stroke="var(--color-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          <line x1={x} y1={y - ringR - tick} x2={x} y2={y - ringR} stroke="var(--color-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          <line x1={x} y1={y + ringR} x2={x} y2={y + ringR + tick} stroke="var(--color-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          <line x1={x - ringR - tick} y1={y} x2={x - ringR} y2={y} stroke="var(--color-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+          <line x1={x + ringR} y1={y} x2={x + ringR + tick} y2={y} stroke="var(--color-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+        </g>
       )}
       {/* dockable-port "hub" ring — ports read differently from waypoints at any zoom */}
-      {isPort && (
-        <circle cx={x} cy={y} r={r * 1.45} fill="none" stroke={color} strokeWidth={1.25} vectorEffect="non-scaling-stroke" opacity={0.8} />
+      {s.hubRing && (
+        <circle cx={x} cy={y} r={r * 1.45} fill="none" stroke={s.color} strokeWidth={1.25} vectorEffect="non-scaling-stroke" opacity={0.8} style={{ pointerEvents: 'none' }} />
       )}
-      {/* core node */}
-      <circle cx={x} cy={y} r={r} fill={color} stroke="var(--color-app)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+      {/* core glyph */}
+      {glyph}
       {showLabel && (
         <text
           x={x}
-          y={y - r * (isPort ? 1.75 : 1.45) - 3 / k}
+          y={y - r * (s.hubRing ? 1.75 : 1.45) - 3 / k}
           fontSize={14 / k}
           textAnchor="middle"
           fill="var(--color-ink)"
-          stroke="var(--color-app)"
-          strokeWidth={3 / k}
+          stroke="var(--color-map-halo)"
+          strokeWidth={3.5 / k}
           paintOrder="stroke"
           style={{ pointerEvents: 'none', userSelect: 'none' }}
         >

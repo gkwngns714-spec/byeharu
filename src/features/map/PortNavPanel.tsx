@@ -11,7 +11,7 @@ import { useOsnReadiness } from './useOsnReadiness'
 import { usePortMoveCommand } from './usePortMoveCommand'
 import { useSpaceStopCommand } from './useSpaceStopCommand'
 import { SpaceStopControls } from './SpaceStopControls'
-import { Button } from '../../components/ui'
+import { Button, OverlayPanel } from '../../components/ui'
 
 // PORT-LAUNCH-1B — the DARK port-to-port OSN navigation surface.
 //
@@ -99,12 +99,10 @@ export function PortNavPanel({
   }
 
   return (
-    <div
-      data-testid="port-nav-panel"
-      // UX-CLEANUP item 5: design-system tokens (accent tone = the OSN travel surface), matching the
-      // compact map-overlay idiom (token-styled container, primitives for interactive elements).
-      className="pointer-events-auto absolute left-2 top-2 z-10 w-60 rounded-lg border border-accent/25 bg-surface/90 p-2 text-ink shadow-card"
-    >
+    // UI R1: the OverlayPanel primitive owns the chrome (accent tone = the OSN travel surface). No
+    // self-positioning — this panel rides MapScreen's top-left overlay rail and stacks with its
+    // corner-mates instead of colliding.
+    <OverlayPanel tone="accent" data-testid="port-nav-panel" className="w-60 text-ink">
       {showSelection && (
         <div data-testid="port-nav-selection">
           <p className="mb-1 text-[11px] font-medium text-accent">Travel to a port</p>
@@ -163,6 +161,6 @@ export function PortNavPanel({
           />
         </div>
       )}
-    </div>
+    </OverlayPanel>
   )
 }

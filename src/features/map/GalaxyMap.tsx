@@ -17,7 +17,8 @@ import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTrans
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
 import { useOsnReadiness } from './useOsnReadiness'
 import { isCoordinateTargetingActionable, type OsnReadiness } from './osnReadiness'
-import { Button } from '../../components/ui'
+import { labelVisible } from './markerStyle'
+import { Button, OverlayPanel, OverlayRail } from '../../components/ui'
 
 // Read-only 2D galaxy map (plain SVG — no canvas/WebGL). UNIFIED fixed-coordinate frame (S6B-PRES):
 // EVERY spatial object — named locations, base/home, movement lines, legacy + open-space ship states,
@@ -159,8 +160,6 @@ export function GalaxyMap({
     return (dxPx * VIEW) / w
   }
 
-  const showLabels = view.k >= 0.9
-
   // ── pan / zoom handlers (read-only camera; no data mutation) ──
   const onPointerDown = (e: RPointerEvent) => {
     ;(e.target as Element).setPointerCapture?.(e.pointerId)
@@ -246,13 +245,6 @@ export function GalaxyMap({
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-card border border-edge bg-app shadow-card">
-      {/* zoom controls */}
-      <div className="absolute right-2 top-2 z-10 flex flex-col gap-1">
-        <Button size="icon" onClick={() => zoomByFactor(1.25)} aria-label="Zoom in">+</Button>
-        <Button size="icon" onClick={() => zoomByFactor(1 / 1.25)} aria-label="Zoom out">−</Button>
-        <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>
-      </div>
-
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VIEW} ${VIEW}`}
@@ -267,26 +259,63 @@ export function GalaxyMap({
       >
         {/* Static backdrop (NOT transformed): the map area always renders a deliberate background,
             even at the camera bounds. Visual safety layer only — not a map-layer framework.
-            UX-CLEANUP item 5: a subtle token-driven deep-space treatment (soft radial glow + faint
-            grid) instead of a flat fill — colors come ONLY from the @theme tokens. */}
+            UI R1 depth treatment (tokens ONLY — no raw color literals, no WebGL, no animation):
+            app-dark canvas (darker than the surface chrome) → soft surface lift + faint accent
+            nebula → static tiled starfield → major/minor grid on --color-map-grid → vignette. */}
         <defs>
-          <radialGradient id="bh-space-bg" cx="50%" cy="42%" r="75%">
-            <stop offset="0%" stopColor="var(--color-surface)" />
-            <stop offset="55%" stopColor="var(--color-app)" />
-            <stop offset="100%" stopColor="var(--color-app)" />
+          <radialGradient id="bh-space-glow" cx="50%" cy="42%" r="75%">
+            <stop offset="0%" stopColor="var(--color-surface)" stopOpacity={0.55} />
+            <stop offset="70%" stopColor="var(--color-surface)" stopOpacity={0} />
           </radialGradient>
-          <pattern id="bh-space-grid" width={VIEW / 10} height={VIEW / 10} patternUnits="userSpaceOnUse">
+          <radialGradient id="bh-space-nebula" cx="30%" cy="28%" r="50%">
+            <stop offset="0%" stopColor="var(--color-accent)" stopOpacity={0.05} />
+            <stop offset="100%" stopColor="var(--color-accent)" stopOpacity={0} />
+          </radialGradient>
+          <radialGradient id="bh-space-vignette" cx="50%" cy="50%" r="72%">
+            <stop offset="0%" stopColor="var(--color-app)" stopOpacity={0} />
+            <stop offset="62%" stopColor="var(--color-app)" stopOpacity={0} />
+            <stop offset="100%" stopColor="var(--color-app)" stopOpacity={0.6} />
+          </radialGradient>
+          {/* static starfield tile — a fixed set of faint ink dots (no script, no animation loop) */}
+          <pattern id="bh-space-stars" width={VIEW / 4} height={VIEW / 4} patternUnits="userSpaceOnUse">
+            <g fill="var(--color-ink)">
+              <circle cx={12} cy={40} r={1.1} opacity={0.35} />
+              <circle cx={58} cy={15} r={0.7} opacity={0.2} />
+              <circle cx={90} cy={80} r={1.4} opacity={0.45} />
+              <circle cx={140} cy={30} r={0.8} opacity={0.25} />
+              <circle cx={170} cy={110} r={1.1} opacity={0.3} />
+              <circle cx={30} cy={150} r={0.7} opacity={0.2} />
+              <circle cx={105} cy={170} r={1.3} opacity={0.4} />
+              <circle cx={200} cy={60} r={0.9} opacity={0.25} />
+              <circle cx={230} cy={140} r={0.7} opacity={0.2} />
+              <circle cx={65} cy={210} r={1} opacity={0.3} />
+              <circle cx={160} cy={225} r={0.8} opacity={0.22} />
+              <circle cx={220} cy={205} r={1.2} opacity={0.35} />
+              <circle cx={15} cy={95} r={0.9} opacity={0.28} />
+              <circle cx={245} cy={20} r={0.8} opacity={0.2} />
+            </g>
+          </pattern>
+          {/* minor/major grid — both painted with --color-map-grid at two weights/opacities */}
+          <pattern id="bh-space-grid-minor" width={VIEW / 20} height={VIEW / 20} patternUnits="userSpaceOnUse">
             <path
-              d={`M ${VIEW / 10} 0 L 0 0 0 ${VIEW / 10}`}
+              d={`M ${VIEW / 20} 0 L 0 0 0 ${VIEW / 20}`}
               fill="none"
-              stroke="var(--color-edge)"
+              stroke="var(--color-map-grid)"
               strokeWidth={0.5}
-              opacity={0.35}
+              opacity={0.5}
             />
           </pattern>
+          <pattern id="bh-space-grid-major" width={VIEW / 5} height={VIEW / 5} patternUnits="userSpaceOnUse">
+            <path d={`M ${VIEW / 5} 0 L 0 0 0 ${VIEW / 5}`} fill="none" stroke="var(--color-map-grid)" strokeWidth={1.25} />
+          </pattern>
         </defs>
-        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-bg)" pointerEvents="none" />
-        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-grid)" pointerEvents="none" />
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="var(--color-app)" pointerEvents="none" />
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-glow)" pointerEvents="none" />
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-nebula)" pointerEvents="none" />
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-stars)" pointerEvents="none" />
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-grid-minor)" pointerEvents="none" />
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-grid-major)" pointerEvents="none" />
+        <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-vignette)" pointerEvents="none" />
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.k})`}>
           {/* movement paths (under markers) */}
           {movements.map((m) => {
@@ -317,7 +346,10 @@ export function GalaxyMap({
                 k={view.k}
                 location={loc}
                 selected={loc.id === selectedId}
-                showLabel={showLabels}
+                // UI R1 label declutter: zoom-tiered reveal (pure policy in markerStyle.ts) — ports/
+                // important locations are always labelled, lesser ones reveal as the player zooms in;
+                // the selected marker is always labelled.
+                showLabel={loc.id === selectedId || labelVisible(loc, view.k)}
                 onSelect={onSelect}
               />
             )
@@ -351,29 +383,44 @@ export function GalaxyMap({
         </g>
       </svg>
 
-      {/* OSN-3 S6C / OSN-COORD-ENABLE-1C — overlay controls. Mounts ONLY when the SERVER readiness capability
-          is true AND the movement domain is enabled AND the ship is eligible (canTarget). While production is
-          dark (coordinate_travel_available=false) it never mounts; a non-'eligible' ship also keeps it hidden.
-          Port-to-port travel is a separate release surface (PortNavPanel, mounted by the screen). */}
-      {canTarget && (
-        <SpaceMoveControls
-          enabled={spaceMoveEnabled}
-          eligibility={eligibility}
-          phase={sm.state.phase}
-          target={sm.state.target}
-          targetWithinBounds={sm.state.targetWithinBounds}
-          serverTarget={sm.state.serverTarget}
-          errorMessage={sm.state.errorMessage}
-          onConfirm={() => void sm.submit().finally(() => refreshReadiness())}
-          onClear={sm.clear}
-        />
-      )}
+      {/* ── UI R1 overlay slots: one positioned rail per corner; co-corner overlays stack instead of
+          colliding at hand-tuned absolute offsets. MapScreen owns the remaining corners (top-left =
+          port nav + feature rail, top-center = world events, bottom-right = the legacy stop, which is
+          mutually exclusive by state with the coordinate stop below — one active movement owner). ── */}
 
-      {/* OSN-4 — Stop safety CTA. Mounted ONLY for a real active coordinate transit, INDEPENDENT of the
-          initiation flag (in-flight safety). Today this condition is unreachable (no coordinate moves exist
-          while the flag is false) → dark in production. Target selection / new-move stay flag-gated above. */}
+      {/* top-right: zoom cluster + (when server-lit) the coordinate-move controls, stacked */}
+      <OverlayRail slot="top-right">
+        <OverlayPanel className="flex flex-col gap-1">
+          <Button size="icon" onClick={() => zoomByFactor(1.25)} aria-label="Zoom in">+</Button>
+          <Button size="icon" onClick={() => zoomByFactor(1 / 1.25)} aria-label="Zoom out">−</Button>
+          <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>
+        </OverlayPanel>
+
+        {/* OSN-3 S6C / OSN-COORD-ENABLE-1C — overlay controls. Mounts ONLY when the SERVER readiness
+            capability is true AND the movement domain is enabled AND the ship is eligible (canTarget).
+            While production is dark (coordinate_travel_available=false) it never mounts; a non-'eligible'
+            ship also keeps it hidden. Port-to-port travel is a separate release surface (PortNavPanel). */}
+        {canTarget && (
+          <SpaceMoveControls
+            enabled={spaceMoveEnabled}
+            eligibility={eligibility}
+            phase={sm.state.phase}
+            target={sm.state.target}
+            targetWithinBounds={sm.state.targetWithinBounds}
+            serverTarget={sm.state.serverTarget}
+            errorMessage={sm.state.errorMessage}
+            onConfirm={() => void sm.submit().finally(() => refreshReadiness())}
+            onClear={sm.clear}
+          />
+        )}
+      </OverlayRail>
+
+      {/* OSN-4 — Stop safety CTA (bottom-right slot). Mounted ONLY for a real active coordinate transit,
+          INDEPENDENT of the initiation flag (in-flight safety). Today this condition is unreachable (no
+          coordinate moves exist while the flag is false) → dark in production. */}
       {inCoordinateTransit && (
         <SpaceStopControls
+          slot="bottom-right"
           phase={stop.state.phase}
           errorMessage={stop.state.errorMessage}
           outcome={stop.state.outcome}
@@ -381,21 +428,29 @@ export function GalaxyMap({
         />
       )}
 
-      {/* compact legend + hint row (token-driven; the legend mirrors the marker semantics exactly) */}
-      <div className="pointer-events-none absolute bottom-2 left-2 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-faint">
+      {/* bottom-left: player-facing marker key + hint (pointer-transparent — never blocks map gestures).
+          Mirrors the markerStyle glyph semantics exactly: diamond port / circle waypoint / triangle hostile. */}
+      <OverlayPanel slot="bottom-left" inert className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-faint">
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 rounded-full bg-success" /> safe
+          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
+            <polygon points="5,0 10,5 5,10 0,5" fill="var(--color-accent)" />
+          </svg>
+          Port — dock &amp; trade
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 rounded-full bg-danger" /> hostile
+          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
+            <circle cx="5" cy="5" r="4" fill="var(--color-success)" />
+          </svg>
+          Safe
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 rounded-full border border-accent bg-accent/40" /> port
+          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
+            <polygon points="5,0.5 9.5,9 0.5,9" fill="var(--color-danger)" />
+          </svg>
+          Hostile
         </span>
-        <span>
-          {locations.length} locations · {movements.length} moving · drag to pan · scroll/buttons to zoom
-        </span>
-      </div>
+        <span className="basis-full">Tap a marker for details · drag to pan · scroll to zoom</span>
+      </OverlayPanel>
     </div>
   )
 }
