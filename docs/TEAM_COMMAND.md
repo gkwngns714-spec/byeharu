@@ -56,8 +56,17 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
     `get_my_group_expedition_preview` stays the *friendly* per-member surface (`valid:false` + error per
     member); D0 is the *authoritative* context the combat consumer will read — it never clamps, never
     partial-totals, never leaks member detail.
-  - D1–D4 — resolve a team into the existing `fleet_units`/`combat_units` input and run the existing combat
-    engine (the consumers of D0's totals; chartered when D1 starts). *Not started.*
+  - **D1 — combat_units member widening + tick/report parity re-create. Done (migration 0167;
+    schema + engine-branch only, NO member-row writer, no flag flipped).** `combat_units` can now carry a
+    member main ship (`main_ship_id` XOR `unit_type_id`, frozen `attack_snapshot`/`defense_snapshot`); the
+    LIVE `process_combat_ticks` (0046 head) and `report_create` (0026 head) were re-created with
+    **legacy-byte-parity deltas only** (every delta is a `coalesce(member, legacy)` or a
+    member-row-gated branch — and member rows have NO writer until D2, so live combat is provably
+    unchanged). Three new internal leaves: `combat_fleet_return_speed`, `mainship_sync_combat_hp`,
+    `mainship_mark_combat_destroyed`.
+  - D2–D4 — the flag-gated member-row writer (resolve a team into the widened `combat_units` input),
+    member combat lighting, and lit-time polish (the consumers of D0's totals; chartered when D2
+    starts). *Not started.*
 
 ---
 
@@ -307,6 +316,64 @@ no frontend** (a migration+proof slice):
   only be folding the ONE adapter's outputs; and the strict-vs-preview split — one over-capacity member →
   totals answers opaque `stats_invalid` while the C0 preview still answers `ok` with that member
   `valid:false`. The selftest greps enforce the delegation-pin forms.
+
+## Slice D1 — what shipped
+
+Migration `supabase/migrations/20260618000167_slice_d1_combat_member_units.sql` — the riskiest
+team-command phase: it re-creates the **LIVE** combat cron body and the **LIVE** report writer. Fully
+DARK, **no member-row writer, no flag flip, no frontend, no backfill**:
+
+- **The parity discipline (the absolute law of this slice):** both bodies were copied VERBATIM from
+  their true heads (verified by grepping every migration for each function name and taking the
+  latest — `process_combat_ticks` ← 0046, `report_create` ← 0026; nothing later re-creates either).
+  Every delta is one of exactly two provably-inert shapes:
+  - a `coalesce(member_value, legacy_value)` where the member value is NULL on every existing row
+    (snapshot-first stat reads over a `left join`; `coalesce(unit_type_id, main_ship_id::text)` jsonb
+    keys; `coalesce(fleet_speed(…), combat_fleet_return_speed(…))` return speed), or
+  - a branch reachable ONLY when a `combat_units` row has `main_ship_id IS NOT NULL` — and **no such
+    row can exist**: the new columns have NO writer until D2's flag-gated RPC.
+  Each delta carries a `-- SLICE D1:` marker; nothing else in either body changed (same variables,
+  same order). Verified by extracting the shipped bodies and diffing against the head originals.
+- **`combat_units` widening:** `main_ship_id uuid NULL → main_ship_instances` (ON DELETE CASCADE),
+  `attack_snapshot`/`defense_snapshot double precision NULL` (matching `unit_types.attack/defense`),
+  `unit_type_id` relaxed to NULL, and the exactly-one-identity CHECK
+  `((unit_type_id is null) <> (main_ship_id is null))` — every existing row carries `unit_type_id`,
+  so the CHECK is trivially satisfied with no backfill. Two hardening invariants complete the schema
+  half of the parity law: a snapshot-pairing CHECK (snapshots exist IFF member row — a stray catalog
+  snapshot would silently override live stats through the coalesce-first read; a NULL member snapshot
+  would contribute silent-zero) and a partial unique index (one member row per encounter+ship — the
+  legacy `unique (encounter_id, unit_type_id)` cannot cover member rows because NULLs never collide).
+- **Three new leaves** (internal cron/engine only — SECURITY DEFINER, `search_path=public`, revoked
+  from public/anon/authenticated, service_role only; the 0153 one-leaf idiom):
+  - `combat_fleet_return_speed(p_fleet)` — min member HULL `base_speed` over the fleet's active
+    encounter's member rows (the exact hull-speed source `request_main_ship_return` uses, 0050);
+    NULL for legacy fleets → the tick's coalesce is a no-op.
+  - `mainship_sync_combat_hp(p_main_ship_id, p_hp integer)` — writes `main_ship_instances.hp` ONLY;
+    the member mirror of `fleet_sync_quantities` (which now provably receives ONLY catalog-keyed
+    counts — the member `else` branch is unreachable today).
+  - `mainship_mark_combat_destroyed(p_main_ship_id)` — the combat-side ship terminal after
+    `fleet_destroy`: the EXACT 0059 terminal shape (`status='destroyed'`, `hp=0`,
+    `spatial_state=NULL` + coords NULL — spatial_state can NOT be left untouched under the 0055
+    lifecycle CHECKs). This is now the SECOND trusted destruction writer (0059's uniqueness claim is
+    superseded; both write the same terminal).
+- **What stays unreachable until D2:** every member branch — the snapshot stat reads, the uuid jsonb
+  keys, the hp sync, the member destruction loop, and the hull-speed return fallback. D2's flag-gated
+  RPC is the FIRST writer of member `combat_units` rows.
+- **Proof:** `scripts/team-command-proof.{sql,sh}` gained the `TEAMCMD_PASS_COMBATPARITY` block
+  (positioned after the team blocks, with `team_command_enabled` still ON in-txn — the flag's
+  irrelevance to a legacy fleet's combat is itself asserted): a real legacy unit fleet is sent and
+  settled through the real chain (`send_fleet_to_location` → `movement_settle_arrival` →
+  `combat_create_encounter`), one `process_combat_ticks()` tick's `player_damage` must EQUAL the
+  proof's OWN independent `Σ(unit_types.attack × alive_count)` AND its `enemy_damage` must EQUAL the
+  proof's own defense-curve value from the independent `Σ(defense × alive)` (variance pinned to 0
+  in-txn via the real `set_game_config` — both compares exact, mirroring the tick's operation order),
+  every tick/report jsonb key must be a legacy unit_type id, hp accounting and `fleet_units` sync are
+  exact, the retreat→escape settle produces a legacy-keyed report with `speed_used = fleet_speed`,
+  both illegal identity inserts raise the CHECK, the three leaves smoke-check (NULL return speed for
+  a legacy fleet; hp-only sync; the 0059 destruction terminal — on a rolled-back fixture ship), and
+  **exactly one** combat cron job exists (`process-combat-ticks` — the no-second-engine pin). The
+  selftest greps pin the independent-sum asserts (attack + enemy damage) and the cron-count assert in
+  assert form.
 
 ## Dark state / gate decisions
 

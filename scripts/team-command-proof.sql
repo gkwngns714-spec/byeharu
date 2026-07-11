@@ -31,6 +31,17 @@
 --            delta. Captains are provisioned ONLY via the sole writers (captains_mint_instance /
 --            captain_assign_apply — the sole-writer law; NEVER a direct insert into
 --            captain_instances / ship_captain_assignments).
+--   COMBATPARITY (Slice D1, 0167) — the re-created LIVE combat tick + report writer keep LEGACY
+--            byte-parity: a real unit fleet is provisioned/sent/settled through the real chain (with
+--            the team flag ON in-txn — proving the flag is irrelevant to legacy combat), one tick's
+--            player_damage EQUALS the proof's OWN independent Σ(unit_types.attack × alive_count) and
+--            its enemy_damage EQUALS the proof's own defense-curve value from the independent
+--            Σ(defense × alive) (variance pinned 0 in-txn — both compares exact), every tick/report
+--            jsonb key is a legacy unit_type id, hp and fleet_units sync are exact, the escape
+--            settle's return speed equals legacy fleet_speed, the new exactly-one-identity CHECK
+--            raises on both illegal shapes, the three D1 leaves smoke-check (NULL return speed for a
+--            legacy fleet; hp-only sync; the 0059 destruction terminal), and EXACTLY ONE combat cron
+--            job exists (the no-second-engine pin).
 --   TEAMSTATS (Slice D0, 0166) — get_my_group_expedition_totals rejects dark BEFORE the team-flag
 --            flip; invalid_activity / group_not_found (random + cross-player) / empty_group; on the
 --            happy path every additive total EQUALS the proof's OWN independent per-member sum over
@@ -642,6 +653,195 @@ begin
   raise notice 'TEAMCMD_PASS_DELETE ok: members SET-NULL un-grouped, ships survive, double-delete fails closed';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete)' as result;
+-- ════════ BLOCK COMBATPARITY (Slice D1, 0167): legacy tick/report byte-parity + identity CHECK + one engine ════════
+-- Slice D1 re-created the LIVE combat tick (0046 head) and report writer (0026 head) with member-only
+-- deltas (member rows have NO writer until D2). This block proves the LEGACY combat path still behaves
+-- identically — provisioned entirely through the real chain (send_fleet_to_location →
+-- movement_settle_arrival, the SAME per-movement settle the movement cron loop calls →
+-- combat_create_encounter → process_combat_ticks → request_retreat → escape → report_create).
+-- Deliberately positioned AFTER the team blocks, with team_command_enabled still ON in-txn: the team
+-- flag must be IRRELEVANT to a legacy unit fleet's combat — that irrelevance is itself asserted (the
+-- encounter's combat_units rows must be pure legacy). In-txn config surgery goes through the real
+-- set_game_config (the 0046-documented CI idiom; all reverted by ROLLBACK): tick logging ON so the
+-- tick's internals are observable, damage variance 0 so the damage equality is EXACT, not statistical.
+-- The only direct fixture surgery is clock rewinding (arrive_at / last_resolved_at /
+-- retreat_started_at) — now() is txn-constant, so no real interval can ever elapse in this proof.
+do $$
+declare r jsonb; n int; t record;
+  uA uuid := (select v from tcmd where k='uA');
+  a1 uuid := (select v from tcmd where k='a1');
+  a3 uuid := (select v from tcmd where k='a3');
+  v_base uuid; v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid; v_pres uuid;
+  v_expected_attack double precision; v_expected_defense double precision; v_hp_before double precision;
+  v_hp_after double precision; v_expected_enemy double precision; v_bd double precision;
+  v_defbase double precision; v_danger integer; v_waves integer; v_started timestamptz;
+  v_keys text[]; v_expected_keys text[]; v_speed double precision; v_bad int := 0;
+begin
+  perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
+  perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+
+  -- a real legacy unit fleet to a real hunt_pirates location (lowest entry gate first).
+  select id into v_base from public.bases where player_id = uA and status = 'active' limit 1;
+  select id into v_hunt from public.locations
+    where activity_type = 'hunt_pirates' and status = 'active'
+    order by min_power_required asc, base_difficulty asc limit 1;
+  if v_hunt is null then raise exception 'COMBATPARITY FAIL: no active hunt_pirates location'; end if;
+
+  r := pg_temp.call_as(uA, format('public.send_fleet_to_location(%L::uuid, %L::uuid, %L::jsonb)',
+        v_base, v_hunt, '[{"unit_type_id":"scout","quantity":40},{"unit_type_id":"corvette","quantity":10}]'::jsonb));
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  if v_fleet is null or v_mv is null then raise exception 'COMBATPARITY FAIL send: %', r; end if;
+
+  -- settle the arrival through the SAME function the movement cron uses (rewind first — sanctioned
+  -- clock surgery; the depart_at rewind keeps the arrive_at > depart_at CHECK satisfied).
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+    raise exception 'COMBATPARITY FAIL settle: %', r; end if;
+
+  -- the arrival hook created the encounter; every combat_units row is PURE LEGACY even though the
+  -- team flag is ON in-txn: unit_type_id NOT NULL, main_ship_id NULL, snapshots NULL (no D2 writer).
+  select id, presence_id into v_enc, v_pres from public.combat_encounters
+    where fleet_id = v_fleet and status = 'active';
+  if v_enc is null then raise exception 'COMBATPARITY FAIL: no active encounter after arrival'; end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc;
+  if n <> 2 then raise exception 'COMBATPARITY FAIL: % combat_units rows (want 2)', n; end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc
+    and (unit_type_id is null or main_ship_id is not null or attack_snapshot is not null or defense_snapshot is not null);
+  if n <> 0 then raise exception 'COMBATPARITY FAIL: % non-legacy combat_units rows under team flag ON (want 0)', n; end if;
+
+  -- leaf smoke: the member return-speed leaf answers NULL for a legacy (member-less) fleet with an
+  -- active encounter — exactly the value that makes the tick's coalesce fallback a no-op.
+  if public.combat_fleet_return_speed(v_fleet) is not null then
+    raise exception 'COMBATPARITY FAIL: combat_fleet_return_speed not NULL for a legacy fleet'; end if;
+
+  -- THE INDEPENDENT SUMS: expected tick attack = Σ(unit_types.attack × alive_count) and expected
+  -- defense = Σ(unit_types.defense × alive_count), computed by this proof from the catalog BEFORE the
+  -- tick. With variance pinned to 0 the tick's player_damage must EQUAL the attack sum exactly —
+  -- through the D1 left-join/coalesce(snapshot, catalog) aggregation.
+  select sum(ut.attack * cu.alive_count), sum(ut.defense * cu.alive_count), sum(cu.hp_current)
+    into v_expected_attack, v_expected_defense, v_hp_before
+    from public.combat_units cu join public.unit_types ut on ut.id = cu.unit_type_id
+    where cu.encounter_id = v_enc;
+
+  -- expected tick 1 ENEMY damage (the defense curve flows through the SAME D1 left-join/coalesce
+  -- hunk), mirroring the tick body's arithmetic in the 0046 operation order EXACTLY:
+  --   danger       = 1 + waves_cleared + floor(secs_inside / danger_time_divisor_seconds)
+  --   enemy_attack = base_difficulty × enemy_attack_base × (1 + danger × enemy_attack_danger_scale)
+  --   enemy_damage = enemy_attack × def_base / (def_base + Σ(defense×alive)) × variance
+  -- The compare below is EXACT (no tolerance): the tick stores enemy_damage UNROUNDED; variance is
+  -- exactly 1.0 with the pct pinned to 0 ((1-0) + random()*0), and ×1.0 is exact in IEEE; the 2-term
+  -- defense sum is order-independent; and the expression here repeats the tick's operation order.
+  select waves_cleared, started_at into v_waves, v_started from public.combat_encounters where id = v_enc;
+  v_danger  := 1 + v_waves + floor(extract(epoch from (now() - v_started)) / coalesce(cfg_num('danger_time_divisor_seconds'), 180))::integer;
+  v_defbase := coalesce(cfg_num('defense_curve_base'), 100);
+  select base_difficulty into v_bd from public.locations where id = v_hunt;
+  v_expected_enemy := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0)
+                      * (1 + v_danger * coalesce(cfg_num('enemy_attack_danger_scale'),0.25));
+  v_expected_enemy := v_expected_enemy * v_defbase / (v_defbase + v_expected_defense) * 1.0;
+
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+
+  select * into t from public.combat_ticks where encounter_id = v_enc and tick_number = 1;
+  if t.id is null then raise exception 'COMBATPARITY FAIL: no tick 1 row (tick logging is on)'; end if;
+  if t.player_damage is distinct from v_expected_attack then
+    raise exception 'COMBATPARITY FAIL: tick player_damage % (want independent Σ(attack×alive) %)', t.player_damage, v_expected_attack; end if;
+  if t.danger_level is distinct from v_danger then
+    raise exception 'COMBATPARITY FAIL: tick danger_level % (want mirrored %)', t.danger_level, v_danger; end if;
+  if t.enemy_damage is distinct from v_expected_enemy then
+    raise exception 'COMBATPARITY FAIL: tick enemy_damage % (want independent defense-curve value %)', t.enemy_damage, v_expected_enemy; end if;
+  if t.result not in ('ongoing','wave_cleared') then raise exception 'COMBATPARITY FAIL: tick 1 result %', t.result; end if;
+
+  -- legacy jsonb keys: the tick snapshot keys are EXACTLY the fleet's unit_type_ids; every loss key
+  -- is a catalog id (never a uuid-keyed member entry).
+  select array_agg(k order by k) into v_keys from jsonb_object_keys(t.unit_snapshot_json) k;
+  select array_agg(unit_type_id order by unit_type_id) into v_expected_keys
+    from public.combat_units where encounter_id = v_enc;
+  if v_keys is distinct from v_expected_keys then
+    raise exception 'COMBATPARITY FAIL: snapshot keys % (want legacy unit keys %)', v_keys, v_expected_keys; end if;
+  select count(*) into n from jsonb_object_keys(t.player_losses_json) k
+    where not exists (select 1 from public.unit_types u where u.id = k);
+  if n <> 0 then raise exception 'COMBATPARITY FAIL: % non-catalog loss keys: %', n, t.player_losses_json; end if;
+
+  -- hp accounting is exact, and the catalog survivor sync landed in fleet_units — i.e.
+  -- fleet_sync_quantities received ONLY catalog-keyed rows and synced every one of them.
+  select sum(hp_current) into v_hp_after from public.combat_units where encounter_id = v_enc;
+  if t.player_integrity_after is distinct from greatest(0, v_hp_after) then
+    raise exception 'COMBATPARITY FAIL: integrity_after % vs summed unit hp %', t.player_integrity_after, v_hp_after; end if;
+  if t.player_integrity_before is distinct from v_hp_before then
+    raise exception 'COMBATPARITY FAIL: integrity_before % vs pre-tick unit hp %', t.player_integrity_before, v_hp_before; end if;
+  select count(*) into n from public.combat_units cu
+    join public.fleet_units fu on fu.fleet_id = v_fleet and fu.unit_type_id = cu.unit_type_id
+    where cu.encounter_id = v_enc and fu.quantity <> cu.alive_count;
+  if n <> 0 then raise exception 'COMBATPARITY FAIL: % fleet_units rows out of sync with alive_count', n; end if;
+
+  -- retreat → escape settle: the report shape + the return movement's LEGACY speed.
+  r := pg_temp.call_as(uA, format('public.request_retreat(%L::uuid)', v_pres));
+  update public.combat_encounters
+     set retreat_started_at = retreat_started_at - interval '1 minute',
+         last_resolved_at   = last_resolved_at   - interval '1 minute'
+   where id = v_enc;
+  perform public.process_combat_ticks();
+
+  select count(*) into n from public.combat_encounters where id = v_enc and status = 'escaped' and ended_at is not null;
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: encounter did not settle escaped'; end if;
+  select count(*) into n from public.combat_reports where encounter_id = v_enc and result = 'escaped';
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: no escaped combat_report'; end if;
+  -- report keys stay the legacy unit_type ids (the D1 coalesce key is a no-op for legacy rows).
+  select count(*) into n from public.combat_reports cr, jsonb_object_keys(cr.survivors_json) k
+    where cr.encounter_id = v_enc and not exists (select 1 from public.unit_types u where u.id = k);
+  if n <> 0 then raise exception 'COMBATPARITY FAIL: non-catalog survivor keys in the report'; end if;
+  -- the return movement used fleet_speed (units survive) — D1's combat_fleet_return_speed fallback is
+  -- a coalesce no-op for legacy: speed_used must equal the independent min catalog speed.
+  select min(ut.speed) into v_speed
+    from public.fleet_units fu join public.unit_types ut on ut.id = fu.unit_type_id
+    where fu.fleet_id = v_fleet and fu.quantity > 0;
+  select count(*) into n from public.fleet_movements
+    where fleet_id = v_fleet and mission_type = 'return_home' and status = 'moving' and speed_used = v_speed;
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: return movement missing or speed_used <> legacy fleet_speed %', v_speed; end if;
+
+  -- the exactly-one-identity CHECK: BOTH identities and NEITHER identity must each raise 23514.
+  -- (These are deliberate ILLEGAL inserts probing the constraint — not a member-row writer; a
+  -- succeeding insert increments v_bad and fails the block. A not-null raise instead of a
+  -- check_violation would also fail the block — pinning that the unit_type_id relax shipped.)
+  begin
+    insert into public.combat_units (encounter_id, player_id, unit_type_id, main_ship_id, ship_hp, initial_count, alive_count, hp_max, hp_current)
+      values (v_enc, uA, 'frigate', a1, 1, 1, 1, 1, 1);
+    v_bad := v_bad + 1;
+  exception when check_violation then null; end;
+  begin
+    insert into public.combat_units (encounter_id, player_id, unit_type_id, main_ship_id, ship_hp, initial_count, alive_count, hp_max, hp_current)
+      values (v_enc, uA, null, null, 1, 1, 1, 1, 1);
+    v_bad := v_bad + 1;
+  exception when check_violation then null; end;
+  if v_bad <> 0 then raise exception 'COMBATPARITY FAIL: % illegal identity inserts were ACCEPTED (want 0)', v_bad; end if;
+
+  -- leaf smoke on a fixture team ship (a3: home, spatial_state NULL — undisturbed since BLOCK STOP;
+  -- rolled back with everything): mainship_sync_combat_hp writes hp ONLY (status/spatial untouched);
+  -- mainship_mark_combat_destroyed writes the exact 0059 terminal (status/hp/spatial_state/coords).
+  perform public.mainship_sync_combat_hp(a3, 123);
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id = a3 and hp = 123 and status = 'home' and spatial_state is null;
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_sync_combat_hp did not write hp-only'; end if;
+  perform public.mainship_mark_combat_destroyed(a3);
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id = a3 and status = 'destroyed' and hp = 0
+      and spatial_state is null and space_x is null and space_y is null;
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_mark_combat_destroyed did not write the 0059 terminal'; end if;
+
+  -- the no-second-engine pin: EXACTLY one combat cron job, and it is the 0026 tick schedule.
+  select count(*) into n from cron.job where jobname like '%combat%';
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: % combat cron jobs (want exactly 1)', n; end if;
+  select count(*) into n from cron.job
+    where jobname = 'process-combat-ticks' and command like '%process_combat_ticks%';
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: the one combat job is not process-combat-ticks'; end if;
+
+  raise notice 'TEAMCMD_PASS_COMBATPARITY ok: legacy hunt via real chain under team flag ON; tick damage = independent Σ(attack×alive); enemy damage = independent defense-curve value; legacy jsonb keys; hp+fleet sync exact; escaped report legacy-keyed; return speed = fleet_speed; identity CHECK raises both ways; leaf smoke (NULL return speed, hp-only sync, 0059 terminal); exactly 1 combat cron job';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

@@ -5,7 +5,9 @@
 # captain_slots=6 hull bump is DEFERRED to activation, so the proof applies it in-txn before its
 # captain commissions. Captains are provisioned only via the 0118/0119 sole writers) plus the
 # Slice-D0 teamstats block (0166: get_my_group_expedition_totals — the AUTHORITATIVE team totals;
-# proven by an independent per-member sum over direct adapter calls, and strict-vs-preview).
+# proven by an independent per-member sum over direct adapter calls, and strict-vs-preview) plus the
+# Slice-D1 combat-parity block (0167: the re-created LIVE combat tick/report keep LEGACY byte-parity —
+# tick damage equals the proof's own independent Σ(attack×alive); one combat cron; identity CHECK).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -22,7 +24,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -86,14 +88,31 @@ if [ "$MODE" = "selftest" ]; then
   grep -qi "on delete set null" "$SQL"                                || fail "harness does not assert the delete SET-NULL member un-grouping"
   grep -q "group_id is null" "$SQL"                                   || fail "harness does not assert members are un-grouped after delete"
 
-  # ── all seven block PASS markers present. ───────────────────────────────────────────────────────────
+  # ── D1 (0167) combat-parity pins: the COMBATPARITY block must compute its OWN independent
+  #    Σ(unit_types.attack × alive_count) / Σ(defense × alive_count) and ASSERT the tick's
+  #    player_damage AND enemy_damage against them, and must ASSERT the no-second-engine cron count —
+  #    pinned in assert form so a gutted .sql that merely mentions them in prose cannot false-green. ──
+  grep -qF "select sum(ut.attack * cu.alive_count), sum(ut.defense * cu.alive_count), sum(cu.hp_current)" "$SQL" \
+    || fail "harness does not compute the independent legacy attack+defense sums (D1 parity pin)"
+  grep -qF "if t.player_damage is distinct from v_expected_attack then" "$SQL" \
+    || fail "harness does not ASSERT tick player_damage = the independent attack sum"
+  grep -qF "if t.enemy_damage is distinct from v_expected_enemy then" "$SQL" \
+    || fail "harness does not ASSERT tick enemy_damage = the independent defense-curve value"
+  grep -qF "from cron.job where jobname like '%combat%'" "$SQL" \
+    || fail "harness does not count the combat cron jobs (no-second-engine pin)"
+  grep -qF "% combat cron jobs (want exactly 1)" "$SQL" \
+    || fail "harness does not ASSERT exactly one combat cron job"
+  grep -qF "exception when check_violation then null; end;" "$SQL" \
+    || fail "harness does not probe the combat_units exactly-one-identity CHECK"
+
+  # ── all eight block PASS markers present. ───────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains; 7 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation specifics)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains; 7 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity specifics)"
   exit 0
 fi
 
