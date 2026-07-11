@@ -33,8 +33,8 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
   - **B-send — DARK group-send RPC (`send_ship_group_expedition`, loops the *unmodified* live send). Done
     (migration 0163).**
   - **B-stop — DARK group-stop RPC (`stop_ship_group_transit`, loops the *unmodified* live stop per member
-    fleet). ← this slice (migration 0164).**
-  - B-ui — team send/stop controls (dark). *Not started.*
+    fleet). Done (migration 0164).**
+  - **B-ui — team send/stop controls in the roster (dark, frontend-only). ← this slice.**
   - B-verify — CI `.mjs` verifier for send/stop + races. *Not started.*
 - Slice C — captains (wire the dark CAPTAIN-P15/P16 system; captain skills → team skillset via
   `calculate_expedition_stats`; bump `main_ship_hull_types.base_captain_slots` 2 → 6–8). *Not started.*
@@ -161,6 +161,23 @@ function edited:
   the client never supplies a fleet id (fleets are derived from owned members only). ACL `authenticated`-only.
 - **Frontend:** `src/features/command/teamStop.ts` — pure `groupStopAvailability` mirror (pre-read order only),
   unit-tested in `tests/teamStop.spec.ts`. **No UI this slice.**
+
+## Slice B (B-ui) — what shipped
+
+Frontend-only (no migration) — wires the B-send/B-stop RPCs into the roster, completing Slice B's interactive
+surface. Still behind `TEAM_COMMAND_ENABLED` (panel not mounted in prod):
+
+- **`teamApi` wrappers** `sendShipGroup(groupId, locationId)` / `stopShipGroup(groupId)` — normalize-don't-throw
+  over `send_ship_group_expedition` / `stop_ship_group_transit`.
+- **`sendableDestinations(locations)`** pure helper (in `teamSend.ts`) — filters `game.locations` to
+  `status='active' AND activity_type='none'`, mirroring the live send's server predicate; projects to
+  `{id,name}`, sorted. Unit-tested in `tests/teamSend.spec.ts`.
+- **`TeamRosterPanel`** gains a per-team **Send** (with a destination `<select>` from `sendableDestinations`)
+  and **Stop** control, reusing the existing `run()` await→refetch→busy pattern (non-optimistic). Results are a
+  short `Notice`: send → `Sent N ships to X`; stop → `Stopped a, skipped b, failed c`. Destination comes from
+  the ONE shell `game.locations` (shared game state, not a second selection source); ship list/pointer still
+  the ONE shell `selection`. The server re-validates the destination + owns atomicity — the client filter is
+  convenience. Deferred (lit-time UX): a send confirm step, per-member `results[]` drill-down.
 
 ## Dark state / gate decisions
 

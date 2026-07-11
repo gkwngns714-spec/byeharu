@@ -7,10 +7,14 @@ import {
   upsertShipGroup,
   assignShipToGroup,
   deleteShipGroup,
+  sendShipGroup,
+  stopShipGroup,
   type TeamRpcResult,
 } from './teamApi'
 import { buildTeamRoster, nextTeamSlot, type GroupRow, type RosterShip } from './teamRoster'
 import { groupUpsertAvailability } from './teamMutations'
+import { sendableDestinations, groupSendAvailability } from './teamSend'
+import { groupStopAvailability } from './teamStop'
 
 // TEAM-COMMAND Slice B1 — INTERACTIVE team roster (backend "group" == UI "team").
 //
@@ -25,14 +29,16 @@ import { groupUpsertAvailability } from './teamMutations'
 // (a deleted team's ships reappear as ungrouped via ON DELETE SET NULL).
 
 export function TeamRosterPanel() {
-  const { selection } = useShellState()
+  const { selection, game } = useShellState()
   const [groups, setGroups] = useState<GroupRow[]>([])
   const [groupMap, setGroupMap] = useState<Record<string, string | null>>({})
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null) // key of the mutation in flight (blocks double-submit)
-  const [notice, setNotice] = useState<string | null>(null) // reason of the last failed mutation (dark ⇒ rare)
+  // last action outcome: a warning (failed) or a success summary (send/stop aggregate). Dark ⇒ rare.
+  const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null) // group_id pending delete confirm
   const [drafts, setDrafts] = useState<Record<string, string>>({}) // per-team rename input, keyed by group_id
+  const [destChoice, setDestChoice] = useState<Record<string, string>>({}) // per-team send destination id
 
   const reload = useCallback(async () => {
     const [g, m] = await Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap()])
@@ -58,13 +64,18 @@ export function TeamRosterPanel() {
 
   // Run a mutation: block re-entry, clear stale notice, await the server, surface any reject, THEN refetch
   // server truth (never optimistic). All mutation controls disable while any run is in flight.
-  const run = async (key: string, op: () => Promise<TeamRpcResult>) => {
+  const run = async (
+    key: string,
+    op: () => Promise<TeamRpcResult>,
+    summarize?: (res: TeamRpcResult & { ok: true }) => string,
+  ) => {
     if (busy) return
     setBusy(key)
     setNotice(null)
     try {
       const res = await op()
-      if (!res.ok) setNotice(res.reason)
+      if (!res.ok) setNotice({ tone: 'warning', text: `Couldn’t complete that action (${res.reason}).` })
+      else if (summarize) setNotice({ tone: 'success', text: summarize(res) })
       await reload()
     } finally {
       setBusy(null) // never wedge the panel, even if a wrapper unexpectedly rejects
@@ -80,6 +91,7 @@ export function TeamRosterPanel() {
   }))
   const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
   const openSlot = nextTeamSlot(groups)
+  const destinations = sendableDestinations(game.locations) // active, non-combat targets (server re-validates)
 
   const shipRow = (s: RosterShip) => {
     const selected = s.main_ship_id === selection.selectedShipId
@@ -138,8 +150,8 @@ export function TeamRosterPanel() {
       />
 
       {notice && (
-        <Notice tone="warning" className="mb-3">
-          Couldn’t complete that action ({notice}).
+        <Notice tone={notice.tone} className="mb-3">
+          {notice.text}
         </Notice>
       )}
 
@@ -162,6 +174,10 @@ export function TeamRosterPanel() {
           {teams.map(({ group, ships }) => {
             const draft = drafts[group.group_id] ?? group.name
             const nameOk = groupUpsertAvailability({ gateEnabled: true, groupIndex: group.group_index, name: draft }).canUpsert
+            const destId = destChoice[group.group_id] ?? ''
+            const destName = destinations.find((d) => d.id === destId)?.name ?? ''
+            const sendOk = groupSendAvailability({ gateEnabled: true, groupResolved: true, memberCount: ships.length }).canSend
+            const stopOk = groupStopAvailability({ gateEnabled: true, groupResolved: true, memberCount: ships.length }).canStop
             return (
               <div key={group.group_id} className="space-y-2 rounded-lg border border-edge/60 p-3">
                 <div className="flex items-center justify-between gap-2">
@@ -224,6 +240,61 @@ export function TeamRosterPanel() {
                 ) : (
                   <div className="space-y-1.5">{ships.map(shipRow)}</div>
                 )}
+
+                {/* Team send/stop (dark). Send needs an active, non-combat destination; Stop needs none. The
+                    server re-validates + owns atomicity; this is a convenience surface. */}
+                <div className="flex flex-wrap items-center gap-1.5 border-t border-edge/60 pt-2">
+                  <select
+                    value={destId}
+                    onChange={(e) => setDestChoice((d) => ({ ...d, [group.group_id]: e.target.value }))}
+                    disabled={busy !== null}
+                    aria-label={`Send destination for team ${group.group_index}`}
+                    className="rounded-md border border-edge bg-surface px-2 py-1 text-xs text-ink"
+                  >
+                    <option value="">Destination…</option>
+                    {destinations.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    busy={busy === `send:${group.group_id}`}
+                    // gate on a RESOLVED destination: a chosen id that later drops out of game.locations
+                    // (poll marks it inactive/combat) must disable Send, not just the empty placeholder.
+                    disabled={busy !== null || !sendOk || !destinations.some((d) => d.id === destId)}
+                    onClick={() =>
+                      void run(
+                        `send:${group.group_id}`,
+                        () => sendShipGroup(group.group_id, destId),
+                        (res) => {
+                          const n = (res.sent as unknown[] | undefined)?.length ?? 0
+                          return `Sent ${n} ship${n === 1 ? '' : 's'} to ${destName}.`
+                        },
+                      )
+                    }
+                  >
+                    Send
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    busy={busy === `stop:${group.group_id}`}
+                    disabled={busy !== null || !stopOk}
+                    onClick={() =>
+                      void run(
+                        `stop:${group.group_id}`,
+                        () => stopShipGroup(group.group_id),
+                        (res) =>
+                          `Stopped ${(res.stopped as number | undefined) ?? 0}, skipped ${(res.skipped as number | undefined) ?? 0}, failed ${(res.failed as number | undefined) ?? 0}.`,
+                      )
+                    }
+                  >
+                    Stop
+                  </Button>
+                </div>
               </div>
             )
           })}

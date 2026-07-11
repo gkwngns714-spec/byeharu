@@ -70,3 +70,22 @@ export async function deleteShipGroup(groupId: string): Promise<TeamRpcResult> {
   if (error) return { ok: false, reason: 'unavailable' }
   return data as TeamRpcResult
 }
+
+// send_ship_group_expedition (0163) — all-or-nothing team send to an active, non-combat location.
+// Success carries { sent: [...] }; the server re-validates the destination and each member.
+export async function sendShipGroup(groupId: string, locationId: string): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('send_ship_group_expedition', {
+    p_group_id: groupId,
+    p_location: locationId,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
+// stop_ship_group_transit (0164) — best-effort halt of every in-flight member. Success carries the aggregate
+// { stopped, skipped, failed }.
+export async function stopShipGroup(groupId: string): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('stop_ship_group_transit', { p_group_id: groupId })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}

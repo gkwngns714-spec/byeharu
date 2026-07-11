@@ -7,6 +7,24 @@
 // is all-or-nothing). This lets a future (later sub-slice) team UI disable/hide a "Send team" affordance and
 // fail closed without a round-trip. No I/O — unit-tested in tests/teamSend.spec.ts.
 
+export interface SendDestination {
+  id: string
+  name: string
+}
+
+// Destinations a team-send may target. The live send requires the location `status='active'` AND
+// `activity_type='none'` (non-combat) — migration 0050. `get_world_map()` already returns only active
+// locations, so the status check is defensive; both clauses mirror the server predicate exactly. Takes a
+// structural row (not MapLocation) to stay pure + decoupled. The server re-validates — this is display convenience.
+export function sendableDestinations(
+  locations: { id: string; name: string; status: string; activity_type: string }[],
+): SendDestination[] {
+  return locations
+    .filter((l) => l.status === 'active' && l.activity_type === 'none')
+    .map((l) => ({ id: l.id, name: l.name }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
 export type GroupSendReason = 'ok' | 'gate_dark' | 'group_not_found' | 'empty_group'
 
 // Mirrors send_ship_group_expedition: gate → group resolved (owned) → group non-empty → ok. Note this stops at
