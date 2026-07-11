@@ -1,4 +1,4 @@
-# Session Handoff — 2026-07-09
+# Session Handoff — 2026-07-12
 
 Snapshot of where development stands, so work can continue on another computer. This file is committed
 to the repo (it travels via GitHub); the per-machine plan/memory files do NOT travel.
@@ -17,75 +17,74 @@ to the repo (it travels via GitHub); the per-machine plan/memory files do NOT tr
 5. Run: `npm run dev` → `http://localhost:5173/byeharu/` (base path `/byeharu/` is required). Live site:
    `https://gkwngns714-spec.github.io/byeharu/` (auto-deploys from `main` via Pages).
 
-## 2. Current live state of the game (port-centric — activated 2026-07-08)
-The game is now **port-centric**, not home-base-centric. On the LIVE prod DB (`game_config`):
+## 2. Current state — repo & prod (verified 2026-07-12)
+- **`main` @ `9a292ed`** (merge of PR #97). **Zero open PRs.** Everything below is merged.
+- **Prod migration head = `20260618000169`** (the owner approved 0165 + 0166–0169 to production
+  2026-07-12; the Deploy workflow's production-environment gate is the approval mechanism).
+- **Pages deploy is live** — players see the new **Mission Control UI** (renewal R0–R4).
+
+### Live game (port-centric — activated 2026-07-08)
+On the LIVE prod DB (`game_config`):
 - `mainship_space_movement_enabled = true` — OSN port-to-port travel + docking is ON.
 - 3 starter ports REVEALED (active on the map): **Haven** (`b1a00001-…`), **Slagworks** (`…02`),
   **Driftmarch** (`…03`). Reveal is one-way.
 - `station_storage_enabled = true` — per-port, per-player storage (the docked-port "Hangar").
-- Migration head `20260618000158`. `mainship_send_enabled = true` (legacy send loop). Coordinate free-travel
-  (`mainship_coordinate_travel_enabled`), trade, captains, multi-ship commission, ranking, world-balance =
-  still DARK.
-- Rollback (flags only; port reveal persists): flip `station_storage_enabled` / `mainship_space_movement_enabled`
-  false via the `set_game_config` RPC (pattern: `scripts/dev-mainship-flag.mjs`).
-- Activation utility (reusable): `scripts/activate-port-centric.mjs --confirm`.
+- `mainship_send_enabled = true` — the legacy expedition send loop.
+- Rollback (flags only; port reveal persists): flip flags false via the `set_game_config` RPC
+  (pattern: `scripts/dev-mainship-flag.mjs`).
 
-## 3. Open / in-flight work
-- **PR #75 `fix-remove-recall`** — OPEN, NOT merged. Contains: recall/return-home removed (no home base to
-  return to), the (0,0) "home" ship marker suppressed, full spaghetti cleanup + all unit-test fixes, and the
-  **stop-zoom camera fix** (single focus point → gentle neighbourhood zoom, not MAX_K). Verified: `tsc -b`
-  clean, `vite build` green, 214 pure-logic specs pass. Merge with an admin merge (branch protection needs a
-  review): `gh pr merge 75 --merge --admin --delete-branch -R gkwngns714-spec/byeharu`.
-- Everything else this session is merged to `main` (bigger map markers, wheel-zoom fix, station storage
-  migrations 0157/0158, port-centric UI removal of home base).
+### Built DARK — the complete inventory (all merged + deployed, nothing player-visible)
+Every system below is implemented, proven by its verify script / disposable proof, and gated
+server-side (reject-before-read) + client-side (compile-time or server-lit UI). Flag flips are
+**human activation decisions, never part of a slice**.
 
-## 4. NEXT WORK — Team-command system (roadmap approved)
-Vision: the player commands **3 teams × 6–8 ships** (~18–24 ships), each ship with **6–8 captains**; a team's
-skillset = ship attributes + captain skills. This is the game's **own designed trajectory** (`docs/MAINSHIP_TRANSITION.md`,
-`docs/ROADMAP.md` — "multiple persistent main ships in expedition **groups**"), backend ~90% scaffolded.
+| System | Scope | Dark gate(s) |
+|---|---|---|
+| **Team command — COMPLETE (A → D4)** | teams (1–3) of owned ships; group send/stop; captains-in-teams preview; authoritative team stats; **team combat over the existing engine** (ONE fleet + manifest + member `combat_units`); dark Hunt UI. Migrations 0160–0169. See `docs/TEAM_COMMAND.md`. | `team_command_enabled` + compile-time `TEAM_COMMAND_ENABLED` |
+| Captains (P15/P16) | catalog, mint/assign sole writers, stats via `calculate_expedition_stats`, recruit + progression | `captain_assignment_enabled`, `captain_progression_enabled` |
+| Trade V1 (TRADE-FLEET-0C + MARKET-1 + UI-1) | multi-ship, m³ ship-bound cargo, server market, wallet/credits, relief floor | `trade_market_enabled`, `trade_relief_enabled` + `TRADE_MARKET_ENABLED` |
+| Multi-ship commissioning | `commission_additional_main_ship` (credit-priced, `main_ship_price` = 1000) | `mainship_additional_commission_enabled` + `MAINSHIP_ADDITIONAL_ENABLED` |
+| Exploration (P11) | 5 seeded sites, OSN-proximity scan, discovery rewards | `exploration_enabled` (UI is server-lit) |
+| Mining (P12) | extraction + double-extract guard | `mining_enabled` |
+| Modules (P13) + Fitting (P14) | module crafting, instances, fitting, stats via the adapter | `module_crafting_enabled`, `module_fitting_enabled` |
+| Ranking (P17) | seasons, counted grants, accrue cron | `ranking_enabled` |
+| Location investment (P18) | invest command | `location_investment_enabled` |
+| World balance (P19) | price drift | `world_balance_enabled` |
+| World events / Phase-20 polish | world-events writer + read surface, UI asset catalog | `phase20_polish_enabled` |
+| OSN free coordinate travel | arbitrary-coordinate movement | `mainship_coordinate_travel_enabled` + `OSN_COORDINATE_TRAVEL_ENABLED` |
 
-**Anti-spaghetti law (from the docs — non-negotiable):** (1) a group resolves into the EXISTING
-`fleet_units`/`combat_units` combat input — never a second combat system; (2) reuse the `fleets`/movement
-spine; (3) RPCs stay `main_ship_id`/group-shaped (`send_main_ship_expedition(p_ships jsonb,…)` already is);
-(4) "group" in code, "team" in UI.
+## 3. THE ONE NEXT STEP — team-command activation
+The dark build is complete; nothing is in flight. What remains is the **human-gated activation** per
+`docs/TEAM_COMMAND.md` → **"ACTIVATION CHECKLIST — the single source of truth"**: the flag flips
+(`team_command_enabled`, `TEAM_COMMAND_ENABLED`, optionally `captain_assignment_enabled`), the deferred
+captain-slot bump migration (hull 2 → 6 + instance backfill — exact SQL pinned in TEAM_COMMAND.md),
+the lit-time balance decisions (enemy scaling vs team power, `max_active_fleets`, partial-destruction,
+`retreat_safety`), and the post-flip smoke (`scripts/team-command-proof.sh` against the lit env).
 
-### Slice A0 — FOUNDATION FIXUP (do FIRST, from the pre-team audit)
-The dark multi-ship/captain scaffolding is sound but incomplete. Fix these before the team UI (all masked
-today only because multi-ship is dark):
-- **[blocker] `get_my_docked_store` (migration 0158) reads an ARBITRARY ship at N>1** — it uses
-  `select … where player_id=…` with no guard. Convert to a trailing `p_main_ship_id uuid default null` +
-  `mainship_resolve_owned_ship` (the 0082 pattern used by the twin `get_my_current_dock_services`). *This is a
-  real latent bug in our own station-storage RPC.*
-- **[blocker] `get_my_expedition_preview` (migration 0049)** — same unguarded read; convert the same way.
-- **[blocker] 3 client `.maybeSingle()` ship reads throw/ghost at N≥2**: `fetchMyMainShip` (`mainshipApi.ts`),
-  `useGalaxyMapData.fetchMainShip`, `portEntryApi.fetchPortEntryShipState`. Make them plural + selection-aware.
-- **[blocker] Selection is 3 disagreeing instances** (`ShipScreen`, `PortScreen`, `ModulesPanel` each mount
-  their own `useMainShipSelection`). Lift it into `shellState.ts` = ONE source of truth (the code has a TODO
-  saying exactly this).
-- **[blocker] No authoritative "list my ships" surface** — enumeration is only the frontend `fetchMyMainShips`
-  table read; the team roster needs an authoritative list.
-- Cleanups: bump `main_ship_hull_types.base_captain_slots` 2 → 6–8 (data only); decide/ wire or drop the dead
-  `MAINSHIP_ADDITIONAL_ENABLED` gate; fold `ModulesPanel.shipPick` onto the shell selection; fix the
-  recruit-panel flag drift; drop/convert the dead `get_main_ship` (0043).
+**Decision support: `docs/TEAM_ACTIVATION_PACKET.md`** — computed balance numbers per hunt zone,
+commissioning economics, and a staged flip plan (including a low-risk `exploration_enabled` flip that
+can go first).
 
-### Then the team slices
-- **Slice A** — team model + enable multi-ship: `ship_groups (id, player_id, group_index 1–3, name)` +
-  `main_ship_instances.group_id`; raise `max_main_ships_per_player` (3 → target); flip
-  `mainship_additional_commission_enabled`; `CommandScreen.tsx` becomes the roster.
-- **Slice B** — send/stop BY TEAM (generalize `send_main_ship_expedition` to N ships; group movement over the
-  fleets spine; `MainShipCommand.tsx` team-aware). This is where "pick which ship" is answered — as team
-  selection, not a throwaway per-ship picker.
-- **Slice C** — captains: wire the (dark, clean) CAPTAIN-P15/P16 system; captain skills → ship/team skillset
-  via the existing `calculate_expedition_stats` aggregator (already the right building block).
-- **Slice D** — team combat (largest; prerequisite): main-ship combat was NEVER built (main-ship fleet carries
-  zero combat units). Per the law, resolve a team into the existing `fleet_units`/`combat_units` input and run
-  the existing combat engine (`…0023`). NOTE: today `calculate_expedition_stats` feeds only a read-only
-  *preview* (`…0049`), not live combat — same for modules/support craft; a live consumer is net-new here.
+Pre-activation blockers: **all closed** (M1 — the live single send's lost-update race — fixed in D3,
+migration 0169). Optional, non-gating: the Low-2 lock-ordering polish from D3's adversarial review.
 
-### Clean foundations to REUSE (don't fork)
-Captain sole-writer law (`captains_mint_instance`, `captain_assign_apply`); the ONE shared stat vocabulary
-(`calculate_expedition_stats`); reject-never-clamp caps; reject-before-any-read dark gating; the 7 converted
-`p_main_ship_id` RPCs + `mainship_resolve_owned_ship`.
+## 4. Dev-method laws (how work is done in this repo — non-negotiable)
+1. **Anti-spaghetti (team command, from the docs):** (1) a group resolves into the EXISTING
+   `fleet_units`/`combat_units` combat input — never a second combat engine; (2) reuse the
+   `fleets`/movement spine — never a second movement engine; (3) RPCs stay `main_ship_id`/group-shaped;
+   (4) "group" in code, "team" in UI; ONE client selection source (`shellState.selection`).
+2. **Dark-first:** every feature ships fully gated — server flag checked FIRST, reject-before-any-read;
+   UI compile-time-gated or server-lit; **flag flips are human activation, never part of a slice**.
+   Live function re-creates follow the D1 parity discipline (copy the grep-verified TRUE head; every
+   delta provably inert; diff-verified).
+3. **One green PR per slice:** small vertical slices, each its own branch + PR with
+   `Build (frontend typecheck)` + `Verify` green, merged before the next slice starts.
+4. **CI disposable proof:** DB-touching slices carry a write-then-ROLLBACK proof
+   (`scripts/*-proof.{sql,sh}` wired into a workflow) that exercises the real chain in one rolled-back
+   txn — never trust-by-reading. Sole-writer laws are grep-enforced in proof selftests.
+5. **Fable implementer/reviewer loop:** each slice is implemented, then adversarially reviewed
+   (findings fixed or explicitly deferred with severity, e.g. D3's Low-2), then merged as one green PR;
+   the **human owner gates deploys and every flag flip** (the GitHub production-environment approval).
 
 ## 5. Environment / process notes (this repo)
 - Migrations do NOT fully auto-deploy: the `Deploy Supabase migrations` workflow waits on a **production**
@@ -93,4 +92,5 @@ Captain sole-writer law (`captains_mint_instance`, `captain_assign_apply`); the 
   (branch protection requires a review; as sole dev, use `gh pr merge … --admin`).
 - CI on PRs: `Build (frontend typecheck)` + a `Verify` check; both must be green.
 - Full local checks: `npx tsc -b && npx vite build`; unit specs: `npx playwright test <spec>` (the `*.uispec.ts`
-  and `galaxy.spec.ts` need a running app + Supabase env, so run the pure `*.spec.ts` set locally).
+  and `galaxy.spec.ts` need a running app + Supabase env, so run the pure `*.spec.ts` set locally;
+  team specs: `npm run verify:team:unit`).
