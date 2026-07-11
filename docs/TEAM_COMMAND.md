@@ -64,9 +64,19 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
     member-row-gated branch — and member rows have NO writer until D2, so live combat is provably
     unchanged). Three new internal leaves: `combat_fleet_return_speed`, `mainship_sync_combat_hp`,
     `mainship_mark_combat_destroyed`.
-  - D2–D4 — the flag-gated member-row writer (resolve a team into the widened `combat_units` input),
-    member combat lighting, and lit-time polish (the consumers of D0's totals; chartered when D2
-    starts). *Not started.*
+  - **D2 — hunt send + sortie manifest + encounter routing. Done (migration 0168; dark, no flag
+    flipped, no frontend).** `group_sortie_members` (the sortie's membership SNAPSHOT — the
+    **manifest-wins law**), `send_ship_group_hunt` (the combat twin of B-send over the 0050 narrow
+    bridge: ONE fleet per team; power gate + speed from a per-member adapter fold over the locked
+    member set — D0's folding law; members → `'hunting'`), the informational `fleets.group_id` tag,
+    and `combat_create_group_encounter` — the FIRST writer of member `combat_units` rows
+    (raise-free by construction: a bad member DEGRADES to an inert `alive_count=0` row, never
+    poisoning the settle cron), routed by a single manifest-gated branch in the re-created
+    `combat_create_encounter` (head 0023, diff-verified).
+  - D3–D4 — sortie settle/return (reconcile `'hunting'` ships home after defeat/escape/return —
+    today a returned sortie's ships stay `'hunting'` until D3's reconciler; the 0050 reconciler
+    deliberately ignores `'hunting'`) and the frontend mirrors + dark Hunt UI (the client consumers
+    of D0's totals). *Not started.*
 
 ---
 
@@ -375,6 +385,100 @@ DARK, **no member-row writer, no flag flip, no frontend, no backfill**:
   selftest greps pin the independent-sum asserts (attack + enemy damage) and the cron-count assert in
   assert form.
 
+## Slice D2 — what shipped
+
+Migration `supabase/migrations/20260618000168_slice_d2_group_hunt_send.sql` — the team enters the
+combat engine. Fully DARK (**no flag flipped, no frontend, no backfill, no edit to any shipped
+migration**); the FIRST writer of the member `combat_units` rows D1 prepared:
+
+- **The narrow bridge (why not B-send's wrapper idiom):** the live single send hard-rejects combat
+  destinations (0050:104/0152:116), and looping it would make N fleets → N encounters — the wrong
+  shape for ONE team encounter. So `send_ship_group_hunt(p_group_id, p_location)` composes the spine
+  primitives directly, exactly like the 0050 main-ship bridge: ONE direct `fleets` insert (no
+  `fleet_units`; the 0050:133-135 shape + the informational `group_id` tag; `main_ship_id` stays
+  NULL — one fleet, many ships), `movement_create(…, 'hunt_pirates', speed)`, `fleet_set_moving`,
+  members → `status='hunting'` (in the 0043/0055 status domain since day one; ignored by the 0050
+  reconciler, which touches only `'traveling'`/`'returning'` — no reconciler race), and the frozen
+  manifest rows. Send stats are the **per-member adapter fold over the LOCKED member set** (power =
+  Σ `combat_power`, speed = min member speed — D0's exact folding law, and exactly what the
+  encounter creator does), deliberately NOT the group-shaped D0 RPC: that re-resolves LIVE
+  membership, and a concurrent assign could slip a ship in between the gather and its read — gating
+  power over a superset of the manifest about to be frozen (manifest-wins even at send time).
+  Reject vocab (gate FIRST): `not_authenticated` → `team_command_disabled` → `group_not_found` →
+  `empty_group` → `invalid_location` (must be `status='active'` AND `activity_type='hunt_pirates'`)
+  → `member_not_ready` (EVERY member `status='home'` **AND `hp > 0`** — a zero-hp 'home' ship is
+  schema-legal since the D1 hp sync can write 0 — checked UNDER the ship locks; also returned when
+  the gather→lock window lost a member row, instead of a raw FK 500) → `fleet_limit_reached` (the
+  shared `max_active_fleets` budget; the team is ONE fleet) → `power_below_required` (Σ member
+  `combat_power` vs `locations.min_power_required`, the 0019:60-63 semantics) → `ok`; plus two
+  fail-closed folds: `stats_invalid` (any adapter raise, the 0166 posture) and `no_home_base`.
+  Locks: group `FOR SHARE` + revalidate → member ships `FOR UPDATE` (the 0163 order); **NO
+  movement-row lock anywhere** (the 0164 lock-order lesson — the settle cron takes movement→ship,
+  so this RPC must never take ship→movement). **Honest race scope (M1, see the pre-activation
+  checklist):** the under-lock readiness check closes LOCKING racers only (team-send vs team-send /
+  assign / delete); the live single send's plain read + unconditional ship UPDATE
+  (0050:87-94,146-147) can still overwrite a just-committed `'hunting'` with `'traveling'` in a true
+  concurrent interleaving. No `p_request_id` — B-send (0163) has none; the under-lock re-check is
+  the dedup.
+- **The manifest-wins law:** `group_sortie_members (fleet_id, main_ship_id, player_id)` — the team's
+  `fleet_units` analogue, the membership SNAPSHOT from send until return. A mid-flight
+  unassign/`delete_ship_group` must NOT orphan the sortie: **routing keys on the manifest, never on
+  live group membership and never on `fleets.group_id`** (which is display-only — its comment says
+  ROUTING NEVER reads it; `ON DELETE SET NULL` merely unlabels a fleet whose team was deleted).
+  Sole writer: `send_ship_group_hunt` (grep-enforced in the proof selftest, the captains sole-writer
+  convention). Owner-select RLS (0160 style); rows die with their fleet (CASCADE). One-live-sortie-
+  per-ship is enforced behaviorally (a partial unique index cannot express it — "live" is
+  `fleets.status`, another table): joining a sortie flips the ship to `'hunting'` in the same
+  transaction, and only the D3 return path will set it home again.
+- **Encounter routing:** `combat_create_encounter` re-created from its TRUE head (0023:69 —
+  grep-verified 0017→0022→0023, nothing later) with ONE marked branch after the presence read: a
+  fleet with manifest rows returns `combat_create_group_encounter(p_presence)`; everything else is
+  byte-identical (diff-verified — the D1 parity discipline). Unreachable in prod: no manifest row
+  can exist while `team_command_enabled` is false.
+- **`combat_create_group_encounter`** (internal; service_role/no-client-grant, the D1-leaf posture) —
+  SNAPSHOT INPUTS ONLY, zero wave/damage math (the second-engine tripwire). **Manifest-wins design
+  choice:** the D0 authority is group-shaped (reads LIVE membership), which can have diverged by
+  arrival — so the creator calls the ONE per-ship adapter (`calculate_expedition_stats`, 0122 — the
+  same adapter D0 delegates to) directly **per MANIFEST member**: divergence is impossible because
+  live membership is never read; when membership is unchanged, `player_power_start` equals D0's
+  `totals.combat_power` by construction. Per member it writes one `combat_units` row satisfying all
+  three D1 invariants: `main_ship_id` (identity), `attack_snapshot := combat_power`,
+  `defense_snapshot := survival`, `alive_count := 1`, and `ship_hp`/`hp_max`/`hp_current` := the
+  ship's **REAL CURRENT** `main_ship_instances.hp` — pre-existing damage carries into the encounter.
+  Encounter integrity := Σ member hp (the head's `sum(hp_max)` statement pair). **RAISE-FREE BY
+  CONSTRUCTION (cron safety):** the creator runs inside `movement_settle_arrival`'s txn and the
+  movement cron has **no per-movement subtransaction** — a raise would roll back every other
+  player's arrival in that run and leave the poisoned movement re-selected forever. So a member with
+  `hp <= 0` or an adapter refuse-don't-clamp raise (over-capacity after a mid-flight fitting/captain
+  change) **DEGRADES instead of raising**: its row is still inserted (skipping would orphan the
+  ship's `'hunting'` state) as dead-on-arrival — `alive_count 0`, zero snapshots (non-null, so the
+  D1 pairing CHECK holds), zero hp — inert in every tick read; an all-degraded roster yields a
+  zero-hp encounter the tick's existing defeat pass settles cleanly (fleet_destroy + the D1 member
+  loop marking the ships combat-destroyed). No outer exception wrapper on the routing branch —
+  deliberate: with every reachable raise degraded it would be dead code, and falling through to the
+  legacy zero-unit path would insta-defeat with NO member rows for the D1 defeat loop to settle
+  (orphaned `'hunting'` ships — incoherent).
+- **What's still unreachable / deferred:** no client UI until **D4** (`send_ship_group_hunt` has no
+  caller in `src/`); the sortie **return/settle** is **D3** — after defeat/escape the tick already
+  destroys/returns the FLEET (D1's member branches: hp sync, hull-speed return, destruction
+  terminal), but surviving ships stay `status='hunting'` until D3's reconciler brings them home.
+- **Proof:** `scripts/team-command-proof.{sql,sh}` gained the `TEAMCMD_PASS_TEAMHUNT` block (after
+  COMBATPARITY, flag ON in-txn; the dark reject is asserted in BLOCK DARK before the flip): reject
+  vocabulary + ORDER (`invalid_location` answers before member readiness), ONE fleet + 2-row
+  manifest + `'hunting'` ships, `speed_used` == the proof's OWN independent D0 `totals.speed`,
+  live-single-send + double-team-send races reject mid-sortie, member encounter pins
+  (`attack_snapshot` == the proof's own direct per-member adapter call, hp carries a pre-send dent,
+  `player_power_start` == `totals.combat_power`), one tick's `player_damage` == Σ member
+  `attack_snapshot` (variance re-pinned 0) with the D1 leaf syncing damage to
+  `main_ship_instances.hp` (the member path's first live execution), the **manifest-wins pin**:
+  a real mid-flight unassign leaves the manifest at 2 rows and the next tick still drives BOTH
+  members, and the **H1 cron-safety pins**: a zero-hp member rejects `member_not_ready` at send,
+  and a sortie whose member's adapter RAISES at arrival (mid-flight `captain_slots→0` surgery)
+  still **settles successfully** — the member row lands degraded (`alive_count=0`, zero snapshots,
+  zero hp, zero `player_power_start` contribution) and the all-degraded encounter defeats cleanly
+  (fleet destroyed, ship combat-destroyed by the D1 member loop). Selftest greps bind the key
+  asserts in assert form + the manifest sole-writer negative grep.
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -421,6 +525,16 @@ the cap so it is not the binding limit once multi-ship is later lit.
 - **Captain UI in the roster** (assign/unassign per member ship, captain list) → **DONE in Slice C1**
   (dark, frontend-only; reuses the CAPTAIN-P15 commands verbatim — no new server authority). Captain
   progression wiring / lit-time polish (and any 6 → 8 slot raise) → Slice C2.
+- **M1 — ACTIVATION BLOCKER (fix in D3, before `team_command_enabled` is ever flipped):** the live
+  single send's ship write is a plain read + **unconditional** UPDATE
+  (`send_main_ship_expedition`, 0050:87-94 + 146-147 / 0152:100-107 + 150) — it takes no ship lock,
+  so a single send that read `status='home'` concurrently with a committing team hunt-send can
+  overwrite `'hunting'` → `'traveling'` (a lost update that desyncs the ship from its live sortie).
+  Sequentially it already rejects (`not available (status hunting)`), and while dark the team send
+  can never run, so nothing is exposed today. Fix (a live-function edit, out of D2's charter):
+  re-create the single send's ship write with `and status='home'` + a `FOUND` check (raising the
+  send's own not-available error on miss). D2 documents the honest race scope in migration 0168's
+  header.
 - **Every flag flip (`team_command_enabled`, `captain_assignment_enabled`, …) = human activation**, never
   part of a slice. All C0 behavior stays dark behind `team_command_enabled=false` (and the captain fold
   behind `captain_assignment_enabled=false`).

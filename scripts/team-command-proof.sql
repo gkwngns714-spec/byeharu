@@ -1,5 +1,5 @@
--- TEAM-COMMAND B-VERIFY — disposable REAL-CHAIN proof of the DARK team send/stop surface (slices
--- 0160..0166) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
+-- TEAM-COMMAND B-VERIFY — disposable REAL-CHAIN proof of the DARK team send/stop/combat surface (slices
+-- 0160..0168) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
 -- proof runs inside ONE transaction that ROLLBACKs — it persists NO ship, group, fleet, flag flip, or
 -- fixture user. No production access. No COMMIT anywhere.
 --
@@ -49,6 +49,21 @@
 --            totals.speed = min member speed; and the STRICT posture: one over-capacity member →
 --            the totals RPC refuses WHOLE with an opaque stats_invalid (no member detail) while the
 --            C0 preview still answers ok with that member valid:false (strict-vs-preview).
+--   TEAMHUNT (Slice D2, 0168) — send_ship_group_hunt rejects dark BEFORE the team-flag flip; the
+--            reject vocabulary + ORDER (invalid_location answers before member readiness);
+--            member_not_ready on an unready team; the happy path writes ONE fleet (group_id tag,
+--            main_ship_id NULL) + a frozen 2-row manifest + 'hunting' ships with movement
+--            speed_used == the proof's OWN independent D0 totals.speed; live-single-send and
+--            double-team-send races reject mid-sortie; the settled arrival routes through
+--            combat_create_encounter's D2 branch into a member encounter whose per-member
+--            attack/defense snapshots EQUAL the proof's OWN direct adapter calls, whose hp carries
+--            pre-existing damage, and whose player_power_start EQUALS totals.combat_power; one
+--            tick's player_damage EQUALS Σ member attack_snapshot with the D1 leaf syncing damage
+--            back to main_ship_instances.hp; the MANIFEST-WINS law — a mid-flight unassign
+--            (real RPC) leaves the manifest whole and the next tick still drives both members; and
+--            the H1 cron-safety law — a zero-hp member rejects at send, and an adapter-refused
+--            member DEGRADES at arrival (alive_count=0 / zero snapshots) instead of raising inside
+--            the settle, which must still succeed (the cron has no per-movement subtransaction).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -144,11 +159,18 @@ begin
   -- team-flag flip below, with a random id and a VALID activity, so only the gate can be what answers.
   r := pg_temp.call_as(uA, 'public.get_my_group_expedition_totals(gen_random_uuid(), ''none'')');
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL totals: %', r; end if;
+  -- Slice D2 (0168): the combat team-send rejects dark too — asserted BEFORE the team-flag flip
+  -- below, with random uuids, so only the gate can be what answers (a reject-after-read regression
+  -- would surface group_not_found instead).
+  r := pg_temp.call_as(uA, 'public.send_ship_group_hunt(gen_random_uuid(), gen_random_uuid())');
+  if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL hunt send: %', r; end if;
 
   select count(*) into n from public.ship_groups;
   if n <> 0 then raise exception 'DARK FAIL: % ship_groups rows written while dark (want 0)', n; end if;
+  select count(*) into n from public.group_sortie_members;
+  if n <> 0 then raise exception 'DARK FAIL: % group_sortie_members rows written while dark (want 0)', n; end if;
 
-  raise notice 'TEAMCMD_PASS_DARK ok: all 7 team RPCs reject-before-read with team_command_disabled; 0 rows written';
+  raise notice 'TEAMCMD_PASS_DARK ok: all 8 team RPCs reject-before-read with team_command_disabled; 0 rows written';
 end $$;
 
 -- enable the dark capabilities ONLY inside this rolled-back txn (committed/production values stay false).
@@ -842,6 +864,316 @@ begin
   raise notice 'TEAMCMD_PASS_COMBATPARITY ok: legacy hunt via real chain under team flag ON; tick damage = independent Σ(attack×alive); enemy damage = independent defense-curve value; legacy jsonb keys; hp+fleet sync exact; escaped report legacy-keyed; return speed = fleet_speed; identity CHECK raises both ways; leaf smoke (NULL return speed, hp-only sync, 0059 terminal); exactly 1 combat cron job';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity)' as result;
+-- ════════ BLOCK TEAMHUNT (Slice D2, 0168): hunt send + sortie manifest + member encounter routing ════════
+-- The FIRST member combat_units rows ever written — the writer D1 deferred. Real chain end to end:
+-- send_ship_group_hunt (ONE fleet, manifest frozen, ships 'hunting', speed = D0 totals.speed) →
+-- movement_settle_arrival (the SAME per-movement settle the cron calls) → presence_create →
+-- combat_create_encounter's D2 branch → combat_create_group_encounter (member snapshots from the
+-- MANIFEST) → process_combat_ticks (the member path's first live execution: damage distribution +
+-- the D1 hp sync leaf). Pins: reject vocabulary + order (invalid_location answers BEFORE member
+-- readiness); ONE fleet per team send; movement speed_used == the proof's OWN independent D0
+-- totals.speed; each member's attack_snapshot == the proof's OWN direct per-member adapter call;
+-- hp_current == the ship's REAL current hp (pre-existing damage carries in); encounter
+-- player_power_start == totals.combat_power; tick player_damage == Σ member attack_snapshot
+-- (variance re-pinned 0); double-send + live-single-send races reject; the MANIFEST-WINS law —
+-- a mid-flight unassign (real RPC) leaves the manifest at 2 rows and the next tick still drives BOTH
+-- members; the send's hp>0 readiness guard (a zero-hp 'home' ship rejects member_not_ready); and the
+-- H1 CRON-SAFETY degrade: an adapter-refused member does NOT poison movement_settle_arrival (no
+-- per-movement subtransaction exists in the cron scan) — the settle succeeds, the member row lands
+-- degraded (alive_count=0 / zero snapshots / zero hp), and the all-degraded encounter defeats cleanly
+-- through the existing machinery. Fixture surgery is limited to the quarantined kinds already used
+-- above: the c2 home normalization (the provisioning idiom), the TEAMSTATS captain_slots surgery, and
+-- clock rewinds. The manifest itself is NEVER touched directly — send_ship_group_hunt is its sole
+-- writer (the .sh selftest greps that no direct group_sortie_members mutation exists).
+do $$
+declare r jsonb; t jsonb; s1 jsonb; s2 jsonb; n int;
+  uB uuid := (select v from tcmd where k='uB'); uC uuid := (select v from tcmd where k='uC');
+  uA uuid := (select v from tcmd where k='uA');
+  gA1 uuid := (select v from tcmd where k='gA1'); gB1 uuid := (select v from tcmd where k='gB1');
+  c1 uuid := (select v from tcmd where k='c1'); c2 uuid := (select v from tcmd where k='c2');
+  b1 uuid := (select v from tcmd where k='b1');
+  slag uuid := (select v from tcmd where k='slag');
+  v_hunt uuid; gH uuid; capa uuid; capb uuid; capc uuid; capd uuid;
+  v_fleet uuid; v_mv uuid; v_enc uuid; v_active_before int;
+  v_fleet2 uuid; v_mv2 uuid; v_enc2 uuid;
+  v_hp1 double precision; v_hp2 double precision; v_hp1b double precision; v_hp2b double precision;
+  v_err text;
+begin
+  -- config surgery must be in effect for the exact-damage pins: re-apply the COMBATPARITY in-txn
+  -- surgery (idempotent; the real set_game_config; all reverted by ROLLBACK).
+  perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
+  perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+
+  -- the same seeded hunt destination COMBATPARITY used (lowest entry gate first).
+  select id into v_hunt from public.locations
+    where activity_type = 'hunt_pirates' and status = 'active'
+    order by min_power_required asc, base_difficulty asc limit 1;
+  if v_hunt is null then raise exception 'TEAMHUNT FAIL: no active hunt_pirates location'; end if;
+
+  -- ── reject vocabulary, in the RPC's order (dark gate already proven in BLOCK DARK) ────────────────
+  -- group_not_found — a random uuid, and uC cross-player-probing uB's real group (no ownership oracle).
+  r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(gen_random_uuid(), %L::uuid)', v_hunt));
+  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'TEAMHUNT FAIL random group: %', r; end if;
+  r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB1, v_hunt));
+  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'TEAMHUNT FAIL cross-player probe: %', r; end if;
+  -- empty_group — uB's created-but-memberless slot.
+  r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB1, v_hunt));
+  if (r->>'reason') is distinct from 'empty_group' then raise exception 'TEAMHUNT FAIL empty_group: %', r; end if;
+  -- invalid_location — a SAFE (activity none) destination MUST reject, and it must answer BEFORE the
+  -- member-readiness check: gA1's members (a1,a2 held stationary since BLOCK STOP; a3 destroyed in
+  -- COMBATPARITY) are all unready, yet the answer is the location's (the reject-order pin).
+  r := pg_temp.call_as(uA, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gA1, slag));
+  if (r->>'reason') is distinct from 'invalid_location' then raise exception 'TEAMHUNT FAIL invalid_location: %', r; end if;
+  -- member_not_ready — the same unready team against the REAL hunt destination.
+  r := pg_temp.call_as(uA, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gA1, v_hunt));
+  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMHUNT FAIL member_not_ready: %', r; end if;
+
+  -- ── happy-path fixture: uC's pair {c1 (home), c2} — normalize c2 to home (the SAME quarantined
+  -- provisioning idiom: home shape + retire its 'present' commission fleet + settle its presence).
+  update public.main_ship_instances
+     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+   where main_ship_id = c2;
+  update public.fleets
+     set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where main_ship_id = c2 and status = 'present';
+  update public.location_presence
+     set status = 'completed', updated_at = now()
+   where fleet_id in (select id from public.fleets where main_ship_id = c2 and status = 'destroyed')
+     and status = 'active';
+  -- pre-existing damage pin: dent c2 via the D1 hp-only leaf (hp 500 → 350) BEFORE the send — its
+  -- member combat row must carry 350, never max_hp.
+  perform public.mainship_sync_combat_hp(c2, 350);
+
+  -- captains via the SOLE WRITERS only (as everywhere): c1 gets two gunnery seeds (+8 combat), c2 one
+  -- (+4) — members genuinely differ, so a creator that swapped/averaged snapshots cannot false-green.
+  capa := public.captains_mint_instance(uC, 'gunnery_veteran', 'tcmd-d2-1');
+  capb := public.captains_mint_instance(uC, 'gunnery_veteran', 'tcmd-d2-2');
+  capc := public.captains_mint_instance(uC, 'gunnery_veteran', 'tcmd-d2-3');
+  perform public.captain_assign_apply(uC, capa, c1);
+  perform public.captain_assign_apply(uC, capb, c1);
+  perform public.captain_assign_apply(uC, capc, c2);
+
+  -- team slot 1 is free again for uC (gC1 was deleted in BLOCK DELETE).
+  r := pg_temp.call_as(uC, 'public.upsert_ship_group(1, ''HuntPack'')');
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL group create: %', r; end if;
+  gH := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', c1, gH));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL assign c1: %', r; end if;
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', c2, gH));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL assign c2: %', r; end if;
+
+  -- H1 send-side hp guard: a ZERO-hp 'home' member is schema-legal (the D1 hp sync can write 0 on a
+  -- member that died while its team escaped) and must reject member_not_ready at SEND time — dent c1
+  -- to 0 via the D1 leaf, assert, restore the fixture hp.
+  perform public.mainship_sync_combat_hp(c1, 0);
+  r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
+  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMHUNT FAIL hp-zero send: %', r; end if;
+  perform public.mainship_sync_combat_hp(c1, 500);
+
+  -- THE INDEPENDENT EXPECTATIONS, captured BEFORE the send: the D0 authority's totals (this
+  -- privileged context calls it directly) and the ONE adapter per member (the same inputs the
+  -- encounter creator must use).
+  t  := public.calculate_group_expedition_stats(uC, gH, 'pirate_hunt');
+  s1 := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'pirate_hunt');
+  s2 := public.calculate_expedition_stats(uC, c2, '[]'::jsonb, 'pirate_hunt');
+  select count(*) into v_active_before from public.fleets
+    where player_id = uC and status in ('moving','present','returning');
+  if v_active_before <> 0 then raise exception 'TEAMHUNT FAIL precondition: uC has % active fleets (want 0)', v_active_before; end if;
+
+  -- ── SEND ──────────────────────────────────────────────────────────────────────────────────────────
+  r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL send: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  if v_fleet is null or v_mv is null or (r->>'member_count')::int is distinct from 2 then
+    raise exception 'TEAMHUNT FAIL send envelope: %', r; end if;
+
+  -- exactly ONE fleet for the whole team (the narrow-bridge shape, not per-member fleets)…
+  select count(*) into n from public.fleets
+    where player_id = uC and status in ('moving','present','returning');
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: % active fleets for the team send (want exactly ONE)', n; end if;
+  -- …tagged with the informational group_id, moving, and NOT main-ship-tagged (one fleet, many ships).
+  select count(*) into n from public.fleets
+    where id = v_fleet and group_id = gH and main_ship_id is null and status = 'moving' and active_movement_id = v_mv;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: sortie fleet shape wrong (group_id/main_ship_id/status)'; end if;
+  -- the MANIFEST: exactly the 2 members, frozen.
+  select count(*) into n from public.group_sortie_members
+    where fleet_id = v_fleet and main_ship_id in (c1, c2) and player_id = uC;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL: % manifest rows (want 2)', n; end if;
+  -- both ships out hunting (the 0043 status that only the D3 return path will clear).
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id in (c1, c2) and status = 'hunting' and spatial_state is null;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL: % ships hunting (want 2)', n; end if;
+  -- movement speed == the INDEPENDENT D0 totals.speed (min member speed), mission = hunt_pirates.
+  select count(*) into n from public.fleet_movements
+    where id = v_mv and mission_type = 'hunt_pirates' and target_location_id = v_hunt
+      and speed_used is not distinct from (t->'totals'->>'speed')::double precision;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: movement speed_used is distinct from (t->''totals''->>''speed'') (independent D0 totals.speed)'; end if;
+  select count(*) into n from public.fleet_movements
+    where id = v_mv and speed_used is not distinct from least((s1->>'speed')::double precision, (s2->>'speed')::double precision);
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: movement speed_used <> min member adapter speed'; end if;
+
+  -- ── RACES while the sortie is live ────────────────────────────────────────────────────────────────
+  -- the live single send must reject a hunting member (status='hunting' is not 'home')…
+  begin
+    r := pg_temp.call_as(uC, format('public.send_main_ship_expedition(%L::jsonb, %L::uuid)',
+          jsonb_build_array(c1), slag));
+    raise exception 'TEAMHUNT FAIL: live single send ACCEPTED a hunting member: %', r;
+  exception when others then
+    v_err := sqlerrm;
+    if v_err not like '%not available (status hunting)%' then
+      raise exception 'TEAMHUNT FAIL: single-send race raised the wrong error: %', v_err; end if;
+  end;
+  -- …and a second team hunt-send on the same group rejects member_not_ready (double-send close).
+  r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
+  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMHUNT FAIL double send: %', r; end if;
+
+  -- ── SETTLE via the cron's own per-movement settle (clock rewind, the sanctioned surgery) ──────────
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+    raise exception 'TEAMHUNT FAIL settle: %', r; end if;
+
+  -- ONE encounter, routed through the D2 branch into the member creator.
+  select count(*) into n from public.combat_encounters where fleet_id = v_fleet;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: % encounters for the sortie fleet (want 1)', n; end if;
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
+  if v_enc is null then raise exception 'TEAMHUNT FAIL: sortie encounter not active'; end if;
+
+  -- exactly 2 member combat rows, all member-shaped (unit_type_id NULL + both snapshots — D1 CHECKs).
+  select count(*) into n from public.combat_units where encounter_id = v_enc;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL: % combat_units rows (want 2)', n; end if;
+  select count(*) into n from public.combat_units
+    where encounter_id = v_enc and unit_type_id is null and main_ship_id in (c1, c2)
+      and attack_snapshot is not null and defense_snapshot is not null
+      and initial_count = 1 and alive_count = 1;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL: combat rows are not member-shaped'; end if;
+  -- per-member snapshots == the proof's OWN direct adapter calls (the delegation pin, member side).
+  select count(*) into n from public.combat_units
+    where encounter_id = v_enc and main_ship_id = c1
+      and attack_snapshot  is not distinct from (s1->>'combat_power')::double precision
+      and defense_snapshot is not distinct from (s1->>'survival')::double precision;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: c1 attack_snapshot is distinct from (s1->>''combat_power'') (independent adapter call)'; end if;
+  select count(*) into n from public.combat_units
+    where encounter_id = v_enc and main_ship_id = c2
+      and attack_snapshot  is not distinct from (s2->>'combat_power')::double precision
+      and defense_snapshot is not distinct from (s2->>'survival')::double precision;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: c2 attack_snapshot is distinct from (s2->>''combat_power'') (independent adapter call)'; end if;
+  -- hp_current == each ship's REAL current hp (c2 carries its pre-send dent: 350, never max_hp).
+  select count(*) into n from public.combat_units cu
+    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
+    where cu.encounter_id = v_enc
+      and cu.hp_current is not distinct from msi.hp::double precision
+      and cu.hp_max     is not distinct from msi.hp::double precision
+      and cu.ship_hp    is not distinct from msi.hp::double precision;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL: member hp columns diverge from the ships'' real hp'; end if;
+  select count(*) into n from public.combat_units
+    where encounter_id = v_enc and main_ship_id = c2 and hp_current = 350;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: c2 pre-existing damage did not carry in (want hp_current 350)'; end if;
+  -- encounter aggregates: power_start == the INDEPENDENT D0 totals.combat_power (== s1+s2 sum);
+  -- integrity == Σ member real hp.
+  select count(*) into n from public.combat_encounters
+    where id = v_enc
+      and player_power_start is not distinct from (t->'totals'->>'combat_power')::double precision
+      and player_power_start is not distinct from ((s1->>'combat_power')::double precision + (s2->>'combat_power')::double precision);
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: player_power_start is distinct from (t->''totals''->>''combat_power'') (independent D0 totals)'; end if;
+  select count(*) into n from public.combat_encounters ce
+    where ce.id = v_enc and ce.player_integrity_max is not distinct from
+      (select sum(hp_current) from public.combat_units where encounter_id = v_enc);
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: player_integrity_max <> summed member hp'; end if;
+
+  -- ── TICK 1: the member path's first live execution ────────────────────────────────────────────────
+  select hp_current into v_hp1 from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
+  select hp_current into v_hp2 from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+  -- tick player_damage == Σ member attack_snapshot (the member-side aggregation pin; variance 0).
+  select count(*) into n from public.combat_ticks
+    where encounter_id = v_enc and tick_number = 1
+      and player_damage is not distinct from
+        (select sum(attack_snapshot * alive_count) from public.combat_units where encounter_id = v_enc);
+  if n <> 1 then raise exception 'TEAMHUNT FAIL: tick player_damage is distinct from sum(attack_snapshot) (member aggregation pin)'; end if;
+  -- damage distributed over the member rows: both alive rows took hull damage…
+  select hp_current into v_hp1b from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
+  select hp_current into v_hp2b from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
+  if v_hp1b >= v_hp1 or v_hp2b >= v_hp2 then
+    raise exception 'TEAMHUNT FAIL: member rows took no damage on tick 1 (c1 %→%, c2 %→%)', v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+  -- …and the D1 sync leaf drove the damage back to the SHIP rows (hp only; still hunting).
+  select count(*) into n from public.combat_units cu
+    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
+    where cu.encounter_id = v_enc and msi.status = 'hunting'
+      and msi.hp = round(greatest(0, cu.hp_current))::integer;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL: main_ship_instances.hp not synced from the member rows'; end if;
+
+  -- ── MANIFEST WINS: mid-flight unassign (real RPC) must not orphan the sortie ──────────────────────
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, null)', c1));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL manifest-wins unassign: %', r; end if;
+  select count(*) into n from public.group_sortie_members where fleet_id = v_fleet;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL manifest-wins: manifest has % rows after unassign (want still 2)', n; end if;
+  -- the next tick still drives BOTH members (damage + hp sync), though c1 left the live group.
+  select hp_current into v_hp1 from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
+  select hp_current into v_hp2 from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+  select hp_current into v_hp1b from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
+  select hp_current into v_hp2b from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
+  if v_hp1b >= v_hp1 or v_hp2b >= v_hp2 then
+    raise exception 'TEAMHUNT FAIL manifest-wins: a member row took no damage after the unassign (c1 %→%, c2 %→%)', v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+  select count(*) into n from public.combat_units cu
+    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
+    where cu.encounter_id = v_enc and msi.hp = round(greatest(0, cu.hp_current))::integer;
+  if n <> 2 then raise exception 'TEAMHUNT FAIL manifest-wins: hp sync missed a member after the unassign'; end if;
+
+  -- ── H1 CRON-SAFETY (the crown-jewel pin): a member whose adapter RAISES at arrival must NOT ───────
+  -- poison the settle. process_fleet_movements has NO per-movement subtransaction (pg_cron runs the
+  -- scan as ONE txn) — a creator raise would roll back every other arrival in the run AND wedge the
+  -- movement forever. Fixture: uB's b1 (home, unused) with one captain (sole writer), sent as a
+  -- 1-ship team, then captain_slots→0 surgery MID-FLIGHT (the TEAMSTATS over-capacity idiom — a
+  -- main_ship_instances fixture write, NOT a Captain-table write) so calculate_expedition_stats
+  -- refuses b1 at arrival. The settle must still SUCCEED; b1's member row must DEGRADE
+  -- (alive_count=0, zero snapshots, zero hp); and the next tick must settle the all-degraded
+  -- zero-hp encounter as a clean DEFEAT through the EXISTING machinery (fleet_destroy + the D1
+  -- member loop marking b1 combat-destroyed) — no raise, no orphaned 'hunting' ship.
+  capd := public.captains_mint_instance(uB, 'gunnery_veteran', 'tcmd-d2-4');
+  perform public.captain_assign_apply(uB, capd, b1);
+  r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', b1, gB1));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL degrade assign: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB1, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL degrade send: %', r; end if;
+  v_fleet2 := (r->>'fleet_id')::uuid; v_mv2 := (r->>'movement_id')::uuid;
+  update public.main_ship_instances set captain_slots = 0, updated_at = now() where main_ship_id = b1;
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_mv2;
+  r := public.movement_settle_arrival(v_mv2);
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+    raise exception 'TEAMHUNT FAIL: settle did NOT succeed despite the degraded member (cron-safety pin): %', r; end if;
+  select id into v_enc2 from public.combat_encounters where fleet_id = v_fleet2 and status = 'active';
+  if v_enc2 is null then raise exception 'TEAMHUNT FAIL degrade: no active encounter for the degraded sortie'; end if;
+  -- the degraded member row: inserted (never skipped), dead-on-arrival, D1-CHECK-legal (snapshots 0).
+  select count(*) into n from public.combat_units
+    where encounter_id = v_enc2 and main_ship_id = b1 and unit_type_id is null
+      and alive_count = 0 and attack_snapshot = 0 and defense_snapshot = 0 and hp_current = 0;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: b1 row not degraded (want alive_count=0 / zero snapshots / zero hp)'; end if;
+  select count(*) into n from public.combat_encounters where id = v_enc2 and player_power_start = 0;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: degraded member leaked fighting power into power_start'; end if;
+  -- the all-degraded zero-hp encounter settles as a clean DEFEAT on its first tick (existing machinery).
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc2;
+  perform public.process_combat_ticks();
+  select count(*) into n from public.combat_encounters where id = v_enc2 and status = 'defeat' and ended_at is not null;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: zero-hp encounter did not settle defeat'; end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id = b1 and status = 'destroyed' and hp = 0 and spatial_state is null;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: b1 not marked combat-destroyed by the D1 member loop'; end if;
+  select count(*) into n from public.fleets where id = v_fleet2 and status = 'destroyed';
+  if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: sortie fleet not destroyed on defeat'; end if;
+
+  raise notice 'TEAMCMD_PASS_TEAMHUNT ok: rejects (group_not_found×2/empty_group/invalid_location-before-readiness/member_not_ready incl. zero-hp), ONE fleet + 2-row manifest + hunting ships, speed_used = independent D0 totals.speed, races reject (single send + double team send), member encounter (attack_snapshot = per-member adapter, hp carries pre-existing damage, power_start = totals.combat_power), tick damage = sum(attack_snapshot) with ship-hp sync, manifest wins over a mid-flight unassign, and the H1 cron-safety degrade: settle succeeds despite an adapter-refused member, whose row lands alive_count=0/zero-snapshot and defeats cleanly';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
