@@ -6,6 +6,7 @@ import { useGalaxyMapData } from '../features/map/useGalaxyMapData'
 import { useMainShipSelection } from '../features/map/useMainShipSelection'
 import { useSettleDueArrival } from '../features/map/useSettleDueArrival'
 import { selectActiveLegacyMovement } from '../features/map/spaceStopCommand'
+import { Icon, type IconName } from '../components/ui'
 
 // UI-REBUILD (2b) — the persistent four-destination shell. ONE mobile-first bottom tab bar
 // (Map · Ship · Port · Command; active tab derived from the router) over a single shared data
@@ -17,12 +18,14 @@ import { selectActiveLegacyMovement } from '../features/map/spaceStopCommand'
 // The persistent shell breaks that invariant, so the hook mounts EXACTLY ONCE here, covering BOTH
 // families; no destination mounts it again.
 
-const TABS = [
-  { to: '/map', label: 'Map', icon: '🗺' },
-  { to: '/ship', label: 'Ship', icon: '🛰' },
-  { to: '/port', label: 'Port', icon: '⚓' },
-  { to: '/command', label: 'Command', icon: '🏠' },
-] as const
+// Tab glyphs come from the design-system Icon set (currentColor line icons — they inherit the
+// NavLink's token color: accent when active, ink-muted otherwise). No emoji in chrome.
+const TABS: readonly { to: string; label: string; icon: IconName }[] = [
+  { to: '/map', label: 'Map', icon: 'map' },
+  { to: '/ship', label: 'Ship', icon: 'ship' },
+  { to: '/port', label: 'Port', icon: 'anchor' },
+  { to: '/command', label: 'Command', icon: 'command' },
+]
 
 export function AppShell() {
   const map = useGalaxyMapData()
@@ -67,9 +70,7 @@ export function AppShell() {
                   }`
                 }
               >
-                <span className="text-lg leading-none" aria-hidden>
-                  {t.icon}
-                </span>
+                <Icon name={t.icon} size={20} />
                 {t.label}
               </NavLink>
             ))}
