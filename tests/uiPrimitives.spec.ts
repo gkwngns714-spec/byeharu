@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { ICON_NAMES, ICON_PATHS } from '../src/components/ui/icons'
-import { screenBodyClass } from '../src/components/ui/screenLayout'
+import { screenBodyClass, screenRailClass, screenSplitClass } from '../src/components/ui/screenLayout'
 import { OVERLAY_SLOTS, overlayPanelClass, overlayRailClass } from '../src/components/ui/overlayLayout'
 
 // UI-R0 (Mission Control foundation) — pure unit proof for the design-system primitives' logic:
@@ -39,6 +39,32 @@ test('Screen default variant: centered max-w-3xl column with the space-y-4 rhyth
 
 test('Screen wide variant swaps ONLY the max width', () => {
   expect(screenBodyClass(true)).toBe(screenBodyClass(false).replace('max-w-3xl', 'max-w-6xl'))
+})
+
+// ── UI R3: the desktop ops split (Ship/Port/Command screen composition) ───────────────────────────
+
+test('Screen split: single column on mobile, side-by-side top-aligned rails at lg', () => {
+  const cls = screenSplitClass()
+  for (const part of ['flex', 'flex-col', 'gap-4', 'lg:flex-row', 'lg:items-start']) {
+    expect(cls).toContain(part)
+  }
+  // Deliberately FLEX, never a grid template — reserved grid tracks cannot collapse when a
+  // rail's dark children all render null; a hidden flex rail hands its width to the sibling.
+  expect(cls).not.toContain('grid')
+})
+
+test('Screen split rails: 2:1 at lg, panel rhythm, and dark-rail self-collapse (empty:hidden)', () => {
+  const main = screenRailClass('main')
+  const aside = screenRailClass('aside')
+  for (const cls of [main, aside]) {
+    for (const part of ['min-w-0', 'space-y-4', 'empty:hidden']) {
+      expect(cls).toContain(part) // empty:hidden = an all-dark rail leaves NO production hole
+    }
+  }
+  expect(main).toContain('lg:flex-[2_1_0%]')
+  expect(aside).toContain('lg:flex-[1_1_0%]')
+  // The rails differ ONLY in their flex ratio — one pattern, two widths.
+  expect(aside).toBe(main.replace('lg:flex-[2_1_0%]', 'lg:flex-[1_1_0%]'))
 })
 
 // ── UI R1: OverlayPanel — the map-overlay chrome + per-corner slot layout ─────────────────────────

@@ -158,6 +158,21 @@ test('aggregateTeamStats: a valid member with no speed key does not produce a bo
   expect(out.totals.combat_power).toBe(1)
 })
 
+test('aggregateTeamStats: an invalid member carrying the 0165 per-member `error` detail aggregates exactly like any invalid member', () => {
+  // Slice C1 widened PreviewMember with the optional `error` migration 0165 emits beside
+  // valid:false — display-only detail; aggregation must key ONLY on `valid` (the error string
+  // never changes counts, totals, or slowestSpeed).
+  const out = aggregateTeamStats([
+    member('a', stats({ combat_power: 7, speed: 1.1 })),
+    { main_ship_id: 'b', valid: false, error: 'captain headcount exceeds capacity' },
+  ])
+  expect(out.memberCount).toBe(2)
+  expect(out.validCount).toBe(1)
+  expect(out.invalidCount).toBe(1)
+  expect(out.totals.combat_power).toBe(7)
+  expect(out.slowestSpeed).toBe(1.1)
+})
+
 test('aggregateTeamStats: a valid member with NO stats payload stays valid (zero contribution), never demoted', () => {
   // Server said valid:true — client must NOT reclassify it as invalid just because stats is absent.
   const out = aggregateTeamStats([

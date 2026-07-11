@@ -19,6 +19,7 @@ import {
   type ModuleCatalogEntry,
   type ModuleInstance,
 } from './modulesTypes'
+import { Button, Card, CardHeader } from '../../components/ui'
 
 // MODULES-P13 — the dark module-crafting surface: the craftable catalog (recipes + the player's
 // balances) and the crafted-instances list. SERVER-DRIVEN visibility (no client flag constant):
@@ -164,16 +165,13 @@ export function ModulesPanel({
     myShips.find((s) => s.main_ship_id === shipId)?.name ?? `ship ${shipId.slice(0, 8)}…`
 
   return (
-    <div
-      data-testid="modules-panel"
-      // Bottom-left row, beside MiningPanel (w-64 panels at left-2 and left-[17rem] → this sits at
-      // left-[33.5rem]); the other OSN overlays hold the remaining corners. All three activity
-      // panels are server-lit, so overlap only ever involves lit surfaces.
-      className="pointer-events-auto absolute bottom-2 left-[33.5rem] z-10 w-64 rounded-lg border border-sky-500/30 bg-slate-900/90 p-2 text-slate-100"
-    >
-      <p className="text-[11px] font-medium text-sky-300">Modules</p>
+    // UI R2: the Card primitive owns the chrome (accent tone = the modules identity; ex-sky).
+    // Screen-embedded — rides ShipScreen's Screen stack (space-y-4), so the legacy map-corner
+    // absolute offset (bottom-2 left-[33.5rem]) is gone with the hand-rolled skin. Tokens only.
+    <Card tone="accent" data-testid="modules-panel">
+      <CardHeader title="Modules" />
       {catalog === null ? (
-        <p data-testid="modules-catalog-unavailable" className="mt-1 text-[10px] text-slate-400">
+        <p data-testid="modules-catalog-unavailable" className="mt-1 text-[10px] text-ink-muted">
           Catalog unavailable right now.
         </p>
       ) : catalog.length > 0 ? (
@@ -188,17 +186,17 @@ export function ModulesPanel({
             return (
               <li key={entry.id} data-testid={`modules-catalog-${entry.id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-slate-200">{entry.name}</span>
-                  <span className="rounded bg-sky-600/30 px-1.5 py-0.5 text-[9px] text-sky-300">
+                  <span className="truncate text-ink">{entry.name}</span>
+                  <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
                     {entry.slot_type}
                   </span>
                 </div>
-                <p className="text-slate-400">
+                <p className="text-ink-muted">
                   {entry.ingredients.map((i, idx) => {
                     const have = balances?.[i.item_id]
                     const lacking = balances != null && (have ?? 0) < i.qty
                     return (
-                      <span key={i.item_id} className={lacking ? 'text-rose-400' : undefined}>
+                      <span key={i.item_id} className={lacking ? 'text-danger' : undefined}>
                         {idx > 0 && ' · '}
                         {i.item_id} ×{i.qty}
                         {balances != null && ` (have ${have ?? 0})`}
@@ -206,17 +204,20 @@ export function ModulesPanel({
                     )
                   })}
                 </p>
-                <button
-                  type="button"
+                <Button
+                  variant="primary"
+                  size="sm"
                   data-testid={`modules-craft-button-${entry.id}`}
-                  disabled={isPending || short}
+                  disabled={short}
+                  busy={isPending}
+                  busyLabel="Crafting…"
                   onClick={() => void craft(entry)}
-                  className="mt-0.5 rounded bg-sky-600/90 px-3 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+                  className="mt-0.5"
                 >
-                  {isPending ? 'Crafting…' : 'Craft'}
-                </button>
+                  Craft
+                </Button>
                 {note && (
-                  <p data-testid={`modules-craft-note-${entry.id}`} className="mt-0.5 text-[10px] text-sky-200/90">
+                  <p data-testid={`modules-craft-note-${entry.id}`} className="mt-0.5 text-[10px] text-accent">
                     {note}
                   </p>
                 )}
@@ -225,12 +226,12 @@ export function ModulesPanel({
           })}
         </ul>
       ) : (
-        <p data-testid="modules-catalog-none" className="mt-1 text-[10px] text-slate-400">
+        <p data-testid="modules-catalog-none" className="mt-1 text-[10px] text-ink-muted">
           No module designs available.
         </p>
       )}
       {result.instances.length > 0 ? (
-        <ul data-testid="modules-instances" className="mt-2 space-y-1 border-t border-slate-700/60 pt-2">
+        <ul data-testid="modules-instances" className="mt-2 space-y-1 border-t border-edge pt-2">
           {result.instances.map((m) => {
             // FITTING-P14 per-instance controls — everything below the timestamp is double-gated
             // (litFittings): while module_fitting_enabled is dark these render nothing and the row
@@ -242,26 +243,27 @@ export function ModulesPanel({
             return (
               <li key={m.instance_id} data-testid={`modules-instance-${m.instance_id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-slate-200">{m.name}</span>
-                  <span className="rounded bg-sky-600/30 px-1.5 py-0.5 text-[9px] text-sky-300">{m.slot_type}</span>
+                  <span className="truncate text-ink">{m.name}</span>
+                  <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">{m.slot_type}</span>
                 </div>
-                <p className="text-slate-500">{new Date(m.created_at).toLocaleString()}</p>
+                <p className="font-mono text-ink-faint">{new Date(m.created_at).toLocaleString()}</p>
                 {litFittings && fitting && (
                   <div className="mt-0.5 flex items-center justify-between gap-2">
-                    <span data-testid={`modules-fitted-on-${m.instance_id}`} className="truncate text-sky-200/90">
+                    <span data-testid={`modules-fitted-on-${m.instance_id}`} className="truncate text-accent">
                       Fitted → {shipLabel(fitting.main_ship_id)}
                     </span>
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       data-testid={`modules-unfit-button-${m.instance_id}`}
-                      disabled={isPending}
+                      busy={isPending}
+                      busyLabel="Unfitting…"
                       onClick={() =>
                         void runFitting(m, () => unfitModuleFromShip(m.instance_id, crypto.randomUUID()), 'Unfitted')
                       }
-                      className="rounded bg-slate-600/90 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-slate-500 disabled:opacity-50"
                     >
-                      {isPending ? 'Unfitting…' : 'Unfit'}
-                    </button>
+                      Unfit
+                    </Button>
                   </div>
                 )}
                 {litFittings && !fitting && myShips.length > 0 && (
@@ -270,7 +272,7 @@ export function ModulesPanel({
                       data-testid={`modules-fit-ship-${m.instance_id}`}
                       value={pick}
                       onChange={(e) => setShipPick((p) => ({ ...p, [m.instance_id]: e.target.value }))}
-                      className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-[10px] text-slate-200"
+                      className="min-w-0 flex-1 rounded border border-edge bg-surface-2 px-1 py-0.5 text-[10px] text-ink"
                     >
                       {myShips.map((s) => (
                         <option key={s.main_ship_id} value={s.main_ship_id}>
@@ -279,21 +281,23 @@ export function ModulesPanel({
                         </option>
                       ))}
                     </select>
-                    <button
-                      type="button"
+                    <Button
+                      variant="primary"
+                      size="sm"
                       data-testid={`modules-fit-button-${m.instance_id}`}
-                      disabled={isPending || !pick}
+                      disabled={!pick}
+                      busy={isPending}
+                      busyLabel="Fitting…"
                       onClick={() =>
                         void runFitting(m, () => fitModuleToShip(m.instance_id, pick, crypto.randomUUID()), 'Fitted')
                       }
-                      className="rounded bg-sky-600/90 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-sky-500 disabled:opacity-50"
                     >
-                      {isPending ? 'Fitting…' : 'Fit'}
-                    </button>
+                      Fit
+                    </Button>
                   </div>
                 )}
                 {litFittings && note && (
-                  <p data-testid={`modules-fitting-note-${m.instance_id}`} className="mt-0.5 text-[10px] text-sky-200/90">
+                  <p data-testid={`modules-fitting-note-${m.instance_id}`} className="mt-0.5 text-[10px] text-accent">
                     {note}
                   </p>
                 )}
@@ -302,10 +306,10 @@ export function ModulesPanel({
           })}
         </ul>
       ) : (
-        <p data-testid="modules-instances-none" className="mt-2 border-t border-slate-700/60 pt-2 text-[10px] text-slate-400">
+        <p data-testid="modules-instances-none" className="mt-2 border-t border-edge pt-2 text-[10px] text-ink-muted">
           No modules crafted yet.
         </p>
       )}
-    </div>
+    </Card>
   )
 }

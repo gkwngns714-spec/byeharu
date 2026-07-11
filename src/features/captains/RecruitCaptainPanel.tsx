@@ -6,6 +6,7 @@ import {
   type CaptainRecipe,
   type GetMyCaptainInstancesResult,
 } from './captainsTypes'
+import { Button, Card, CardHeader } from '../../components/ui'
 
 // CAPTAIN-P16 (post-audit UI, panel 4 of 4) — the dark Captain Progression (recruit) surface: the
 // recruitable captain types with their ingredient costs + a per-type Recruit action. Recruit is
@@ -81,19 +82,17 @@ export function RecruitCaptainPanel({
   if (!isServerLit(roster)) return null
 
   return (
-    <div
-      data-testid="recruit-captain-panel"
-      // Bottom-left row, continuing after CaptainsPanel (left-[50rem]); non-spatial like its siblings, so
-      // it coexists with every other overlay without overlap (each w-64, ~0.5rem gaps).
-      className="pointer-events-auto absolute bottom-2 left-[66.5rem] z-10 w-64 rounded-lg border border-fuchsia-500/30 bg-slate-900/90 p-2 text-slate-100"
-    >
-      <p className="text-[11px] font-medium text-fuchsia-300">Recruit Captains</p>
+    // UI R2: the Card primitive owns the chrome (accent tone = the captains identity; ex-fuchsia).
+    // Screen-embedded — rides ShipScreen's Screen stack (space-y-4), so the legacy map-corner
+    // absolute offset (bottom-2 left-[66.5rem]) is gone with the hand-rolled skin. Tokens only.
+    <Card tone="accent" data-testid="recruit-captain-panel">
+      <CardHeader title="Recruit Captains" />
       {recipes.length === 0 ? (
-        <p data-testid="recruit-recipes-none" className="mt-2 border-t border-slate-700/60 pt-2 text-[10px] text-slate-400">
+        <p data-testid="recruit-recipes-none" className="mt-2 border-t border-edge pt-2 text-[10px] text-ink-muted">
           No captain recipes available.
         </p>
       ) : (
-        <ul data-testid="recruit-recipes" className="mt-2 space-y-1 border-t border-slate-700/60 pt-2">
+        <ul data-testid="recruit-recipes" className="mt-2 space-y-1 border-t border-edge pt-2">
           {recipes.map((rec) => {
             const isPending = pending[rec.captain_type_id] ?? false
             const note = rowNote[rec.captain_type_id]
@@ -101,25 +100,26 @@ export function RecruitCaptainPanel({
             return (
               <li key={rec.captain_type_id} data-testid={`recruit-recipe-${rec.captain_type_id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-slate-200">{rec.name}</span>
-                  <span className="shrink-0 rounded bg-slate-800/80 px-1.5 py-0.5 text-[9px] text-slate-300">
+                  <span className="truncate text-ink">{rec.name}</span>
+                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[9px] text-ink-muted">
                     {rec.specialization}
                   </span>
                 </div>
-                <p className="text-slate-500">{cost || '—'}</p>
+                <p className="text-ink-faint">{cost || '—'}</p>
                 <div className="mt-1">
-                  <button
-                    type="button"
+                  <Button
+                    variant="primary"
+                    size="sm"
                     data-testid={`recruit-button-${rec.captain_type_id}`}
-                    disabled={isPending}
+                    busy={isPending}
+                    busyLabel="Recruiting…"
                     onClick={() => void recruit(rec)}
-                    className="rounded bg-fuchsia-600/90 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-fuchsia-500 disabled:opacity-50"
                   >
-                    {isPending ? 'Recruiting…' : 'Recruit'}
-                  </button>
+                    Recruit
+                  </Button>
                 </div>
                 {note && (
-                  <p data-testid={`recruit-note-${rec.captain_type_id}`} className="mt-0.5 text-[10px] text-fuchsia-200/90">
+                  <p data-testid={`recruit-note-${rec.captain_type_id}`} className="mt-0.5 text-[10px] text-accent">
                     {note}
                   </p>
                 )}
@@ -128,6 +128,6 @@ export function RecruitCaptainPanel({
           })}
         </ul>
       )}
-    </div>
+    </Card>
   )
 }

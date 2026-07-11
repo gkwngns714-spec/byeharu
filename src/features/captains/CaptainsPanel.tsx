@@ -6,6 +6,7 @@ import {
   type CaptainInstance,
   type GetMyCaptainInstancesResult,
 } from './captainsTypes'
+import { Button, Card, CardHeader } from '../../components/ui'
 
 // CAPTAIN-P15 (post-audit UI, panel 3 of 4) — the dark Captains surface: the player's captain roster
 // with a per-row Assign/Unassign action over their main ship. SERVER-DRIVEN visibility (no client flag
@@ -84,19 +85,17 @@ export function CaptainsPanel({
   const captains = roster.captains ?? []
 
   return (
-    <div
-      data-testid="captains-panel"
-      // Bottom-left row, continuing after ModulesPanel (left-[33.5rem]); Captains is non-spatial like
-      // Modules, so it coexists with every sibling without overlap (each w-64, ~0.5rem gaps).
-      className="pointer-events-auto absolute bottom-2 left-[50rem] z-10 w-64 rounded-lg border border-fuchsia-500/30 bg-slate-900/90 p-2 text-slate-100"
-    >
-      <p className="text-[11px] font-medium text-fuchsia-300">Captains</p>
+    // UI R2: the Card primitive owns the chrome (accent tone = the captains identity; ex-fuchsia).
+    // Screen-embedded — rides ShipScreen's Screen stack (space-y-4), so the legacy map-corner
+    // absolute offset (bottom-2 left-[50rem]) is gone with the hand-rolled skin. Tokens only.
+    <Card tone="accent" data-testid="captains-panel">
+      <CardHeader title="Captains" />
       {captains.length === 0 ? (
-        <p data-testid="captains-none" className="mt-2 border-t border-slate-700/60 pt-2 text-[10px] text-slate-400">
+        <p data-testid="captains-none" className="mt-2 border-t border-edge pt-2 text-[10px] text-ink-muted">
           No captains yet.
         </p>
       ) : (
-        <ul data-testid="captains-list" className="mt-2 space-y-1 border-t border-slate-700/60 pt-2">
+        <ul data-testid="captains-list" className="mt-2 space-y-1 border-t border-edge pt-2">
           {captains.map((c) => {
             const assigned = c.main_ship_id != null
             const isPending = pending[c.instance_id] ?? false
@@ -108,43 +107,46 @@ export function CaptainsPanel({
             return (
               <li key={c.instance_id} data-testid={`captain-row-${c.instance_id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-slate-200">{c.name}</span>
-                  <span className="shrink-0 rounded bg-slate-800/80 px-1.5 py-0.5 text-[9px] text-slate-300">
+                  <span className="truncate text-ink">{c.name}</span>
+                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[9px] text-ink-muted">
                     {c.specialization}
                   </span>
                 </div>
-                {stats && <p className="text-slate-500">{stats}</p>}
+                {stats && <p className="text-ink-faint">{stats}</p>}
                 <div className="mt-1 flex items-center justify-between gap-2">
                   {assigned ? (
-                    <button
-                      type="button"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       data-testid={`captain-unassign-${c.instance_id}`}
-                      disabled={isPending}
+                      busy={isPending}
+                      busyLabel="Unassigning…"
                       onClick={() => void unassign(c)}
-                      className="rounded bg-slate-700/90 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-slate-600 disabled:opacity-50"
                     >
-                      {isPending ? 'Unassigning…' : 'Unassign'}
-                    </button>
+                      Unassign
+                    </Button>
                   ) : (
-                    <button
-                      type="button"
+                    <Button
+                      variant="primary"
+                      size="sm"
                       data-testid={`captain-assign-${c.instance_id}`}
-                      disabled={!mainShipId || isPending}
+                      disabled={!mainShipId}
+                      busy={isPending}
+                      busyLabel="Assigning…"
                       onClick={() => void assign(c)}
-                      className="rounded bg-fuchsia-600/90 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-fuchsia-500 disabled:opacity-50"
                     >
-                      {isPending ? 'Assigning…' : 'Assign to ship'}
-                    </button>
+                      Assign to ship
+                    </Button>
                   )}
                   <span
                     data-testid={`captain-state-${c.instance_id}`}
-                    className={`shrink-0 text-[9px] ${assigned ? 'text-emerald-300' : 'text-slate-400'}`}
+                    className={`shrink-0 text-[9px] ${assigned ? 'text-success' : 'text-ink-muted'}`}
                   >
                     {assigned ? 'Assigned' : 'Unassigned'}
                   </span>
                 </div>
                 {note && (
-                  <p data-testid={`captain-note-${c.instance_id}`} className="mt-0.5 text-[10px] text-fuchsia-200/90">
+                  <p data-testid={`captain-note-${c.instance_id}`} className="mt-0.5 text-[10px] text-accent">
                     {note}
                   </p>
                 )}
@@ -153,6 +155,6 @@ export function CaptainsPanel({
           })}
         </ul>
       )}
-    </div>
+    </Card>
   )
 }

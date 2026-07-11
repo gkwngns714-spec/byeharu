@@ -60,7 +60,9 @@ export function DockedPortCard({ dock }: { dock: DockServices }) {
       {/* 3 · DETAILS — only the ACTIVE services the server reported, in plain language */}
       <SectionLabel className="mt-4">Port services</SectionLabel>
       {dock.services.length > 0 ? (
-        <dl data-testid="dock-services-list" className="mt-2 space-y-1.5 text-sm">
+        // R3 density: two service columns once the card is wide enough (the wide ops split hands
+        // this card the full or 2/3 row); same rows, same testids.
+        <dl data-testid="dock-services-list" className="mt-2 grid gap-y-1.5 text-sm sm:grid-cols-2 sm:gap-x-8">
           {dock.services.map((s) => (
             <StatRow
               key={s}

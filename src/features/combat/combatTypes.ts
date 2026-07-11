@@ -32,7 +32,15 @@ export interface CombatEncounter {
 export interface CombatUnit {
   id: string
   encounter_id: string
-  unit_type_id: string
+  // Slice D1 (migration 0167) widened combat_units to EXACTLY-ONE identity: a legacy catalog unit
+  // (unit_type_id) XOR a team-member main ship (main_ship_id, with frozen attack/defense snapshots).
+  // Member rows are DATA-DARK today — their only writer is flag-gated (team_command_enabled=false),
+  // so every row a prod client can fetch still carries a non-null unit_type_id. Consumers must be
+  // null-safe anyway (RoundLog/ActiveCombatPanel fall back to a ship label).
+  unit_type_id: string | null
+  main_ship_id?: string | null
+  attack_snapshot?: number | null
+  defense_snapshot?: number | null
   ship_hp: number
   initial_count: number
   alive_count: number

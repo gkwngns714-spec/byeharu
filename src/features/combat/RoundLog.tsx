@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { UnitType } from '../../lib/catalog'
 import { formatShortTime } from '../../lib/time'
 import type { CombatTick } from './combatTypes'
+import { combatUnitLabel } from './combatLabels'
 
 // M6: player-facing round-by-round log. Built ONLY from real combat_ticks fields
 // (player_damage, enemy_damage, wave_number, player_losses_json, reward_delta_json,
@@ -16,7 +17,10 @@ export function RoundLog({
   unitTypes: UnitType[]
   limit?: number
 }) {
-  const typeName = (id: string) => unitTypes.find((t) => t.id === id)?.name ?? id
+  // Slice D4: player_losses_json keys are coalesce(unit_type_id, main_ship_id::text) since D1 —
+  // resolved by the ONE combatUnitLabel helper (catalog name first, uuid-shaped member key → "Team
+  // ship" label). Data-dark today (member rows have no prod writer) → legacy output byte-identical.
+  const typeName = (id: string) => combatUnitLabel(id, unitTypes)
   const lossText = (j: Record<string, number>) =>
     Object.entries(j ?? {})
       .filter(([, v]) => v > 0)
@@ -39,7 +43,8 @@ export function RoundLog({
           line = (
             <span>
               <span className="text-success">Wave {t.wave_number} cleared.</span> You dealt{' '}
-              {Math.round(t.player_damage)} damage
+              {/* UI R4: damage numerals in mono (ops telemetry) — rendered text unchanged. */}
+              <span className="font-mono tabular-nums">{Math.round(t.player_damage)}</span> damage
               {metal > 0 && <span className="text-warning/90"> · +{metal} metal pending</span>}
               {losses && <> · lost {losses}</>}
             </span>
@@ -52,8 +57,8 @@ export function RoundLog({
           // 'ongoing'
           line = (
             <span>
-              Wave {t.wave_number}: you dealt <span className="text-accent">{Math.round(t.player_damage)}</span>,
-              pirates dealt <span className="text-danger">{Math.round(t.enemy_damage)}</span>
+              Wave {t.wave_number}: you dealt <span className="font-mono tabular-nums text-accent">{Math.round(t.player_damage)}</span>,
+              pirates dealt <span className="font-mono tabular-nums text-danger">{Math.round(t.enemy_damage)}</span>
               {losses ? <> · lost {losses}</> : ' · no ships lost'}
             </span>
           )

@@ -4,6 +4,7 @@ import { CombatEventLayer } from './CombatEventLayer'
 import { RoundLog } from './RoundLog'
 import { requestRetreat } from './combatApi'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
+import { combatUnitLabel } from './combatLabels'
 import { Card, Button, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
 
 // Display-only combat panel. All values are server-authoritative; the only action
@@ -37,7 +38,10 @@ export function ActiveCombatPanel({
   }, [])
 
   const retreating = encounter.status === 'retreating'
-  const typeName = (id: string) => unitTypes.find((t) => t.id === id)?.name ?? id
+  // Slice D4: tick jsonb keys are coalesce(unit_type_id, main_ship_id::text) since D1 — resolved by
+  // the ONE combatUnitLabel helper (catalog name first, uuid-shaped member key → "Team ship" label).
+  // Data-dark: member rows/keys can't exist in prod today, so legacy rendering is byte-identical.
+  const typeName = (id: string) => combatUnitLabel(id, unitTypes)
   const rewards = Object.entries(encounter.total_rewards_json ?? {})
 
   const playerPct = encounter.player_integrity_max > 0
@@ -74,14 +78,16 @@ export function ActiveCombatPanel({
   }
 
   return (
-    <Card tone="danger">
+    // UI R4: the existing bh-fade-in entrance when a battle takes the screen (one-shot, no loop);
+    // wave/danger/cleared counters read as mono ops telemetry. Strings/logic untouched.
+    <Card tone="danger" className="bh-fade-in">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-danger">⚔️ Combat — {locationName}</h2>
           <p className="text-sm text-ink-muted">
-            Wave <span className="text-ink">{encounter.wave_number}</span> · Danger{' '}
-            <span className="text-ink">{encounter.danger_level}</span> ·{' '}
-            <span className="text-ink">{encounter.waves_cleared}</span> waves cleared ·{' '}
+            Wave <span className="font-mono tabular-nums text-ink">{encounter.wave_number}</span> · Danger{' '}
+            <span className="font-mono tabular-nums text-ink">{encounter.danger_level}</span> ·{' '}
+            <span className="font-mono tabular-nums text-ink">{encounter.waves_cleared}</span> waves cleared ·{' '}
             <span className="text-ink">
               {retreating ? 'Retreating' : waveCleared ? 'Next wave incoming' : 'In combat'}
             </span>
@@ -133,13 +139,16 @@ export function ActiveCombatPanel({
         <SectionLabel>Fleet units</SectionLabel>
         <div className="space-y-2">
           {units.length === 0 && <p className="text-sm text-ink-faint">no units</p>}
-          {units.slice().sort((a, b) => a.unit_type_id.localeCompare(b.unit_type_id)).map((u) => {
+          {/* Slice D4 null-safety: a unit is keyed by coalesce(unit_type_id, main_ship_id) since D1 —
+              sort + label on that coalesced key so a member row (null unit_type_id, dark today) can
+              never crash the panel; legacy rows sort/label byte-identically. */}
+          {units.slice().sort((a, b) => unitKey(a).localeCompare(unitKey(b))).map((u) => {
             const pct = u.hp_max > 0 ? (u.hp_current / u.hp_max) * 100 : 0
             const lost = u.initial_count - u.alive_count
             return (
               <Bar
                 key={u.id}
-                label={`${typeName(u.unit_type_id)} — ${u.alive_count}/${u.initial_count} ships${lost > 0 ? ` (${lost} lost)` : ''}`}
+                label={`${typeName(unitKey(u))} — ${u.alive_count}/${u.initial_count} ships${lost > 0 ? ` (${lost} lost)` : ''}`}
                 pct={pct}
                 text={`${pct.toFixed(0)}% · ${Math.round(u.hp_current)}/${Math.round(u.hp_max)} HP`}
                 tone={u.alive_count === 0 ? 'neutral' : 'success'}
@@ -156,12 +165,12 @@ export function ActiveCombatPanel({
           {retreating ? (
             <>
               <p className="text-warning/90">Your fleet is retreating — weapons disengaged.</p>
-              <p className="text-ink-muted">Pirates dealt <span className="text-danger">{Math.round(latest.enemy_damage)}</span> damage during disengagement.</p>
+              <p className="text-ink-muted">Pirates dealt <span className="font-mono tabular-nums text-danger">{Math.round(latest.enemy_damage)}</span> damage during disengagement.</p>
             </>
           ) : (
             <>
-              <p className="text-ink-muted">You dealt <span className="text-accent">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
-              <p className="text-ink-muted">Pirates dealt <span className="text-danger">{Math.round(latest.enemy_damage)}</span> damage.</p>
+              <p className="text-ink-muted">You dealt <span className="font-mono tabular-nums text-accent">{Math.round(latest.player_damage)}</span> damage to the wave.</p>
+              <p className="text-ink-muted">Pirates dealt <span className="font-mono tabular-nums text-danger">{Math.round(latest.enemy_damage)}</span> damage.</p>
             </>
           )}
           <p className="text-ink-faint">{lossText(latest.player_losses_json)}</p>
@@ -174,7 +183,7 @@ export function ActiveCombatPanel({
         </SectionLabel>
         <p className="text-sm">
           {rewards.length === 0 ? <span className="text-ink-faint">none yet</span>
-            : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-ink-muted">{code}: {amt}</span>)}
+            : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-ink-muted">{code}: <span className="font-mono tabular-nums">{amt}</span></span>)}
         </p>
         <p className="mt-1 text-[11px] text-ink-faint">
           {retreating
@@ -194,6 +203,10 @@ export function ActiveCombatPanel({
     </Card>
   )
 }
+
+// Slice D4: the client-side twin of the server's coalesce(unit_type_id, main_ship_id) unit key —
+// non-empty for every legal row (the D1 CHECK guarantees exactly one identity is set).
+const unitKey = (u: CombatUnit) => u.unit_type_id ?? u.main_ship_id ?? ''
 
 function Bar({ label, pct, text, tone }: { label: string; pct: number; text: string; tone: MeterTone }) {
   return (

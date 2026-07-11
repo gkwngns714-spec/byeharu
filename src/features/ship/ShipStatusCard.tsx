@@ -8,7 +8,7 @@ import {
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MapLocation } from '../map/mapTypes'
 import { formatCountdown } from '../../lib/time'
-import { Badge, Button, Card, CardHeader, Meter, Notice, SectionLabel, StatRow, type BadgeTone } from '../../components/ui'
+import { Badge, Button, Card, CardHeader, Meter, Notice, SectionLabel, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 
 // UI-REBUILD (2b, Ship interior) — THE one ship-status surface. Merges the two former panels
 // (MainShipPreview: card + repair + the only recall · MainShipPanel: derived status + destination
@@ -71,10 +71,14 @@ export function ShipStatusCard({
   }
 
   // Shared-state loading (the shell polls; first paint may briefly have no ship view yet).
+  // R3: card-shaped Skeleton rows instead of bare pulsing text (same state, design-system placeholder).
   if (!mainShip) {
     return (
-      <Card tone="accent" data-testid="ship-status-card">
-        <p className="animate-pulse text-sm text-ink-muted">Checking on your ship…</p>
+      <Card tone="accent" data-testid="ship-status-card" aria-busy="true">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="mt-3 h-2 w-full" />
+        <Skeleton className="mt-4 h-20 w-full rounded-lg" />
+        <span className="sr-only">Checking on your ship…</span>
       </Card>
     )
   }
@@ -87,7 +91,8 @@ export function ShipStatusCard({
         {hull && (
           <>
             <SectionLabel className="mt-3">Your starter ship will be</SectionLabel>
-            <dl className="mt-2 space-y-1.5 text-sm">
+            {/* R3 density: two stat columns once the card is wide enough (wide ops split). */}
+            <dl className="mt-2 grid gap-y-1.5 text-sm sm:grid-cols-2 sm:gap-x-8">
               <StatRow label="Hull" value={hull.name} />
               <StatRow label="Toughness" value={hull.base_hp} />
               <StatRow label="Speed" value={hull.base_speed} />
@@ -205,9 +210,10 @@ export function ShipStatusCard({
         )}
       </div>
 
-      {/* 3 · DETAILS — cargo + fittings, plain language */}
+      {/* 3 · DETAILS — cargo + fittings, plain language. R3 density: two stat columns once the
+          card is wide enough (the wide ops split hands this card the full or 2/3 row). */}
       <SectionLabel className="mt-4">Cargo & fittings</SectionLabel>
-      <dl className="mt-2 space-y-1.5 text-sm">
+      <dl className="mt-2 grid gap-y-1.5 text-sm sm:grid-cols-2 sm:gap-x-8">
         <StatRow label="Cargo hold" value={ship.cargo_capacity} />
         <StatRow label="Speed" value={hull?.base_speed ?? '—'} />
         <StatRow label="Captain seats" value={ship.captain_slots} />

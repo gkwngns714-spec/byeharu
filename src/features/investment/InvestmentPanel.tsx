@@ -13,6 +13,7 @@ import {
   type GetLocationInvestmentLeaderboardResult,
   type GetMyLocationInvestmentsResult,
 } from './investmentTypes'
+import { Button, Card, CardHeader } from '../../components/ui'
 
 // LOCATION-INVEST-P18 (post-audit UI, panel 2 of 4) — the dark Port Investment surface: the docked
 // port's persistent development + seasonal score board + the caller's own history, and ONE Invest
@@ -107,24 +108,22 @@ export function InvestmentPanel({
   const windowRange = `${new Date(development.window_start).toLocaleDateString()} – ${new Date(development.window_end).toLocaleDateString()}`
 
   return (
-    <div
-      data-testid="investment-panel"
-      // Bottom-left overlay. Investment shows ONLY when docked (at_location); the bottom-left in-space
-      // overlays (Exploration/Mining) require in_space and are null while docked, so they never coexist.
-      className="pointer-events-auto absolute bottom-2 left-2 z-10 w-72 rounded-lg border border-cyan-500/30 bg-slate-900/90 p-2 text-slate-100"
-    >
-      <p className="text-[11px] font-medium text-cyan-300">Port Investment</p>
+    // UI R2: the Card primitive owns the chrome (accent tone = the investment identity; ex-cyan).
+    // Screen-embedded — rides PortScreen's Screen stack (space-y-4), so the legacy map-corner
+    // absolute offset (bottom-2 left-2) is gone with the hand-rolled skin. Tokens only.
+    <Card tone="accent" data-testid="investment-panel">
+      <CardHeader title="Port Investment" />
 
       {/* Persistent development (all-time) vs seasonal score (current window). */}
       <div data-testid="investment-development" className="mt-1 grid grid-cols-2 gap-1 text-[10px]">
-        <span className="text-slate-400">Development (all-time)</span>
-        <span className="text-right tabular-nums text-slate-100">{development.all_time_total}</span>
-        <span className="text-slate-400">Contributors</span>
-        <span className="text-right tabular-nums text-slate-100">{development.contributor_count}</span>
-        <span className="text-slate-400">Season score</span>
-        <span className="text-right tabular-nums text-cyan-200">{development.season_total}</span>
+        <span className="text-ink-muted">Development (all-time)</span>
+        <span className="text-right font-mono tabular-nums text-ink">{development.all_time_total}</span>
+        <span className="text-ink-muted">Contributors</span>
+        <span className="text-right font-mono tabular-nums text-ink">{development.contributor_count}</span>
+        <span className="text-ink-muted">Season score</span>
+        <span className="text-right font-mono tabular-nums text-accent">{development.season_total}</span>
       </div>
-      <p data-testid="investment-window" className="mt-1 text-[9px] text-slate-500">
+      <p data-testid="investment-window" className="mt-1 text-[9px] text-ink-faint">
         Season window #{development.window_index}: {windowRange}
       </p>
 
@@ -138,28 +137,31 @@ export function InvestmentPanel({
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           placeholder="Amount"
-          className="min-w-0 flex-1 rounded border border-white/10 bg-slate-800 px-2 py-1 text-xs text-slate-200"
+          className="min-w-0 flex-1 rounded border border-edge bg-surface-2 px-2 py-1 text-xs font-mono tabular-nums text-ink"
         />
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           data-testid="investment-invest-button"
-          disabled={!mainShipId || investPending}
+          disabled={!mainShipId}
+          busy={investPending}
+          busyLabel="Investing…"
           onClick={() => void invest()}
-          className="shrink-0 rounded bg-cyan-600/90 px-3 py-1 text-xs font-medium text-white hover:bg-cyan-500 disabled:opacity-50"
+          className="shrink-0"
         >
-          {investPending ? 'Investing…' : 'Invest'}
-        </button>
+          Invest
+        </Button>
       </div>
       {investNote && (
-        <p data-testid="investment-invest-note" className="mt-1 text-[10px] text-cyan-200/90">
+        <p data-testid="investment-invest-note" className="mt-1 text-[10px] text-accent">
           {investNote}
         </p>
       )}
 
       {/* Seasonal leaderboard, own row highlighted (client-side match on the auth uid). */}
-      <ul data-testid="investment-leaderboard" className="mt-2 space-y-1 border-t border-slate-700/60 pt-2">
+      <ul data-testid="investment-leaderboard" className="mt-2 space-y-1 border-t border-edge pt-2">
         {rows.length === 0 ? (
-          <li className="text-[10px] text-slate-400">No investors this season yet.</li>
+          <li className="text-[10px] text-ink-muted">No investors this season yet.</li>
         ) : (
           rows.map((r) => {
             const isSelf = userId != null && r.player_id === userId
@@ -168,15 +170,15 @@ export function InvestmentPanel({
                 key={r.player_id}
                 data-testid={`investment-row-${r.player_id}`}
                 className={`flex items-center justify-between gap-2 rounded px-1.5 py-0.5 text-[10px] ${
-                  isSelf ? 'bg-cyan-500/20 text-cyan-100' : 'text-slate-200'
+                  isSelf ? 'bg-accent/15 text-ink' : 'text-ink'
                 }`}
               >
-                <span className="w-6 shrink-0 tabular-nums text-slate-400">#{r.rank}</span>
+                <span className="w-6 shrink-0 font-mono tabular-nums text-ink-muted">#{r.rank}</span>
                 <span className="min-w-0 flex-1 truncate font-mono">
                   {shortId(r.player_id)}
-                  {isSelf && <span className="ml-1 text-cyan-300">(you)</span>}
+                  {isSelf && <span className="ml-1 text-accent">(you)</span>}
                 </span>
-                <span className="shrink-0 tabular-nums">{r.season_score}</span>
+                <span className="shrink-0 font-mono tabular-nums">{r.season_score}</span>
               </li>
             )
           })
@@ -187,11 +189,11 @@ export function InvestmentPanel({
           player's rank/score, or note "unranked" when outside the returned top-N. */}
       {userId != null && rows.length > 0 && (
         ownRow ? (
-          <p data-testid="investment-own-standing" className="mt-1 text-[10px] text-cyan-300">
+          <p data-testid="investment-own-standing" className="mt-1 text-[10px] text-accent">
             Your standing: #{ownRow.rank} · {ownRow.season_score} this season
           </p>
         ) : (
-          <p data-testid="investment-own-standing-unranked" className="mt-1 text-[10px] text-slate-400">
+          <p data-testid="investment-own-standing-unranked" className="mt-1 text-[10px] text-ink-muted">
             Unranked — outside the top {rows.length}.
           </p>
         )
@@ -199,17 +201,17 @@ export function InvestmentPanel({
 
       {/* The caller's own contribution history (from get_my_location_investments). */}
       {myRows.length > 0 && (
-        <ul data-testid="investment-history" className="mt-2 space-y-0.5 border-t border-slate-700/60 pt-2">
+        <ul data-testid="investment-history" className="mt-2 space-y-0.5 border-t border-edge pt-2">
           {myRows.map((m) => (
-            <li key={m.investment_id} data-testid={`investment-history-${m.investment_id}`} className="flex items-center justify-between gap-2 text-[10px] text-slate-400">
+            <li key={m.investment_id} data-testid={`investment-history-${m.investment_id}`} className="flex items-center justify-between gap-2 text-[10px] text-ink-muted">
               <span className="min-w-0 truncate">{m.location_name}</span>
-              <span className="shrink-0 tabular-nums text-slate-300">
+              <span className="shrink-0 font-mono tabular-nums text-ink">
                 {m.amount} · {new Date(m.invested_at).toLocaleDateString()}
               </span>
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </Card>
   )
 }

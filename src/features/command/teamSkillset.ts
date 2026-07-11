@@ -67,11 +67,14 @@ export const ADDITIVE_STAT_KEYS = [
 
 export type AdditiveStatKey = (typeof ADDITIVE_STAT_KEYS)[number]
 
-// Structural member shape from the RPC's members[] (only what aggregation needs).
+// Structural member shape from the RPC's members[] (only what aggregation needs). `error` is the
+// per-member failure detail migration 0165 emits alongside valid:false (a member's validation
+// raise, e.g. over-capacity) — display-only; aggregation only reads `valid`.
 export interface PreviewMember {
   main_ship_id: string
   valid: boolean
   stats?: MemberStats
+  error?: string
 }
 
 export interface TeamStatTotals {

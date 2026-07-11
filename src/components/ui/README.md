@@ -32,11 +32,17 @@ body `text-sm` · metadata `text-xs` · micro-labels via `<SectionLabel>`.
 - **`Meter`** — progress/integrity bar, tonal fill.
 - **`Notice`** — inline tinted callout (errors, warnings, confirmations). Spreads `data-testid`.
 - **`SectionLabel`** — uppercase mono micro group heading inside panels (the ops-console label).
-- **`PageHeader`** — screen title + actions row; no own bottom margin (the `Screen` stack's
-  `space-y-4` owns the rhythm).
+- **`PageHeader`** — optional mono `eyebrow` micro-label (the ops-console screen designator) +
+  screen title + actions row; no own bottom margin (the `Screen` stack's `space-y-4` owns the
+  rhythm).
 - **`Screen`** — the page scaffold every destination mounts (scroll owner + centered column +
-  `space-y-4` stack). `wide` switches `max-w-3xl` → `max-w-6xl` for future desktop two-column
+  `space-y-4` stack). `wide` switches `max-w-3xl` → `max-w-6xl` for the desktop two-column
   layouts. Screens never hand-copy this frame.
+- **`screenSplitClass` / `screenRailClass`** (UI R3, `screenLayout.ts`) — the ONE desktop ops
+  split: single column on mobile, `main` (2fr) + `aside` (1fr) flex rails at `lg`. Rails carry
+  `empty:hidden`, so a rail whose children are ALL dark-gated (render null) disappears and its
+  sibling takes the full row — no production hole. Rules: rails hold ONLY element children, and a
+  screen-owned `SectionLabel` may head a rail child only when it is statically known to render.
 - **`EmptyState`** — Card-based "nothing here" surface: icon slot + title + optional body/action.
 - **`Skeleton`** — pulsing tokenized loading block; size via className.
 - **`OverlayPanel` / `OverlayRail`** — the map-overlay chrome + per-corner slot layout (UI R1).

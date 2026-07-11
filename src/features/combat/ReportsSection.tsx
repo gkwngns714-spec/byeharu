@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Badge, Button, Card, CardHeader, Notice, StatRow } from '../../components/ui'
+import { Badge, Button, Card, CardHeader, Notice, Skeleton, StatRow } from '../../components/ui'
 import type { UnitType } from '../../lib/catalog'
 import type { MapLocation } from '../map/mapTypes'
 import { formatDateTime, formatDuration } from '../../lib/time'
 import { fetchTicksForEncounter } from './combatApi'
 import { RoundLog } from './RoundLog'
 import type { CombatReport, CombatTick } from './combatTypes'
+import { combatUnitLabel } from './combatLabels'
 
 // UI-REBUILD (2b) — the ONE combat-reports surface, mounted in the Command destination. Merges the
 // old /reports page (CombatReportPage) and the inline dashboard list (CombatReportsView): the M6
@@ -45,7 +46,10 @@ export function ReportsSection({
     }
   }
 
-  const typeName = (id: string) => unitTypes.find((t) => t.id === id)?.name ?? id
+  // Slice D4: survivors/losses jsonb keys are coalesce(unit_type_id, main_ship_id::text) since D1 —
+  // the ONE combatUnitLabel helper resolves catalog names first and renders uuid-shaped member keys
+  // as a "Team ship" label. Data-dark today → legacy report rendering byte-identical.
+  const typeName = (id: string) => combatUnitLabel(id, unitTypes)
   const ships = (obj: Record<string, number>) => {
     const e = Object.entries(obj ?? {}).filter(([, v]) => v > 0)
     return e.length ? e.map(([k, v]) => `${v} ${typeName(k)}`).join(', ') : 'none'
@@ -107,7 +111,12 @@ export function ReportsSection({
                   {open && (
                     <div className="mt-2 rounded-lg border border-edge bg-surface-2 p-3">
                       {ticksLoading ? (
-                        <p className="text-ink-muted">Loading rounds…</p>
+                        // R3: design-system placeholder instead of bare loading text (same state).
+                        <div aria-busy="true">
+                          <Skeleton className="h-4 w-2/3" />
+                          <Skeleton className="mt-2 h-4 w-1/2" />
+                          <span className="sr-only">Loading rounds…</span>
+                        </div>
                       ) : (
                         <RoundLog ticks={ticks} unitTypes={unitTypes} limit={100} />
                       )}
