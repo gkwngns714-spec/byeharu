@@ -9,12 +9,19 @@ import {
   deleteShipGroup,
   sendShipGroup,
   stopShipGroup,
+  type ShipGroupMapEntry,
   type TeamRpcResult,
 } from './teamApi'
 import { buildTeamRoster, nextTeamSlot, type GroupRow, type RosterShip } from './teamRoster'
 import { groupUpsertAvailability } from './teamMutations'
 import { sendableDestinations, groupSendAvailability } from './teamSend'
 import { groupStopAvailability } from './teamStop'
+import { captainsByShip } from './teamCaptains'
+import { TeamMemberCaptains } from './TeamMemberCaptains'
+import { TeamPreviewSection } from './TeamPreviewSection'
+import { getMyCaptainInstances } from '../captains/captainsApi'
+import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
+import { isServerLit } from '../../lib/useActivityPanelGuards'
 
 // TEAM-COMMAND Slice B1 — INTERACTIVE team roster (backend "group" == UI "team").
 //
@@ -27,11 +34,21 @@ import { groupStopAvailability } from './teamStop'
 // metadata + membership (which the shell selection doesn't carry) are fetched here. NO optimistic UI: every
 // mutation awaits the server then refetches BOTH group reads, so the view can never diverge from server truth
 // (a deleted team's ships reappear as ungrouped via ON DELETE SET NULL).
+//
+// Slice C1 adds two dark sub-surfaces (both inherit this panel's compile-time mount gate):
+//   • per-member captains (TeamMemberCaptains) — rendered ONLY when isServerLit(get_my_captain_instances),
+//     so while captain_assignment_enabled is false the server's captain_assignment_disabled envelope keeps
+//     the roster byte-identical to today (the CaptainsPanel fail-closed posture; the client is never the
+//     control). Captain mutations await-then-refetch the captain roster — no optimistic UI.
+//   • per-team expedition preview (TeamPreviewSection) — display-only estimate over C0's preview RPC; a
+//     rosterVersion stamp invalidates any cached preview whenever the panel reloads (membership ⇒ stale).
 
 export function TeamRosterPanel() {
   const { selection, game } = useShellState()
   const [groups, setGroups] = useState<GroupRow[]>([])
-  const [groupMap, setGroupMap] = useState<Record<string, string | null>>({})
+  const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
+  const [captainRoster, setCaptainRoster] = useState<GetMyCaptainInstancesResult | null>(null)
+  const [rosterVersion, setRosterVersion] = useState(0) // bumped per reload — stales cached previews
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null) // key of the mutation in flight (blocks double-submit)
   // last action outcome: a warning (failed) or a success summary (send/stop aggregate). Dark ⇒ rare.
@@ -41,25 +58,39 @@ export function TeamRosterPanel() {
   const [destChoice, setDestChoice] = useState<Record<string, string>>({}) // per-team send destination id
 
   const reload = useCallback(async () => {
-    const [g, m] = await Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap()])
+    const [g, m, cr] = await Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances()])
     setGroups(g)
     setGroupMap(m)
+    setCaptainRoster(cr)
+    setRosterVersion((v) => v + 1) // membership may have changed — any cached preview is stale
     setLoading(false)
   }, [])
 
   // Initial load: inline .then so setState lands in an async callback, not synchronously in the effect body
-  // (react-hooks/set-state-in-effect). reload() reuses the same two fetches after every mutation.
+  // (react-hooks/set-state-in-effect). reload() reuses the same three fetches after every mutation.
   useEffect(() => {
     let active = true
-    void Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap()]).then(([g, m]) => {
+    void Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances()]).then(([g, m, cr]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
+      setCaptainRoster(cr)
       setLoading(false)
     })
     return () => {
       active = false
     }
+  }, [])
+
+  // Captain-roster-only refetch, used by TeamMemberCaptains after a completed assign/unassign
+  // (await-then-refetch, never optimistic). Group membership can't change on a captain command, so
+  // the group reads are not re-run here — but the preview IS staled: calculate_expedition_stats
+  // folds captain skills (0122), so an assign/unassign changes member stats and any shown preview
+  // is pre-mutation. Bumping rosterVersion hides it the same way a membership change does.
+  const refreshCaptains = useCallback(async () => {
+    const cr = await getMyCaptainInstances()
+    setCaptainRoster(cr)
+    setRosterVersion((v) => v + 1)
   }, [])
 
   // Run a mutation: block re-entry, clear stale notice, await the server, surface any reject, THEN refetch
@@ -87,11 +118,16 @@ export function TeamRosterPanel() {
     main_ship_id: s.main_ship_id,
     name: s.name,
     status: s.status,
-    group_id: groupMap[s.main_ship_id] ?? null,
+    group_id: groupMap[s.main_ship_id]?.group_id ?? null,
   }))
   const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
   const openSlot = nextTeamSlot(groups)
   const destinations = sendableDestinations(game.locations) // active, non-combat targets (server re-validates)
+
+  // FAIL CLOSED (Slice C1): the captain sub-surface exists ONLY when the server affirmatively lit
+  // get_my_captain_instances — captain_assignment_disabled (and any transport error) → null → the
+  // roster renders byte-identical to today. The split preserves roster order per bucket.
+  const captainSplit = isServerLit(captainRoster) ? captainsByShip(captainRoster.captains ?? []) : null
 
   const shipRow = (s: RosterShip) => {
     const selected = s.main_ship_id === selection.selectedShipId
@@ -137,6 +173,19 @@ export function TeamRosterPanel() {
             </Button>
           )}
         </div>
+        {/* Slice C1 — per-member captains, ONLY while the captain feature is server-lit (grouped AND
+            ungrouped rows). Slot count is the SERVER-reported captain_slots (owner-RLS read) — never
+            a hardcoded 2/6; null skips the client precheck and lets the server answer. */}
+        {captainSplit && (
+          <TeamMemberCaptains
+            mainShipId={s.main_ship_id}
+            shipStatus={s.status}
+            assigned={captainSplit.byShip.get(s.main_ship_id) ?? []}
+            unassigned={captainSplit.unassigned}
+            captainSlots={groupMap[s.main_ship_id]?.captain_slots ?? null}
+            refresh={refreshCaptains}
+          />
+        )}
       </div>
     )
   }
@@ -295,6 +344,16 @@ export function TeamRosterPanel() {
                     Stop
                   </Button>
                 </div>
+
+                {/* Slice C1 — per-team expedition preview (display-only estimate; Slice D owns truth).
+                    rosterVersion invalidates a cached preview on every reload (membership ⇒ stale). */}
+                <TeamPreviewSection
+                  groupId={group.group_id}
+                  groupIndex={group.group_index}
+                  memberCount={ships.length}
+                  ships={ships}
+                  rosterVersion={rosterVersion}
+                />
               </div>
             )
           })}

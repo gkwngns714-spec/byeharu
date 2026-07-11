@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import type { GroupRow } from './teamRoster'
+import type { PreviewMember } from './teamSkillset'
 
 // TEAM-COMMAND Slice A — owner-scoped reads for team/group data (DARK).
 //
@@ -20,14 +21,24 @@ export async function fetchMyShipGroups(): Promise<GroupRow[]> {
   return data as GroupRow[]
 }
 
-// Membership map: main_ship_id → group_id (null = ungrouped). Owner-read; merged onto the shell's ship list
-// (which does not carry group_id) so the shell stays the single selection source.
-export async function fetchMyShipGroupMap(): Promise<Record<string, string | null>> {
-  const { data, error } = await supabase.from('main_ship_instances').select('main_ship_id, group_id')
+// Per-ship membership + capacity read: main_ship_id → { group_id, captain_slots }. Owner-read; merged onto
+// the shell's ship list (which carries neither) so the shell stays the single selection source. Slice C1
+// widened the SELECT with `captain_slots` (an existing owner-RLS column — the mainshipApi SHIP_COLS read
+// already selects it; zero server change) so the captain sub-surface can feed captainAssignAvailability a
+// SERVER-reported slot count instead of a hardcoded 2/6.
+export interface ShipGroupMapEntry {
+  group_id: string | null // null = ungrouped
+  captain_slots: number | null // null = unexpectedly absent → callers skip the client slot precheck
+}
+
+export async function fetchMyShipGroupMap(): Promise<Record<string, ShipGroupMapEntry>> {
+  const { data, error } = await supabase
+    .from('main_ship_instances')
+    .select('main_ship_id, group_id, captain_slots')
   if (error || !data) return {}
-  const map: Record<string, string | null> = {}
-  for (const r of data as { main_ship_id: string; group_id: string | null }[]) {
-    map[r.main_ship_id] = r.group_id ?? null
+  const map: Record<string, ShipGroupMapEntry> = {}
+  for (const r of data as { main_ship_id: string; group_id: string | null; captain_slots: number | null }[]) {
+    map[r.main_ship_id] = { group_id: r.group_id ?? null, captain_slots: r.captain_slots ?? null }
   }
   return map
 }
@@ -88,4 +99,30 @@ export async function stopShipGroup(groupId: string): Promise<TeamRpcResult> {
   const { data, error } = await supabase.rpc('stop_ship_group_transit', { p_group_id: groupId })
   if (error) return { ok: false, reason: 'unavailable' }
   return data as TeamRpcResult
+}
+
+// ── Slice C1 — the ONE group-preview READ wrapper over C0's dark RPC (0165). ──
+// Read-only; the captain assign/unassign commands are NOT wrapped here — captainsApi.ts owns them
+// (one captain API, one envelope, one error map).
+
+// get_my_group_expedition_preview's envelope (0165): lit → the group id + activity echoed back with
+// per-member results (each member delegated to the ONE stat adapter; a member's validation raise
+// arrives as { valid:false, error }); dark → { ok:false, reason:'team_command_disabled' } (and the
+// rest of the 0165 reject vocab). PreviewMember is the teamSkillset.ts structural shape.
+export type GroupPreviewResult =
+  | { ok: true; group_id: string; activity_type: string; member_count: number; members: PreviewMember[] }
+  | { ok: false; reason: string }
+
+// get_my_group_expedition_preview (0165) — DARK, read-only per-member stats preview for a team.
+// Normalize-don't-throw (the file's dark-RPC style): transport error → { ok:false, reason:'unavailable' }.
+export async function fetchGroupExpeditionPreview(
+  groupId: string,
+  activityType: string,
+): Promise<GroupPreviewResult> {
+  const { data, error } = await supabase.rpc('get_my_group_expedition_preview', {
+    p_group_id: groupId,
+    p_activity_type: activityType,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as GroupPreviewResult
 }

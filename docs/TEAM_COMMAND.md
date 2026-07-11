@@ -41,8 +41,9 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
 - Slice C — captains (wire the dark CAPTAIN-P15/P16 system into teams). Broken into sub-slices:
   - **C0 — DARK read-only group expedition preview (`get_my_group_expedition_preview`, delegates per member
     to `calculate_expedition_stats`). RPC-only, zero data change — the captain-slot 2 → 6 bump (hull +
-    instance) is deferred to activation. Done (migration 0165). ← this slice.**
-  - C1 — captain UI in the team roster (assignment surface per member ship, dark). *Not started.*
+    instance) is deferred to activation. Done (migration 0165).**
+  - **C1 — captain UI in the team roster (assignment surface per member ship + expedition-preview UI,
+    dark, frontend-only, no migration). Done. ← this slice.**
   - C2 — captain progression wiring / lit-time polish (and any 6 → 8 slot raise). *Not started.*
 - Slice D — team combat (largest; main-ship combat was never built — resolve a team into the existing combat
   engine per the law; defines the AUTHORITATIVE server-side team stats beside the combat consumer). *Not
@@ -225,6 +226,44 @@ captain sub-slice, fully DARK (no flag flipped, no activation) and **RPC-ONLY (z
   with captains provisioned **only via the sole writers** (`captains_mint_instance` /
   `captain_assign_apply`; the selftest greps that no direct Captain-table insert exists).
 
+## Slice C1 — what shipped
+
+Frontend-only (**no migration, no flag flipped, no `game_config` write**) — the captain roster + expedition
+preview wired into the team roster, fully DARK (everything below is rendered only from `TeamRosterPanel`,
+which is not mounted while `TEAM_COMMAND_ENABLED = false`):
+
+- **`src/features/command/teamCaptains.ts`** — pure (no I/O, types-only import from the captains feature):
+  `captainsByShip` (split the ONE `get_my_captain_instances` roster on `main_ship_id`, null → unassigned,
+  input order preserved; a captain pointing at a ship not in the roster stays bucketed under that id — the
+  server's assignment is truth, never reclassified), `captainAssignAvailability` (**display-only** mirror of
+  the assign reject order, 0120/0121 wrapper + 0119 writer: dark FIRST → `ship_not_settled` →
+  `already_assigned` (writer step 4) → `captain_slots_full` (writer step 5) → ok; the free-slot input comes
+  from the **server-reported** `captain_slots`, never a hardcoded 2/6), and `PREVIEW_ACTIVITY_TYPES`/`isPreviewActivity` (**exactly** the 0165/0122 set:
+  `pirate_hunt`/`trade_run`/`exploration`/`mining`/`none`, defined ONCE). Unit-tested in
+  `tests/teamCaptains.spec.ts` (`npm run verify:team:unit`).
+- **`teamApi.fetchGroupExpeditionPreview(groupId, activityType)`** — the ONE read wrapper over C0's
+  `get_my_group_expedition_preview` (normalize-don't-throw, the file's dark-RPC style; transport error →
+  `{ok:false, reason:'unavailable'}`). The captain commands are **not** wrapped here — `captainsApi.ts`
+  stays the one captain API/envelope/error map. `fetchMyShipGroupMap` widened its owner-RLS SELECT with the
+  existing `captain_slots` column (zero server change) to feed the availability mirror a real slot count.
+  `PreviewMember` (teamSkillset.ts) gained the optional per-member `error` migration 0165 emits.
+- **`TeamMemberCaptains`** — per-member captain sub-surface in every ship row (grouped AND ungrouped):
+  assigned captains + Unassign, and an Assign picker over the unassigned pool. Submits ONLY the existing
+  CAPTAIN-P15 commands (`assign_captain_to_ship` is already ship-addressed — **no new server code**) via the
+  existing guarded idiom (`runGuardedCommand` + `useActivityPanelGuards`, `request_id = crypto.randomUUID()`);
+  error copy through the ONE mapper `captainCommandErrorMessage` (incl. `ship_not_settled`). Rendered ONLY
+  while `isServerLit(get_my_captain_instances)` — while `captain_assignment_enabled` is false the server's
+  `captain_assignment_disabled` envelope keeps the roster **byte-identical to today**. After any captain
+  mutation the panel refetches the captain roster (await-then-refetch, no optimistic UI).
+- **`TeamPreviewSection`** — per-team activity `<select>` (exactly the five 0165 activities) + Preview
+  button gated by C0's `groupPreviewAvailability`; on success renders C0's `aggregateTeamStats`
+  (**estimate, display-only** — authoritative team stats are Slice D's): additive totals, `slowestSpeed`,
+  valid/invalid counts, and per-member lines (`valid:false` → the server's per-member `error`). A cached
+  preview is stamped with the roster version it was computed at and disappears on any panel reload
+  (membership change ⇒ stale).
+- **RecruitCaptainPanel stays on ShipScreen** (untouched); the 6 → 8 slot raise and progression wiring stay
+  C2; the captain-slot 2 → 6 activation bump stays deferred (see "Explicitly deferred").
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -267,7 +306,9 @@ the cap so it is not the binding limit once multi-ship is later lit.
 - **Authoritative server-side team stats** → Slice D, defined beside the combat consumer.
   `get_my_group_expedition_preview` deliberately does zero arithmetic, and `aggregateTeamStats` is
   display-only — neither is a source of team-stat truth.
-- **Captain UI in the roster** (assign/unassign per member ship, captain list) → Slice C1.
+- **Captain UI in the roster** (assign/unassign per member ship, captain list) → **DONE in Slice C1**
+  (dark, frontend-only; reuses the CAPTAIN-P15 commands verbatim — no new server authority). Captain
+  progression wiring / lit-time polish (and any 6 → 8 slot raise) → Slice C2.
 - **Every flag flip (`team_command_enabled`, `captain_assignment_enabled`, …) = human activation**, never
   part of a slice. All C0 behavior stays dark behind `team_command_enabled=false` (and the captain fold
   behind `captain_assignment_enabled=false`).
