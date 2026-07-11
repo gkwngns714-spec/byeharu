@@ -34,12 +34,19 @@ The DB never says "team"; the UI never says "group". Code that bridges the two (
     (migration 0163).**
   - **B-stop — DARK group-stop RPC (`stop_ship_group_transit`, loops the *unmodified* live stop per member
     fleet). Done (migration 0164).**
-  - **B-ui — team send/stop controls in the roster (dark, frontend-only). ← this slice.**
-  - B-verify — CI `.mjs` verifier for send/stop + races. *Not started.*
-- Slice C — captains (wire the dark CAPTAIN-P15/P16 system; captain skills → team skillset via
-  `calculate_expedition_stats`; bump `main_ship_hull_types.base_captain_slots` 2 → 6–8). *Not started.*
+  - **B-ui — team send/stop controls in the roster (dark, frontend-only). Done.**
+  - **B-verify — disposable write-then-ROLLBACK proof of the dark team surface. Done
+    (`scripts/team-command-proof.{sql,sh}` + `.github/workflows/team-command-proof.yml`, merged in #84 —
+    a `.sql`/`.sh` proof, not the once-planned `.mjs`).**
+- Slice C — captains (wire the dark CAPTAIN-P15/P16 system into teams). Broken into sub-slices:
+  - **C0 — DARK read-only group expedition preview (`get_my_group_expedition_preview`, delegates per member
+    to `calculate_expedition_stats`). RPC-only, zero data change — the captain-slot 2 → 6 bump (hull +
+    instance) is deferred to activation. Done (migration 0165). ← this slice.**
+  - C1 — captain UI in the team roster (assignment surface per member ship, dark). *Not started.*
+  - C2 — captain progression wiring / lit-time polish (and any 6 → 8 slot raise). *Not started.*
 - Slice D — team combat (largest; main-ship combat was never built — resolve a team into the existing combat
-  engine per the law). *Not started.*
+  engine per the law; defines the AUTHORITATIVE server-side team stats beside the combat consumer). *Not
+  started.*
 
 ---
 
@@ -179,6 +186,45 @@ surface. Still behind `TEAM_COMMAND_ENABLED` (panel not mounted in prod):
   the ONE shell `selection`. The server re-validates the destination + owns atomicity — the client filter is
   convenience. Deferred (lit-time UX): a send confirm step, per-member `results[]` drill-down.
 
+## Slice C0 — what shipped
+
+Migration `supabase/migrations/20260618000165_slice_c0_captain_slots_and_group_preview.sql` — the first
+captain sub-slice, fully DARK (no flag flipped, no activation) and **RPC-ONLY (zero data change)**:
+
+- **Part A — DEFERRED ENTIRELY (RPC-only slice)**: C0 makes **NO data change** — grep the migration for any
+  `insert`/`update` on `main_ship_hull_types` or `main_ship_instances` → there is none. **Both** captain-slot
+  bumps are deferred to activation: (1) the HULL bump `main_ship_hull_types.base_captain_slots` 2 → 6, **and**
+  (2) the existing-instance `main_ship_instances.captain_slots` backfill. **Why both (grep-verified,
+  dark-discipline):** the Ship screen's "Captain seats" stat row (`ShipStatusCard.tsx`) renders **both**
+  values **ungated** — `hull.base_captain_slots` in the no-ship starter teaser (`:95`) and the ship's
+  `captain_slots` (`:213`). So the hull bump is **not** invisible either: a shipless player would see the
+  teaser move 2 → 6, and every ship commissioned after the bump (`captain_slots` is copied from the hull at
+  commission) would show 6. While captains are dark the slot count is **purely cosmetic** (no assignment can
+  exist → no stat can change), so nothing needs the bump now. Deferring both keeps C0 changing **nothing a
+  player can see** — it only adds a gated, unreachable-in-prod RPC.
+- **Part B — `get_my_group_expedition_preview(p_group_id, p_activity_type default 'none')`** — DARK,
+  read-only group stats preview. Reject vocab: `not_authenticated` → `team_command_disabled` (gate FIRST,
+  before any read) → `invalid_activity` (exactly the 0122 set: `pirate_hunt`/`trade_run`/`exploration`/
+  `mining`/`none`) → `group_not_found` → `empty_group` → `ok`. Per member it calls the **unmodified**
+  `calculate_expedition_stats` (0122 — which already folds captain skills + the headcount cap) inside a
+  per-member exception scope (a member's raise → `{main_ship_id, valid:false, error}`, never a team 500 —
+  the 0159 preview idiom). **Zero stat arithmetic in SQL**: no accumulator, no sum — delegation + collection
+  only. Group totals are a client display concern; **authoritative team stats are Slice D's**, defined beside
+  the combat consumer. **Read-only, NO locks** (deliberate divergence from B-send/B-stop, which lock because
+  they write): the MVCC snapshot is the consistency guarantee. ACL `authenticated`-only;
+  `calculate_expedition_stats` stays service_role-only (this SECURITY DEFINER wrapper calls it as owner — the
+  `get_my_expedition_preview` posture).
+- **Frontend:** `src/features/command/teamSkillset.ts` — pure `groupPreviewAvailability` mirror (RPC reject
+  order) + `aggregateTeamStats` (**display-only, not server truth**: sums the additive stat keys across valid
+  members, `slowestSpeed = min` member speed since members travel individually, skips + counts invalid
+  members, never NaN). Unit-tested in `tests/teamSkillset.spec.ts` (`npm run verify:team:unit`). **No UI this
+  slice.**
+- **Proof:** `scripts/team-command-proof.{sql,sh}` gained the `TEAMCMD_PASS_CAPTAINS` block — dark reject
+  before the in-txn flag flip, every reject token, the captain seed-bonus delta over an uncaptained baseline
+  with `captain_slots_limit=6`, uncaptained-member byte-parity with the solo preview, and unassign-reverts —
+  with captains provisioned **only via the sole writers** (`captains_mint_instance` /
+  `captain_assign_apply`; the selftest greps that no direct Captain-table insert exists).
+
 ## Dark state / gate decisions
 
 Everything above is **dark**. Nothing changed for players.
@@ -204,8 +250,27 @@ the cap so it is not the binding limit once multi-ship is later lit.
   true in an ephemeral/rolled-back txn and exercise upsert/assign/unassign/**delete** + every reject, assert
   player A cannot assign A's ship to B's group **nor delete B's group**, and cover the **double-delete** and
   **assign-vs-delete** races.
-- **`base_captain_slots` 2 → 6–8** → Slice C (needed only when captains are wired; not needed by the group
-  model).
+- **Captain-slot capacity bump 2 → 6 (BOTH the hull bump AND the existing-instance backfill)** → **DEFERRED
+  to activation** (kept ENTIRELY out of C0 to preserve zero player-visible change — the "Captain seats" row
+  in `ShipStatusCard.tsx` renders `hull.base_captain_slots` in the no-ship teaser (`:95`) **and** the ship's
+  `captain_slots` (`:213`), both ungated, so either bump would move a player-visible label while dark). C0 is
+  RPC-only. When captains are lit, run **both together** alongside the flag flips (idempotent, monotonic):
+  ```sql
+  update public.main_ship_hull_types
+     set base_captain_slots = 6 where hull_type_id = 'starter_frigate' and base_captain_slots < 6;
+  update public.main_ship_instances i
+     set captain_slots = h.base_captain_slots, updated_at = now()
+    from public.main_ship_hull_types h
+   where i.hull_type_id = h.hull_type_id and i.captain_slots < h.base_captain_slots;
+  ```
+  Any later 6 → 8 raise is a separate additive C2 migration, decided at lit-time balance.
+- **Authoritative server-side team stats** → Slice D, defined beside the combat consumer.
+  `get_my_group_expedition_preview` deliberately does zero arithmetic, and `aggregateTeamStats` is
+  display-only — neither is a source of team-stat truth.
+- **Captain UI in the roster** (assign/unassign per member ship, captain list) → Slice C1.
+- **Every flag flip (`team_command_enabled`, `captain_assignment_enabled`, …) = human activation**, never
+  part of a slice. All C0 behavior stays dark behind `team_command_enabled=false` (and the captain fold
+  behind `captain_assignment_enabled=false`).
 - **Folding `ModulesPanel.shipPick` into the shell selection** → deferred. It changes module-fitting behavior
   (per-instance pick → global selection) inside the dark trade/modules feature and is not adjacent to the team
   model; folding it here would be scope creep into a behavior change.

@@ -23,10 +23,18 @@
 --   DELETE — deleting a group un-groups its members via the FK ON DELETE SET NULL (0160) — ships are
 --            NEVER removed; re-delete fails closed as group_not_found (resolve → FOR UPDATE →
 --            revalidate).
+--   CAPTAINS (Slice C0, 0165) — get_my_group_expedition_preview rejects dark BEFORE the team-flag
+--            flip; invalid_activity / group_not_found (random + cross-player) / empty_group; a
+--            captained member's stats carry the captain seed bonus over the uncaptained baseline
+--            with captain_slots_limit=6 (the Part-A backfill); an uncaptained member's group stats
+--            are byte-identical to its solo get_my_expedition_preview; unassigning reverts the
+--            delta. Captains are provisioned ONLY via the sole writers (captains_mint_instance /
+--            captain_assign_apply — the sole-writer law; NEVER a direct insert into
+--            captain_instances / ship_captain_assignments).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
--- mainship_send_enabled ONLY inside this rolled-back transaction; the ROLLBACK reverts them, so every
+-- mainship_send_enabled + captain_assignment_enabled ONLY inside this rolled-back transaction; the ROLLBACK reverts them, so every
 -- committed/production flag value stays false. It also transiently mirrors production config a fresh
 -- chain lacks (reveal_starter_ports) — all reverted by ROLLBACK. No committed flag/state changes.
 --
@@ -110,17 +118,32 @@ begin
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL send: %', r; end if;
   r := pg_temp.call_as(uA, 'public.stop_ship_group_transit(gen_random_uuid())');
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL stop: %', r; end if;
+  -- Slice C0 (0165): the group preview rejects dark too — asserted BEFORE the team-flag flip below,
+  -- with a random id and a VALID activity, so only the gate can be what answers.
+  r := pg_temp.call_as(uA, 'public.get_my_group_expedition_preview(gen_random_uuid(), ''none'')');
+  if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL preview: %', r; end if;
 
   select count(*) into n from public.ship_groups;
   if n <> 0 then raise exception 'DARK FAIL: % ship_groups rows written while dark (want 0)', n; end if;
 
-  raise notice 'TEAMCMD_PASS_DARK ok: all 5 team RPCs reject-before-read with team_command_disabled; 0 rows written';
+  raise notice 'TEAMCMD_PASS_DARK ok: all 6 team RPCs reject-before-read with team_command_disabled; 0 rows written';
 end $$;
 
 -- enable the dark capabilities ONLY inside this rolled-back txn (committed/production values stay false).
 update public.game_config set value='true'::jsonb where key='team_command_enabled';
 update public.game_config set value='true'::jsonb where key='mainship_additional_commission_enabled';
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
+update public.game_config set value='true'::jsonb where key='captain_assignment_enabled';
+
+-- Slice C0 is RPC-ONLY: migration 0165 does NOT bump base_captain_slots (both the hull bump AND the
+-- instance backfill are deferred to activation, because the "Captain seats" row in ShipStatusCard
+-- renders them ungated). So a fresh chain's starter_frigate hull is still at its 0043 seed (2). The
+-- CAPTAINS block below needs the ACTIVATED capacity to prove captain_slots_limit=6 and to fit two
+-- captains, so apply the ACTIVATION-STEP hull bump HERE, INSIDE the rolled-back txn (reverted by the
+-- trailing ROLLBACK — no committed data change). Ships commissioned below then copy 6 at commission,
+-- so no instance backfill is needed for the fixture. This mirrors what the real activation migration
+-- will run alongside these same flag flips (see docs/TEAM_COMMAND.md "Explicitly deferred").
+update public.main_ship_hull_types set base_captain_slots = 6 where hull_type_id = 'starter_frigate';
 
 -- Fund the fixture wallets BEFORE any additional-commission call. commission_first_main_ship is free, but
 -- every ADDITIONAL commission DEBITS a price (1000 credits/ship, 0091) from player_wallet — and fresh
@@ -274,6 +297,103 @@ begin
   raise notice 'TEAMCMD_PASS_WRITE ok: upsert/rename one-row, index+name validation, assign/unassign persisted, same-player gap closed';
 end $$;
 
+-- ════════ BLOCK CAPTAINS (Slice C0, 0165): group preview rejects + captain-fold delta + slots=6 ════════
+-- Captains are provisioned ONLY via the SOLE WRITERS (captains_mint_instance 0118 /
+-- captain_assign_apply 0119) in this privileged psql context — NEVER a direct insert into
+-- captain_instances / ship_captain_assignments (the sole-writer law; the .sh selftest greps this
+-- file for exactly that violation). Player-facing preview calls go through pg_temp.call_as. The
+-- dark reject for the preview itself was already asserted in BLOCK DARK, before the flag flips.
+do $$
+declare r jsonb; base jsonb; capped jsonb; a2grp jsonb; solo jsonb; n int;
+  uA uuid := (select v from tcmd where k='uA'); uB uuid := (select v from tcmd where k='uB');
+  a1 uuid := (select v from tcmd where k='a1'); a2 uuid := (select v from tcmd where k='a2');
+  gA1 uuid := (select v from tcmd where k='gA1');
+  gid uuid; cap1 uuid; cap2 uuid;
+begin
+  -- reject vocabulary, in the RPC's order (gate already proven in BLOCK DARK):
+  -- invalid_activity — validated BEFORE any row read, so even a real owned group answers the same.
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_preview(%L::uuid, ''warp_speed'')', gA1));
+  if (r->>'reason') is distinct from 'invalid_activity' then raise exception 'CAPTAINS FAIL invalid activity: %', r; end if;
+  -- group_not_found — a random uuid, and uB cross-player-probing uA's real group (no ownership oracle).
+  r := pg_temp.call_as(uA, 'public.get_my_group_expedition_preview(gen_random_uuid(), ''none'')');
+  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'CAPTAINS FAIL random group: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.get_my_group_expedition_preview(%L::uuid, ''none'')', gA1));
+  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'CAPTAINS FAIL cross-player probe: %', r; end if;
+  -- empty_group — a created-but-memberless slot.
+  r := pg_temp.call_as(uA, 'public.upsert_ship_group(3, ''C0Empty'')');
+  if (r->>'ok')::boolean is not true then raise exception 'CAPTAINS FAIL empty-slot create: %', r; end if;
+  gid := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_preview(%L::uuid, ''none'')', gid));
+  if (r->>'reason') is distinct from 'empty_group' then raise exception 'CAPTAINS FAIL empty_group: %', r; end if;
+
+  -- membership: a1 + a2 into gA1 (both still home from provisioning; a1 was unassigned in WRITE).
+  r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a1, gA1));
+  if (r->>'ok')::boolean is not true then raise exception 'CAPTAINS FAIL assign a1: %', r; end if;
+  r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a2, gA1));
+  if (r->>'ok')::boolean is not true then raise exception 'CAPTAINS FAIL assign a2: %', r; end if;
+
+  -- UNCAPTAINED BASELINE: ok envelope, member_count 2, every member valid; capture a1's stats.
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_preview(%L::uuid, ''none'')', gA1));
+  if (r->>'ok')::boolean is not true then raise exception 'CAPTAINS FAIL baseline preview: %', r; end if;
+  if (r->>'member_count')::int is distinct from 2 or jsonb_array_length(r->'members') is distinct from 2 then
+    raise exception 'CAPTAINS FAIL baseline member count: %', r; end if;
+  select count(*) into n from jsonb_array_elements(r->'members') e where (e->>'valid')::boolean;
+  if n <> 2 then raise exception 'CAPTAINS FAIL baseline validity: %', r->'members'; end if;
+  select e->'stats' into base from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a1::text;
+  -- captain_slots_limit=6: migration 0165 is RPC-only (no hull/instance bump — both deferred to
+  -- activation). This proof applies the ACTIVATION-STEP hull bump IN-TXN above (before provisioning),
+  -- so these ships copied base_captain_slots=6 at commission, and it flows through the ONE adapter
+  -- into the preview's stats. (No instance backfill needed for the fixture; the in-txn bump preceded
+  -- the commissions. All reverted by ROLLBACK.)
+  if (base->>'captain_slots_limit')::int is distinct from 6 then
+    raise exception 'CAPTAINS FAIL: baseline captain_slots_limit % (want 6 — activation hull bump applied in-txn)', base->>'captain_slots_limit'; end if;
+  if (base->>'captain_slots_used')::int is distinct from 0 then
+    raise exception 'CAPTAINS FAIL: baseline captain_slots_used % (want 0)', base->>'captain_slots_used'; end if;
+
+  -- provision TWO captains via the sole writers only (mint → assign to a1); gunnery_veteran seeds
+  -- attack 4 (0117), so two of them must move a1's combat_power by exactly +8 through 0122.
+  cap1 := public.captains_mint_instance(uA, 'gunnery_veteran', 'tcmd-c0-1');
+  cap2 := public.captains_mint_instance(uA, 'gunnery_veteran', 'tcmd-c0-2');
+  if cap1 is null or cap2 is null or cap1 = cap2 then raise exception 'CAPTAINS FAIL: mint returned %/%', cap1, cap2; end if;
+  perform public.captain_assign_apply(uA, cap1, a1);
+  perform public.captain_assign_apply(uA, cap2, a1);
+
+  -- CAPTAINED: a1's stats show the seed bonus over the baseline; slots book 2 used of 6.
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_preview(%L::uuid, ''none'')', gA1));
+  if (r->>'ok')::boolean is not true then raise exception 'CAPTAINS FAIL captained preview: %', r; end if;
+  select e->'stats' into capped from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a1::text;
+  if (capped->>'combat_power')::numeric is distinct from (base->>'combat_power')::numeric + 8 then
+    raise exception 'CAPTAINS FAIL: captained combat_power % (want baseline % + 8)', capped->>'combat_power', base->>'combat_power'; end if;
+  if (capped->>'captain_slots_used')::int is distinct from 2 then
+    raise exception 'CAPTAINS FAIL: captained captain_slots_used % (want 2)', capped->>'captain_slots_used'; end if;
+  if (capped->>'captain_slots_limit')::int is distinct from 6 then
+    raise exception 'CAPTAINS FAIL: captained captain_slots_limit % (want 6)', capped->>'captain_slots_limit'; end if;
+
+  -- UNCAPTAINED MEMBER PARITY: a2's stats in the GROUP preview must be byte-identical to its SOLO
+  -- get_my_expedition_preview stats (same adapter, same inputs — the group RPC adds no arithmetic).
+  select e->'stats' into a2grp from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a2::text;
+  solo := pg_temp.call_as(uA, format('public.get_my_expedition_preview(''[]''::jsonb, ''none'', %L::uuid)', a2));
+  if (solo->>'valid')::boolean is not true then raise exception 'CAPTAINS FAIL solo preview: %', solo; end if;
+  if a2grp is distinct from solo->'stats' then
+    raise exception 'CAPTAINS FAIL: a2 group stats diverge from its solo preview: % vs %', a2grp, solo->'stats'; end if;
+
+  -- UNASSIGN one captain (the sole writer's null-ship form) → the delta steps back by one seed…
+  perform public.captain_assign_apply(uA, cap2, null);
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_preview(%L::uuid, ''none'')', gA1));
+  select e->'stats' into capped from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a1::text;
+  if (capped->>'combat_power')::numeric is distinct from (base->>'combat_power')::numeric + 4
+     or (capped->>'captain_slots_used')::int is distinct from 1 then
+    raise exception 'CAPTAINS FAIL: one-unassign did not step the delta back (%, used %)', capped->>'combat_power', capped->>'captain_slots_used'; end if;
+  -- …and unassigning the second reverts a1 byte-identically to the uncaptained baseline.
+  perform public.captain_assign_apply(uA, cap1, null);
+  r := pg_temp.call_as(uA, format('public.get_my_group_expedition_preview(%L::uuid, ''none'')', gA1));
+  select e->'stats' into capped from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a1::text;
+  if capped is distinct from base then
+    raise exception 'CAPTAINS FAIL: full unassign did not revert to baseline: % vs %', capped, base; end if;
+
+  raise notice 'TEAMCMD_PASS_CAPTAINS ok: preview rejects (invalid_activity/group_not_found×2/empty_group), captain fold +8 with 2/6 slots, uncaptained parity with solo preview, unassign reverts';
+end $$;
+
 -- ════════ BLOCK SEND: empty group, foreign group, real 2-ship send, and ALL-OR-NOTHING ════════
 do $$
 declare r jsonb; n int; gC1 uuid;
@@ -422,6 +542,6 @@ begin
   raise notice 'TEAMCMD_PASS_DELETE ok: members SET-NULL un-grouped, ships survive, double-delete fails closed';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; all-or-nothing send; best-effort stop; SET-NULL delete)' as result;
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; all-or-nothing send; best-effort stop; SET-NULL delete)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

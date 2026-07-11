@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # TEAM-COMMAND B-VERIFY — disposable proof orchestrator for the DARK team send/stop RPC surface
-# (slices 0160..0164: ship_groups + upsert/assign/delete + group send/stop).
+# (slices 0160..0164: ship_groups + upsert/assign/delete + group send/stop) plus the Slice-C0 captain
+# block (0165: get_my_group_expedition_preview — an RPC-ONLY migration with NO data change; the
+# captain_slots=6 hull bump is DEFERRED to activation, so the proof applies it in-txn before its
+# captain commissions. Captains are provisioned only via the 0118/0119 sole writers).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
-#              RPCs, exercises all five team RPCs + every reject token, and asserts the all-or-nothing /
-#              stop-aggregate / held-in-space / SET-NULL specifics.
+#              RPCs (and captains via the sole writers, never direct inserts), exercises all six team
+#              RPCs + every reject token, and asserts the all-or-nothing / stop-aggregate /
+#              held-in-space / SET-NULL / captain-fold specifics.
 #   local    — run the write-then-ROLLBACK proof against a disposable DB_URL (the actual behavior proof),
 #              then verify the COMMITTED team_command_enabled flag is still 'false'.
 # The shared blocks (arg scaffold / self-rolling-back / flag-inside-txn / out-of-scope / local psql+markers)
@@ -16,30 +20,48 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
   tp_assert_self_rolling_back "$SQL"
-  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled
+  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled
 
   # ── provisions via the REAL commission RPCs (no direct ship inserts as the primary path). ─────────
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
   grep -q "public.commission_additional_main_ship()" "$SQL" || fail "harness does not exercise commission_additional_main_ship"
 
-  # ── all FIVE team RPCs are exercised. ──────────────────────────────────────────────────────────────
-  for fn in upsert_ship_group assign_ship_to_group delete_ship_group send_ship_group_expedition stop_ship_group_transit; do
+  # ── all SIX team RPCs are exercised (the five B-surface RPCs + the C0 group preview). ─────────────
+  for fn in upsert_ship_group assign_ship_to_group delete_ship_group send_ship_group_expedition stop_ship_group_transit get_my_group_expedition_preview; do
     grep -q "public.$fn(" "$SQL" || fail "harness does not exercise the '$fn' RPC"
   done
+
+  # ── C0 captains are provisioned ONLY via the sole writers (0118/0119) — the mint+assign calls are
+  #    present, and NO direct insert into either Captain-owned table exists anywhere in the proof. ────
+  grep -q "public.captains_mint_instance("  "$SQL" || fail "harness does not mint captains via captains_mint_instance"
+  grep -q "public.captain_assign_apply("    "$SQL" || fail "harness does not assign captains via captain_assign_apply"
+  # NEGATIVE: no DIRECT mutation of either Captain-owned table by ANY verb (insert/update/delete/copy),
+  # qualified or not — only the sole writers may touch them. Strip comment lines first so the header's
+  # prose ("never a direct insert into …") can't trip it.
+  grep -viE '^[[:space:]]*--' "$SQL" \
+    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(captain_instances|ship_captain_assignments)\b' \
+    && fail "harness directly mutates a Captain-owned table (sole-writer law violation)" || true
 
   # ── every reject token is asserted (dark gate, validation, fail-closed resolves, send outcomes). Pin the
   #    ASSERT FORM (`is distinct from '<tok>'`), not a bare token match — a bare grep would also match the
   #    SQL header comments, so a gutted .sql that only mentions the tokens in prose could false-green. ────
-  for tok in team_command_disabled invalid_group_index invalid_name ship_not_found group_not_found empty_group member_send_failed; do
+  for tok in team_command_disabled invalid_group_index invalid_name ship_not_found group_not_found empty_group member_send_failed invalid_activity; do
     grep -q "is distinct from '$tok'" "$SQL" || fail "harness does not ASSERT the '$tok' reject (is distinct from form)"
   done
+
+  # ── C0 capacity: the preview's captain_slots_limit=6 is asserted in assert form. 0165 is RPC-only, so
+  #    the proof applies the deferred activation hull bump IN-TXN before commissioning — assert both. ──
+  grep -q "captain_slots_limit')::int is distinct from 6" "$SQL" \
+    || fail "harness does not ASSERT captain_slots_limit=6 (is distinct from form)"
+  grep -qE "update public\.main_ship_hull_types set base_captain_slots = 6 where hull_type_id = 'starter_frigate'" "$SQL" \
+    || fail "harness does not apply the deferred activation hull bump (base_captain_slots=6) in-txn"
 
   # ── behavior specifics: all-or-nothing send rollback; the EXACT mixed + idempotent stop aggregates;
   #    the physical held-in-open-space shape; delete's SET-NULL member un-grouping. ───────────────────
@@ -51,14 +73,14 @@ if [ "$MODE" = "selftest" ]; then
   grep -qi "on delete set null" "$SQL"                                || fail "harness does not assert the delete SET-NULL member un-grouping"
   grep -q "group_id is null" "$SQL"                                   || fail "harness does not assert members are un-grouped after delete"
 
-  # ── all five block PASS markers present. ──────────────────────────────────────────────────────────
+  # ── all six block PASS markers present. ───────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 3 dark flags toggled only in-txn; real-RPC provisioning; 5 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL specifics)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains; 6 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold specifics)"
   exit 0
 fi
 
@@ -66,11 +88,11 @@ fi
 tp_run_local "TEAM-COMMAND B-VERIFY" "$SQL" "$PASS_LINE" "$MARKERS"
 
 # post-run honesty check: EVERY committed flag the proof flips must still be false (the flips were rolled
-# back). Check all three the harness toggles in-txn, not just the team gate.
-for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled; do
+# back). Check all four the harness toggles in-txn, not just the team gate.
+for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled; do
   committed="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = '$flag'), 'false')")" \
     || fail "could not read the committed '$flag' value"
   [ "$committed" = "false" ] || fail "committed $flag is '$committed' — the proof leaked a flag flip (must stay false)"
 done
 
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled all still false)"
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled all still false)"
