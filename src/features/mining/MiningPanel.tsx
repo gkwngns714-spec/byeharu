@@ -78,10 +78,10 @@ export function MiningPanel({
   return (
     <div
       data-testid="mining-panel"
-      // Bottom-left, beside ExplorationPanel (w-64 at left-2 → this sits at left-[17rem]); the other
-      // OSN overlays hold the remaining corners (PortNav top-left, DockServices top-right, Stop
-      // bottom-right). Both activity panels are server-lit, so overlap only ever involves lit surfaces.
-      className="pointer-events-auto absolute bottom-2 left-[17rem] z-10 w-64 rounded-lg border border-amber-500/30 bg-slate-900/90 p-2 text-slate-100"
+      // UI R1: self-positioning dropped — rides MapScreen's top-left OverlayRail (stacks below PortNav +
+      // Exploration in a flex column, no magic left-[17rem] offset). pointer-events-auto stays so it's
+      // interactive inside the pointer-transparent rail. Inner skin (amber/slate) is R2's tokenization pass.
+      className="pointer-events-auto w-64 rounded-lg border border-amber-500/30 bg-slate-900/90 p-2 text-slate-100"
     >
       <p className="text-[11px] font-medium text-amber-300">Mining</p>
       <button

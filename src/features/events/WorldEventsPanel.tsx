@@ -5,6 +5,7 @@ import { assetGlyphs } from '../assets/assetGlyphs'
 import type { GetUiAssetCatalogResult, UiAsset } from '../assets/assetsTypes'
 import { getWorldEvents } from './eventsApi'
 import type { GetWorldEventsResult, WorldEventSeverity } from './eventsTypes'
+import { OverlayPanel } from '../../components/ui'
 
 // PHASE20-POLISH — the dark World Events display: a compact, read-only overlay of currently-live world
 // events. SERVER-DRIVEN visibility (no client flag constant): the panel reads get_world_events (0141)
@@ -14,11 +15,12 @@ import type { GetWorldEventsResult, WorldEventSeverity } from './eventsTypes'
 // later lights the flag AND publishes events, they appear. The server (flag gate + live-window filter)
 // is the SOLE control; the client never decides visibility. Purely presentational — no actions/buttons.
 
-// Severity → badge color classes (the ExplorationPanel badge idiom: a small static class map).
+// Severity → badge classes (the ExplorationPanel badge idiom: a small static class map). UI R1:
+// design-system tokens only — severity reads by the shared semantic language (accent/warning/danger).
 const SEVERITY_BADGE: Record<WorldEventSeverity, string> = {
-  info: 'bg-sky-600/30 text-sky-300',
-  warning: 'bg-amber-600/30 text-amber-300',
-  critical: 'bg-rose-600/30 text-rose-300',
+  info: 'bg-accent/15 text-accent',
+  warning: 'bg-warning/15 text-warning',
+  critical: 'bg-danger/15 text-danger',
 }
 
 export function WorldEventsPanel({
@@ -61,14 +63,12 @@ export function WorldEventsPanel({
   if (!isServerLit(result) || (result.events?.length ?? 0) === 0) return null
 
   return (
-    <div
-      data-testid="world-events-panel"
-      // Top-center; deliberately clear of the four existing overlays (PortNav top-left, DockServices
-      // top-right, Exploration/Mining bottom-left, Stop bottom-right) so all can coexist without overlap.
-      className="pointer-events-auto absolute left-1/2 top-2 z-10 w-72 -translate-x-1/2 rounded-lg border border-indigo-500/30 bg-slate-900/90 p-2 text-slate-100"
-    >
-      <p className="text-[11px] font-medium text-indigo-300">World Events</p>
-      <ul data-testid="world-events-list" className="mt-2 space-y-1 border-t border-slate-700/60 pt-2">
+    // UI R1: the top-center overlay slot via the OverlayPanel primitive (tokens only) — deliberately
+    // clear of the corner rails (port nav / feature panels top-left, zoom + coordinate move top-right,
+    // legend bottom-left, stop CTAs bottom-right) so all can coexist without overlap.
+    <OverlayPanel slot="top-center" data-testid="world-events-panel" className="w-72 text-ink">
+      <p className="font-mono text-[11px] uppercase tracking-wider text-accent">World Events</p>
+      <ul data-testid="world-events-list" className="mt-2 space-y-1 border-t border-edge pt-2">
         {result.events?.map((e) => {
           // Resolve the server-owned severity icon vocabulary → the client-owned glyph. Any miss
           // (dark/empty catalog, unseeded key, unregistered asset_ref) resolves to no glyph — the
@@ -89,7 +89,7 @@ export function WorldEventsPanel({
                       {glyph}
                     </span>
                   )}
-                  <span className="truncate text-slate-200">{e.title}</span>
+                  <span className="truncate text-ink">{e.title}</span>
                 </span>
                 <span
                   data-testid={`world-event-badge-${e.id}`}
@@ -98,11 +98,11 @@ export function WorldEventsPanel({
                   {e.severity}
                 </span>
               </div>
-              {e.body && <p className="text-slate-400">{e.body}</p>}
+              {e.body && <p className="text-ink-muted">{e.body}</p>}
             </li>
           )
         })}
       </ul>
-    </div>
+    </OverlayPanel>
   )
 }

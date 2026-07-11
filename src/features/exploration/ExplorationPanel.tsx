@@ -71,9 +71,10 @@ export function ExplorationPanel({
   return (
     <div
       data-testid="exploration-panel"
-      // Bottom-left; mirrors the other OSN overlays (PortNav top-left, DockServices top-right, Stop
-      // bottom-right) so all four can coexist without overlap.
-      className="pointer-events-auto absolute bottom-2 left-2 z-10 w-64 rounded-lg border border-violet-500/30 bg-slate-900/90 p-2 text-slate-100"
+      // UI R1: self-positioning dropped — this now rides MapScreen's top-left OverlayRail, which stacks
+      // co-corner overlays in a flex column (no more magic offsets). Keeps pointer-events-auto so it stays
+      // interactive inside the pointer-transparent rail. Inner skin (violet/slate) is R2's tokenization pass.
+      className="pointer-events-auto w-64 rounded-lg border border-violet-500/30 bg-slate-900/90 p-2 text-slate-100"
     >
       <p className="text-[11px] font-medium text-violet-300">Exploration</p>
       <button
