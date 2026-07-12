@@ -1,6 +1,7 @@
 import { useShellState } from '../../app/shellState'
 import { useAuthStore } from '../../store/authStore'
 import { PortEntryPanel } from '../portentry/PortEntryPanel'
+import { FirstOrdersCard } from '../onboarding/FirstOrdersCard'
 import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
 import { ReportsSection } from '../combat/ReportsSection'
 import { RankingPanel } from '../ranking/RankingPanel'
@@ -50,6 +51,10 @@ export function CommandScreen() {
       ) : (
         <div className={screenSplitClass()}>
           <div className={screenRailClass('main')}>
+            {/* OB-1 (plan §C P10) — the First Orders checklist, rail TOP: the first thing a new
+                player sees. Read-only over the shell's already-polled state (zero own fetches);
+                self-hides when all steps are done or the player dismisses it (localStorage). */}
+            <FirstOrdersCard />
             {/* RIGHT NOW #1 — onboarding (self-hides unless the server says an action is needed). */}
             <PortEntryPanel deps={{ onChanged: game.refresh }} locations={game.locations} />
             {/* RIGHT NOW #2 — live battles (only while an encounter exists). */}

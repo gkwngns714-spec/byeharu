@@ -108,6 +108,106 @@ main @ 938a70c (#117 merged; 0181 touches neither the tick nor world_events); `t
 - ACT-WORLDBAL + ACT-PHASE20 (queue #15/#16): the Rung-7 flips — world balance first, then phase20;
   the EV-1 knobs (75 / 0.25 / 0.6–1.4) are the [D] owner-tunables to revisit at flip time.
 
+## 2026-07-12 — ACT-HAUL: the delivery-contracts activation script
+
+**Request.** The HAUL closer (plan §C P2; ROADMAP phase-22): `scripts/activate-haul.{sql,sh}` in the
+proven activate-* idiom. NO migration — the contracts stack is fully built dark (0176 templates +
+schema + flag + the deterministic hourly generator; 0179 accept/deliver + receipts + `deliver_by` +
+the cap; 0181 the `get_port_contracts` bulletin read + the server-lit HaulBoardPanel, PR #117). The
+script IS the flip: `haul_contracts_enabled` → true + one sanctioned generator invoke.
+
+**Work done**
+- **`scripts/activate-haul.sql`** — one all-or-nothing BEGIN..COMMIT (txn-local UTC — the
+  generator's `offer_day` anchor), zero psql meta-commands. PRECONDITIONS (read-only): head ≥
+  `0181` + 0176/0179/0181 recorded; the 5 tables; the 12-function surface via `to_regprocedure`
+  (the haul four + the deliver charter leaves + `market_buy` — the sourcing faucet — + the config
+  leaves); DEPLOYED-body prosrc pins — the generator must be the 0179 re-create (the (a2)
+  `deliver_by <= now()` → 'cancelled' hunk the stale 0176 body lacks) with the 0176 pins intact
+  (offered-only expiry, `hashtextextended` determinism, natural-key on-conflict mint); accept pins
+  (gate, `too_many_active`, the `hashtext('haul_accept')` per-player advisory serialization,
+  `already_accepted_other`); deliver pins (`trade_cargo_consume` + `wallet_credit` — the charter
+  fan-out — `deadline_passed`, `idempotent_replay`); read pins (gate, `expires_at > now()`,
+  `accepted_by = v_player`); EXACTLY 10 active templates with the 0176 §4 WORTH-TAKING invariants
+  re-derived from the LIVE market rows at both qty endpoints; the 3 starter ports
+  generator-eligible; knobs sane READ-ONLY (`haul_offers_per_port` 1..10, cap ≥ 1 — 0 is a legal
+  owner freeze but not a launch state); the cron exactly once; the flag key exists (value not
+  asserted — re-runs supported); ACLs intact (generator service-role-only, client RPCs
+  authenticated-only).
+- **██ THE TRADE PRECONDITION (decided: hard gate, not a warning). ██** `trade_market_enabled`
+  must be COMMITTED true (raw + `cfg_bool`). THE FINDING THAT FORCED IT: accepting is
+  trade-independent (a claim moves nothing — 0179 §1), but delivering consumes `ship_cargo_lots`
+  via `trade_cargo_consume`, and the SOLE producer of `ship_cargo_lots` is `market_buy`
+  (grep-verified: `trade_cargo_add_lot`'s only call sites are market_buy and its re-creates —
+  0089/0092/0136/0138) — which server-rejects while trade is dark. **The mining "alternative" was
+  checked and does NOT exist in this codebase:** mining rewards land as ITEM-inventory rows
+  ('ore'/'crystal' `item_types` via `reward_grant` — the 0102 decision (1)), never a cargo lot;
+  the `trade_goods` 'ore' is a separate catalog. So with trade dark there is NO sourcing path at
+  all — a lit board would be a 100% dead affordance (every accept ends in the (a2) cancel at
+  `deliver_by`). Hence PRECONDITION with the full reasoning in the failure hint. FLIP ORDER:
+  ACT-TRADE first.
+- **STAGE 1 — the ONE flag write** (`set_game_config`), ORDERED BEFORE THE GENERATOR INVOKE: the
+  generator dark-gates on the flag (feature_disabled while false — it physically cannot mint
+  dark); both stages in the one txn, so an offer-stage failure rolls the flag back too.
+- **STAGE 2 — ██ INSTANT OFFERS (decided: YES, invoke in-stage). ██** One
+  `public.haul_generate_offers()` call — the SANCTIONED sole mint entrypoint (the script never
+  writes haul tables directly). Rationale: the hourly '7 * * * *' cadence means the first lit
+  firing lands up to ~1h post-flip — an empty bulletin hour for no reason; invoked in-txn (the txn
+  sees its own stage-1 write, so the gate is open) offers exist at all 3 ports the moment the flip
+  commits. Asserts: envelope {ok:true}; ports == 3; minted > 0 with the ONE tolerated exception —
+  a SAME-DAY RE-RUN mints 0 by the (origin, offer_day, slot) natural key, accepted only if today's
+  rows already exist; and every starter port carries ≥ 1 today-row (run-time-independent). RE-RUN
+  SEMANTICS: no-op success (flag upsert + idempotent mint; a later-day re-run mints the new day's
+  board — exactly what the cron does anyway).
+- **SMOKE — the authed-RPC decision:** activate-captains stopped at `to_regprocedure` existence;
+  activate-ranking invoked its client RPCs directly (they need no auth subject).
+  `get_port_contracts` needs `auth.uid()` and the script runs privileged — so it is called FOR
+  REAL under a TRANSACTION-LOCAL fake JWT (`set_config('request.jwt.claims', …, true)` with a
+  random sub — the exact technique the 0179/0181 self-asserts and haul-proof.sql use; the sub owns
+  nothing so `mine` must be `[]`, nothing is written, claims cleared after and txn-local anyway),
+  asserted {ok:true} + `max_active` mirroring the cap knob + the `offered` array EQUAL to the
+  direct fresh-offered count at Haven Reach (RPC == table truth). Plus: flag committed (raw +
+  cfg_bool), per-port fresh counts (FYI), cron intact once, `haul_receipts` selectable. Markers
+  `ACTIVATE_HAUL_PASS_*` + final PASS line.
+- **MOUNT VERIFIED — NO client PR:** HaulBoardPanel is already mounted on the Port screen aside
+  rail (PortScreen.tsx:80, docked branch), gated ONLY by `isServerLit(board)`
+  (HaulBoardPanel.tsx:120); no HAUL_* compile constant in osnReleaseGates.ts or anywhere in src
+  (grep-verified). At flip time players docked at any starter port see the Contracts bulletin with
+  ~2 fresh offers (haul_offers_per_port=2) INSTANTLY; accept at the origin, "Your contracts n/3",
+  deliver with any owned ship at the dest before `deliver_by`, credits via Wallet with idempotent
+  receipts; the hourly cron keeps the board rolling.
+- **ROLLBACK (commented, flag-only + ██ THE EXPIRY FREEZE ██ — the 0176 forward note landed, as
+  required, extended by 0179):** darkening freezes BOTH generator passes — stale 'offered' rows
+  persist un-expired (raw-RLS-readable, but the CLIENT board vanishes instantly because it rides
+  the gated read RPC — the 0181 rationale, honored) and 'accepted' rows past `deliver_by` stay
+  un-cancelled holding cap slots. Running the generator once post-dark does NOT sweep (gate-first
+  no-op — the "optionally run the generator" idea is explicitly rejected in the section). Choice
+  documented: ACCEPT the frozen state (recommended — unreachable through every gated surface; on
+  re-light the first cron firing sweeps both passes, no gap) or the commented manual service-role
+  sweep (the generator's own (a)/(a2) predicates verbatim).
+- **`scripts/activate-haul.sh`** — selftest/run wrapper (confirm token `ACTIVATE_HAUL`). The
+  DB-free selftest adapts the established write-counting to this script's TWO sanctioned
+  mutations: exactly ONE `set_game_config('` call site (→ true on the one approved key; never a
+  knob or another window's key — the forbidden list now includes the haul knobs +
+  `captain_growth_enabled`) AND exactly ONE `:= public.haul_generate_offers()` invocation (the
+  to_regprocedure signature strings count as existence, not call sites); NO direct table DML, no
+  DDL, no meta-commands; one timed UTC BEGIN..COMMIT; the migration + prosrc + worth-taking +
+  cron + trade-precondition greps; the fake-JWT smoke greps (call + offered-vs-table match + mine
+  leak-check + claims cleared); the ordering/instant-offers/re-run/mount/rollback-freeze doc
+  tokens.
+
+**Verification.** `bash scripts/activate-haul.sh selftest` green; **mutation-tested 12/12 caught (reviewer added occurrence-count hardening for same-line/perform-form evasions — M6)**
+(second flag write, uncommented rollback false-write, gutted trade cfg_bool precondition, gutted
+(a2) prosrc pin, direct table UPDATE, TRUNCATE DDL, psql meta-command, dropped generator invoke,
+DOUBLED generator invoke, dropped fake-JWT clear, gutted ports=3 envelope assert, renamed STAGE2
+marker — plus control green between each). All 8 existing activate/reveal selftests
+untouched-green (trade, ranking, captains, exploration, mining, team-command, coordinate-travel,
+ember-reach) + haul-proof selftest green; `tsc --noEmit` + `vite build` untouched-green (no src
+change). Docs: plan §C P2 + queue row 12 + the Then-line → fully stocked / script shipped; ROADMAP
+phase-22 row annotated. Nothing committed/pushed/applied — the flip stays human-gated, ordered
+AFTER ACT-TRADE.
+
+---
+
 ## 2026-07-12 — C2-2: captain level → stats adapter fold (dark)
 
 **Request.** The CAPXP continuation (plan §C P5, after the 0177 foundation): the level-curve →
