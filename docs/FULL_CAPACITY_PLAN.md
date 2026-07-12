@@ -292,6 +292,39 @@ later catalog growth. Deps: none (rides the shipped adapter). Guard: the catalog
 (NO runtime writer); `main_ship_traits` keeps ONE writer and NO update/delete path, ever — a ship's
 soul never changes; all stats enter play ONLY via the ONE adapter (no parallel stat path).
 
+### P13 — SHIELD: regenerating ship shields *(M — SHIELD-0 SHIPPED dark as mig 0191; SHIELD-1/2 + ACT-SHIELD remain)*
+The owner directive: ships get a SHIELD that regenerates during and outside combat. SHIELD-0
+(**shipped**, mig `0191`, slice-shield0): the schema foundation, DEPLOY-INERT and **data-gated —
+deliberately NO `shield_enabled` flag** (the 0170 hull-stats posture: the system is dark because
+every number is 0, not because a gate hides it). Columns mirror the hp model (0043):
+`main_ship_hull_types.base_shield` (integer, default 0, `>= 0` — 0 = shieldless is legal, unlike
+`max_hp > 0`) + `main_ship_instances.shield`/`max_shield` (integer, default 0, `shield >= 0`,
+`max_shield >= 0`, `shield <= max_shield`) + `combat_units.shield_max`/`shield_current` (double
+precision NULL — the 0167 member-snapshot shape, with the pairing CHECK ADAPTED: paired-together +
+member-row-only, NOT the strict 0167 IFF, because the live member writer (D2, activated
+2026-07-12) does not write shields until SHIELD-1 — a strict IFF would break live team hunts on
+deploy). The ONE sync leaf `mainship_sync_combat_shield(ship, shield)` — the
+`mainship_sync_combat_hp` (0167:129-145) sibling posture exactly (SECURITY DEFINER,
+service-role-only ACL, missing row = zero rows, one-leaf-one-concern: writes `shield` ONLY) plus
+BOTH clamps (`least(max_shield, greatest(0, …))` — regen can overshoot upward where combat only
+lowered hp); NO caller until SHIELD-1. Knobs `shield_regen_combat_pct`/`shield_regen_idle_pct`
+seeded '0' (double-inert: no consumer + OFF). A partial index on
+`main_ship_instances (main_ship_id) where shield < max_shield` is the future regen pass's scan
+surface (matches zero rows while everything is 0/0). Commission needs NO re-create this slice
+(verified: the 0184/0078 heads ENUMERATE insert columns, so default-0 columns ride free — new
+ships are born 0/0). Proof = the `TEAMCMD_PASS_SHIELD0` block in `team-command-proof` (schema
+pins; total inertness; leaf clamp smoke with hp byte-untouched; knobs never touched even in-txn).
+**SHIELD-1**: the engine — tick/creator parity re-creates (0169/0168 heads): member `shield_max`/
+`shield_current` frozen at encounter creation (the base_shield copy), shield-absorbs-first damage,
+in-combat regen via `shield_regen_combat_pct`, the sync leaf wired next to its hp sibling, and the
+commission-path base_shield → instance copy. **SHIELD-2**: the out-of-combat regen home (riding
+the 0191 partial index) + UI (shield bars next to hp). **ACT-SHIELD** (the human flip, [D — all
+owner-tunable; the charter's proposals]): the monotonic per-hull `base_shield` backfill —
+**Sparrow 100 / Mule 130 / Talon 85** — + the instance 0→base copy + knobs **0.02 combat / 0.10
+idle**; rollback = knobs/data back to 0, never a schema revert. Guards: the leaf mirrors its
+sibling (no parallel sync path); `shield` keeps ONE runtime writer; all engine changes are
+parity-discipline re-creates from grep-verified true heads; deploy-inert provable at every slice.
+
 **Evaluated & deferred:** support-craft revival — NO (deprecated scaffolding per MAINSHIP_TRANSITION §★).
 PvP/guilds/visibility — NO until exploration/mining/trading all consume OSN (the ROADMAP timing rule).
 Coordinate-envelope growth — NO until the World-Range Recon. New expedition `activity_type`s — fold into
@@ -323,6 +356,7 @@ P2 contracts + P8 event sites first.
 | 15 | ACT-INVEST + ACT-WORLDBAL | queued |
 | 16 | EV-1 + ACT-PHASE20 **[D: thresholds 75 / 0.25 / 0.6–1.4 — proposed in the 0182 header, owner-tunable]** | **EV-1 shipped (dark)** — mig `0182` (slice-ev1): `worldstate_tick` re-created from its TRUE head (0137, grep-verified; parity diff clean) with the marked EV-1 hunks — ALL STATE-detected (never edge: a failed publish's condition still holds next minute, so the retry is genuine): pressure high (at/above `event_pressure_high_threshold=75`; critical ≥ threshold + half the headroom; a parked-high location re-announces daily — intended pressure-nagging) + eased (the exact complement, suppressed unless today's high was announced — a read-only lookup of the tick's own published rows), depletion warnings (post-regen reserve < `event_depletion_warn_fraction=0.25`, global-scope, field NAME only), drift extremes (`price_surge`/`price_crash` outside 0.6/1.4 — 1.4 grounded: the 0136 drift target caps at 1.5 under coeff 0.5, so the notional 1.6 is unreachable) — every publication through the EXISTING `world_events_publish` (never a direct insert; 5 call sites pinned), per-(subject, UTC-day) dedup keys, EACH publication its own begin/exception subtransaction (query_canceled re-raised; a publish failure logs a WARNING, never aborts the tick, never rolls back a sibling — D2), the four knobs read ONLY when `world_balance_enabled` and guarded (uncastable/NaN → seeded default + WARNING — a knob typo cannot kill the live heartbeat), double-dark (`world_balance_enabled` × publish's own `phase20_polish_enabled` gate), NO new cron (the 0033 60s heartbeat, self-asserted unchanged); proof `scripts/ev1-proof.{sql,sh}` in NEW `world-events-proof.yml` (family-pure host — trade-v1 stays trade-only). ACT-PHASE20 (the Rung-7 flips) remains |
 | 17 | SOUL-0 per-ship traits foundation **[D: the 8-trait table + magnitudes — proposed in the 0186 header, owner-tunable]** | **shipped (dark)** — mig `0186` (slice-soul0): `ship_trait_types` (the 0117 catalog posture — 8 birthmark traits, stats keys self-assert-pinned to the shared 0180 adapter input vocabulary, `hp_mult >= 1.0` with `veteran_frame` 1.08 the sole carrier) + `main_ship_traits` (2 slots per ship, owner-read, INSERT-ONLY immutable — no update/delete path anywhere) + `soul_roll_traits_for_ship` (service-only sole writer; traits = a pure `hashtextextended(':soul:')` function of the ship id, the 0041/0176 determinism technique; idempotent, hp_mult applied once + monotonic) — behind NEW `ship_traits_enabled=false`, DOUBLY dark (no caller yet). Proof = the `TEAMCMD_PASS_SOUL0` block in `team-command-proof` (catalog verbatim; rolls = the proof's own inline hash re-derivation on veteran + plain arms; exact hp_mult; idempotent-replay immutability). SOUL-1 (commission hook + adapter fold), SOUL-2 (read surface + dossier UI), ACT-SOUL (backfill roll — deterministic at a FIXED catalog, so the flip script must assert catalog count = 8 first — + the human flip) = later slices — see §C P12 |
+| 18 | SHIELD-0 shield foundation **[D: base_shield at flip Sparrow 100 / Mule 130 / Talon 85 + regen 0.02 combat / 0.10 idle — the §C P13 proposals, owner-tunable at ACT-SHIELD]** | **shipped (dark)** — mig `0191` (slice-shield0): the hp-mirrored shield columns (`base_shield` + instance `shield`/`max_shield` integer default 0 with the 0043-shaped CHECKs, `max_shield` 0-legal) + `combat_units.shield_max`/`shield_current` (0167 snapshot shape; pairing CHECK adapted member-only — live member rows stay NULL-legal until SHIELD-1) + the `mainship_sync_combat_shield` leaf (the 0167 sibling posture + both clamps; NO caller yet) + `shield_regen_combat_pct`/`shield_regen_idle_pct` seeded '0' + the `shield < max_shield` partial regen index (matches zero rows). Data-gated (NO flag); zero function re-creates (the 0184/0078 commission heads enumerate columns → default-0 rides free). Proof = the `TEAMCMD_PASS_SHIELD0` block in `team-command-proof`. SHIELD-1 (engine re-creates), SHIELD-2 (regen home + UI), ACT-SHIELD (monotonic backfill + knobs) = later slices — see §C P13 |
 
 *(Then: the SHIPYARD line (P6 — SHIPYARD-0 shipped dark as mig 0185; SHIPYARD-1 shipped dark as
 mig 0188, slice-shipyard1 — the order RPC + queue seam; SHIPYARD-2/3 + ACT-SHIPYARD remain) [D],
