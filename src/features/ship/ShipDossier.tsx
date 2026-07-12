@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { fetchMyExpeditionPreview, fetchMyMainShips, resolveOwnedShip, type MainShipRow } from '../map/mainshipApi'
 import { getMyShipFittings } from '../modules/modulesApi'
-import { getMyCaptainInstances } from '../captains/captainsApi'
+import { getMyCaptainInstances, getShipStations } from '../captains/captainsApi'
+import { deckBoard, type ShipStation } from '../captains/deckStations'
 import { getShipCargoLots, type ShipCargoLot } from '../map/tradeApi'
 import type { SelectableShip } from '../map/useMainShipSelection'
 import type { GetMyShipFittingsResult } from '../modules/modulesTypes'
@@ -72,6 +73,9 @@ export function ShipDossier({
 }) {
   const [fittings, setFittings] = useState<GetMyShipFittingsResult | null>(null)
   const [roster, setRoster] = useState<GetMyCaptainInstancesResult | null>(null)
+  // DECKS-2: the six-station catalog (public-read Reference/Config; [] = read failed → the
+  // captains section falls back to its pre-DECKS list shape, never a broken board).
+  const [stations, setStations] = useState<ShipStation[]>([])
   const [lots, setLots] = useState<ShipCargoLot[] | null>(null)
   const [ships, setShips] = useState<MainShipRow[] | null>(null)
   // SHIP-POWER: the raw preview envelope (parsed at render — the parser owns every malformed shape).
@@ -87,12 +91,13 @@ export function ShipDossier({
     // One batched read wave (the ModulesPanel refresh idiom). The two RPC reads carry their own
     // dark envelopes (each section fails closed on !ok); the two direct selects are owner-read
     // RLS and collapse to []/null on error inside their wrappers.
-    const [fit, cap, cargo, myShips, preview] = await Promise.all([
+    const [fit, cap, cargo, myShips, preview, decks] = await Promise.all([
       getMyShipFittings(),
       getMyCaptainInstances(),
       getShipCargoLots(shipId),
       fetchMyMainShips(), // module_slots for the slot-usage line (the ModulesPanel picker source)
       fetchMyExpeditionPreview(shipId), // SHIP-POWER: THIS ship's server stats (transport error → null → hidden)
+      getShipStations(), // DECKS-2: the station catalog (public-read; [] on error → list fallback)
     ])
     if (!activeRef.current) return
     setFittings(fit)
@@ -100,6 +105,7 @@ export function ShipDossier({
     setLots(cargo)
     setShips(myShips)
     setStatsPreview(preview)
+    setStations(decks)
   }, [activeRef, shipId]) // activeRef identity is stable — dep satisfies the lint rule
 
   // refreshKey is a deliberate re-fetch trigger (the ModulesPanel lifecycleKey dep idiom).
@@ -128,6 +134,10 @@ export function ShipDossier({
   const slotsUsed = litFittings ? fittedSlotsUsed(litFittings) : 0
   const slotLimit = resolveOwnedShip(ships ?? [], shipId)?.module_slots ?? null
   const litCaptains = isServerLit(roster) ? captainsForShip(roster.captains ?? [], shipId) : null
+  // DECKS-2: the decks board view-model (pure; specs in tests/deckStations.spec.ts). null while
+  // the roster is dark (nothing renders — unchanged posture) or the catalog read failed (list
+  // fallback below).
+  const board = litCaptains && stations.length > 0 ? deckBoard(stations, litCaptains) : null
   const stacks = aggregateCargo(lots)
   const usedM3 = cargoUsedM3(lots)
   // SHIP-POWER: the strip's parse (pure; specs in tests/shipDossier.spec.ts).
@@ -200,11 +210,64 @@ export function ShipDossier({
       )}
 
       {/* CAPTAINS — server-lit gated (captain_assignment_enabled — DARK today → renders NOTHING,
-          label included, exactly like every captain surface). */}
+          label included, exactly like every captain surface; the decks board changes nothing
+          about that posture — the isServerLit gate is unchanged and the one predicate).
+          DECKS-2: the section IS the decks board — six named station rows (ship_stations order),
+          each holding its captain or an "Empty station" slot (the owner order: "in ship i should
+          be able to see decks … with empty slots"). Pure derivation in deckBoard (specs:
+          tests/deckStations.spec.ts); catalog read failed ([]) → the exact pre-DECKS list shape
+          (fail closed to yesterday, never a broken board). Acting stays in CaptainsPanel beside —
+          this card remains the ship's paper. */}
       {litCaptains && (
         <>
           <SectionLabel className="mt-4">Captains</SectionLabel>
-          {litCaptains.length > 0 ? (
+          {board ? (
+            <ul data-testid="dossier-captains" className="mt-2 space-y-1.5">
+              {board.rows.map(({ station, captain }) => (
+                <li
+                  key={station.station_id}
+                  data-testid={`deck-station-${station.station_id}`}
+                  className="flex items-center justify-between gap-2 text-sm"
+                >
+                  <span className="w-24 shrink-0 text-[10px] uppercase tracking-wide text-ink-faint">
+                    {station.name}
+                  </span>
+                  {captain ? (
+                    <span
+                      data-testid={`dossier-captain-${captain.instance_id}`}
+                      className="flex min-w-0 flex-1 items-center justify-between gap-2"
+                    >
+                      <span className="truncate text-ink">{captain.name}</span>
+                      <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
+                        {captain.specialization}
+                      </span>
+                    </span>
+                  ) : (
+                    <span
+                      data-testid={`deck-empty-${station.station_id}`}
+                      className="flex-1 rounded border border-dashed border-edge px-1.5 py-0.5 text-[10px] text-ink-faint"
+                    >
+                      Empty station
+                    </span>
+                  )}
+                </li>
+              ))}
+              {/* general quarters: a captain with no/unknown station (pre-backfill data or a
+                  malformed row) still shows — the board never hides an assigned captain. */}
+              {board.unstationed.map((c) => (
+                <li
+                  key={c.instance_id}
+                  data-testid={`dossier-captain-${c.instance_id}`}
+                  className="flex items-center justify-between gap-2 text-sm"
+                >
+                  <span className="truncate text-ink">{c.name}</span>
+                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
+                    {c.specialization}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : litCaptains.length > 0 ? (
             <ul data-testid="dossier-captains" className="mt-2 space-y-1.5">
               {litCaptains.map((c) => (
                 <li
@@ -219,7 +282,11 @@ export function ShipDossier({
                 </li>
               ))}
             </ul>
-          ) : (
+          ) : null}
+          {/* fallback path only (catalog read failed → no board): the pre-DECKS empty note. The
+              lit board already SAYS empty — six "Empty station" slots — so the paragraph would be
+              redundant noise beside it. */}
+          {!board && litCaptains.length === 0 && (
             <p data-testid="dossier-captains-empty" className="mt-2 text-sm text-ink-faint">
               No captain assigned.
             </p>

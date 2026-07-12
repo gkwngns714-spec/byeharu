@@ -7,6 +7,7 @@ import type {
   RecruitCaptainResult,
   UnassignCaptainResult,
 } from './captainsTypes'
+import type { ShipStation } from './deckStations'
 
 // CAPTAIN-P15 (post-audit UI, panel 3 of 4) — typed client API for the dark Captains surface: the roster
 // read (get_my_captain_instances, 0123) + the two assign/unassign commands (0120/0121). Mirrors
@@ -25,16 +26,22 @@ export async function getMyCaptainInstances(): Promise<GetMyCaptainInstancesResu
 }
 
 /** Assign a captain to the player's main ship (idempotent on (player, request_id); server-authoritative
- *  on ownership/slots/settled-safe). request_id is TEXT. Transport error → { ok:false, reason:'unavailable' }. */
+ *  on ownership/slots/settled-safe/stations). request_id is TEXT. DECKS-2: `station` is the optional
+ *  deck station id (ship_stations) — omitted/null lets the server auto-assign the lowest-sort free
+ *  station (0189). p_station is only SENT when a station was picked, so the default call keeps the
+ *  exact pre-0189 wire shape (defaulted param server-side — deploy-order safe). Transport error →
+ *  { ok:false, reason:'unavailable' }. */
 export async function assignCaptainToShip(
   requestId: string,
   captainInstanceId: string,
   mainShipId: string,
+  station?: string | null,
 ): Promise<AssignCaptainResult> {
   const { data, error } = await supabase.rpc('assign_captain_to_ship', {
     p_request_id: requestId,
     p_captain_instance_id: captainInstanceId,
     p_main_ship_id: mainShipId,
+    ...(station != null ? { p_station: station } : {}),
   })
   if (error) return { ok: false, reason: 'unavailable' }
   return data as AssignCaptainResult
@@ -52,6 +59,23 @@ export async function unassignCaptainFromShip(
   })
   if (error) return { ok: false, reason: 'unavailable' }
   return data as UnassignCaptainResult
+}
+
+// ── DECKS-2: the deck-station catalog read ──────────────────────────────────────────────────────────
+
+/**
+ * Read the six-station deck catalog (ship_stations, 0189) by DIRECT public-read select — the exact
+ * catalog convention getCaptainRecipes uses for captain_types/item_types; NO new server RPC. Ordered
+ * by sort (the server's auto-assign walk). Fail-closed: any error → [] (the decks board and the
+ * station picker simply don't render — the captains section falls back to its pre-DECKS shape).
+ */
+export async function getShipStations(): Promise<ShipStation[]> {
+  const { data, error } = await supabase
+    .from('ship_stations')
+    .select('station_id, name, sort, affinity_specialization')
+    .order('sort', { ascending: true })
+  if (error || !data) return []
+  return data as ShipStation[]
 }
 
 // ── CAPTAIN-P16 (post-audit UI, panel 4 of 4): recruitment (progression) ───────────────────────────

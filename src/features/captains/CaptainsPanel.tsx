@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isServerLit, runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
-import { assignCaptainToShip, getMyCaptainInstances, unassignCaptainFromShip } from './captainsApi'
+import { assignCaptainToShip, getMyCaptainInstances, getShipStations, unassignCaptainFromShip } from './captainsApi'
 import {
   captainCommandErrorMessage,
   type CaptainInstance,
   type GetMyCaptainInstancesResult,
 } from './captainsTypes'
+import { AUTO_STATION, freeStations, stationForCommand, stationLabel, type ShipStation } from './deckStations'
+import { captainsForShip } from '../ship/shipDossierView'
 import { CaptainXpBar } from './CaptainXpBar'
 import { Button, Card, CardHeader } from '../../components/ui'
 
@@ -31,6 +33,10 @@ export function CaptainsPanel({
   onChanged?: () => void
 }) {
   const [roster, setRoster] = useState<GetMyCaptainInstancesResult | null>(null)
+  // DECKS-2: the six-station catalog (public-read; [] = read failed → no picker, assigns stay
+  // auto — behavior-identical to pre-DECKS) + the panel's ONE station pick for the next assign.
+  const [stations, setStations] = useState<ShipStation[]>([])
+  const [stationPick, setStationPick] = useState<string>(AUTO_STATION)
   // Per-captain (instance-id-keyed) pending + note Records — the ModulesPanel per-row guarded idiom.
   const [pending, setPending] = useState<Record<string, boolean>>({})
   const [rowNote, setRowNote] = useState<Record<string, string | null>>({})
@@ -40,9 +46,10 @@ export function CaptainsPanel({
   const { activeRef } = guards
 
   const refresh = useCallback(async () => {
-    const res = await getMyCaptainInstances()
+    const [res, decks] = await Promise.all([getMyCaptainInstances(), getShipStations()])
     if (!activeRef.current) return
     setRoster(res)
+    setStations(decks)
   }, [activeRef]) // ref identity is stable — dep satisfies the lint rule without changing identity
 
   // lifecycleKey is a deliberate re-fetch trigger (the ModulesPanel dep idiom).
@@ -51,24 +58,52 @@ export function CaptainsPanel({
   }, [refresh, lifecycleKey])
 
   // SHIP-DOSSIER: post-success refetch + sibling notification (guarded commands only — the mount
-  // refresh must NOT ping siblings).
+  // refresh must NOT ping siblings). DECKS-2: the station pick also resets to auto — the picked
+  // station is (usually) taken now, and a stale pick must never silently target the next assign.
   async function refreshAndNotify() {
     await refresh()
+    setStationPick(AUTO_STATION)
     onChanged?.()
   }
 
+  // DECKS-2: the picker's option set — the selected ship's FREE stations (display-side; the
+  // server's station_occupied reject stays the enforcer). Empty catalog read → empty set → no
+  // picker renders and assigns stay auto (pre-DECKS behavior exactly).
+  const shipCaptains =
+    isServerLit(roster) && mainShipId ? captainsForShip(roster.captains ?? [], mainShipId) : []
+  const pickableStations = mainShipId ? freeStations(stations, shipCaptains) : []
+
+  // DECKS-2: the ONE derived pick both the <select> and the command read — display and behavior
+  // can never diverge (no setState-in-effect; a pure render derivation). A pick whose <option>
+  // vanished (the station was taken between refreshes) VISIBLY falls back to Auto — the player
+  // sees "Auto" before any click, so acting on it is never a silent substitution; a pick that IS
+  // displayed is sent VERBATIM, and a lost race gets the server's honest station_occupied answer.
+  const effectivePick =
+    stationPick === AUTO_STATION || pickableStations.some((s) => s.station_id === stationPick)
+      ? stationPick
+      : AUTO_STATION
+
   // One intentional Assign per row — the shared guarded-submit body over the per-captain key; the server
-  // dedups on (player, request_id) and is the final authority on ownership/slots/settled-safe. request_id
-  // is a fresh crypto.randomUUID() STRING (the TEXT wrapper param). Failure copy: server message, else map.
+  // dedups on (player, request_id) and is the final authority on ownership/slots/settled-safe/stations.
+  // request_id is a fresh crypto.randomUUID() STRING (the TEXT wrapper param). DECKS-2: the DISPLAYED
+  // pick (effectivePick — see the derivation above) rides along VERBATIM (Auto → null → the server
+  // auto-assigns the lowest-sort free station; a displayed named pick that loses a race answers
+  // station_occupied honestly — never a silent substitution). The success note names the LANDED station
+  // from the command's own success envelope (0189 — server truth for the auto case too). Failure copy:
+  // server message, else map.
   async function assign(c: CaptainInstance) {
     if (!mainShipId) return
+    const station = stationForCommand(effectivePick)
     await runGuardedCommand({
       key: c.instance_id,
       guards,
       setPending: (on) => setPending((p) => ({ ...p, [c.instance_id]: on })),
       setNote: (note) => setRowNote((n) => ({ ...n, [c.instance_id]: note })),
-      exec: () => assignCaptainToShip(crypto.randomUUID(), c.instance_id, mainShipId),
-      successNote: () => `Assigned ${c.name}.`,
+      exec: () => assignCaptainToShip(crypto.randomUUID(), c.instance_id, mainShipId, station),
+      successNote: (res) =>
+        res.station != null
+          ? `Assigned ${c.name} — ${stationLabel(stations, res.station)}.`
+          : `Assigned ${c.name}.`, // pre-0189 envelope (no station key) — the old note verbatim
       errorNote: (res) => captainCommandErrorMessage(res),
       refresh: refreshAndNotify,
     })
@@ -102,6 +137,32 @@ export function CaptainsPanel({
     // absolute offset (bottom-2 left-[50rem]) is gone with the hand-rolled skin. Tokens only.
     <Card tone="accent" data-testid="captains-panel">
       <CardHeader title="Captains" />
+      {/* DECKS-2 — the compact station picker for the NEXT assign (one panel-level pick, the
+          ModulesPanel <select> token classes): Auto = the server picks the lowest-sort free
+          station; the options are THIS ship's free stations only (server-enforced regardless).
+          Renders only when an assign is possible (a ship + a lit catalog) — with the catalog read
+          failed or dark, the panel is byte-identical to pre-DECKS. */}
+      {mainShipId !== null && stations.length > 0 && (
+        <div className="mt-2 flex items-center gap-1.5">
+          <label htmlFor="deck-assign-station" className="shrink-0 text-[10px] text-ink-faint">
+            Station
+          </label>
+          <select
+            id="deck-assign-station"
+            data-testid="deck-assign-station"
+            value={effectivePick}
+            onChange={(e) => setStationPick(e.target.value)}
+            className="min-w-0 flex-1 rounded border border-edge bg-surface-2 px-1 py-0.5 text-[10px] text-ink"
+          >
+            <option value={AUTO_STATION}>Auto (first free)</option>
+            {pickableStations.map((s) => (
+              <option key={s.station_id} value={s.station_id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {captains.length === 0 ? (
         <p data-testid="captains-none" className="mt-2 border-t border-edge pt-2 text-[10px] text-ink-muted">
           No captains yet.
