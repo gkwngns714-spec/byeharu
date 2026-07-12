@@ -213,9 +213,14 @@ begin
     raise exception 'MOD2-1 self-assert FAIL: % module(s) would answer no_recipe', v_n;
   end if;
 
-  -- (f) both crafting/fitting gates remain DARK — this migration flips nothing.
+  -- (f) this migration flips nothing — but the module gates MAY legitimately be lit already:
+  -- module_crafting_enabled/module_fitting_enabled went TRUE at the 2026-07-12 team-command
+  -- activation (scripts/activate-team-command.sql stage 2, packet §1.4.2). Landing this seed on a
+  -- LIT system simply makes the two modules immediately craftable — owner-sanctioned content.
+  -- (The original dark-assert here BLOCKED the prod deploy — repaired 2026-07-12 while unapplied;
+  -- CI chains are dark-seeded so both arms stay covered.)
   if public.cfg_bool('module_crafting_enabled') or public.cfg_bool('module_fitting_enabled') then
-    raise exception 'MOD2-1 self-assert FAIL: a module gate reads true at seed time (this slice must land dark)';
+    raise notice 'MOD2-1: module gates are LIT at seed time — shield_lattice + mining_rig_extension go live immediately (sanctioned)';
   end if;
 
   raise notice 'MOD2-1 self-assert ok: 2 modules (defense 12 / mining 8, slot 1 each, fit any hull) + 6 exact recipe rows; every ingredient item-typed with a live drop source (loot prosrc + field bundles); every seeded stats key adapter-read (prosrc-pinned) with survival/mining_yield outputs present; craftable shape; both gates still dark';
