@@ -6,6 +6,9 @@ import {
   fittedSlotsUsed,
   fittingsForShip,
   formatM3,
+  parseShipStatsPreview,
+  shipPowerFromPreview,
+  shipStatsErrorMessage,
 } from '../src/features/ship/shipDossierView'
 import type { ShipFittingRow } from '../src/features/modules/modulesTypes'
 import type { CaptainInstance } from '../src/features/captains/captainsTypes'
@@ -107,4 +110,81 @@ test('formatM3: two decimals, MarketPanel-style', () => {
   expect(formatM3(0)).toBe('0.00')
   expect(formatM3(12.5)).toBe('12.50')
   expect(formatM3(3.14159)).toBe('3.14')
+})
+
+// ── SHIP-POWER — parseShipStatsPreview (get_my_expedition_preview envelope → strip shape) ────────
+// The 0049/0159 envelope vocabulary: {has_ship, valid, ship, stats|error} · the no-ship teaser
+// {has_ship:false, hull} · fail-closed 'hidden' on anything malformed (incl. the wrapper's
+// transport-error null). The strip must never crash the dossier on a bad shape.
+
+const litPreview = (stats: Record<string, unknown>) => ({
+  has_ship: true,
+  valid: true,
+  ship: { main_ship_id: 'ship-a', name: 'Byeharu' },
+  stats,
+})
+
+test('parseShipStatsPreview: a valid envelope yields the four strip numbers', () => {
+  const parsed = parseShipStatsPreview(
+    litPreview({ combat_power: 25, survival: 12.5, speed: 1.2, cargo_capacity: 100, pirate_attention: 3 }),
+  )
+  expect(parsed).toEqual({
+    kind: 'stats',
+    stats: { combat_power: 25, survival: 12.5, speed: 1.2, cargo_capacity: 100 },
+  })
+})
+
+test('parseShipStatsPreview: absent / non-finite stat fields degrade per-field to null, not a crash', () => {
+  const parsed = parseShipStatsPreview(litPreview({ combat_power: 25, speed: 'fast', cargo_capacity: NaN }))
+  expect(parsed).toEqual({
+    kind: 'stats',
+    stats: { combat_power: 25, survival: null, speed: null, cargo_capacity: null },
+  })
+  // stats missing entirely (still valid:true) → all-null strip, kind stays 'stats'
+  expect(parseShipStatsPreview({ has_ship: true, valid: true })).toEqual({
+    kind: 'stats',
+    stats: { combat_power: null, survival: null, speed: null, cargo_capacity: null },
+  })
+})
+
+test('parseShipStatsPreview: has_ship && !valid → invalid, carrying the server error verbatim', () => {
+  expect(parseShipStatsPreview({ has_ship: true, valid: false, error: 'ship_selection_required' })).toEqual({
+    kind: 'invalid',
+    error: 'ship_selection_required',
+  })
+  // a non-string error field degrades to null, never leaks a non-string into copy
+  expect(parseShipStatsPreview({ has_ship: true, valid: false, error: 42 })).toEqual({
+    kind: 'invalid',
+    error: null,
+  })
+})
+
+test('parseShipStatsPreview: no-ship teaser / transport null / malformed shapes all hide the strip', () => {
+  // the genuine no-ship starter-hull teaser (has_ship:false) — the status card owns that story
+  expect(parseShipStatsPreview({ has_ship: false, hull: { hull_type_id: 'starter_frigate' } })).toEqual({ kind: 'hidden' })
+  expect(parseShipStatsPreview(null)).toEqual({ kind: 'hidden' }) // wrapper's transport-error collapse
+  expect(parseShipStatsPreview(undefined)).toEqual({ kind: 'hidden' })
+  expect(parseShipStatsPreview('nope')).toEqual({ kind: 'hidden' })
+  expect(parseShipStatsPreview([1, 2])).toEqual({ kind: 'hidden' })
+  expect(parseShipStatsPreview({ valid: true })).toEqual({ kind: 'hidden' }) // has_ship absent → fail closed
+})
+
+// ── SHIP-POWER — shipPowerFromPreview (the roster's ungrouped-row chip value) ────────────────────
+test('shipPowerFromPreview: power from a valid envelope; null (chip omitted) otherwise', () => {
+  expect(shipPowerFromPreview(litPreview({ combat_power: 25 }))).toBe(25)
+  expect(shipPowerFromPreview(litPreview({ combat_power: 0 }))).toBe(0) // 0 is a REAL power, not "unknown"
+  expect(shipPowerFromPreview(litPreview({}))).toBe(null)
+  expect(shipPowerFromPreview({ has_ship: true, valid: false, error: 'x' })).toBe(null)
+  expect(shipPowerFromPreview(null)).toBe(null)
+})
+
+// ── SHIP-POWER — shipStatsErrorMessage (a raw envelope error NEVER reaches the DOM) ──────────────
+test('shipStatsErrorMessage: maps the structured token; raw sqlerrm / unknown / null go generic', () => {
+  expect(shipStatsErrorMessage('ship_selection_required')).toBe('Select a ship to see its stats.')
+  // a raw Postgres sqlerrm (internal function names) must degrade, never surface verbatim
+  const raw = 'calculate_expedition_stats: unknown activity_type bogus'
+  expect(shipStatsErrorMessage(raw)).toBe('Ship stats unavailable right now.')
+  expect(shipStatsErrorMessage(raw)).not.toContain('calculate_expedition_stats')
+  expect(shipStatsErrorMessage('anything_else')).toBe('Ship stats unavailable right now.')
+  expect(shipStatsErrorMessage(null)).toBe('Ship stats unavailable right now.')
 })

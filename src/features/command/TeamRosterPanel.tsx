@@ -26,6 +26,8 @@ import { getMyCaptainInstances } from '../captains/captainsApi'
 import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { isServerLit } from '../../lib/useActivityPanelGuards'
 import { withPowerGate } from '../map/locationDisplay'
+import { fetchMyExpeditionPreview } from '../map/mainshipApi'
+import { shipPowerFromPreview } from '../ship/shipDossierView'
 
 // TEAM-COMMAND Slice B1 — INTERACTIVE team roster (backend "group" == UI "team").
 //
@@ -145,6 +147,40 @@ export function TeamRosterPanel() {
   }))
   const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
   const openSlot = nextTeamSlot(groups)
+
+  // SHIP-POWER — per-ship power chips on UNGROUPED rows only (documented decision): a grouped
+  // ship's power already surfaces in its TeamDossier Breakdown (the group preview RPC fetches
+  // per-member stats), so solo-fetching grouped members would double-read the same numbers. For
+  // ungrouped ships nothing else fetches their stats, so we read the SOLO preview
+  // (get_my_expedition_preview) once per ship per roster load — cached by rosterVersion (the
+  // panel's staleness discipline: a loadout/captain mutation reloads, bumps the version, and
+  // stales this map). N = ungrouped-ship count (small: ships arrive one commission at a time),
+  // batched in ONE Promise.all wave. A null power (invalid/dark) simply omits the chip.
+  const [soloPower, setSoloPower] = useState<{ version: number; byShip: Record<string, number | null> } | null>(null)
+  const ungroupedIdsKey = ungrouped.map((s) => s.main_ship_id).join('|') // uuids — '|' never collides
+  useEffect(() => {
+    // While the roster/group reads are in flight, groupMap is {} and EVERY ship derives as
+    // ungrouped — fetching then would fire an N_total preview wave for a set that's about to be
+    // wrong, followed by a second (real) wave. Bail until the load settles; `loading` is a dep, so
+    // the effect refires with the true ungrouped set the moment it flips false.
+    if (loading) return
+    if (ungroupedIdsKey === '') return
+    const ids = ungroupedIdsKey.split('|')
+    let active = true
+    void Promise.all(ids.map((id) => fetchMyExpeditionPreview(id))).then((raws) => {
+      if (!active) return
+      const byShip: Record<string, number | null> = {}
+      ids.forEach((id, i) => {
+        byShip[id] = shipPowerFromPreview(raws[i])
+      })
+      setSoloPower({ version: rosterVersion, byShip })
+    })
+    return () => {
+      active = false
+    }
+  }, [ungroupedIdsKey, rosterVersion, loading])
+  // Only data computed at the CURRENT roster version renders (the TeamDossier stamp discipline).
+  const curSoloPower = soloPower !== null && soloPower.version === rosterVersion ? soloPower.byShip : null
   const destinations = sendableDestinations(game.locations) // active, non-combat targets (server re-validates)
   const huntZones = huntableDestinations(game.locations) // active hunt_pirates targets — may be EMPTY today
 
@@ -168,6 +204,17 @@ export function TeamRosterPanel() {
             {s.name}
           </button>
           <span className="ml-3 flex shrink-0 items-center gap-2">
+            {/* SHIP-POWER — solo power for UNGROUPED rows (grouped rows: see the TeamDossier
+                Breakdown). Mono chip, the dossier idiom; omitted (not '—') while unknown/stale. */}
+            {s.group_id == null && curSoloPower?.[s.main_ship_id] != null && (
+              <span
+                data-testid={`roster-power-${s.main_ship_id}`}
+                className="inline-flex items-baseline gap-1 rounded border border-edge bg-surface-2 px-1.5 py-0.5 text-[10px]"
+              >
+                <span className="text-ink-faint">Power</span>
+                <span className="font-mono tabular-nums text-ink">{curSoloPower[s.main_ship_id]}</span>
+              </span>
+            )}
             <span className="text-xs text-ink-faint">{s.status}</span>
             {selected && <Badge tone="accent">Selected</Badge>}
           </span>

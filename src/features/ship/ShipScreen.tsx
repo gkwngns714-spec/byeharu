@@ -2,7 +2,6 @@ import { useReducer } from 'react'
 import { useShellState } from '../../app/shellState'
 import { ShipStatusCard } from './ShipStatusCard'
 import { ShipDossier } from './ShipDossier'
-import { ModulesPanel } from '../modules/ModulesPanel'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
 import { InventoryPanel } from '../inventory/InventoryPanel'
@@ -23,9 +22,10 @@ export function ShipScreen() {
   const { game, map, selection: shipSelection } = useShellState()
   const lifecycleKey = `${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
   // SHIP-DOSSIER — the screen's loadout revision: bumped by any panel AFTER a successful
-  // loadout/inventory-changing command (craft/fit/unfit/assign/unassign/recruit), folded into the
-  // read panels' refresh key so ShipDossier + InventoryPanel re-read the server state the command
-  // just changed (non-optimistic: the command panel refetched itself first, then pinged us).
+  // loadout/inventory-changing command (assign/unassign/recruit — the captain panels; WORKSHOP
+  // moved craft/fit to Port, whose route remount re-reads this screen's panels on return), folded
+  // into the read panels' refresh key so ShipDossier + InventoryPanel re-read the server state the
+  // command just changed (non-optimistic: the command panel refetched itself first, then pinged us).
   const [loadoutRev, bumpLoadoutRev] = useReducer((n: number) => n + 1, 0)
   const readRefreshKey = `${lifecycleKey}|r${loadoutRev}`
   // TRADE-UI-1 — client selected-ship model, now the ONE shell instance (A0 lifted it here; Port's MarketPanel
@@ -54,10 +54,11 @@ export function ShipScreen() {
               await Promise.all([game.refresh(), map.refresh()])
             }}
           />
-          {/* SHIP-DOSSIER — what is ON the selected ship (the ONE shell selection): fitted
-              modules (lit) · assigned captains (server-lit gated — dark today) · cargo hold
-              (owner-read, works undocked). Read-only; the command panels below/beside stay the
-              acting surfaces and ping loadoutRev after success. */}
+          {/* SHIP-DOSSIER — what is ON the selected ship (the ONE shell selection): the ship's
+              own stats strip (SHIP-POWER) · fitted modules (lit, READ-ONLY — editing moved to
+              Port → Workshop; seeing ≠ editing) · assigned captains (server-lit gated) · cargo
+              hold (owner-read, works undocked). The captain panels beside stay the acting
+              surfaces and ping loadoutRev after success. */}
           {/* key=ship id: switching ships (dark ShipSwitcher) REMOUNTS the dossier, so one ship's
               sections can never briefly wear another ship's name while the new reads land. */}
           <ShipDossier
@@ -65,14 +66,14 @@ export function ShipScreen() {
             selectedShip={shipSelection.selectedShip}
             refreshKey={readRefreshKey}
           />
-          {/* MODULES-P13 (dark, server-lit only): module crafting — renders null while the server
-              rejects (module_crafting_disabled), so production is byte-unchanged. */}
-          <ModulesPanel lifecycleKey={lifecycleKey} onChanged={bumpLoadoutRev} />
+          {/* WORKSHOP: ModulesPanel (craft & fit) moved to PortScreen — fitting is port-work
+              (the 0114 settled-SAFE law); the dossier above keeps the read-only fitted view. */}
         </div>
         <div className={screenRailClass('aside')}>
           {/* SHIP-DOSSIER — the player's item inventory (player_inventory), previously visible
               NOWHERE except as 'have n' recipe hints. Live data, no feature flag — always shown.
-              Aside home: these items feed the ModulesPanel/RecruitCaptainPanel on this screen. */}
+              Aside home: these items feed RecruitCaptainPanel here and the Port Workshop's
+              recipes (WORKSHOP moved ModulesPanel there; this read refetches on route remount). */}
           <InventoryPanel refreshKey={readRefreshKey} />
           {/* CAPTAIN-P15 (dark, server-lit only): assign/unassign captains to this ship. */}
           <CaptainsPanel

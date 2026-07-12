@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
-import { fetchMyMainShips, resolveOwnedShip, type MainShipRow } from '../map/mainshipApi'
+import { fetchMyExpeditionPreview, fetchMyMainShips, resolveOwnedShip, type MainShipRow } from '../map/mainshipApi'
 import { getMyShipFittings } from '../modules/modulesApi'
 import { getMyCaptainInstances } from '../captains/captainsApi'
 import { getShipCargoLots, type ShipCargoLot } from '../map/tradeApi'
@@ -14,6 +14,8 @@ import {
   fittedSlotsUsed,
   fittingsForShip,
   formatM3,
+  parseShipStatsPreview,
+  shipStatsErrorMessage,
 } from './shipDossierView'
 import { Card, CardHeader, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemTile } from '../../components/items'
@@ -24,8 +26,25 @@ import { ItemChip, ItemTile } from '../../components/items'
 // read ModulesPanel uses for its own fit flow), assigned captains (the 0123 roster read), and the
 // cargo hold (the ship_cargo_lots owner-read that previously rendered only inside the docked
 // MarketPanel — the RLS is a plain owner-table select via the ship join, so it reads anywhere,
-// docked or not). NO commands and NO new server surface — acting on the loadout stays in
-// ModulesPanel/CaptainsPanel below/beside; this card is the ship's paper.
+// docked or not). NO commands and NO new server surface — acting on the loadout stays in the
+// command panels (modules: Port → Workshop; captains: CaptainsPanel beside); this card is the
+// ship's paper.
+//
+// SHIP-POWER — the strip at the top adds the ship's OWN stats (the owner order: "the team has a
+// power value whereas the individual ship does not show anything"): Power / Survival / Speed /
+// Cargo cap as mono chips, the TeamDossier visual idiom, so ship stats and team stats read as ONE
+// system. Fed by get_my_expedition_preview (0049/0159 — the LIVE per-ship read; empty loadout,
+// neutral activity 'none', the EXPLICIT selected ship id) through the PURE parser
+// (parseShipStatsPreview — fail-closed on every malformed/dark/no-ship shape). It rides the same
+// batched refresh, so refreshKey re-reads it whenever loadout state moves (captain commands bump
+// it on this screen; module edits happen at Port → Workshop and land here on route remount).
+//
+// LABEL HONESTY: the strip's cargo chip is the adapter's ABSTRACT `cargo_capacity` (the int
+// column + module `cargo` bonuses, 0122/0180) — labeled 'Cargo cap', NEVER 'm³'. The authoritative
+// VOLUME is the separate cargo_capacity_m3 column (0076 abstract-vs-volume split), which the Cargo
+// hold line below and the market's buy enforcement (0089) use; the two numbers legitimately
+// diverge (e.g. a fitted expanded_cargo_lattice raises the abstract cap, not the hold volume), so
+// the strip must not wear the hold's unit.
 //
 // Composition: a sibling Card directly under ShipStatusCard in the Ship screen's main rail —
 // ShipStatusCard keeps its "no own fetch" contract (it renders the shell's polled state), while
@@ -44,7 +63,8 @@ export function ShipDossier({
   selectedShip,
   // Re-reads on main-ship lifecycle transitions AND after a loadout-changing command elsewhere on
   // the screen (ShipScreen bumps its loadout revision into this key after a successful
-  // craft/fit/unfit/assign/unassign/recruit — the non-optimistic await→refetch discipline).
+  // assign/unassign/recruit — the non-optimistic await→refetch discipline; craft/fit moved to
+  // Port → Workshop with WORKSHOP, and land here via route remount instead).
   refreshKey,
 }: {
   selectedShip: SelectableShip | null
@@ -54,6 +74,8 @@ export function ShipDossier({
   const [roster, setRoster] = useState<GetMyCaptainInstancesResult | null>(null)
   const [lots, setLots] = useState<ShipCargoLot[] | null>(null)
   const [ships, setShips] = useState<MainShipRow[] | null>(null)
+  // SHIP-POWER: the raw preview envelope (parsed at render — the parser owns every malformed shape).
+  const [statsPreview, setStatsPreview] = useState<unknown>(null)
 
   // Mounted guard — the shared idiom home (read-only panel: no submit guards needed).
   const { activeRef } = useActivityPanelGuards()
@@ -65,17 +87,19 @@ export function ShipDossier({
     // One batched read wave (the ModulesPanel refresh idiom). The two RPC reads carry their own
     // dark envelopes (each section fails closed on !ok); the two direct selects are owner-read
     // RLS and collapse to []/null on error inside their wrappers.
-    const [fit, cap, cargo, myShips] = await Promise.all([
+    const [fit, cap, cargo, myShips, preview] = await Promise.all([
       getMyShipFittings(),
       getMyCaptainInstances(),
       getShipCargoLots(shipId),
       fetchMyMainShips(), // module_slots for the slot-usage line (the ModulesPanel picker source)
+      fetchMyExpeditionPreview(shipId), // SHIP-POWER: THIS ship's server stats (transport error → null → hidden)
     ])
     if (!activeRef.current) return
     setFittings(fit)
     setRoster(cap)
     setLots(cargo)
     setShips(myShips)
+    setStatsPreview(preview)
   }, [activeRef, shipId]) // activeRef identity is stable — dep satisfies the lint rule
 
   // refreshKey is a deliberate re-fetch trigger (the ModulesPanel lifecycleKey dep idiom).
@@ -106,10 +130,45 @@ export function ShipDossier({
   const litCaptains = isServerLit(roster) ? captainsForShip(roster.captains ?? [], shipId) : null
   const stacks = aggregateCargo(lots)
   const usedM3 = cargoUsedM3(lots)
+  // SHIP-POWER: the strip's parse (pure; specs in tests/shipDossier.spec.ts).
+  const shipStats = parseShipStatsPreview(statsPreview)
+  // The TeamDossier chip idiom, verbatim classes — ship stats and team stats read as ONE system.
+  const chip = (label: string, value: number | string) => (
+    <span key={label} className="inline-flex items-baseline gap-1 rounded border border-edge bg-surface px-1.5 py-0.5 text-[10px]">
+      <span className="text-ink-faint">{label}</span>
+      <span className="font-mono tabular-nums text-ink">{value}</span>
+    </span>
+  )
+  const num = (v: number | null): number | string => v ?? '—'
 
   return (
     <Card data-testid="ship-dossier">
       <CardHeader title="On this ship" subtitle={selectedShip.name} className="mb-2" />
+
+      {/* SHIP-POWER — this ship's own stats strip (top): the same four numbers the TeamDossier
+          strip totals across a team, for ONE ship, in the same chip language. Server truth: the
+          preview delegates to the ONE stat adapter (0122 — modules + captains folded in). Hidden
+          (not '—' noise) while the read is dark/no-ship; an invalid envelope shows its reason. */}
+      {shipStats.kind !== 'hidden' && (
+        <div data-testid="ship-stats-strip" className="rounded-lg border border-edge bg-surface-2/50 px-3 py-2">
+          <p className="text-[10px] text-ink-faint">Ship stats · server truth</p>
+          {shipStats.kind === 'invalid' ? (
+            // The raw envelope `error` (0159 passes sqlerrm through) NEVER reaches the DOM —
+            // shipStatsErrorMessage maps known tokens, unknown → generic (the teamReasonMessage mold).
+            <p data-testid="ship-stats-error" className="mt-1 text-[10px] text-warning">
+              {shipStatsErrorMessage(shipStats.error)}
+            </p>
+          ) : (
+            <div data-testid="ship-stats" className="mt-1.5 flex flex-wrap gap-1.5">
+              {chip('Power', num(shipStats.stats.combat_power))}
+              {chip('Survival', num(shipStats.stats.survival))}
+              {chip('Speed', num(shipStats.stats.speed))}
+              {/* the adapter's ABSTRACT cargo stat — 'cap', not the hold's m³ (see header note) */}
+              {chip('Cargo cap', num(shipStats.stats.cargo_capacity))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* FITTED MODULES — only while the fitting read surface is lit (module_fitting_enabled). */}
       {litFittings && (
@@ -134,7 +193,7 @@ export function ShipDossier({
             </div>
           ) : (
             <p data-testid="dossier-modules-empty" className="mt-2 text-sm text-ink-faint">
-              No modules fitted — craft &amp; fit below.
+              No modules fitted — craft &amp; fit in Port → Workshop.
             </p>
           )}
         </>

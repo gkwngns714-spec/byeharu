@@ -5,6 +5,7 @@ import { SalvageMarketPanel } from './SalvageMarketPanel'
 import { StationHangar } from './StationHangar'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { MarketPanel } from '../map/MarketPanel'
+import { ModulesPanel } from '../modules/ModulesPanel'
 import { useDockServices } from '../map/useDockServices'
 import { useDockStore } from '../map/useDockStore'
 import { isDocked } from '../map/dockServices'
@@ -29,7 +30,8 @@ export function PortScreen() {
   // reads the SAME selection). Compile-gated false + server-rejected today.
 
   // UI R3 (composition): desktop ops split — main rail = the port's identity/services card + the
-  // dark market (the trade surface belongs beside the port, not under the hangar); aside rail =
+  // Workshop (WORKSHOP: module craft & fit — port-docked work, see below) + the dark market (the
+  // trade surface belongs beside the port, not under the hangar); aside rail =
   // the storage/economy surfaces (Hangar, Investment — both dark today). With every aside child
   // null, the rail self-collapses (`empty:hidden`) and the docked-port card takes the full row —
   // no production hole. The not-docked EmptyState stays a single centered focus card (no split:
@@ -59,6 +61,18 @@ export function PortScreen() {
           <div className={screenRailClass('main')}>
             {/* The docked-port surface (identity → right now → service details). */}
             <DockedPortCard dock={dock} />
+            {/* WORKSHOP — module crafting & fitting, MOVED from the Ship tab (owner order: "modules
+                should be in Port → Workshop, not the ship tab"). Fitting is port-work — the 0114
+                settled-SAFE law needs a settled ship, and this docked branch guarantees exactly
+                that (not docked → the screen's EmptyState, no Workshop) — and crafting rides along
+                (non-spatial, 0109: player-scoped, no settled precondition — reachable wherever the
+                ship is docked). The panel itself is UNCHANGED (a move, not a refactor): server-lit
+                only, with the Workshop label rendered inside its lit branch so a dark read never
+                leaves a label over a void. The Ship tab keeps the dossier's READ-ONLY fitted view
+                (seeing ≠ editing). No onChanged wiring: no sibling on this screen reads the player
+                inventory / ship loadout, and the Ship tab's readers (ShipDossier, InventoryPanel)
+                refetch on route remount — screens unmount on navigation. */}
+            <ModulesPanel lifecycleKey={lifecycleKey} sectionLabel="Workshop" />
             {/* TRADE-MARKET-1 (dark, compile-gated false + server-rejected): buy/sell at the docked port. */}
             {TRADE_MARKET_ENABLED && (
               <MarketPanel key={shipSelection.selectedShipId ?? 'none'} selectedShip={shipSelection.selectedShip} />

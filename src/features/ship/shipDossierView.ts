@@ -58,3 +58,65 @@ export function cargoUsedM3(lots: ShipCargoLot[]): number {
 export function formatM3(n: number): string {
   return n.toFixed(2)
 }
+
+// ── SHIP-POWER — the per-ship stats strip parser ─────────────────────────────────────────────────
+// get_my_expedition_preview (0049, resolver-swapped 0159) → the strip's display shape. PURE (no
+// fetch); the thin RPC wrapper (mainshipApi.fetchMyExpeditionPreview) hands the raw jsonb envelope
+// here. Normalize-don't-throw: every malformed/dark/no-ship input collapses to a quiet variant —
+// the strip fails CLOSED (hidden), never crashes the dossier. The numbers are the 0122 adapter's
+// (clamped ≥0 server-side); a non-finite/absent field still degrades per-field to null ('—').
+
+/** The strip's four numbers (0122 adapter keys). null = absent/malformed field (renders as —). */
+export interface ShipStatsStrip {
+  combat_power: number | null
+  survival: number | null
+  speed: number | null
+  cargo_capacity: number | null
+}
+
+export type ShipStatsPreviewParse =
+  | { kind: 'stats'; stats: ShipStatsStrip } // has_ship && valid → render the strip
+  | { kind: 'invalid'; error: string | null } // has_ship && !valid (adapter raise / selection required)
+  | { kind: 'hidden' } // no-ship teaser, transport null, or malformed → render nothing
+
+const finiteOrNull = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) ? v : null
+
+export function parseShipStatsPreview(data: unknown): ShipStatsPreviewParse {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return { kind: 'hidden' }
+  const d = data as Record<string, unknown>
+  // No-ship starter-hull teaser (has_ship:false) — the status card owns that story, not the strip.
+  if (d.has_ship !== true) return { kind: 'hidden' }
+  if (d.valid !== true) return { kind: 'invalid', error: typeof d.error === 'string' ? d.error : null }
+  const stats = (typeof d.stats === 'object' && d.stats !== null ? d.stats : {}) as Record<string, unknown>
+  return {
+    kind: 'stats',
+    stats: {
+      combat_power: finiteOrNull(stats.combat_power),
+      survival: finiteOrNull(stats.survival),
+      speed: finiteOrNull(stats.speed),
+      cargo_capacity: finiteOrNull(stats.cargo_capacity),
+    },
+  }
+}
+
+/** One ship's power from a raw preview envelope, or null (invalid/dark/no-ship) — the roster's
+ *  per-ungrouped-ship chip value. A null chip is simply omitted (fail quiet, never '—' noise). */
+export function shipPowerFromPreview(data: unknown): number | null {
+  const parsed = parseShipStatsPreview(data)
+  return parsed.kind === 'stats' ? parsed.stats.combat_power : null
+}
+
+// The invalid-envelope error → player copy map (the teamReasonMessage mold — that map's
+// vocabulary is the TEAM RPCs' reject reasons, not this envelope's, so it can't be reused
+// directly). The 0159 envelope's `error` is either the one structured token below or a raw
+// Postgres sqlerrm (internal function names, e.g. 'calculate_expedition_stats: …') — the raw
+// string must NEVER reach the DOM; anything unmapped degrades to the generic line.
+const STATS_ERROR_MESSAGES: Record<string, string> = {
+  ship_selection_required: 'Select a ship to see its stats.',
+}
+
+/** Short player-facing copy for an invalid stats envelope; unknown/raw-sqlerrm/null → generic. */
+export function shipStatsErrorMessage(error: string | null): string {
+  return (error !== null ? STATS_ERROR_MESSAGES[error] : undefined) ?? 'Ship stats unavailable right now.'
+}

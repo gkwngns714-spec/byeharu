@@ -13,7 +13,9 @@ import { teamReasonMessage } from './teamReasonMessage'
 // each ship + captains"). Two surfaces, both fed by the EXISTING dark reads (no new server piece):
 //
 //   • The strip: D0's AUTHORITATIVE totals — fetchGroupExpeditionTotals(groupId,'none') — as five
-//     mono chips: Power (combat) · Speed (slowest member) · Cargo (m³ total) · Survival · Members.
+//     mono chips: Power (combat) · Speed (slowest member) · Cargo cap (the adapter's ABSTRACT
+//     cargo_capacity total — NOT the cargo_capacity_m3 hold volume, 0076's abstract-vs-volume
+//     split; SHIP-POWER fixed the old 'Cargo m³' mislabel here) · Survival · Members.
 //     Fetched on panel load and re-fetched whenever rosterVersion bumps (the panel bumps it after
 //     EVERY membership/captain mutation — the existing invalidation), so the strip can never show
 //     pre-mutation numbers; a result stamped with an older version renders as loading, never stale.
@@ -113,7 +115,7 @@ export function TeamDossier({
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {chip('Power', num(cur.totals.combat_power))}
           {chip('Speed', num(cur.totals.speed))}
-          {chip('Cargo m³', num(cur.totals.cargo_capacity))}
+          {chip('Cargo cap', num(cur.totals.cargo_capacity))}
           {chip('Survival', num(cur.totals.survival))}
           {chip('Members', cur.member_count)}
         </div>
