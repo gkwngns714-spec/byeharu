@@ -142,8 +142,13 @@ do $$
 declare r jsonb; uM uuid := (select v from tf0c where k='uM'); slag uuid := (select v from tf0c where k='slag');
   ship_a uuid; ship_b uuid; n int; st_a text; st_b text;
 begin
-  select main_ship_id into ship_a from public.main_ship_instances where player_id=uM order by created_at asc  limit 1;
-  select main_ship_id into ship_b from public.main_ship_instances where player_id=uM order by created_at desc limit 1;
+  -- pick two distinct ships by PRIMARY KEY order. created_at CANNOT discriminate here: all three ships
+  -- are commissioned inside this ONE proof transaction and now() is transaction-frozen, so every
+  -- created_at ties — an `order by created_at` asc/desc pair is then plan-dependent and can return the
+  -- SAME row (it did on the current chain after 0160 added main_ship_instances_group_idx and shifted
+  -- the plan). main_ship_id is the unique PK, so asc/desc first rows are guaranteed distinct.
+  select main_ship_id into ship_a from public.main_ship_instances where player_id=uM order by main_ship_id asc  limit 1;
+  select main_ship_id into ship_b from public.main_ship_instances where player_id=uM order by main_ship_id desc limit 1;
   if ship_a = ship_b then raise exception 'PROP2 FAIL: could not pick two distinct ships'; end if;
 
   -- command ONLY ship_a by explicit p_main_ship_id → it departs; ship_b must be untouched.
