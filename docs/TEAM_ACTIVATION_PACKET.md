@@ -200,6 +200,21 @@ window: the bump migration + `captain_assignment_enabled=true` + a memory-shard 
 If a single-window launch is preferred instead, the checklist already supports it — just include
 the shard drop, or captains exist only by admin mint.
 
+> **FAST-FOLLOW PREP SHIPPED 2026-07-12 (build half done; the flip stays human):** migration
+> `20260618000171_captains_launch_prep` = the bump SQL above VERBATIM + the F5 shard drop —
+> `pirate_loot_for_wave` (head 0041) re-created with one marked hunk: each cleared wave **≥ 2**
+> rolls `random() < captain_shard_drop_rate` for exactly **1 shard** (wave 1 stays deterministic
+> scrap-only so the live verify-phase5 pin never goes flaky). The knob is a NEW game_config key
+> **seeded 0 → byte-inert** until the flip. `scripts/activate-captains.{sql,sh}` is the recorded
+> human gate: knob → **0.15** (proposed conservative launch rate — ≈0.3 shards/solo-Snare-run,
+> ≈2.4/deep-6-ship-run per §1.1's wave counts; one `set_game_config` write to retune), then BOTH
+> captain flags → true, then read-only smoke. **No client PR** — all three captain surfaces are
+> server-lit on `get_my_captain_instances` (verified: CaptainsPanel.tsx:83,
+> RecruitCaptainPanel.tsx:82, TeamRosterPanel.tsx:144) and mount on the server envelope alone.
+> Proof: `scripts/team-command-proof.sh` gained `TEAMCMD_PASS_SHARDDROP` (rate-0 byte-parity /
+> rate-1 wave-2 drop / wave-1 threshold / end-to-end deposit into `player_inventory`) and now
+> asserts the slot bump as migration state instead of fixturing it in-txn.
+
 ---
 
 ## 4. Decision 4 — `max_active_fleets`
@@ -329,6 +344,13 @@ crafting/fitting, stage-3 smoke asserts, marked rollback). The one-line client P
 `TEAM_COMMAND_ENABLED` + `MAINSHIP_ADDITIONAL_ENABLED` then mounts the roster/Hunt UI, the
 Commission-ship control, and the ship switcher. Captains remain the fast-follow window (§3); each
 script run and that client-flip PR stay their own recorded human gates.
+
+**CAPTAINS FAST-FOLLOW PREP shipped 2026-07-12** (row 3's build half, after teams went live):
+migration `20260618000171_captains_launch_prep` (the §3 bump SQL verbatim + the F5
+`captain_memory_shard` drop, config-gated on `captain_shard_drop_rate` seeded 0 = inert) and
+`scripts/activate-captains.{sql,sh}` (the flip: knob → 0.15, `captain_assignment_enabled` +
+`captain_progression_enabled` → true, smoke; selftest-green). **No client PR is needed** — every
+captain surface is server-lit (§3 note). The script run remains its own recorded human gate.
 
 *Every flip is a separate recorded human gate; the post-flip proof
 (`scripts/team-command-proof.sh`) is mandatory before the activation is called done.*
