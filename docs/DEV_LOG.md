@@ -5,6 +5,73 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — SOUL-1: ship traits go functional — commission roll hook + adapter trait fold (mig 0193, dark)
+
+**Request.** The SHIP-SOUL charter (P12), slice 1: every new ship is born with its soul WHEN LIT
+(the commission path calls `soul_roll_traits_for_ship`), and `calculate_expedition_stats` folds
+each rolled trait's `stats_json` at the 0170 seam — all still dark behind `ship_traits_enabled`.
+
+**Work done**
+- **True heads (grep-verified, re-verified after the 0190/0191 rebase):**
+  `port_entry_commission_build` → 0184 (0080 → 0184; 0185/0188 only mention it, 0190/0191 don't
+  touch it); `ensure_main_ship_for_player` → 0078 (0043 → 0077 → 0078);
+  `calculate_expedition_stats` → 0180 (0044 → 0115 → 0122 → 0170 → 0180; 0181..0191 never
+  re-create it). Both commission WRITERS delegate the insert to build (0080 §B / 0091), so ONE
+  hook in build covers first + additional ships.
+- **mig `20260618000193_soul1_fold.sql`** — (a) build re-created (0184 head) with ONE marked hook
+  after the ship insert: `if cfg_bool('ship_traits_enabled') then perform
+  soul_roll_traits_for_ship(v_ship)` — double-gated (call site + the roll fn's own gate-first),
+  dark = ZERO calls, byte-parity; definer-to-definer works with no ACL widening (the 0169
+  team_hunt_send → 0152 leaf pattern). (b) ensure re-created (0078 head) with the SAME hook
+  inside its CREATE BRANCH only (`returning … into v_new` captured; P12 reads "every new ship" —
+  a starter Sparrow deserves a soul; a replay must never roll an existing ship — that
+  retroactive roll is ACT-SOUL's, behind the catalog-freeze count=8 precondition). (c) adapter
+  re-created (0180 head) with the ONE knob-gated trait fold: `v_traits_enabled` read once at
+  entry (the 0180 v_growth posture), the loop over `main_ship_traits × ship_trait_types` feeds
+  the SAME accumulators in the module loop's 8-key vocabulary, placed adjacent to the 0170 hull
+  fold (traits are the ship itself; additive accumulators — order can't change the sum);
+  `speed_mult_bonus` joins the ONE final-speed multiplier (the only modified pre-existing line,
+  + 0 exactly while dark); NO tradeoff CASE (trait costs live in their minus keys); `hp_mult`
+  NEVER read — applied once at roll time (0186), prosrc-pinned. Self-asserts: deploy-time double
+  inertness (gate dark + zero rolled rows + catalog frozen at 8), exactly one gated hook per
+  creator (ensure's inside the create branch), ONE trait read site / 8 key reads / no hp_mult
+  read / speed inside the multiplier / traits unscaled, every 0180 captain-level pin re-verified
+  on the re-create, ACLs server-only across the board.
+- **Proof** — `TEAMCMD_PASS_SOUL1` appended to `team-command-proof` (the 21st marker, after
+  main's 20 — …SHIELD0, TEAMMOVE): dark commission = zero trait rows + adapter byte-identical
+  before/after a direct roll with the gate re-darkened (the knob-gated read); lit fold = dark
+  baseline + the STORED traits' `stats_json` sums exactly per key (independent catalog join, 0=0
+  false-green guarded), speed = `round(greatest(0.2, base_speed × (1 + Σ speed_mult_bonus)), 3)`,
+  no non-stat key moves; a LIT commission births exactly 2 derivation-matching traits
+  (`pg_temp.soul_expect`); the veteran-arm draw pins hp_mult ONCE at commission
+  (max_hp = round(base × mult)) with the adapter never re-scaling; ensure creates WITH soul lit /
+  without dark, a lit ensure REPLAY never rolls an existing unrolled ship, and lit + zero rows is
+  byte-identical to dark (the empty-loop arm).
+  **RECONCILE:** the SOUL0 block now commissions its roll fixtures DARK before its in-txn flip
+  (under the hook a lit commission pre-rolls, which would break its `inserted = 2` asserts) and
+  the gate is re-darkened before TEAMMAP — every pre-SOUL-1 block (incl. SHIELD0's leaf-smoke
+  commission and TEAMMOVE's docked hop) keeps byte-identical behavior
+  (COMBATPARITY/TEAMSTATS pins run dark, where the fold is skipped entirely).
+- **Docs:** FULL_CAPACITY_PLAN P12 + queue row 17 (SOUL-1 shipped; SOUL-2 + ACT-SOUL next);
+  SYSTEM_BOUNDARIES §1 rows (`ship_trait_types` consumer pin; `main_ship_traits` callers wired)
+  + the §8 adapter edge (DOWNWARD read-only into Ship Soul, knob-gated).
+- **Collision notes:** 0190 (TEAMMOVE) + 0191 (SHIELD-0) landed on main mid-slice → rebased,
+  proof pair reconciled both-blocks-kept (SOUL1 21st), neither re-creates a SOUL-1 head; 0192 is
+  claimed by in-flight SHIPYARD-2 → 0193 taken. **SHIPYARD-2 choreography (both directions,
+  explicit — SOUL-1 is landing FIRST):** SHIPYARD-2 (in flight, currently numbered 0192, with its
+  own `port_entry_commission_build` re-create from the 0184 head) MUST at its rebase (a) RENUMBER
+  to >= 0194 — a 0192 applying after this 0193 on prod would silently erase the SOUL-1 hook
+  (last create-or-replace wins), and on fresh chains 0193 applying after a 0192 would erase its
+  delivery hunks — and (b) re-create build from THIS migration's head (0193 = the 0184 body + the
+  SOUL-1 hook) so both hunks coexist. (Had SHIPYARD-2 landed first, this slice would have
+  re-applied its minimal hook hunk on SHIPYARD-2's head instead — recorded in the 0193 header.)
+
+**Verification.** `team-command-proof.sh selftest` green (21 markers); 3 mutation guttings
+(fold exactness / dark parity / commission-hook pin) fail-then-restore; `tsc -b` + `vite build`
+green (no client changes — server-only slice).
+
+---
+
 ## 2026-07-13 — TEAMMOVE-1: a docked team moves onward as one (mig 0190, LIVE gate)
 
 **Request.** The owner directive's second half ("the team should also be able to be docked or

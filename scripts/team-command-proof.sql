@@ -186,12 +186,28 @@
 --            re-departed (never re-created), both moving + group-tagged (the 0187 idiom, no
 --            strays), ships in the legacy in-flight pair; and the arrival settles dock the team at
 --            Driftmarch with the informational tag surviving — the whole-team onward hop, closed.
+--   SOUL1 (SOUL-1, 0193) — the commission ROLL HOOK + the adapter TRAIT FOLD: a DARK commission
+--            writes ZERO trait rows and, after a direct lit roll, the DARK adapter output is
+--            byte-identical to the never-rolled baseline (the knob-gated read); LIT, the rolled
+--            ship's totals equal the dark baseline + the STORED traits' stats_json sums EXACTLY
+--            per key (independent catalog join; 0=0 false-green guarded; speed inside the ONE
+--            multiplier; no non-stat key moves); a LIT commission (the real RPC → build) births
+--            exactly 2 traits matching the inline pg_temp.soul_expect derivation; the veteran-arm
+--            draw pins hp_mult applied ONCE at the commission roll (max_hp = round(base × mult))
+--            with the adapter never re-scaling it; ensure_main_ship_for_player creates WITH soul
+--            lit / without dark, and a LIT ensure REPLAY never rolls an existing unrolled ship
+--            (the create-branch law — the retroactive roll is ACT-SOUL's), whose lit adapter
+--            output equals its dark self (the empty-loop inert arm). RECONCILE: SOUL0 now
+--            commissions its roll fixtures DARK before its in-txn flip (a lit commission rolls at
+--            birth under the hook), and the gate is re-darkened before TEAMMAP so every
+--            pre-SOUL-1 block (incl. SHIELD0's leaf-smoke commission and TEAMMOVE's docked hop)
+--            keeps byte-identical behavior.
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
 -- mainship_send_enabled + captain_assignment_enabled (+ captain_growth_enabled at CAPXP,
 -- module_crafting_enabled + module_fitting_enabled at MOD2, and ship_traits_enabled at
--- SOUL0) ONLY inside this rolled-back transaction; the ROLLBACK reverts them, so every
+-- SOUL0/SOUL1) ONLY inside this rolled-back transaction; the ROLLBACK reverts them, so every
 -- committed/production flag value stays false. It also transiently mirrors production config a fresh
 -- chain lacks (reveal_starter_ports) — all reverted by ROLLBACK. No committed flag/state changes.
 --
@@ -2189,7 +2205,10 @@ end $$;
 -- asserted DARK first, and the roll writer's gate-first reject pinned with a RANDOM uuid (a
 -- reject-after-read regression would answer ship_not_found — no existence oracle) with ZERO rows
 -- written; the 0186 catalog pinned VERBATIM (8 traits exact: id + stats_json + hp_mult); then the
--- flag flipped in-txn only. DETERMINISM is proven by INLINE RE-DERIVATION (the D0/D1 independent-
+-- flag flipped in-txn only — SOUL-1 RECONCILE: the flip now happens AFTER the fixture commissions
+-- (inside the block, still in-txn): SOUL-1's commission hook rolls at birth when lit, and this
+-- block's direct-roll asserts (inserted = 2) need UNROLLED fixtures, so they commission DARK
+-- exactly as every pre-SOUL-1 run did. DETERMINISM is proven by INLINE RE-DERIVATION (the D0/D1 independent-
 -- computation idiom): pg_temp.soul_expect re-implements the pure-hash mapping (hashtextextended
 -- over the ':soul:' salts → ((h % n + n) % n) into the trait_type_id order under the SAME
 -- collate "C" pin as the writer — the collation law: byte order, never the DB default — with
@@ -2241,8 +2260,6 @@ begin
   if n <> 0 then raise exception 'SOUL0 FAIL: % main_ship_traits rows written while dark (want 0)', n; end if;
 end $$;
 
-update public.game_config set value='true'::jsonb where key='ship_traits_enabled';
-
 do $$
 declare r jsonb; n int; i int;
   u uuid; s uuid; shipv uuid; shipp uuid;
@@ -2289,6 +2306,11 @@ begin
   end loop;
   if shipv is null or shipp is null then
     raise exception 'SOUL0 FAIL: could not draw both fixture arms (veteran + plain) in 40 commissions'; end if;
+
+  -- SOUL-1 RECONCILE: light the gate only NOW, after the fixtures were commissioned DARK — the
+  -- SOUL-1 commission hook rolls at birth when lit, and the direct-roll asserts below need
+  -- UNROLLED fixtures (inserted = 2 — the pre-SOUL-1 posture, preserved exactly). In-txn only.
+  update public.game_config set value='true'::jsonb where key='ship_traits_enabled';
 
   -- ── the VETERAN arm: exact derived traits, distinct slots, exact hp_mult application ────────
   select max_hp into v_max0 from public.main_ship_instances where main_ship_id = shipv;
@@ -2352,6 +2374,14 @@ begin
 
   raise notice 'TEAMCMD_PASS_SOUL0 ok: committed flag dark + gate-first reject with 0 rows; 0186 catalog pinned verbatim (8 exact); both rolls land exactly the inline re-derived traits (pure-hash determinism), slots distinct; veteran arm max_hp = round(base × 1.08) with hp scaled, plain arm byte-untouched; second roll = idempotent replay (0 inserts, same traits, stored-roll envelope incl. the real hp_mult, no hp re-raise)';
 end $$;
+
+-- SOUL-1 RECONCILE: re-darken the trait gate before TEAMMAP — under the SOUL-1 commission hook a
+-- LIT commission rolls souls at birth, and the downstream blocks' fixture commissions (TEAMMAP's
+-- team pair, SHIELD0's leaf-smoke ship — like every block before SOUL0) must stay byte-identical
+-- to their pre-SOUL-1 behavior (the parity law: existing blocks run dark, where hook + fold are
+-- zero-call/zero-read). BLOCK SOUL1 below re-lights it in-txn for its own arms and leaves it dark
+-- again on exit. ROLLBACK reverts everything regardless.
+update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
 
 -- ════════ BLOCK TEAMMAP (TEAMMAP-1, 0187): group-send tags member fleets; arrival docks the team ════════
 -- Migration 0187 re-created send_ship_group_expedition (from its TRUE 0163 head) with ONE marked hunk:
@@ -2746,6 +2776,204 @@ begin
   raise notice 'TEAMCMD_PASS_TEAMMOVE ok: empty_group + foreign fail-closed; mid-flight member and split-port team both reject member_not_ready with zero departures; all-or-nothing rolls back the departed member (member_send_failed pinned to the presence raise, both fleets still docked); the whole docked team then moves Slagworks → Driftmarch as one (2 present-departure envelopes over the members'' own fleets, moving + tagged, no strays) and docks at Driftmarch with the tag surviving';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock)' as result;
+-- ════════ BLOCK SOUL1 (SOUL-1, 0193): commission roll hook + adapter trait fold — parity + exactness ════════
+-- Migration 0193 re-created the commission creators from their TRUE heads (port_entry_commission_build
+-- 0184; ensure_main_ship_for_player 0078) with ONE gated hook each (`if cfg_bool('ship_traits_enabled')
+-- then perform soul_roll_traits_for_ship(<new ship>)` — double-gated: the roll fn gates first itself),
+-- and calculate_expedition_stats from its 0180 head with the ONE knob-gated trait fold (each rolled
+-- trait's stats_json into the SAME accumulators as the module loop; speed_mult_bonus inside the ONE
+-- multiplier; hp_mult NEVER read — applied once at roll time). Fresh fixture users throughout (the
+-- MOD2/SOUL0 idiom). The gate enters this block DARK (the reconcile above) and leaves it DARK:
+--   DARKHOOK  — a DARK commission writes ZERO trait rows (the call-site gate: dark = zero calls);
+--               the pre-roll adapter output is captured as the parity baseline.
+--   DARKPARITY— the ship is then rolled directly (lit in-txn; inserted = 2 — proving the dark
+--               commission really left it unrolled), the gate flipped OFF, and the adapter output
+--               must be BYTE-IDENTICAL to the never-rolled baseline: stored trait rows are
+--               invisible while dark (the knob-gated read — the fold's first inert arm; the
+--               second arm, lit + zero rows, is every LIT call on an unrolled ship, exercised by
+--               the DARKHOOK baseline ship before its roll... no — pinned explicitly below: the
+--               lit adapter on the STILL-UNROLLED ensure-replay probe ship equals its dark self).
+--   LITFOLD   — lit, the rolled ship's totals equal the dark baseline + the STORED traits'
+--               stats_json sums EXACTLY (per key, derived independently from the catalog join —
+--               never the adapter's own math; the all-zero 0=0 false-green guarded), speed equals
+--               round(greatest(0.2, base_speed × (1 + Σ speed_mult_bonus)), 3), and NO other
+--               envelope key moves (isolation).
+--   HOOK      — lit, a REAL commission (commission_first_main_ship → build) lands EXACTLY 2 trait
+--               rows matching the inline pg_temp.soul_expect derivation (the hook IS the 0186 roll
+--               fn); dark commission = zero rows (DARKHOOK above). The veteran-arm draw (fresh
+--               commissions until a rolled pair carries veteran_frame) pins hp_mult applied ONCE
+--               at commission (max_hp = round(base_hp × Πhp_mult), hp full) and the adapter NOT
+--               re-scaling it (max_hp byte-identical across a lit adapter call).
+--   ENSURE    — lit, the legacy service creator ensure_main_ship_for_player lands a ship WITH its
+--               2 derived traits (starter ships get souls too — P12); and the create-branch law:
+--               a ship commissioned DARK then replayed through ensure LIT stays UNROLLED (zero
+--               rows — the retroactive roll belongs to ACT-SOUL, never to a replay), and its lit
+--               adapter output equals its dark self (the empty-loop inert arm, pinned explicitly).
+do $$
+declare r jsonb; n int; i int;
+  uD uuid; sD uuid;            -- dark-commission fixture → the parity/exactness ship
+  uH uuid; sH uuid;            -- lit-commission fixture → the hook pin
+  sV uuid;                     -- veteran-arm ship (drawn among lit commissions)
+  uE uuid; sE uuid;            -- ensure-path fixture (lit create)
+  uF uuid; sF uuid;            -- ensure-replay probe (dark create, lit replay — must stay unrolled)
+  exp text[]; t1 text; t2 text;
+  s_pre jsonb; s_lit jsonb; s_dark jsonb; f_lit jsonb; f_dark jsonb;
+  t_att numeric; t_def numeric; t_rep numeric; t_car numeric; t_sca numeric; t_min numeric; t_eva numeric; t_spd numeric;
+  v_base_speed numeric; v_mult numeric; v_base_hp int; v_max int; v_hp int; v_exp numeric; k text;
+begin
+  -- precondition: the reconcile left the gate dark in-txn (this block owns its own flips).
+  if public.cfg_bool('ship_traits_enabled') then
+    raise exception 'SOUL1 FAIL precondition: ship_traits_enabled lit at block entry (the reconcile must leave it dark)'; end if;
+
+  -- ── DARKHOOK: a dark commission writes ZERO trait rows; capture the parity baseline ─────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uD;
+  r := pg_temp.call_as(uD, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SOUL1 FAIL provision dark: %', r; end if;
+  select main_ship_id into sD from public.main_ship_instances where player_id = uD;
+  select count(*) into n from public.main_ship_traits where main_ship_id = sD;
+  if n <> 0 then raise exception 'SOUL1 FAIL: dark commission rolled traits (hook gate breach): % rows (want 0 — dark = zero calls)', n; end if;
+  s_pre := public.calculate_expedition_stats(uD, sD, '[]'::jsonb, 'none');
+
+  -- ── roll sD directly while LIT (inserted = 2 proves the dark commission left it unrolled) ───
+  update public.game_config set value='true'::jsonb where key='ship_traits_enabled';
+  exp := pg_temp.soul_expect(sD);
+  r := public.soul_roll_traits_for_ship(sD);
+  if (r->>'ok')::boolean is not true or (r->>'inserted')::int is distinct from 2 then
+    raise exception 'SOUL1 FAIL direct roll: % (want inserted 2 — the dark commission must have left the ship unrolled)', r; end if;
+
+  -- THE INDEPENDENT EXPECTATIONS: the STORED rows × the catalog (never the adapter's own math).
+  select coalesce(sum(coalesce((y.stats_json->>'attack')::numeric, 0)), 0),
+         coalesce(sum(coalesce((y.stats_json->>'defense')::numeric, 0)), 0),
+         coalesce(sum(coalesce((y.stats_json->>'repair')::numeric, 0)), 0),
+         coalesce(sum(coalesce((y.stats_json->>'cargo')::numeric, 0)), 0),
+         coalesce(sum(coalesce((y.stats_json->>'scan')::numeric, 0)), 0),
+         coalesce(sum(coalesce((y.stats_json->>'mining')::numeric, 0)), 0),
+         coalesce(sum(coalesce((y.stats_json->>'evasion')::numeric, 0)), 0),
+         coalesce(sum(coalesce((y.stats_json->>'speed_mult_bonus')::numeric, 0)), 0)
+    into t_att, t_def, t_rep, t_car, t_sca, t_min, t_eva, t_spd
+    from public.main_ship_traits mt
+    join public.ship_trait_types y on y.trait_type_id = mt.trait_type_id
+    where mt.main_ship_id = sD;
+  if t_att = 0 and t_def = 0 and t_rep = 0 and t_car = 0 and t_sca = 0 and t_min = 0 and t_eva = 0 and t_spd = 0 then
+    raise exception 'SOUL1 FAIL: the trait fold under test must be REAL (a 0=0 compare can only false-green) — rolled pair sums are all zero'; end if;
+  select h.base_speed into v_base_speed
+    from public.main_ship_instances i join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
+    where i.main_ship_id = sD;
+
+  -- ── LITFOLD + DARKPARITY: capture lit, flip off, dark must equal the never-rolled baseline ──
+  s_lit := public.calculate_expedition_stats(uD, sD, '[]'::jsonb, 'none');
+  update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
+  s_dark := public.calculate_expedition_stats(uD, sD, '[]'::jsonb, 'none');
+  if s_dark is distinct from s_pre then
+    raise exception 'SOUL1 FAIL: dark adapter output diverged from the never-rolled baseline (rolled rows must be invisible while dark — the knob-gated read): % vs %', s_dark, s_pre; end if;
+
+  -- exactness, per key, against the dark baseline + the independent sums (greatest-0 clamped —
+  -- the adapter's own output law; every dark bare-ship accumulator is >= 0 so the baseline is raw).
+  foreach k in array array['combat_power','survival','repair','scouting','mining_yield','retreat_safety'] loop
+    v_exp := greatest(0, (s_dark->>k)::numeric + case k
+               when 'combat_power' then t_att when 'survival' then t_def when 'repair' then t_rep
+               when 'scouting' then t_sca when 'mining_yield' then t_min else t_eva end);
+    if (s_lit->>k)::numeric is distinct from v_exp then
+      raise exception 'SOUL1 FAIL: lit % is % (want % — the exact trait fold: dark baseline + the stored traits'' stats_json)', k, s_lit->>k, v_exp; end if;
+  end loop;
+  if (s_lit->>'cargo_capacity')::int is distinct from greatest(0, (s_dark->>'cargo_capacity')::int + round(t_car)::int) then
+    raise exception 'SOUL1 FAIL: lit cargo_capacity % (want % — the exact trait fold: dark baseline + the stored traits'' stats_json)',
+      s_lit->>'cargo_capacity', greatest(0, (s_dark->>'cargo_capacity')::int + round(t_car)::int); end if;
+  if (s_lit->>'speed')::numeric is distinct from round(greatest(0.2, v_base_speed * (1 + t_spd)), 3) then
+    raise exception 'SOUL1 FAIL: lit speed % (want round(greatest(0.2, base_speed × (1 + Σ speed_mult_bonus)), 3) = % — the ONE multiplier)',
+      s_lit->>'speed', round(greatest(0.2, v_base_speed * (1 + t_spd)), 3); end if;
+  if (s_lit - 'combat_power' - 'survival' - 'repair' - 'cargo_capacity' - 'scouting' - 'mining_yield' - 'retreat_safety' - 'speed')
+     is distinct from
+     (s_dark - 'combat_power' - 'survival' - 'repair' - 'cargo_capacity' - 'scouting' - 'mining_yield' - 'retreat_safety' - 'speed') then
+    raise exception 'SOUL1 FAIL: the trait fold moved a non-stat key: lit % vs dark %', s_lit, s_dark; end if;
+
+  -- ── HOOK: a LIT commission is born with its soul — exactly 2 rows, exactly the derivation ───
+  update public.game_config set value='true'::jsonb where key='ship_traits_enabled';
+  for i in 1..40 loop
+    exit when sH is not null and sV is not null;
+    insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+      values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+              'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+      returning id into uH;
+    r := pg_temp.call_as(uH, 'public.commission_first_main_ship()');
+    if (r->>'ok')::boolean is not true then raise exception 'SOUL1 FAIL provision lit: %', r; end if;
+    select main_ship_id into sH from public.main_ship_instances where player_id = uH;
+    if sV is null and exists (select 1 from public.main_ship_traits where main_ship_id = sH and trait_type_id = 'veteran_frame') then
+      sV := sH;   -- the veteran arm (hook-rolled at birth)
+    end if;
+  end loop;
+  select count(*) into n from public.main_ship_traits where main_ship_id = sH;
+  if n <> 2 then raise exception 'SOUL1 FAIL: lit commission landed % trait rows (want exactly 2 — the SOUL-1 commission hook)', n; end if;
+  exp := pg_temp.soul_expect(sH);
+  select trait_type_id into t1 from public.main_ship_traits where main_ship_id = sH and slot = 1;
+  select trait_type_id into t2 from public.main_ship_traits where main_ship_id = sH and slot = 2;
+  if t1 is distinct from exp[1] or t2 is distinct from exp[2] then
+    raise exception 'SOUL1 FAIL: the hook did not land the derivation: rolled (%, %) but the inline re-derivation says (%, %)', t1, t2, exp[1], exp[2]; end if;
+  if sV is null then
+    raise exception 'SOUL1 FAIL: could not draw a veteran_frame commission in 40 lit draws (P ≈ 1e-5 miss)'; end if;
+
+  -- hp_mult applied ONCE at commission (by the hook's roll), and the adapter never re-scales it.
+  select h.base_hp into v_base_hp
+    from public.main_ship_instances i join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
+    where i.main_ship_id = sV;
+  select a.hp_mult * b.hp_mult into v_mult
+    from public.main_ship_traits m1
+    join public.ship_trait_types a on a.trait_type_id = m1.trait_type_id and m1.slot = 1
+    join public.main_ship_traits m2 on m2.main_ship_id = m1.main_ship_id and m2.slot = 2
+    join public.ship_trait_types b on b.trait_type_id = m2.trait_type_id
+    where m1.main_ship_id = sV;
+  select max_hp, hp into v_max, v_hp from public.main_ship_instances where main_ship_id = sV;
+  if v_max is distinct from round(v_base_hp * v_mult)::int or v_hp is distinct from v_max then
+    raise exception 'SOUL1 FAIL: veteran commission max_hp/hp %/% (want round(% × %) both — hp_mult applied ONCE at the commission roll)',
+      v_max, v_hp, v_base_hp, v_mult; end if;
+  r := public.calculate_expedition_stats((select player_id from public.main_ship_instances where main_ship_id = sV), sV, '[]'::jsonb, 'none');
+  select max_hp into n from public.main_ship_instances where main_ship_id = sV;
+  if n is distinct from v_max then
+    raise exception 'SOUL1 FAIL: the adapter re-scaled max_hp (hp_mult double-application): % (want % untouched)', n, v_max; end if;
+
+  -- ── ENSURE: the legacy service creator hooks too; the replay/create-branch law holds ─────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uE;
+  select (public.ensure_main_ship_for_player(uE)).main_ship_id into sE;
+  select count(*) into n from public.main_ship_traits where main_ship_id = sE;
+  if n <> 2 then raise exception 'SOUL1 FAIL: ensure creation landed % trait rows (want exactly 2 — the ensure hook: starter ships get souls)', n; end if;
+  exp := pg_temp.soul_expect(sE);
+  select count(*) into n from public.main_ship_traits
+    where main_ship_id = sE and ((slot = 1 and trait_type_id = exp[1]) or (slot = 2 and trait_type_id = exp[2]));
+  if n <> 2 then raise exception 'SOUL1 FAIL: the ensure hook did not land the derivation for %', sE; end if;
+
+  -- create-branch law: a ship created DARK stays UNROLLED through a LIT ensure replay (the
+  -- retroactive roll is ACT-SOUL's, never a replay's), and its lit adapter output equals its dark
+  -- self (the empty-loop inert arm, pinned on a real unrolled ship while the gate is LIT).
+  update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uF;
+  select (public.ensure_main_ship_for_player(uF)).main_ship_id into sF;
+  select count(*) into n from public.main_ship_traits where main_ship_id = sF;
+  if n <> 0 then raise exception 'SOUL1 FAIL: dark ensure creation rolled traits (hook gate breach): % rows', n; end if;
+  f_dark := public.calculate_expedition_stats(uF, sF, '[]'::jsonb, 'none');
+  update public.game_config set value='true'::jsonb where key='ship_traits_enabled';
+  select count(*) into n from public.main_ship_traits
+    where main_ship_id = (public.ensure_main_ship_for_player(uF)).main_ship_id;
+  if n <> 0 then
+    raise exception 'SOUL1 FAIL: an existing unrolled ship must NOT get rolled by the ensure replay (the create-branch law; that roll is ACT-SOUL''s): % rows', n; end if;
+  f_lit := public.calculate_expedition_stats(uF, sF, '[]'::jsonb, 'none');
+  if f_lit is distinct from f_dark then
+    raise exception 'SOUL1 FAIL: lit + zero trait rows diverged from dark (the empty-loop inert arm must be byte-identical): % vs %', f_lit, f_dark; end if;
+
+  -- exit posture: leave the gate DARK (as this block found it; ROLLBACK reverts regardless).
+  update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
+
+  raise notice 'TEAMCMD_PASS_SOUL1 ok: dark commission = zero trait rows + byte-identical adapter before/after a direct roll (knob-gated read); lit fold = dark baseline + the stored traits'' stats_json sums exactly per key (independent catalog join, 0=0 guarded), speed inside the ONE multiplier, no non-stat key moved; lit commission births exactly 2 derivation-matching traits (the hook IS the 0186 roll); veteran arm max_hp = round(base × mult) once at commission with the adapter never re-scaling; ensure creates WITH soul when lit, zero rows when dark, and a lit ensure REPLAY never rolls an existing unrolled ship whose lit output = its dark self (the empty-loop arm)';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

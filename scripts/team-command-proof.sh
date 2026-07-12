@@ -61,7 +61,16 @@
 # head): mid-flight and split-port members reject member_not_ready with zero departures, a
 # manufactured mid-loop presence failure proves the all-or-nothing rollback of the already-departed
 # member, and the happy path re-departs the members' OWN docked fleets moving + group-tagged, then
-# docks the whole team at the onward port with the tag surviving).
+# docks the whole team at the onward port with the tag surviving)
+# plus the SOUL-1 hook+fold block (0193: the commission roll hook — a DARK commission writes zero
+# trait rows, a LIT commission births exactly 2 derivation-matching traits through the real RPC,
+# ensure_main_ship_for_player hooks its create branch only (a lit replay never rolls an existing
+# unrolled ship) — and the adapter trait fold: dark output byte-identical to the never-rolled
+# baseline despite stored rows (knob-gated read), lit totals = dark baseline + the stored traits'
+# stats_json sums exactly per key with speed inside the one multiplier, hp_mult applied once at
+# the commission roll and never re-scaled by the adapter; the SOUL0 block reconciled to commission
+# its roll fixtures DARK before its in-txn flip and the gate re-darkened before TEAMMAP so the
+# downstream SHIELD0/TEAMMOVE fixtures stay byte-identical).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -78,7 +87,9 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE"
+# (SOUL1 is the 21st marker, appended after main's 20 — …SHIELD0, TEAMMOVE; the in-flight
+# SHIPYARD-2 slice claims the next slot and reconciles here at ITS rebase.)
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -530,14 +541,50 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "(want 2 — the moved team present at Driftmarch, tag surviving)" "$SQL" \
     || fail "harness does not ASSERT the tag survives the onward settle"
 
-  # ── all twenty block PASS markers present. ───────────────────────────────────────────────────────────
+  # ── SOUL1 (0193 / SOUL-1) pins, in assert form (a gutted .sql that only mentions them in prose
+  #    cannot false-green): the dark-commission zero-roll (the call-site gate); the dark-parity
+  #    byte-identity despite stored rows (the knob-gated read); the lit fold exactness against the
+  #    independent stored-rows × catalog sums + the 0=0 false-green guard + the exact speed formula
+  #    + the non-stat-key isolation; the lit-commission hook (exactly 2 rows = the inline
+  #    derivation); the hp_mult once-at-roll + never-re-scaled pair; and the ensure hooks (create
+  #    WITH soul lit, the create-branch replay law, the empty-loop inert arm). The Ship-Soul
+  #    sole-writer negative grep above already covers this block (reads only; rolls ride the real
+  #    writer/RPCs). ────────────────────────────────────────────────────────────────────────────
+  grep -qF "dark commission rolled traits (hook gate breach)" "$SQL" \
+    || fail "harness does not ASSERT the dark commission writes zero trait rows (the call-site gate)"
+  grep -qF "rolled rows must be invisible while dark" "$SQL" \
+    || fail "harness does not ASSERT dark adapter byte-identity despite stored trait rows (the knob-gated read)"
+  grep -qF "the trait fold under test must be REAL (a 0=0 compare can only false-green)" "$SQL" \
+    || fail "harness does not GUARD the trait-fold exactness pin against an all-zero false-green"
+  grep -qF "the exact trait fold: dark baseline + the stored traits'' stats_json" "$SQL" \
+    || fail "harness does not ASSERT the lit fold = dark baseline + the independent stored-trait sums"
+  grep -qF "round(greatest(0.2, v_base_speed * (1 + t_spd)), 3)" "$SQL" \
+    || fail "harness does not ASSERT the exact trait speed formula (inside the ONE multiplier)"
+  grep -qF "the trait fold moved a non-stat key" "$SQL" \
+    || fail "harness does not ASSERT the trait-fold non-stat-key isolation"
+  grep -qF "(want exactly 2 — the SOUL-1 commission hook)" "$SQL" \
+    || fail "harness does not ASSERT the lit commission births exactly 2 trait rows"
+  grep -qF "the hook did not land the derivation" "$SQL" \
+    || fail "harness does not ASSERT the hook-rolled traits = the inline re-derivation"
+  grep -qF "hp_mult applied ONCE at the commission roll" "$SQL" \
+    || fail "harness does not ASSERT hp_mult lands once at the commission roll (max_hp = round(base × mult))"
+  grep -qF "the adapter re-scaled max_hp (hp_mult double-application)" "$SQL" \
+    || fail "harness does not ASSERT the adapter never re-scales max_hp (non-double-application)"
+  grep -qF "(want exactly 2 — the ensure hook: starter ships get souls)" "$SQL" \
+    || fail "harness does not ASSERT the ensure creator hooks (starter ships get souls)"
+  grep -qF "an existing unrolled ship must NOT get rolled by the ensure replay" "$SQL" \
+    || fail "harness does not ASSERT the ensure create-branch replay law (no retroactive roll)"
+  grep -qF "the empty-loop inert arm must be byte-identical" "$SQL" \
+    || fail "harness does not ASSERT the lit + zero-rows empty-loop inert arm"
+
+  # ── all twenty-one block PASS markers present. ───────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped; shield regen knobs never touched)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped; shield regen knobs never touched)"
   exit 0
 fi
 
