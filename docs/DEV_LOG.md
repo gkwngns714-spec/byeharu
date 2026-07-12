@@ -5,6 +5,73 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — SHIELD-0: the shield schema foundation (mig 0191, deploy-inert, data-gated)
+
+**Request.** The SHIELD charter, slice 0 (owner directive: ships get a SHIELD that regenerates
+during and outside combat): schema + the one sync leaf + the two regen knobs ONLY — NO engine
+change (SHIELD-1 owns the tick/creator parity re-creates; SHIELD-2 the regen home + UI).
+Everything provably inert while every `base_shield` = 0, every instance 0/0, both knobs '0'.
+
+**Work done**
+- **The commission decision (the reason this slice re-creates ZERO functions):** both live
+  insert heads — `port_entry_commission_build` (TRUE head 0184, grep-verified: creates at
+  0080→0184 only) and `ensure_main_ship_for_player` (TRUE head 0078: 0043→0077→0078) —
+  ENUMERATE their insert columns, so `default 0 not null` shield columns ride the defaults and
+  every newly commissioned ship is born 0/0 with no marked-hunk re-create. The base_shield →
+  max_shield commission copy lands with SHIELD-1/2's engine re-creates; ACT-SHIELD's flip script
+  will do the monotonic backfill for pre-flip ships.
+- **mig `20260618000191_shield0_foundation.sql`** *(0188–0190 claimed by in-flight slices —
+  numbering coordinated)*:
+  - `main_ship_hull_types.base_shield` integer not null default 0 (`>= 0` — 0-legal, unlike
+    `base_hp > 0`: shieldless is a permanent legal state) + `main_ship_instances.shield`/
+    `max_shield` (integer default 0; `shield >= 0`, `max_shield >= 0`, `shield <= max_shield` —
+    the 0043:53-54 hp shape with the max relaxed to 0-legal). All CHECKs named for pinnability.
+  - `combat_units.shield_max`/`shield_current` double precision NULL (the 0167:69-70 snapshot
+    shape) + `combat_units_member_shield_pairing` — the 0167:85-88 pairing law ADAPTED with one
+    deliberate, documented weakening: paired-together + member-row-only instead of the strict
+    IFF, because the member-row writer (D2's hunt send) went LIVE at the 2026-07-12 activation
+    and does not write shields until SHIELD-1 — a strict IFF would fail every live team-hunt
+    insert on deploy. Catalog rows can never carry a stray shield (the half the engine's future
+    coalesce reads depend on); SHIELD-1's writer re-create may tighten to the full IFF.
+  - `mainship_sync_combat_shield(p_main_ship_id, p_shield)` — the `mainship_sync_combat_hp`
+    (0167:129-145) sibling posture exactly (SECURITY DEFINER, `set search_path=public`,
+    service-role-only per 0167:559-564, missing row = zero rows, one-leaf-one-concern) plus
+    BOTH clamps — `least(max_shield, greatest(0, …))` — because regen pushes UP where combat
+    only ever lowered hp. Body kept free of the `hp` token so writes-shield-only is
+    prosrc-pinnable. NO caller this slice (SHIELD-1 wires the tick).
+  - Knobs `shield_regen_combat_pct`/`shield_regen_idle_pct` seeded '0' (the 0170/0180/0185
+    double-inert idiom); NO `shield_enabled` flag — the system is DATA-gated like the 0170 hull
+    stats. Partial index `main_ship_instances (main_ship_id) where shield < max_shield` = the
+    future regen pass's scan surface; matches zero rows while everything is 0/0.
+  - **Self-asserts:** column shapes via information_schema (3 × integer/not-null/default-0;
+    2 × nullable double precision no-default); the 5 named CHECKs; leaf ACL
+    (`has_function_privilege`: service_role yes, authenticated/anon no) + prosrc pins (both
+    clamps, `set shield`, no `hp`, no `random()`/`setseed`); both knobs '0'; every hull 0,
+    every instance 0/0, every combat row NULL/NULL; the missing-row leaf call moves nothing;
+    the regen index exists and its predicate matches zero rows.
+- **Proof — new `TEAMCMD_PASS_SHIELD0` block in `scripts/team-command-proof.{sql,sh}`** (19th
+  marker as this branch stands — see the reconcile note): committed knobs '0' asserted and NEVER
+  touched, even in-txn (no consumer exists — the SHIPYARD0 never-flip posture applied to knobs,
+  negative-grepped in the selftest for BOTH the raw-update and `set_game_config` idioms); the
+  schema/CHECK/index pins; total inertness over every earlier block's fixtures; the leaf smoke
+  on a fresh commissioned fixture (max_shield fixture-set 50 in-txn): floor clamp → 0, ceiling
+  clamp → 50, in-range → 30 exact, missing ship = zero rows, `shield_le_max` trips on a direct
+  over-max write, and hp/max_hp BYTE-EXACT before/after every call. `.sh` extends the local-mode
+  committed-value honesty checks to pin both knobs still '0' after the run.
+- **Docs:** FULL_CAPACITY_PLAN (new §C P13 — the SHIELD charter; queue row 18; [D] owner-tunable
+  flip numbers: Sparrow 100 / Mule 130 / Talon 85 base_shield, 0.02 combat / 0.10 idle regen),
+  SYSTEM_BOUNDARIES (§1 `main_ship_instances` disjoint-writers-by-column note + `combat_units`
+  shield columns; §2 Main Ship gains the leaf).
+- **Verification:** `team-command-proof.sh selftest` green with the new marker; 3 mutation
+  guttings (marker / hp-untouched pin / committed-knob pin) each fail-then-restore; `tsc -b` +
+  `vite build` green (no client change — additive server columns only).
+- **Numbering/reconcile note:** written against origin/main's 18 proof markers; DECKS (0189,
+  own proof) and TEAMMOVE (0190, appends the 19th team-proof marker) are in flight — if TEAMMOVE
+  merges first this block becomes the 20th and the merge keeps both blocks (the established
+  both-blocks-kept routine).
+
+---
+
 ## 2026-07-13 — SHIPYARD-1: the hull-build ORDER command (mig 0188, dark)
 
 **Request.** The SHIPYARD charter, slice 1: `start_hull_build` on the REUSED M4.5 `build_orders`

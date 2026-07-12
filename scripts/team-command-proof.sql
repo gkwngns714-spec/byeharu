@@ -155,6 +155,20 @@
 --            stationary/at_location) with the informational tag SURVIVING the settle (the map's
 --            docked-team badge read). Display-only law respected: no routing assertion keys on
 --            the tag. Fresh fixture user (the MOD2 idiom).
+--   SHIELD0 (SHIELD-0, 0191) — the shield foundation is DEPLOY-INERT + the one leaf clamps:
+--            both regen knobs (`shield_regen_combat_pct`/`shield_regen_idle_pct`) asserted
+--            COMMITTED '0' and NEVER touched, even in-txn (no consumer exists to exercise at a
+--            non-zero rate — the SHIPYARD0 shipyard_enabled posture); the schema shape pinned
+--            exact (3 integer default-0 columns: hull base_shield + instance shield/max_shield;
+--            2 nullable no-default double-precision combat snapshot columns; the 5 named CHECKs
+--            incl. the member-only pairing; the regen partial index); TOTAL inertness (every
+--            hull base_shield 0, every instance 0/0, every combat row shield-NULL, the regen
+--            predicate matching zero rows); and the leaf smoke on a fresh commissioned fixture
+--            (max_shield fixture-set 50 in-txn): mainship_sync_combat_shield clamps at the 0
+--            floor and the max_shield ceiling, writes an in-range value exactly, a missing ship
+--            updates zero rows, the shield_le_max CHECK trips on an over-max direct write, and
+--            hp/max_hp are BYTE-UNTOUCHED across every call (one leaf one concern) — with the
+--            leaf's prosrc + service-role-only ACL pinned. No caller exists until SHIELD-1.
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -2417,6 +2431,126 @@ begin
   raise notice 'TEAMCMD_PASS_TEAMMAP ok: 2-ship team send tags both member fleets with group_id (= the envelope''s sent[] ids, no strays); arrival settles dock both members at the port (stationary/at_location, fleets present at Slagworks) with the informational tag surviving the settle';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving)' as result;
+-- ════════ BLOCK SHIELD0 (SHIELD-0, 0191): the shield foundation is deploy-inert + the leaf clamps ════════
+-- Migration 0191 is schema + one leaf + two knobs, ZERO engine edits (SHIELD-1 owns the tick
+-- re-creates, SHIELD-2 the regen home). This block proves the whole slice is INERT as deployed —
+-- the knobs are asserted committed-'0' and NEVER raised, even in-txn: no consumer exists to
+-- exercise at a non-zero rate (the SHIPYARD0 shipyard_enabled never-flip posture; the .sh selftest
+-- negative-greps any touch of either knob). The leaf smoke runs on a FRESH fixture user (the
+-- MOD2/TEAMMAP idiom); setting the fixture ship's max_shield directly in-txn is sanctioned fixture
+-- surgery (the provisioning-normalization precedent on main_ship_instances) — NO runtime writer of
+-- max_shield exists yet to do it through, which is itself part of the slice's inertness story.
+do $$
+declare r jsonb; n int; uS uuid; s1 uuid;
+  v_hp_before integer; v_maxhp_before integer; v_hp_after integer; v_maxhp_after integer;
+  v_shield integer; v_src text; v_val text;
+begin
+  -- ── committed knob seeds: both '0', asserted, never touched ──────────────────────────────────
+  select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_combat_pct';
+  if v_val is distinct from '0' then
+    raise exception 'SHIELD0 FAIL: committed shield_regen_combat_pct is % (want ''0'' — the 0191 dark seeds)', coalesce(v_val, '<missing>'); end if;
+  select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_idle_pct';
+  if v_val is distinct from '0' then
+    raise exception 'SHIELD0 FAIL: committed shield_regen_idle_pct is % (want ''0'' — the 0191 dark seeds)', coalesce(v_val, '<missing>'); end if;
+
+  -- ── schema shape pins: the 3 integer default-0 columns, the 2 nullable no-default snapshot
+  --    columns, the 5 named CHECKs (incl. the member-only pairing), the regen partial index ─────
+  select count(*) into n from information_schema.columns
+    where table_schema = 'public'
+      and ((table_name = 'main_ship_hull_types' and column_name = 'base_shield')
+        or (table_name = 'main_ship_instances'  and column_name in ('shield', 'max_shield')))
+      and data_type = 'integer' and is_nullable = 'NO' and column_default = '0';
+  if n <> 3 then raise exception 'SHIELD0 FAIL: % of 3 shield columns carry integer/not-null/default-0 (the 0191 shape)', n; end if;
+  select count(*) into n from information_schema.columns
+    where table_schema = 'public' and table_name = 'combat_units'
+      and column_name in ('shield_max', 'shield_current')
+      and data_type = 'double precision' and is_nullable = 'YES' and column_default is null;
+  if n <> 2 then raise exception 'SHIELD0 FAIL: % of 2 combat snapshot columns are nullable double precision, no default', n; end if;
+  select count(*) into n from pg_constraint
+    where conname in ('main_ship_hull_types_base_shield_nonneg', 'main_ship_instances_shield_nonneg',
+                      'main_ship_instances_max_shield_nonneg', 'main_ship_instances_shield_le_max',
+                      'combat_units_member_shield_pairing')
+      and contype = 'c';
+  if n <> 5 then raise exception 'SHIELD0 FAIL: % of 5 named shield CHECKs present', n; end if;
+  select count(*) into n from pg_indexes
+    where schemaname = 'public' and tablename = 'main_ship_instances'
+      and indexname = 'main_ship_instances_shield_regen_idx';
+  if n <> 1 then raise exception 'SHIELD0 FAIL: the shield regen partial index is missing'; end if;
+
+  -- ── the leaf: service-role-only ACL + the one-leaf-one-concern prosrc pins ───────────────────
+  select prosrc into v_src from pg_proc p
+    join pg_namespace ns on ns.oid = p.pronamespace
+    where ns.nspname = 'public' and p.proname = 'mainship_sync_combat_shield';
+  if v_src is null then raise exception 'SHIELD0 FAIL: mainship_sync_combat_shield not found'; end if;
+  if strpos(v_src, 'greatest(0, p_shield)') = 0 or strpos(v_src, 'least(max_shield') = 0 then
+    raise exception 'SHIELD0 FAIL: the leaf is missing a clamp (want greatest(0,...) + least(max_shield,...))'; end if;
+  if strpos(v_src, 'set shield') = 0 then
+    raise exception 'SHIELD0 FAIL: the leaf does not write shield'; end if;
+  if strpos(v_src, 'hp') <> 0 then
+    raise exception 'SHIELD0 FAIL: the shield leaf body mentions hp (one leaf one concern breach)'; end if;
+  if strpos(v_src, 'random(') <> 0 or strpos(v_src, 'setseed') <> 0 then
+    raise exception 'SHIELD0 FAIL: the leaf body carries session RNG (0041 determinism breach)'; end if;
+  if not has_function_privilege('service_role', 'public.mainship_sync_combat_shield(uuid, integer)', 'execute') then
+    raise exception 'SHIELD0 FAIL: service_role cannot execute the leaf'; end if;
+  if has_function_privilege('authenticated', 'public.mainship_sync_combat_shield(uuid, integer)', 'execute')
+     or has_function_privilege('anon', 'public.mainship_sync_combat_shield(uuid, integer)', 'execute') then
+    raise exception 'SHIELD0 FAIL: a client role can execute the leaf (must be service_role-only)'; end if;
+
+  -- ── TOTAL inertness as deployed (every earlier block's fixtures included: commissioned ships
+  --    ride the default 0/0; member combat rows ride NULL/NULL — nothing writes shields yet) ────
+  select count(*) into n from public.main_ship_hull_types where base_shield <> 0;
+  if n <> 0 then raise exception 'SHIELD0 FAIL: % hull row(s) carry base_shield <> 0 (want 0 — every hull base_shield 0)', n; end if;
+  select count(*) into n from public.main_ship_instances where shield <> 0 or max_shield <> 0;
+  if n <> 0 then raise exception 'SHIELD0 FAIL: % instance row(s) off 0/0 (want 0 — every instance at 0/0)', n; end if;
+  select count(*) into n from public.combat_units where shield_max is not null or shield_current is not null;
+  if n <> 0 then raise exception 'SHIELD0 FAIL: % combat row(s) carry a shield snapshot (want 0 — every combat row shield-NULL)', n; end if;
+  select count(*) into n from public.main_ship_instances where shield < max_shield;
+  if n <> 0 then raise exception 'SHIELD0 FAIL: the regen predicate matches % row(s) (want 0 — nothing to regenerate while 0/0)', n; end if;
+
+  -- ── leaf smoke: fresh fixture user + ship (the free first commission), max_shield fixture-set
+  --    50 in-txn; hp/max_hp read BEFORE and re-read byte-exact AFTER every leaf call ────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uS;
+  r := pg_temp.call_as(uS, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD0 FAIL provision: %', r; end if;
+  select main_ship_id, hp, max_hp into s1, v_hp_before, v_maxhp_before
+    from public.main_ship_instances where player_id = uS;
+  update public.main_ship_instances set max_shield = 50, shield = 0 where main_ship_id = s1;
+
+  perform public.mainship_sync_combat_shield(s1, -25);
+  select shield into v_shield from public.main_ship_instances where main_ship_id = s1;
+  if v_shield is distinct from 0 then raise exception 'SHIELD0 FAIL: sync(-25) landed shield % (want 0 — the floor clamp)', v_shield; end if;
+  perform public.mainship_sync_combat_shield(s1, 999);
+  select shield into v_shield from public.main_ship_instances where main_ship_id = s1;
+  if v_shield is distinct from 50 then raise exception 'SHIELD0 FAIL: sync(999) landed shield % (want 50 — the max_shield ceiling clamp)', v_shield; end if;
+  perform public.mainship_sync_combat_shield(s1, 30);
+  select shield into v_shield from public.main_ship_instances where main_ship_id = s1;
+  if v_shield is distinct from 30 then raise exception 'SHIELD0 FAIL: sync(30) landed shield % (want 30 — the in-range write)', v_shield; end if;
+
+  -- missing ship = zero rows: the fixture ship keeps 30 and stays the ONLY nonzero-shield row.
+  perform public.mainship_sync_combat_shield(gen_random_uuid(), 999);
+  select shield into v_shield from public.main_ship_instances where main_ship_id = s1;
+  if v_shield is distinct from 30 then raise exception 'SHIELD0 FAIL: missing-ship sync moved the fixture ship to % (want 30 untouched)', v_shield; end if;
+  select count(*) into n from public.main_ship_instances where shield <> 0 and main_ship_id <> s1;
+  if n <> 0 then raise exception 'SHIELD0 FAIL: missing-ship sync moved % other row(s) (want zero-rows semantics)', n; end if;
+
+  -- the shield_le_max CHECK holds against a direct over-max write (the COMBATPARITY probe idiom).
+  begin
+    update public.main_ship_instances set shield = 60 where main_ship_id = s1;
+    raise exception 'SHIELD0 FAIL: shield 60 over max_shield 50 did not trip shield_le_max';
+  exception when check_violation then null; end;
+
+  -- hp/max_hp BYTE-EXACT across every leaf call (one leaf one concern).
+  select hp, max_hp into v_hp_after, v_maxhp_after from public.main_ship_instances where main_ship_id = s1;
+  if v_hp_after is distinct from v_hp_before or v_maxhp_after is distinct from v_maxhp_before then
+    raise exception 'SHIELD0 FAIL: the shield leaf moved hp/max_hp (one leaf one concern breach): %/% -> %/%',
+      v_hp_before, v_maxhp_before, v_hp_after, v_maxhp_after; end if;
+
+  raise notice 'TEAMCMD_PASS_SHIELD0 ok: committed regen knobs ''0'' (never touched, even in-txn); 3 default-0 columns + 2 NULL snapshot columns + 5 CHECKs + regen index pinned; leaf service-only with clamp/shield-only/no-RNG prosrc; every hull 0, every instance 0/0, every combat row shield-NULL, regen predicate empty; leaf smoke exact (floor 0 / ceiling 50 / in-range 30, missing ship zero rows, shield_le_max trips, hp/max_hp byte-untouched)';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
