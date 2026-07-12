@@ -149,17 +149,42 @@ byte-inert at level 1). C2-3: XP bars in TeamMemberCaptains. C2-4: the 6→8 slo
 migration, lit-time decision). Deps: Rung 0. Guard: Captain system stays sole writer; XP reads finalized
 grants exactly like Ranking does — combat never writes captain XP mid-tick.
 
-### P6 — HULLS-2: ship progression beyond starter_frigate *(M)*
-HULLS2-0: seed 2 hulls dark — **bulk_hauler** (hp 650, speed 0.8, cargo 140, modules 2, captains 6,
-`{attack 5, defense 15}`) and **strike_corvette** (hp 420, speed 1.3, cargo 20, modules 4, captains 6,
-`{attack 30, defense 10}`) — role emergent from fit, no activity locks (MAINSHIP_TRANSITION core vision);
-add `main_ship_hull_types.price_credits` (starter 250, hauler 800, corvette 800 — owner decision).
-HULLS2-1: parity re-create of commissioning taking `p_hull_type_id` (default `'starter_frigate'` →
-byte-inert) — this IS the "next functional rework" that retires the SYSTEM_BOUNDARIES fleets-shim
-exception (repoint the sanctioned `fleets` writes through a Fleet-exposed function, re-derive the frozen
-prosrc-md5 pins, delete the exception note in the same PR). HULLS2-2: hull picker in CommissionShipPanel
-behind `hull_catalog_enabled`; proof. Deps: credits flowing (Rung 3/P3). Guard: stats only ever enter play
-via `base_stats_json` through the 0170 adapter fold — no new stat path.
+### P6 — SHIPYARD: ships are BUILT, not bought *(M/L — SHIPYARD-0 SHIPPED dark as mig 0185; supersedes the old HULLS-2 line per the SHIPYARD charter)*
+**The production model (owner directive: "ships must be made through mining, production, level
+requirement and more"):** T0 = `starter_frigate` — the existing credits-only commission, UNTOUCHED.
+T1 = **bulk_hauler** ('Mule-class Hauler': hp 650, speed 0.8, cargo 140, modules 2, captains 6,
+`{attack 5, defense 15}`) and **strike_corvette** ('Talon-class Corvette': hp 420, speed 1.3, cargo 20,
+modules 4, captains 6, `{attack 30, defense 10}`) — BUILT from mined/dropped materials + credits over a
+build timer (role emergent from fit, no activity locks — MAINSHIP_TRANSITION core vision; the 0184
+Mule/Talon class register). T2+ = later hulls gated by `required_hull_type_id` (own the prerequisite
+hull) + `required_captain_level` (the owner's "level requirement") — the gate columns exist from day 0;
+T1 seeds both NULL (honest: captain levels are dark). Recipes [D, owner-tunable]: hauler = ore 24 +
+crystal 6 + engine_parts 6 + scrap 12 + blueprint_fragment 2; corvette = ore 16 + crystal 4 +
+weapon_parts 6 + pirate_alloy 8 + blueprint_fragment 2; both credits 400 / build 3600s.
+**Slices (0 shipped, all dark behind `shipyard_enabled=false`):**
+SHIPYARD-0 **shipped** (mig `0185`, slice-shipyard0): `shipyard_enabled='false'` +
+`hull_build_recipes`/`hull_recipe_ingredients` (Reference/Config, migration-seeded only, public read —
+the 0107 posture) + the 2 T1 hulls seeded dark + the **blueprint faucet** — `pirate_loot_for_wave`
+re-created from its TRUE head (0171, grep-verified; parity diff = the one marked hunk) with the
+config-gated w≥8 blueprint_fragment drop (`blueprint_fragment_drop_rate` seeded '0' → byte-inert; the
+exact 0171 shard idiom; shards w≥2, blueprints w≥8 — the deep-run gate; the 0098 exploration one-shot
+remains the second source); self-asserting (exact hull/recipe shapes, F4 drop grounding vs loot
+prosrc/field bundles/site bundles, hunk-token + rate-0 parity pins, flag dark); proof = the
+`TEAMCMD_PASS_SHIPYARD0` block in `team-command-proof` (catalog exact; rate-0 byte-parity / rate-1
+w≥8 exactly-one-appended-blueprint / w<8 + wave-1 thresholds — the SHARDDROP technique).
+SHIPYARD-1: the build command — `start_hull_build` on the REUSED M4.5 `build_orders` serial queue
+(never a second timer system), spending items via `inventory_spend` + credits via `wallet_debit`,
+enforcing the recipe gates (required hull / captain level when lit). SHIPYARD-2: build completion →
+delivery — the queue completion commissions the built ship through the ONE commission build core
+(parity re-create taking `p_hull_type_id`, default `'starter_frigate'` → byte-inert — this IS the
+"next functional rework" that retires the SYSTEM_BOUNDARIES fleets-shim exception: repoint the
+sanctioned `fleets` writes through a Fleet-exposed function, re-derive the frozen prosrc-md5 pins,
+delete the exception note in the same PR). SHIPYARD-3: shipyard UI (recipe list + build queue panel,
+server-lit). ACT-SHIPYARD: the human flip script — **preconditions: mining lit (the ore/crystal
+faucet) + trade/salvage lit (the credits faucet)**, blueprint knob raised [D] in the same window.
+Deps: credits flowing (Rung 3/P3) + ACT-MINING. Guard: stats only ever enter play via
+`base_stats_json` through the 0170 adapter fold — no new stat path; the recipe tables stay
+Reference/Config (migration-seeded, NO runtime writer); combat never grants ships.
 
 ### P7 — MODULES-2: tiers + the defense line *(S/M — MOD2-1 SHIPPED as mig 0183 + the team-proof MOD2 block; dark behind the existing module gates)*
 MOD2-1 **shipped** (mig `0183`, slice-mod2): `shield_lattice` (slot_type `defense`, slot 1,
@@ -251,7 +276,8 @@ P2 contracts + P8 event sites first.
 | 15 | ACT-INVEST + ACT-WORLDBAL | queued |
 | 16 | EV-1 + ACT-PHASE20 **[D: thresholds 75 / 0.25 / 0.6–1.4 — proposed in the 0182 header, owner-tunable]** | **EV-1 shipped (dark)** — mig `0182` (slice-ev1): `worldstate_tick` re-created from its TRUE head (0137, grep-verified; parity diff clean) with the marked EV-1 hunks — ALL STATE-detected (never edge: a failed publish's condition still holds next minute, so the retry is genuine): pressure high (at/above `event_pressure_high_threshold=75`; critical ≥ threshold + half the headroom; a parked-high location re-announces daily — intended pressure-nagging) + eased (the exact complement, suppressed unless today's high was announced — a read-only lookup of the tick's own published rows), depletion warnings (post-regen reserve < `event_depletion_warn_fraction=0.25`, global-scope, field NAME only), drift extremes (`price_surge`/`price_crash` outside 0.6/1.4 — 1.4 grounded: the 0136 drift target caps at 1.5 under coeff 0.5, so the notional 1.6 is unreachable) — every publication through the EXISTING `world_events_publish` (never a direct insert; 5 call sites pinned), per-(subject, UTC-day) dedup keys, EACH publication its own begin/exception subtransaction (query_canceled re-raised; a publish failure logs a WARNING, never aborts the tick, never rolls back a sibling — D2), the four knobs read ONLY when `world_balance_enabled` and guarded (uncastable/NaN → seeded default + WARNING — a knob typo cannot kill the live heartbeat), double-dark (`world_balance_enabled` × publish's own `phase20_polish_enabled` gate), NO new cron (the 0033 60s heartbeat, self-asserted unchanged); proof `scripts/ev1-proof.{sql,sh}` in NEW `world-events-proof.yml` (family-pure host — trade-v1 stays trade-only). ACT-PHASE20 (the Rung-7 flips) remains |
 
-*(Then: HULLS2 line [D], MOD2-2, RR line, OB line, C2-4 — resequenced at the next plan review.
+*(Then: the SHIPYARD line (P6 — SHIPYARD-0 shipped dark as mig 0185; SHIPYARD-1..3 + ACT-SHIPYARD
+remain) [D], MOD2-2, RR line, OB line, C2-4 — resequenced at the next plan review.
 HAUL is now FULLY STOCKED: HAUL-3 shipped 0181/PR #117 and the ACT-HAUL flip script shipped
 (slice-act-haul) — only the human flip remains, ordered after ACT-TRADE. C2-3 shipped in PR #117.)*
 
