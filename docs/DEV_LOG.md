@@ -83,6 +83,109 @@ curve instead of a degenerate one.
 
 ---
 
+## 2026-07-12 — EV-1: the world-events producer — worldstate_tick narrates threshold events (dark)
+
+**Request.** Plan §C P8 first slice (queue #16, EV-1 only — EV-2 event sites + EV-3 feed UI are later):
+`worldstate_tick` publishes threshold events through the EXISTING `world_events_publish` — pressure
+crossings, depletion warnings, drift extremes — dedup-keyed; publish failure never aborts the tick;
+zero events while dark; no new cron.
+
+**Work done** *(shipped shape includes the same-day hostile-review rework: state-detection everywhere,
+per-publication failure isolation, gated+guarded knob reads; rebased onto main @ 938a70c — #117 merged
+0181 haul_read_surface, so this slice is 0182 as planned.)*
+- **Migration `20260618000182_ev1_worldstate_events.sql`** —
+  - **True head found = 0137** (grep-verified: the tick's only create sites are 0032 → 0034 → 0135 →
+    0136 → 0137; 0138..0181 never re-create/alter/drop it — 0172 re-created `mining_extract` +
+    `worldstate_deplete_field`, NOT the tick; post-rebase re-verified: 0181 touches neither).
+    Re-created VERBATIM with four fenced `EV-1 (0182)` hunks (declares; the gated+guarded knob
+    loader; the post-UPDATE location-event block; the per-field depletion block). Extract-and-diff
+    verified after the rebase: 0182 minus the fenced hunks == the 0137 body byte-for-byte.
+  - **Gate shape (verified, stated honestly):** the tick does NOT globally no-op while dark — the
+    pre-P19 decay/rollup always runs (the 0034 live behavior); every P19 dynamic gates per-block on
+    `world_balance_enabled`. EV-1 follows exactly that shape: every publication sits inside
+    `if v_wb_enabled` (location events also inside the existing `v_drifted` guard) → a dark tick
+    publishes ZERO events, reads ZERO EV-1 config, and its writes stay byte-identical to 0137.
+    DOUBLE-DARK: the 0140 publisher itself no-ops (NULL) while `phase20_polish_enabled=false` —
+    events flow only when BOTH flip (exactly the Rung-7 order).
+  - **The events — ALL STATE-detected** (hostile-review HIGH fix: an edge, once consumed, has
+    advanced even if its publish failed — the event would be lost forever; a state still holds next
+    minute, so a failed publish genuinely retries; per-day dedup keeps it exactly-once). All
+    `event_type='world_state'`, all through `world_events_publish` — NEVER a direct insert, pinned:
+    `pressure_high` while pressure sits at/above `event_pressure_high_threshold=75` (critical ≥
+    threshold + half the remaining headroom = 87.5 at defaults, else warning; a PARKED-high location
+    re-announces once per UTC day — documented as intended pressure-nagging [D]) / `pressure_eased`
+    (the EXACT complement on the threshold, info, NOISE-SUPPRESSED: only when TODAY's pressure_high
+    was announced — a read-only lookup of the tick's own published rows, so a perpetually-calm
+    location never "eases"; the daily re-announce keeps the same-day pairing coherent across
+    midnight) — location scope; `field_depleting` (post-regen reserve <
+    `event_depletion_warn_fraction=0.25`; global scope — fields are hidden spatial sites, not Map
+    locations; the title carries the field NAME only, a deliberate mild narration reveal since a
+    depleting field is by definition actively worked); `price_surge`/`price_crash` (outside
+    `event_drift_extreme_band_low/_high` = 0.6/1.4). Dedup keys `<family>:<subject_id>:<UTC day>`.
+  - **Thresholds grounded [D owner-tunable]:** pressure 0..100 baseline 50 (0031) → 75 ≈ a sustained
+    7-defeat/hour danger target (0135 term). Reserve 1.0→0.1-floor in 0.1 steps (0137) → 0.25 ≈ 8
+    extractions deep. Drift: the brief's notional 1.6 high is UNREACHABLE — the 0136 target caps at
+    1.0 + coeff(0.5) = 1.5 — so 1.4 (80% of the max premium, needs pressure > 90 sustained ~16
+    ticks); 0.6 is symmetric defensive cover (target never < 1.0 under default tuning).
+  - **D2 cron-safety (per-publication isolation):** EVERY publication is its OWN begin/exception
+    subtransaction — pressure-high / eased / drift each isolated per location, depletion one
+    subtransaction PER FIELD — so one failure can neither abort the tick (the location UPDATE sits
+    outside the guards) nor roll back a sibling's success nor skip the remaining fields;
+    `query_canceled` is re-raised in every guard (a cancel is never neutered); everything else logs
+    a WARNING. State-detection makes the next minute's retry genuine. NO new cron — the 0033 60s
+    heartbeat, self-asserted unchanged.
+  - **Knob safety (hostile-review MEDIUM fix):** the four EV-1 knobs are NOT read in DECLARE (which
+    would run unguarded every 60s, dark included) — they load in a gated (`v_wb_enabled` only) +
+    guarded loader: a bad cast aborts only the loader subtransaction (→ seeded defaults + WARNING)
+    and a NaN backstop catches values that cast fine but compare as the greatest double. A mis-set
+    owner-tunable can never kill the live decay/rollup heartbeat, and the config descriptions'
+    "only consumed when world_balance_enabled=true" is literally true.
+  - **Self-asserts:** knobs at the seeds; BOTH gates still dark (lit-early deploy fails closed —
+    the 0180 precedent); parity spot-pins (0135/0136/0137 head tokens survive; exactly 5
+    `world_events_publish` call sites; all 5 dedup families; exactly 5 failure guards + exactly 5
+    query_canceled re-raises; NO direct `world_events` insert in the prosrc); a dark dry-run (real
+    tick → zero events; publish probe → NULL); cron unchanged (exactly the one 0033 job, no second
+    schedule drives the tick).
+- **Proof `scripts/ev1-proof.{sql,sh}`** (lib-based, one BEGIN..ROLLBACK; both gates + every
+  transient config write inside the txn only): dark tick + dark publish → zero rows; state highs via
+  the REAL decay math (transient baseline/decay-rate tuning: 60→80 warning, 60→92 critical ≥ 87.5);
+  eased 80→50 with today's high announced → one info event AND a never-high location below the
+  threshold stays silent (the suppression pin); same-day still-high re-tick → zero new rows (the
+  dedup pin); depletion via the REAL sole writer `worldstate_deplete_field` ×8 → one global warning
+  naming the field, second tick deduped; drift fixtures 1.45→1.405 ≥ 1.4 surge / 0.52→0.568 ≤ 0.6
+  crash; **publish-failure injection** (a BEFORE INSERT trigger blowing up every `world_events`
+  insert → the tick completes and its location_state write survives) **plus the genuine-retry pin**
+  (trigger dropped → the very next tick finds the state still holding and LANDS the lost event —
+  the property edge semantics could never satisfy); **knob guard** (uncastable `"not-a-number"` AND
+  `"NaN"` threshold values → tick completes, falls back to the default 75, still narrates);
+  **narrate-never-mutate** (direct publishes change no location_state/mining_field_state byte —
+  md5-snapshot compare). Mutation-tested: 8 mutations (COMMIT swap, post-ROLLBACK flag toggle,
+  direct world_events insert, retry-marker gut, real-writer bypass, dedup-family gut, NaN-arm gut,
+  suppression-assert gut) each individually FAIL the selftest; restored → green.
+- **Workflow `world-events-proof.yml`** (NEW; selftest + disposable-matrix on `slice-ev**` +
+  `autopilot/**`). HOST DECISION: a new family-pure workflow, NOT a 7th trade-v1-proof step —
+  trade-v1 is the trade-family host (name, triggers, and matrix are trade-branded) and team-command
+  the team/captain host; grafting worldstate coverage onto trade-v1 would misfile it, make every
+  trade branch pay for it, and pollute its branch filters. Many small family-pure proof workflows is
+  the repo convention.
+- **Docs:** SYSTEM_BOUNDARIES (World State exposes + forbidden rows, the world_events matrix row, a
+  new acyclic-edge note World State → World Events, the 60s-cron section — narrate-never-mutate
+  restated everywhere); FULL_CAPACITY_PLAN (P8 header + queue #16: EV-1 shipped dark; EV-2/EV-3 +
+  ACT-PHASE20 remain).
+
+**Verify.** ev1-proof selftest green + 8/8 mutations caught; all other proof selftests green
+(osn-hub1a-production-catalog-verify fails identically on the clean tree — pre-existing,
+environment-dependent, unrelated); parity diff re-verified byte-clean after the rebase onto
+main @ 938a70c (#117 merged; 0181 touches neither the tick nor world_events); `tsc -b` +
+`vite build` green (untouched). Real-chain run = `world-events-proof.yml` disposable-matrix on the
+`slice-ev1` push (no local Docker/psql — the established norm).
+
+**Open follow-ups**
+- EV-2: event sites (time-activated `event_site` locations, 48h lifecycle, retired hidden).
+- EV-3: feed UI (WorldEventsPanel + map badges via `ui_asset_catalog`).
+- ACT-WORLDBAL + ACT-PHASE20 (queue #15/#16): the Rung-7 flips — world balance first, then phase20;
+  the EV-1 knobs (75 / 0.25 / 0.6–1.4) are the [D] owner-tunables to revisit at flip time.
+
 ## 2026-07-12 — ACT-HAUL: the delivery-contracts activation script
 
 **Request.** The HAUL closer (plan §C P2; ROADMAP phase-22): `scripts/activate-haul.{sql,sh}` in the
