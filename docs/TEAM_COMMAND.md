@@ -612,6 +612,36 @@ complete (A → D4); nothing lights up until these are done deliberately, togeth
 > FAST-FOLLOW (the bump SQL of item 2 + a `captain_memory_shard` drop +
 > `captain_assignment_enabled` (+ `captain_progression_enabled`) — packet §3).
 
+> **CAPTAINS FAST-FOLLOW PREP shipped 2026-07-12** (the ④ build half; ①–③ went live the same
+> day). **DONE by this slice:** migration `20260618000171_captains_launch_prep` — (a) the pinned
+> item-2 bump SQL **verbatim** (hull `base_captain_slots` 2 → 6 + the existing-instance
+> `captain_slots` backfill, idempotent + monotonic), and (b) the `captain_memory_shard` DROP
+> SOURCE (packet F5): `pirate_loot_for_wave` re-created from its TRUE head (0041 — grep-verified
+> the only create site; NOT another `process_combat_ticks` re-create, the tick already injects
+> this leaf's output into the wave-clear bundle) with ONE marked hunk — from wave 2 onward each
+> cleared wave rolls `random() < captain_shard_drop_rate` for exactly 1 shard — gated on that NEW
+> game_config knob **seeded 0 = byte-inert** (rate-0 output is byte-identical to the head,
+> diff-verified; wave 1 stays deterministic scrap-only at ANY rate so verify-phase5's wave-1
+> exact pin never goes flaky). Plus `scripts/activate-captains.{sql,sh}` (the ④ flip, HUMAN-run,
+> selftest-green, management-API compatible — no psql meta-commands, one BEGIN..COMMIT):
+> preconditions (head ≥ 0171; bump + backfill really applied) → stage-1 knob
+> `captain_shard_drop_rate` → **0.15** (proposed launch value, script-tunable any time) →
+> stage-2 flags `captain_assignment_enabled` + `captain_progression_enabled` → true (BOTH, or
+> recruiting stays dead — F5) → read-only smoke (cfg values; the 9-function captain surface
+> exists; catalog non-empty with every type recruitable; the shard economy closed) → PASS
+> markers; marked rollback (flags/knob only — NEVER lower slot counts once captains occupy
+> slots 3–6). **NO CLIENT PR IS NEEDED for ④ (verified this slice):** every captain surface —
+> `CaptainsPanel` + `RecruitCaptainPanel` (ShipScreen) and `TeamMemberCaptains` (team roster) —
+> is server-lit via `isServerLit(get_my_captain_instances)` and mounts the moment stage 2
+> commits; no captain compile constant exists in `osnReleaseGates.ts`, and
+> `TEAM_COMMAND_ENABLED` is already `true`. **Deploy → flip window note:** the 0171 bump moves
+> the UNGATED "Captain seats" label 2 → 6 at deploy, BEFORE the flag — cosmetic while dark
+> (packet §3's accepted posture: no captain can occupy a seat until the flip); deploy 0171 and
+> run the script in the same sitting to keep the gap short. **REMAINING (human):** deploy 0171 →
+> run `scripts/activate-captains.sql` against prod → `scripts/team-command-proof.sh` (now incl.
+> the `TEAMCMD_PASS_SHARDDROP` block; the CAPTAINS block asserts the bump as migration state) +
+> manual smoke (hunt past wave 2 → shard drops → recruit → assign → C0 preview / D0 totals move).
+
 1. **Flag flips (the switch itself)** — **scripted: `scripts/activate-team-command.{sql,sh}`
    (human-run, idempotent, all-or-nothing, rollback section included; NOT CI):**
    - `team_command_enabled` (game_config) → `true` — lights every team RPC (B0/B1/B-send/B-stop/
@@ -629,14 +659,19 @@ complete (A → D4); nothing lights up until these are done deliberately, togeth
      rail — the in-client path to ship #2+, shipped dark by the 2026-07-12 prep slice.
    - `captain_assignment_enabled` → `true` **only if captains are wanted at launch** — DECIDED
      (packet §3): launch UNCAPTAINED; captains are the fast-follow flip, so the activation script
-     deliberately does NOT touch any captain flag.
+     deliberately does NOT touch any captain flag. The fast-follow flip now has its OWN script:
+     **`scripts/activate-captains.{sql,sh}`** (shipped 2026-07-12 — `captain_shard_drop_rate` →
+     0.15, then `captain_assignment_enabled` + `captain_progression_enabled` → true; see the
+     blockquote above).
 2. **The deferred captain-slots migration (run WITH the captain flag, idempotent + monotonic):**
    the hull bump `main_ship_hull_types.base_captain_slots` 2 → 6 **and** the existing-instance
    `captain_slots` backfill — the exact SQL is pinned under "Explicitly deferred" below. Deferred
-   through C0-D4 because the "Captain seats" row renders both values ungated. **STILL REMAINING —
-   the captains fast-follow window (packet §3), together with a `captain_memory_shard` drop
-   (packet F5: recruiting is dead-ended without a shard source) + the captain flags; deliberately
-   NOT part of the 2026-07-12 prep slice or its activation script.**
+   through C0-D4 because the "Captain seats" row renders both values ungated. **SHIPPED as
+   migration `20260618000171_captains_launch_prep` (2026-07-12, the captains fast-follow prep):**
+   the pinned SQL verbatim, PLUS the `captain_memory_shard` drop (packet F5 — config-gated on
+   `captain_shard_drop_rate`, seeded 0 = inert). The captain FLAGS + the launch drop rate are
+   `scripts/activate-captains.{sql,sh}` — deliberately a script write, never the migration. See
+   the CAPTAINS FAST-FOLLOW PREP blockquote above for the deploy → flip cosmetic-window note.
 3. **Pre-activation blockers — all CLOSED:** M1 (the live single send's lost-update race) was fixed
    in D3 (migration 0169); nothing else on the blocker list.
 4. **Optional pre-activation cleanup:** the **Low-2 lock-ordering polish** from D3's adversarial
@@ -689,11 +724,13 @@ the cap so it is not the binding limit once multi-ship is later lit.
   true in an ephemeral/rolled-back txn and exercise upsert/assign/unassign/**delete** + every reject, assert
   player A cannot assign A's ship to B's group **nor delete B's group**, and cover the **double-delete** and
   **assign-vs-delete** races.
-- **Captain-slot capacity bump 2 → 6 (BOTH the hull bump AND the existing-instance backfill)** → **DEFERRED
-  to activation** (kept ENTIRELY out of C0 to preserve zero player-visible change — the "Captain seats" row
-  in `ShipStatusCard.tsx` renders `hull.base_captain_slots` in the no-ship teaser (`:95`) **and** the ship's
-  `captain_slots` (`:213`), both ungated, so either bump would move a player-visible label while dark). C0 is
-  RPC-only. When captains are lit, run **both together** alongside the flag flips (idempotent, monotonic):
+- **Captain-slot capacity bump 2 → 6 (BOTH the hull bump AND the existing-instance backfill)** → **DONE in
+  migration `20260618000171_captains_launch_prep` (2026-07-12)** — the SQL below shipped VERBATIM. It was
+  deferred through C0–D4 to preserve zero player-visible change (the "Captain seats" row in
+  `ShipStatusCard.tsx` renders `hull.base_captain_slots` in the no-ship teaser (`:100`) **and** the ship's
+  `captain_slots` (`:219`), both ungated), and ships now, in the captains window, alongside
+  `scripts/activate-captains.{sql,sh}` (the label moves 2 → 6 at deploy, before the flag — the packet-§3
+  accepted cosmetic window). The historical pin (idempotent, monotonic):
   ```sql
   update public.main_ship_hull_types
      set base_captain_slots = 6 where hull_type_id = 'starter_frigate' and base_captain_slots < 6;
@@ -702,7 +739,10 @@ the cap so it is not the binding limit once multi-ship is later lit.
     from public.main_ship_hull_types h
    where i.hull_type_id = h.hull_type_id and i.captain_slots < h.base_captain_slots;
   ```
-  Any later 6 → 8 raise is a separate additive C2 migration, decided at lit-time balance.
+  NEVER lower either count once captains occupy slots 3–6 (the 0122 adapter refuses over-capacity →
+  `stats_invalid` everywhere). Any later 6 → 8 raise is a separate additive C2 migration, decided at
+  lit-time balance. The team-command proof now ASSERTS the bump as migration state (its former in-txn
+  fixture bump is retired).
 - **Authoritative server-side team stats** → **DONE in Slice D0** (`calculate_group_expedition_stats` +
   `get_my_group_expedition_totals`, migration 0166 — strict, delegation-only, dark).
   `get_my_group_expedition_preview` still deliberately does zero arithmetic, and `aggregateTeamStats` is

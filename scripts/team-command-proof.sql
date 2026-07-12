@@ -1,5 +1,5 @@
 -- TEAM-COMMAND B-VERIFY — disposable REAL-CHAIN proof of the DARK team send/stop/combat surface (slices
--- 0160..0168) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
+-- 0160..0169 + the 0170/0171 activation-prep migrations) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
 -- proof runs inside ONE transaction that ROLLBACKs — it persists NO ship, group, fleet, flag flip, or
 -- fixture user. No production access. No COMMIT anywhere.
 --
@@ -30,7 +30,8 @@
 --   CAPTAINS (Slice C0, 0165) — get_my_group_expedition_preview rejects dark BEFORE the team-flag
 --            flip; invalid_activity / group_not_found (random + cross-player) / empty_group; a
 --            captained member's stats carry the captain seed bonus over the uncaptained baseline
---            with captain_slots_limit=6 (the Part-A backfill); an uncaptained member's group stats
+--            with captain_slots_limit=6 (the 0171 captains-launch bump — asserted in setup, no
+--            longer fixtured in-txn); an uncaptained member's group stats
 --            are byte-identical to its solo get_my_expedition_preview; unassigning reverts the
 --            delta. Captains are provisioned ONLY via the sole writers (captains_mint_instance /
 --            captain_assign_apply — the sole-writer law; NEVER a direct insert into
@@ -79,6 +80,13 @@
 --            pin (a 'hunting' ship rejects the live single send with its own not-available raise —
 --            never a lost update — and a legal single send still works); and the reconciler
 --            self-heals manufactured 'returning'/'hunting' orphans home.
+--   SHARDDROP (captains launch, 0171) — the config-gated captain_memory_shard drop: with the
+--            committed seed rate 0 the re-created pirate_loot_for_wave is BYTE-IDENTICAL to its
+--            0041 head (parity, element order included); at rate 1 (set in-txn) a wave >= 2
+--            bundle gains EXACTLY one appended shard qty 1 (additive-only) while wave 1 stays
+--            deterministic scrap-only at ANY rate; the rate is left 1 in-txn so TEAMSETTLE's won
+--            encounter carries a shard end-to-end (drop → bundle → return → reward_grant →
+--            player_inventory — the recruit currency really arrives).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -194,15 +202,24 @@ update public.game_config set value='true'::jsonb where key='mainship_additional
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 update public.game_config set value='true'::jsonb where key='captain_assignment_enabled';
 
--- Slice C0 is RPC-ONLY: migration 0165 does NOT bump base_captain_slots (both the hull bump AND the
--- instance backfill are deferred to activation, because the "Captain seats" row in ShipStatusCard
--- renders them ungated). So a fresh chain's starter_frigate hull is still at its 0043 seed (2). The
--- CAPTAINS block below needs the ACTIVATED capacity to prove captain_slots_limit=6 and to fit two
--- captains, so apply the ACTIVATION-STEP hull bump HERE, INSIDE the rolled-back txn (reverted by the
--- trailing ROLLBACK — no committed data change). Ships commissioned below then copy 6 at commission,
--- so no instance backfill is needed for the fixture. This mirrors what the real activation migration
--- will run alongside these same flag flips (see docs/TEAM_COMMAND.md "Explicitly deferred").
-update public.main_ship_hull_types set base_captain_slots = 6 where hull_type_id = 'starter_frigate';
+-- CAPTAINS-LAUNCH RECONCILIATION (0171): the once-deferred hull bump + instance backfill NOW SHIP
+-- as migration 20260618000171 (the captains fast-follow prep), and this disposable chain always
+-- runs with ALL migrations applied — so base_captain_slots is 6 BEFORE any fixture exists. The
+-- proof's former in-txn fixture bump (the pre-0171 activation rehearsal) is therefore RETIRED and
+-- REPLACED BY AN ASSERT: the MIGRATION, not the harness, provides the 6-seat capacity the CAPTAINS
+-- block pins. Ships commissioned below copy 6 at commission; the 0171 instance backfill is asserted
+-- as a no-op on the fresh chain (monotonic — zero laggards can exist).
+do $$
+declare n int;
+begin
+  select count(*) into n from public.main_ship_hull_types where base_captain_slots is distinct from 6;
+  if n <> 0 then raise exception 'SETUP FAIL: % hull row(s) not at base_captain_slots 6 (want 0 — the 0171 captains-launch bump)', n; end if;
+  select count(*) into n from public.main_ship_instances i
+    join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
+    where i.captain_slots < h.base_captain_slots;
+  if n <> 0 then raise exception 'SETUP FAIL: % instance(s) below the hull captain_slots (want 0 — the 0171 backfill)', n; end if;
+  raise notice 'setup ok: 0171 captain-slot bump in place (hulls at 6; backfill complete) — no fixture bump needed';
+end $$;
 
 -- Fund the fixture wallets BEFORE any additional-commission call. commission_first_main_ship is free, but
 -- every ADDITIONAL commission DEBITS a price (1000 credits/ship, 0091) from player_wallet — and fresh
@@ -429,13 +446,12 @@ begin
   select count(*) into n from jsonb_array_elements(r->'members') e where (e->>'valid')::boolean;
   if n <> 2 then raise exception 'CAPTAINS FAIL baseline validity: %', r->'members'; end if;
   select e->'stats' into base from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a1::text;
-  -- captain_slots_limit=6: migration 0165 is RPC-only (no hull/instance bump — both deferred to
-  -- activation). This proof applies the ACTIVATION-STEP hull bump IN-TXN above (before provisioning),
-  -- so these ships copied base_captain_slots=6 at commission, and it flows through the ONE adapter
-  -- into the preview's stats. (No instance backfill needed for the fixture; the in-txn bump preceded
-  -- the commissions. All reverted by ROLLBACK.)
+  -- captain_slots_limit=6: migration 0171 (captains-launch prep) ships the once-deferred hull bump
+  -- + instance backfill, so a fresh all-migrations chain seeds base_captain_slots=6 — these ships
+  -- copied 6 at commission (asserted in setup, no fixture bump), and it flows through the ONE
+  -- adapter into the preview's stats.
   if (base->>'captain_slots_limit')::int is distinct from 6 then
-    raise exception 'CAPTAINS FAIL: baseline captain_slots_limit % (want 6 — activation hull bump applied in-txn)', base->>'captain_slots_limit'; end if;
+    raise exception 'CAPTAINS FAIL: baseline captain_slots_limit % (want 6 — the 0171 captains-launch bump)', base->>'captain_slots_limit'; end if;
   if (base->>'captain_slots_used')::int is distinct from 0 then
     raise exception 'CAPTAINS FAIL: baseline captain_slots_used % (want 0)', base->>'captain_slots_used'; end if;
 
@@ -1219,6 +1235,70 @@ begin
   raise notice 'TEAMCMD_PASS_TEAMHUNT ok: rejects (group_not_found×2/empty_group/invalid_location-before-readiness/member_not_ready incl. zero-hp), ONE fleet + 2-row manifest + hunting ships, speed_used = independent D0 totals.speed, races reject (single send + double team send), member encounter (attack_snapshot = per-member adapter, hp carries pre-existing damage, power_start = totals.combat_power), tick damage = sum(attack_snapshot) with ship-hp sync, manifest wins over a mid-flight unassign, and the H1 cron-safety degrade: settle succeeds despite an adapter-refused member, whose row lands alive_count=0/zero-snapshot and defeats cleanly';
 end $$;
 
+-- ════════ BLOCK SHARDDROP (captains launch, 0171): config-gated captain_memory_shard drop ════════
+-- Migration 0171 re-created pirate_loot_for_wave (from its TRUE head, 0041 — the only create site)
+-- with ONE marked hunk: from wave 2 onward a cleared wave rolls `random() < cfg
+-- captain_shard_drop_rate` for exactly 1 captain_memory_shard (the packet-F5 recruit-economy
+-- source). Direct-call pins at the knob's DETERMINISTIC endpoints (rate 0 → never, rate 1 →
+-- always; the probabilistic middle is deliberately untested):
+--   PARITY (rate 0, the committed 0171 seed) — output BYTE-IDENTICAL to the 0041 head, element
+--            order included: wave 10 (all five legacy drops) and wave 1 (scrap only);
+--   DROP (rate 1)      — a wave-2 bundle gains EXACTLY one shard qty 1, APPENDED after the legacy
+--            elements (additive-only: bundle minus the shard == the legacy bundle);
+--   THRESHOLD (rate 1) — wave 1 stays scrap-only at ANY rate (the wave >= 2 gate — the live
+--            verify-phase5 `wave 1 → scrap only` exact pin must never go flaky post-flip);
+--   DEEP SHAPE (rate 1) — wave 10 == the legacy bundle || the one shard.
+-- The rate is then LEFT at 1 (in-txn only; ROLLBACK reverts) so TEAMSETTLE's real won encounter
+-- below carries a shard END-TO-END through the unchanged bundle path.
+do $$
+declare v_legacy jsonb; v_got jsonb; n int;
+begin
+  -- the committed knob seed is 0 (dark) — the migration's inert-by-default posture.
+  if (select value #>> '{}' from public.game_config where key = 'captain_shard_drop_rate') is distinct from '0' then
+    raise exception 'SHARDDROP FAIL: committed captain_shard_drop_rate is % (want 0 — the 0171 dark seed)',
+      (select value #>> '{}' from public.game_config where key = 'captain_shard_drop_rate'); end if;
+
+  -- PARITY at rate 0: byte-identical to the proof's OWN independently-built 0041 bundle (the
+  -- head's exact append order), deep wave and wave 1.
+  v_legacy := jsonb_build_array(
+    jsonb_build_object('item_id', 'scrap',        'quantity', 1),
+    jsonb_build_object('item_id', 'pirate_alloy', 'quantity', 1),
+    jsonb_build_object('item_id', 'weapon_parts', 'quantity', 1),
+    jsonb_build_object('item_id', 'engine_parts', 'quantity', 1),
+    jsonb_build_object('item_id', 'repair_parts', 'quantity', 1));
+  v_got := public.pirate_loot_for_wave(10, 4);
+  if v_got is distinct from v_legacy then
+    raise exception 'SHARDDROP FAIL: rate-0 loot diverges from the legacy 0041 bundle: % vs %', v_got, v_legacy; end if;
+  v_got := public.pirate_loot_for_wave(1, 1);
+  if v_got is distinct from jsonb_build_array(jsonb_build_object('item_id', 'scrap', 'quantity', 1)) then
+    raise exception 'SHARDDROP FAIL: rate-0 wave-1 loot is not scrap-only: %', v_got; end if;
+
+  -- DROP at rate 1 (the real set_game_config; reverted by ROLLBACK): wave 2 gains EXACTLY one
+  -- shard qty 1, appended LAST (additive-only over the legacy wave-2 bundle = scrap alone).
+  perform public.set_game_config('captain_shard_drop_rate', '1'::jsonb);
+  v_got := public.pirate_loot_for_wave(2, 1);
+  select count(*) into n from jsonb_array_elements(v_got) e
+    where e->>'item_id' = 'captain_memory_shard' and (e->>'quantity')::int = 1;
+  if n <> 1 then
+    raise exception 'SHARDDROP FAIL: rate-1 wave-2 loot has % shard elements (want exactly 1, qty 1): %', n, v_got; end if;
+  if v_got->(jsonb_array_length(v_got) - 1)->>'item_id' is distinct from 'captain_memory_shard' then
+    raise exception 'SHARDDROP FAIL: the shard is not appended after the legacy elements: %', v_got; end if;
+  if v_got - (jsonb_array_length(v_got) - 1) is distinct from jsonb_build_array(jsonb_build_object('item_id', 'scrap', 'quantity', 1)) then
+    raise exception 'SHARDDROP FAIL: rate-1 wave-2 bundle minus the shard is not the legacy bundle: %', v_got; end if;
+
+  -- THRESHOLD at rate 1: wave 1 STILL scrap-only (the wave >= 2 gate holds at any rate).
+  v_got := public.pirate_loot_for_wave(1, 1);
+  if v_got is distinct from jsonb_build_array(jsonb_build_object('item_id', 'scrap', 'quantity', 1)) then
+    raise exception 'SHARDDROP FAIL: rate-1 wave-1 loot is not scrap-only (threshold breach): %', v_got; end if;
+
+  -- DEEP SHAPE at rate 1: the full legacy bundle plus the one appended shard, nothing else.
+  v_got := public.pirate_loot_for_wave(10, 4);
+  if v_got is distinct from (v_legacy || jsonb_build_object('item_id', 'captain_memory_shard', 'quantity', 1)) then
+    raise exception 'SHARDDROP FAIL: rate-1 wave-10 bundle wrong: %', v_got; end if;
+
+  raise notice 'TEAMCMD_PASS_SHARDDROP ok: committed seed 0 (dark); rate-0 byte-parity with the 0041 bundle (wave 10 + wave 1); rate-1 wave-2 gains exactly one appended shard (additive-only); wave-1 threshold holds at any rate; rate left 1 in-txn for the TEAMSETTLE end-to-end carry';
+end $$;
+
 -- ════════ BLOCK TEAMSETTLE (Slice D3, 0169): sortie settle — members return, reconcile home, M1 ════════
 -- Closes the member lifecycle loop over TEAMHUNT's still-LIVE sortie (uC's active encounter: c1,c2
 -- 'hunting', fleet 'present') plus a fresh loss sortie. Pins:
@@ -1236,7 +1316,8 @@ end $$;
 --                        still 'returning' (the D3 legacy-branch guard);
 --   RETURN SETTLE      — movement_settle_arrival's base branch completes the fleet and deposits the
 --                        carried bundle (reward_grants row keyed by the encounter; base_resources
---                        metal grows by exactly the carried metal), touching NO member ship;
+--                        metal grows by exactly the carried metal; the 0171 wave-2 shard lands in
+--                        player_inventory — the SHARDDROP end-to-end carry), touching NO member ship;
 --   RECONCILE          — the next reconciler run re-homes both members in the head branch's exact
 --                        write shape (status='home', spatial_state stays NULL — the clean
 --                        legacy_home) with damage persisted; the manifest rows are RETAINED (the D3
@@ -1264,6 +1345,7 @@ declare r jsonb; n int; i int; v_err text;
   gH uuid; v_hunt uuid; v_fleet uuid; v_enc uuid; v_pres uuid; v_rmv uuid;
   v_fleet3 uuid; v_mv3 uuid; v_enc3 uuid;
   v_rw jsonb; v_minspeed double precision; v_cbase uuid; v_metal_before double precision;
+  v_shard_before integer;
   v_hp1 integer; v_hp2 integer;
 begin
   -- config surgery re-applied (idempotent; the real set_game_config; all reverted by ROLLBACK).
@@ -1289,15 +1371,30 @@ begin
     where main_ship_id in (c1, c2) and status = 'hunting';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: reconciler touched a mid-combat member (race guard): % hunting (want 2)', n; end if;
 
-  -- ── accrue a reward: tick until a wave clears (variance 0; bounded; each tick needs a
-  -- last_resolved_at rewind because now() is txn-constant).
-  for i in 1..25 loop
+  -- ── accrue a reward: tick until TWO waves clear (variance 0; bounded). Two, not one, since the
+  -- SHARDDROP block left captain_shard_drop_rate at 1 and the 0171 drop starts at wave 2 — the won
+  -- bundle must carry a shard for the end-to-end deposit pin below. Each tick needs a
+  -- last_resolved_at rewind, and the wave-2 spawn needs a next_wave_at rewind too, because now()
+  -- is txn-constant (the SHARDDROP-era extension of the same clock-rewind fixture kind).
+  for i in 1..60 loop
     select total_rewards_json into v_rw from public.combat_encounters where id = v_enc;
-    exit when v_rw is not null and v_rw <> '{}'::jsonb;
-    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+    exit when v_rw is not null and v_rw <> '{}'::jsonb
+          and (select waves_cleared from public.combat_encounters where id = v_enc) >= 2;
+    update public.combat_encounters
+       set last_resolved_at = last_resolved_at - interval '1 minute',
+           next_wave_at     = next_wave_at - interval '1 minute'
+     where id = v_enc;
     perform public.process_combat_ticks();
   end loop;
-  if v_rw is null or v_rw = '{}'::jsonb then raise exception 'TEAMSETTLE FAIL: no reward accrued in 25 ticks'; end if;
+  if v_rw is null or v_rw = '{}'::jsonb
+     or (select waves_cleared from public.combat_encounters where id = v_enc) < 2 then
+    raise exception 'TEAMSETTLE FAIL: two waves not cleared in 60 ticks (rewards %)', v_rw; end if;
+  -- THE 0171 SHARD CARRY: at rate 1 the wave-2 clear must have merged EXACTLY one shard element
+  -- (qty 1 — wave 1 contributes none, the threshold) into the pending bundle.
+  select count(*) into n from jsonb_array_elements(v_rw->'items') e
+    where e->>'item_id' = 'captain_memory_shard' and (e->>'quantity')::int = 1;
+  if n <> 1 then
+    raise exception 'TEAMSETTLE FAIL: won bundle carries % shard elements (want exactly 1 — the 0171 drop at rate 1): %', n, v_rw; end if;
   select count(*) into n from public.combat_units where encounter_id = v_enc and alive_count > 0;
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members alive before retreat (want 2)', n; end if;
 
@@ -1360,6 +1457,7 @@ begin
   select id into v_cbase from public.bases where player_id = uC and status = 'active' order by created_at limit 1;
   select coalesce((select amount from public.base_resources where base_id = v_cbase and resource_code = 'metal'), 0)
     into v_metal_before;
+  v_shard_before := public.inventory_get_balance(uC, 'captain_memory_shard');
   update public.fleet_movements
      set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
    where id = v_rmv;
@@ -1376,6 +1474,11 @@ begin
     where base_id = v_cbase and resource_code = 'metal'
       and amount is not distinct from v_metal_before + (v_rw->>'metal')::double precision;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: base metal did not grow by the carried reward metal'; end if;
+  -- THE 0171 SHARD DEPOSIT: the carried shard landed in player_inventory (reward_grant's item
+  -- path) — the recruit currency (0125: every recipe costs exactly 1 shard) really arrives.
+  if public.inventory_get_balance(uC, 'captain_memory_shard') is distinct from v_shard_before + 1 then
+    raise exception 'TEAMSETTLE FAIL: carried shard not deposited to player_inventory (have %, want % — the recruit currency)',
+      public.inventory_get_balance(uC, 'captain_memory_shard'), v_shard_before + 1; end if;
   -- the base settle itself never touches member ships (untagged fleet): still 'returning'.
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'returning';
@@ -1471,9 +1574,9 @@ begin
     where main_ship_id = c2 and status = 'home' and spatial_state is null;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned hunting member'; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle, reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, M1 hunting-reject without a lost update + legal single-send parity, and both self-heal re-homes';
+  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, M1 hunting-reject without a lost update + legal single-send parity, and both self-heal re-homes';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure)' as result;
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
