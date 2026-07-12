@@ -310,6 +310,24 @@ export async function repairMainShip(mainShipId?: string | null): Promise<{ main
   return data as { main_ship_id: string; status: string; hp: number; max_hp: number }
 }
 
+// SHIP-IDENTITY (0184) / §2.5 — thin client wrapper over the player rename (rename_main_ship_self).
+// Sends the raw name plus the EXPLICIT selected/sole main-ship id (p_main_ship_id; null → server
+// sole-ship shim). The server owns validation (btrim → non-empty → ≤ 40) and asserts ownership via
+// mainship_resolve_owned_ship — the client mirror (shipNameProblem) is display-only. A transport
+// error collapses to the reject envelope ('unavailable') so the UI can map it, never a throw.
+export type RenameMainShipResult =
+  | { ok: true; main_ship_id: string; name: string }
+  | { ok: false; reason: string }
+
+export async function renameMainShip(name: string, mainShipId?: string | null): Promise<RenameMainShipResult> {
+  const { data, error } = await supabase.rpc('rename_main_ship_self', {
+    p_name: name,
+    p_main_ship_id: mainShipId ?? null,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as RenameMainShipResult
+}
+
 // OSN-3 S6C / COORD-GUARD (§2.5) — thin client wrapper over the S6A public coordinate-command boundary
 // (command_main_ship_space_move, resolver-guarded since migration 0178). Empty-space movement ONLY: it
 // sends a coordinate target, an idempotency key, AND the explicit selected/sole main-ship id

@@ -108,7 +108,7 @@ async function main() {
     : bad('9. stats', JSON.stringify(s))
 
   // 10. status defaults to home; name defaults to Byeharu.
-  s.status === 'home' && s.name === 'Byeharu' ? ok("10. status defaults to 'home' (name 'Byeharu')") : bad('10. defaults', `${s.status}/${s.name}`)
+  s.status === 'home' && s.name === 'Sparrow' ? ok("10. status defaults to 'home' (name 'Sparrow' — 0184)") : bad('10. defaults', `${s.status}/${s.name}`)
 
   // 11. rename works (trim) + validates empty / overlong.
   const rr = await rename(u1.userId, '  Aqua Voyager  ')
