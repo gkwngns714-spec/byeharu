@@ -1781,6 +1781,13 @@ begin
       (select value #>> '{}' from public.game_config where key = 'captain_level_bonus_per_level'); end if;
   v_knob := public.cfg_num('captain_level_bonus_per_level');
 
+  -- FIXTURE REPAIR (CI 2026-07-12): the TEAMHUNT degrade case zeroed b1's captain_slots mid-flight
+  -- (the adapter-raise surgery) and nothing restored it — no block called the adapter on b1 again
+  -- until THIS one, so the call raised 'captains use 1 slots, limit 0'. Restore the 0171 value
+  -- before the adapter calls (in-txn; ROLLBACK reverts regardless).
+  update public.main_ship_instances set captain_slots = 6, updated_at = now()
+    where main_ship_id = b1 and captain_slots < 6;
+
   -- preconditions: the CAPXP flip left the flag LIT in-txn; the fixture levels are exactly as the
   -- accrual left them (2 level-2 captains on c1; 1 level-1 captain on the grantless b1); c1 is
   -- module-free so its combat_power decomposes to hull + captains exactly.
