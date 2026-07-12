@@ -125,6 +125,17 @@
 --            hull-only 10 → 22 — the packet-F2 degenerate curve's first fitted move) and
 --            mining_yield + 8 EXACTLY, with nothing else moving but module_slots_used (the
 --            minus-key isolation pin; defense/mining archetypes take the engine else-0 tradeoff).
+--   SHIPYARD0 (SHIPYARD-0, 0185) — the ship-production foundation, all dark: shipyard_enabled
+--            COMMITTED 'false' + blueprint_fragment_drop_rate COMMITTED '0' (asserted, never
+--            flipped — no shipyard RPC exists to exercise); the 2 T1 hull rows pinned EXACT
+--            (bulk_hauler 'Mule-class Hauler' 650/0.8/140/{5,15} + strike_corvette 'Talon-class
+--            Corvette' 420/1.3/20/{30,10}, captains 6 / modules 2 and 4); the build recipes
+--            pinned EXACT (2 headers: credits 400 / 3600s / NULL T1 gates; the 10 ingredient
+--            rows, no strays); and the blueprint faucet at its deterministic endpoints (the
+--            SHARDDROP technique, riding its in-txn shard-rate-1 fixture carry): rate-0
+--            byte-parity with the 0171 head at waves 8 and 10, rate-1 wave-8 gains EXACTLY one
+--            appended blueprint qty 1 (additive-only), wave 7 (w<8) and wave 1 stay
+--            blueprint-free at any rate (the deep-run threshold).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -1994,6 +2005,121 @@ begin
   raise notice 'TEAMCMD_PASS_MOD2 ok: committed module gates dark; 0183 seeds exact (defense 12 / mining 8, 6 recipe rows); exact-price craft spends to 0 with insufficient_items at the boundary + verbatim replay (1 instance); fit lands survival +12 exactly (hull 10 -> 22, the F2 curve moves) and mining_yield +8 exactly, nothing else but slots 1 then 2';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end)' as result;
+-- ════════ BLOCK SHIPYARD0 (SHIPYARD-0, 0185): T1 hull/recipe catalog + the blueprint faucet ════════
+-- Migration 0185 seeded the ship-production foundation DARK: `shipyard_enabled='false'`, the two
+-- T1 hulls (bulk_hauler / strike_corvette — the 0184 Mule/Talon register), their build recipes
+-- (`hull_build_recipes` + `hull_recipe_ingredients`, Reference/Config, migration-seeded only),
+-- and ONE marked hunk on pirate_loot_for_wave (re-created from its TRUE head, 0171): waves >= 8
+-- roll `random() < cfg blueprint_fragment_drop_rate` for exactly 1 blueprint_fragment — the EXACT
+-- 0171 shard idiom at a DEEPER threshold (shards w>=2, blueprints w>=8 — the deep-run gate).
+-- Direct-call pins at the knob's DETERMINISTIC endpoints (the SHARDDROP technique — rate 0 →
+-- never, rate 1 → always; the probabilistic middle is deliberately untested). FIXTURE CARRY: the
+-- SHARDDROP block left captain_shard_drop_rate at 1 IN-TXN (asserted below), so every legacy
+-- bundle here deterministically carries the appended shard — the expected arrays include it.
+--   CATALOG   — 2 hull rows EXACT (all gameplay columns + display names + base_stats_json);
+--               2 recipe headers EXACT (credits 400 / 3600s / NULL T1 gates); 10 ingredient rows
+--               EXACT, no strays.
+--   PARITY (blueprint rate 0, the committed 0185 seed) — wave-8 and wave-10 bundles BYTE-IDENTICAL
+--               to the 0171 head's output (legacy elements + the rate-1 shard), NO blueprint.
+--   DROP (rate 1)      — a wave-8 bundle gains EXACTLY one blueprint qty 1, APPENDED LAST
+--               (additive-only: bundle minus the blueprint == the 0171 bundle).
+--   THRESHOLD (rate 1) — wave 7 (w<8) gains NO blueprint at ANY rate; wave 1 stays scrap-only
+--               with BOTH knobs at 1 (the verify-phase5 exact pin can never flake).
+--   DARK      — shipyard_enabled COMMITTED 'false'; blueprint_fragment_drop_rate COMMITTED '0'
+--               (both asserted before any in-txn knob write; the flag is NEVER flipped, even
+--               in-txn — no shipyard RPC exists to exercise).
+do $$
+declare v_legacy8 jsonb; v_legacy10 jsonb; v_shard jsonb; v_got jsonb; n int;
+begin
+  -- the committed seeds are dark/inert — the 0185 posture (asserted BEFORE the in-txn knob write).
+  if (select value #>> '{}' from public.game_config where key = 'shipyard_enabled') is distinct from 'false' then
+    raise exception 'SHIPYARD0 FAIL: committed shipyard_enabled is % (want ''false'' — the 0185 dark seed)',
+      (select value #>> '{}' from public.game_config where key = 'shipyard_enabled'); end if;
+  if (select value #>> '{}' from public.game_config where key = 'blueprint_fragment_drop_rate') is distinct from '0' then
+    raise exception 'SHIPYARD0 FAIL: committed blueprint_fragment_drop_rate is % (want 0 — the 0185 faucet seed)',
+      (select value #>> '{}' from public.game_config where key = 'blueprint_fragment_drop_rate'); end if;
+  -- the SHARDDROP fixture carry this block's exact bundles depend on (see header).
+  if public.cfg_num('captain_shard_drop_rate') is distinct from 1 then
+    raise exception 'SHIPYARD0 FAIL: in-txn captain_shard_drop_rate is % (want 1 — the SHARDDROP block''s fixture carry)',
+      public.cfg_num('captain_shard_drop_rate'); end if;
+
+  -- CATALOG: the two T1 hulls, every gameplay column pinned (the 0185 seed verbatim).
+  select count(*) into n from public.main_ship_hull_types
+    where (hull_type_id = 'bulk_hauler' and name = 'Mule-class Hauler'
+           and base_hp = 650 and base_speed = 0.8
+           and base_cargo_capacity = 140 and base_cargo_capacity_m3 = 140.0
+           and base_support_capacity = 10 and base_captain_slots = 6 and base_module_slots = 2
+           and base_stats_json = '{"attack": 5, "defense": 15}'::jsonb)
+       or (hull_type_id = 'strike_corvette' and name = 'Talon-class Corvette'
+           and base_hp = 420 and base_speed = 1.3
+           and base_cargo_capacity = 20 and base_cargo_capacity_m3 = 20.0
+           and base_support_capacity = 10 and base_captain_slots = 6 and base_module_slots = 4
+           and base_stats_json = '{"attack": 30, "defense": 10}'::jsonb);
+  if n <> 2 then raise exception 'SHIPYARD0 FAIL: % of 2 T1 hull rows carry the exact 0185 seed (stats + display names)', n; end if;
+
+  -- CATALOG: the recipe headers + the full ingredient set, exact and stray-free.
+  select count(*) into n from public.hull_build_recipes
+    where hull_type_id in ('bulk_hauler', 'strike_corvette')
+      and credits_cost = 400 and build_seconds = 3600
+      and required_hull_type_id is null and required_captain_level is null;
+  if n <> 2 then raise exception 'SHIPYARD0 FAIL: % of 2 recipe header rows carry the exact 0185 seed (credits 400 / 3600s / NULL T1 gates)', n; end if;
+  select count(*) into n from public.hull_recipe_ingredients
+    where (hull_type_id, item_id, qty) in (
+      ('bulk_hauler', 'ore', 24), ('bulk_hauler', 'crystal', 6), ('bulk_hauler', 'engine_parts', 6),
+      ('bulk_hauler', 'scrap', 12), ('bulk_hauler', 'blueprint_fragment', 2),
+      ('strike_corvette', 'ore', 16), ('strike_corvette', 'crystal', 4), ('strike_corvette', 'weapon_parts', 6),
+      ('strike_corvette', 'pirate_alloy', 8), ('strike_corvette', 'blueprint_fragment', 2));
+  if n <> 10 then raise exception 'SHIPYARD0 FAIL: % of 10 ingredient rows carry the exact 0185 seed (hull, item, qty)', n; end if;
+  select count(*) into n from public.hull_recipe_ingredients;
+  if n <> 10 then raise exception 'SHIPYARD0 FAIL: hull_recipe_ingredients has % rows (want exactly 10 — no strays)', n; end if;
+
+  -- PARITY at blueprint rate 0 (the committed seed): the deployed body's output is byte-identical
+  -- to the 0171 head — the legacy elements + the (shard-rate-1) shard, NO blueprint, order intact.
+  v_legacy8 := jsonb_build_array(
+    jsonb_build_object('item_id', 'scrap',        'quantity', 1),
+    jsonb_build_object('item_id', 'pirate_alloy', 'quantity', 1),
+    jsonb_build_object('item_id', 'weapon_parts', 'quantity', 1),
+    jsonb_build_object('item_id', 'engine_parts', 'quantity', 1));
+  v_legacy10 := v_legacy8 || jsonb_build_object('item_id', 'repair_parts', 'quantity', 1);
+  v_shard    := jsonb_build_object('item_id', 'captain_memory_shard', 'quantity', 1);
+  v_got := public.pirate_loot_for_wave(8, 2);
+  if v_got is distinct from (v_legacy8 || v_shard) then
+    raise exception 'SHIPYARD0 FAIL: rate-0 wave-8 bundle diverges from the 0171 head output: % vs %', v_got, v_legacy8 || v_shard; end if;
+  v_got := public.pirate_loot_for_wave(10, 4);
+  if v_got is distinct from (v_legacy10 || v_shard) then
+    raise exception 'SHIPYARD0 FAIL: rate-0 wave-10 bundle diverges from the 0171 head output: % vs %', v_got, v_legacy10 || v_shard; end if;
+
+  -- DROP at rate 1 (the real set_game_config; reverted by ROLLBACK): wave 8 gains EXACTLY one
+  -- blueprint qty 1, appended LAST (additive-only over the 0171 bundle).
+  perform public.set_game_config('blueprint_fragment_drop_rate', '1'::jsonb);
+  v_got := public.pirate_loot_for_wave(8, 2);
+  select count(*) into n from jsonb_array_elements(v_got) e
+    where e->>'item_id' = 'blueprint_fragment' and (e->>'quantity')::int = 1;
+  if n <> 1 then
+    raise exception 'SHIPYARD0 FAIL: rate-1 wave-8 loot has % blueprint elements (want exactly 1 blueprint, qty 1): %', n, v_got; end if;
+  if v_got->(jsonb_array_length(v_got) - 1)->>'item_id' is distinct from 'blueprint_fragment' then
+    raise exception 'SHIPYARD0 FAIL: the blueprint is not appended after every 0171 element: %', v_got; end if;
+  if v_got - (jsonb_array_length(v_got) - 1) is distinct from (v_legacy8 || v_shard) then
+    raise exception 'SHIPYARD0 FAIL: rate-1 wave-8 bundle minus the blueprint is not the 0171 bundle: %', v_got; end if;
+
+  -- THRESHOLD at rate 1: wave 7 (w<8) gains NO blueprint; wave 1 STILL scrap-only with BOTH
+  -- knobs at 1 (shards gate w>=2, blueprints w>=8 — the deterministic-wave-1 law holds).
+  v_got := public.pirate_loot_for_wave(7, 2);
+  select count(*) into n from jsonb_array_elements(v_got) e where e->>'item_id' = 'blueprint_fragment';
+  if n <> 0 then
+    raise exception 'SHIPYARD0 FAIL: rate-1 wave-7 loot carries a blueprint (w>=8 threshold breach): %', v_got; end if;
+  v_got := public.pirate_loot_for_wave(1, 1);
+  if v_got is distinct from jsonb_build_array(jsonb_build_object('item_id', 'scrap', 'quantity', 1)) then
+    raise exception 'SHIPYARD0 FAIL: wave-1 loot is not scrap-only with both knobs at 1 (threshold breach): %', v_got; end if;
+
+  -- DEEP SHAPE at rate 1: the full 0171 bundle plus the one appended blueprint, nothing else.
+  v_got := public.pirate_loot_for_wave(10, 4);
+  if v_got is distinct from (v_legacy10 || v_shard || jsonb_build_object('item_id', 'blueprint_fragment', 'quantity', 1)) then
+    raise exception 'SHIPYARD0 FAIL: rate-1 wave-10 bundle wrong: %', v_got; end if;
+
+  raise notice 'TEAMCMD_PASS_SHIPYARD0 ok: committed shipyard flag false + faucet knob 0 (dark); 2 T1 hulls exact (Mule 650/0.8/140 + Talon 420/1.3/20, names + stats); 2 recipe headers + 10 ingredient rows exact; rate-0 byte-parity with the 0171 head (wave 8 + wave 10, shard carried); rate-1 wave-8 gains exactly one appended blueprint (additive-only); w<8 + wave-1 thresholds hold at any rate';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

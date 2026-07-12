@@ -5,6 +5,79 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — SHIPYARD-0: the ship-production foundation (mig 0185, dark)
+
+**Request.** The SHIPYARD charter, slice 0 (owner directive: "ships must be made through mining,
+production, level requirement and more") — the catalog + faucet foundation ONLY: hull build recipes,
+the two T1 hulls dark, the blueprint combat faucet inert. NO build_orders changes, NO RPC, NO cron
+edits (SHIPYARD-1/2 own the queue + commands). Supersedes the plan's old P6 HULLS-2 line.
+
+**Work done**
+- **Hull-column verification (the load-bearing check):** `main_ship_hull_types` = the 0043 column
+  set + ONE later alter — 0075 added `base_cargo_capacity_m3 numeric NOT NULL CHECK (> 0)` (the
+  abstract→volume 1:1 law), grep-verified sole ALTER site; 0170 only UPDATEs `base_stats_json`
+  ({attack, defense} input vocabulary), 0171 only UPDATEs `base_captain_slots` (the 2→6 bump), 0184
+  only UPDATEs `name`. So the T1 seeds carry ALL of: hp/speed/cargo + m3 (140/140.0, 20/20.0) /
+  support 10 (starter parity [D] — support craft are deprecated scaffolding, the column is NOT
+  NULL, the value cosmetic) / captains 6 DIRECTLY (the 0171 law — `activate-captains.sql` and the
+  team proof both assert EVERY hull row at 6) / modules 2 and 4 / `base_stats_json` exact.
+- **mig `20260618000185_shipyard0_foundation.sql`** — (a) `shipyard_enabled='false'` (the 0107
+  config+flag idiom; every SHIPYARD RPC must gate-first on it) + `blueprint_fragment_drop_rate='0'`
+  (the 0171 knob idiom); (b) `hull_build_recipes` (hull PK→`main_ship_hull_types`, `credits_cost`
+  ≥ 0, `build_seconds` > 0, T2+ gates `required_hull_type_id`/`required_captain_level` — T1 seeds
+  both NULL, honest: captain levels are dark) + (c) `hull_recipe_ingredients` (FK-normalized, qty
+  > 0 — the 0107/0125 recipe posture), both Reference/Config public-read, migration-seeded only;
+  (d) the two T1 hulls DARK — **bulk_hauler** 'Mule-class Hauler' 650/0.8/140/{5,15} +
+  **strike_corvette** 'Talon-class Corvette' 420/1.3/20/{30,10} (the 0184 EVE register, exactly as
+  0184 pre-registered Mule/Talon; inert: every commission path hardcodes 'starter_frigate');
+  (e) recipes [D]: hauler = ore 24 + crystal 6 + engine_parts 6 + scrap 12 + blueprint_fragment 2,
+  corvette = ore 16 + crystal 4 + weapon_parts 6 + pirate_alloy 8 + blueprint_fragment 2, both
+  400 credits / 3600s.
+- **The blueprint faucet (parity discipline):** `pirate_loot_for_wave` re-created from its TRUE
+  head — **0171** (grep-verified: 0041 + 0171 are the only create sites; 0046/0167/0169 call it,
+  0174/0176/0183 only cite it) — with ONE marked `SHIPYARD-0 (0185)` hunk: waves ≥ 8 roll
+  `random() < coalesce(cfg_num('blueprint_fragment_drop_rate'), 0)` for exactly 1
+  blueprint_fragment, appended AFTER the 0171 shard hunk (rate-0 output byte-identical INCLUDING
+  element order; strict-< against a [0,1) draw → rate 0 NEVER fires). Extract-and-diff verified:
+  0185 minus the marked hunk == the 0171 body byte-for-byte. WAVE THRESHOLDS (the packet design):
+  shards w≥2, blueprints w≥8 — the deep-run gate (engine_parts depth); wave 1 stays deterministic
+  scrap-only at ANY rate (the live verify-phase5 exact pin can never flake — its other wave pins
+  are inclusion-based, so a lit faucet stays green there too). blueprint_fragment now has TWO live
+  sources: the 0098 exploration one-shot + this repeatable deep-combat faucet — recipes needing 2
+  are farmable, not dead-ended (the F5 lesson applied forward).
+- **Self-asserts (the migration refuses to land wrong):** gate dark + knob 0 at seed time; 2 hulls
+  exact on EVERY gameplay column (+ the 0170 stats / 0171 slots laws re-checked across ALL hull
+  rows); 2 recipe headers exact (400/3600/NULL gates) + 10 ingredient rows exact, stray-free;
+  every ingredient item-typed + drop-grounded (F4: loot prosrc tokens, mining-field bundles at
+  qty > 0, the blueprint dual-source incl. the 0098 site bundle); the loot hunk tokens pinned in
+  prosrc + behavioral endpoint pins (wave-1 scrap-only at any knobs — shard-tolerant by design
+  since ACT-CAPTAINS may have raised that knob; rate-0 wave-10 carries NO blueprint); craftability
+  shape (no headerless ingredients / ingredientless headers).
+- **Proof:** new `TEAMCMD_PASS_SHIPYARD0` block in `scripts/team-command-proof.{sql,sh}` (after
+  MOD2): committed `shipyard_enabled` false + knob 0 asserted FIRST (the flag is NEVER flipped,
+  even in-txn — no shipyard RPC exists; pinned by a selftest negative grep); the hull + recipe
+  catalog pinned verbatim; the faucet at its deterministic endpoints (the SHARDDROP technique,
+  riding its in-txn shard-rate-1 fixture carry, asserted explicitly): rate-0 wave-8/wave-10
+  byte-parity with the 0171 head, rate-1 (real `set_game_config`, rolled back) wave-8 gains
+  EXACTLY one appended blueprint qty 1 (additive-only: bundle minus blueprint == the 0171 bundle),
+  wave-7 + wave-1 thresholds hold. Selftest greps in assert form + sole-writer negative greps
+  (no direct `hull_build_recipes`/`hull_recipe_ingredients` writes anywhere in the proof);
+  post-run honesty checks extended (committed blueprint knob still 0, shipyard flag still false).
+  **Mutation-tested: 9/9 caught** (marker drop, exactly-one/parity/threshold/hull/ingredient pin
+  guttings, the set_game_config raise drop, a smuggled direct recipe-table write, an in-txn
+  shipyard flag flip); restored green.
+- **Docs:** FULL_CAPACITY_PLAN P6 → the SHIPYARD charter (T0/T1/T2 ladder, SHIPYARD-0..3 +
+  ACT-SHIPYARD with 0 marked shipped; ACT-SHIPYARD preconditions: mining lit for the ore faucet +
+  trade/salvage lit for credits); SYSTEM_BOUNDARIES §1 rows for both new tables (Reference/Config,
+  migration-seeded only, NO runtime writer — SHIPYARD-1's future build command reads them downward
+  and spends ONLY via `inventory_spend`/`wallet_debit`).
+
+**Bugs / fixes**
+- _(none — pure additive catalog + one parity-disciplined re-create; no engine, RPC, cron, or
+  frontend surface touched.)_
+
+---
+
 ## 2026-07-12 — MOD2-1: the shield line + mining rig module seeds (mig 0183, dark)
 
 **Request.** Plan §C P7 queue #11: seed `shield_lattice` (the defense line — the packet-F2 fix:

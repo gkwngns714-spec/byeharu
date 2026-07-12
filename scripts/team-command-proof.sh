@@ -33,7 +33,11 @@
 # the MOD2-1 shield-line block (0183: both module gates committed-dark then in-txn-lit on a fresh
 # fixture user — exact-price craft via craft_module spending to zero with the insufficient_items
 # boundary + verbatim replay, fit via fit_module_to_ship, and the 0180 adapter deltas: survival
-# +12 exactly (hull-only 10 → 22) and mining_yield +8 exactly, minus-key isolation both fits).
+# +12 exactly (hull-only 10 → 22) and mining_yield +8 exactly, minus-key isolation both fits)
+# plus the SHIPYARD-0 foundation block (0185: shipyard_enabled + blueprint_fragment_drop_rate
+# asserted COMMITTED-dark and never flipped; the 2 T1 hull rows + 2 recipe headers + 10 ingredient
+# rows pinned exact; the blueprint faucet at its deterministic endpoints — rate-0 byte-parity with
+# the 0171 head, rate-1 wave-8 exactly-one-appended-blueprint, and the w<8 / wave-1 thresholds).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -50,7 +54,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -308,14 +312,59 @@ if [ "$MODE" = "selftest" ]; then
     | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|player_inventory|inventory_ledger|reward_grants)\b' \
     && fail "harness directly mutates a Modules/Fitting/Inventory/Reward-owned table (sole-writer law violation)" || true
 
-  # ── all fifteen block PASS markers present. ────────────────────────────────────────────────────────
+  # ── SHIPYARD0 (0185 / SHIPYARD-0) pins, in assert form (a gutted .sql that only mentions them in
+  #    prose cannot false-green): BOTH committed dark seeds (the flag is never flipped, even in-txn
+  #    — no shipyard RPC exists); the exact T1 hull/recipe catalog pins; the blueprint faucet's
+  #    rate-0 parity, the real set_game_config raise, the rate-1 wave-8 exactly-one-blueprint +
+  #    appended-last + additive-only pins, and BOTH thresholds (w<8 and the deterministic wave 1).
+  #    Plus the catalog sole-writer negatives: the harness never mutates the two Reference/Config
+  #    recipe tables (migration-seeded only — the main_ship_hull_types negative-grep convention).
+  grep -qF "(want ''false'' — the 0185 dark seed)" "$SQL" \
+    || fail "harness does not ASSERT the committed shipyard_enabled seed is false"
+  grep -qF "(want 0 — the 0185 faucet seed)" "$SQL" \
+    || fail "harness does not ASSERT the committed blueprint_fragment_drop_rate seed is 0"
+  grep -viE '^[[:space:]]*--' "$SQL" \
+    | grep -qE "set value='true'::jsonb where key='shipyard_enabled'" \
+    && fail "harness flips shipyard_enabled (must stay dark even in-txn — no shipyard RPC exists to exercise)" || true
+  # review M (2026-07-12): ALSO catch the set_game_config idiom — the raw-update grep alone
+  # was mutation-evadable (a perform set_game_config('shipyard_enabled','true') would pass).
+  grep -viE '^[[:space:]]*--' "$SQL" \
+    | grep -q "set_game_config('shipyard_enabled'" \
+    && fail "harness flips shipyard_enabled via set_game_config (must never be flipped, even in-txn)" || true
+  grep -qF "% of 2 T1 hull rows carry the exact 0185 seed" "$SQL" \
+    || fail "harness does not ASSERT the exact 0185 T1 hull catalog (stats + display names)"
+  grep -qF "% of 2 recipe header rows carry the exact 0185 seed" "$SQL" \
+    || fail "harness does not ASSERT the exact 0185 recipe headers (credits/build_seconds/NULL gates)"
+  grep -qF "% of 10 ingredient rows carry the exact 0185 seed" "$SQL" \
+    || fail "harness does not ASSERT the exact 0185 ingredient rows"
+  grep -qF "(want exactly 10 — no strays)" "$SQL" \
+    || fail "harness does not ASSERT the stray-free ingredient count"
+  grep -qF "rate-0 wave-8 bundle diverges from the 0171 head output" "$SQL" \
+    || fail "harness does not ASSERT rate-0 byte-parity with the 0171 loot bundle (wave 8)"
+  grep -qF "set_game_config('blueprint_fragment_drop_rate', '1'::jsonb)" "$SQL" \
+    || fail "harness does not raise the blueprint rate via the real set_game_config (in-txn)"
+  grep -qF "(want exactly 1 blueprint, qty 1)" "$SQL" \
+    || fail "harness does not ASSERT the rate-1 wave-8 exactly-one-blueprint drop"
+  grep -qF "the blueprint is not appended after every 0171 element" "$SQL" \
+    || fail "harness does not ASSERT the blueprint is appended last (additive-only order)"
+  grep -qF "rate-1 wave-8 bundle minus the blueprint is not the 0171 bundle" "$SQL" \
+    || fail "harness does not ASSERT the additive-only (bundle minus blueprint) pin"
+  grep -qF "rate-1 wave-7 loot carries a blueprint (w>=8 threshold breach)" "$SQL" \
+    || fail "harness does not ASSERT the w<8 threshold holds at rate 1"
+  grep -qF "wave-1 loot is not scrap-only with both knobs at 1" "$SQL" \
+    || fail "harness does not ASSERT wave 1 stays scrap-only with both knobs raised"
+  grep -viE '^[[:space:]]*--' "$SQL" \
+    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(hull_build_recipes|hull_recipe_ingredients)\b' \
+    && fail "harness directly mutates a hull-recipe Reference/Config table (migration-seeded only)" || true
+
+  # ── all sixteen block PASS markers present. ────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 7 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2 specifics; 0171 bump asserted-not-fixtured)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 7 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped)"
   exit 0
 fi
 
@@ -344,4 +393,15 @@ committed_xp="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{
   || fail "could not read the committed 'captain_xp_per_combat_grant' value"
 [ "$committed_xp" = "10" ] || fail "committed captain_xp_per_combat_grant is '$committed_xp' — the proof leaked the knob (must stay 10)"
 
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10)"
+# same honesty check for the 0185 BLUEPRINT KNOB: the SHIPYARD0 block raises it to 1 in-txn; the
+# committed value must still be the 0185 seed '0' — a leak here would silently start dropping
+# blueprint fragments in a dark game. The shipyard FLAG needs no leak check beyond the loop above's
+# pattern: the proof never writes it at all (asserted by the selftest negative grep).
+committed_bp="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'blueprint_fragment_drop_rate'), '0')")" \
+  || fail "could not read the committed 'blueprint_fragment_drop_rate' value"
+[ "$committed_bp" = "0" ] || fail "committed blueprint_fragment_drop_rate is '$committed_bp' — the proof leaked the knob (must stay 0)"
+committed_sy="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'shipyard_enabled'), 'false')")" \
+  || fail "could not read the committed 'shipyard_enabled' value"
+[ "$committed_sy" = "false" ] || fail "committed shipyard_enabled is '$committed_sy' — must stay false (the proof never touches it)"
+
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0)"
