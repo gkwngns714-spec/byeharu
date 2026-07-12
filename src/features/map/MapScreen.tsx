@@ -9,6 +9,8 @@ import { MainShipCommand } from './MainShipCommand'
 import type { MapLocation } from './mapTypes'
 import { TYPE_LABEL, dangerLabel, rewardLabel } from './locationDisplay'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
+import { TeamMapSend } from '../command/TeamMapSend'
+import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 import { MiningPanel } from '../mining/MiningPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
@@ -239,6 +241,14 @@ export function MapScreen() {
             )}
             {selMeta && <StatRow label="Region" value={selMeta.sectorName} />}
           </dl>
+
+          {/* TEAM-MAP-SEND — send a TEAM from the map (owner order). Mounted behind the same
+              compile-time gate as the roster (the CommandScreen idiom); the component itself
+              renders nothing unless this location is a legal team destination (the pure
+              teamDestinationKind reuse of the roster's predicates) AND the player has ≥1 team —
+              a team-less map sheet stays byte-identical. Submits via the SAME team wrappers,
+              non-optimistic; onSent refreshes the map reads (movements/fleets). */}
+          {TEAM_COMMAND_ENABLED && <TeamMapSend location={selected} onSent={refresh} />}
         </aside>
       )}
     </div>

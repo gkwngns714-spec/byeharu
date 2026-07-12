@@ -21,6 +21,7 @@ import { huntableDestinations, groupHuntAvailability } from './teamCombat'
 import { captainsByShip } from './teamCaptains'
 import { TeamMemberCaptains } from './TeamMemberCaptains'
 import { TeamPreviewSection } from './TeamPreviewSection'
+import { TeamDossier } from './TeamDossier'
 import { getMyCaptainInstances } from '../captains/captainsApi'
 import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { isServerLit } from '../../lib/useActivityPanelGuards'
@@ -347,6 +348,20 @@ export function TeamRosterPanel() {
                     </Button>
                   </div>
                 </div>
+
+                {/* TEAM-DOSSIER — the always-visible authoritative stats strip (Power/Speed/Cargo/
+                    Survival/Members from D0's totals RPC, auto-fetched) + per-ship Breakdown (C0's
+                    preview). rosterVersion re-fetches it after every membership/captain mutation —
+                    the same invalidation the preview section leans on. captainsLit drives only the
+                    "captains included" label copy (the adapter folds captain skills either way). */}
+                <TeamDossier
+                  groupId={group.group_id}
+                  groupIndex={group.group_index}
+                  memberCount={ships.length}
+                  ships={ships}
+                  rosterVersion={rosterVersion}
+                  captainsLit={captainSplit !== null}
+                />
 
                 {confirmDelete === group.group_id && (
                   <Notice tone="danger">
