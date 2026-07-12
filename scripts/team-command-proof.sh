@@ -20,7 +20,12 @@
 # plus the captains-launch shard-drop block (0171: the once-deferred captain-slot bump now SHIPS as
 # a migration — asserted in setup, no longer fixtured in-txn — and pirate_loot_for_wave's
 # config-gated captain_memory_shard drop: rate-0 byte-parity with the 0041 head, rate-1 wave-2
-# drop, wave-1 threshold, and the TEAMSETTLE end-to-end carry into player_inventory).
+# drop, wave-1 threshold, and the TEAMSETTLE end-to-end carry into player_inventory) plus the
+# CAPXP captain-XP-foundation block (0177: captain_xp_accrue over the TEAMSETTLE fixture — dark
+# no-op with grants present, current-assignment accrual crediting the 3 assigned manifest captains
+# exactly knob×1 grant each with the level-2 boundary at 100 xp, the per-(grant, captain)
+# captain_counted_grants ledger + the NULL-captain orphan sentinel, zero grants unconsumed,
+# grantless-ship + unassigned captains untouched, and the re-run exactly-once anti-join pin).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -37,14 +42,14 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
   tp_assert_self_rolling_back "$SQL"
-  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled
+  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled
 
   # ── provisions via the REAL commission RPCs (no direct ship inserts as the primary path). ─────────
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
@@ -60,11 +65,13 @@ if [ "$MODE" = "selftest" ]; then
   #    present, and NO direct insert into either Captain-owned table exists anywhere in the proof. ────
   grep -q "public.captains_mint_instance("  "$SQL" || fail "harness does not mint captains via captains_mint_instance"
   grep -q "public.captain_assign_apply("    "$SQL" || fail "harness does not assign captains via captain_assign_apply"
-  # NEGATIVE: no DIRECT mutation of either Captain-owned table by ANY verb (insert/update/delete/copy),
-  # qualified or not — only the sole writers may touch them. Strip comment lines first so the header's
-  # prose ("never a direct insert into …") can't trip it.
+  # NEGATIVE: no DIRECT mutation of ANY Captain-owned table by ANY verb (insert/update/delete/copy),
+  # qualified or not — only the sole writers may touch them (incl. the 0177 XP ledger
+  # captain_counted_grants, whose sole writer is captain_xp_accrue, and captain_instances.xp/level,
+  # which only the accrual may move). Strip comment lines first so the header's prose ("never a
+  # direct insert into …") can't trip it.
   grep -viE '^[[:space:]]*--' "$SQL" \
-    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(captain_instances|ship_captain_assignments)\b' \
+    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(captain_instances|ship_captain_assignments|captain_counted_grants)\b' \
     && fail "harness directly mutates a Captain-owned table (sole-writer law violation)" || true
 
   # ── D2 (0168) sole-writer law: group_sortie_members (the sortie MANIFEST) may only be written by
@@ -206,14 +213,53 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "carried shard not deposited to player_inventory" "$SQL" \
     || fail "harness does not ASSERT the shard deposit into player_inventory (the recruit currency)"
 
-  # ── all twelve block PASS markers present. ──────────────────────────────────────────────────────────
+  # ── CAPXP (0177) pins, in assert form (a gutted .sql that only mentions them in prose cannot
+  #    false-green): the accrual fn is exercised; the committed flag/knob seeds are pinned; the dark
+  #    no-op envelope; the knob raised via the REAL set_game_config to the level-2 boundary; the
+  #    exact knob×grants credit + the boundary level; the grantless/unassigned negatives; the
+  #    per-(grant, captain) ledger shape + the orphan sentinel + full consumption; the independently
+  #    recomputed curve; and the re-run exactly-once anti-join pin. ─────────────────────────────────
+  grep -qF "public.captain_xp_accrue()" "$SQL" \
+    || fail "harness does not exercise captain_xp_accrue"
+  grep -qF "(want ''false'' — the 0177 dark seed)" "$SQL" \
+    || fail "harness does not ASSERT the committed captain_growth_enabled seed is false"
+  grep -qF "(want 10 — the 0177 knob seed)" "$SQL" \
+    || fail "harness does not ASSERT the committed captain_xp_per_combat_grant seed is 10"
+  grep -qF "CAPXP FAIL dark:" "$SQL" \
+    || fail "harness does not ASSERT the dark accrual no-op envelope"
+  grep -qF "dark run left % ledger row(s) (want 0)" "$SQL" \
+    || fail "harness does not ASSERT the dark run wrote zero ledger rows"
+  grep -qF "set_game_config('captain_xp_per_combat_grant', '100'::jsonb)" "$SQL" \
+    || fail "harness does not raise the xp knob via the real set_game_config (in-txn)"
+  grep -qF "(want exactly the knob 100 × 1 qualifying grant on all 3)" "$SQL" \
+    || fail "harness does not ASSERT the exact knob × qualifying-grant credit"
+  grep -qF "at the 100-xp boundary (want all 3 exactly 2)" "$SQL" \
+    || fail "harness does not ASSERT the level-2 boundary at 100 xp"
+  grep -qF "the grantless-ship captain moved (want xp 0 / level 1)" "$SQL" \
+    || fail "harness does not ASSERT the grantless-ship captain gains nothing"
+  grep -qF "the unassigned captain gained xp" "$SQL" \
+    || fail "harness does not ASSERT the unassigned captain gains nothing"
+  grep -qF "(want 3 — one per assigned manifest captain)" "$SQL" \
+    || fail "harness does not ASSERT the per-(grant, captain) credit-row shape"
+  grep -qF "(want 1 sentinel row — consumed, never credited)" "$SQL" \
+    || fail "harness does not ASSERT the orphan NULL-captain sentinel"
+  grep -qF "grants left unconsumed after the run (want 0)" "$SQL" \
+    || fail "harness does not ASSERT full grant consumption (every grant examined exactly once)"
+  grep -qF "level <> 1 + floor(sqrt(xp / 100.0))::integer" "$SQL" \
+    || fail "harness does not RECOMPUTE the level curve independently"
+  grep -qF "re-run double-counted (want all-zero envelope)" "$SQL" \
+    || fail "harness does not ASSERT the re-run exactly-once anti-join pin"
+  grep -qF "re-run grew the ledger to % row(s) (want still 4)" "$SQL" \
+    || fail "harness does not ASSERT the ledger is unchanged by the re-run"
+
+  # ── all thirteen block PASS markers present. ────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle specifics; 0171 bump asserted-not-fixtured)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 5 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp specifics; 0171 bump asserted-not-fixtured)"
   exit 0
 fi
 
@@ -221,8 +267,8 @@ fi
 tp_run_local "TEAM-COMMAND B-VERIFY" "$SQL" "$PASS_LINE" "$MARKERS"
 
 # post-run honesty check: EVERY committed flag the proof flips must still be false (the flips were rolled
-# back). Check all four the harness toggles in-txn, not just the team gate.
-for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled; do
+# back). Check all five the harness toggles in-txn, not just the team gate.
+for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled; do
   committed="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = '$flag'), 'false')")" \
     || fail "could not read the committed '$flag' value"
   [ "$committed" = "false" ] || fail "committed $flag is '$committed' — the proof leaked a flag flip (must stay false)"
@@ -235,4 +281,11 @@ committed_rate="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> 
   || fail "could not read the committed 'captain_shard_drop_rate' value"
 [ "$committed_rate" = "0" ] || fail "committed captain_shard_drop_rate is '$committed_rate' — the proof leaked the knob (must stay 0)"
 
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled all still false; captain_shard_drop_rate still 0)"
+# same honesty check for the 0177 XP KNOB: the proof raises it to 100 in-txn (the CAPXP boundary
+# test); the committed value must still be the 0177 seed '10' — a leak would silently 10× captain
+# XP the moment the owner lights captain_growth_enabled.
+committed_xp="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant'), '10')")" \
+  || fail "could not read the committed 'captain_xp_per_combat_grant' value"
+[ "$committed_xp" = "10" ] || fail "committed captain_xp_per_combat_grant is '$committed_xp' — the proof leaked the knob (must stay 10)"
+
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10)"

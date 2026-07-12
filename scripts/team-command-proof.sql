@@ -1,5 +1,5 @@
 -- TEAM-COMMAND B-VERIFY — disposable REAL-CHAIN proof of the DARK team send/stop/combat surface (slices
--- 0160..0169 + the 0170/0171 activation-prep migrations) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
+-- 0160..0169 + the 0170/0171 activation-prep migrations + the 0177 captain-XP foundation) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
 -- proof runs inside ONE transaction that ROLLBACKs — it persists NO ship, group, fleet, flag flip, or
 -- fixture user. No production access. No COMMIT anywhere.
 --
@@ -87,6 +87,20 @@
 --            deterministic scrap-only at ANY rate; the rate is left 1 in-txn so TEAMSETTLE's won
 --            encounter carries a shard end-to-end (drop → bundle → return → reward_grant →
 --            player_inventory — the recruit currency really arrives).
+--   CAPXP (CAPXP-0/1, 0177) — the captain-XP foundation, consuming the TEAMSETTLE fixture AS the
+--            captained team sortie: committed seeds dark (captain_growth_enabled 'false', combat
+--            knob '10'); every instance at the additive defaults (xp 0 / level 1);
+--            captain_xp_accrue() no-ops {feature_disabled} with ZERO writes BEFORE the in-txn
+--            flip; lit (flag + knob 100 in-txn — the exact level-2 boundary of the [D] curve),
+--            ONE run credits the THREE currently-assigned manifest captains (capa+capb on c1,
+--            capc on c2 — one grant feeds multiple captains, the per-(grant, captain) ledger
+--            keying) EXACTLY knob × 1 qualifying grant each with level landing exactly 2 at the
+--            100-xp boundary; a captain on a grantless ship (capd/b1 — defeat, no grant) and a
+--            freshly-minted UNASSIGNED captain gain NOTHING; an ORPHAN grant (minted via the REAL
+--            reward_grant sole writer with a random source_id — the retention-cleaned-encounter
+--            shape) is consumed as a NULL-captain sentinel, never credited; zero grants left
+--            unconsumed; the curve recomputed independently over every instance; and a RE-RUN
+--            consumes/credits/awards ZERO (the anti-join exactly-once pin).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -1577,6 +1591,155 @@ begin
   raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, M1 hunting-reject without a lost update + legal single-send parity, and both self-heal re-homes';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure)' as result;
+-- ════════ BLOCK CAPXP (CAPXP-0/1, 0177): captain-XP foundation — dark no-op, exact accrual, ledger ════════
+-- Consumes the TEAMSETTLE fixture AS the captained team sortie the 0177 charter names: the settled
+-- uC sortie deposited ONE finalized combat reward_grants row whose manifest is {c1, c2}, and the
+-- TEAMHUNT captain roster is STILL ASSIGNED NOW (capa+capb on c1, capc on c2, capd on the grantless
+-- b1 — all provisioned via the 0118/0119 sole writers). The 0177 accrual credits captains assigned
+-- AT ACCRUAL TIME (the documented current-assignment semantic — captain-at-sortie-time is recorded
+-- nowhere), so this roster is exactly the credit set. Fixture surgery stays inside the sanctioned
+-- kinds: config via the real set_game_config, captains via the sole writers, and the one orphan
+-- grant via the REAL Reward sole writer reward_grant() — never a direct insert into any
+-- Captain-owned or ledger table (grep-enforced).
+do $$
+declare r jsonb; n int;
+begin
+  -- committed seeds (nothing in-txn has touched these keys): the flag is dark, the knob at seed.
+  if (select value #>> '{}' from public.game_config where key = 'captain_growth_enabled') is distinct from 'false' then
+    raise exception 'CAPXP FAIL: committed captain_growth_enabled is % (want ''false'' — the 0177 dark seed)',
+      (select value #>> '{}' from public.game_config where key = 'captain_growth_enabled'); end if;
+  if (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant') is distinct from '10' then
+    raise exception 'CAPXP FAIL: committed captain_xp_per_combat_grant is % (want 10 — the 0177 knob seed)',
+      (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant'); end if;
+
+  -- additive defaults: every instance (the C0/D0/D2 fixtures included) sits at xp 0 / level 1.
+  select count(*) into n from public.captain_instances where xp <> 0 or level <> 1;
+  if n <> 0 then raise exception 'CAPXP FAIL: % instance(s) off the additive defaults before accrual (want 0)', n; end if;
+
+  -- DARK NO-OP (asserted BEFORE the flag flip below): reject-before-read envelope, ZERO writes —
+  -- finalized grants already exist at this point, so a gate-after-read regression would fold them.
+  r := public.captain_xp_accrue();
+  if (r->>'ok')::boolean is not false or (r->>'code') is distinct from 'feature_disabled' then
+    raise exception 'CAPXP FAIL dark: %', r; end if;
+  select count(*) into n from public.captain_counted_grants;
+  if n <> 0 then raise exception 'CAPXP FAIL: dark run left % ledger row(s) (want 0)', n; end if;
+  select count(*) into n from public.captain_instances where xp <> 0 or level <> 1;
+  if n <> 0 then raise exception 'CAPXP FAIL: dark run moved xp/level on % instance(s) (want 0)', n; end if;
+end $$;
+
+-- light captain growth ONLY inside this rolled-back txn (the committed/production value stays false).
+update public.game_config set value='true'::jsonb where key='captain_growth_enabled';
+
+do $$
+declare r jsonb; r2 jsonb; n int;
+  uC uuid := (select v from tcmd where k='uC');
+  c1 uuid := (select v from tcmd where k='c1'); c2 uuid := (select v from tcmd where k='c2');
+  b1 uuid := (select v from tcmd where k='b1');
+  v_grant uuid; v_capu uuid; v_knob numeric; v_total numeric;
+begin
+  -- ── fixture facts, derived independently (precondition-pinned so the arithmetic is airtight) ─────
+  -- exactly ONE finalized grant exists (the TEAMSETTLE deposit)…
+  select count(*) into n from public.reward_grants;
+  if n <> 1 then raise exception 'CAPXP FAIL precondition: % reward_grants rows (want exactly 1 — the TEAMSETTLE deposit)', n; end if;
+  select rg.id into v_grant from public.reward_grants rg where rg.source_type = 'combat';
+  -- …its sortie manifest is exactly {c1, c2}…
+  select count(*) into n from public.group_sortie_members gsm
+    join public.combat_encounters ce on ce.fleet_id = gsm.fleet_id
+    where ce.id = (select source_id from public.reward_grants where id = v_grant)
+      and gsm.main_ship_id in (c1, c2);
+  if n <> 2 then raise exception 'CAPXP FAIL precondition: the grant manifest is not {c1, c2} (matched %)', n; end if;
+  -- …and the TEAMHUNT roster is still assigned NOW: 2 captains on c1, 1 on c2, 1 on the grantless b1.
+  select count(*) into n from public.ship_captain_assignments where main_ship_id = c1;
+  if n <> 2 then raise exception 'CAPXP FAIL precondition: % captain(s) on c1 (want 2)', n; end if;
+  select count(*) into n from public.ship_captain_assignments where main_ship_id in (c2, b1);
+  if n <> 2 then raise exception 'CAPXP FAIL precondition: % captain(s) on c2+b1 (want 1+1)', n; end if;
+
+  -- controls: a freshly-minted UNASSIGNED captain (the sole writer, as everywhere), and an ORPHAN
+  -- grant via the REAL Reward sole writer (random source_id = the retention-cleaned-encounter
+  -- shape: no encounter row, no derivable ship — must be consumed as a sentinel, never credited).
+  v_capu := public.captains_mint_instance(uC, 'gunnery_veteran', 'tcmd-capxp-u');
+  perform public.reward_grant('combat', gen_random_uuid(), uC, null, '{"metal": 1}'::jsonb);
+  select count(*) into n from public.reward_grants;
+  if n <> 2 then raise exception 'CAPXP FAIL: the orphan grant was not minted via reward_grant (% rows, want 2)', n; end if;
+
+  -- the boundary knob: 100 is EXACTLY the level-2 threshold of the [D] curve (level = 1 +
+  -- floor(sqrt(xp/100)): 99 xp stays level 1, 100 lands level 2) — raised via the real
+  -- set_game_config (in-txn only; ROLLBACK reverts; the committed seed 10 was pinned above).
+  perform public.set_game_config('captain_xp_per_combat_grant', '100'::jsonb);
+  v_knob := public.cfg_num('captain_xp_per_combat_grant');
+
+  -- ── THE ACCRUAL ───────────────────────────────────────────────────────────────────────────────────
+  r := public.captain_xp_accrue();
+  if (r->>'ok')::boolean is not true then raise exception 'CAPXP FAIL accrue: %', r; end if;
+  -- envelope: BOTH grants consumed (the sortie grant + the orphan), 3 credit rows over 3 captains.
+  if (r->>'grants_consumed')::int is distinct from 2
+     or (r->>'credits_inserted')::int is distinct from 3
+     or (r->>'captains_credited')::int is distinct from 3
+     or (r->>'xp_awarded')::numeric is distinct from 3 * v_knob then
+    raise exception 'CAPXP FAIL: accrual envelope wrong (want 2 grants / 3 credits / 3 captains / % xp): %', 3 * v_knob, r; end if;
+
+  -- every currently-assigned manifest captain gained EXACTLY the knob amount × its 1 qualifying
+  -- grant — one grant feeds multiple captains (2 on c1 + 1 on c2), the per-(grant, captain) keying…
+  select count(*) into n from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    where sca.main_ship_id in (c1, c2) and ci.xp = v_knob;
+  if n <> 3 then
+    raise exception 'CAPXP FAIL: % manifest captain(s) at xp % (want exactly the knob 100 × 1 qualifying grant on all 3)', n, v_knob; end if;
+  -- …and each landed level EXACTLY 2 at the 100-xp boundary (a >=-vs-> slip in the curve → 1).
+  select count(*) into n from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    where sca.main_ship_id in (c1, c2) and ci.level = 2;
+  if n <> 3 then
+    raise exception 'CAPXP FAIL: % manifest captain(s) at level 2 at the 100-xp boundary (want all 3 exactly 2)', n; end if;
+
+  -- a captain on a GRANTLESS ship gains nothing (b1's only sortie was a defeat — no grant)…
+  select count(*) into n from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    where sca.main_ship_id = b1 and ci.xp = 0 and ci.level = 1;
+  if n <> 1 then raise exception 'CAPXP FAIL: the grantless-ship captain moved (want xp 0 / level 1)'; end if;
+  -- …and the UNASSIGNED captain gains nothing at all (no xp, no ledger row).
+  select count(*) into n from public.captain_instances where id = v_capu and xp = 0 and level = 1;
+  if n <> 1 then raise exception 'CAPXP FAIL: the unassigned captain gained xp'; end if;
+  select count(*) into n from public.captain_counted_grants where captain_instance_id = v_capu;
+  if n <> 0 then raise exception 'CAPXP FAIL: the unassigned captain has % ledger row(s) (want 0)', n; end if;
+
+  -- LEDGER SHAPE: 3 credit rows for the sortie grant (each xp = knob, the linked ship recorded) +
+  -- exactly 1 NULL-captain sentinel for the orphan — 4 rows total, zero grants left unconsumed.
+  select count(*) into n from public.captain_counted_grants
+    where grant_id = v_grant and captain_instance_id is not null
+      and xp = v_knob and main_ship_id in (c1, c2) and source_type = 'combat';
+  if n <> 3 then raise exception 'CAPXP FAIL: % credit row(s) for the sortie grant (want 3 — one per assigned manifest captain)', n; end if;
+  select count(*) into n from public.captain_counted_grants
+    where grant_id <> v_grant and captain_instance_id is null and main_ship_id is null and xp = 0;
+  if n <> 1 then raise exception 'CAPXP FAIL: % orphan sentinel row(s) (want 1 sentinel row — consumed, never credited)', n; end if;
+  select count(*) into n from public.captain_counted_grants;
+  if n <> 4 then raise exception 'CAPXP FAIL: % total ledger row(s) (want 4)', n; end if;
+  select count(*) into n from public.reward_grants rg
+    where not exists (select 1 from public.captain_counted_grants c where c.grant_id = rg.id);
+  if n <> 0 then raise exception 'CAPXP FAIL: % grants left unconsumed after the run (want 0)', n; end if;
+
+  -- CURVE COHERENCE, recomputed independently over EVERY instance (the maintained level column may
+  -- never drift from the [D] formula).
+  select count(*) into n from public.captain_instances
+    where level <> 1 + floor(sqrt(xp / 100.0))::integer;
+  if n <> 0 then raise exception 'CAPXP FAIL: % instance(s) where level <> 1 + floor(sqrt(xp / 100)) (curve drift)', n; end if;
+
+  -- THE ANTI-JOIN PIN: a re-run consumes/credits/awards ZERO — no double count, ledger unchanged.
+  r2 := public.captain_xp_accrue();
+  if (r2->>'ok')::boolean is not true
+     or (r2->>'grants_consumed')::int is distinct from 0
+     or (r2->>'credits_inserted')::int is distinct from 0
+     or (r2->>'xp_awarded')::numeric is distinct from 0 then
+    raise exception 'CAPXP FAIL: re-run double-counted (want all-zero envelope): %', r2; end if;
+  select count(*) into n from public.captain_counted_grants;
+  if n <> 4 then raise exception 'CAPXP FAIL: re-run grew the ledger to % row(s) (want still 4)', n; end if;
+  select coalesce(sum(xp), 0) into v_total from public.captain_instances;
+  if v_total is distinct from 3 * v_knob then
+    raise exception 'CAPXP FAIL: re-run moved total xp to % (want still %)', v_total, 3 * v_knob; end if;
+
+  raise notice 'TEAMCMD_PASS_CAPXP ok: committed seeds dark (flag false, knob 10); additive defaults; dark accrue = clean no-op with grants present; lit accrue credits the 3 currently-assigned manifest captains exactly knob×1 grant each (xp 100 → level exactly 2 at the boundary), per-(grant, captain) ledger + 1 orphan sentinel, zero grants unconsumed; grantless-ship + unassigned captains untouched; curve recomputed clean over every instance; re-run = all-zero envelope, no double count';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
