@@ -5,6 +5,69 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — ZONES2-1+2 (queue #7+#8): "Ember Reach" content expansion — seeded HIDDEN + the reveal script
+
+**Request.** Queue slices #7+#8 of the full-capacity plan (§C P4, the packet §1.3 Option-C seeds): the
+first content expansion — new higher-difficulty hunt zone "Ember Reach", seeded `status='hidden'`, plus
+the reveal operation script (reveal IS the cadence mechanism). PURE DATA slice: zero engine edits, zero
+flag flips; nothing player-visible until the human runs the reveal.
+
+**Work done**
+- **Migration `20260618000175_zones2_ember_reach.sql`** — additive, idempotent (fixed literal UUIDs
+  embedding 0175, the 0066 identity idiom; `on conflict (id) do nothing`, any other unique-key collision
+  aborts). Seeds: sector **Ashen Frontier** (index 3, danger_tier 3, ACTIVE) + zone **Ember Reach**
+  (ACTIVE) + three HIDDEN `pirate_hunt` sites — **Ember Gate** (100,90 · bd 40 · tier 4 · min_power 150),
+  **Cinder Maw** (125,110 · bd 50 · tier 4 · 220), **The Furnace** (150,130 · bd 60 · tier 5 · 300).
+  Containers are ACTIVE because `get_world_map` filters all THREE levels on `status='active'`
+  (0002:121/125/129) and the reveal flips only the location rows; an active zone with zero active
+  locations renders nothing (the client flattens locations only — verified). Gates are packet-derived
+  [D owner-tunable]: 38 combat_power per kitted+captained ship (§0.3) → 150/220/300 ≈ **4/6/8 ships**
+  (≈3/5/6 after the 6-captain bump). Coordinates continue the 0154 distance-orders-by-difficulty ray NE
+  beyond Blackden (85.1 → 134.5/166.5/198.5 from home), outside the legacy bbox (x −50…70, y −30…80),
+  ≥16%-of-span marker separation (0154's ~9% threshold), deep inside the OSN envelope. Deliberate
+  omissions, each justified in the header: no safe waypoint (keeps the reveal exactly-3), no
+  anchors/services (not dockable), no location_state seed (worldstate lazily upserts, 0032:37-41);
+  `physical_role='activity_site'` (first honest user of the 0065 value; excluded from every port
+  predicate). Self-assert DO block: exact 3-row read-back (identity/stats/HIDDEN), monotonic
+  gates+distance, game-wide name uniqueness, coordinates in-envelope/outside-bbox, and the
+  **hidden-invisibility pin BOTH ways** — structural (`get_world_map` prosrc carries the three
+  `status = 'active'` filters) AND behavioral (the migration calls `get_world_map()` — a STABLE
+  table-reading SQL function — and asserts none of the 3 names/ids appear).
+- **`reward_tier` finding (verified against the TRUE combat head 0169:354):** reward_tier multiplies the
+  METAL reward per cleared wave — `round(10 × greatest(tier,1) × (1+0.25×danger))` → tier 4/5 pays
+  4×/5× tier-1 metal. ITEM loot (0041 `pirate_loot_for_wave`) keys on WAVE NUMBER only — tier has NO
+  loot-table meaning; drops keep riding wave/danger progression as today (defining tier-keyed loot would
+  be an engine edit, out of charter). Documented in the migration header.
+- **`scripts/reveal-ember-reach.{sql,sh}`** — the reveal operation (activate-family wrapper pattern
+  ADAPTED to a reveal; reveal-starter-ports txn semantics). One timed BEGIN..COMMIT, zero psql
+  meta-commands. PRECONDITIONS: 0175 recorded by version; the 3 canonical rows exist ALL hidden (a rerun
+  fails closed — already-revealed is an error); exact seeded identity (refuses drifted content);
+  monotonic gates; parents ACTIVE; `get_world_map` three-level filter prosrc-pinned + a behavioral
+  no-leak pre-check. STAGE — **the ONLY write**: ONE `update public.locations set status='active'`
+  scoped to the 3 fixed uuids, `row_count=3` asserted. SMOKE: 3 active; net active-locations exactly +3;
+  every non-canonical location status-invariant (the offsetting-proof digest); **game_config digest unchanged**
+  (a content reveal must never move a flag); behavioral post-check (all 3 names now in the map read).
+  Commented manual ROLLBACK: re-hiding IS supported for hunt sites (unlike the port reveal) — sends
+  validate status at SEND time only (0019:39/0168:196), settle/combat/return key on location_id, so
+  in-flight/in-combat fleets resolve normally and nothing strands; documented in the script. Selftest
+  asserts the write-shape inversion (exactly ONE locations UPDATE, zero `set_game_config`, no
+  insert/delete/DDL, rollback stays commented) — **mutation-tested: 8/8 mutations caught** (sneaked
+  set_game_config, second-table update, uncommented rollback, retargeted uuid, DDL, dropped 0175 gate,
+  dropped prosrc pin, sneaked insert), control green.
+- **No client change needed**: the galaxy map is data-driven (markerStyle/labelTier derive from the
+  location row; useGalaxyMapData flattens whatever get_world_map returns; camera content-fit computes
+  its own bbox; grep: nothing keys on location count/sectors — one test fixture uses a synthetic Snare).
+
+**Verification.** New selftest green + mutation-tested (8/8); all existing selftests untouched-green
+(activate-team-command/captains/exploration/mining/trade, reveal-starter-ports, team-command-proof,
+postreveal-verify); `tsc -b` + `vite build` untouched-green (zero client changes in this slice). The
+migration self-asserts at apply time (fail-closed; aborts the deploy on any drift).
+
+**Follow-up (human-gated).** Deploy 0175, then — deliberately later, once teams have kitted up (the
+gates assume ≈4/6/8 kitted ships; modules/captains need to be flowing first) — run
+`bash scripts/reveal-ember-reach.sh run REVEAL_EMBER_REACH`. Rows 7+8 marked shipped in the plan queue;
+ROADMAP phase 23 row added.
+
 ## 2026-07-12 — SALVAGE-0/1 (queue #6): the combat-loot → port-economy feed (dark)
 
 **Request.** Queue slice #6 of the full-capacity plan (plan §C P3): ports gain item buy-lists and the
