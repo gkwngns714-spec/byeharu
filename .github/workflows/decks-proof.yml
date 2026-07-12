@@ -1,0 +1,60 @@
+name: DECKS — 0189 deck-stations disposable proof (no production)
+
+# Runs the DECKS disposable proof on a throwaway local Supabase — NEVER production:
+#   1. DB-free selftest: the harness is well-formed, self-rolling-back (opens a txn, toggles the ONE
+#      dark gate + every game_config write ONLY inside it, ends in ROLLBACK with NO COMMIT), obeys
+#      the sole-writer law (mint/assign/unassign only via the real writers; the sole quarantined
+#      surgery is the backfill fixture), and pins every property assert in assert-form;
+#   2. a disposable local Supabase (the full chain incl. 0189) running the real-chain matrix: dark
+#      posture with the no-oracle station probe; named-station assign (envelope/row/receipt/roster);
+#      station_occupied + unknown_station rejects; the lowest-sort auto-fill walk with the
+#      headcount-cap-first authority; unassign-frees; verbatim station-bearing replay; the
+#      deterministic, monotonic 0189 backfill.
+# HOST DECISION (recorded): the captain behavior proofs live in team-command-proof (CAPTAINS/CAPXP/
+# CAPLEVEL blocks), but that pair is CONTENDED by two in-flight slices — so DECKS ships as its own
+# family-pure standalone workflow (the ev1/world-events precedent: many small family-pure proof
+# workflows is the repo convention), NOT a new block in team-command-proof or a 7th trade-v1 step.
+# The proof flips NO committed flag; no `environment:` on any job — none can read production secrets.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-decks**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: decks-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/decks-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0189)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: DECKS real-chain matrix
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/decks-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

@@ -152,13 +152,13 @@ begin
   --     loot leaf). Existence, not execution — the behavior proof is scripts/team-command-proof.sh
   --     (CAPTAINS + SHARDDROP blocks), run separately.
   foreach fn in array array[
-    'public.assign_captain_to_ship(text, uuid, uuid)',
+    'public.assign_captain_to_ship(text, uuid, uuid, text)',   -- DECKS-1: + p_station (0189 drop-then-create)
     'public.unassign_captain_from_ship(text, uuid)',
     'public.recruit_captain(text, text)',
     'public.get_my_captain_instances()',
     'public.get_my_ship_captains(uuid)',
     'public.captains_mint_instance(uuid, text, text)',
-    'public.captain_assign_apply(uuid, uuid, uuid)',
+    'public.captain_assign_apply(uuid, uuid, uuid, text)',     -- DECKS-1: + p_station (0189 drop-then-create)
     'public.production_recruit_captain(uuid, text, text)',
     'public.pirate_loot_for_wave(integer, numeric)'] loop
     if to_regprocedure(fn) is null then

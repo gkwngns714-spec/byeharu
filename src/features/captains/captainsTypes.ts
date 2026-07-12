@@ -9,9 +9,11 @@
 // panel renders nothing — the UI is never the control (fail-closed law), no client flag constant.
 
 /** One row of get_my_captain_instances().captains (0123; xp/level added by the 0181 C2-3
- *  projection hunk). main_ship_id = the assigned ship, or null when the captain is unassigned
- *  (the per-row roster indicator). xp/level are OPTIONAL (a pre-0181 envelope lacks them) and are
- *  0/1 everywhere while captain_growth_enabled is false — the CaptainXpBar renders nothing then. */
+ *  projection hunk; station added by the 0189 DECKS-1 hunk). main_ship_id = the assigned ship, or
+ *  null when the captain is unassigned (the per-row roster indicator). xp/level are OPTIONAL (a
+ *  pre-0181 envelope lacks them) and are 0/1 everywhere while captain_growth_enabled is false —
+ *  the CaptainXpBar renders nothing then. station is OPTIONAL likewise (a pre-0189 envelope lacks
+ *  it): the held deck station id (ship_stations), or null when unassigned / general quarters. */
 export interface CaptainInstance {
   instance_id: string
   captain_type_id: string
@@ -21,6 +23,7 @@ export interface CaptainInstance {
   xp?: number
   level?: number
   main_ship_id: string | null
+  station?: string | null
   created_at: string
 }
 
@@ -33,21 +36,24 @@ export type GetMyCaptainInstancesResult =
   | { ok: false; reason?: string }
 
 // assign_captain_to_ship / unassign_captain_from_ship wrapper envelopes (0120): success carries the
-// action + ids (+ idempotent_replay on a same (player, request_id) replay); failure is REASON-keyed with
-// a server message (the 0120/0121 mapper). Same shape for both commands.
+// action + ids (+ idempotent_replay on a same (player, request_id) replay; + the additive DECKS-1
+// `station` — the deck station taken, explicit or server-auto-picked; null on unassign and absent
+// on a pre-0189 envelope); failure is REASON-keyed with a server message (the 0120/0121/0189
+// mapper). Same shape for both commands.
 export type AssignCaptainResult =
-  | { ok: true; action: string; captain_instance_id: string; main_ship_id: string | null; idempotent_replay?: boolean }
+  | { ok: true; action: string; captain_instance_id: string; main_ship_id: string | null; station?: string | null; idempotent_replay?: boolean }
   | { ok: false; reason?: string; message?: string }
 
 export type UnassignCaptainResult =
-  | { ok: true; action: string; captain_instance_id: string; main_ship_id: string | null; idempotent_replay?: boolean }
+  | { ok: true; action: string; captain_instance_id: string; main_ship_id: string | null; station?: string | null; idempotent_replay?: boolean }
   | { ok: false; reason?: string; message?: string }
 
 // Player-facing copy for the EXACT client-visible reason set both wrappers can return, enumerated from
 // 0120 + 0121 (the captain_command_client_envelope mapper + the wrapper gates):
 //   captain_assignment_disabled (dark; no server message) · not_authenticated · invalid_request
 //   (invalid_request_id is mapped to this) · ship_not_settled (0121 settled-safe rule) · captain_not_owned
-//   · ship_not_owned · already_assigned · captain_slots_full · not_assigned · unavailable (fallback).
+//   · ship_not_owned · already_assigned · captain_slots_full · not_assigned · unknown_station ·
+//   station_occupied · no_free_station (the 0189 DECKS-1 station reasons) · unavailable (fallback).
 // PREFERS the server `message` when present (the 0120 envelopes carry one for every non-dark failure),
 // then falls back to this map — mirroring miningExtractErrorMessage. 'unavailable' is the last resort.
 const CAPTAIN_COMMAND_ERROR_COPY: Record<string, string> = {
@@ -60,6 +66,9 @@ const CAPTAIN_COMMAND_ERROR_COPY: Record<string, string> = {
   already_assigned: 'That captain is already assigned to a ship. Unassign them first.',
   captain_slots_full: 'No free captain slots on this ship.',
   not_assigned: 'That captain is not assigned to any ship.',
+  unknown_station: 'That deck station does not exist.',
+  station_occupied: 'That deck station is already held. Free it first.',
+  no_free_station: 'Every deck station on this ship is occupied.',
   unavailable: 'Captain assignment is unavailable right now.',
 }
 export function captainCommandErrorMessage(res: { reason?: string; message?: string }): string {
