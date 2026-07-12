@@ -5,6 +5,113 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — HAUL-0/1 (queue #12): delivery-contracts foundation (dark)
+
+**Request.** Queue slice #12 of the full-capacity plan (§C P2): the retention loop's foundation —
+HAUL-0 (`haul_contracts` schema + migration-seeded templates + `haul_contracts_enabled` dark flag) +
+HAUL-1 (the cron-driven, seeded-deterministic offer generator). The accept/deliver RPCs (HAUL-2) and
+the bulletin UI (HAUL-3) are LATER slices. Everything dark; no client code.
+
+**Work done**
+- **Migration `20260618000176_haul_contracts_foundation.sql`**:
+  - `haul_contract_templates` — Reference/Config (migration-seeded ONLY, public read-only): 10 v1
+    templates over the 0173 three-port economy carrying origin/dest (fixed uuid or NULL='any'),
+    good, qty range, reward params, duration (6–12h), and generation weight. **Reward math [D,
+    owner-tunable]:** `reward = round(reward_base + qty × (LIVE dest market_offers.buy_price +
+    reward_premium_per_unit))` — beats the best same-haul self-trade (`qty × (dest.buy −
+    origin.sell)`) by exactly `base + qty × premium` > 0, always, and MODESTLY (premiums ≈15–25% of
+    the route's per-unit market profit; the full 10-row table with profit ranges lives in the 0176
+    header). Two Drift-origin BACKHAULS ride market-dead 0173 routes (Drift is a pure importer) —
+    the port pays above market to move goods raw arbitrage won't; smallest payouts on the board.
+    Every qty_max fits the 50 m³ starter hold (self-asserted). Scale: a full day's board = 6
+    contracts ≈ 300–900 profit — a retention garnish beside the repeatable +200/trip guaranteed
+    routes, not a dominant faucet.
+  - `haul_contracts` — the live offers: status domain offered/accepted/delivered/expired/cancelled,
+    natural key `unique (origin_location_id, offer_day, slot)`, HAUL-2 columns (accepted_by/
+    accepted_ship/accepted_at/delivered_at) ready but unwritten. RLS: 'offered' rows PUBLIC
+    (per-port bulletins, no player data); accepted rows OWNER-only (`accepted_by = auth.uid()`);
+    no client write path. Sole writer today = the generator; the only future writers = HAUL-2.
+  - **`haul_generate_offers()`** (SECURITY DEFINER, service-role-only): gate-FIRST →
+    `{ok:false, code:'feature_disabled'}` while dark — a cron-safe no-op, NEVER a raise (the D2/0145
+    lesson). **Determinism = the 0041 technique** (pure function of inputs, no session RNG), extended
+    with a pure hash: `hashtextextended('haul:'||day||':'||port||':'||slot, 0)` → uniform → weighted
+    template pick (cumulative weights in template_id order); a second salt (`haulqty:`) → quantity.
+    Same (day, port, slot) ⇒ byte-identical offer; idempotency is structural (the natural key +
+    `on conflict do nothing` — re-runs and racing double-fires mint nothing). Generates N per active
+    port per day (N = new knob `haul_offers_per_port`, seeded 2; active = status active + docking
+    active + an active market — so ECON-SEED feeds both the pricing and the port filter). The expiry
+    pass flips 'offered'→'expired' past `expires_at`; the predicate is status='offered' ONLY —
+    **accepted contracts are never touched** (an accepted contract's delivery deadline is HAUL-2's
+    business; design decision, proof-pinned).
+  - **Cron `haul-generate-offers`, hourly (`'7 * * * *'`)** — cadence decision: offers are
+    daily-deterministic (generation does real work once per day; every other firing is an idempotent
+    no-op), but offer durations are 6–12h (sub-day), so the hourly firing is what keeps the bulletin
+    honest — expiry latency ≤1h; daily would strand dead offers for hours, faster than hourly buys
+    nothing. The 0033/0147 idiom verbatim; minute 7 avoids the top-of-hour herd. Scheduled NOW with
+    zero live effect while dark.
+  - Self-asserts: exactly the 10 approved templates; per-port pools non-empty; starter-haulable;
+    worth-taking recomputed from the LIVE market rows at BOTH qty endpoints; generator exists +
+    service-role-only ACL; cron scheduled exactly once; flag dark + knob 2; and the cron-safety
+    pin — a dark dry-run of the generator returns the no-op envelope and leaves zero rows.
+- **Proof `scripts/haul-proof.{sql,sh}`** (trade-family, lib-based, one BEGIN..ROLLBACK; wired as
+  the 6th selftest + matrix step in `trade-v1-proof.yml`, trigger `slice-haul**`): P0 dark cron-safe
+  no-op (envelope, zero rows, no raise) → flag on in-txn → P1 exactly N×3 offers, all 'offered',
+  slots 1..N per port, template bounds + LIVE reward recompute + expiry anchor exact → P2
+  worth-taking (contract profit beats the recomputed same-haul self-trade AND is absolute-positive —
+  covers the backhauls) → P3 determinism (same-day re-run creates 0 rows, offer-set signature
+  unchanged; the Haven slot-1 identity RE-DERIVED from the raw hash technique, not by calling the
+  generator) → P4 expiry (a fixture-aged offered row flips 'expired'; a past-deadline 'accepted'
+  fixture is NEVER touched; zero new mints) → P5 RLS/ACL shape (2 SELECT-only policies pinned by
+  name+qual, templates public-read, zero client write grants, generator ACL, cron exactly once).
+  The harness never INSERTs into either haul table (all rows come from the real generator; two
+  marked fixture UPDATEs only) — selftest-pinned.
+- **`SYSTEM_BOUNDARIES.md`** — §1 rows for both tables (owners, sole writers, read surfaces) + a §2
+  Haul Contracts system row (the charter guard: Contracts owns ONLY its table (+ future receipts);
+  cargo moves only through Trade-Cargo, credits only through Wallet — HAUL-0/1 writes neither).
+  ROADMAP phase row 22 + plan queue row 12 → shipped (dark).
+
+**Hostile-review fixes (applied same slice; cron-safety/determinism/economics/schema reviewed CLEAN):**
+- **M1 (shared lib `scripts/lib/trade-proof-lib.sh` — hardens ALL SEVEN lib consumers):** a flag
+  toggle appended AFTER a proof's final `rollback;` AUTOCOMMITS in psql and previously SURVIVED the
+  selftests — `tp_assert_flags_inside_txn` checked only the FIRST occurrence per flag and
+  `tp_assert_self_rolling_back` only that the last txn VERB was rollback. Fixed both: EVERY
+  occurrence of each flag toggle must now sit strictly inside begin;..rollback; (loop over all
+  `grep -n` matches), and NOTHING but comments/whitespace may follow the final ROLLBACK (on its own
+  line or any later one — comment-stripped check). Reconciliation: all seven lib-sourcing selftests
+  (six trade-family + team-command) re-run GREEN unchanged — no existing proof carried trailing SQL
+  or an out-of-txn toggle, so no proof needed adjustment.
+- **L1 (0176 GUC-stable determinism):** the hash salts rendered the day via `format('%s', date)`
+  (DateStyle-dependent) and the day boundary used `now()` (TimeZone-dependent). Now: the day is the
+  UTC calendar day `(now() at time zone 'utc')::date` and enters both salts via
+  `to_char(day, 'YYYY-MM-DD')` — no session GUC can shift an offer's identity between cron, psql,
+  and the proof. The proof's P1/P3/P4 day derivations + the P3 inline re-derivation updated in
+  exact lockstep; new selftest greps pin the to_char rendering + the UTC boundary.
+- **L3 (0176 templates):** added `check (reward_base + reward_premium_per_unit > 0)` — a future 0/0
+  template would make the worth-taking invariant a tie and could round a sub-0.5 reward to 0 → a
+  lit-cron insert raise on `reward_credits > 0`.
+- **Forward notes (0176 header + here):** (1) PRICE DRIFT — when `world_balance_enabled` lights, the
+  P19 drift multiplier composes into the player's ACTUAL buy/sell prices at read time but NOT into
+  contract rewards (priced at generation from the static `market_offers` rows); HAUL-2/HAUL-3 must
+  surface the EFFECTIVE profit, not the static header math. (2) EMERGENCY DARKENING — a lit→dark
+  flip freezes the expiry pass too (gate-first returns before it), so stale 'offered' rows persist
+  publicly readable; the eventual ACT-HAUL rollback section must run one manual expiry pass (the
+  generator's expiry UPDATE, as service role) or explicitly accept the frozen bulletin.
+
+**Verification.** `bash scripts/haul-proof.sh selftest` green; **mutation-tested 14/14 caught**
+(commit-instead-of-rollback, flag-enable dropped, direct haul_contracts insert, feature_disabled
+envelope gutted, hash re-derivation removed, self-trade recompute gutted, accepted-row pin dropped,
+PASS marker dropped, pg_policies asserts dropped, migrations-path reference; post-lib-fix: the M1
+survivor post-rollback flag toggle, post-rollback arbitrary SQL, same-line post-rollback SQL, and
+the to_char GUC pin gutted — the survivor also re-tested CAUGHT on salvage, proving the lib-wide
+fix), controls green. All seven lib-consumer selftests green (six trade-family + team-command).
+`tsc`/`vite build` untouched-green (no client code). Real-chain run = the `trade-v1-proof.yml`
+disposable matrix on push (slice-haul trigger).
+
+**Bugs / fixes**
+- _(none)_
+
+---
+
 ## 2026-07-12 — RANK-SEASON + ACT-RANKING (queue #9): the ranking activation script
 
 **Request.** Queue slice #9 of the full-capacity plan (§B rung 5): `scripts/activate-ranking.{sql,sh}`

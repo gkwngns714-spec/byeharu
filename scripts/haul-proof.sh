@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# HAUL — disposable proof orchestrator for HAUL-0/1 (migration 0176: haul_contract_templates seed +
+# haul_contracts + haul_contracts_enabled flag + the deterministic offer generator + hourly cron).
+# Modes:
+#   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
+#              ROLLBACK), enables haul_contracts_enabled ONLY inside the txn, mints contracts ONLY via
+#              the real generator (never a direct insert), and binds every pin: the dark feature_disabled
+#              no-op, the exact N×ports count, the live-market reward recompute, the worth-taking
+#              self-trade comparison, the raw-hash determinism re-derivation, the offered-only expiry
+#              (accepted rows spared), and the RLS/ACL shape asserts.
+#   local    — run the write-then-ROLLBACK proof against a disposable DB_URL (the actual property proof).
+# The shared blocks (arg scaffold / self-rolling-back / flags-inside-txn / out-of-scope / local psql+markers)
+# live in scripts/lib/trade-proof-lib.sh (haul is trade-family); only this proof's specifics live here.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+. "$SCRIPT_DIR/lib/trade-proof-lib.sh"
+tp_init "${1:-}"
+SQL="$REPO_ROOT/scripts/haul-proof.sql"
+
+# the property PASS markers and the final PASS line this proof must exercise.
+MARKERS="HAUL_PASS_DARK_GATE HAUL_PASS_GENERATE HAUL_PASS_WORTH_TAKING HAUL_PASS_DETERMINISM HAUL_PASS_EXPIRY HAUL_PASS_RLS_SHAPE"
+PASS_LINE="HAUL PROOF PASSED"
+
+if [ "$MODE" = "selftest" ]; then
+  [ -f "$SQL" ] || fail "proof sql not found"
+
+  tp_assert_self_rolling_back "$SQL"
+
+  # ── the ONE dark flag is enabled ONLY strictly inside the begin;..rollback; scope. ────────────────
+  tp_assert_flags_inside_txn "$SQL" haul_contracts_enabled
+
+  # ── all three starter-port identities (fixed 0066 UUIDs) are asserted. ────────────────────────────
+  for pid in b1a00001-0066-4a00-8a00-000000000001 \
+             b1a00002-0066-4a00-8a00-000000000002 \
+             b1a00003-0066-4a00-8a00-000000000003; do
+    grep -q "$pid" "$SQL" || fail "harness does not assert port $pid"
+  done
+
+  # ── the dark run is pinned as a cron-safe NO-OP envelope (never a raise) with zero rows. ──────────
+  grep -q "'feature_disabled'" "$SQL" || fail "harness does not pin the dark feature_disabled envelope"
+  grep -q "dark generator created" "$SQL" || fail "harness does not pin zero rows on the dark run"
+
+  # ── contracts are minted ONLY by the real generator; the harness never writes the tables directly
+  #    (its two marked expiry FIXTURE updates aside — inserts are categorically banned). ─────────────
+  grep -q "public.haul_generate_offers()" "$SQL" || fail "harness does not invoke the real generator"
+  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.haul_contracts' "$SQL" \
+    && fail "harness inserts haul_contracts directly (rows must come from the generator)" || true
+  grep -qiE 'insert[[:space:]]+into[[:space:]]+public\.haul_contract_templates' "$SQL" \
+    && fail "harness writes haul_contract_templates (Reference/Config — migration-seeded only)" || true
+
+  # ── the exact-count and reward-math pins. ─────────────────────────────────────────────────────────
+  grep -q "N x ports" "$SQL" || fail "harness does not pin the exact N x ports offer count"
+  grep -q "od.buy_price + t.reward_premium_per_unit" "$SQL" \
+    || fail "harness does not recompute the reward off the LIVE dest market row"
+
+  # ── the worth-taking economics pin (self-trade recompute from market_offers). ─────────────────────
+  grep -q "self-trade" "$SQL" || fail "harness does not pin the worth-taking self-trade comparison"
+  grep -q "od.buy_price - oo.sell_price" "$SQL" || fail "harness does not recompute the self-trade profit"
+
+  # ── the determinism pins: idempotent re-run + the RAW hash technique re-derivation. ───────────────
+  grep -q "idempotent within the day" "$SQL" || fail "harness does not pin the same-day idempotent re-run"
+  grep -q "hashtextextended" "$SQL" || fail "harness does not re-derive an offer from the raw hash technique"
+  grep -q "'haulqty:%s:%s:%s'" "$SQL" || fail "harness does not re-derive the quantity salt"
+  grep -q "to_char(v_day, 'YYYY-MM-DD')" "$SQL" || fail "harness does not pin the GUC-stable to_char day rendering"
+  grep -q "at time zone 'utc'" "$SQL" || fail "harness does not pin the UTC day boundary"
+  grep -q "signature changed" "$SQL" || fail "harness does not pin the offer-set signature across re-runs"
+
+  # ── the expiry pins: offered-only flip; accepted rows NEVER touched. ──────────────────────────────
+  grep -q "status = 'expired'" "$SQL" || fail "harness does not assert the offered->expired flip"
+  grep -q "ACCEPTED row" "$SQL" || fail "harness does not pin that accepted rows are never expired"
+
+  # ── the RLS/ACL shape asserts. ────────────────────────────────────────────────────────────────────
+  grep -q "pg_policies" "$SQL" || fail "harness does not assert policy shape via pg_policies"
+  grep -q "haul_contracts_offered_public_read" "$SQL" || fail "harness does not pin the bulletin policy"
+  grep -q "haul_contracts_accepted_owner_read" "$SQL" || fail "harness does not pin the owner policy"
+  grep -q "has_function_privilege" "$SQL" || fail "harness does not assert the generator ACL"
+  grep -q "haul-generate-offers" "$SQL" || fail "harness does not assert the cron job"
+
+  # ── every property PASS marker is present. ────────────────────────────────────────────────────────
+  for m in $MARKERS; do
+    grep -q "$m" "$SQL" || fail "missing property PASS marker: $m"
+  done
+  grep -q "$PASS_LINE" "$SQL" || fail "harness missing the final PASS marker"
+
+  tp_assert_out_of_scope "$SQL"
+
+  echo "HAUL SELFTEST: ALL PASSED (self-rolling-back; flag inside txn only; generator-minted rows only; dark no-op + N x ports + live reward math + worth-taking + hash determinism + offered-only expiry + RLS shape all pinned)"
+  exit 0
+fi
+
+: "${DB_URL:?DB_URL (disposable stack) required}"
+tp_run_local "HAUL" "$SQL" "$PASS_LINE" "$MARKERS"
+echo "HAUL LOCAL PROOF: OVERALL_PASS"
