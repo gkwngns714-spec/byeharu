@@ -1,6 +1,7 @@
 import { useShellState } from '../../app/shellState'
 import { DockedPortCard } from './DockedPortCard'
 import { HaulBoardPanel } from './HaulBoardPanel'
+import { SalvageMarketPanel } from './SalvageMarketPanel'
 import { StationHangar } from './StationHangar'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { MarketPanel } from '../map/MarketPanel'
@@ -62,6 +63,19 @@ export function PortScreen() {
             {TRADE_MARKET_ENABLED && (
               <MarketPanel key={shipSelection.selectedShipId ?? 'none'} selectedShip={shipSelection.selectedShip} />
             )}
+            {/* SALVAGE-2 (dark, flag-gated): the port's item buy-desk — the SECOND market surface
+                (items→credits beside MarketPanel's cargo goods), so it rides the main rail with the
+                trade family; the aside keeps the storage/economy surfaces. No read RPC exists for
+                salvage (0174: port_item_demand is public-read Reference/Config), so the panel gates
+                itself on the server's own salvage_market_enabled flag read honestly from
+                PUBLIC-READ game_config (the getCommissionConfigRows posture) — flag false
+                (production today) → renders null, so production is byte-unchanged. locationId is
+                the SERVER dock projection (this docked branch). */}
+            <SalvageMarketPanel
+              lifecycleKey={lifecycleKey}
+              locationId={dock.locationId}
+              mainShipId={map.mainShip?.main_ship_id ?? null}
+            />
           </div>
           <div className={screenRailClass('aside')}>
             {/* STATION-STORAGE — this port's own hangar (per-port, per-player storage). Dark by default:
