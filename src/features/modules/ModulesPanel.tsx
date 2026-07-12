@@ -19,7 +19,7 @@ import {
   type ModuleCatalogEntry,
   type ModuleInstance,
 } from './modulesTypes'
-import { Button, Card, CardHeader } from '../../components/ui'
+import { Button, Card, CardHeader, SectionLabel } from '../../components/ui'
 import { ItemChip, ItemGlyph, itemLabel } from '../../components/items'
 
 // MODULES-P13 — the dark module-crafting surface: the craftable catalog (recipes + the player's
@@ -47,6 +47,7 @@ import { ItemChip, ItemGlyph, itemLabel } from '../../components/items'
 export function ModulesPanel({
   lifecycleKey,
   onChanged,
+  sectionLabel,
 }: {
   // Re-reads instances/balances whenever the main-ship lifecycle changes (DockServicesPanel
   // idiom) — securing deposits land items on exactly those transitions.
@@ -55,6 +56,10 @@ export function ModulesPanel({
   // fit/unfit changes a ship's loadout) so sibling read surfaces (ShipDossier, InventoryPanel)
   // can re-read — the screen's cross-panel refetch wire, never an optimistic patch.
   onChanged?: () => void
+  // WORKSHOP (presentation only): an optional SectionLabel rendered INSIDE the lit branch — the
+  // panel's visibility is server-decided at runtime, so a screen-owned header could label a void
+  // (the ShipScreen no-labels-over-dark-panels law); owning it here keeps the label void-safe.
+  sectionLabel?: string
 }) {
   const [result, setResult] = useState<GetMyModuleInstancesResult | null>(null)
   const [catalog, setCatalog] = useState<ModuleCatalogEntry[] | null>(null)
@@ -179,10 +184,11 @@ export function ModulesPanel({
   const shipLabel = (shipId: string) =>
     myShips.find((s) => s.main_ship_id === shipId)?.name ?? `ship ${shipId.slice(0, 8)}…`
 
-  return (
+  const panel = (
     // UI R2: the Card primitive owns the chrome (accent tone = the modules identity; ex-sky).
-    // Screen-embedded — rides ShipScreen's Screen stack (space-y-4), so the legacy map-corner
-    // absolute offset (bottom-2 left-[33.5rem]) is gone with the hand-rolled skin. Tokens only.
+    // Screen-embedded — rides the host Screen stack (space-y-4; WORKSHOP moved the panel from
+    // ShipScreen's main rail to PortScreen's), so the legacy map-corner absolute offset
+    // (bottom-2 left-[33.5rem]) is gone with the hand-rolled skin. Tokens only.
     <Card tone="accent" data-testid="modules-panel">
       <CardHeader title="Modules" />
       {catalog === null ? (
@@ -340,5 +346,16 @@ export function ModulesPanel({
         </p>
       )}
     </Card>
+  )
+
+  // WORKSHOP: label + panel as ONE rail child (the wrapper div keeps the Screen stack's spacing
+  // between the pair and its siblings, not between label and card). No label prop → the bare Card,
+  // byte-identical to the pre-WORKSHOP markup.
+  if (sectionLabel == null) return panel
+  return (
+    <div>
+      <SectionLabel>{sectionLabel}</SectionLabel>
+      {panel}
+    </div>
   )
 }

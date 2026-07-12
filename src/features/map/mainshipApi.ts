@@ -246,6 +246,24 @@ export function deriveMainShipStatus(fleet: { status: string } | null): MainShip
   return 'traveling' // 'moving'
 }
 
+// SHIP-POWER §2.5 — thin read wrapper over the LIVE per-ship stats preview (get_my_expedition_preview,
+// 0049 → resolver-swapped 0159). FIRST client caller: until SHIP-POWER no shipped UI read this RPC at
+// all (only the group twin, teamApi). Sends an EMPTY loadout (support craft is deprecated — see
+// MAINSHIP_TRANSITION.md), the NEUTRAL activity 'none' (accepted by the 0122 adapter; no activity-tag
+// warnings folded in) and the EXPLICIT selected/sole main-ship id (p_main_ship_id; null → server
+// sole-ship shim). Returns the RAW jsonb envelope for the PURE parser (shipDossierView's
+// parseShipStatsPreview) to interpret; a transport error collapses to null (→ parsed 'hidden') —
+// normalize-don't-throw, the file's dark-RPC style.
+export async function fetchMyExpeditionPreview(mainShipId?: string | null): Promise<unknown> {
+  const { data, error } = await supabase.rpc('get_my_expedition_preview', {
+    p_loadout: [],
+    p_activity_type: 'none',
+    p_main_ship_id: mainShipId ?? null,
+  })
+  if (error) return null
+  return data
+}
+
 // PHASE 9 / TRADE-FLEET-0C §2.5 — read the current docked-port surface for the EXPLICIT selected/sole main
 // ship (p_main_ship_id; null → server sole-ship shim → behavior-identical while every player has exactly one
 // ship). The player is still derived from auth.uid(); no other input is sent. Errors / pre-deploy collapse to
