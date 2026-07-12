@@ -135,6 +135,12 @@ create table public.hull_build_receipts (
 -- both idempotency probes and owner-scoped lookups (the 0086/0109 comment idiom).
 
 alter table public.hull_build_receipts enable row level security;
+-- Strip the platform DEFAULT PRIVILEGES first (the 0179 haul_receipts posture verbatim): a
+-- Supabase stack's ALTER DEFAULT PRIVILEGES grants ALL on new public tables to anon/authenticated,
+-- which would leave non-SELECT client grants on this table (caught live by the (6) self-assert
+-- below — the CI disposable-stack apply, 2026-07-13). RLS already blocks client writes (no write
+-- policy), the revoke makes the grant surface itself truthful: SELECT-only, authenticated-only.
+revoke all on table public.hull_build_receipts from public, anon, authenticated;   -- strip default grants (0176/0179 posture)
 -- Owner-read only (the 0094/0109 posture verbatim); granted to authenticated, NOT anon. NO insert/
 -- update/delete policy and NO write grant → clients cannot mutate; Production is sole writer.
 create policy "hull_build_receipts_select_own" on public.hull_build_receipts
