@@ -5,6 +5,72 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — C2-2: captain level → stats adapter fold (dark)
+
+**Request.** The CAPXP continuation (plan §C P5, after the 0177 foundation): the level-curve →
+adapter parity delta — `calculate_expedition_stats` scales each assigned captain's stats
+contribution by `(1 + (level-1) × level_bonus)`, byte-inert at level 1 AND while
+`captain_growth_enabled` is dark. C2-3 XP bars + C2-4 the 6→8 slot raise = later slices.
+
+**Work done**
+- **Migration `20260618000180_c2_2_captain_level_fold.sql`** —
+  - **True head found = 0170** (grep-verified: the only create sites are 0044 → 0115 → 0122 → 0170;
+    0171..0179 never re-create it — 0159/0165/0166/0168 only call it). Re-created VERBATIM with the
+    marked `C2-2 (0180)` delta: three added declares (flag + knob read ONCE at entry — never
+    per-captain, so a mid-scan config write can't split one ship's roster across regimes), `i.level`
+    added to the captain-loop join select (additive column), and the ONE hunk where captain stats
+    fold in: `v_lvl_mult := case when v_growth then 1 + (c.level - 1) * v_lvl_bonus else 1 end`,
+    with ` * v_lvl_mult` appended to the EIGHT stats_json contribution reads (7 accumulators +
+    speed_mult_bonus). Extract-and-diff verified: the declares + the join column + the hunk only.
+    Stated honestly in the header: unlike 0170's add-only shape, a multiplicative scale must MODIFY
+    those eight lines.
+  - **THE DOUBLE GATE:** while dark the multiplier is exactly 1.0 regardless of level; at level 1 it
+    is exactly 1.0 regardless of the flag — so the delta is DOUBLY inert today (flag committed
+    false AND every captain level 1 — the accrual, its sole writer, has only ever run dark). Knob
+    floored at 0 and level ≥ 1 by the 0177 CHECK → the multiplier is never < 1 (leveling is never a
+    nerf; the tradeoff CASE lines — attention/speed penalty — stay level-flat: growth is never a
+    stealth cost raise).
+  - **Knob `captain_level_bonus_per_level` seeded 0.10 [D owner-tunable]** — with the 0177 curve
+    (level = 1 + floor(sqrt(xp/100))): level 2 (100 xp) = +10% on the captain-contributed portion
+    (a level-2 gunnery_veteran contributes 4.4 attack instead of 4), level 3 = +20%, …
+  - **Self-asserts:** knob at 0.10; flag still dark + zero captains above level 1 at migration time
+    (a lit-early deploy fails closed, forcing a human decision); prosrc pins — the gated-multiplier
+    token verbatim, `captain_level_bonus_per_level` read, `i.level` joined, EXACTLY 8 `* v_lvl_mult`
+    scale sites (fewer = a dropped stat, more = a leak onto another pipeline), tradeoffs unscaled;
+    adapter ACL still server-only. (No adapter spot-call in the migration — no fixture exists there;
+    the prosrc pins + the CI proof carry the behavior.)
+- **Proof: `TEAMCMD_PASS_CAPLEVEL` block** appended to `scripts/team-command-proof.sql` (after
+  CAPXP, consuming its outcome AS the level-2 fixture — capa+capb at exactly level 2 on c1, capd at
+  level 1 on the grantless b1, flag lit in-txn). All expectations derived INDEPENDENTLY from
+  catalog/instance joins (the TEAMSTATS style): (1) LIT + LEVEL 2 — c1's combat_power exceeds the
+  level-1 baseline by exactly `round(knob × Σ(level-1)×attack, 2)` (23 → 23.8 at the seeds) with
+  every other key byte-identical (isolation pin); (2) FLAG OFF + LEVEL 2 — the level-1 world
+  exactly (combat_power = hull attack + Σ captain attack, absolute); (3) FLAG ON + LEVEL 1 — b1
+  byte-identical lit or dark. Plus a real-bonus guard (Σ(level-1)×attack must be > 0 — a 0=0
+  compare can only false-green) and the committed-knob-untouched pin.
+  - **Reconciliation (the C2-2 READ check):** the CAPXP block flips the flag and raises captains to
+    level 2, but NO existing block calls the adapter after that point (grep: zero
+    adapter/preview/totals calls past the TEAMSETTLE block; the flag flip postdates every
+    adapter-calling block) — so every existing pin runs dark at level 1, where the 0180 multiplier
+    is exactly 1.0 twice over, and stays byte-valid with NO fixture surgery.
+- **`scripts/team-command-proof.sh`:** `TEAMCMD_PASS_CAPLEVEL` marker + 7 CAPLEVEL selftest greps
+  in assert form. Mutation-tested: each of the 7 pins individually gutted → selftest FAILs; restored
+  → green.
+
+**Verify.** team-command selftest green; all other proof selftests green
+(osn-hub1a-production-catalog-verify selftest fails identically on the clean tree — pre-existing,
+environment-dependent, unrelated); `tsc -b` + `vite build` green (untouched). Real-chain run =
+`team-command-proof.yml` disposable-matrix on the `slice-c2-2` push (no local Docker/psql — the
+established norm).
+
+**Open follow-ups**
+- C2-3: XP bars in TeamMemberCaptains (reads `captain_instances.xp/level` — first client consumer).
+- C2-4: the 6→8 captain-slot raise (separate additive migration, lit-time decision).
+- ACT-CAPXP flip still owns the dark-backlog decision (0177 header) — and now also lights the
+  level fold: flipping `captain_growth_enabled` activates BOTH accrual and the adapter bonus.
+
+---
+
 ## 2026-07-12 — HAUL-2: the contract accept/deliver RPCs (dark)
 
 **Request.** The HAUL continuation (plan §C P2, after the 0176 foundation): the accept/deliver

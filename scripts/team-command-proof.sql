@@ -1,5 +1,6 @@
 -- TEAM-COMMAND B-VERIFY — disposable REAL-CHAIN proof of the DARK team send/stop/combat surface (slices
--- 0160..0169 + the 0170/0171 activation-prep migrations + the 0177 captain-XP foundation) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
+-- 0160..0169 + the 0170/0171 activation-prep migrations + the 0177 captain-XP foundation + the
+-- 0180 C2-2 captain level fold) in a throwaway local Supabase. Fixture users carry the 'tcmd.' email prefix. The ENTIRE
 -- proof runs inside ONE transaction that ROLLBACKs — it persists NO ship, group, fleet, flag flip, or
 -- fixture user. No production access. No COMMIT anywhere.
 --
@@ -101,6 +102,17 @@
 --            shape) is consumed as a NULL-captain sentinel, never credited; zero grants left
 --            unconsumed; the curve recomputed independently over every instance; and a RE-RUN
 --            consumes/credits/awards ZERO (the anti-join exactly-once pin).
+--   CAPLEVEL (C2-2, 0180) — the captain level → adapter fold, consuming the CAPXP outcome AS the
+--            level-2 fixture (capa+capb level 2 on c1, capd level 1 on the grantless b1, flag lit
+--            in-txn): the committed 0180 knob seed (0.10) untouched; LIT + LEVEL 2 — c1's
+--            combat_power exceeds the level-1 baseline by EXACTLY round(knob × Σ(level-1)×attack,
+--            2) (23 → 23.8 at the seeds) with every non-combat_power key byte-identical (the fold
+--            scales captain stats_json contributions only — tradeoffs level-flat); FLAG OFF +
+--            LEVEL 2 — the level-1 world exactly (combat_power = hull attack + Σ captain attack,
+--            derived independently from the catalog joins); FLAG ON + LEVEL 1 — b1 byte-identical
+--            lit or dark. The DOUBLE inertness, both arms pinned. Reconciliation (checked): no
+--            earlier block calls the adapter after the CAPXP flip/accrual, so every existing
+--            adapter pin runs dark at level 1 and stays byte-valid unreconciled.
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -1740,6 +1752,98 @@ begin
   raise notice 'TEAMCMD_PASS_CAPXP ok: committed seeds dark (flag false, knob 10); additive defaults; dark accrue = clean no-op with grants present; lit accrue credits the 3 currently-assigned manifest captains exactly knob×1 grant each (xp 100 → level exactly 2 at the boundary), per-(grant, captain) ledger + 1 orphan sentinel, zero grants unconsumed; grantless-ship + unassigned captains untouched; curve recomputed clean over every instance; re-run = all-zero envelope, no double count';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once)' as result;
+-- ════════ BLOCK CAPLEVEL (C2-2, 0180): the captain level fold — exact lit bonus + DOUBLE inertness ════════
+-- Consumes the CAPXP outcome AS the level-2 fixture: capa+capb (gunnery_veteran, attack 4 each)
+-- sit on c1 at EXACTLY level 2 (the 100-xp boundary), capd sits on the grantless b1 at level 1,
+-- and captain_growth_enabled is TRUE in-txn (the flip above CAPXP). RECONCILIATION (checked at
+-- C2-2 time): NO earlier block calls the adapter after that flip or after the accrual moved any
+-- level — every adapter-pinned block (HULLSTATS/CAPTAINS/TEAMSTATS/TEAMHUNT/…) runs dark at level
+-- 1, where the 0180 multiplier is exactly 1.0 twice over, so every existing pin stays byte-valid
+-- unreconciled. This block pins the delta itself, all expectations derived INDEPENDENTLY from the
+-- catalog/instance joins (the TEAMSTATS independent-sum style — never the adapter's own math):
+--   (1) LIT + LEVEL 2: c1's combat_power EXCEEDS the level-1 baseline by exactly
+--       round(knob × Σ(level-1)×attack, 2) — with hull 15 + 2×4 captains at knob 0.10: 23 → 23.8 —
+--       and NO other stat key moves (gunnery seeds carry attack only; tradeoffs stay level-flat);
+--   (2) FLAG OFF + LEVEL 2 → the baseline EXACTLY: dark c1 answers hull attack + Σ captain attack
+--       (the level-1 world absolute — the first inertness arm);
+--   (3) FLAG ON + LEVEL 1 → the baseline EXACTLY: b1 (single level-1 captain) answers
+--       byte-identically lit or dark (the second inertness arm).
+-- Flag toggles are in-txn only (rolled back); the committed knob seed is pinned untouched first.
+do $$
+declare s_on jsonb; s_off jsonb; b_on jsonb; b_off jsonb; n int;
+  uC uuid := (select v from tcmd where k='uC'); uB uuid := (select v from tcmd where k='uB');
+  c1 uuid := (select v from tcmd where k='c1'); b1 uuid := (select v from tcmd where k='b1');
+  v_knob numeric; v_hull numeric; v_cap numeric; v_lvl numeric;
+begin
+  -- committed seed (nothing in-txn has touched this key): the 0180 knob at 0.10.
+  if (select value #>> '{}' from public.game_config where key = 'captain_level_bonus_per_level') is distinct from '0.10' then
+    raise exception 'CAPLEVEL FAIL: committed captain_level_bonus_per_level is % (want ''0.10'' — the 0180 knob seed)',
+      (select value #>> '{}' from public.game_config where key = 'captain_level_bonus_per_level'); end if;
+  v_knob := public.cfg_num('captain_level_bonus_per_level');
+
+  -- preconditions: the CAPXP flip left the flag LIT in-txn; the fixture levels are exactly as the
+  -- accrual left them (2 level-2 captains on c1; 1 level-1 captain on the grantless b1); c1 is
+  -- module-free so its combat_power decomposes to hull + captains exactly.
+  if not public.cfg_bool('captain_growth_enabled') then
+    raise exception 'CAPLEVEL FAIL precondition: captain_growth_enabled is not lit in-txn (the CAPXP flip)'; end if;
+  select count(*) into n from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    where sca.main_ship_id = c1 and ci.level = 2;
+  if n <> 2 then raise exception 'CAPLEVEL FAIL precondition: % level-2 captain(s) on c1 (want 2 — the CAPXP boundary fixture)', n; end if;
+  select count(*) into n from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    where sca.main_ship_id = b1 and ci.level = 1;
+  if n <> 1 then raise exception 'CAPLEVEL FAIL precondition: % captain(s) (want 1 level-1 captain on the grantless b1)', n; end if;
+  select count(*) into n from public.ship_module_fittings where main_ship_id = c1;
+  if n <> 0 then raise exception 'CAPLEVEL FAIL precondition: c1 carries % fitted module(s) (want 0 — the decomposition needs a module-free ship)', n; end if;
+
+  -- THE INDEPENDENT EXPECTATIONS (catalog/instance joins, never the adapter): c1's hull attack,
+  -- Σ captain attack, and the level-weighted Σ(level-1)×attack the C2-2 bonus applies to.
+  select coalesce((h.base_stats_json->>'attack')::numeric, 0) into v_hull
+    from public.main_ship_instances i
+    join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
+    where i.main_ship_id = c1;
+  select coalesce(sum(coalesce((t.stats_json->>'attack')::numeric, 0)), 0),
+         coalesce(sum((ci.level - 1) * coalesce((t.stats_json->>'attack')::numeric, 0)), 0)
+    into v_cap, v_lvl
+    from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    join public.captain_types t on t.id = ci.captain_type_id
+    where sca.main_ship_id = c1;
+  if v_lvl <= 0 then
+    raise exception 'CAPLEVEL FAIL precondition: Σ(level-1)×attack on c1 is % — the bonus under test must be REAL (a 0=0 compare can only false-green)', v_lvl; end if;
+
+  -- (1) LIT + LEVEL 2, and (3a) LIT + LEVEL 1 — capture both while the flag is on.
+  s_on := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'none');
+  b_on := public.calculate_expedition_stats(uB, b1, '[]'::jsonb, 'none');
+
+  -- (2) FLAG OFF + LEVEL 2 → the level-1 baseline EXACTLY (in-txn flip; restored below).
+  update public.game_config set value='false'::jsonb where key='captain_growth_enabled';
+  s_off := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'none');
+  b_off := public.calculate_expedition_stats(uB, b1, '[]'::jsonb, 'none');
+  if (s_off->>'combat_power')::numeric is distinct from v_hull + v_cap then
+    raise exception 'CAPLEVEL FAIL: flag off + level 2 diverged from the level-1 world: combat_power % (want hull attack % + Σ captain attack % exactly)',
+      s_off->>'combat_power', v_hull, v_cap; end if;
+
+  -- the EXACT BONUS: lit exceeds the baseline by round(knob × Σ(level-1)×attack, 2) — 23 → 23.8
+  -- at the seeds — and by NOTHING else (every non-combat_power key byte-identical: gunnery seeds
+  -- carry attack only, and the fold never touches tradeoffs).
+  if (s_on->>'combat_power')::numeric is distinct from (s_off->>'combat_power')::numeric + round(v_knob * v_lvl, 2) then
+    raise exception 'CAPLEVEL FAIL: lit combat_power % (want baseline % + knob × Σ(level-1)×attack = % — the exact C2-2 bonus)',
+      s_on->>'combat_power', s_off->>'combat_power', (s_off->>'combat_power')::numeric + round(v_knob * v_lvl, 2); end if;
+  if (s_on - 'combat_power') is distinct from (s_off - 'combat_power') then
+    raise exception 'CAPLEVEL FAIL: the level fold moved a non-captain-stat key: lit % vs dark %', s_on, s_off; end if;
+
+  -- (3) FLAG ON + LEVEL 1 → the baseline EXACTLY: b1 byte-identical lit or dark (whole envelope).
+  if b_on is distinct from b_off then
+    raise exception 'CAPLEVEL FAIL: flag on + level 1 diverged from its dark baseline (the level-1 world must be byte-identical lit or dark): % vs %', b_on, b_off; end if;
+
+  -- restore the in-txn state this block found (the CAPXP flip; ROLLBACK reverts everything anyway).
+  update public.game_config set value='true'::jsonb where key='captain_growth_enabled';
+
+  raise notice 'TEAMCMD_PASS_CAPLEVEL ok: committed knob 0.10 untouched; lit level-2 c1 exceeds the level-1 baseline by exactly round(knob × Σ(level-1)×attack, 2) (23 → 23.8 at the seeds) with every other key byte-identical; flag off + level 2 = hull + Σ captain attack exactly; flag on + level 1 = byte-identical to dark — the DOUBLE inertness, both arms pinned';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
