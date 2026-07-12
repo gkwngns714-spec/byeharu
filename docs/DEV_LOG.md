@@ -5,6 +5,112 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — SHIPYARD-1: the hull-build ORDER command (mig 0188, dark)
+
+**Request.** The SHIPYARD charter, slice 1: `start_hull_build` on the REUSED M4.5 `build_orders`
+serial queue — validate recipe + progression gates + balances, spend ingredients (`inventory_spend`)
++ credits (`wallet_debit`) under lock, enqueue the build, receipt it. ORDER side ONLY — SHIPYARD-2
+owns completion → delivery (the commission-core generalization). Dark behind `shipyard_enabled`.
+
+**Work done**
+- **True-head grounding (grep-verified before writing a line):** every `build_orders` queue
+  function (`train_units`/`production_create_order`/`production_complete_order`/
+  `production_start_next`/`process_build_queue`/`cancel_build_order`) is created ONLY at
+  0036/0038 → the 0038 bodies are the live heads; `inventory_spend` head = 0039 (sole creator);
+  `wallet_debit`/`wallet_credit` head = 0093 (re-created over 0089/0090); the commission core
+  `port_entry_commission_build` head = 0184 (over 0080) — hardcodes `'starter_frigate'`,
+  SHIPYARD-2 territory, untouched; `captain_instances.level` = the 0177 additive column.
+  **ZERO live functions touched this slice** — the clean shape the charter seam allows.
+- **THE SEAM (load-bearing):** a hull order lands `'waiting'` with `unit_type_id` NULL and is
+  INVISIBLE to the 0038 engine by construction — `production_start_next` picks through
+  `join unit_types ut on ut.id = bo.unit_type_id` (a NULL-unit row never joins → never promoted,
+  never gets `complete_at`; unit training unaffected) and `process_build_queue` loops
+  `status='active'` only (a never-promoted row can never hit its unit-shaped `base_merge_units`
+  delivery). Both prosrc facts PINNED by the 0188 self-assert at apply time. Honest-dark: no hull
+  order can exist in prod while the flag is false, and ACT-SHIPYARD requires SHIPYARD-2 (which
+  ships the engine's hull arm: activation with recipe `build_seconds`, completion → commission
+  delivery, AND hull-aware `cancel_build_order` refunds — today's cancel would eat a hull order's
+  credits/items at metal_spent=0; recorded in the plan + SYSTEM_BOUNDARIES).
+- **mig `20260618000188_shipyard1_order_rpc.sql`** (0186/0187 are claimed by in-flight slices) —
+  (a) ADDITIVE `build_orders` generalization: `unit_type_id` + `base_id` drop NOT NULL, new
+  `hull_type_id` FK → `hull_build_recipes` (the STRICT FK: only recipe-carrying hulls orderable —
+  T0 `starter_frigate` is deliberately recipe-less and can never be enqueued), new `credits_spent`
+  (≥ 0, default 0), `build_orders_kind_coherent` CHECK (unit+base+no-hull XOR hull+no-unit+no-base;
+  validates every legacy row at apply); (b) `hull_build_receipts` — the 0109/0126 per-player
+  idempotency ledger point-for-point (unique (player_id, request_id) uuid, owner-read RLS, no
+  client write path, replay-verbatim); (c) private `production_start_hull_build` (SECURITY DEFINER,
+  service_role-only): gate-FIRST reject-before-any-read → request → per-player advisory lock
+  (`hull_build` domain, before the replay check) → replay → catalog (unknown_hull vs no_recipe —
+  the 0109 distinct-truthful posture) → the 0185 progression gates (required hull owned
+  non-destroyed / any owned captain at `required_captain_level` — both dormant-NULL on T1) → the
+  SHARED `max_build_orders` cap (waiting+active, the train_units predicate verbatim — one queue,
+  one cap) → ingredient pre-check (friendly envelope before ANY write; integral-qty hard-abort) →
+  `wallet_debit` (first write; false → `insufficient_credits`, nothing else spent — the 0089
+  posture) → `inventory_spend` per ingredient (exceptions roll back debit+spends+everything —
+  all-or-nothing, failure writes NO receipt) → the `'waiting'` hull-row insert (quantity 1, NO
+  timestamps — the M4.5 serial law) → receipt. Deterministic (no random(); `order by item_id` —
+  the 0041 law); (d) public `start_hull_build(request_id, hull_type)` wrapper (0109 idiom:
+  anti-probe gate — dark answer identical for real vs garbage hulls — + reason→code/message map
+  with per-reason context pass-through); (e) two-layer ACL (wrapper authenticated-only; writer
+  off-client); (f) self-asserts: flag dark, schema shape exact, engine-invisibility prosrc pins,
+  gate-first token-order pin over every read surface, determinism pin, ACL pins, receipts RLS
+  posture, integral recipe quantities, the 0185 T1 catalog re-pinned intact.
+- **Proof `scripts/shipyard-proof.{sql,sh}` + `.github/workflows/shipyard-proof.yml`** (standalone
+  — `team-command-proof` is contended by two in-flight slices; modeled on `trade-v1-proof.yml`,
+  REUSING `scripts/lib/trade-proof-lib.sh`): ONE rolled-back txn, flag raised in-txn only via the
+  raw-update idiom, provisioning via the REAL leaves (`reward_grant` items,
+  `captains_mint_instance` the gate captain, wallet funded by the sanctioned tm1 insert).
+  P0 dark gate (wrapper envelopes BYTE-IDENTICAL for real vs garbage hull — no existence oracle;
+  private writer dark on its own authority; zero writes) · P1 exact-spend order (hauler: wallet
+  500→100 exact, all 5 ingredients →0 exact, ONE waiting hull-shaped row with no timestamps, ONE
+  receipt with the 5-element bill) · P2 replay (same request_id → same order/receipt verbatim,
+  flagged, no double spend) · P3 shortfalls (blueprint_fragment 0/2 → `insufficient_items` exact;
+  credits 100<400 → `insufficient_credits` with ingredients+wallet untouched — the all-or-nothing
+  ordering) · P4 gates on an in-txn synthetic T2 fixture (unknown_hull/no_recipe truthful;
+  hull-prereq reject; captain-level reject on BOTH arms — no captain, then a REAL level-1 captain
+  vs required 2; boundary pass queues the 2nd order) · P5 self-prereq impossibility
+  (`hull_recipe_no_self_prereq` check_violation) · P6 the engine seam for real
+  (`production_start_next` + `process_build_queue` invoked: hull rows stay waiting, no timestamps,
+  NO ship delivered; bare/hybrid rows check-rejected; shared cap `queue_full` at knob 2, zero
+  writes). Selftest (hardened, the 0185-era pattern): self-rolling-back + flag-in-txn +
+  `set_game_config('shipyard_enabled'…)` evasion catch + sole-writer bans (no direct
+  player_inventory/captain_instances/hull_build_receipts inserts, no direct wallet/inventory
+  updates) + exact-economics pins + full envelope/oracle/replay/seam token coverage.
+- **Verification:** selftest GREEN; 4 mutation guttings each caught then restored byte-identical
+  (PASS-marker gut → caught; flag-flip idiom swapped to set_game_config → caught; replay pin gut →
+  caught; trailing COMMIT → caught). No Docker on this machine — the real-chain matrix runs in the
+  new `shipyard-proof.yml` on push (selftest job + disposable local Supabase job). No client files
+  touched (server-only slice — tsc/vite n/a).
+- **Docs synced (the §E same-PR law):** SYSTEM_BOUNDARIES — `build_orders` row rewritten (two row
+  kinds, the writer, the seam + cancel note), NEW `hull_build_receipts` row, the two 0185 recipe
+  rows' "NOTHING reads it today" replaced (0188 is their first reader), Production §2 contract
+  gains the two-layer command + the wallet/engine forbidden columns; FULL_CAPACITY_PLAN — P6
+  SHIPYARD-1 → shipped with the SHIPYARD-2 seam items, §D trailing note updated.
+
+**Review fixes (hostile review 2026-07-13 — approved, one HIGH fixed in-slice while 0188 unmerged)**
+- **H1 — receipts vs the 0047 reaper (REAL BUG, fixed):** `maintenance_cleanup_runtime_data`
+  (0047 §10, live cron) deletes terminal `build_orders` >30d; the original
+  `order_id … on delete cascade` would have cascade-deleted the receipt — silently expiring the
+  replay guarantee (a day-32 stale retry = a SECOND full-price order) and destroying the audit
+  bill; the justifying "no delete path exists" comment was false (the 0109/0126 cascade precedent
+  FKs durable property tables, not reaped runtime rows). Fixed: `order_id` now nullable with FK
+  **ON DELETE SET NULL** — receipts are the durable idempotency+audit ledger and outlive the reap;
+  replay reads ONLY the receipt row (verified: the writer's step 4 never selects through the FK);
+  comment rewritten to the true lifetime story; new self-assert pins the FK confdeltype ('n') +
+  the player_id cascade ('c'); NEW proof block **P7 `SHIPYARD_PASS_RETENTION`** (8th marker) —
+  flips the P1 order terminal, backdates it 31d, runs the REAL reaper wet
+  (`maintenance_cleanup_runtime_data(false, 5000)`), asserts the order purged + the receipt
+  survived (order_id NULL, bill intact) + the same-request_id stale retry replays the original
+  envelope verbatim (order_id null) with no re-debit / no second order / no second receipt;
+  selftest pins added (reaper-wet-run + survival + no-second-order tokens). Docs: the lifetime
+  line added to the SYSTEM_BOUNDARIES `hull_build_receipts` row; the plan's P6 seam list marks
+  this risk RESOLVED IN-SLICE (unlike cancel-refunds/delivery, which stay pre-flip requirements).
+- **N1:** the gate-first self-assert's anchor now sits on the actual `cfg_bool('shipyard_enabled'`
+  call token, not the first comment mention. **N2:** the no-random() determinism assert now also
+  covers the wrapper's prosrc. (N3–N5 skipped per review.)
+- Re-verified: selftest GREEN with 8 markers; retention-pin mutation gutting FAILS then restored
+  byte-identical.
+
 ## 2026-07-12 — SOUL-0: the per-ship traits foundation (mig 0186, doubly dark)
 
 **Request.** The SHIP-SOUL packet, slice 0 (owner directive: "each ship has its own ORIGINAL
