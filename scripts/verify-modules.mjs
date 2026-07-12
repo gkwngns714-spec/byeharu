@@ -1,4 +1,6 @@
 // MODULES-P13 verification — DARK POSTURE + contracts (slices A–F).
+// NOTE: catalog contract is 0183-INCLUSIVE (6 module types / 18 recipe rows) — this verifier
+// FAILS against prod until migration 0183 is applied (expected, not a regression).
 //   node scripts/verify-modules.mjs
 //
 // Proves, with a throwaway authenticated user, that the whole module-crafting surface ships dark
@@ -7,8 +9,9 @@
 //     wrapper both reject BEFORE any read while module_crafting_enabled='false')
 //   • get_my_module_instances → {ok:false, reason:'module_crafting_disabled'} (0110 read envelope)
 //   • module_types / module_recipe_ingredients are PUBLIC-READ catalogs (0107 — the item_types
-//     posture, deliberately inverted from mining's hidden fields): the 4 seeded archetypes and
-//     their 12 recipe rows read back exactly, every qty > 0, every ingredient id present in
+//     posture, deliberately inverted from mining's hidden fields): the 6 seeded archetypes
+//     (0107's four + 0183's MOD2-1 shield_lattice/mining_rig_extension) and their 18 recipe rows
+//     read back exactly, every qty > 0, every ingredient id present in
 //     item_types (the client-checkable form of FK validity)
 //   • module_instances / module_craft_receipts are own-row-only (a fresh user sees zero rows) and
 //     have NO client write path (inserts denied — to the catalogs too)
@@ -51,18 +54,23 @@ const newUser = createUserFactory({ url, anonKey, emailPrefix: 'modtest', create
 // and strictly read-only (this script owns no set_game_config path at all).
 const cfgVal = async (client, k) => (await client.from('game_config').select('value').eq('key', k).maybeSingle()).data?.value
 
-// The 0107 seed contract, asserted verbatim (public Reference/Config — reading it IS the posture).
+// The 0107 + 0183 (MOD2-1) seed contract, asserted verbatim (public Reference/Config — reading
+// it IS the posture).
 const EXPECTED_TYPES = {
   autocannon_battery: 'weapon',
   vector_thruster_kit: 'engine',
   expanded_cargo_lattice: 'cargo',
   deep_scan_sensor_array: 'sensor',
+  shield_lattice: 'defense',
+  mining_rig_extension: 'mining',
 }
 const EXPECTED_RECIPES = {
   autocannon_battery: { weapon_parts: 4, pirate_alloy: 2, scrap: 6 },
   vector_thruster_kit: { engine_parts: 4, crystal: 2, scrap: 4 },
   expanded_cargo_lattice: { scrap: 10, pirate_alloy: 3, repair_parts: 2 },
   deep_scan_sensor_array: { scan_data: 5, anomaly_shard: 2, blueprint_fragment: 1 },
+  shield_lattice: { repair_parts: 4, pirate_alloy: 3, scrap: 8 },
+  mining_rig_extension: { crystal: 2, ore: 6, scrap: 4 },
 }
 
 async function main() {
@@ -92,9 +100,9 @@ async function main() {
   {
     const { data, error } = await me.from('module_types').select('id, slot_type')
     const got = Object.fromEntries((data ?? []).map((r) => [r.id, r.slot_type]))
-    !error && (data ?? []).length === 4 &&
+    !error && (data ?? []).length === 6 &&
     JSON.stringify(Object.entries(got).sort()) === JSON.stringify(Object.entries(EXPECTED_TYPES).sort())
-      ? ok('module_types = the 4 seeded archetypes (weapon/engine/cargo/sensor)')
+      ? ok('module_types = the 6 seeded archetypes (weapon/engine/cargo/sensor + 0183 defense/mining)')
       : bad('module_types seeds', error?.message ?? JSON.stringify(got))
   }
   {
@@ -102,8 +110,8 @@ async function main() {
     if (error) bad('module_recipe_ingredients read', error.message)
     else {
       const rows = data ?? []
-      rows.length === 12
-        ? ok('module_recipe_ingredients = 12 rows')
+      rows.length === 18
+        ? ok('module_recipe_ingredients = 18 rows')
         : bad('recipe row count', `${rows.length} rows`)
       rows.every((r) => r.qty > 0)
         ? ok('every recipe qty > 0')
@@ -113,7 +121,7 @@ async function main() {
       Object.keys({ ...EXPECTED_RECIPES, ...got }).every(
         (t) => JSON.stringify(Object.entries(EXPECTED_RECIPES[t] ?? {}).sort()) === JSON.stringify(Object.entries(got[t] ?? {}).sort()),
       )
-        ? ok('every recipe matches the 0107 seed contract exactly')
+        ? ok('every recipe matches the 0107/0183 seed contract exactly')
         : bad('recipe contents', JSON.stringify(got))
       // FK validity, client-checkable form: every ingredient id exists in the public item catalog.
       const itemIds = new Set(((await me.from('item_types').select('item_id')).data ?? []).map((r) => r.item_id))

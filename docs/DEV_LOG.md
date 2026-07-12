@@ -5,6 +5,84 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — MOD2-1: the shield line + mining rig module seeds (mig 0183, dark)
+
+**Request.** Plan §C P7 queue #11: seed `shield_lattice` (the defense line — the packet-F2 fix:
+`survival` is hull-only 10 today, the defense curve near-degenerate) + `mining_rig_extension`, a
+PURE catalog seed — new `module_types` + recipes, ZERO engine edits; recipes from live drops only
+(the F4 lesson); prove the stat keys against the adapter's ACTUAL reads.
+
+**Work done**
+- **Stat-key verification (the load-bearing check):** the adapter's TRUE head is `0180`
+  (creates at 0044→0115→0122→0170→0180, grep-verified); its module loop reads stats_json keys
+  `attack/defense/repair/cargo/scan/mining/evasion/speed_mult_bonus` coalesce-0 into the shared
+  accumulators — `defense` → `a_survival` → output `survival`; `mining` → `a_mining` →
+  `mining_yield`. So the shield seeds **`{"defense": 12}`** (input vocabulary — NOT "survival",
+  which is the output key; hull base_stats_json uses the same {attack, defense} form, 0170) and
+  the rig seeds **`{"mining": 8}`**. Migration self-asserts pin both: every seeded key must
+  appear in the deployed prosrc in the exact `(m.stats_json->>'<key>')` read form, plus the
+  `survival`/`mining_yield` output keys — a typo'd key (= a dead module) cannot land.
+- **mig `20260618000183_mod2_shield_line.sql`** — idempotent seeds on the real unique keys
+  (module_types PK id; module_recipe_ingredients PK (module_type_id, item_id)); slot_type
+  archetypes `defense`/`mining` are NEW and additive (0107 (b) posture); both take the adapter
+  tradeoff CASE's `else 0` arm — the engine posture ("the cost is the slot"), deliberate: taxing
+  defense with attention would require an adapter re-create, out of a seed slice's scope.
+  Numbers **[D owner-tunable]**: defense 12 = the plan's number (band: slot-1 autocannon
+  attack 10; hull defense 10 → the shield more than doubles the curve input); mining 8 (band:
+  mining_drone capacity-2 → mining 8; the shipped slot-1 sensor precedent seeds exactly the
+  cap-2 drone's value — deep_scan scan 8 = survey_drone's 8).
+- **Recipes + grounding (live drops only, self-asserted):** shield = repair_parts 4 +
+  pirate_alloy 3 + scrap 8 (plan verbatim; pirate_loot_for_wave head 0171: scrap w≥1, alloy w≥3,
+  repair_parts **w≥10** — the deep-run gate is INTENDED: the shield is a mid-game unlock, earned
+  where defense matters (packet §1.1: w10+ ≈ a 4-ship kitted team's farm depth), precedent
+  expanded_cargo_lattice's repair_parts 2). Rig = crystal 2 + ore 6 + scrap 4 [D] — crystal/ore
+  are mining-field drops (0103 bundles: ore in all 5 fields at 2–3, crystal in 3 of 5 at 1–2):
+  the cross-activity mine-to-mine-better loop; magnitudes match the thruster's crystal 2 /
+  scrap 4. Self-asserts query the REAL sources (loot prosrc tokens; field bundles at qty > 0) —
+  F4 is enforced, not just documented. HONESTY NOTE: `mining_yield` has no engine consumer yet
+  (0103: weighted/depleting yields are a later additive change) — the rig's stat surfaces in
+  previews/group totals until then; a stat gap, not an F4 item gap.
+- **Proof (judged: the team proof IS the right home — fixture players, funded wallets, the real
+  reward_grant path, and the adapter already under exact pins there; a standalone modules proof
+  would re-build all of that for one block):** new `TEAMCMD_PASS_MOD2` block in
+  `scripts/team-command-proof.{sql,sh}` — fresh fixture user (free first commission →
+  canonically docked = settled-SAFE for fitting 0114; captain/module-free so the baseline
+  decomposes to hull defense exactly), both module gates asserted COMMITTED-dark then flipped
+  in-txn only; catalog + recipes pinned verbatim; ingredients granted at EXACTLY the recipe
+  quantities via the real `reward_grant` sole writer; `craft_module` spends the exact price to
+  zero (the craftability math: the listed items ARE the entire price), a second craft →
+  `insufficient_items`, replay verbatim with ONE minted instance; `fit_module_to_ship` →
+  adapter `survival` = baseline **+12 exactly** (hull 10 → 22 — the defense stat's FIRST
+  end-to-end pin) and `mining_yield` **+8 exactly**, with the minus-key isolation compare
+  (nothing else moves but module_slots_used 1 → 2). Selftest greps added in assert form +
+  sole-writer negative greps (no direct writes to any Modules/Fitting/Inventory/Reward table
+  anywhere in the proof); post-run honesty checks extended to both module flags. Mutation-tested:
+  6 deliberate guttings (delta values, flag flip, marker, boundary assert, a smuggled direct
+  module-table write) each fail the selftest; restored green.
+- **Verifier contracts extended (they pin exact catalog counts):** `verify-modules.mjs` 4→6
+  types / 12→18 recipe rows + both recipes; `verify-fitting.mjs` EXPECTED_FITTING_CATALOG + the
+  two new (slot_cost, stats) rows. Docs: FULL_CAPACITY_PLAN P7 + queue row 11 → shipped (dark);
+  MOD2-2 Mk-II remains queued.
+
+**Balance note — the survival curve (what +12 does to the packet's enemy-damage math).**
+Incoming damage rides the 0023 curve (combat_per_unit_and_pacing) `enemy_attack × 100/(100+survival) × variance`; survival is
+hull-only 10 today, so every ship eats ×0.909 of raw enemy attack. One shield (10 → 22) moves the
+factor to ×0.820 — **−9.8% incoming damage everywhere**. At Snare (bd 10 → 12.5 raw @ danger 1)
+that is ~1.1 hp/tick — real but marginal, and the shield occupies the slot an autocannon
+(+10 attack) would fill, so shields rarely pay at starter zones (slower clears eat the saving).
+At Ember Reach's hidden sites (bd 40/50/60 → 50/62.5/75 raw @ danger 1) the same −9.8% is
+**4.5–6.7 hp/tick**, compounding over long deep-run tick counts where danger growth already
+outruns any fixed team — the shield's value scales with exactly the content its w≥10
+repair_parts recipe is gated behind. A full 3-shield fit reaches survival 46 (×0.685, −24.7%)
+at the price of EVERY attack slot — the tradeoff rides the Σ slot_cost cap, as designed. The
+axis this opens: HULLS2's bulk_hauler (defense 15) and MOD2-2's shield Mk-II now land on a live
+curve instead of a degenerate one.
+
+**Bugs / fixes**
+- _(none — pure additive seeds; the adapter, craft, and fit surfaces are untouched.)_
+
+---
+
 ## 2026-07-12 — ACT-HAUL: the delivery-contracts activation script
 
 **Request.** The HAUL closer (plan §C P2; ROADMAP phase-22): `scripts/activate-haul.{sql,sh}` in the
