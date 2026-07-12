@@ -43,7 +43,11 @@
 # re-derivation of the pure-hash ':soul:' salts on fresh-commissioned fixtures — both the
 # veteran_frame hp_mult arm and the plain arm every run — slot distinctness, exact
 # max_hp = round(base × 1.08), and idempotent-replay immutability; the harness never writes a
-# Ship-Soul table directly, negative-grepped below).
+# Ship-Soul table directly, negative-grepped below)
+# plus the TEAMMAP-1 group-tag block (0187: send_ship_group_expedition re-created from its 0163
+# head with ONE marked hunk tagging the member fleets with the team's group_id — a 2-ship team
+# send tags both fleets = exactly the envelope's sent[] ids with no strays, and the arrival settle
+# docks both members at the port with the informational, display-only tag surviving the settle).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -60,7 +64,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -414,14 +418,30 @@ if [ "$MODE" = "selftest" ]; then
     | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(ship_trait_types|main_ship_traits)\b' \
     && fail "harness directly mutates a Ship-Soul-owned table (sole-writer law violation)" || true
 
-  # ── all seventeen block PASS markers present. ────────────────────────────────────────────────────────
+  # ── TEAMMAP (0187 / TEAMMAP-1) pins, in assert form (a gutted .sql that only mentions them in
+  #    prose cannot false-green): the group-tag hunk assert (member fleets carry the team's
+  #    group_id), the envelope-exactness assert (tagged set = the sent[] fleet ids), the no-strays
+  #    assert, the arrival-dock assert (0153 dock shape), and the tag-survives-the-settle assert
+  #    (the map's docked-team badge read). ─────────────────────────────────────────────────────────
+  grep -qF "(want 2 — the 0187 tag hunk)" "$SQL" \
+    || fail "harness does not ASSERT the 0187 group-tag hunk (member fleets carry group_id)"
+  grep -qF "tagged fleets are not exactly the envelope" "$SQL" \
+    || fail "harness does not ASSERT the tagged set = the envelope's sent[] fleet ids"
+  grep -qF "(want exactly the 2 member fleets — no strays)" "$SQL" \
+    || fail "harness does not ASSERT the no-stray-tags pin"
+  grep -qF "(want 2 — the 0153 dock write)" "$SQL" \
+    || fail "harness does not ASSERT arrival docks both members (0153 stationary/at_location)"
+  grep -qF "(want 2 — the docked-team badge read)" "$SQL" \
+    || fail "harness does not ASSERT the tag survives the settle (present member fleets at the port)"
+
+  # ── all eighteen block PASS markers present. ─────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped)"
   exit 0
 fi
 

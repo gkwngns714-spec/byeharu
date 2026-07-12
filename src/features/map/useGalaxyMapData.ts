@@ -10,6 +10,10 @@ import {
   resolveOwnedShip,
   type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
+import { fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets } from '../command/teamApi'
+import { deriveDockedTeamRollups, type DockedTeamRollup } from '../command/teamRollup'
+import type { GroupRow } from '../command/teamRoster'
+import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 
 // Read-only galaxy-map data. Reuses existing world-map / base / movement fetchers and
 // adds a tiny owner-read of main_ship_instances. NO writes, NO new backend. Static world
@@ -56,6 +60,12 @@ export interface GalaxyMapData {
   // OSN-3 S1: the active coordinate movement for the main ship (polled, read-only). Null unless a
   // future coordinate move exists (no writer in S1, so always null in practice until OSN-3 S3+).
   mainShipSpaceMovement: MainShipSpaceMovement | null
+  // TEAMMAP-0: the owner's teams (the REUSED teamApi groups read — id → name/slot) and the pure
+  // docked-team rollup (live membership × 'present' fleets). Both are gated on the SAME
+  // compile-time constant that mounts every other team surface (TEAM_COMMAND_ENABLED): while it is
+  // false none of the team reads run and both stay empty — the map renders byte-identical to today.
+  teamGroups: GroupRow[]
+  dockedTeamRollups: DockedTeamRollup[]
   refresh: () => Promise<void>
 }
 
@@ -84,6 +94,8 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainShipHeldFleet: null,
   mainShipPresence: null,
   mainShipSpaceMovement: null,
+  teamGroups: [],
+  dockedTeamRollups: [],
 }
 
 export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
@@ -137,6 +149,18 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
       const mainShipSpaceMovement = mainShip
         ? await fetchActiveMainShipSpaceMovement(mainShip.main_ship_id)
         : null
+      // TEAMMAP-0: the team read set — the REUSED owner groups read, the live membership map, and
+      // the docked/present fleets — folded by the PURE rollup. Compile-time gated (the teamApi
+      // mount-gate law: these reads must not run against a DB predating the team migrations).
+      // Poll-cost posture: the groups read goes FIRST; a team-less player (zero groups → zero
+      // possible badges/rollups) skips the membership + present-fleet reads entirely, paying one
+      // extra read per poll instead of three.
+      const teamGroups = TEAM_COMMAND_ENABLED ? await fetchMyShipGroups() : []
+      const [groupMap, presentFleets] =
+        teamGroups.length > 0
+          ? await Promise.all([fetchMyShipGroupMap(), fetchMyPresentShipFleets()])
+          : [{}, []]
+      const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets)
 
       setState({
         loading: false,
@@ -151,6 +175,8 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         mainShipHeldFleet,
         mainShipPresence,
         mainShipSpaceMovement,
+        teamGroups,
+        dockedTeamRollups,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))

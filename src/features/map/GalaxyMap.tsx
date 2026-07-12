@@ -6,6 +6,9 @@ import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './m
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { shipLayer } from './SpaceRouteLine'
+import { teamMarkersLayer } from './teamMarkers'
+import type { GroupRow } from '../command/teamRoster'
+import type { DockedTeamRollup } from '../command/teamRollup'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { useSpaceMoveCommand } from './useSpaceMoveCommand'
 import { useSpaceStopCommand } from './useSpaceStopCommand'
@@ -38,6 +41,8 @@ export function GalaxyMap({
   mainShipSpaceMovement,
   mainshipSendEnabled,
   movements,
+  teamGroups,
+  dockedTeamRollups,
   selectedId,
   onSelect,
   deps,
@@ -49,6 +54,10 @@ export function GalaxyMap({
   mainShipSpaceMovement: MainShipSpaceMovement | null
   mainshipSendEnabled: boolean
   movements: FleetMovement[]
+  // TEAMMAP-2: the owner's teams + the pure docked-team rollup (both empty while TEAM_COMMAND is
+  // dark — the additive team layer then renders nothing and the map is byte-identical to today).
+  teamGroups: GroupRow[]
+  dockedTeamRollups: DockedTeamRollup[]
   selectedId: string | null
   onSelect: (id: string | null) => void
   // Test/integration injection seam; defaults to the real server readiness + movement-flag reads.
@@ -355,6 +364,21 @@ export function GalaxyMap({
                 onSelect={onSelect}
               />
             )
+          })}
+
+          {/* TEAMMAP-2 — the team marker layer, composed by the pure, hook-free `teamMarkersLayer`
+              helper (the shipLayer element-tree convention; the unit tests call the SAME function).
+              ADDITIVE beside the existing layers: in-flight team badges ride the shared movement
+              interpolation at the lead fleet's position (individual dashed lines + dots above stay
+              untouched), and complete docked teams badge their port's marker position. Empty teams
+              (TEAM_COMMAND dark, or no team in flight/docked) render nothing. */}
+          {teamMarkersLayer({
+            movements,
+            groups: teamGroups,
+            rollups: dockedTeamRollups,
+            locations,
+            norm,
+            k: view.k,
           })}
 
           {/* OSN-1 + OSN-3 S6B-ROUTE: the local player's own ship overlay layer, composed by the pure,

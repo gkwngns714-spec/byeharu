@@ -147,6 +147,14 @@
 --            byte-untouched; and a second roll is an idempotent replay (inserted 0, same traits,
 --            max_hp never re-raised). The roll fn is service-only with NO caller in the product
 --            (doubly dark); the harness never writes a Ship-Soul table directly (negative-grepped).
+--   TEAMMAP (TEAMMAP-1, 0187) — the group-tag hunk on send_ship_group_expedition (re-created from
+--            its 0163 head): a 2-ship team send to Slagworks (starter port) tags BOTH member
+--            fleets with the team's group_id — exactly the envelope's sent[] fleet ids, no stray
+--            tags — and settling each arrival through movement_settle_arrival (the SAME
+--            per-movement settle the cron calls) DOCKS both members at the port (0153
+--            stationary/at_location) with the informational tag SURVIVING the settle (the map's
+--            docked-team badge read). Display-only law respected: no routing assertion keys on
+--            the tag. Fresh fixture user (the MOD2 idiom).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -2302,6 +2310,108 @@ begin
   raise notice 'TEAMCMD_PASS_SOUL0 ok: committed flag dark + gate-first reject with 0 rows; 0186 catalog pinned verbatim (8 exact); both rolls land exactly the inline re-derived traits (pure-hash determinism), slots distinct; veteran arm max_hp = round(base × 1.08) with hp scaled, plain arm byte-untouched; second roll = idempotent replay (0 inserts, same traits, stored-roll envelope incl. the real hp_mult, no hp re-raise)';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability)' as result;
+-- ════════ BLOCK TEAMMAP (TEAMMAP-1, 0187): group-send tags member fleets; arrival docks the team ════════
+-- Migration 0187 re-created send_ship_group_expedition (from its TRUE 0163 head) with ONE marked hunk:
+-- after the all-or-nothing member loop succeeds, the just-created member fleets are tagged with the
+-- team's group_id — the 0168 INFORMATIONAL, display-only column (ROUTING NEVER reads it; accordingly
+-- this block makes no routing assertion on the tag either — it pins the tag itself and that the
+-- pre-existing dock settle is untouched by it). Runs on a FRESH fixture user (the MOD2 idiom — the
+-- earlier fixtures sit in deep post-settle shapes):
+--   TAG  — a 2-ship team send to Slagworks (starter port) leaves BOTH member fleets carrying
+--          group_id = the team, the tagged set is exactly the envelope's sent[] fleet ids, and the
+--          owner has NO stray tagged fleet beyond those two.
+--   DOCK — rewinding arrive_at (the sanctioned clock surgery) and settling each movement through
+--          movement_settle_arrival (the SAME per-movement settle the cron calls) DOCKS both members
+--          at the port (0153: status 'stationary' / spatial_state 'at_location'), their fleets
+--          'present' at Slagworks — and the informational tag SURVIVES the settle (the map's
+--          docked-team badge read).
+do $$
+declare r jsonb; n int; uT uuid; t1 uuid; t2 uuid; gT uuid; v_mv uuid;
+  slag uuid := (select v from tcmd where k='slag');
+  v_sent_fleets uuid[];
+begin
+  -- fresh fixture user (the MOD2 idiom): the on-signup triggers auto-create the active Home Base;
+  -- fund the wallet for the additional commission (the same direct owner insert as the funding step
+  -- above — B-verify makes no balance assertion).
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uT;
+  insert into public.player_wallet (player_id, balance) values (uT, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+
+  -- two ships via the REAL commission RPCs, then the ONE sanctioned fixture normalization to legacy
+  -- 'home' (the provisioning idiom verbatim: home pair-shape + retire the 'present' commission
+  -- fleets + complete their presence rows + a created_at stagger for deterministic member order).
+  r := pg_temp.call_as(uT, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL provision first: %', r; end if;
+  select main_ship_id into t1 from public.main_ship_instances where player_id = uT;
+  r := pg_temp.call_as(uT, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'TEAMMAP FAIL provision 2nd: %', r; end if;
+  t2 := (r->>'main_ship_id')::uuid;
+  update public.main_ship_instances
+     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+   where main_ship_id in (t1, t2);
+  update public.fleets
+     set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where main_ship_id in (t1, t2) and status = 'present';
+  update public.location_presence
+     set status = 'completed', updated_at = now()
+   where fleet_id in (select id from public.fleets where main_ship_id in (t1, t2) and status = 'destroyed')
+     and status = 'active';
+  update public.main_ship_instances set created_at = created_at - interval '2 seconds' where main_ship_id = t1;
+  update public.main_ship_instances set created_at = created_at - interval '1 second'  where main_ship_id = t2;
+
+  -- a team of two, via the real RPCs.
+  r := pg_temp.call_as(uT, 'public.upsert_ship_group(1, ''MapWing'')');
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL group create: %', r; end if;
+  gT := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', t1, gT));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL assign t1: %', r; end if;
+  r := pg_temp.call_as(uT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', t2, gT));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL assign t2: %', r; end if;
+
+  -- TAG: group-send to the port; both member fleets carry the informational group_id, the tagged
+  -- set is exactly the envelope's sent[] fleet ids (the hunk updates what the loop just created),
+  -- and the owner has no stray tagged fleet.
+  r := pg_temp.call_as(uT, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gT, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL team send: %', r; end if;
+  if jsonb_array_length(r->'sent') <> 2 then raise exception 'TEAMMAP FAIL: sent length % (want 2)', jsonb_array_length(r->'sent'); end if;
+  select array_agg((e->>'fleet_id')::uuid) into v_sent_fleets from jsonb_array_elements(r->'sent') e;
+  select count(*) into n from public.fleets
+    where main_ship_id in (t1, t2) and status = 'moving' and group_id = gT;
+  if n <> 2 then raise exception 'TEAMMAP FAIL: % member fleets carry group_id = the team (want 2 — the 0187 tag hunk)', n; end if;
+  select count(*) into n from public.fleets where id = any(v_sent_fleets) and group_id = gT;
+  if n <> 2 then raise exception 'TEAMMAP FAIL: tagged fleets are not exactly the envelope''s sent[] ids (% of 2)', n; end if;
+  select count(*) into n from public.fleets where player_id = uT and group_id is not null;
+  if n <> 2 then raise exception 'TEAMMAP FAIL: % tagged fleets for the owner (want exactly the 2 member fleets — no strays)', n; end if;
+
+  -- DOCK: settle both arrivals through the cron's own per-movement settle (clock rewind first — the
+  -- sanctioned surgery; now() is txn-constant so no real interval can elapse). Slagworks is a legal
+  -- dockable port (0065/0066 role + docking service + anchor seeds, revealed in setup), so the 0153
+  -- location branch docks each main ship; the informational tag must survive the settle.
+  for v_mv in
+    select fm.id from public.fleet_movements fm
+      join public.fleets f on f.id = fm.fleet_id
+     where f.main_ship_id in (t1, t2) and fm.status = 'moving'
+  loop
+    update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_mv;
+    r := public.movement_settle_arrival(v_mv);
+    if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+      raise exception 'TEAMMAP FAIL settle: %', r; end if;
+  end loop;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
+  if n <> 2 then raise exception 'TEAMMAP FAIL: % members docked at arrival (want 2 — the 0153 dock write)', n; end if;
+  select count(*) into n from public.fleets
+    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag and group_id = gT;
+  if n <> 2 then raise exception 'TEAMMAP FAIL: % present member fleets at the port still tagged (want 2 — the docked-team badge read)', n; end if;
+
+  raise notice 'TEAMCMD_PASS_TEAMMAP ok: 2-ship team send tags both member fleets with group_id (= the envelope''s sent[] ids, no strays); arrival settles dock both members at the port (stationary/at_location, fleets present at Slagworks) with the informational tag surviving the settle';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
