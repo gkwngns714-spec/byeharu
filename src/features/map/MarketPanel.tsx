@@ -59,7 +59,7 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
     if (!shipId) return
     const [w, l, o] = await Promise.all([getWalletBalance(), getShipCargoLots(shipId), getMarketOffers(shipId)])
     if (!activeRef.current) return
-    setWallet(w)
+    setWallet(typeof w === 'number' ? w : 0) // null/'error' → this panel's prior 0 display
     setLots(l)
     setOffers(o)
     setLoading(false)

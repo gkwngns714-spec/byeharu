@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   deriveMainShipStatus,
+  renameMainShip,
   repairMainShip,
   type MainShipFleet,
   type MainShipView,
@@ -9,6 +10,7 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MapLocation } from '../map/mapTypes'
 import { formatCountdown } from '../../lib/time'
 import { Badge, Button, Card, CardHeader, Meter, Notice, SectionLabel, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
+import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX } from './shipName'
 
 // UI-REBUILD (2b, Ship interior) — THE one ship-status surface. Merges the two former panels
 // (MainShipPreview: card + repair + the only recall · MainShipPanel: derived status + destination
@@ -51,8 +53,40 @@ export function ShipStatusCard({
   const [repairError, setRepairError] = useState<string | null>(null)
   const repairRef = useRef(false)
 
+  // SHIP-IDENTITY — inline rename ("I should be able to rename them, personalize them" — owner).
+  // Same guard idiom as repair: synchronous ref + busy flag; NON-OPTIMISTIC (await RPC → onChanged
+  // refetch — the displayed name is always the server's). The pure mirror (shipNameProblem)
+  // disables Save before a doomed round-trip; the server (rename_main_ship_self, 0184) re-validates
+  // and asserts ownership.
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const renameRef = useRef(false)
+
   const ship = mainShip?.has_ship ? mainShip.ship : undefined
   const hull = mainShip?.hull
+
+  async function doRename() {
+    if (renameRef.current || !ship) return // synchronous double-submit guard
+    const clean = normalizeShipName(nameDraft)
+    if (shipNameProblem(nameDraft) || clean === ship.name) return // Save is disabled for these; belt-and-braces
+    renameRef.current = true
+    setRenameBusy(true)
+    setRenameError(null)
+    try {
+      const res = await renameMainShip(clean, ship.main_ship_id) // §2.5: explicit ship id; server asserts ownership
+      if (res.ok) {
+        await onChanged() // refetch — the new name arrives from the server, never patched locally
+        setRenaming(false)
+      } else {
+        setRenameError(renameReasonMessage(res.reason))
+      }
+    } finally {
+      renameRef.current = false
+      setRenameBusy(false)
+    }
+  }
 
   async function doRepair() {
     if (repairRef.current) return // synchronous double-submit guard
@@ -143,13 +177,79 @@ export function ShipStatusCard({
 
   return (
     <Card tone="accent" data-testid="ship-status-card">
-      {/* 1 · IDENTITY */}
+      {/* 1 · IDENTITY — the ship's own name (renameable), the hull CLASS as the subtitle. */}
       <CardHeader
-        title={ship.name}
+        title={
+          <span className="inline-flex items-baseline gap-2">
+            <span data-testid="mainship-name">{ship.name}</span>
+            {!renaming && (
+              <button
+                type="button"
+                data-testid="mainship-rename-open"
+                aria-label="Rename ship"
+                className="text-xs font-normal text-ink-faint underline-offset-2 hover:text-ink hover:underline"
+                onClick={() => {
+                  setNameDraft(ship.name)
+                  setRenameError(null)
+                  setRenaming(true)
+                }}
+              >
+                Rename
+              </button>
+            )}
+          </span>
+        }
         subtitle={hull?.name ?? ship.hull_type_id}
         aside={<Badge tone={badge.tone}>{badge.text}</Badge>}
         className="mb-3"
       />
+      {renaming && (
+        <div className="mb-3" data-testid="mainship-rename-form">
+          <div className="flex items-center gap-2">
+            <input
+              value={nameDraft}
+              maxLength={SHIP_NAME_MAX}
+              autoFocus
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void doRename()
+                if (e.key === 'Escape') setRenaming(false)
+              }}
+              className="min-w-0 flex-1 rounded-lg border border-edge bg-surface-2 px-2 py-1 text-sm text-ink"
+              aria-label="Ship name"
+              data-testid="mainship-rename-input"
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              busy={renameBusy}
+              busyLabel="Saving…"
+              disabled={shipNameProblem(nameDraft) !== null || normalizeShipName(nameDraft) === ship.name}
+              onClick={() => void doRename()}
+              data-testid="mainship-rename-save"
+            >
+              Save
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={renameBusy}
+              onClick={() => setRenaming(false)}
+              data-testid="mainship-rename-cancel"
+            >
+              Cancel
+            </Button>
+          </div>
+          {shipNameProblem(nameDraft) === 'name_empty' && nameDraft !== '' && (
+            <p className="mt-1 text-xs text-ink-faint">{renameReasonMessage('name_empty')}</p>
+          )}
+          {renameError && (
+            <Notice tone="danger" className="mt-2" data-testid="mainship-rename-error">
+              {renameError}
+            </Notice>
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between text-xs text-ink-faint">
         <span>Hull integrity</span>
         <span className="text-ink">{ship.hp} / {ship.max_hp}</span>
