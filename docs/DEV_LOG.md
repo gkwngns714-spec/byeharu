@@ -5,6 +5,96 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — CAPXP-0/1 (queue #13): captain-XP foundation (dark)
+
+**Request.** Queue slice #13 of the full-capacity plan (§C P5): the captain-XP foundation —
+C2-0 (additive `captain_instances.xp/level` + `captain_growth_enabled` dark flag) + C2-1 (XP
+accrual as a downward reader of FINALIZED `reward_grants`, the commit-safe 0144/0145 anti-join
+idiom with a `captain_counted_grants` ledger). The level-curve adapter delta (C2-2), the XP-bar UI
+(C2-3), and the 6→8 slot raise (C2-4) are LATER slices. Everything dark; no client code.
+
+**Work done**
+- **Migration `20260618000177_captain_xp_foundation.sql`**:
+  - `captain_instances` gains additive `xp numeric not null default 0` + `level integer not null
+    default 1` — **read by NOTHING yet** (no adapter/RPC/client touches them until C2-2/C2-3);
+    the mint (0118) and assignment (0119) writers ride the defaults and never touch either column.
+  - **THE SHIP-LINKAGE FINDING** (`reward_grants` carries NO ship column — the linkage is
+    per-source via `source_id`): **combat** = encounter id → `combat_encounters.fleet_id` → the
+    frozen `group_sortie_members` manifest (0168 — the charter's "sorties whose manifest included
+    the captain's ship") ∪ the `fleets.main_ship_id` tag (0050) for solo sorties; **exploration** =
+    `exploration_discoveries.main_ship_id` (0146/0172 securing link; nullable — legacy null-scanner
+    rows underivable); **mining** = `mining_extractions.main_ship_id` (nullable — 0103 ON DELETE SET NULL; a destroyed-ship extraction consumes as a sentinel; review M1 corrected the earlier NOT-NULL claim); **trade** = NO reward_grants producer exists today (trade pays through Wallet) —
+    if one appears its grants consume as sentinels until a linkage+knob slice defines them. Grants
+    with no derivable ship (legacy unit fleets, retention-cleaned encounters) are consumed as
+    SENTINELS, never credited.
+  - **`captain_counted_grants`** — the 0144 consumption-ledger idiom, captain-shaped: keyed
+    `unique nulls not distinct (grant_id, captain_instance_id)` (one grant can feed MULTIPLE
+    captains on one manifest — each credit its own exactly-once row) with a **NULL-captain
+    SENTINEL** marking "consumed, no credit". The accrual anti-joins per GRANT (no ledger row at
+    all), so every grant is examined EXACTLY ONCE ever: bounded scans, and **no retroactive XP
+    backfill** — a grant's captain set is fixed the first time the accrual sees it. Server-only
+    (RLS on, no client policy/grant — the 0144 posture).
+  - **`captain_xp_accrue()`** (SECURITY DEFINER, service-role-only): gate-FIRST →
+    `{ok:false, code:'feature_disabled'}` while dark (a cron-safe no-op, NEVER a raise — the
+    D2/0145 lesson) → global advisory lock → ONE commit-safe statement (the 0145 data-modifying-CTE
+    shape): unconsumed grants → derivable ships → captains **currently assigned**
+    (`ship_captain_assignments`) → ledger insert (credits + sentinels, `on conflict do nothing`) →
+    per-captain Σxp folded into `captain_instances.xp` with `level = 1 + floor(sqrt(xp/100))`
+    maintained inline (coherent from day one; the C2-2 adapter ignores it until its own slice).
+  - **THE DESIGN-HONESTY NOTE (current-assignment vs at-sortie):** XP goes to captains assigned
+    AT ACCRUAL TIME, not at sortie time — the manifest freezes at-send SHIP membership, but
+    **captain-at-sortie-time is recorded nowhere** (nothing snapshots the roster at send), so
+    current-assignment is the only derivable semantic. Practical skew ≈ one 5-min cron window; a
+    D-family manifest extension (per-member captain snapshots written by `send_ship_group_hunt`)
+    would enable true at-sortie attribution — noted as a future refinement, deliberately not built
+    in a dark XP slice. Corollary documented for the future ACT-CAPXP flip: dark-era grants are
+    all unconsumed, so the FIRST lit run folds that whole backlog into current assignees — the
+    activation script must accept the one-time backfill or pre-seed sentinels (flip-time decision).
+  - **XP formula [D, owner-tunable]:** flat XP per grant per source — a grant IS the finalized
+    unit of "a sortie that came home with something" (UNIQUE (source_type, source_id)); knobs
+    `captain_xp_per_combat_grant=10`, `captain_xp_per_exploration_grant=6`,
+    `captain_xp_per_mining_grant=4`; every assigned captain on a linked ship gets the FULL amount
+    (no split). Curve [D proposed]: `level = 1 + floor(sqrt(xp/100))` — 100→2, 400→3, 900→4.
+  - **Cron `captain-xp-accrue`, every 5 min** (the 0147 idiom + cadence rationale verbatim:
+    freshness only, never correctness — the ledger anti-join folds any backlog next firing).
+    Scheduled NOW, zero live effect while dark.
+  - Self-asserts: columns exist NOT NULL with defaults 0/1 and every instance rides them; ledger
+    exists server-only; accrual exists service-role-only; cron scheduled exactly once; flag dark +
+    knobs 10/6/4; and the cron-safety pin — a dark dry-run returns the no-op envelope, zero ledger
+    rows, zero xp movement.
+- **Proof — `TEAMCMD_PASS_CAPXP` block appended to `scripts/team-command-proof.{sql,sh}`**
+  (captain/team-family; consumes the TEAMSETTLE fixture AS the captained team sortie — the settled
+  uC sortie's grant, manifest {c1,c2}, with the TEAMHUNT roster still assigned: 2 captains on c1,
+  1 on c2, 1 on the grantless b1): committed seeds pinned (flag 'false', knob '10'); additive
+  defaults on every instance; DARK accrue = clean no-op envelope with ZERO writes **while grants
+  already exist** (a gate-after-read regression would fold them); flag on in-txn + knob raised to
+  100 via the real `set_game_config` (100 = the exact level-2 boundary) → ONE run credits the 3
+  currently-assigned manifest captains EXACTLY knob × 1 qualifying grant each, level lands exactly
+  2 at the boundary; a captain on a grantless ship and a freshly-minted UNASSIGNED captain gain
+  NOTHING; an ORPHAN grant (minted via the REAL `reward_grant` sole writer with a random source_id
+  — the retention-cleaned-encounter shape) consumes as a NULL-captain sentinel; zero grants left
+  unconsumed; the curve recomputed independently over every instance; RE-RUN = all-zero envelope,
+  ledger unchanged, total xp unchanged (the anti-join exactly-once pin). The `.sh` gains the
+  marker, `captain_growth_enabled` in the flags-inside-txn list, 16 assert-form selftest greps,
+  `captain_counted_grants` in the Captain-table negative grep (sole-writer law), and post-run
+  committed-value honesty checks for the flag AND the xp knob (must stay 'false'/'10').
+- **`SYSTEM_BOUNDARIES.md`** — §1 row for `captain_counted_grants` (sole writer = the accrual;
+  server-only) + the `captain_instances` row now states the disjoint-by-column writer split (mint
+  owns row creation, `captain_xp_accrue` owns xp/level — mint/assign never touch them) + the §2
+  Captain row gains the accrual, its downward edges (Reward/Combat/Movement/Team-Command/
+  Exploration/Mining reads), and the forbidden edges (no XP writes outside the accrual; Combat
+  never writes captain XP mid-tick).
+- **Docs** — plan queue row 13 + ROADMAP phase row 24 → shipped (dark), both carrying the
+  current-assignment note and the ACT-CAPXP dark-backlog decision.
+
+**Verification.** `bash scripts/team-command-proof.sh selftest` green (the hardened lib);
+**mutation-tested 7/7 caught** (flag-flip dropped, boundary assert gutted, PASS marker dropped,
+direct ledger insert (sole-writer law), curve recompute gutted, re-run pin gutted, sentinel pin
+gutted), control green. All six trade-family selftests green (untouched consumers of the shared
+lib). `tsc`/`vite build` untouched-green (no client code). Real-chain run = the
+`team-command-proof.yml` disposable matrix on push (`slice-**` trigger; this machine has no
+Docker/psql — the established loop).
+
 ## 2026-07-12 — HAUL-0/1 (queue #12): delivery-contracts foundation (dark)
 
 **Request.** Queue slice #12 of the full-capacity plan (§C P2): the retention loop's foundation —
