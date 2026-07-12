@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useShellState } from '../../app/shellState'
-import { Card, CardHeader, Badge, SectionLabel, Button, Notice, Skeleton } from '../../components/ui'
+import { Card, CardHeader, Badge, SectionLabel, Button, Notice, Skeleton, Icon } from '../../components/ui'
 import {
   fetchMyShipGroups,
   fetchMyShipGroupMap,
@@ -54,6 +54,13 @@ import { withPowerGate } from '../map/locationDisplay'
 //     groupHuntAvailability mirror; an EMPTY hunt list (no hunt_pirates location revealed) degrades to a
 //     disabled control + hint, never hides.
 //   • TeamPreviewSection gains the authoritative "Server totals" line (D0's totals RPC).
+//
+// TEAM-UX (owner report: "how do I assign a ship?") — presentation-only redesign of the ASSIGN journey;
+// zero RPC/state/logic change: (1) zero teams → a guided empty state (the old layout showed ships with NO
+// assign control and never said "create a team first"); (2) each team card gets "+ Add ship" opening a
+// one-tap picker of unassigned ships (assign FROM the team); (3) per-ship chips renamed from '→ {team}'
+// to explicit 'Add to {team}' / 'Move to {team}' / 'Remove from team'; (4) assigns now surface a success
+// notice. All paths share the same assign run key, busy guard, and await-then-refetch discipline.
 
 export function TeamRosterPanel() {
   const { selection, game } = useShellState()
@@ -66,6 +73,7 @@ export function TeamRosterPanel() {
   // last action outcome: a warning (failed) or a success summary (send/stop aggregate). Dark ⇒ rare.
   const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null) // group_id pending delete confirm
+  const [addShipFor, setAddShipFor] = useState<string | null>(null) // group_id whose "+ Add ship" picker is open (TEAM-UX)
   const [drafts, setDrafts] = useState<Record<string, string>>({}) // per-team rename input, keyed by group_id
   const [destChoice, setDestChoice] = useState<Record<string, string>>({}) // per-team send destination id
   const [huntChoice, setHuntChoice] = useState<Record<string, string>>({}) // per-team hunt destination id
@@ -163,17 +171,26 @@ export function TeamRosterPanel() {
             {selected && <Badge tone="accent">Selected</Badge>}
           </span>
         </div>
+        {/* TEAM-UX: explicit verbs on the per-ship path. The old '→ {team}' ghost chips were the ONLY
+            assign control and read as decoration, not an action (the owner couldn't find them). Same
+            RPC, same run key, same busy/no-double-submit — just an honest label plus success feedback. */}
         <div className="mt-2 flex flex-wrap gap-1.5">
           {targets.map((g) => (
             <Button
               key={g.group_id}
               size="sm"
-              variant="ghost"
+              variant="secondary"
               busy={busy === `assign:${s.main_ship_id}`}
               disabled={busy !== null}
-              onClick={() => void run(`assign:${s.main_ship_id}`, () => assignShipToGroup(s.main_ship_id, g.group_id))}
+              onClick={() =>
+                void run(
+                  `assign:${s.main_ship_id}`,
+                  () => assignShipToGroup(s.main_ship_id, g.group_id),
+                  () => `Added ${s.name} to ${g.name}.`,
+                )
+              }
             >
-              → {g.name}
+              {s.group_id == null ? `Add to ${g.name}` : `Move to ${g.name}`}
             </Button>
           ))}
           {s.group_id != null && (
@@ -182,9 +199,15 @@ export function TeamRosterPanel() {
               variant="ghost"
               busy={busy === `assign:${s.main_ship_id}`}
               disabled={busy !== null}
-              onClick={() => void run(`assign:${s.main_ship_id}`, () => assignShipToGroup(s.main_ship_id, null))}
+              onClick={() =>
+                void run(
+                  `assign:${s.main_ship_id}`,
+                  () => assignShipToGroup(s.main_ship_id, null),
+                  () => `Removed ${s.name} from its team.`,
+                )
+              }
             >
-              Unassign
+              Remove from team
             </Button>
           )}
         </div>
@@ -209,9 +232,15 @@ export function TeamRosterPanel() {
     <Card>
       <CardHeader
         title="Teams"
-        subtitle="Create, rename, delete teams, assign ships, and dispatch team expeditions or pirate hunts."
+        subtitle="Group your ships into teams and command them together."
         aside={<Badge tone="warning">Preview</Badge>}
       />
+
+      {/* TEAM-UX: the one-line "how" — the old subtitle was a feature laundry list that never told a new
+          player the ORDER of operations (create a team FIRST, then add ships). */}
+      <p className="mb-3 text-xs text-ink-faint">
+        How teams work: create a team, add ships to it, then send or hunt with the whole team in one order.
+      </p>
 
       {notice && (
         <Notice tone={notice.tone} className="mb-3">
@@ -228,16 +257,41 @@ export function TeamRosterPanel() {
         </div>
       ) : (
         <div className="space-y-4">
-          {openSlot !== null && (
-            <Button
-              size="sm"
-              variant="secondary"
-              busy={busy === 'create'}
-              disabled={busy !== null}
-              onClick={() => void run('create', () => upsertShipGroup(openSlot, 'Team'))}
-            >
-              + Create team
-            </Button>
+          {/* TEAM-UX: with ZERO teams the panel used to show only a small "+ Create team" button and a list
+              of ships with NO assign control at all (assign targets only exist once a team does) — nothing
+              said "create a team first". Guided empty state fixes exactly that; same RPC, same run key. */}
+          {teams.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-edge p-6 text-center">
+              <Icon name="command" size={28} className="mx-auto text-ink-faint" />
+              <h3 className="mt-2 text-sm font-semibold text-ink">Create your first team</h3>
+              <p className="mx-auto mt-1 max-w-xs text-xs text-ink-muted">
+                Ships join teams here — create a team, then add your ships to it.
+              </p>
+              {openSlot !== null && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="mt-3"
+                  busy={busy === 'create'}
+                  disabled={busy !== null}
+                  onClick={() => void run('create', () => upsertShipGroup(openSlot, 'Team'))}
+                >
+                  + Create your first team
+                </Button>
+              )}
+            </div>
+          ) : (
+            openSlot !== null && (
+              <Button
+                size="sm"
+                variant="secondary"
+                busy={busy === 'create'}
+                disabled={busy !== null}
+                onClick={() => void run('create', () => upsertShipGroup(openSlot, 'Team'))}
+              >
+                + Create team
+              </Button>
+            )
           )}
 
           {teams.map(({ group, ships }) => {
@@ -319,10 +373,68 @@ export function TeamRosterPanel() {
                 )}
 
                 {ships.length === 0 ? (
-                  <p className="text-xs text-ink-faint">No ships assigned.</p>
+                  <p className="text-xs text-ink-faint">No ships in this team yet — use “+ Add ship” below.</p>
                 ) : (
                   <div className="space-y-1.5">{ships.map(shipRow)}</div>
                 )}
+
+                {/* TEAM-UX: assign FROM the team ("+ Add ship" → one-tap picker of unassigned ships) —
+                    more discoverable than hunting for per-ship chips in the Unassigned section. Same
+                    assign RPC + run key as the per-ship path; await → refetch, never optimistic. */}
+                <div className="space-y-1.5">
+                  {addShipFor === group.group_id ? (
+                    <div className="space-y-1.5 rounded-lg border border-edge bg-surface-2/50 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <SectionLabel>Unassigned ships — tap Add</SectionLabel>
+                        <Button size="sm" variant="ghost" onClick={() => setAddShipFor(null)}>
+                          Done
+                        </Button>
+                      </div>
+                      {ungrouped.length === 0 ? (
+                        <p className="text-xs text-ink-faint">Every ship is already on a team.</p>
+                      ) : (
+                        ungrouped.map((s) => (
+                          <div
+                            key={s.main_ship_id}
+                            className="flex items-center justify-between gap-2 rounded-lg border border-edge bg-surface px-2 py-1.5"
+                          >
+                            <span className="truncate text-xs text-ink">{s.name}</span>
+                            <span className="flex shrink-0 items-center gap-2">
+                              <span className="text-[10px] text-ink-faint">{s.status}</span>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                busy={busy === `assign:${s.main_ship_id}`}
+                                disabled={busy !== null}
+                                onClick={() =>
+                                  void run(
+                                    `assign:${s.main_ship_id}`,
+                                    () => assignShipToGroup(s.main_ship_id, group.group_id),
+                                    () => `Added ${s.name} to ${group.name}.`,
+                                  )
+                                }
+                              >
+                                Add
+                              </Button>
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={busy !== null || ungrouped.length === 0}
+                      onClick={() => setAddShipFor(group.group_id)}
+                    >
+                      + Add ship
+                    </Button>
+                  )}
+                  {addShipFor !== group.group_id && ungrouped.length === 0 && (
+                    <span className="ml-2 text-[10px] text-ink-faint">No unassigned ships.</span>
+                  )}
+                </div>
 
                 {/* Team send/stop (dark). Send needs an active, non-combat destination; Stop needs none. The
                     server re-validates + owns atomicity; this is a convenience surface. */}
@@ -464,8 +576,17 @@ export function TeamRosterPanel() {
 
           <div className="space-y-2">
             <SectionLabel>
-              Unassigned · {ungrouped.length} ship{ungrouped.length === 1 ? '' : 's'}
+              Unassigned ships · {ungrouped.length}
             </SectionLabel>
+            {/* TEAM-UX: say what to DO with these ships, not just count them. With zero teams the rows
+                below carry no assign buttons at all (no targets exist) — point at the create step. */}
+            {ungrouped.length > 0 && (
+              <p className="text-xs text-ink-muted">
+                {teams.length === 0
+                  ? 'These ships need a team — create one above, then add them to it.'
+                  : 'Add them to a team to command them together.'}
+              </p>
+            )}
             {ungrouped.length === 0 ? (
               <p className="text-xs text-ink-faint">All ships are assigned to a team.</p>
             ) : (
