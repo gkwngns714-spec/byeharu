@@ -5,9 +5,12 @@ import type { MapLocation } from '../map/mapTypes'
 import {
   fetchMyShipGroups,
   fetchMyShipGroupMap,
+  fetchMyPresentShipFleets,
   fetchGroupExpeditionTotals,
   sendShipGroup,
   sendShipGroupHunt,
+  moveShipGroup,
+  type PresentShipFleetLite,
   type ShipGroupMapEntry,
   type TeamRpcResult,
 } from './teamApi'
@@ -15,6 +18,8 @@ import type { GroupRow } from './teamRoster'
 import { teamDestinationKind } from './teamDestination'
 import { groupSendAvailability } from './teamSend'
 import { groupHuntAvailability } from './teamCombat'
+import { deriveDockedTeamRollups } from './teamRollup'
+import { teamMapSendAction } from './teamMove'
 import { teamReasonMessage } from './teamReasonMessage'
 
 // TEAM-MAP-SEND — "Send a team here" on MapScreen's location detail sheet (owner order: send
@@ -39,11 +44,23 @@ import { teamReasonMessage } from './teamReasonMessage'
 // two-click confirm (combat commits ships); the armed confirm carries the location id it was
 // armed FOR, so switching the selected location disarms it by derivation — a confirm can never
 // commit to a stale destination.
+//
+// TEAMMOVE-1 — the docked-team arm (owner directive: "docked or move as a whole"): the sheet also
+// fetches the present-fleet read (the TEAMMAP rollup input) and folds it through the ONE
+// deriveDockedTeamRollups reuse; each expedition row then takes its action from the ONE pure
+// classifier teamMapSendAction (teamMove.ts) — 'move' (fully docked at another port → "Move team
+// here", moveShipGroup → move_ship_group_to_location 0190, new testid team-move-<groupId>),
+// 'docked_here' (muted badge, nothing to do), 'docked_unready' (any docked member → the home send
+// is DOOMED server-side, so the Send control renders DISABLED with a gather hint — a docked team
+// never gets an enabled Send), or 'send' (the original arm). Same run() discipline, same reason
+// map, existing testids untouched; the server re-checks everything under its locks and stays
+// authoritative.
 
 export function TeamMapSend({ location, onSent }: { location: MapLocation; onSent: () => void }) {
   const { selection } = useShellState()
   const [groups, setGroups] = useState<GroupRow[] | null>(null) // null = loading (render nothing yet)
   const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
+  const [presentFleets, setPresentFleets] = useState<PresentShipFleetLite[]>([]) // docked-team rollup input
   const [powers, setPowers] = useState<Record<string, number>>({}) // group_id → authoritative combat power
   const [busy, setBusy] = useState<string | null>(null) // key of the command in flight
   const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
@@ -54,11 +71,14 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   // async callback, not synchronously in the effect body (react-hooks/set-state-in-effect).
   useEffect(() => {
     let active = true
-    void Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap()]).then(([g, m]) => {
-      if (!active) return
-      setGroups(g)
-      setGroupMap(m)
-    })
+    void Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap(), fetchMyPresentShipFleets()]).then(
+      ([g, m, pf]) => {
+        if (!active) return
+        setGroups(g)
+        setGroupMap(m)
+        setPresentFleets(pf)
+      },
+    )
     return () => {
       active = false
     }
@@ -85,6 +105,12 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   // Hidden entirely: not a team destination, teams still loading, or the player has zero teams.
   if (kind === null || groups === null || groups.length === 0) return null
 
+  // TEAMMOVE-1 — the docked-team rollup (the ONE TEAMMAP fold, reused verbatim): a team whose every
+  // member is docked at the SAME location gets a non-null locationId, and — for an expedition
+  // destination that isn't that port — the row below offers "Move team here" (the 0190 onward move)
+  // instead of the home-team send.
+  const dockRollups = deriveDockedTeamRollups(groups, groupMap, presentFleets)
+
   // The TeamRosterPanel run() discipline: block re-entry, await the server, map any reject through
   // the ONE copy map, THEN refresh the shell reads (never optimistic).
   const run = async (key: string, op: () => Promise<TeamRpcResult>, summarize: (res: TeamRpcResult & { ok: true }) => string) => {
@@ -97,7 +123,8 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
       else {
         setNotice({ tone: 'success', text: summarize(res) })
         onSent() // map data (movements/fleets)
-        await selection.refresh() // ship statuses (members just left home)
+        await selection.refresh() // ship statuses (members just left home / their dock)
+        setPresentFleets(await fetchMyPresentShipFleets()) // docked rollups (a moved team left its port)
       }
     } finally {
       setBusy(null) // never wedge the sheet, even if a wrapper unexpectedly rejects
@@ -129,6 +156,21 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
             groupResolved: true,
             memberCount: members.length,
           }).canSend
+          // TEAMMOVE-1 — the expedition-arm action from the ONE pure classifier (teamMove.ts):
+          // 'move' (fully docked elsewhere), 'docked_here' (muted, nothing to do),
+          // 'docked_unready' (any docked member → the home send is DOOMED server-side, never
+          // render it enabled), or 'send' (the original arm). kind==='expedition' already proved
+          // the destination legal; the server (0190) stays the sole authority under its locks.
+          const rollup = dockRollups.find((d) => d.groupId === g.group_id)
+          const arm =
+            kind === 'expedition'
+              ? teamMapSendAction({
+                  memberCount: rollup?.memberCount ?? members.length,
+                  dockedCount: rollup?.dockedCount ?? 0,
+                  dockedLocationId: rollup?.locationId ?? null,
+                  destinationId: location.id,
+                })
+              : null
           // kind==='hunt' already proved the destination active + hunt_pirates → locationValid true.
           const huntOk = groupHuntAvailability({
             gateEnabled: true,
@@ -153,13 +195,42 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                     )}
                   </span>
                 </span>
-                {kind === 'expedition' ? (
+                {arm === 'move' ? (
+                  /* TEAMMOVE-1 — a fully-docked team moves ONWARD as one (0190): same run()
+                     discipline as the send; the server re-checks docked-together under its locks. */
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    data-testid={`team-move-${g.group_id}`}
+                    busy={busy === `move:${g.group_id}`}
+                    busyLabel="Moving…"
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void run(
+                        `move:${g.group_id}`,
+                        () => moveShipGroup(g.group_id, location.id),
+                        (res) => {
+                          const n = (res.sent as unknown[] | undefined)?.length ?? members.length
+                          return `Moved ${g.name} — ${n} ship${n === 1 ? '' : 's'} — to ${location.name}.`
+                        },
+                      )
+                    }
+                  >
+                    Move team here
+                  </Button>
+                ) : arm === 'docked_here' ? (
+                  /* TEAMMOVE-1 — the team already sits docked at THIS port: nothing to do (a send
+                     would be doomed — docked ≠ home; a move-here is a no-op the server rejects). */
+                  <Badge>Docked here</Badge>
+                ) : arm === 'send' || arm === 'docked_unready' ? (
+                  /* 'docked_unready' keeps the familiar Send control but DISABLED: any docked
+                     member dooms the home send to member_send_failed (the classifier's law). */
                   <Button
                     size="sm"
                     variant="secondary"
                     busy={busy === `send:${g.group_id}`}
                     busyLabel="Sending…"
-                    disabled={busy !== null || !sendOk}
+                    disabled={busy !== null || !sendOk || arm === 'docked_unready'}
                     onClick={() =>
                       void run(
                         `send:${g.group_id}`,
@@ -186,6 +257,12 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
               </div>
               {kind === 'hunt' && members.length > 0 && !allHome && (
                 <p className="mt-1 text-[10px] text-ink-faint">Every ship must be home to hunt.</p>
+              )}
+              {arm === 'docked_unready' && (
+                <p className="mt-1 text-[10px] text-ink-faint">
+                  Some ships are docked away — gather the team at one port to move it, or bring every
+                  ship home to send it.
+                </p>
               )}
               {armed && (
                 <Notice tone="danger" className="mt-2">
