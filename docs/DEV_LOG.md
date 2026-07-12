@@ -5,6 +5,110 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — ACTIVATION PREP: exploration + mining flip scripts + the 0172 writer reconcile (Phases 11/12; no flip)
+
+**Request.** Full-capacity plan queue slices #2+#3: ship the two HUMAN-run activation scripts for the
+fully-built-dark exploration (0097–0101 + 0146 dup-guard) and mining (0102–0106 + 0143 double-extract
+guard) systems, in the proven `activate-team-command` / `activate-captains` idiom. The adversarial
+review of the slice then UPGRADED a "noted in passing" finding to a launch-blocker and found its twin
+(both the same failure class), so the slice grew ONE fix migration. NO flag flipped by this slice —
+each script run is a later, deliberate human go decision.
+
+**Bugs found (both pre-existing; both the SAME mistake — a "verbatim" re-create copied a STALE body)**
+- **H1 (HIGH — launch-blocker for the exploration flip).** 0146's re-create of `exploration_scan`
+  copied the 0099 body, silently reverting 0100's insert change: new discoveries recorded NO
+  `main_ship_id`. The securing fallback `mainship_resolve_owned_ship(player, null)` resolves ONLY
+  when the player owns EXACTLY one ship (0081:47-51) and returns null otherwise, making
+  `process_exploration_securing` `continue` (0100:223-228) — FOREVER. Multi-ship commissioning is
+  LIVE since the team flip, so the day exploration flipped, any 2+-ship player's discovery rewards
+  would have stranded permanently. (Initially logged here as "functionally safe" — WRONG: the
+  fallback is not a safety net for multi-ship owners, it is a dead end.)
+- **H2 (HIGH — same class).** 0143's re-create of `mining_extract` copied the 0104 body, clobbering
+  0137's P19 field-depletion integration (the reserve-scaled bundle at step 11.5 + the
+  `worldstate_deplete_field` call at step 12.5): the deployed writer had ZERO depletion hooks and
+  `worldstate_deplete_field` had NO caller. Latent while `world_balance_enabled=false`, but it would
+  have silently killed the P19 depletion subsystem the day world balance lights.
+- **Systemic lesson (recorded in the 0172 header too):** a CREATE OR REPLACE re-create must start
+  from the TRUE head body — grep ALL later migrations for the function name before copying. The
+  parity-re-create law exists for exactly this; both regressions came from copying a stale body.
+
+**Work done**
+- **Migration `20260618000172_exploration_mining_writer_reconcile.sql`** — re-creates BOTH writers
+  from their true current heads with the dropped features merged back (diff-verified, code-only):
+  `exploration_scan` = the 0146 head body + ONE marked hunk (the discoveries insert records
+  `main_ship_id` again — the exact 0100:170 column set; the 0146 `unique_violation` handler KEPT
+  verbatim); `mining_extract` = the 0143 head body (advisory lock KEPT) + the 0137 hunks re-merged
+  verbatim (depletion locals, step 11.5 reserve scaling, `v_bundle` in the insert + result envelope,
+  step 12.5 deplete call). Both writers are dark (flags false) so the re-creates are not live-risky;
+  ACLs re-asserted per precedent. The header documents the PROSRC-ASSERT COUPLING: the activation
+  scripts require the literal tokens `unique_violation` + `pending_bundle_json, main_ship_id`
+  (exploration) and `pg_advisory_xact_lock` + `worldstate_deplete_field` (mining) in the deployed
+  bodies — future re-creates must keep them (the in-body comments deliberately avoid the exact
+  tokens so a comment can never satisfy the assert).
+- `scripts/activate-exploration.{sql,sh}` — one all-or-nothing BEGIN..COMMIT, zero psql meta-commands
+  (management-API/Dashboard-paste compatible). PRECONDITIONS: head ≥ **0172** + 0172 recorded (the H1
+  fix is a HARD gate); the 5 seeded sites present+active; every active bundle catalog-closed against
+  `item_types`; the MERGED writer LIVE (the 0098 `exploration_discoveries_player_id_site_id_key`
+  unique constraint by name + prosrc of the deployed `exploration_scan` containing BOTH the 0146
+  `unique_violation` handler AND the 0172-restored `pending_bundle_json, main_ship_id` insert column
+  list — the flip physically cannot run against the broken writer); keys exist; the
+  `exploration_scan_radius` knob asserted sane (0 < r ≤ 20000) and NEVER rewritten. STAGE 1: the ONE
+  write — `exploration_enabled` → true via `set_game_config`. SMOKE (read-only): committed flag (raw +
+  `cfg_bool`); `to_regprocedure` over the whole surface (`command_exploration_scan(uuid, uuid)`,
+  `get_my_exploration_discoveries()`, `exploration_scan(uuid, uuid, uuid)`,
+  `process_exploration_securing()`, `osn_distance(dp×4)`, `reward_grant(text, uuid, uuid, uuid,
+  jsonb)`); ≥ 5 active sites; EXACTLY ONE `process-exploration-securing` cron job.
+  `ACTIVATE_EXPLORATION_PASS_*` markers + final PASS line; flag-only commented ROLLBACK (packet §7:
+  discoveries persist harmlessly; the 0100 processor ignores the flag and — because the flip
+  preconditions on 0172 — every post-flip discovery records its ship, so securing never depends on
+  the multi-ship-ambiguous resolver fallback; rows can still legitimately wait for a safe settle or
+  an active home base).
+- `scripts/activate-mining.{sql,sh}` — same shape: head ≥ **0172** + 0172 recorded (the H2 fix is a
+  HARD gate); 5 fields seeded+active; bundles catalog-closed; the MERGED writer LIVE (prosrc of the
+  deployed `mining_extract` containing BOTH `pg_advisory_xact_lock` AND `worldstate_deplete_field`) +
+  the 0103 `mining_extractions_cooldown_idx`; `mining_extract_radius` /
+  `mining_extract_cooldown_seconds` asserted sane, never rewritten → `mining_enabled` → true → smoke
+  (`command_mining_extract(uuid, uuid)`, `get_my_mining_extractions()`, `mining_extract(uuid, uuid,
+  uuid)`, `process_mining_securing()`, the shared leaves, plus `worldstate_field_remaining(uuid)` /
+  `worldstate_deplete_field(uuid)`; ONE `process-mining-securing` cron). The 0137 hooks stay dormant
+  behind `world_balance_enabled=false` — the script never touches that flag.
+  `ACTIVATE_MINING_PASS_*` markers; flag-only ROLLBACK + the documented (not asserted) POST-FLIP WATCH:
+  `mining_extractions` rows with `secured_at` NULL are pending yields securing on the next safe settle.
+- **NO client PR needed for either flip (verified this slice):** ExplorationPanel/MiningPanel are
+  server-lit — `if (!isServerLit(result)) return null` (ExplorationPanel.tsx:70 on
+  `get_my_exploration_discoveries`; MiningPanel.tsx:77 on `get_my_mining_extractions`) — and both are
+  already mounted unconditionally on MapScreen's top-left OverlayRail (MapScreen.tsx:141/148); no
+  exploration/mining compile constant exists in `osnReleaseGates.ts`. The server flip alone mounts both.
+- **Run order (documented in both headers):** exploration first (packet §7 "can go first"), mining a
+  few days later; the scripts are fully independent (neither touches the other's key — selftest-enforced).
+- **Proof coverage note:** no disposable SQL proof pins these two writer bodies today
+  (`team-command-proof` covers combat; `verify-exploration.mjs`/`verify-mining.mjs` probe dark-reject
+  envelopes + function existence, not bodies; `mining-p12-double-extract-concurrency.sh` pins the
+  0143 advisory-lock behavior, which 0172 keeps, so it stays valid). The activation preconditions now
+  BIND both fixes via the prosrc asserts — the flips cannot run against a regressed writer. A lit-path
+  depletion proof remains deferred to the P19/world-balance activation checklist (0137's own note).
+- Docs: ROADMAP Phase 11/12 rows annotated "activation script shipped — awaiting human flip".
+
+**Verification.** Both `.sh` selftests green (DB-free static safety: exactly 1 `set_game_config` call
+site on the 1 approved key, no meta-commands, no knob/foreign-key writes, no DDL/table writes —
+including unqualified `UPDATE … SET` (the write-net regex covers `update (public.)?<table> set`, not
+just `update public.`), rollback commented, markers + prosrc-bindings + no-client-PR + run-order
+documented; mutation-tested — a `false` write, a removed H1/H2 prosrc assert, and an injected
+unqualified `update … set` are each caught). 0172's re-created bodies diff-verified code-only against
+their heads: exploration_scan vs 0146 = ONLY the 2-line insert (adds `main_ship_id`/`p_main_ship_id`);
+mining_extract vs 0143 = ONLY the 0137 hunks (4 locals, step 11.5, `v_bundle` swap ×2, step 12.5);
+mining_extract vs 0137 = ONLY the 0143 step-10b advisory lock. `npx tsc -b` + `npx vite build`
+untouched-green; `scripts/team-command-proof.sh selftest` still green.
+
+**Open follow-ups**
+- Deploy 0172 (with the normal migration pipeline) BEFORE the exploration flip — the activation
+  script hard-fails without it, by design.
+- The flips themselves are HUMAN-gated: `bash scripts/activate-exploration.sh run ACTIVATE_EXPLORATION`
+  (then `node scripts/verify-exploration.mjs` + the packet §7 manual smoke), and days later
+  `bash scripts/activate-mining.sh run ACTIVATE_MINING` (then `node scripts/verify-mining.mjs`).
+
+---
+
 ## 2026-07-12 — DEPLOYS: prod migration head 0169; team-command roadmap merged (main @ 9a292ed)
 
 **Merged.** The whole team-command roadmap (A → D4) + the Mission Control UI renewal (R0 → R4) are on
