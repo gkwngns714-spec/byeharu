@@ -37,7 +37,13 @@
 # plus the SHIPYARD-0 foundation block (0185: shipyard_enabled + blueprint_fragment_drop_rate
 # asserted COMMITTED-dark and never flipped; the 2 T1 hull rows + 2 recipe headers + 10 ingredient
 # rows pinned exact; the blueprint faucet at its deterministic endpoints — rate-0 byte-parity with
-# the 0171 head, rate-1 wave-8 exactly-one-appended-blueprint, and the w<8 / wave-1 thresholds).
+# the 0171 head, rate-1 wave-8 exactly-one-appended-blueprint, and the w<8 / wave-1 thresholds) plus
+# the SOUL-0 per-ship-traits block (0186: ship_traits_enabled committed-dark + the roll writer's
+# gate-first reject, the 8-trait catalog pinned verbatim, deterministic rolls proven by INLINE
+# re-derivation of the pure-hash ':soul:' salts on fresh-commissioned fixtures — both the
+# veteran_frame hp_mult arm and the plain arm every run — slot distinctness, exact
+# max_hp = round(base × 1.08), and idempotent-replay immutability; the harness never writes a
+# Ship-Soul table directly, negative-grepped below).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -54,14 +60,26 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
   tp_assert_self_rolling_back "$SQL"
-  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled
+  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled
+
+  # ── GATE-FLAG set_game_config hardening (the shipyard_enabled review-M lesson, applied to every
+  #    boolean gate): tp_assert_flags_inside_txn only fences the RAW-update form, so a smuggled
+  #    `set_game_config('<gate>','true')` placed after the ROLLBACK would autocommit a committed
+  #    flag flip and evade it. The harness's ONLY sanctioned gate flip is the raw in-txn update —
+  #    set_game_config is reserved for the numeric KNOBS (shard/xp/blueprint rates) — so ANY
+  #    set_game_config touch of a gate, anywhere in the file, fails closed. ─────────────────────────
+  for gate in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled; do
+    grep -viE '^[[:space:]]*--' "$SQL" \
+      | grep -q "set_game_config('$gate'" \
+      && fail "harness writes the gate '$gate' via set_game_config (gates ride the raw in-txn update only)" || true
+  done
 
   # ── provisions via the REAL commission RPCs (no direct ship inserts as the primary path). ─────────
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
@@ -357,14 +375,53 @@ if [ "$MODE" = "selftest" ]; then
     | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(hull_build_recipes|hull_recipe_ingredients)\b' \
     && fail "harness directly mutates a hull-recipe Reference/Config table (migration-seeded only)" || true
 
-  # ── all sixteen block PASS markers present. ────────────────────────────────────────────────────────
+  # ── SOUL0 (0186 / SOUL-0) pins, in assert form (a gutted .sql that only mentions them in prose
+  #    cannot false-green): the committed dark seed + the gate-first reject; the verbatim 8-trait
+  #    catalog pin; the INLINE hash re-derivation (the exact salt/technique tokens) and the
+  #    rolled-equals-derived assert; slot distinctness; the exact veteran_frame hp_mult; the
+  #    idempotent-replay immutability trio (inserted 0 / no trait change / no hp re-raise). Plus
+  #    the sole-writer negative: the harness NEVER writes a Ship-Soul table directly — traits
+  #    exist only through the real soul_roll_traits_for_ship writer. ────────────────────────────────
+  grep -qF "public.soul_roll_traits_for_ship(" "$SQL" \
+    || fail "harness does not exercise the SOUL-0 roll writer"
+  grep -qF "(want ''false'' — the 0186 dark seed)" "$SQL" \
+    || fail "harness does not ASSERT the committed ship_traits_enabled seed is false"
+  grep -qF "SOUL0 FAIL dark:" "$SQL" \
+    || fail "harness does not ASSERT the dark gate-first reject on the roll writer"
+  grep -qF "(want 8 traits exact — the 0186 catalog verbatim)" "$SQL" \
+    || fail "harness does not pin the 0186 trait catalog verbatim"
+  grep -qF "hashtextextended(p_ship::text || ':soul:1', 0)" "$SQL" \
+    || fail "harness does not re-derive the trait hash inline (the determinism pin)"
+  grep -qF 'order by trait_type_id collate "C"' "$SQL" \
+    || fail "harness re-derivation is not collate-\"C\"-pinned (the derivation-order collation law)"
+  grep -qF "the roll is not the pinned pure function" "$SQL" \
+    || fail "harness does not ASSERT rolled traits = the inline re-derivation"
+  grep -qF "the replay envelope does not report the STORED roll" "$SQL" \
+    || fail "harness does not ASSERT the replay envelope reports the stored roll (traits + real hp_mult)"
+  grep -qF "distinctness breach" "$SQL" \
+    || fail "harness does not ASSERT slot-1/slot-2 distinctness"
+  grep -qF "— the hp_mult exactly)" "$SQL" \
+    || fail "harness does not ASSERT the exact veteran_frame hp_mult application"
+  grep -qF "(want inserted 0 — the idempotent replay)" "$SQL" \
+    || fail "harness does not ASSERT the second-roll idempotent replay"
+  grep -qF "re-roll breach" "$SQL" \
+    || fail "harness does not ASSERT the second roll changes no rolled trait"
+  grep -qF "hp applies once" "$SQL" \
+    || fail "harness does not ASSERT the second roll cannot re-raise max_hp"
+  grep -qF "a plain (mult-1.0) roll moved hp/max_hp" "$SQL" \
+    || fail "harness does not ASSERT the plain arm leaves hp/max_hp untouched"
+  grep -viE '^[[:space:]]*--' "$SQL" \
+    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(ship_trait_types|main_ship_traits)\b' \
+    && fail "harness directly mutates a Ship-Soul-owned table (sole-writer law violation)" || true
+
+  # ── all seventeen block PASS markers present. ────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 7 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped)"
   exit 0
 fi
 
@@ -372,8 +429,8 @@ fi
 tp_run_local "TEAM-COMMAND B-VERIFY" "$SQL" "$PASS_LINE" "$MARKERS"
 
 # post-run honesty check: EVERY committed flag the proof flips must still be false (the flips were rolled
-# back). Check all seven the harness toggles in-txn, not just the team gate.
-for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled; do
+# back). Check all eight the harness toggles in-txn, not just the team gate.
+for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled; do
   committed="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = '$flag'), 'false')")" \
     || fail "could not read the committed '$flag' value"
   [ "$committed" = "false" ] || fail "committed $flag is '$committed' — the proof leaked a flag flip (must stay false)"
@@ -404,4 +461,4 @@ committed_sy="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{
   || fail "could not read the committed 'shipyard_enabled' value"
 [ "$committed_sy" = "false" ] || fail "committed shipyard_enabled is '$committed_sy' — must stay false (the proof never touches it)"
 
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0)"
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled/ship_traits_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0)"
