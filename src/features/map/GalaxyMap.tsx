@@ -70,7 +70,9 @@ export function GalaxyMap({
   // The hook reads `mainship_space_movement_enabled` itself; while dark `sm.enabled` is false and the
   // whole surface stays unmounted → zero production visual change. Coordinate-target taps are only
   // captured when the flag is on AND the ship is eligible. Camera behavior is unchanged either way.
-  const sm = useSpaceMoveCommand()
+  // COORD-GUARD (§2.5): the SELECTED ship is threaded exactly like the Stop command + the readiness
+  // read below — the move targets the ship the readiness projection was scoped to (no split-brain).
+  const sm = useSpaceMoveCommand({ mainShipId: mainShip?.main_ship_id ?? null })
   // OSN-4 — Stop safety. The CTA mounts ONLY for a real active coordinate transit and is INDEPENDENT of the
   // initiation flag (in-flight safety): an emergency flag disable must never strand an in-flight ship.
   const stop = useSpaceStopCommand({ mainShipId: mainShip?.main_ship_id ?? null })

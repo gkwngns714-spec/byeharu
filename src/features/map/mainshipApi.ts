@@ -310,14 +310,17 @@ export async function repairMainShip(mainShipId?: string | null): Promise<{ main
   return data as { main_ship_id: string; status: string; hp: number; max_hp: number }
 }
 
-// OSN-3 S6C — thin client wrapper over the EXISTING S6A public coordinate-command boundary
-// (command_main_ship_space_move). Empty-space movement ONLY: it sends a coordinate target + an
-// idempotency key and NOTHING else (no location id, no target_kind, no ship/player id — the server
-// derives the ship from auth.uid()). It writes no table directly. The flag (mainship_space_movement_
-// enabled) is the server's authority; while dark the wrapper returns {ok:false, code:'feature_disabled'}.
-// On a Postgres error the call still resolves to a normalized failure (no throw) so the UI can map it.
-export async function commandMainShipSpaceMove(targetX: number, targetY: number, requestId: string): Promise<SpaceMoveResult> {
-  const { data, error } = await supabase.rpc(SPACE_MOVE_RPC, buildSpaceMoveRpcArgs({ x: targetX, y: targetY }, requestId))
+// OSN-3 S6C / COORD-GUARD (§2.5) — thin client wrapper over the S6A public coordinate-command boundary
+// (command_main_ship_space_move, resolver-guarded since migration 0178). Empty-space movement ONLY: it
+// sends a coordinate target, an idempotency key, AND the explicit selected/sole main-ship id
+// (p_main_ship_id) — no location id, no target_kind, no player id. The server asserts ownership of that
+// ship (UI selection is never trusted); a null id preserves the sole-ship shim (behavior-identical while
+// the player has exactly one ship; fail-closed no_ship at N≠1 — the same contract as the Stop wrapper).
+// It writes no table directly. The flags (mainship_space_movement_enabled + mainship_coordinate_travel_
+// enabled) are the server's authority; while dark the wrapper returns a reject envelope. On a Postgres
+// error the call still resolves to a normalized failure (no throw) so the UI can map it.
+export async function commandMainShipSpaceMove(targetX: number, targetY: number, requestId: string, mainShipId?: string | null): Promise<SpaceMoveResult> {
+  const { data, error } = await supabase.rpc(SPACE_MOVE_RPC, buildSpaceMoveRpcArgs({ x: targetX, y: targetY }, requestId, mainShipId))
   if (error) return { ok: false, code: 'unavailable', message: error.message }
   return data as SpaceMoveResult
 }

@@ -6,9 +6,11 @@
 // controller (target selection + idempotent submit lifecycle) that the React hook adapts.
 //
 // HARD BOUNDARY: S6C is empty-space ONLY. The controller calls a single injected `rpc(target, id)`
-// (the S6A wrapper) and the RPC args carry ONLY a coordinate target + an idempotency key — NEVER a
-// location id, a `target_kind`, or a ship/player id (the server derives the ship from auth.uid()).
-// A coordinate equal to a location's coordinates is still an empty-space target; S6C never docks.
+// (the S6A wrapper) and the RPC args carry ONLY a coordinate target + an idempotency key + the explicit
+// selected/sole main-ship id (COORD-GUARD / §2.5: p_main_ship_id — the server asserts ownership, UI
+// selection is never trusted; null preserves the sole-ship shim) — NEVER a location id, a `target_kind`,
+// or a player id. A coordinate equal to a location's coordinates is still an empty-space target; S6C
+// never docks.
 
 import { isWithinOpenSpaceBounds, type WorldCoord } from './openSpaceTransform'
 
@@ -16,15 +18,19 @@ import { isWithinOpenSpaceBounds, type WorldCoord } from './openSpaceTransform'
 // tests reference the same literal — S6C must never reach any other movement endpoint.
 export const SPACE_MOVE_RPC = 'command_main_ship_space_move' as const
 
-// Exact RPC argument shape: coordinate target + idempotency key ONLY. No location id, no target_kind,
-// no ship/player id. The presence of exactly these three keys is asserted by the tests.
+// Exact RPC argument shape: coordinate target + idempotency key + the explicit selected/sole main-ship
+// id (COORD-GUARD / §2.5 — added alongside migration 0178's trailing `p_main_ship_id uuid default null`;
+// the server asserts ownership, and null preserves the sole-ship shim exactly like the Stop command's
+// wrapper). No location id, no target_kind, no player id. The presence of exactly these four keys is
+// asserted by the tests.
 export interface SpaceMoveRpcArgs {
   p_target_x: number
   p_target_y: number
   p_request_id: string
+  p_main_ship_id: string | null
 }
-export function buildSpaceMoveRpcArgs(target: WorldCoord, requestId: string): SpaceMoveRpcArgs {
-  return { p_target_x: target.x, p_target_y: target.y, p_request_id: requestId }
+export function buildSpaceMoveRpcArgs(target: WorldCoord, requestId: string, mainShipId?: string | null): SpaceMoveRpcArgs {
+  return { p_target_x: target.x, p_target_y: target.y, p_request_id: requestId, p_main_ship_id: mainShipId ?? null }
 }
 
 // Canonical integer world-unit grid, matching the S6A wrapper's `round(numeric)` = half-AWAY-from-zero

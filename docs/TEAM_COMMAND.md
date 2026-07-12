@@ -769,12 +769,25 @@ the cap so it is not the binding limit once multi-ship is later lit.
   live send instead, so the live single-ship path is byte-for-byte unchanged.
 - **`max_active_fleets` raise** → deferred. It is LIVE and shared with old fleets, so a team of >3 members
   currently rolls back on the 4th; raising it would alter live behavior and belongs with lighting team-send.
-- **A0-fix for the raw OSN coordinate move** — `command_main_ship_space_move` (0070) still derives the ship
-  with an unguarded `where player_id = …` (arbitrary at N>1), but it rejects on `mainship_space_movement_enabled`
-  + `mainship_coordinate_travel_enabled` (both false) *before* that read → unreachable. NOTE:
-  `command_main_ship_space_stop` was ALREADY resolver-guarded in migration 0083 — it is NOT unguarded. Neither
-  is on B-stop's path (the legacy stop is fleet-addressed), so the A0-fix is **not** a B-stop prereq; retire it
-  when coordinate-travel AND multi-ship commissioning are both lit.
+- **A0-fix for the raw OSN coordinate move** — ✅ **RESOLVED (COORD-GUARD, migration 0178, 2026-07-12).**
+  `command_main_ship_space_move` (head was 0070) derived the ship with an unguarded `where player_id = …`
+  (arbitrary at N>1); it was unreachable only while `mainship_coordinate_travel_enabled` stayed false (its
+  other gate, `mainship_space_movement_enabled`, has been TRUE since the port-centric launch — a single
+  dark gate, not two). With multi-ship commissioning LIVE (2026-07-12), migration 0178 re-created it from
+  its 0070 head with the exact 0083 pattern: trailing `p_main_ship_id uuid default null` +
+  `mainship_resolve_owned_ship` (explicit → ownership-asserted; null → sole-ship shim; N≠1 → fail-closed
+  `no_ship`). The coordinate-travel flip script (`scripts/activate-coordinate-travel.{sql,sh}`)
+  preconditions on the guarded prosrc, so the flag can never light the old unguarded body. NOTE:
+  `command_main_ship_space_stop` was ALREADY resolver-guarded in migration 0083. Signature-pin repoints
+  recorded in docs/TRADE_FLEET_0C_VERIFIER_REPOINT.md (§#1).
+- **Residual pre-multi-ship read: `commission_first_main_ship` (0072:117,129)** — surfaced by the
+  COORD-GUARD sweep; NOT movement-surface, NOT a coordinate-flip prereq. It still runs
+  `select main_ship_id … where player_id = v_player` twice, but only to CLASSIFY "already has a ship"
+  around the commission writer: at N>1 it reads an arbitrary row whose non-NULLness (not identity) drives
+  the branch, and the post-branch dock/present classification in the reject envelope may then describe an
+  arbitrary ship. Read-only, no write path, not exploitable — a wrong-ship LABEL at worst. Tiny follow-up
+  queued: swap both reads for an `exists(...)`/count (no resolver needed — the function is first-ship-only
+  by contract) the next time the 0072 function is re-created under the parity law.
 - **B-send/B-stop CI `.mjs` verifier** → with B-verify: flip `team_command_enabled`, exercise group-send +
   every reject, assert all-or-nothing send rollback + the double-send/send-vs-delete races; AND group-stop —
   every pre-read reject, the **best-effort aggregate** on a mixed-state group (some moving, some docked), and

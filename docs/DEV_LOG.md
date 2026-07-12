@@ -5,6 +5,86 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — COORD-GUARD (queue #14.5): the A0-fix + the coordinate-travel flip script
+
+**Request.** The pre-activation slice that makes the free-coordinate-travel flip safe: resolver-guard
+the raw coordinate command (the standing "A0-fix" debt, docs/TEAM_COMMAND.md), then ship the
+activate-family flip script for `mainship_coordinate_travel_enabled`. Motivation (WORLD_RECON_F1 §7):
+exploration/mining sites sit out to ±4200 and need a settled `in_space` ship within 750 units, while
+the only dockable anchors are the three 0066 port anchors (−50,−30)/(70,−10)/(10,80) — computed from
+the seeds, the NEAREST site ('Derelict Listening Post' (−1200,850)) is ~1,434 units from the nearest
+anchor (10,80), nearly double the radius, so those rungs are UNREACHABLE until this flag flips; the
+farthest site from its nearest anchor ('Precursor Vault Signal' (−4100,3600)) is ~5,411 units ≈
+5,411 s at base_speed 1.0 — one legal jump under the 86,400 s cap. But the flag's command,
+`command_main_ship_space_move` (head 0070), still derived the ship with the pre-multi-ship unguarded
+`where player_id = v_player` (deferred by 0C's §2.5 [C] row because the coordinate gate rejected before
+the read). Multi-ship is LIVE (24-ship cap, commissioning lit) — flipping without the guard lights an
+arbitrary-ship read.
+
+**Work done**
+- **Migration `20260618000178_coord_guard_a0fix.sql`** — parity re-create from the grep-verified TRUE
+  head (create-sites: 0060 → 0070; nothing later): trailing `p_main_ship_id uuid default null` (the
+  0081/0159 idiom; drop + recreate) and step 3's unguarded read swapped for
+  `mainship_resolve_owned_ship(v_player, p_main_ship_id)` — explicit id → ownership-asserted, null →
+  sole-ship shim, N≠1 → fail-closed `no_ship` (verbatim shape). Diff-verified: the function body
+  differs from 0070 by EXACTLY the step-3 comment + resolver swap; every single-ship player is
+  byte-identical end to end. ACLs re-asserted on the new identity (authenticated-only). Self-asserts:
+  4-arg identity exists, 3-arg gone (no overload), resolver CALL in prosrc, unguarded read gone, both
+  flag gates still precede the resolution, ACL, resolver head present. Backward compatible: id-less
+  callers resolve via the trailing default → shim. Signature-pin repoints (the pins §#1 had recorded
+  as "remain valid") appended COMPLETE to docs/TRADE_FLEET_0C_VERIFIER_REPOINT.md §#1 for the
+  deploy-time human gate — the regprocedure/privilege pins PLUS the arg-type-OID census
+  (osn-postenable-verify.sql:176-181 COORD_SURFACE_COUNT, pronargs 3→4 + proargtypes[3]=uuid;
+  .sh:89/:135 consumers) and the exact-args + SECURITY-INTENT asserts (osn3-s6a-realchain-perm.sql:28,
+  :34 and osn3-s6a-live-check.sh:62,:65 — the :34/:65 "no ship id param" intent is now deliberately
+  false and gets a SEMANTIC rewrite: 'player' still absent, the sole ship arg is the trailing
+  ownership-resolved p_main_ship_id). No verifier file edited. Scope note: this closes the last
+  unguarded read on the OSN MOVEMENT surface; a separate read-only pre-multi-ship read remains in
+  `commission_first_main_ship` (0072:117,129 — arbitrary-row CLASSIFICATION at N>1, not exploitable;
+  tiny follow-up queued in docs/TEAM_COMMAND.md).
+- **Client passthrough (same slice — the multi-ship UX half of the guard):** the S6C tap flow now
+  sends the SELECTED ship. Without it, a multi-ship player would get a LIT coordinate UI (readiness
+  is ship-scoped) whose every move answers `no_ship`. Following the Stop pattern exactly:
+  `buildSpaceMoveRpcArgs` gains `p_main_ship_id` (null-defaulted; spaceMoveCommand.ts),
+  `commandMainShipSpaceMove` gains the trailing `mainShipId` param (mainshipApi.ts),
+  `useSpaceMoveCommand` gains the `mainShipId` override + `[mainShipId]` controller-recreation key
+  (useSpaceMoveCommand.ts — the stop hook's exact lifecycle), and GalaxyMap threads
+  `mainShip?.main_ship_id ?? null` — the SAME source as the stop command and the readiness read, so
+  the move targets the ship the readiness was scoped to. tests/spaceMoveCommand.spec.ts extended:
+  exactly FOUR payload keys, the only ship-matching key is `p_main_ship_id`, no player/location/
+  target_kind key, omitted/null ship id → explicit `p_main_ship_id: null` (the shim wire shape).
+  Dark until the flip → zero live-behavior change today.
+- **`scripts/activate-coordinate-travel.{sql,sh}`** (activate-captains idiom) — PRECONDITIONS: head ≥
+  0178 recorded; the guarded body live via the prosrc pin PAIR (the resolver-CALL assignment token +
+  the unguarded-read-GONE negative check — the pair is the teeth — plus old-3-arg-gone); stop guarded
+  (0083); `get_osn_movement_readiness(uuid)` present with the `coordinate_travel_available` derivation;
+  flag key exists; site/field counts + an anchors-nonempty assert (a NULL distance record must not
+  pass as proof) + the LIVE-computed min anchor→site distance printed as the reachability record.
+  STAGE 1 (the ONE write):
+  `mainship_coordinate_travel_enabled` → true via `set_game_config`. SMOKE (read-only): committed
+  value + cfg_bool + the movement-domain flag still true, readiness capability, move+stop guarded
+  prosrc, ACL sanity, every site/field inside the ±10000 envelope. Markers + PASS line. Commented
+  flag-only ROLLBACK with the verified in-flight-settle citation: `process_mainship_space_arrivals`
+  (head 0064:95) reads NO flag; `command_main_ship_settle_arrival` (0150:66) gates only on
+  `mainship_space_movement_enabled`; the stop writer only branches on a flag when NOT in transit
+  (0064:250-259); grep-verified the coordinate flag's ONLY readers are the move command + the
+  readiness projection. **NO client PR** (verified): coordinate targeting is driven SOLELY by the
+  server-derived `coordinate_travel_available` — osnReleaseGates.ts:5-16 (compile const RETIRED),
+  osnReadiness.ts:63 + isCoordinateTargetingActionable (81-91), GalaxyMap.tsx:93-101 (`canTarget`).
+  Selftest mutation-tested: 9 mutations (flag→false, second write, marker drop, pin drop, direct table
+  write, uncommented rollback, precondition drop, psql meta-command, no-client-PR-note drop) — all 9
+  flip it to FAIL; the clean file passes.
+- **Docs**: FULL_CAPACITY_PLAN — Rung 0.5 inserted in the ladder (exploration/mining rungs now marked
+  REQUIRES Rung 0.5) + queue row #14.5 shipped (+ #14 marked shipped); TEAM_COMMAND A0-fix debt note
+  marked RESOLVED; TRADE_FLEET_0C_VERIFIER_REPOINT §#1 converted with the repoint table.
+
+**Verification (this sandbox, honest).** New selftest green + all 9 mutations fatal; every existing
+activate-*/proof/frozen-verifier selftest still green; the full pure spec battery green including the
+extended spaceMoveCommand spec (the 4-key payload proofs); `npm run build` (tsc + vite) green. No local
+DB (Docker down) — the migration apply remains the human deploy gate, per house convention.
+
+---
+
 ## 2026-07-12 — CAPXP-0/1 (queue #13): captain-XP foundation (dark)
 
 **Request.** Queue slice #13 of the full-capacity plan (§C P5): the captain-XP foundation —

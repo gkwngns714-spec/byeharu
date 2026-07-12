@@ -64,10 +64,20 @@ second — server rejects are the authority (TEAM_COMMAND checklist).
 - **Rung 0 — Captains (prep shipped: mig 0171 + `activate-captains`).** Bump 2→6 + shard drop
   (`captain_shard_drop_rate`, launch 0.15). Risk: the bump is one-way once slots 3–6 fill. Rollback:
   **flags only, never slot counts**.
+- **Rung 0.5 — Coordinate travel (prep shipped: mig 0178 COORD-GUARD + `activate-coordinate-travel`)**
+  — the REACHABILITY prerequisite for rungs 1–2: exploration/mining sites sit out to ±4200 and require a
+  settled `in_space` ship within 750 units, while every dockable anchor lives in bbox x −50…70, y −30…80
+  (WORLD_RECON_F1 §7) — port-to-port travel reaches NO site, only free coordinate travel does. Flip
+  `mainship_coordinate_travel_enabled`; mig 0178 first resolver-guards the raw coordinate command (the
+  A0-fix — unguarded single-ship read, a real bug under live multi-ship) and the flip script
+  preconditions on the guarded prosrc. No flip-time client PR (the coordinate UI is
+  server-readiness-driven via `coordinate_travel_available`; the S6C ship-id passthrough already
+  shipped with the slice). Rollback: flag only; in-flight moves settle regardless.
 - **Rung 1 — Exploration (prep shipped: mig 0172 + `activate-exploration`).** Hard-gated on the 0172
-  writer reconcile (the H1 strand fix). Rollback: flag; discoveries persist harmlessly.
+  writer reconcile (the H1 strand fix). **REQUIRES Rung 0.5 first (reachability — see above).**
+  Rollback: flag; discoveries persist harmlessly.
 - **Rung 2 — Mining (prep shipped: `activate-mining`).** Post-flip watch: `secured_at IS NULL` rows =
-  pending yields securing on next safe settle. Rollback: flag.
+  pending yields securing on next safe settle. **REQUIRES Rung 0.5 first (reachability).** Rollback: flag.
 - **Rung 3 — Trade market.** Prereq: ECON-SEED-1 (mig 0173, §C P1). Flip `trade_market_enabled` +
   `trade_relief_enabled` + the one-line `TRADE_MARKET_ENABLED` client PR. Relief floor = the no-softlock
   backstop, light together. Rollback: flags; wallets/cargo/receipts persist inert; the
@@ -211,7 +221,8 @@ P2 contracts + P8 event sites first.
 | 11 | MOD2-1 shield line **[D: stat values]** | queued |
 | 12 | HAUL-0/1 contracts foundation **[D: template/reward table — proposed in the 0176 header, owner-tunable]** | **shipped (dark)** — mig `0176` (`haul_contract_templates` 10-template seed over the 0173 economy + `haul_contracts` + `haul_contracts_enabled=false` + `haul_offers_per_port=2` + the deterministic `haul_generate_offers()` generator (pure-hash per (day, port, slot), idempotent natural key, offered-only expiry) + hourly cron `haul-generate-offers` — a cron-safe dark no-op), proof `scripts/haul-proof.{sql,sh}` wired into `trade-v1-proof.yml` (slice-haul); HAUL-2 accept/deliver + HAUL-3 UI + flip = later slices |
 | 13 | CAPXP-0/1 captain XP foundation **[D: xp knobs 10/6/4 + curve `1 + floor(sqrt(xp/100))` — proposed in the 0177 header, owner-tunable]** | **shipped (dark)** — mig `0177` (additive `captain_instances.xp/level` read by NOTHING until C2-2 + `captain_growth_enabled=false` + the per-(grant, captain) `captain_counted_grants` ledger with a NULL-captain sentinel (consume-exactly-once; no retroactive backfill) + `captain_xp_accrue()` folding FINALIZED `reward_grants` into CURRENTLY-assigned captains (the derivable semantic — captain-at-sortie is recorded nowhere; ship linkage: combat manifest ∪ solo fleet tag, exploration scanner, mining extractor; grants with no linkage → sentinel) + 5-min cron `captain-xp-accrue`, a cron-safe dark no-op), proof = the `TEAMCMD_PASS_CAPXP` block in `team-command-proof`; NOTE for the future ACT-CAPXP flip: the first lit run folds the entire dark backlog into current assignees — accept or pre-seed sentinels (0177 header). C2-2 adapter delta + C2-3 UI = later slices (slice-capxp) |
-| 14 | WORLD-RECON-F1 (read-only) | queued |
+| 14 | WORLD-RECON-F1 (read-only) | **shipped** (docs/WORLD_RECON_F1.md, second run @ head 0177 — surfaced the §7 reachability finding that produced #14.5) |
+| 14.5 | COORD-GUARD + ACT-COORD-TRAVEL (the Rung-0.5 prereq for the exploration/mining flips: resolver-guard the raw coordinate command — the A0-fix — BEFORE `mainship_coordinate_travel_enabled` can flip) | **shipped** — mig `0178` (0070-head parity re-create; trailing `p_main_ship_id` + `mainship_resolve_owned_ship`, fail-closed at N≠1; self-asserting) + the S6C ship-id passthrough (buildSpaceMoveRpcArgs / commandMainShipSpaceMove / useSpaceMoveCommand / GalaxyMap thread the SELECTED ship exactly like stop/settle/readiness — dark until the flip) + `scripts/activate-coordinate-travel.{sql,sh}` (guard-pinned preconditions, the ONE flag write, anchors + reachability + envelope smokes — awaiting the human flip; NO flip-time client PR: the coordinate UI is server-readiness-driven). COMPLETE signature-pin repoint list in TRADE_FLEET_0C_VERIFIER_REPOINT.md §#1 (incl. the COORD_SURFACE_COUNT arg-type census + the S6A exact-args / security-intent asserts) |
 | 15 | ACT-INVEST + ACT-WORLDBAL | queued |
 | 16 | EV-1 + ACT-PHASE20 | queued |
 
