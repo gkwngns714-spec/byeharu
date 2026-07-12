@@ -61,12 +61,15 @@ end $$;
 -- commission each player's first ship (real RPC) → docked at Haven. Commissioning creates NO wallet (0072), so the
 -- seed/no_wallet cases below start from a genuinely wallet-less player.
 do $$
-declare r jsonb; k text; u uuid;
+-- loop var named sk, NOT k: a plpgsql variable `k` is ambiguous against teb's `k` column inside the
+-- query below (plpgsql variable_conflict=error). Same latent class as TM1's — never executed in CI
+-- until the 0C step first went green 2026-07-12.
+declare r jsonb; sk text; u uuid;
 begin
-  foreach k in array array['uS1','uR','uNW','uPos','uC','uCap'] loop
-    u := (select v from teb where teb.k = k);
+  foreach sk in array array['uS1','uR','uNW','uPos','uC','uCap'] loop
+    u := (select v from teb where teb.k = sk);
     r := pg_temp.call_as(u, 'public.commission_first_main_ship()');
-    if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'SETUP FAIL first-ship %: %', k, r; end if;
+    if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'SETUP FAIL first-ship %: %', sk, r; end if;
   end loop;
 end $$;
 

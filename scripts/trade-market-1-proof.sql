@@ -56,12 +56,15 @@ end $$;
 
 -- commission each player's first ship (real RPC) → docked at Haven; fund wallets by direct owner insert.
 do $$
-declare r jsonb; k text; u uuid;
+-- loop var named sk, NOT k: a plpgsql variable `k` is ambiguous against tm1's `k` column inside the
+-- queries below (plpgsql variable_conflict=error). Latent until the 0C step first went green
+-- 2026-07-12 — this block had never executed in CI.
+declare r jsonb; sk text; u uuid;
 begin
-  foreach k in array array['uT','uD','uP','uA'] loop
-    u := (select v from tm1 where tm1.k = k);
+  foreach sk in array array['uT','uD','uP','uA'] loop
+    u := (select v from tm1 where tm1.k = sk);
     r := pg_temp.call_as(u, 'public.commission_first_main_ship()');
-    if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'SETUP FAIL first-ship %: %', k, r; end if;
+    if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'SETUP FAIL first-ship %: %', sk, r; end if;
   end loop;
   -- fund: trader/no-dock/affluent rich; poor keeps 5 credits (buys nothing meaningful).
   insert into public.player_wallet (player_id, balance) values
