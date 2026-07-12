@@ -120,14 +120,37 @@ default — but the pins above resolve the EXACT arg list and must repoint. Live
 → still resolve via the trailing default; NOT invalidated. Name-only lists
 (`osn-hub1a-production-catalog-verify.sql:101`, `EXPECT_AUTH_SURFACE`) unchanged.*
 
-### #1 `command_main_ship_space_move(double precision, double precision, uuid)` — **NOT converted in 0C**
+### #1 `command_main_ship_space_move(double precision, double precision, uuid)` → `(double precision, double precision, uuid, uuid)`  *(converted in migration 0178 — COORD-GUARD, the coordinate-enable slice this section deferred to)*
 
-**Deferred (dark coordinate command; §2.5 [C] row).** It rejects at `…0070…:57`
-(`mainship_coordinate_travel_enabled = false`) before its ship read, so its single-ship derivation is
-unreachable while dark. **Its signature is unchanged → no pin for it breaks → no repoint needed.** The
-future coordinate-enable slice owns ship-scoping it. Pins that remain valid (recorded for completeness):
-`port-entry-1-production-verify.sql:104,141`, `osn-postenable-verify.sh:84-86`,
-`osn-enablement-preflight.sql:42`, `osn-coord-gate-proof.sh:52,53`.
+**Was deferred in 0C (dark coordinate command; §2.5 [C] row)** because it rejected at `…0070…:57`
+(`mainship_coordinate_travel_enabled = false`) before its ship read. Multi-ship commissioning went LIVE
+2026-07-12, so ahead of the coordinate-travel flip, **migration
+`20260618000178_coord_guard_a0fix.sql`** applied the same trailing `p_main_ship_id uuid default null` +
+`mainship_resolve_owned_ship` conversion (drop + recreate; the flip script
+`scripts/activate-coordinate-travel.{sql,sh}` preconditions on the guarded prosrc). Backward compatible at
+runtime (pre-slice clients send `{p_target_x, p_target_y, p_request_id}` → default null → sole-ship shim;
+the same slice ships the client passthrough — the S6C wrapper now also sends the selected/sole
+`p_main_ship_id`, like its stop/settle/readiness siblings), but the previously-recorded "pins that remain
+valid" now break and repoint at the deploy-time human gate:
+
+| file:line | pinned expression | repoint to |
+|---|---|---|
+| `scripts/port-entry-1-production-verify.sql:104` | `('public.command_main_ship_space_move(double precision, double precision, uuid)')` (D2 exact-RPC inventory) | `('public.command_main_ship_space_move(double precision, double precision, uuid, uuid)')` |
+| `scripts/port-entry-1-production-verify.sql:141` | `to_regprocedure('public.command_main_ship_space_move(double precision,double precision,uuid)')` (COORD_CMD_PRESENT) | `…(double precision,double precision,uuid,uuid)…` |
+| `scripts/osn-postenable-verify.sql:148,151,154,157,162` | `to_regprocedure('public.command_main_ship_space_move(double precision,double precision,uuid)')` (COORD_CMD_RESOLVED / SECDEF / ACL / prosrc descriptor probes) | `…(double precision,double precision,uuid,uuid)…` |
+| `scripts/osn-postenable-verify.sh:173` | greps its own SQL for the 3-arg `to_regprocedure` literal (frozen-pair self-check) | the 4-arg literal, together with the .sql repoint |
+| `scripts/osn-enablement-preflight.sql:42` | `to_regprocedure('public.command_main_ship_space_move(double precision,double precision,uuid)') as move_wrapper` | `…(double precision,double precision,uuid,uuid)…` |
+| `scripts/osn-coord-gate-proof.sh:52,53` | `has_function_privilege('anon'/'authenticated','public.command_main_ship_space_move(double precision, double precision, uuid)','EXECUTE')` | `…(double precision, double precision, uuid, uuid)…` |
+| `scripts/osn-postenable-verify.sql:176-181` | `COORD_SURFACE_COUNT` — census by **arg-type OIDs**, not display string: counts public authenticated-executable normal functions with `p.pronargs=3` and `proargtypes[0..2]` = (`float8`,`float8`,`uuid`); expects exactly 1 | `p.pronargs=4` + add `AND p.proargtypes[3] = 'uuid'::regtype::oid`; still expects exactly 1. Consumers `osn-postenable-verify.sh:89` (`ck … COORD_SURFACE_COUNT … 1`) and `:135` (the `COORDINATE_COMMAND_PUBLIC_SURFACE` composite) keep their `=1` expectation once the .sql census is repointed — update the .sh's descriptive text "(float8,float8,uuid)" alongside |
+| `scripts/osn3-s6a-realchain-perm.sql:28` **and** `:34` | `:28` exact identity-args assert: `r.args <> 'p_target_x double precision, p_target_y double precision, p_request_id uuid'`; `:34` **SECURITY-INTENT assert** `if r.args ~* 'player' or r.args ~* 'ship'` ("wrapper accepts no player/ship id") — the `'ship'` half is now **deliberately false** under 0178 | `:28` → append `, p_main_ship_id uuid` (`pg_get_function_identity_arguments` omits defaults). `:34` → **SEMANTIC rewrite, not a literal swap**: keep the `~* 'player'` reject verbatim; replace the `~* 'ship'` reject with an assert that the ONLY ship-matching arg is the TRAILING defaulted `p_main_ship_id` (ownership-resolved server-side via `mainship_resolve_owned_ship` — the 0178 contract). The repointed `:28` exact-args string already pins that shape; `:34` keeps player-id rejection as its own teeth. (The `:37` "PERM ok … no player/ship id param" notice string is cosmetic — update alongside.) |
+| `scripts/osn3-s6a-live-check.sh:62,65` | the SAME two asserts run against **live prod** (manual-dispatch workflow): `:62` exact identity-args string, `:65` `r.args ~* 'player' or r.args ~* 'ship'` | same repoint as the realchain-perm row: `:62` → the 4-arg identity string; `:65` → the semantic rewrite (`'player'` absent; the sole ship arg is the trailing ownership-resolved `p_main_ship_id`) |
+
+*Not invalidated (recorded): the client `.rpc('command_main_ship_space_move', {p_target_x,…})` named-arg
+calls (which as of this slice ALSO pass `p_main_ship_id` — matching the new signature either way) and any
+name-only surface lists resolve via named args / `proname` — unchanged. The prosrc md5 story: no verifier
+pins this function's prosrc md5 (the osn-postenable probes are token/descriptor checks), so no md5
+re-derivation is needed; the 0178 body differs from 0070 by exactly the step-3 resolver swap
+(diff-verified in the slice).*
 
 ### #7 `normalize_main_ship_dock()` → `normalize_main_ship_dock(uuid)`  *(converted in migration 0084)*
 
@@ -308,8 +331,9 @@ Six active sites converted to a trailing `p_main_ship_id uuid default null` via 
 `mainship_resolve_owned_ship` helper: **#2** `command_main_ship_space_stop`, **#3**
 `command_main_ship_space_move_to_location`, **#4** `get_my_current_dock_services`, **#5**
 `get_osn_movement_readiness`, **#6** `repair_main_ship`, **#7** `normalize_main_ship_dock`. **#1**
-`command_main_ship_space_move` is **deferred/dark** (coordinate gate rejects before any ship read; signature
-unchanged → no repoint). All backward compatible (zero-arg callers → default null → sole-ship shim). Every
+`command_main_ship_space_move` was deferred/dark in 0C and has since been **converted by migration 0178**
+(COORD-GUARD, 2026-07-12 — see its updated §#1 table above for the pins that now repoint). All backward
+compatible (zero-arg callers → default null → sole-ship shim). Every
 pin above is a **deploy-time human repoint**, out of the loop's locked scope; the post-0C surface is proven
 by the forthcoming TRADE-FLEET verifier. The PORT-ENTRY D2 inventory
 (`scripts/port-entry-1-production-verify.sql:96-113`) stays frozen and is repointed wholesale at the deploy

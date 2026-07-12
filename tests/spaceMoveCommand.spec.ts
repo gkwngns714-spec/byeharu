@@ -16,7 +16,8 @@ import type { WorldCoord } from '../src/features/map/openSpaceTransform'
 
 // OSN-3 S6C — pure proofs for the empty-space coordinate command logic + controller. No browser/page,
 // no DB, no network — the controller's `rpc` is injected, so these tests PROVE the command boundary
-// (only the S6A RPC name, coords + request-id payload only, idempotency lifecycle) without any DB.
+// (only the S6A RPC name; coords + request-id + the ownership-server-asserted selected/sole ship id
+// (COORD-GUARD §2.5) and nothing else; idempotency lifecycle) without any DB.
 // Run: `npm run verify:osn:s6c`.
 
 // ── Canonical integer-grid rounding (must mirror the S6A server: round = half-AWAY-from-zero) ─────────
@@ -37,20 +38,30 @@ test('canonicalizeWorldTarget rounds both axes to the integer grid', () => {
   expect(canonicalizeWorldTarget({ x: -0.5, y: 0.49 })).toEqual({ x: -1, y: 0 })
 })
 
-// ── RPC boundary: name + exact argument shape (NO location id, NO target_kind, NO ship/player id) ─────
+// ── RPC boundary: name + exact argument shape (NO location id, NO target_kind, NO player id; the ONLY
+//    ship reference is the ownership-server-asserted p_main_ship_id — COORD-GUARD §2.5 / migration 0178) ─
 test('SPACE_MOVE_RPC is the S6A wrapper and the only command name', () => {
   expect(SPACE_MOVE_RPC).toBe('command_main_ship_space_move')
 })
 
-test('buildSpaceMoveRpcArgs carries ONLY the coordinate target + request id', () => {
-  const args = buildSpaceMoveRpcArgs({ x: 100, y: -200 }, 'req-abc')
-  expect(args).toEqual({ p_target_x: 100, p_target_y: -200, p_request_id: 'req-abc' })
-  // exactly three keys — no p_location / p_location_id / p_target_kind / p_ship / p_player can sneak in
-  expect(Object.keys(args).sort()).toEqual(['p_request_id', 'p_target_x', 'p_target_y'])
+test('buildSpaceMoveRpcArgs carries ONLY the coordinate target + request id + selected ship id', () => {
+  const args = buildSpaceMoveRpcArgs({ x: 100, y: -200 }, 'req-abc', 'ship-1')
+  expect(args).toEqual({ p_target_x: 100, p_target_y: -200, p_request_id: 'req-abc', p_main_ship_id: 'ship-1' })
+  // exactly four keys — no p_location / p_location_id / p_target_kind / p_player can sneak in
+  expect(Object.keys(args).sort()).toEqual(['p_main_ship_id', 'p_request_id', 'p_target_x', 'p_target_y'])
   const keys = Object.keys(args)
   expect(keys.some((k) => /location/i.test(k))).toBe(false)
   expect(keys.some((k) => /target_kind/i.test(k))).toBe(false)
-  expect(keys.some((k) => /ship|player/i.test(k))).toBe(false)
+  expect(keys.some((k) => /player/i.test(k))).toBe(false)
+  // the ONE ship-matching key is exactly the §2.5 param the server ownership-asserts — never any other
+  expect(keys.filter((k) => /ship/i.test(k))).toEqual(['p_main_ship_id'])
+})
+
+test('buildSpaceMoveRpcArgs: omitted/null ship id → explicit p_main_ship_id: null (the sole-ship shim)', () => {
+  // omitted and explicit-null are the SAME wire shape — the server default/shim path, matching the Stop
+  // wrapper's `mainShipId ?? null` contract (single-ship players stay behavior-identical).
+  expect(buildSpaceMoveRpcArgs({ x: 1, y: 2 }, 'req-1')).toEqual({ p_target_x: 1, p_target_y: 2, p_request_id: 'req-1', p_main_ship_id: null })
+  expect(buildSpaceMoveRpcArgs({ x: 1, y: 2 }, 'req-1', null)).toEqual({ p_target_x: 1, p_target_y: 2, p_request_id: 'req-1', p_main_ship_id: null })
 })
 
 // ── Gesture ownership: tap vs pan; multi-touch never targets ──────────────────────────────────────────

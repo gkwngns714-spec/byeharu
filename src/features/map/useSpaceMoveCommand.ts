@@ -26,9 +26,15 @@ export interface UseSpaceMoveCommand {
 }
 
 export function useSpaceMoveCommand(overrides?: {
+  // COORD-GUARD (§2.5): the explicit selected/sole main-ship id to command. The default `rpc` forwards it
+  // as p_main_ship_id so the server targets that OWNED ship instead of deriving the sole ship. Null
+  // preserves the shim (behavior-identical while single-ship). Threaded exactly like useSpaceStopCommand:
+  // captured directly (no ref) and used as the controller's sole recreation key — see the useMemo deps.
+  mainShipId?: string | null
   rpc?: SpaceMoveControllerDeps['rpc']
   genRequestId?: SpaceMoveControllerDeps['genRequestId']
 }): UseSpaceMoveCommand {
+  const mainShipId = overrides?.mainShipId ?? null
   const [enabled, setEnabled] = useState(false)
   // The controller reads the flag through a ref so it always sees the latest value without being
   // re-created (recreating it would drop in-flight target/request-id state).
@@ -38,13 +44,16 @@ export function useSpaceMoveCommand(overrides?: {
   const controller = useMemo(
     () =>
       createSpaceMoveController({
-        rpc: overrides?.rpc ?? ((target, requestId) => commandMainShipSpaceMove(target.x, target.y, requestId)),
+        // Default sends the explicit commanded ship as p_main_ship_id; null → server sole-ship shim.
+        rpc: overrides?.rpc ?? ((target, requestId) => commandMainShipSpaceMove(target.x, target.y, requestId, mainShipId)),
         genRequestId: overrides?.genRequestId ?? (() => crypto.randomUUID()),
         isEnabled: () => enabledRef.current,
       }),
-    // Stable for the component's lifetime; dependencies are read via refs/closures by design.
+    // Recreate ONLY when the commanded ship changes (null→id at load; id→id' on a ship switch, which
+    // correctly drops any in-flight target/request-id state belonging to the previous ship — the stop
+    // hook's exact lifecycle); the flag is read via a ref and the stable test overrides via closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [mainShipId],
   )
 
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState)
