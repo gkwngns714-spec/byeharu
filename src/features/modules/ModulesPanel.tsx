@@ -46,10 +46,15 @@ import { ItemChip, ItemGlyph, itemLabel } from '../../components/items'
 
 export function ModulesPanel({
   lifecycleKey,
+  onChanged,
 }: {
   // Re-reads instances/balances whenever the main-ship lifecycle changes (DockServicesPanel
   // idiom) — securing deposits land items on exactly those transitions.
   lifecycleKey: string
+  // SHIP-DOSSIER: fires AFTER a successful command's own refetch (craft consumes inventory;
+  // fit/unfit changes a ship's loadout) so sibling read surfaces (ShipDossier, InventoryPanel)
+  // can re-read — the screen's cross-panel refetch wire, never an optimistic patch.
+  onChanged?: () => void
 }) {
   const [result, setResult] = useState<GetMyModuleInstancesResult | null>(null)
   const [catalog, setCatalog] = useState<ModuleCatalogEntry[] | null>(null)
@@ -101,6 +106,13 @@ export function ModulesPanel({
     void refresh()
   }, [refresh, lifecycleKey])
 
+  // SHIP-DOSSIER: post-success refetch + sibling notification (guarded commands only — the mount
+  // refresh must NOT ping siblings, or every lifecycle tick would fan out into a refetch storm).
+  async function refreshAndNotify() {
+    await refresh()
+    onChanged?.()
+  }
+
   // One intentional Craft per row — the shared guarded-submit body (runGuardedCommand) over the
   // per-row key (catalog id); the server dedups on (player_id, request_id). Refresh re-reads
   // instances AND balances. Failure copy: the server's message, else the shared map, plus the
@@ -121,7 +133,7 @@ export function ModulesPanel({
           ? `${base} (${itemLabel(res.item_id, 'item')}: ${res.have ?? 0}/${res.need ?? 0})`
           : base
       },
-      refresh,
+      refresh: refreshAndNotify,
     })
   }
 
@@ -144,7 +156,7 @@ export function ModulesPanel({
           ? `${base} (${res.used ?? 0}/${res.limit} used, needs ${res.cost ?? 0})`
           : base
       },
-      refresh,
+      refresh: refreshAndNotify,
     })
   }
 

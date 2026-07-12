@@ -1,8 +1,11 @@
+import { useReducer } from 'react'
 import { useShellState } from '../../app/shellState'
 import { ShipStatusCard } from './ShipStatusCard'
+import { ShipDossier } from './ShipDossier'
 import { ModulesPanel } from '../modules/ModulesPanel'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
+import { InventoryPanel } from '../inventory/InventoryPanel'
 import { ShipSwitcher } from '../map/ShipSwitcher'
 import { MAINSHIP_ADDITIONAL_ENABLED, TRADE_MARKET_ENABLED } from '../map/osnReleaseGates'
 import { CommissionShipPanel } from './CommissionShipPanel'
@@ -19,15 +22,22 @@ import { PageHeader, Screen, screenRailClass, screenSplitClass } from '../../com
 export function ShipScreen() {
   const { game, map, selection: shipSelection } = useShellState()
   const lifecycleKey = `${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
+  // SHIP-DOSSIER — the screen's loadout revision: bumped by any panel AFTER a successful
+  // loadout/inventory-changing command (craft/fit/unfit/assign/unassign/recruit), folded into the
+  // read panels' refresh key so ShipDossier + InventoryPanel re-read the server state the command
+  // just changed (non-optimistic: the command panel refetched itself first, then pinged us).
+  const [loadoutRev, bumpLoadoutRev] = useReducer((n: number) => n + 1, 0)
+  const readRefreshKey = `${lifecycleKey}|r${loadoutRev}`
   // TRADE-UI-1 — client selected-ship model, now the ONE shell instance (A0 lifted it here; Port's MarketPanel
   // reads the SAME selection). Consumed by the DARK ShipSwitcher only (compile-gated false + server-rejected).
 
-  // UI R3 (composition): desktop ops split — main rail = the ship's vitals + the heavy outfitting
-  // surface (Modules); aside rail = the crew roster surfaces (Captains/Recruit) + the dark ship
-  // switcher. Everything but ShipStatusCard is dark today, so both extra groups render null and the
-  // aside rail self-collapses (`empty:hidden`) — production shows exactly one full-width vitals
-  // card, no hole. Mobile keeps today's top-down order. NO SectionLabels above the dark panels:
-  // their lit-ness is server-decided at runtime, so a screen-owned header could label a void.
+  // UI R3 (composition): desktop ops split — main rail = the ship's vitals + the per-ship dossier
+  // (SHIP-DOSSIER: fitted modules · captains · cargo hold) + the heavy outfitting surface
+  // (Modules); aside rail = the player's item inventory (SHIP-DOSSIER: live data, always lit) +
+  // the crew roster surfaces (Captains/Recruit) + the dark ship switcher. The dark panels still
+  // render null behind their server gates; the dossier + inventory are lit read surfaces, so both
+  // rails now always have content. Mobile keeps top-down order. NO SectionLabels above the dark
+  // panels: their lit-ness is server-decided at runtime, so a screen-owned header could label a void.
   return (
     <Screen wide>
       <PageHeader eyebrow="Ops · Vessel" title="Ship" subtitle="Your main ship" />
@@ -44,15 +54,34 @@ export function ShipScreen() {
               await Promise.all([game.refresh(), map.refresh()])
             }}
           />
+          {/* SHIP-DOSSIER — what is ON the selected ship (the ONE shell selection): fitted
+              modules (lit) · assigned captains (server-lit gated — dark today) · cargo hold
+              (owner-read, works undocked). Read-only; the command panels below/beside stay the
+              acting surfaces and ping loadoutRev after success. */}
+          {/* key=ship id: switching ships (dark ShipSwitcher) REMOUNTS the dossier, so one ship's
+              sections can never briefly wear another ship's name while the new reads land. */}
+          <ShipDossier
+            key={shipSelection.selectedShipId ?? 'no-ship'}
+            selectedShip={shipSelection.selectedShip}
+            refreshKey={readRefreshKey}
+          />
           {/* MODULES-P13 (dark, server-lit only): module crafting — renders null while the server
               rejects (module_crafting_disabled), so production is byte-unchanged. */}
-          <ModulesPanel lifecycleKey={lifecycleKey} />
+          <ModulesPanel lifecycleKey={lifecycleKey} onChanged={bumpLoadoutRev} />
         </div>
         <div className={screenRailClass('aside')}>
+          {/* SHIP-DOSSIER — the player's item inventory (player_inventory), previously visible
+              NOWHERE except as 'have n' recipe hints. Live data, no feature flag — always shown.
+              Aside home: these items feed the ModulesPanel/RecruitCaptainPanel on this screen. */}
+          <InventoryPanel refreshKey={readRefreshKey} />
           {/* CAPTAIN-P15 (dark, server-lit only): assign/unassign captains to this ship. */}
-          <CaptainsPanel lifecycleKey={lifecycleKey} mainShipId={map.mainShip?.main_ship_id ?? null} />
+          <CaptainsPanel
+            lifecycleKey={lifecycleKey}
+            mainShipId={map.mainShip?.main_ship_id ?? null}
+            onChanged={bumpLoadoutRev}
+          />
           {/* CAPTAIN-P16 (dark, server-lit only): captain recruitment (progression). */}
-          <RecruitCaptainPanel lifecycleKey={lifecycleKey} />
+          <RecruitCaptainPanel lifecycleKey={lifecycleKey} onChanged={bumpLoadoutRev} />
           {/* Multi-ship selection (dark, compile-gated false + server-rejected). TEAM-ACTIVATION
               PREP re-gate: the switcher was born under TRADE_MARKET_ENABLED only because TRADE-UI-1
               was its first multi-ship consumer — the selection itself is generic (modules, captains,
