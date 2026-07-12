@@ -169,6 +169,23 @@
 --            updates zero rows, the shield_le_max CHECK trips on an over-max direct write, and
 --            hp/max_hp are BYTE-UNTOUCHED across every call (one leaf one concern) — with the
 --            leaf's prosrc + service-role-only ACL pinned. No caller exists until SHIELD-1.
+--   TEAMMOVE (TEAMMOVE-1, 0190) — a DOCKED team moves onward as one, reusing TEAMMAP's docked
+--            end-state (the MapWing team, both members docked at Slagworks): the new
+--            move_ship_group_to_location rejects dark (gate-first, asserted in BLOCK DARK);
+--            empty_group; foreign group fails closed; ONE MEMBER MID-FLIGHT (re-departed alone via
+--            the real per-ship move) → member_not_ready with ZERO departures; a SPLIT team (the two
+--            members docked at DIFFERENT ports) → member_not_ready with zero departures;
+--            ALL-OR-NOTHING — the first member's per-ship move SUCCEEDS inside the subtransaction,
+--            the second raises (its active presence row fixture-completed — the manufactured-state
+--            technique) → member_send_failed pinned to the presence raise, with BOTH fleets still
+--            'present' at the port and both ships still in the docked pair (the succeeded member
+--            was rolled back); the HAPPY PATH moves the whole docked team Slagworks → Driftmarch
+--            through per-member delegation to the UNCHANGED live move_main_ship_to_location (0156
+--            head — its 'present' departure branch): 2 present-departure envelopes (from='present',
+--            from Slagworks, to Driftmarch), the departed fleets are the members' OWN docked fleets
+--            re-departed (never re-created), both moving + group-tagged (the 0187 idiom, no
+--            strays), ships in the legacy in-flight pair; and the arrival settles dock the team at
+--            Driftmarch with the informational tag surviving — the whole-team onward hop, closed.
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -195,7 +212,8 @@ begin;   -- everything below is transient; the trailing ROLLBACK leaves ZERO per
 
 create temp table tcmd(k text primary key, v uuid) on commit preserve rows;
 insert into tcmd values
-  ('slag', 'b1a00002-0066-4a00-8a00-000000000002');    -- Slagworks (active non-combat destination)
+  ('slag',  'b1a00002-0066-4a00-8a00-000000000002'),   -- Slagworks (active non-combat destination)
+  ('drift', 'b1a00003-0066-4a00-8a00-000000000003');   -- Driftmarch (the TEAMMOVE onward port)
 
 -- caller helper: set the authenticated subject then run an RPC, returning its jsonb.
 create or replace function pg_temp.call_as(p_sub uuid, p_fn text) returns jsonb language plpgsql as $$
@@ -232,12 +250,18 @@ begin
     where id = (select v from tcmd where k='slag') and status = 'active' and activity_type = 'none';
   if n <> 1 then raise exception 'SETUP FAIL: Slagworks is not active/activity_type=none'; end if;
 
+  -- the TEAMMOVE onward port too (a second legal destination, so a docked team can move Slagworks →
+  -- Driftmarch): same predicate the per-ship move requires (0156: active + non-combat).
+  select count(*) into n from public.locations
+    where id = (select v from tcmd where k='drift') and status = 'active' and activity_type = 'none';
+  if n <> 1 then raise exception 'SETUP FAIL: Driftmarch is not active/activity_type=none'; end if;
+
   -- every fixture player has an ACTIVE Home Base (auto-created on signup; required by the live send).
   select count(*) into n from public.bases b join tcmd t on t.v = b.player_id
     where t.k in ('uA','uB','uC') and b.status = 'active';
   if n <> 3 then raise exception 'SETUP FAIL: expected 3 active fixture bases, got %', n; end if;
 
-  raise notice 'setup ok: starter ports active, Slagworks sendable, 3 active fixture bases (transient)';
+  raise notice 'setup ok: starter ports active, Slagworks + Driftmarch sendable, 3 active fixture bases (transient)';
 end $$;
 
 -- ════════ BLOCK DARK: every team RPC rejects-BEFORE-read while team_command_enabled=false ════════
@@ -271,6 +295,11 @@ begin
   -- would surface group_not_found instead).
   r := pg_temp.call_as(uA, 'public.send_ship_group_hunt(gen_random_uuid(), gen_random_uuid())');
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL hunt send: %', r; end if;
+  -- TEAMMOVE (0190): the docked-team group move rejects dark too — asserted BEFORE the team-flag
+  -- flip below, with random uuids, so only the gate can be what answers (a reject-after-read
+  -- regression would surface group_not_found instead).
+  r := pg_temp.call_as(uA, 'public.move_ship_group_to_location(gen_random_uuid(), gen_random_uuid())');
+  if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL group move: %', r; end if;
 
   select count(*) into n from public.ship_groups;
   if n <> 0 then raise exception 'DARK FAIL: % ship_groups rows written while dark (want 0)', n; end if;
@@ -2551,6 +2580,172 @@ begin
   raise notice 'TEAMCMD_PASS_SHIELD0 ok: committed regen knobs ''0'' (never touched, even in-txn); 3 default-0 columns + 2 NULL snapshot columns + 5 CHECKs + regen index pinned; leaf service-only with clamp/shield-only/no-RNG prosrc; every hull 0, every instance 0/0, every combat row shield-NULL, regen predicate empty; leaf smoke exact (floor 0 / ceiling 50 / in-range 30, missing ship zero rows, shield_le_max trips, hp/max_hp byte-untouched)';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched)' as result;
+-- ════════ BLOCK TEAMMOVE (TEAMMOVE-1, 0190): a DOCKED team moves onward as one ════════
+-- Migration 0190 added move_ship_group_to_location — the 0163-shaped wrapper composing the UNCHANGED
+-- live per-ship move_main_ship_to_location (0156 head, 'present' departure branch) once per member,
+-- all-or-nothing, closing gap G-B (a docked team could arrive together but never leave together).
+-- Fixture reuse: TEAMMAP's docked end-state persists inside this one txn — the MapWing team (2 ships,
+-- both docked at Slagworks, fleets 'present' + tagged) — re-derived here by the team's unique name.
+--   REJECTS — empty group; foreign group fails closed; one member re-departed alone (via the REAL
+--             per-ship move — no fixture surgery) → member_not_ready with ZERO departures; the two
+--             members docked at DIFFERENT ports (t2 settled at Driftmarch — a real split team) →
+--             member_not_ready with zero departures.
+--   ALL-OR-NOTHING — with the team re-united at Slagworks, t2's active presence row is
+--             fixture-completed (the manufactured-state technique; captured by id and restored
+--             after): t1's per-ship move SUCCEEDS inside the subtransaction, then t2's raises
+--             ('no active presence') → member_send_failed pinned to that raise, and BOTH fleets are
+--             still 'present' at Slagworks with both ships still in the docked pair — the succeeded
+--             member was rolled back, never half-moved.
+--   MOVE —    the happy path: the whole docked team moves Slagworks → Driftmarch — 2
+--             present-departure envelopes (from='present', from_location Slagworks, to Driftmarch,
+--             each with a movement_id), the departed fleets are the members' OWN docked fleets
+--             re-departed (the wrapper composes, never re-creates), both 'moving' + group-tagged
+--             (the 0187 idiom; no stray tags for the owner), ships in the legacy in-flight pair
+--             (traveling / spatial_state NULL, 0152).
+--   ARRIVE —  rewinding BOTH timestamps (the established two-timestamp idiom — arrive_at alone would
+--             violate the 0007 arrive_at > depart_at CHECK) and settling through
+--             movement_settle_arrival docks the team at Driftmarch (0153 pair) with the
+--             informational tag surviving — the whole-team onward hop, end to end.
+do $$
+declare r jsonb; n int; uT uuid; t1 uuid; t2 uuid; gT uuid; gE uuid; v_mv uuid;
+  v_f1 uuid; v_f2 uuid; v_pres uuid;
+  uA uuid := (select v from tcmd where k='uA');
+  slag uuid := (select v from tcmd where k='slag');
+  drift uuid := (select v from tcmd where k='drift');
+  v_sent_fleets uuid[];
+begin
+  -- re-derive the TEAMMAP fixture (same txn; the team name is unique to that block) + preconditions.
+  select group_id, player_id into gT, uT from public.ship_groups where name = 'MapWing';
+  if gT is null then raise exception 'TEAMMOVE FAIL precondition: the TEAMMAP MapWing team is missing'; end if;
+  select main_ship_id into t1 from public.main_ship_instances where group_id = gT order by created_at asc  limit 1;
+  select main_ship_id into t2 from public.main_ship_instances where group_id = gT order by created_at desc limit 1;
+  if t1 is null or t2 is null or t1 = t2 then raise exception 'TEAMMOVE FAIL precondition: want 2 distinct members'; end if;
+  select count(*) into n from public.fleets
+    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL precondition: % member fleets present at Slagworks (want 2 — the TEAMMAP docked end-state)', n; end if;
+
+  -- empty_group: a created-but-memberless slot (the BLOCK SEND idiom).
+  r := pg_temp.call_as(uT, 'public.upsert_ship_group(2, ''MoveEmpty'')');
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMMOVE FAIL empty-slot create: %', r; end if;
+  gE := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gE, drift));
+  if (r->>'reason') is distinct from 'empty_group' then raise exception 'TEAMMOVE FAIL empty_group: %', r; end if;
+
+  -- foreign group fails closed (uA on uT's team → group_not_found, never an oracle).
+  r := pg_temp.call_as(uA, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
+  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'TEAMMOVE FAIL foreign group: %', r; end if;
+
+  -- MEMBER NOT DOCKED: t2 re-departs ALONE via the REAL live per-ship move (real state, no surgery) —
+  -- the team is now {t1 docked, t2 mid-flight} and the group move must reject member_not_ready.
+  select id into v_f2 from public.fleets where main_ship_id = t2 and player_id = uT and status = 'present';
+  r := pg_temp.call_as(uT, format('public.move_main_ship_to_location(%L::uuid, %L::uuid)', v_f2, drift));
+  v_mv := (r->>'movement_id')::uuid;
+  if v_mv is null or (r->>'from') is distinct from 'present' then raise exception 'TEAMMOVE FAIL t2 solo re-depart: %', r; end if;
+  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
+  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMMOVE FAIL not-docked reject: %', r; end if;
+  -- …and the reject moved NOTHING: t1 has zero moving fleets (reject-before-write).
+  select count(*) into n from public.fleets where main_ship_id = t1 and status = 'moving';
+  if n <> 0 then raise exception 'TEAMMOVE FAIL: the not-docked reject departed t1 (% moving fleets, want 0)', n; end if;
+
+  -- settle t2 at Driftmarch → a real SPLIT team (t1@Slagworks, t2@Driftmarch), both fully docked.
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+    raise exception 'TEAMMOVE FAIL t2 drift settle: %', r; end if;
+
+  -- MIXED-LOCATION TEAM: every member docked, but NOT at the same port → member_not_ready, zero moves.
+  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
+  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMMOVE FAIL mixed-location reject: %', r; end if;
+  select count(*) into n from public.fleets where main_ship_id in (t1, t2) and status = 'moving';
+  if n <> 0 then raise exception 'TEAMMOVE FAIL: the mixed-location reject departed a member (% moving fleets, want 0)', n; end if;
+
+  -- re-unite: t2 back to Slagworks via the live per-ship move + settle → both docked at Slagworks.
+  r := pg_temp.call_as(uT, format('public.move_main_ship_to_location(%L::uuid, %L::uuid)', v_f2, slag));
+  v_mv := (r->>'movement_id')::uuid;
+  if v_mv is null then raise exception 'TEAMMOVE FAIL t2 return re-depart: %', r; end if;
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+    raise exception 'TEAMMOVE FAIL t2 slag settle: %', r; end if;
+  select count(*) into n from public.fleets
+    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL re-unite: % member fleets present at Slagworks (want 2)', n; end if;
+
+  -- ALL-OR-NOTHING: t1 (ordered FIRST) departs inside the subtransaction, then t2's per-ship move
+  -- raises — its active presence row is fixture-completed (captured by id; restored below). The
+  -- wrapper's own gates still pass (fleet 'present' at Slagworks, ship in the docked pair), so the
+  -- loop is REACHED and fails on member 2 AFTER member 1 already departed → the raise's presence in
+  -- `detail` proves t1 was rolled back, not never-sent (the BLOCK SEND pinning technique).
+  select id into v_pres from public.location_presence where fleet_id = v_f2 and status = 'active';
+  if v_pres is null then raise exception 'TEAMMOVE FAIL: no active presence to manufacture the mid-loop failure from'; end if;
+  update public.location_presence set status = 'completed', updated_at = now() where id = v_pres;
+  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
+  if (r->>'reason') is distinct from 'member_send_failed' then raise exception 'TEAMMOVE FAIL all-or-nothing reason: %', r; end if;
+  if (r->>'detail') not like '%no active presence%' then
+    raise exception 'TEAMMOVE FAIL all-or-nothing detail not pinned to t2''s presence raise: %', r; end if;
+  select count(*) into n from public.fleets where main_ship_id in (t1, t2) and status = 'moving';
+  if n <> 0 then raise exception 'TEAMMOVE FAIL: % moving member fleets after the aborted move (want 0 — the TEAMMOVE all-or-nothing rollback)', n; end if;
+  select count(*) into n from public.fleets
+    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % member fleets still present at the port (want 2 — the departed member must be rolled back)', n; end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
+  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % ships still in the docked pair (want 2)', n; end if;
+  update public.location_presence set status = 'active', updated_at = now() where id = v_pres;
+
+  -- MOVE (the happy path): the whole docked team moves onward Slagworks → Driftmarch as one.
+  select id into v_f1 from public.fleets where main_ship_id = t1 and player_id = uT and status = 'present';
+  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMMOVE FAIL team move: %', r; end if;
+  if jsonb_array_length(r->'sent') <> 2 then raise exception 'TEAMMOVE FAIL: sent length % (want 2)', jsonb_array_length(r->'sent'); end if;
+  -- every member envelope is the 0156 present-departure shape: from Slagworks, to Driftmarch.
+  select count(*) into n from jsonb_array_elements(r->'sent') e
+    where e->>'from' = 'present' and (e->>'from_location_id')::uuid = slag
+      and (e->>'to_location_id')::uuid = drift and e->>'movement_id' is not null;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL: % present-departure envelopes from Slagworks to Driftmarch (want 2)', n; end if;
+  -- the departed fleets are the members' OWN docked fleets re-departed — the wrapper composes the
+  -- per-ship move over existing fleets, it never re-creates them.
+  select array_agg((e->>'fleet_id')::uuid) into v_sent_fleets from jsonb_array_elements(r->'sent') e;
+  if not (v_sent_fleets @> array[v_f1, v_f2] and array_length(v_sent_fleets, 1) = 2) then
+    raise exception 'TEAMMOVE FAIL: departed fleets % are not the members'' own docked fleets (%, %)', v_sent_fleets, v_f1, v_f2; end if;
+  -- all members traveling with tagged fleets (the 0187 tag idiom applied by the wrapper).
+  select count(*) into n from public.fleets
+    where id = any(v_sent_fleets) and status = 'moving' and active_movement_id is not null and group_id = gT;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL: % moving group-tagged member fleets (want 2 — the TEAMMOVE group departure)', n; end if;
+  select count(*) into n from public.fleets where player_id = uT and group_id is not null;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL: % tagged fleets for the owner (want exactly the 2 member fleets — no strays)', n; end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id in (t1, t2) and status = 'traveling' and spatial_state is null;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL: % ships in the legacy in-flight pair (want 2 — traveling / spatial_state NULL)', n; end if;
+
+  -- ARRIVE: settle both arrivals through the cron's own per-movement settle (rewind BOTH timestamps —
+  -- the established two-timestamp idiom; arrive_at alone would violate arrive_at > depart_at).
+  for v_mv in
+    select fm.id from public.fleet_movements fm
+      join public.fleets f on f.id = fm.fleet_id
+     where f.main_ship_id in (t1, t2) and fm.status = 'moving'
+  loop
+    update public.fleet_movements
+       set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+     where id = v_mv;
+    r := public.movement_settle_arrival(v_mv);
+    if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+      raise exception 'TEAMMOVE FAIL arrival settle: %', r; end if;
+  end loop;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
+  if n <> 2 then raise exception 'TEAMMOVE FAIL: % members docked after the hop (want 2 — the team docked at Driftmarch)', n; end if;
+  select count(*) into n from public.fleets
+    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = drift and group_id = gT;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL: % present member fleets at Driftmarch still tagged (want 2 — the moved team present at Driftmarch, tag surviving)', n; end if;
+
+  raise notice 'TEAMCMD_PASS_TEAMMOVE ok: empty_group + foreign fail-closed; mid-flight member and split-port team both reject member_not_ready with zero departures; all-or-nothing rolls back the departed member (member_send_failed pinned to the presence raise, both fleets still docked); the whole docked team then moves Slagworks → Driftmarch as one (2 present-departure envelopes over the members'' own fleets, moving + tagged, no strays) and docks at Driftmarch with the tag surviving';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

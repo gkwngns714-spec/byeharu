@@ -113,6 +113,21 @@ export async function sendShipGroup(groupId: string, locationId: string): Promis
   return data as TeamRpcResult
 }
 
+// move_ship_group_to_location (0190) — all-or-nothing ONWARD move of a fully-DOCKED team to another
+// active, non-combat location (the other half of "docked or move as a whole"). Server-side it composes
+// the live per-ship move_main_ship_to_location (0156) once per member; success carries { sent: [...] }
+// (one per-ship envelope per member, each with fleet_id/movement_id/arrive_at). Rejects arrive as the
+// 0163-family vocabulary plus member_not_ready (the team is not docked together — the 0168 phrasing);
+// a per-member failure (bad destination, already there, …) surfaces as member_send_failed.
+export async function moveShipGroup(groupId: string, locationId: string): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('move_ship_group_to_location', {
+    p_group_id: groupId,
+    p_location_id: locationId,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
 // stop_ship_group_transit (0164) — best-effort halt of every in-flight member. Success carries the aggregate
 // { stopped, skipped, failed }.
 export async function stopShipGroup(groupId: string): Promise<TeamRpcResult> {

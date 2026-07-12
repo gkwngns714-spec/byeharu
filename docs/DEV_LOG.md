@@ -5,6 +5,46 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — TEAMMOVE-1: a docked team moves onward as one (mig 0190, LIVE gate)
+
+**Request.** The owner directive's second half ("the team should also be able to be docked or
+move as a whole"): the dock half worked (team send → members arrive docked, 0153; visible since
+TEAMMAP, 0187), but BOTH team sends require every member `status='home'` while a docked member is
+`'stationary'` — a docked team could arrive together but never leave together (gap G-B).
+
+**Work done**
+- **mig `20260618000190_teammove_group_move.sql`** — NEW `move_ship_group_to_location(p_group_id,
+  p_location_id)`: the 0163-shaped wrapper composing the UNCHANGED live per-ship
+  `move_main_ship_to_location` (TRUE head 0156, grep-verified 0053 → 0152 → 0156; its 'present'
+  departure branch IS a docked member's state) once per member. Gate-first on the LIVE
+  `team_command_enabled` (no dark posture — stated in the header), group FOR SHARE → ships FOR
+  UPDATE (the 0163 lock order), docked-together preconditions UNDER the locks (every member in the
+  0153 stationary/at_location pair + exactly one owned 'present' fleet each, all at ONE location →
+  else `member_not_ready`, the 0168 phrasing), the destination deliberately never read (the
+  per-ship RPC's own rejects surface through the ONE all-or-nothing subtransaction →
+  `member_send_failed`, the 0163 posture), and the 0187-idiom informational `fleets.group_id` tag
+  off the collected envelopes on success. Lock-order inversion vs the standalone per-ship move
+  (ship→fleet here, fleet→ship there) documented and accepted in the header: deadlock-detected
+  (40P01), both sides fail closed, availability noise on a self-race — never corruption.
+- **UI** — `teamApi.moveShipGroup` wrapper; NEW pure `teamMove.ts` (`groupMoveAvailability`
+  server-mirror + `teamMapSendAction`, the ONE expedition-arm classifier) + `tests/teamMove.spec.ts`
+  (incl. the property law: a team with ANY docked member never classifies as an enabled Send);
+  `TeamMapSend` folds the present-fleet read through the REUSED `deriveDockedTeamRollups` and each
+  team row renders by the classifier — "Move team here" (`team-move-<groupId>` testid) / muted
+  "Docked here" badge / disabled Send + gather hint / the original Send. `member_not_ready` /
+  `member_send_failed` copy generalized to cover both hunt and move.
+- **Proof — new `TEAMCMD_PASS_TEAMMOVE` block in `team-command-proof.{sql,sh}`** (20th marker
+  after the SHIELD0 reconcile), reusing TEAMMAP's docked end-state: empty/foreign rejects;
+  mid-flight member and REAL split-port team (t2 genuinely settled at Driftmarch) both
+  `member_not_ready` with zero departures; all-or-nothing pinned on real tables (t2's presence
+  fixture-completed → t1 departs then rolls back, both fleets still docked); happy path Slagworks →
+  Driftmarch (2 present-departure envelopes over the members' OWN fleets, moving + tagged, no
+  strays) and the onward dock with the tag surviving. 12 assert-form selftest pins; Driftmarch
+  added to the fixture ports.
+
+**Verification.** selftest green (20 markers), `tsc -b`, `vite build`, 498 pure specs by explicit
+list, eslint clean on touched files.
+
 ## 2026-07-13 — SHIELD-0: the shield schema foundation (mig 0191, deploy-inert, data-gated)
 
 **Request.** The SHIELD charter, slice 0 (owner directive: ships get a SHIELD that regenerates

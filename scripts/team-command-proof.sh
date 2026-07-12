@@ -55,11 +55,17 @@
 # partial index); total inertness (every hull 0, every instance 0/0, every combat row shield-NULL,
 # the regen predicate empty); and the mainship_sync_combat_shield leaf smoke — floor/ceiling
 # clamps + in-range write exact, missing ship = zero rows, shield_le_max trips, hp/max_hp
-# byte-untouched, service-role-only ACL + shield-only prosrc).
+# byte-untouched, service-role-only ACL + shield-only prosrc)
+# plus the TEAMMOVE-1 group-move block (0190: move_ship_group_to_location — a DOCKED team moves
+# onward as one via per-member delegation to the UNCHANGED live move_main_ship_to_location (0156
+# head): mid-flight and split-port members reject member_not_ready with zero departures, a
+# manufactured mid-loop presence failure proves the all-or-nothing rollback of the already-departed
+# member, and the happy path re-departs the members' OWN docked fleets moving + group-tagged, then
+# docks the whole team at the onward port with the tag surviving).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
-#              RPCs (and captains via the sole writers, never direct inserts), exercises all seven team
+#              RPCs (and captains via the sole writers, never direct inserts), exercises all nine team
 #              RPCs + every reject token, and asserts the all-or-nothing / stop-aggregate /
 #              held-in-space / SET-NULL / captain-fold / D0-delegation specifics.
 #   local    — run the write-then-ROLLBACK proof against a disposable DB_URL (the actual behavior proof),
@@ -72,7 +78,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -97,9 +103,9 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
   grep -q "public.commission_additional_main_ship()" "$SQL" || fail "harness does not exercise commission_additional_main_ship"
 
-  # ── all EIGHT team RPCs are exercised (the five B-surface RPCs + the C0 group preview + the D0
-  #    authoritative totals + the D2 combat team-send). ──────────────────────────────────────────────
-  for fn in upsert_ship_group assign_ship_to_group delete_ship_group send_ship_group_expedition stop_ship_group_transit get_my_group_expedition_preview get_my_group_expedition_totals send_ship_group_hunt; do
+  # ── all NINE team RPCs are exercised (the five B-surface RPCs + the C0 group preview + the D0
+  #    authoritative totals + the D2 combat team-send + the TEAMMOVE-1 docked-team group move). ───────
+  for fn in upsert_ship_group assign_ship_to_group delete_ship_group send_ship_group_expedition stop_ship_group_transit get_my_group_expedition_preview get_my_group_expedition_totals send_ship_group_hunt move_ship_group_to_location; do
     grep -q "public.$fn(" "$SQL" || fail "harness does not exercise the '$fn' RPC"
   done
 
@@ -493,14 +499,45 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "the shield leaf body mentions hp (one leaf one concern breach)" "$SQL" \
     || fail "harness does not PIN the leaf's shield-only prosrc (no hp token)"
 
-  # ── all nineteen block PASS markers present. ─────────────────────────────────────────────────────────
+  # ── TEAMMOVE (0190 / TEAMMOVE-1) pins, in assert form (a gutted .sql that only mentions them in
+  #    prose cannot false-green): the mid-flight and split-port member_not_ready rejects (each with
+  #    its zero-departures half), the all-or-nothing rollback (member_send_failed pinned to the
+  #    mid-loop presence raise + zero moving fleets + both fleets still docked), the happy-path
+  #    present-departure envelopes over the members' OWN fleets, the moving + group-tagged departure
+  #    with the no-strays pin, and the onward dock with the tag surviving. ───────────────────────────
+  grep -qF "TEAMMOVE FAIL not-docked reject" "$SQL" \
+    || fail "harness does not ASSERT the mid-flight-member member_not_ready reject"
+  grep -qF "the not-docked reject departed t1" "$SQL" \
+    || fail "harness does not ASSERT zero departures on the not-docked reject"
+  grep -qF "TEAMMOVE FAIL mixed-location reject" "$SQL" \
+    || fail "harness does not ASSERT the split-port-team member_not_ready reject"
+  grep -qF "the mixed-location reject departed a member" "$SQL" \
+    || fail "harness does not ASSERT zero departures on the mixed-location reject"
+  grep -qF "all-or-nothing detail not pinned to t2''s presence raise" "$SQL" \
+    || fail "harness does not PIN the all-or-nothing abort to the mid-loop member raise"
+  grep -qF "(want 0 — the TEAMMOVE all-or-nothing rollback)" "$SQL" \
+    || fail "harness does not ASSERT zero moving fleets after the aborted team move"
+  grep -qF "(want 2 — the departed member must be rolled back)" "$SQL" \
+    || fail "harness does not ASSERT both fleets still docked after the aborted team move"
+  grep -qF "present-departure envelopes from Slagworks to Driftmarch (want 2)" "$SQL" \
+    || fail "harness does not ASSERT the 0156 present-departure envelope shape"
+  grep -qF "are not the members'' own docked fleets" "$SQL" \
+    || fail "harness does not ASSERT the wrapper re-departs the members' OWN fleets (composes, never re-creates)"
+  grep -qF "(want 2 — the TEAMMOVE group departure)" "$SQL" \
+    || fail "harness does not ASSERT all members traveling with group-tagged fleets"
+  grep -qF "(want 2 — the team docked at Driftmarch)" "$SQL" \
+    || fail "harness does not ASSERT the onward arrival docks the team (0153 pair)"
+  grep -qF "(want 2 — the moved team present at Driftmarch, tag surviving)" "$SQL" \
+    || fail "harness does not ASSERT the tag survives the onward settle"
+
+  # ── all twenty block PASS markers present. ───────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped; shield regen knobs never touched)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped; shield regen knobs never touched)"
   exit 0
 fi
 
