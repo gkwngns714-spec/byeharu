@@ -4,8 +4,9 @@ import { mainShipInstanceStatusLabel } from './mainshipStatusLabel'
 // TRADE-UI-1 — DARK ship-switcher (SELECTION ONLY, no trade actions). Renders one entry per owned main ship
 // (name + status label + cargo capacity) and lets the player choose which ship the trade surface addresses,
 // by calling selectShip(id). It owns NO server truth: selection is client display state (useMainShipSelection),
-// and every per-ship RPC still passes the chosen id explicitly + is server-validated. Mounted only behind the
-// TRADE_MARKET_ENABLED gate (ShipScreen), so nothing renders while the trade surface is dark.
+// and every per-ship RPC still passes the chosen id explicitly + is server-validated. Mounted (ShipScreen)
+// behind TRADE_MARKET_ENABLED || MAINSHIP_ADDITIONAL_ENABLED — selection is generic, and a 2nd ship arrives
+// via multi-ship commissioning, not only trade (TEAM-ACTIVATION PREP re-gate). Both false → dark today.
 //
 // N-ready but dark-single-ship-graceful: today every player has exactly one ship, so the sole ship renders as a
 // non-interactive already-selected entry (no pointless picker). The moment the add-ship capability flips on and

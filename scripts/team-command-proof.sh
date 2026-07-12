@@ -14,7 +14,9 @@
 # manifest's sole writer is the RPC — never a direct insert, grep-enforced below) plus the Slice-D3
 # team-settle block (0169: the escape tick marks surviving members 'returning', the reconciler
 # re-homes them ONLY once the manifest fleet is finished — mid-combat/in-transit race guards — the
-# manifest is retained, defeat + repair recovery, and the M1 single-send race-closure guard).
+# manifest is retained, defeat + repair recovery, and the M1 single-send race-closure guard) plus
+# the activation-prep hull-stats block (0170: every hull row carries seeded base attack/defense —
+# starter_frigate 15/10 — and the re-created adapter folds them: bare ship == hull seed exactly).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -31,7 +33,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_TEAMSETTLE"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_TEAMSETTLE"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -84,6 +86,13 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT totals = the independent per-member sum"
   grep -qF "least((s1->>'speed')::numeric, (s2->>'speed')::numeric)" "$SQL" \
     || fail "harness does not ASSERT totals.speed = min member speed"
+
+  # ── 0170 hull-stats pins (activation prep): the seed VALUES and the adapter fold, in assert
+  #    form — a gutted .sql that only mentions them in prose cannot false-green. ────────────────────
+  grep -qF "(want attack 15 / defense 10 — the 0170 seed)" "$SQL" \
+    || fail "harness does not ASSERT the 0170 starter_frigate hull seed values (15/10)"
+  grep -qF "diverge from the hull seed" "$SQL" \
+    || fail "harness does not ASSERT the adapter folds hull base stats (bare ship == hull seed)"
 
   # ── C0 capacity: the preview's captain_slots_limit=6 is asserted in assert form. 0165 is RPC-only, so
   #    the proof applies the deferred activation hull bump IN-TXN before commissioning — assert both. ──
@@ -167,14 +176,14 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "repair did not revive the destroyed member (want home @ max_hp)" "$SQL" \
     || fail "harness does not ASSERT the repair revival (recovery pin)"
 
-  # ── all ten block PASS markers present. ─────────────────────────────────────────────────────────────
+  # ── all eleven block PASS markers present. ──────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest; 8 RPCs + all reject tokens; all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/D3-team-settle specifics)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 4 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/D3-team-settle specifics)"
   exit 0
 fi
 

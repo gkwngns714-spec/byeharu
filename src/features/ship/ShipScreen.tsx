@@ -4,7 +4,8 @@ import { ModulesPanel } from '../modules/ModulesPanel'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
 import { ShipSwitcher } from '../map/ShipSwitcher'
-import { TRADE_MARKET_ENABLED } from '../map/osnReleaseGates'
+import { MAINSHIP_ADDITIONAL_ENABLED, TRADE_MARKET_ENABLED } from '../map/osnReleaseGates'
+import { CommissionShipPanel } from './CommissionShipPanel'
 import { PageHeader, Screen, screenRailClass, screenSplitClass } from '../../components/ui'
 
 // UI-REBUILD (2b, Ship interior) — the Ship destination: ONE merged ship-status surface
@@ -52,12 +53,29 @@ export function ShipScreen() {
           <CaptainsPanel lifecycleKey={lifecycleKey} mainShipId={map.mainShip?.main_ship_id ?? null} />
           {/* CAPTAIN-P16 (dark, server-lit only): captain recruitment (progression). */}
           <RecruitCaptainPanel lifecycleKey={lifecycleKey} />
-          {/* TRADE-UI-1 (dark, compile-gated false + server-rejected): multi-ship selection. */}
-          {TRADE_MARKET_ENABLED && (
+          {/* Multi-ship selection (dark, compile-gated false + server-rejected). TEAM-ACTIVATION
+              PREP re-gate: the switcher was born under TRADE_MARKET_ENABLED only because TRADE-UI-1
+              was its first multi-ship consumer — the selection itself is generic (modules, captains,
+              market all address the selected ship), and a second ship now arrives via multi-ship
+              COMMISSIONING, so either gate must light it. OR (not a move): trade can still light it
+              independently. Still dark today — both constants are false. */}
+          {(TRADE_MARKET_ENABLED || MAINSHIP_ADDITIONAL_ENABLED) && (
             <ShipSwitcher
               ships={shipSelection.ships}
               selectedShipId={shipSelection.selectedShipId}
               selectShip={shipSelection.selectShip}
+            />
+          )}
+          {/* TEAM-ACTIVATION PREP (dark, compile-gated false + server-rejected): commission an
+              additional main ship — the in-client path to ship #2+, beside the switcher (ship
+              acquisition next to ship selection). Await→refetch: the new ship must appear in the
+              ONE shell selection list + the game/map state, never optimistically. */}
+          {MAINSHIP_ADDITIONAL_ENABLED && (
+            <CommissionShipPanel
+              ships={shipSelection.ships}
+              onCommissioned={async () => {
+                await Promise.all([shipSelection.refresh(), game.refresh(), map.refresh()])
+              }}
             />
           )}
         </div>

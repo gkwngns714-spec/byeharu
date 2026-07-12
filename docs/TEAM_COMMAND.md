@@ -593,37 +593,76 @@ byte-identical today.
 Every item below is **human-gated activation work, never part of a slice**. The dark build is
 complete (A → D4); nothing lights up until these are done deliberately, together, and in order.
 
-1. **Flag flips (the switch itself):**
+> **ACTIVATION PREP shipped 2026-07-12** (packet `docs/TEAM_ACTIVATION_PACKET.md` — all
+> recommendations approved). **DONE by the prep slice:** migration `20260618000170` (hull base
+> combat stats: starter_frigate `{attack 15, defense 10}` + the parity-shaped adapter fold — the
+> packet-§1.4 fix for a bare team's zero damage/survival; pre-flip this is **API-visible only**:
+> the values answer through `get_my_expedition_preview`, which no shipped UI calls today) ·
+> `scripts/activate-team-command.{sql,sh}` (the staged flip operation below, selftest-green) ·
+> the DARK client commissioning slice (`CommissionShipPanel` + the ship-switcher re-gate on
+> ShipScreen, behind `MAINSHIP_ADDITIONAL_ENABLED` — without it the flip would have shipped a
+> teams UI with no in-client way to buy ship #2) · commissioning price + fleet-cap knobs and the
+> module flags are IN the script (never a migration). **REMAINING (human, in order):** ① run
+> `scripts/activate-team-command.sql` against prod (stage-1 knobs `main_ship_price`→250 /
+> `max_active_fleets`→6; stage-2 flags commission → team → module crafting/fitting; stage-3
+> smoke; marked rollback section inside) → ② the ONE-LINE client PR flipping
+> `TEAM_COMMAND_ENABLED` **and** `MAINSHIP_ADDITIONAL_ENABLED` (`osnReleaseGates.ts`) — mounts
+> `TeamRosterPanel` (CommandScreen: the roster/Hunt UI) + the **Commission ship** control and the
+> ship switcher (ShipScreen aside rail) → ③ post-flip proof + manual smoke (item 6) → ④ captains
+> FAST-FOLLOW (the bump SQL of item 2 + a `captain_memory_shard` drop +
+> `captain_assignment_enabled` (+ `captain_progression_enabled`) — packet §3).
+
+1. **Flag flips (the switch itself)** — **scripted: `scripts/activate-team-command.{sql,sh}`
+   (human-run, idempotent, all-or-nothing, rollback section included; NOT CI):**
    - `team_command_enabled` (game_config) → `true` — lights every team RPC (B0/B1/B-send/B-stop/
      C0/D0/D2's gates all reject-before-read on it).
-   - `TEAM_COMMAND_ENABLED` (`src/features/map/osnReleaseGates.ts`) → `true` — mounts
-     `TeamRosterPanel` (the entire team UI, including D4's Hunt surface).
-   - `captain_assignment_enabled` → `true` **only if captains are wanted at launch** — without it the
-     C1 captain sub-surface stays byte-invisible (fail-closed) and teams fight uncaptained.
+   - `mainship_additional_commission_enabled` → `true` + `main_ship_price` 1000 → 250 — packet §2:
+     teams need ships; seed capital buys a 5-ship roster. (Also in the script: `module_crafting_enabled`
+     + `module_fitting_enabled` per packet §1.4.2 — modules are the designed damage source.)
+   - `TEAM_COMMAND_ENABLED` **and** `MAINSHIP_ADDITIONAL_ENABLED`
+     (`src/features/map/osnReleaseGates.ts`) → `true as const` — the ONE-LINE follow-up PR AFTER
+     the server script passes (server first, client second — server rejects are the authority).
+     What each mounts (verified): `TEAM_COMMAND_ENABLED` → `TeamRosterPanel` in CommandScreen (the
+     entire team UI, including D4's Hunt surface); `MAINSHIP_ADDITIONAL_ENABLED` → the
+     **Commission ship** control (`CommissionShipPanel`) AND the ship switcher (its ShipScreen
+     gate is `TRADE_MARKET_ENABLED || MAINSHIP_ADDITIONAL_ENABLED`) on the Ship screen's aside
+     rail — the in-client path to ship #2+, shipped dark by the 2026-07-12 prep slice.
+   - `captain_assignment_enabled` → `true` **only if captains are wanted at launch** — DECIDED
+     (packet §3): launch UNCAPTAINED; captains are the fast-follow flip, so the activation script
+     deliberately does NOT touch any captain flag.
 2. **The deferred captain-slots migration (run WITH the captain flag, idempotent + monotonic):**
    the hull bump `main_ship_hull_types.base_captain_slots` 2 → 6 **and** the existing-instance
    `captain_slots` backfill — the exact SQL is pinned under "Explicitly deferred" below. Deferred
-   through C0-D4 because the "Captain seats" row renders both values ungated.
+   through C0-D4 because the "Captain seats" row renders both values ungated. **STILL REMAINING —
+   the captains fast-follow window (packet §3), together with a `captain_memory_shard` drop
+   (packet F5: recruiting is dead-ended without a shard source) + the captain flags; deliberately
+   NOT part of the 2026-07-12 prep slice or its activation script.**
 3. **Pre-activation blockers — all CLOSED:** M1 (the live single send's lost-update race) was fixed
    in D3 (migration 0169); nothing else on the blocker list.
 4. **Optional pre-activation cleanup:** the **Low-2 lock-ordering polish** from D3's adversarial
    review (Low severity — harmonizing the residual lock-order asymmetry noted there; correctness is
    already proven by the D3 pins, so this is polish, not a gate).
-5. **Balance items deliberately deferred to lit-time (decide before or shortly after the flip):**
-   - **enemy scaling vs team power** — encounters currently scale exactly as legacy fleets; a
-     3-8-ship team's summed `combat_power` may trivialize existing hunt zones.
-   - **partial-destruction policy** — today a defeated team is destroyed per the D1 member loop and
-     revived per-ship via `repair_main_ship`; decide if that's the wanted lit economy.
-   - **`retreat_safety` modulation** — the folded team `retreat_safety` is summed but retreat still
-     runs the legacy per-encounter curve; decide how team size should modulate it.
-   - **`max_active_fleets`** — LIVE and shared with legacy fleets; a team is ONE fleet (D2), but
-     players running teams + legacy fleets may hit the cap. Raising it changes live behavior →
-     belongs here, not in a slice.
+5. **Balance items deliberately deferred to lit-time — ALL DECIDED 2026-07-12 (packet §1/§4/§5):**
+   - **enemy scaling vs team power** — DECIDED: Option A (no formula change; the ladder already
+     differentiates team sizes) + hull base combat stats `{attack 15, defense 10}` — **DONE,
+     migration 0170** (the parity-shaped adapter fold; kills the bare-team-zero-damage F1, the
+     dead defense curve F2, and the new-player loot bootstrap F4). Higher-difficulty team seeds
+     (Option C) at the first content expansion; the wrap-don't-widen knob (Option B) in reserve.
+   - **partial-destruction policy** — DECIDED: KEEP survive-at-0 on a team WIN (matches the
+     roadmap law; the repair/recovery economy is its own future initiative). No change shipped.
+   - **`retreat_safety` modulation** — DECIDED: stays inactive at launch; when wanted, a
+     config-knob modulation via a parity-shaped tick re-create — never a second engine.
+   - **`max_active_fleets`** — DECIDED: 3 → 6 at flip time — **in the activation script's stage 1**
+     (a reversible `set_game_config` write; LIVE-shared with legacy sends, harmless at 6).
 6. **Post-flip smoke:** run the disposable proof (`scripts/team-command-proof.sh`) once against the
-   lit environment — every block (`TEAMCMD_PASS_*`) must still pass with the real flag on.
+   lit environment — every block (`TEAMCMD_PASS_*`, now including `TEAMCMD_PASS_HULLSTATS` pinning
+   the 0170 hull seed + adapter fold) must still pass with the real flag on — plus the packet-§6
+   stage-3 manual smoke (create team → commission → hunt → retreat → deposit → repair).
 
-Deliberately NOT on this list: C2 (captain progression wiring / 6 → 8 slots) and
-`mainship_additional_commission_enabled` (multi-ship commissioning) — separate, later decisions.
+Deliberately NOT on this list: C2 (captain progression wiring / 6 → 8 slots) — a separate, later
+decision. `mainship_additional_commission_enabled` (multi-ship commissioning) WAS a separate
+decision and was DECIDED 2026-07-12 (packet §2: flip at team launch, price 1000 → 250) — it is in
+the activation script's stage 2.
 
 ## Dark state / gate decisions
 

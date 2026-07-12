@@ -49,9 +49,13 @@ async function main() {
   await admin.rpc('ensure_main_ship_for_player', { p_player: u1.userId })
   ok('set up player + commissioned main ship (via service-role)')
 
+  // Since migration 0170 the hull carries base combat stats (starter_frigate {attack 15}) folded
+  // by the ONE adapter — a bare ship previews its hull seed (read live, never hardcoded), not 0.
+  const hull = (await admin.from('main_ship_hull_types').select('base_stats_json').eq('hull_type_id', 'starter_frigate').single()).data
+  const hullAtk = Number(hull?.base_stats_json?.attack ?? 0)
   const p0 = (await preview(u1.client, [])).data
-  p0 && p0.has_ship === true && p0.valid === true && p0.stats?.support_capacity_limit === 10 && p0.stats?.support_capacity_used === 0 && p0.stats?.combat_power === 0
-    ? ok('1. empty loadout → has_ship, valid, base stats (cap 0/10, combat 0)') : bad('1. base preview', JSON.stringify(p0))
+  p0 && p0.has_ship === true && p0.valid === true && p0.stats?.support_capacity_limit === 10 && p0.stats?.support_capacity_used === 0 && p0.stats?.combat_power === hullAtk
+    ? ok(`1. empty loadout → has_ship, valid, base stats (cap 0/10, combat ${hullAtk} = the hull seed)`) : bad('1. base preview', JSON.stringify(p0))
 
   const p1 = (await preview(u1.client, [{ support_craft_type_id: 'missile_boat', quantity: 1 }])).data
   p1?.valid === true && p1.stats?.support_capacity_used === 3 && p1.stats?.combat_power > 0

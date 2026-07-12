@@ -58,11 +58,16 @@ async function main() {
   if (!ship) die(`no main ship created — ensure.data=${JSON.stringify(ens.data)} ensure.error=${JSON.stringify(ens.error)}`)
   ok(`set up player + main ship (support_capacity ${ship.support_capacity}, cargo ${ship.cargo_capacity})`)
 
-  // 1/2. starter ship, empty loadout → base stats, 0/10 capacity.
+  // 1/2. starter ship, empty loadout → base stats, 0/10 capacity. Since migration 0170 the hull
+  // carries base combat stats (starter_frigate {attack 15, defense 10}) folded by the adapter, so
+  // a bare ship's combat_power/survival equal the HULL seed (read live, never hardcoded), not 0.
+  const hull = (await admin.from('main_ship_hull_types').select('base_stats_json').eq('hull_type_id', ship.hull_type_id).single()).data
+  const hullAtk = Number(hull?.base_stats_json?.attack ?? 0)
+  const hullDef = Number(hull?.base_stats_json?.defense ?? 0)
   const base = (await calc(userId, ship.main_ship_id, [])).data
   base && base.support_capacity_used === 0 && base.support_capacity_limit === 10 &&
-    base.combat_power === 0 && Number(base.speed) === 1 && base.cargo_capacity === ship.cargo_capacity
-    ? ok(`1/2. empty loadout → base stats (speed 1, cargo ${base.cargo_capacity}, combat 0, used 0/10)`) : bad('1/2. base stats', JSON.stringify(base))
+    base.combat_power === hullAtk && base.survival === hullDef && Number(base.speed) === 1 && base.cargo_capacity === ship.cargo_capacity
+    ? ok(`1/2. empty loadout → base stats (speed 1, cargo ${base.cargo_capacity}, combat ${hullAtk}/survival ${hullDef} = the hull seed, used 0/10)`) : bad('1/2. base stats', JSON.stringify(base))
 
   // 16. no NaN, all numeric fields present & finite.
   NUM_FIELDS.every((f) => typeof base[f] === 'number' && Number.isFinite(base[f]))

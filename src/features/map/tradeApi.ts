@@ -110,6 +110,26 @@ export async function commissionAdditionalMainShip(): Promise<CommissionAddition
   return data as CommissionAdditionalResult
 }
 
+// ── commission display context (public-read game_config rows) ───────────────────────────────────
+export interface GameConfigRow {
+  key: string
+  value: unknown
+}
+
+/**
+ * Read the three public-read game_config knobs the commission affordance mirrors/displays
+ * (server flag, ship cap, price — all display-only; the server re-checks every one). Error → []
+ * so the pure coercion (commissionContextFromConfig) falls back to its fail-closed defaults.
+ */
+export async function getCommissionConfigRows(): Promise<GameConfigRow[]> {
+  const { data, error } = await supabase
+    .from('game_config')
+    .select('key, value')
+    .in('key', ['mainship_additional_commission_enabled', 'max_main_ships_per_player', 'main_ship_price'])
+  if (error || !data) return []
+  return data as GameConfigRow[]
+}
+
 // ── owner-read wallet balance (player_wallet) ────────────────────────────────────────────────────
 /** Read the caller's credit balance (owner-read RLS). Lazy: no row yet → 0. numeric arrives as string. */
 export async function getWalletBalance(): Promise<number> {
