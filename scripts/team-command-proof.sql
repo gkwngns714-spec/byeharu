@@ -2397,7 +2397,12 @@ begin
       join public.fleets f on f.id = fm.fleet_id
      where f.main_ship_id in (t1, t2) and fm.status = 'moving'
   loop
-    update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_mv;
+    -- shift BOTH timestamps (the established rewind idiom of every earlier block): moving only
+    -- arrive_at back would land arrive_at <= depart_at on a just-sent movement and violate the
+    -- 0007 fleet_movements check (arrive_at > depart_at).
+    update public.fleet_movements
+       set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+     where id = v_mv;
     r := public.movement_settle_arrival(v_mv);
     if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
       raise exception 'TEAMMAP FAIL settle: %', r; end if;
