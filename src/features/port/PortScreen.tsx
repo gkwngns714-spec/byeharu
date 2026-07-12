@@ -2,6 +2,7 @@ import { useShellState } from '../../app/shellState'
 import { DockedPortCard } from './DockedPortCard'
 import { HaulBoardPanel } from './HaulBoardPanel'
 import { SalvageMarketPanel } from './SalvageMarketPanel'
+import { ShipyardPanel } from './ShipyardPanel'
 import { StationHangar } from './StationHangar'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { MarketPanel } from '../map/MarketPanel'
@@ -86,6 +87,19 @@ export function PortScreen() {
                 (production today) → renders null, so production is byte-unchanged. locationId is
                 the SERVER dock projection (this docked branch). */}
             <SalvageMarketPanel
+              lifecycleKey={lifecycleKey}
+              locationId={dock.locationId}
+              mainShipId={map.mainShip?.main_ship_id ?? null}
+            />
+            {/* SHIPYARD-3 (dark, flag-gated): the hull build order desk — a port SERVICE sibling
+                on the main rail beside the trade family. No read RPC exists for the shipyard
+                (0185/0188: the recipe catalog is public-read Reference/Config), so the panel
+                gates itself on the server's own shipyard_enabled flag read honestly from
+                PUBLIC-READ game_config (the SalvageMarketPanel posture) — flag false (production
+                today) → renders null, so production is byte-unchanged. locationId is the SERVER
+                dock projection (this docked branch). ORDER side only — cancel is the SHIPYARD-2
+                seam (see the panel header). */}
+            <ShipyardPanel
               lifecycleKey={lifecycleKey}
               locationId={dock.locationId}
               mainShipId={map.mainShip?.main_ship_id ?? null}
