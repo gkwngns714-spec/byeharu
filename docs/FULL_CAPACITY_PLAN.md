@@ -170,9 +170,18 @@ seed an item nothing drops). MOD2-2: Mk-II tier (`autocannon_battery_mk2` attack
 Guard: all stats flow through `module_types.stats_json` → the existing fitting adapter; the
 Σ`slot_cost` ≤ `module_slots` reject-never-clamp cap already enforces tradeoffs.
 
-### P8 — EVENTS-LIVE: world events as a live system *(M)*
-EV-1: `worldstate_tick` publishes threshold events through the existing `world_events_publish` (pressure
-crossings, depletion warnings, drift extremes — dedup-keyed). EV-2: **event sites** — a producer that
+### P8 — EVENTS-LIVE: world events as a live system *(M — EV-1 SHIPPED dark as mig 0182; EV-2/EV-3 + the Rung-7 flips remain)*
+EV-1 (**shipped**, mig `0182` / `scripts/ev1-proof.{sql,sh}` / `world-events-proof.yml`):
+`worldstate_tick` publishes STATE-detected threshold events through the existing
+`world_events_publish` (`pressure_high` warning/critical while at/above
+`event_pressure_high_threshold=75` — a parked-high location re-announces daily, intended
+pressure-nagging — + `pressure_eased` as the exact complement suppressed unless today's high was
+announced; `field_depleting` below `event_depletion_warn_fraction=0.25`; `price_surge`/`price_crash`
+outside `event_drift_extreme_band_low/_high=0.6/1.4` — all [D] owner-tunable with gated+guarded knob
+reads, all dedup-keyed per (subject, UTC day); one failure-guarded subtransaction PER publication so
+the 60s heartbeat never aborts and a failed publish genuinely retries; DOUBLE-DARK behind
+`world_balance_enabled` × `phase20_polish_enabled`, zero events until BOTH flip — exactly the Rung-7
+order). EV-2: **event sites** — a producer that
 time-activates seeded `event_site` locations (the `location_type` value has existed since 0002, never
 used): a boosted-tier hunt zone live for 48h, retired by lifecycle (`hidden`), never deleted (A6). EV-3:
 event feed UI (WorldEventsPanel + map badges via `ui_asset_catalog`). Deps: Rung 7. Guard: events
@@ -230,7 +239,7 @@ P2 contracts + P8 event sites first.
 | 14 | WORLD-RECON-F1 (read-only) | **shipped** (docs/WORLD_RECON_F1.md, second run @ head 0177 — surfaced the §7 reachability finding that produced #14.5) |
 | 14.5 | COORD-GUARD + ACT-COORD-TRAVEL (the Rung-0.5 prereq for the exploration/mining flips: resolver-guard the raw coordinate command — the A0-fix — BEFORE `mainship_coordinate_travel_enabled` can flip) | **shipped** — mig `0178` (0070-head parity re-create; trailing `p_main_ship_id` + `mainship_resolve_owned_ship`, fail-closed at N≠1; self-asserting) + the S6C ship-id passthrough (buildSpaceMoveRpcArgs / commandMainShipSpaceMove / useSpaceMoveCommand / GalaxyMap thread the SELECTED ship exactly like stop/settle/readiness — dark until the flip) + `scripts/activate-coordinate-travel.{sql,sh}` (guard-pinned preconditions, the ONE flag write, anchors + reachability + envelope smokes — awaiting the human flip; NO flip-time client PR: the coordinate UI is server-readiness-driven). COMPLETE signature-pin repoint list in TRADE_FLEET_0C_VERIFIER_REPOINT.md §#1 (incl. the COORD_SURFACE_COUNT arg-type census + the S6A exact-args / security-intent asserts) |
 | 15 | ACT-INVEST + ACT-WORLDBAL | queued |
-| 16 | EV-1 + ACT-PHASE20 | queued |
+| 16 | EV-1 + ACT-PHASE20 **[D: thresholds 75 / 0.25 / 0.6–1.4 — proposed in the 0182 header, owner-tunable]** | **EV-1 shipped (dark)** — mig `0182` (slice-ev1): `worldstate_tick` re-created from its TRUE head (0137, grep-verified; parity diff clean) with the marked EV-1 hunks — ALL STATE-detected (never edge: a failed publish's condition still holds next minute, so the retry is genuine): pressure high (at/above `event_pressure_high_threshold=75`; critical ≥ threshold + half the headroom; a parked-high location re-announces daily — intended pressure-nagging) + eased (the exact complement, suppressed unless today's high was announced — a read-only lookup of the tick's own published rows), depletion warnings (post-regen reserve < `event_depletion_warn_fraction=0.25`, global-scope, field NAME only), drift extremes (`price_surge`/`price_crash` outside 0.6/1.4 — 1.4 grounded: the 0136 drift target caps at 1.5 under coeff 0.5, so the notional 1.6 is unreachable) — every publication through the EXISTING `world_events_publish` (never a direct insert; 5 call sites pinned), per-(subject, UTC-day) dedup keys, EACH publication its own begin/exception subtransaction (query_canceled re-raised; a publish failure logs a WARNING, never aborts the tick, never rolls back a sibling — D2), the four knobs read ONLY when `world_balance_enabled` and guarded (uncastable/NaN → seeded default + WARNING — a knob typo cannot kill the live heartbeat), double-dark (`world_balance_enabled` × publish's own `phase20_polish_enabled` gate), NO new cron (the 0033 60s heartbeat, self-asserted unchanged); proof `scripts/ev1-proof.{sql,sh}` in NEW `world-events-proof.yml` (family-pure host — trade-v1 stays trade-only). ACT-PHASE20 (the Rung-7 flips) remains |
 
 *(Then: HULLS2 line [D], MOD2-2, RR line, OB line, C2-4 — resequenced at the next plan review.
 HAUL is now FULLY STOCKED: HAUL-3 shipped 0181/PR #117 and the ACT-HAUL flip script shipped
