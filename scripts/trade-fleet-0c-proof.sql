@@ -1,4 +1,4 @@
--- TRADE-FLEET-0C — disposable REAL-CHAIN proof (runs on the actual chain 0001..0084 in a throwaway Supabase).
+-- TRADE-FLEET-0C — disposable REAL-CHAIN proof (runs on the actual full migration chain in a throwaway Supabase).
 -- Proves the 0C-established subset of the TRADE-FLEET-0B §2.7 eight properties. Fixture users carry the
 -- 'tf0c.' email prefix. The ENTIRE proof runs inside ONE transaction that ROLLBACKs — it persists NO ship,
 -- flag flip, or trade row. No production access. No COMMIT anywhere.
@@ -63,7 +63,21 @@ begin
   insert into public.game_config(key,value,description)
     values('mainship_space_movement_enabled','true'::jsonb,'tf0c transient (rolled back)')
     on conflict (key) do update set value='true'::jsonb;
-  raise notice 'setup ok: starter ports active + movement domain enabled (transient)';
+  -- pin the per-player ship cap to 3 for the cap-block property below (transient; rolled back).
+  -- 0160 (team command Slice A) raised the production cap 3→24, which would make this proof's
+  -- "cap blocks the 4th ship" stage meaningless at small N — the property under test is cap
+  -- ENFORCEMENT, not the production cap VALUE, so we exercise it at cap=3 as originally written.
+  insert into public.game_config(key,value,description)
+    values('max_main_ships_per_player','3'::jsonb,'tf0c transient (rolled back)')
+    on conflict (key) do update set value='3'::jsonb;
+  -- fund uM's wallet by direct owner insert (TM1-proof idiom; transient, rolled back). Since 0091
+  -- priced ADDITIONAL ships (main_ship_price=1000) and 0093 seeds only starting_credits=1000, a
+  -- fresh player affords exactly ONE additional ship — this proof commissions TWO, so the
+  -- provisioning stage needs an explicitly funded wallet (credit semantics are TM1-proof P8 scope).
+  insert into public.player_wallet (player_id, balance)
+    values ((select v from tf0c where k='uM'), 100000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  raise notice 'setup ok: starter ports active + movement domain enabled + cap pinned 3 + uM funded (transient)';
 end $$;
 
 -- ════════ P. Provisioning + DARK flag gate + per-player cap (§1a–b) ════════
