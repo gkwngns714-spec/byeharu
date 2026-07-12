@@ -5,6 +5,86 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — RANK-SEASON + ACT-RANKING (queue #9): the ranking activation script
+
+**Request.** Queue slice #9 of the full-capacity plan (§B rung 5): `scripts/activate-ranking.{sql,sh}`
+in the proven activate-* idiom. NO migration — the ranking stack is fully built dark (0127–0131 schema +
+`ranking_season_open` + accrual + read surface; 0144/0145 the commit-safe `ranking_counted_grants`
+ledger fold; 0147 the 5-min `ranking-accrue-standings` cron, already scheduled as a dark no-op;
+RankingPanel server-lit). The script IS the flip: seasons + `ranking_enabled` → true.
+
+**Work done**
+- **`scripts/activate-ranking.sql`** — one all-or-nothing BEGIN..COMMIT (txn-local **UTC** — the
+  window anchors are UTC-defined), zero psql meta-commands. PRECONDITIONS (read-only): head ≥ `0147` +
+  all 8 ranking migrations recorded; the 3 tables + both season-invariant indexes; the whole function
+  surface via `to_regprocedure` with the REAL signatures — `ranking_season_open(text, timestamptz,
+  timestamptz, text)` (explicit bounds + label; it does NOT compute windows), `ranking_accrue_standings()`,
+  `ranking_score_delta(jsonb)`, and the two client RPCs rankingApi.ts actually calls,
+  `get_ranking_seasons()` + `get_ranking_leaderboard(uuid, text, int)` (there is NO
+  get_my_rankings/get_my_standing — own standing is client-derived by design); the DEPLOYED accrual
+  body prosrc-pinned TWICE to the 0145 commit-safe ledger fold (`ranking_counted_grants` + the
+  `on conflict (season_id, grant_id) do nothing` exactly-once guard — the stale-0130
+  timestamp-cursor body carries neither); the cron scheduled EXACTLY once (jobname
+  `ranking-accrue-standings`, command invoking the accrual); the `ranking_enabled` key exists (value
+  NOT asserted — re-runs are supported); `reward_grants` readable with per-dimension counts **FYI
+  only, never a gate** (ranking lights before grants flow; trade has no depositor yet — 0128).
+- **STAGE ORDER FINDING — flag BEFORE seasons (inverts the task sketch, forced by the code):**
+  `ranking_season_open` dark-gates on `cfg_bool('ranking_enabled')` FIRST (0129:71) and answers
+  `feature_disabled` while false — a season physically cannot be opened dark. So STAGE 1 = the one
+  `set_game_config('ranking_enabled','true')` write; STAGE 2 = the seasons; both in the ONE txn so a
+  season failure rolls the flag back too (never a lit flag without seasons).
+- **Season windows [D proposed, owner-tunable], computed from now() at run time:** weekly =
+  ISO-Monday-anchored `date_trunc('week', now())` .. +7 days, label `IYYY-"W"IW` (e.g. `2026-W28`);
+  monthly = calendar month .. +1 month, label `YYYY-MM` (e.g. `2026-07`). Future rolls must reuse the
+  convention so windows tile and the (cadence, starts_at) replay-idempotency (0129) holds.
+- **RE-RUN SEMANTICS (decided): no-op success, and a later re-run IS the manual roll.** Each cadence
+  is created ONLY if no CURRENT active season exists (active AND window containing now()): same-window
+  re-run skips with a notice; a later-window re-run proceeds and `ranking_season_open` closes the
+  expired active season while opening the new window. Envelopes asserted `ok` + `status='active'` —
+  the edge where a CLOSED identical window replays verbatim (0129 never reactivates) fails LOUDLY
+  instead of committing a lit flag with a dead board.
+- **AUTO-ROLL FINDING: none exists.** The sole `ranking_seasons` writer is `ranking_season_open`
+  (closes the prior active only when opening the next); the only ranking cron is the 5-min ACCRUAL.
+  A season stays `active` past `ends_at` and the accrual's `granted_at between starts_at and ends_at`
+  join simply stops folding — the board silently FREEZES. Season rolling is MANUAL for now (Monday
+  00:00 UTC / 1st of month; a script re-run is the roll) — noted as an operational item + a future
+  **RANK-ROLL** automation slice (safe: the opener is idempotent per (cadence, starts_at)). **Edges the roller must close (review M1/L1): fold recently-closed seasons for a grace tick (the status=active join drops post-roll late commits into NEITHER season), and make the window join half-open (BETWEEN double-counts an exact-boundary grant into both).**
+- **SMOKE (read-only):** flag committed (raw + `cfg_bool`); exactly one active season per cadence with
+  a window containing now(); cron intact exactly once; standings + counted-grants selectable (0 rows
+  FYI); the CLIENT surface answers lit — `get_ranking_seasons()` {ok, ≥2} and
+  `get_ranking_leaderboard(weekly, 'overall')` {ok} (empty rows = the honest "No standings yet" state).
+  Markers `ACTIVATE_RANKING_PASS_*` + final PASS line.
+- **MOUNT VERIFIED — NO client PR:** RankingPanel is already mounted on the post-R3 CommandScreen
+  aside rail (`CommandScreen.tsx:83`, inside `screenRailClass('aside')`), gated ONLY by
+  `isServerLit(seasons) && litSeasons.length > 0` (RankingPanel.tsx:87); no RANKING_* compile constant
+  exists in `osnReleaseGates.ts` or anywhere in src (grep-verified). At flip time players see the
+  Leaderboard card with both seasons and "No standings yet"; boards fill as the 5-min cron folds
+  finalized `reward_grants` (combat/exploration/mining deposit as those systems light; the trade
+  dimension stays 0 until a trade activity deposits grants).
+- **ROLLBACK (commented, flag-only — recommended and reasoned):** `ranking_enabled` → false; standings
+  freeze intact (every ranking RPC + the cron reject-before-read). Seasons are deliberately LEFT
+  ACTIVE: closing is effectively one-way (the 0129 replay returns a closed row verbatim, never
+  reactivates), so a re-light inside the same window would fold nothing; active-but-dark seasons are
+  unreachable and the ledger anti-join BACKFILLS in-window grants on re-light — no gap, no double-count.
+- **`scripts/activate-ranking.sh`** — selftest/run wrapper (confirm token `ACTIVATE_RANKING`). The
+  DB-free selftest asserts: exactly ONE `set_game_config` invocation (→ true on `ranking_enabled`;
+  the signature string in the preconditions is counted as existence, not a call site), never another
+  window's key, NO direct table DML (seasons only via `ranking_season_open` — both cadence calls
+  present, conditional, envelope-asserted), no DDL, no meta-commands, one timed UTC BEGIN..COMMIT,
+  the 0145 prosrc pins + cron jobname pin, markers/PASS/rollback-commented, and the
+  flag-first/no-auto-roll/mount documentation tokens.
+
+**Verification.** `bash scripts/activate-ranking.sh selftest` green; **mutation-tested 10/10 caught**
+(sneaked second flag write, uncommented rollback, dropped weekly season call, gutted conditional
+guard, direct table UPDATE, TRUNCATE DDL, psql meta-command, dropped 0145 prosrc pin, retargeted
+cron jobname, dropped status-active envelope assert), control green. All 6 existing activate/reveal
+selftests untouched-green (trade, captains, exploration, mining, team-command, ember-reach);
+`tsc --noEmit` + `vite build` untouched-green (no src change). Docs: plan queue row 9 → script
+shipped; ROADMAP phase-17 row annotated. Nothing committed/pushed/applied — the flip stays
+human-gated (plan §B rung 5 recommends flipping after rungs 1–3 so ≥3 dimensions accrue).
+
+---
+
 ## 2026-07-12 — ZONES2-1+2 (queue #7+#8): "Ember Reach" content expansion — seeded HIDDEN + the reveal script
 
 **Request.** Queue slices #7+#8 of the full-capacity plan (§C P4, the packet §1.3 Option-C seeds): the
