@@ -8,14 +8,18 @@
 // disabled' }. DARK: while captain_assignment_enabled is false every RPC returns that reason, so the
 // panel renders nothing — the UI is never the control (fail-closed law), no client flag constant.
 
-/** One row of get_my_captain_instances().captains (0123). main_ship_id = the assigned ship, or null
- *  when the captain is unassigned (the per-row roster indicator). */
+/** One row of get_my_captain_instances().captains (0123; xp/level added by the 0181 C2-3
+ *  projection hunk). main_ship_id = the assigned ship, or null when the captain is unassigned
+ *  (the per-row roster indicator). xp/level are OPTIONAL (a pre-0181 envelope lacks them) and are
+ *  0/1 everywhere while captain_growth_enabled is false — the CaptainXpBar renders nothing then. */
 export interface CaptainInstance {
   instance_id: string
   captain_type_id: string
   name: string
   specialization: string
   stats_json: Record<string, number>
+  xp?: number
+  level?: number
   main_ship_id: string | null
   created_at: string
 }

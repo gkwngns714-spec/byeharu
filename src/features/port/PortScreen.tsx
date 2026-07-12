@@ -1,5 +1,6 @@
 import { useShellState } from '../../app/shellState'
 import { DockedPortCard } from './DockedPortCard'
+import { HaulBoardPanel } from './HaulBoardPanel'
 import { StationHangar } from './StationHangar'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { MarketPanel } from '../map/MarketPanel'
@@ -71,6 +72,14 @@ export function PortScreen() {
             <InvestmentPanel
               lifecycleKey={lifecycleKey}
               locationId={map.mainShipPresence?.location_id ?? null}
+              mainShipId={map.mainShip?.main_ship_id ?? null}
+            />
+            {/* HAUL-3 (dark, server-lit only): the port contract bulletin. Renders null unless the
+                server lit get_port_contracts (haul_contracts_disabled while dark) — production is
+                byte-unchanged. locationId is the SERVER dock projection (this docked branch). */}
+            <HaulBoardPanel
+              lifecycleKey={lifecycleKey}
+              locationId={dock.locationId}
               mainShipId={map.mainShip?.main_ship_id ?? null}
             />
           </div>

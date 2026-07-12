@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { assignCaptainToShip, unassignCaptainFromShip } from '../captains/captainsApi'
 import { captainCommandErrorMessage, type CaptainInstance } from '../captains/captainsTypes'
+import { CaptainXpBar } from '../captains/CaptainXpBar'
 import { Button } from '../../components/ui'
 import { captainAssignAvailability } from './teamCaptains'
 
@@ -129,6 +130,9 @@ export function TeamMemberCaptains({
                   </Button>
                 </span>
               </div>
+              {/* C2-3 — XP bar + level chip (dark): renders null while every captain is
+                  level-1/0-xp (captain_growth_enabled false), so this row is byte-identical today. */}
+              <CaptainXpBar xp={c.xp} level={c.level} instanceId={c.instance_id} />
               {rowNote[c.instance_id] && <p className="mt-0.5 text-[10px] text-accent">{rowNote[c.instance_id]}</p>}
             </li>
           ))}
