@@ -1,4 +1,4 @@
--- HAUL — disposable REAL-CHAIN proof (runs on the actual chain 0001..0179 in a throwaway Supabase).
+-- HAUL — disposable REAL-CHAIN proof (runs on the actual chain 0001..0181 in a throwaway Supabase).
 -- Proves HAUL-0/1 (the dark cron-safe no-op, the deterministic per-(day, port) offer generator — exact
 -- N×ports count, template/qty bounds, LIVE-market reward math, the worth-taking economics — same-day
 -- idempotency + pure-function determinism re-derived from the hash technique, the offered-only expiry
@@ -7,7 +7,9 @@
 -- already_accepted/already_accepted_other/wrong-port/stale-offer/too_many_active — the deliver path:
 -- wrong_port, not-yours, insufficient_cargo, then Trade-Cargo consume + Wallet credit EXACT, and the
 -- deadline: deadline_passed reject + the generator's (a2) accepted-past-deliver_by → 'cancelled' pass
--- freeing the cap slot, while within-deadline accepted rows stay untouched by EVERY pass). Fixture
+-- freeing the cap slot, while within-deadline accepted rows stay untouched by EVERY pass) AND the
+-- HAUL-3 read surface (0181 get_port_contracts: the dark gate-first reject — reject-before-read, no
+-- bulletin readable pre-flip — and the lit board reflection after an accept). Fixture
 -- users carry the 'hl1.' email prefix. The ENTIRE proof runs inside ONE transaction that ROLLBACKs —
 -- it persists NO contract, receipt, wallet, ship, template, config, or flag flip. No production
 -- access. No COMMIT anywhere.
@@ -129,9 +131,17 @@ begin
   select count(*) into n from public.haul_receipts;
   if n <> 0 then raise exception 'P0 FAIL: dark RPCs wrote % receipt(s)', n; end if;
 
+  -- the HAUL-3 read RPC (0181) gate-first rejects while dark too (reject-before-read house law:
+  -- no bulletin is readable before the flip); unauthenticated → not_authenticated envelope-first.
+  r := pg_temp.call_as(uH, format('public.get_port_contracts(%L::uuid)', (select v from hl1 where k='haven')));
+  if (r->>'reason') is distinct from 'haul_contracts_disabled' then raise exception 'P0 FAIL dark read: %', r; end if;
+  perform set_config('request.jwt.claims', '', true);
+  r := public.get_port_contracts((select v from hl1 where k='haven'));
+  if (r->>'reason') is distinct from 'not_authenticated' then raise exception 'P0 FAIL unauthenticated read: %', r; end if;
+
   -- enable the dark haul capability ONLY inside this rolled-back txn (production flag stays false after ROLLBACK).
   update public.game_config set value='true'::jsonb where key='haul_contracts_enabled';
-  raise notice 'HAUL_PASS_DARK_GATE ok: dark run -> feature_disabled envelope (no raise), zero rows written; dark accept/deliver -> haul_contracts_disabled, zero receipts';
+  raise notice 'HAUL_PASS_DARK_GATE ok: dark run -> feature_disabled envelope (no raise), zero rows written; dark accept/deliver/read -> haul_contracts_disabled, zero receipts';
 end $$;
 
 -- ════════ P1 — GENERATE: exactly N x ports offers, all 'offered', template-bounded, LIVE-market reward math exact. ════════
@@ -436,7 +446,24 @@ begin
     raise exception 'P6 FAIL accept replay: %', r; end if;
   select count(*) into n from public.haul_receipts where main_ship_id = shipH;
   if n <> 1 then raise exception 'P6 FAIL: replay wrote a receipt'; end if;
-  raise notice 'HAUL_PASS_ACCEPT ok: offered -> accepted at the origin port; deliver_by = accepted_at + duration exact; zero cargo/credit movement; 1 receipt; replay verbatim';
+
+  -- HAUL-3 (0181): the lit read surface reflects the board — the accepted contract left the
+  -- 'offered' tab, 'mine' carries it (deliver_by + dest), the offered tab lists exactly the
+  -- port's remaining FRESH offered rows, and max_active surfaces the seeded cap.
+  r := pg_temp.call_as(uH, format('public.get_port_contracts(%L::uuid)', v_haven));
+  if (r->>'ok')::boolean is not true then raise exception 'P6 FAIL lit read: %', r; end if;
+  if (r->>'max_active')::int <> 3 then raise exception 'P6 FAIL lit read: max_active % (want the seeded 3)', r->>'max_active'; end if;
+  select count(*) into n from jsonb_array_elements(r->'offered') e where (e->>'contract_id')::uuid = v_c1;
+  if n <> 0 then raise exception 'P6 FAIL lit read: the accepted contract is still on the offered tab'; end if;
+  select count(*) into n from jsonb_array_elements(r->'mine') e
+    where (e->>'contract_id')::uuid = v_c1 and (e->>'deliver_by') is not null
+      and (e->>'dest_location_id')::uuid = c.dest_location_id;
+  if n <> 1 then raise exception 'P6 FAIL lit read: mine does not carry the accepted contract with its deliver_by/dest'; end if;
+  select count(*) into n from jsonb_array_elements(r->'offered') e;
+  if n <> (select count(*) from public.haul_contracts
+             where origin_location_id = v_haven and status = 'offered' and expires_at > now()) then
+    raise exception 'P6 FAIL lit read: offered tab does not match the port''s fresh offered rows'; end if;
+  raise notice 'HAUL_PASS_ACCEPT ok: offered -> accepted at the origin port; deliver_by = accepted_at + duration exact; zero cargo/credit movement; 1 receipt; replay verbatim; lit read reflects the board (mine + fresh offered + max_active)';
 end $$;
 
 -- ════════ P6b — ACCEPT guards: already_accepted (self, fresh request) · already_accepted_other · wrong port · stale offer (fail-closed) · too_many_active (replay still works at the cap). ════════
@@ -634,6 +661,6 @@ begin
   raise notice 'HAUL_PASS_DEADLINE_CANCEL ok: past-deliver_by deliver -> deadline_passed (zero-write, reject-only); generator (a2) flipped exactly 1 overdue accepted -> cancelled freeing the cap slot; within-deadline accepted row untouched; zero expiries/mints';
 end $$;
 
-select 'HAUL PROOF PASSED (dark cron-safe no-op + dark RPC rejects; N x ports deterministic offers with live-market reward math; worth-taking vs self-trade; same-day idempotency + hash re-derivation; offered-only expiry sparing accepted; RLS/ACL shape incl. haul_receipts + RPC ACLs; origin-port accept with deliver_by anchor + guards + replay-at-cap; deliver = Trade-Cargo consume + Wallet credit exact with guards + replay; deadline_passed + the (a2) cancel freeing the slot)' as result;
+select 'HAUL PROOF PASSED (dark cron-safe no-op + dark RPC/read rejects; N x ports deterministic offers with live-market reward math; worth-taking vs self-trade; same-day idempotency + hash re-derivation; offered-only expiry sparing accepted; RLS/ACL shape incl. haul_receipts + RPC ACLs; origin-port accept with deliver_by anchor + guards + replay-at-cap + the lit board reflection; deliver = Trade-Cargo consume + Wallet credit exact with guards + replay; deadline_passed + the (a2) cancel freeing the slot)' as result;
 
 rollback;   -- leave ZERO persisted state: no contract, receipt, wallet, ship, fixture user, or flag flip.

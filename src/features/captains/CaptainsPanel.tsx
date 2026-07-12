@@ -6,6 +6,7 @@ import {
   type CaptainInstance,
   type GetMyCaptainInstancesResult,
 } from './captainsTypes'
+import { CaptainXpBar } from './CaptainXpBar'
 import { Button, Card, CardHeader } from '../../components/ui'
 
 // CAPTAIN-P15 (post-audit UI, panel 3 of 4) — the dark Captains surface: the player's captain roster
@@ -113,6 +114,9 @@ export function CaptainsPanel({
                   </span>
                 </div>
                 {stats && <p className="text-ink-faint">{stats}</p>}
+                {/* C2-3 — XP bar + level chip (dark): renders null while every captain is
+                    level-1/0-xp (captain_growth_enabled false), so this row is byte-identical today. */}
+                <CaptainXpBar xp={c.xp} level={c.level} instanceId={c.instance_id} />
                 <div className="mt-1 flex items-center justify-between gap-2">
                   {assigned ? (
                     <Button

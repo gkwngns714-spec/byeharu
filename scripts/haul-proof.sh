@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # HAUL — disposable proof orchestrator for HAUL-0/1 (migration 0176: haul_contract_templates seed +
-# haul_contracts + haul_contracts_enabled flag + the deterministic offer generator + hourly cron) and
+# haul_contracts + haul_contracts_enabled flag + the deterministic offer generator + hourly cron),
 # HAUL-2 (migration 0179: haul_accept_contract / haul_deliver_contract + haul_receipts + deliver_by +
-# the generator's (a2) accepted-past-deliver_by cancel pass).
+# the generator's (a2) accepted-past-deliver_by cancel pass), and the HAUL-3 read surface (migration
+# 0181: get_port_contracts — dark gate-first reject-before-read + the lit board reflection).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), enables haul_contracts_enabled ONLY inside the txn, mints contracts ONLY via
@@ -15,8 +16,9 @@
 #              RLS/ACL shape asserts (incl. haul_receipts + the RPC ACLs), the origin-port accept with
 #              the deliver_by = accepted_at + duration anchor + guards (already_accepted/_other,
 #              too_many_active with replay-at-cap) + replay, the deliver path (wrong_port / foreign /
-#              insufficient_cargo guards, the EXACT wallet + cargo deltas, replay), and the deadline
-#              (deadline_passed reject + the (a2) cancel freeing the cap slot).
+#              insufficient_cargo guards, the EXACT wallet + cargo deltas, replay), the deadline
+#              (deadline_passed reject + the (a2) cancel freeing the cap slot), and the 0181 read
+#              surface (dark gate-first reject + the lit mine/offered board reflection).
 #   local    — run the write-then-ROLLBACK proof against a disposable DB_URL (the actual property proof).
 # The shared blocks (arg scaffold / self-rolling-back / flags-inside-txn / out-of-scope / local psql+markers)
 # live in scripts/lib/trade-proof-lib.sh (haul is trade-family); only this proof's specifics live here.
@@ -109,6 +111,13 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "idempotent_replay" "$SQL" || fail "harness does not pin the idempotent replays"
 
   # ── the HAUL-2 deliver pins: guards, EXACT wallet/cargo deltas via the real leaves, deadline. ─────
+  # ── the HAUL-3 read-surface pins (0181): dark gate-first reject + the lit board reflection. ──────
+  grep -q "public.get_port_contracts(" "$SQL" || fail "harness does not invoke the HAUL-3 read RPC"
+  grep -q "P0 FAIL dark read" "$SQL" || fail "harness does not pin the dark read reject"
+  grep -q "P0 FAIL unauthenticated read" "$SQL" || fail "harness does not pin the unauthenticated read reject"
+  grep -q "mine does not carry the accepted contract" "$SQL" || fail "harness does not pin the lit mine reflection"
+  grep -q "fresh offered rows" "$SQL" || fail "harness does not pin the lit offered-tab reflection"
+
   grep -q "'wrong_port'" "$SQL" || fail "harness does not pin the wrong_port deliver guard"
   grep -q "'insufficient_cargo'" "$SQL" || fail "harness does not pin the insufficient_cargo guard"
   grep -q "100 + c.reward_credits" "$SQL" || fail "harness does not pin the EXACT wallet +reward delta"
@@ -125,7 +134,7 @@ if [ "$MODE" = "selftest" ]; then
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "HAUL SELFTEST: ALL PASSED (self-rolling-back; flag inside txn only; generator-minted + RPC-transitioned rows only; dark no-op + dark RPC rejects + N x ports + live reward math + worth-taking + hash determinism + offered-only expiry + RLS shape incl. receipts/RPC ACLs + accept anchor/guards/replay + deliver exact deltas/guards/replay + deadline cancel all pinned)"
+  echo "HAUL SELFTEST: ALL PASSED (self-rolling-back; flag inside txn only; generator-minted + RPC-transitioned rows only; dark no-op + dark RPC/read rejects + N x ports + live reward math + worth-taking + hash determinism + offered-only expiry + RLS shape incl. receipts/RPC ACLs + accept anchor/guards/replay + lit board reflection + deliver exact deltas/guards/replay + deadline cancel all pinned)"
   exit 0
 fi
 
