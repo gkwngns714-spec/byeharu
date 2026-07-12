@@ -5,6 +5,44 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — ECON-SEED-1: differentiated three-port economy seed (migration 0173, DARK)
+
+**Request.** Queue slice #4 of the full-capacity plan: seed the owner-approved multiport price table
+(master plan §C P1) so the trade-market activation (ACT-TRADE, queue #5) lights a real
+buy-low/travel/sell-high economy instead of the single-port Haven placeholder. Zero live impact —
+trade stays dark (`trade_market_enabled=false`); no flag flip, no client change, no activation script.
+
+**Work done**
+- **Migration `20260618000173_econ_seed_multiport_offers.sql`** (numbered 0173 to stay clear of
+  in-flight 0171/0172; depends only on 0066 ports + 0073 goods + 0085 `market_offers`): idempotent
+  upsert (`on conflict (location_id, good_id) do update`) of all 18 rows — 3 starter ports × 6 goods.
+  Port roles: **Haven** (city/consumer — pays well for ore 16 + provisions 12), **Slagworks**
+  (industrial — sells ore cheapest at 12, pays for provisions 19 + machinery 70 inputs),
+  **Driftmarch** (frontier — pays premiums, top machinery payer at 120, sells everything dear).
+  Haven reconciliation: the 0085 placeholder prices ALREADY equal the approved table — zero deltas;
+  the `do update` arm just guarantees convergence on re-apply.
+- **Self-assert DO block** in the migration: each port carries exactly 6 active offers; the anti-pump
+  spread (`sell_price >= buy_price`) holds on every seeded row; 3 CONCRETE profitable routes
+  recomputed from the rows (direction law: player buys at origin `sell_price`, sells at destination
+  `buy_price` → profit = dest.buy − origin.sell): ore Slagworks 12 → Haven 16 (+4), provisions
+  Haven 15 → Slagworks 19 (+4), machinery Slagworks 88 → Driftmarch 120 (+32).
+- **Proof `scripts/trade-econ-seed-proof.{sql,sh}`** (sources `scripts/lib/trade-proof-lib.sh`;
+  read-only over Reference/Config, still begin→ROLLBACK per the trade idiom; toggles NO flag):
+  `ES1_PASS_MULTIPORT` (all 18 rows active at exactly the approved prices, matched against an inline
+  expected table), `ES1_PASS_ROUTES` (the 3 route profits recomputed from the seeded rows — never
+  hardcode-trusted — and pinned to +4/+4/+32), `ES1_PASS_ANTIPUMP` (every row), `ES1_PASS_ROLES`
+  (Slagworks is the cheapest ore seller; Driftmarch pays the most for machinery). Wired into
+  `.github/workflows/trade-v1-proof.yml` (selftest step + a fourth real-chain matrix step;
+  `slice-econ-**` added to the push triggers).
+- **Docs:** ROADMAP trade row annotated (seed shipped, awaiting the ACT-TRADE flip).
+
+**Explicitly NOT in this slice** (ACT-TRADE, queue #5): flipping `trade_market_enabled` /
+`trade_relief_enabled` / client `TRADE_MARKET_ENABLED`, and any activation script.
+
+**Verification.** `bash scripts/trade-econ-seed-proof.sh selftest` green; all pre-existing trade +
+team-command proof selftests untouched-green; `npx tsc -b` + `npx vite build` untouched-green.
+Real-chain run happens in CI's disposable Supabase (no Docker on this machine).
+
 ## 2026-07-12 — ACTIVATION PREP: exploration + mining flip scripts + the 0172 writer reconcile (Phases 11/12; no flip)
 
 **Request.** Full-capacity plan queue slices #2+#3: ship the two HUMAN-run activation scripts for the
