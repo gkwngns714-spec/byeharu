@@ -108,14 +108,15 @@ Haven→Slagworks +200, machinery Slagworks→Driftmarch +384 (full table + proo
 `trade-econ-seed-proof`). `market_offers` stays Reference/Config, migration-seeded only; the P19 drift
 multiplier layers on top untouched.
 
-### P2 — HAUL: contracts & logistics between ports *(M — the docs' named gap made into gameplay)*
+### P2 — HAUL: contracts & logistics between ports *(M — HAUL-0/1/2 SHIPPED dark as migs 0176 + 0179; HAUL-3 UI + flip remain)*
 NPC delivery contracts: a per-port bulletin offers "deliver N×good to port B by T for C credits + bonus."
-Slices: HAUL-0 `haul_contracts` schema + flag + templates (dark, service-role writers); HAUL-1 offer
-generator (cron, seeded-deterministic per port/day); HAUL-2 accept/deliver RPCs (deliver = docked-verified
-+ cargo debit via Trade-Cargo's own functions + `wallet_credit` with receipts); HAUL-3 bulletin UI on
-PortScreen; HAUL-proof. Deps: P1 + Rung 3. Guard: Contracts owns only `haul_contracts` + receipts; cargo
-moves only through Trade-Cargo, credits only through Wallet — a new SYSTEM_BOUNDARIES row lands in the
-same PR as the schema.
+Slices: HAUL-0 `haul_contracts` schema + flag + templates (dark, service-role writers — **shipped**, 0176);
+HAUL-1 offer generator (cron, seeded-deterministic per port/day — **shipped**, 0176); HAUL-2 accept/deliver
+RPCs (accept = origin-port claim + `deliver_by` deadline + active cap; deliver = docked-verified at the dest
++ cargo debit via Trade-Cargo's own functions + `wallet_credit` with `haul_receipts` — **shipped**, 0179);
+HAUL-3 bulletin UI on PortScreen; HAUL-proof (**shipped + extended**, `scripts/haul-proof.{sql,sh}`).
+Deps: P1 + Rung 3. Guard: Contracts owns only `haul_contracts` + `haul_receipts`; cargo moves only through
+Trade-Cargo, credits only through Wallet — the SYSTEM_BOUNDARIES rows landed in the same PRs as the schema.
 
 ### P3 — SALVAGE: combat-loot → port-economy feed *(S/M)*
 Ports gain item buy-lists: `port_item_demand (location_id, item_id, unit_price)` — migration-seeded,
@@ -219,15 +220,15 @@ P2 contracts + P8 event sites first.
 | 9 | RANK-SEASON + ACT-RANKING **[D: season windows — proposed, owner-tunable]** | **script shipped** (`scripts/activate-ranking.{sql,sh}`, slice-rank-season — awaiting the human flip). One BEGIN..COMMIT, **flag FIRST then seasons** (`ranking_season_open` dark-gates on `ranking_enabled`, so the order is forced); weekly + monthly opened conditionally via `ranking_season_open` (re-run in-window = no-op success; re-run in a later window = the manual roll). [D proposed: weekly = ISO-Monday-UTC window, label `2026-W28`; monthly = calendar month, `2026-07`]. No client PR (RankingPanel server-lit, CommandScreen aside). **OPERATIONAL: seasons do NOT auto-roll** — nothing closes a season at `ends_at` (boards freeze); roll manually each Monday / 1st (a re-run IS the roll) until a **RANK-ROLL** automation slice ships |
 | 10 | SALVAGE-2 + ACT-SALVAGE | queued |
 | 11 | MOD2-1 shield line **[D: stat values]** | queued |
-| 12 | HAUL-0/1 contracts foundation **[D: template/reward table — proposed in the 0176 header, owner-tunable]** | **shipped (dark)** — mig `0176` (`haul_contract_templates` 10-template seed over the 0173 economy + `haul_contracts` + `haul_contracts_enabled=false` + `haul_offers_per_port=2` + the deterministic `haul_generate_offers()` generator (pure-hash per (day, port, slot), idempotent natural key, offered-only expiry) + hourly cron `haul-generate-offers` — a cron-safe dark no-op), proof `scripts/haul-proof.{sql,sh}` wired into `trade-v1-proof.yml` (slice-haul); HAUL-2 accept/deliver + HAUL-3 UI + flip = later slices |
+| 12 | HAUL-0/1 contracts foundation **[D: template/reward table — proposed in the 0176 header, owner-tunable]** | **shipped (dark)** — mig `0176` (`haul_contract_templates` 10-template seed over the 0173 economy + `haul_contracts` + `haul_contracts_enabled=false` + `haul_offers_per_port=2` + the deterministic `haul_generate_offers()` generator (pure-hash per (day, port, slot), idempotent natural key, offered-only expiry) + hourly cron `haul-generate-offers` — a cron-safe dark no-op), proof `scripts/haul-proof.{sql,sh}` wired into `trade-v1-proof.yml` (slice-haul). **HAUL-2 shipped (dark)** — mig `0179` (slice-haul2): `haul_accept_contract` (origin-port claim — moves NO cargo/credits; `deliver_by = accepted_at + template duration` [the 0176 duration reused as the delivery window — the contract's tempo]; `haul_max_active_per_player=3` cap [D]) + `haul_deliver_contract` (ANY owned ship docked at the DEST; `trade_cargo_consume` + `wallet_credit`, atomic + receipted; cost basis consumed-and-lost, the reward covers it) + `haul_receipts` (the salvage_receipts shape, sole writers = the two RPCs) + the generator re-created (0176-head parity, ONE marked (a2) hunk: accepted past `deliver_by` → 'cancelled', freeing the cap slot; no penalty v1 [D]) — same flag, still dark; proof extended (dark RPC rejects, accept/deliver happy+guards+replays incl. replay-at-cap, deadline cancel). HAUL-3 UI + ACT-HAUL flip = later slices |
 | 13 | CAPXP-0/1 captain XP foundation **[D: xp knobs 10/6/4 + curve `1 + floor(sqrt(xp/100))` — proposed in the 0177 header, owner-tunable]** | **shipped (dark)** — mig `0177` (additive `captain_instances.xp/level` read by NOTHING until C2-2 + `captain_growth_enabled=false` + the per-(grant, captain) `captain_counted_grants` ledger with a NULL-captain sentinel (consume-exactly-once; no retroactive backfill) + `captain_xp_accrue()` folding FINALIZED `reward_grants` into CURRENTLY-assigned captains (the derivable semantic — captain-at-sortie is recorded nowhere; ship linkage: combat manifest ∪ solo fleet tag, exploration scanner, mining extractor; grants with no linkage → sentinel) + 5-min cron `captain-xp-accrue`, a cron-safe dark no-op), proof = the `TEAMCMD_PASS_CAPXP` block in `team-command-proof`; NOTE for the future ACT-CAPXP flip: the first lit run folds the entire dark backlog into current assignees — accept or pre-seed sentinels (0177 header). C2-2 adapter delta + C2-3 UI = later slices (slice-capxp) |
 | 14 | WORLD-RECON-F1 (read-only) | **shipped** (docs/WORLD_RECON_F1.md, second run @ head 0177 — surfaced the §7 reachability finding that produced #14.5) |
 | 14.5 | COORD-GUARD + ACT-COORD-TRAVEL (the Rung-0.5 prereq for the exploration/mining flips: resolver-guard the raw coordinate command — the A0-fix — BEFORE `mainship_coordinate_travel_enabled` can flip) | **shipped** — mig `0178` (0070-head parity re-create; trailing `p_main_ship_id` + `mainship_resolve_owned_ship`, fail-closed at N≠1; self-asserting) + the S6C ship-id passthrough (buildSpaceMoveRpcArgs / commandMainShipSpaceMove / useSpaceMoveCommand / GalaxyMap thread the SELECTED ship exactly like stop/settle/readiness — dark until the flip) + `scripts/activate-coordinate-travel.{sql,sh}` (guard-pinned preconditions, the ONE flag write, anchors + reachability + envelope smokes — awaiting the human flip; NO flip-time client PR: the coordinate UI is server-readiness-driven). COMPLETE signature-pin repoint list in TRADE_FLEET_0C_VERIFIER_REPOINT.md §#1 (incl. the COORD_SURFACE_COUNT arg-type census + the S6A exact-args / security-intent asserts) |
 | 15 | ACT-INVEST + ACT-WORLDBAL | queued |
 | 16 | EV-1 + ACT-PHASE20 | queued |
 
-*(Then: HAUL-2/3 + flip, HULLS2 line [D], MOD2-2, RR line, OB line, C2-2/3 — resequenced at the next
-plan review.)*
+*(Then: HAUL-3 + flip (HAUL-2 shipped dark, 0179), HULLS2 line [D], MOD2-2, RR line, OB line, C2-2/3 —
+resequenced at the next plan review.)*
 
 ---
 

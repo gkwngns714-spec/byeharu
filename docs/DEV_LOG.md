@@ -5,6 +5,102 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — HAUL-2: the contract accept/deliver RPCs (dark)
+
+**Request.** The HAUL continuation (plan §C P2, after the 0176 foundation): the accept/deliver
+state-transition RPCs — `haul_accept_contract` + `haul_deliver_contract` — with receipts, the delivery
+deadline, the active cap, and the expiry of accepted-but-undelivered contracts. Everything stays DARK
+behind the same `haul_contracts_enabled` flag (no flag write). HAUL-3 UI + ACT-HAUL = later slices.
+
+**Work done**
+- **Migration `20260618000179_haul_accept_deliver.sql`** — the semantics decisions, each documented in
+  the header:
+  - **Accept is a CLAIM, not a transaction:** moves NO cargo and NO credits — the player sources the
+    goods themselves (market buy at origin / existing cargo); exactly what the 0176 reward math prices
+    in (reward > qty × origin.sell always — the worth-taking invariant covers the buy).
+  - **Origin-port accept:** the bulletin is per-port — the resolved ship must be DOCKED (the ONE
+    resolver 0092/0138) at the contract's origin; a contract elsewhere folds into `contract_not_found`.
+    Offer expiry is ALSO checked at accept (fail-closed — never waits on the hourly cron's flip).
+  - **Any-owned-ship deliver:** the contract is player-scoped (`accepted_by`); ANY owned ship docked at
+    the DEST holding the goods delivers. `accepted_ship` = provenance only.
+  - **deliver_by reconciliation:** 0176's `duration_seconds` anchored the OFFER pickup window and
+    shipped NO delivery window. Decision: reuse the same knob as the delivery window —
+    `deliver_by = accepted_at + duration_seconds` (the contract's TEMPO: 6h staples, 12h premium runs;
+    one owner-tunable number, no reseed; a future wave can split it with a new column). A new CHECK
+    pins every 'accepted' row to a non-null deliver_by (else it would hold a cap slot forever).
+  - **Expiry shape (chosen):** the generator re-created from its 0176 head under PARITY DISCIPLINE —
+    diff-verified byte-identical except THREE marked [HAUL-2 hunk] groups: the `v_cancelled` local, the
+    (a2) pass ('accepted' past `deliver_by` → 'cancelled'; no penalty v1 [D]; frees the cap slot), and
+    the `accepted_cancelled` envelope field. Chosen over a second cron function: one scheduled
+    entrypoint, one gate, one envelope — the cron job untouched. Pass (a) stays offered-only
+    (accepted rows are never 'expired'); (a2) is the SINGLE writer of accepted→cancelled — the deliver
+    RPC rejects `deadline_passed` but never flips the row.
+  - **`haul_receipts`** (0176 shipped NO receipts table — checked; explicitly deferred): the
+    salvage_receipts 0174 shape point-for-point — unique (main_ship_id, request_id), ship-keyed,
+    replay-verbatim; ONE table for BOTH actions (`action` discriminator) so a ship's request namespace
+    is one idempotency domain (trade semantics, no payload-conflict check). `reward_credits` = credits
+    actually moved by the action (0 on accept). Owner-read via the owning ship; sole writers = the two
+    RPCs. New knob `haul_max_active_per_player` seeded 3 [D] (counts 'accepted' only, EXCLUDING the
+    contract being re-accepted — so a replay at the cap works; 0 = freeze).
+  - **Reject orders** (gate-first envelopes, the 0174 template): accept `not_authenticated` →
+    `haul_contracts_disabled` → `invalid_request` → `ship_not_found` → per-ship lock → `not_docked` →
+    `contract_not_found` (row FOR UPDATE — cross-player accept races serialize on the row lock;
+    ship-lock-then-contract-lock everywhere, no deadlock cycle) → `already_accepted_other` →
+    `too_many_active` → `idempotent_replay` → `already_accepted` (mine, fresh request) → ok. Deliver:
+    … `not_docked` → `contract_not_found` → **`idempotent_replay` BEFORE the state/port/deadline/cargo
+    guards** (a successful delivery flips the status AND consumes the cargo — a retry must replay,
+    never bounce; the documented 0174-delta posture) → `contract_not_found` (not mine/not accepted) →
+    `wrong_port` → `deadline_passed` → `insufficient_cargo` (inline lot-sum — the market_sell 0090
+    read idiom) → ok: `trade_cargo_consume` (the ONE FIFO debiter; **cost basis consumed and LOST — the
+    reward covers it**, reported as `cost_basis_consumed`) + `wallet_credit` + delivered flip + receipt,
+    atomic. ACLs: both RPCs authenticated-only; every internal leaf stays client-revoked.
+  - Self-asserts: deliver_by + CHECK; receipts RLS/grants exact; RPC identities + ACLs; internals still
+    private; knob 3; flag STILL dark; generator parity spot-pins (offered-only expiry + salts + natural
+    key + the (a2) predicate) + ACL; cron still exactly once; dark dry-runs — generator no-op envelope
+    zero-delta, RPCs `not_authenticated` with no subject and `haul_contracts_disabled` gate-first under
+    a transient fake JWT, zero receipts.
+- **Proof `scripts/haul-proof.{sql,sh}` extended** (same one-BEGIN..ROLLBACK harness; fixture ships via
+  the real `commission_first_main_ship`, travel via the real move command + rewind + the REAL arrival
+  processor, wallets pre-set to a known 100 — the tm1/sv1 funding precedent): P0 + dark RPC rejects
+  (`haul_contracts_disabled`, zero receipts) → P1 also pins deliver_by NULL pre-accept → P4 accepted
+  fixture now carries a future deliver_by (the 0179 CHECK) and pins `accepted_cancelled=0` — immunity
+  of within-deadline accepted rows to BOTH passes → P5 + haul_receipts policy/grants + RPC ACLs +
+  internal-leaf privacy → **P6 ACCEPT** (origin-port happy path: deliver_by = accepted_at + duration
+  EXACT recompute, zero cargo/credit movement, receipt exact, replay verbatim) → **P6b guards**
+  (`already_accepted` self, `already_accepted_other`, wrong-port + fixture-aged stale-offer
+  `contract_not_found` fail-closed, `too_many_active` at a transient cap 1 WITH replay-at-cap intact —
+  all zero-write) → **P7 DELIVER** (wrong_port at the origin, foreign `contract_not_found`, empty-hold
+  `insufficient_cargo`; fixture cargo qty+2 through the REAL `trade_cargo_add_lot` leaf at the origin's
+  live sell price — direct ship_cargo_lots writes selftest-BANNED; happy path: wallet +reward EXACT on
+  the known 100, cargo −qty exact (remainder 2), FIFO `cost_basis_consumed` = qty × basis exact,
+  delivered flip + receipt; replay verbatim, no cost field, no doubles) → **P8 DEADLINE+CANCEL**
+  (data-driven second accept at the ship's current port; fixture-aged deliver_by; `deadline_passed`
+  reject-only zero-write; generator run: `accepted_cancelled=1`, the slot FREED (active count 0), the
+  within-deadline accepted row untouched again, zero expiries/mints). New markers: HAUL_PASS_ACCEPT /
+  _ACCEPT_GUARDS / _DELIVER_GUARDS / _DELIVER / _DEADLINE_CANCEL. Selftest greps extended: RPC
+  invocations, dark rejects, deliver_by anchor recompute, claim-moves-nothing pins, all guard tokens,
+  exact wallet delta, cost-basis pin, cancel-frees-slot pin, receipts-insert + ship_cargo_lots-write
+  bans, cargo-leaf requirement.
+- **Docs:** SYSTEM_BOUNDARIES §1 haul_contracts row (writers COMPLETE and closed: the three functions)
+  + new haul_receipts row; §2 Haul Contracts system row (both RPCs' full reject orders + the (a2) pass
+  + updated never-list). FULL_CAPACITY_PLAN §C P2 + queue row 12 → HAUL-2 shipped (dark); trailing
+  resequence note → HAUL-3 + flip remain.
+
+**Verification.** `bash scripts/haul-proof.sh selftest` green; **mutation-tested 14/14 caught**
+(commit-instead-of-rollback, flag-enable dropped, direct haul_contracts insert, dark-RPC-reject pin
+gutted, cargo-leaf call renamed away, direct ship_cargo_lots write, deliver_by anchor gutted,
+replay-at-cap pin dropped, deadline-cancel marker dropped, exact-wallet-delta gutted, SQL after the
+final rollback, direct haul_receipts insert, accepted-immunity pin dropped, (a2)-envelope pin
+dropped), control green. All seven lib-consumer selftests green (six trade-family + team-command).
+Generator parity diff-verified: 0176 → 0179 differs by EXACTLY the three marked hunks. `tsc`/`vite
+build` untouched-green (no client code). Real-chain run = the `trade-v1-proof.yml` disposable matrix
+on push (slice-haul** trigger covers slice-haul2). NOT committed/pushed (per instruction).
+
+**Bugs / fixes**
+- _(none)_
+
+---
+
 ## 2026-07-12 — COORD-GUARD (queue #14.5): the A0-fix + the coordinate-travel flip script
 
 **Request.** The pre-activation slice that makes the free-coordinate-travel flip safe: resolver-guard
