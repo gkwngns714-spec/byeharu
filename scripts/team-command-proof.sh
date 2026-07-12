@@ -25,7 +25,11 @@
 # no-op with grants present, current-assignment accrual crediting the 3 assigned manifest captains
 # exactly knob×1 grant each with the level-2 boundary at 100 xp, the per-(grant, captain)
 # captain_counted_grants ledger + the NULL-captain orphan sentinel, zero grants unconsumed,
-# grantless-ship + unassigned captains untouched, and the re-run exactly-once anti-join pin).
+# grantless-ship + unassigned captains untouched, and the re-run exactly-once anti-join pin) plus
+# the C2-2 captain-level-fold block (0180: the re-created adapter scales each captain's stats_json
+# contribution by the DOUBLY-gated (1 + (level-1) × captain_level_bonus_per_level) multiplier —
+# exact lit bonus over the level-1 baseline on the CAPXP level-2 fixture, flag-off + level-2 =
+# the level-1 world exactly, flag-on + level-1 byte-identical to dark, tradeoffs level-flat).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -42,7 +46,7 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -252,14 +256,34 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "re-run grew the ledger to % row(s) (want still 4)" "$SQL" \
     || fail "harness does not ASSERT the ledger is unchanged by the re-run"
 
-  # ── all thirteen block PASS markers present. ────────────────────────────────────────────────────────
+  # ── CAPLEVEL (0180 / C2-2) pins, in assert form (a gutted .sql that only mentions them in prose
+  #    cannot false-green): the committed knob seed; the direct lit/dark adapter calls on the
+  #    level-2 fixture; the exact-bonus compare (baseline + knob × Σ(level-1)×attack); the
+  #    dark-at-level-2 absolute baseline (hull + Σ captain attack); the only-combat_power-moves
+  #    isolation pin; the flag-on-at-level-1 byte-identity; and the real-bonus (never 0=0) guard. ──
+  grep -qF "(want ''0.10'' — the 0180 knob seed)" "$SQL" \
+    || fail "harness does not ASSERT the committed captain_level_bonus_per_level seed is 0.10"
+  grep -qF "s_on := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'none')" "$SQL" \
+    || fail "harness does not call the adapter directly on the level-2 fixture (lit arm)"
+  grep -qF "(s_off->>'combat_power')::numeric + round(v_knob * v_lvl, 2)" "$SQL" \
+    || fail "harness does not ASSERT the exact C2-2 bonus (baseline + knob × Σ(level-1)×attack)"
+  grep -qF "(want hull attack % + Σ captain attack % exactly)" "$SQL" \
+    || fail "harness does not ASSERT flag-off + level-2 = the level-1 world absolute baseline"
+  grep -qF "the level fold moved a non-captain-stat key" "$SQL" \
+    || fail "harness does not ASSERT the fold moves ONLY the captain-contributed combat_power"
+  grep -qF "flag on + level 1 diverged from its dark baseline" "$SQL" \
+    || fail "harness does not ASSERT flag-on + level-1 byte-identity (the second inertness arm)"
+  grep -qF "the bonus under test must be REAL (a 0=0 compare can only false-green)" "$SQL" \
+    || fail "harness does not GUARD the exact-bonus pin against a zero-bonus false-green"
+
+  # ── all fourteen block PASS markers present. ────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 5 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp specifics; 0171 bump asserted-not-fixtured)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 5 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel specifics; 0171 bump asserted-not-fixtured)"
   exit 0
 fi
 
