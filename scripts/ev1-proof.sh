@@ -66,6 +66,14 @@ if [ "$MODE" = "selftest" ]; then
   grep -q '"not-a-number"' "$SQL"     || fail "harness lacks the uncastable knob-guard arm"
   grep -q '"NaN"' "$SQL"              || fail "harness lacks the NaN knob-guard arm"
 
+  # ── the lazy-row fixture ensure is present: location_state rows are LAZY on the real chain (0031
+  #    seeded only the then-existing five; later locations get rows only on first presence) — without
+  #    the 0031-shape ensure the 7-fixture pick underflows on a fresh chain (the CI failure). ────────
+  grep -q "insert into public.location_state (location_id)" "$SQL" \
+    || fail "harness lacks the location_state fixture ensure (lazy rows: a fresh chain has only 5)"
+  grep -q "on conflict (location_id) do nothing" "$SQL" \
+    || fail "harness location_state ensure is not the idempotent 0031 seed shape"
+
   # ── the tick is exercised repeatedly and no cron is touched. ──────────────────────────────────────
   grep -q "public.worldstate_tick()" "$SQL" || fail "harness never runs the real tick"
   grep -qi 'cron\.' "$SQL" && fail "harness touches cron (EV-1 adds NO cron)" || true

@@ -28,7 +28,17 @@ begin;   -- everything below is transient; the trailing ROLLBACK leaves ZERO per
 
 create temp table ev1(k text primary key, v uuid) on commit preserve rows;
 
--- seven fixture locations (deterministic pick over the seeded location_state rows) + one mining field.
+-- location_state rows are LAZY on the real chain: 0031 seeded only the locations that existed THEN
+-- (the original 0002 five); later-added locations (0066 ports, 0175 Ember Reach) get a row only when
+-- 0032's worldstate_register_presence first touches them — so a fresh disposable chain has exactly 5
+-- rows (the CI failure this comment records). Fixture surgery (rolled back; the 0031 idempotent seed
+-- shape verbatim): ensure a state row per location so seven fixtures exist. Setup-only state creation,
+-- not narration — the narrate-never-mutate asserts (P8) only compare publish-call deltas, long after.
+insert into public.location_state (location_id)
+  select id from public.locations
+on conflict (location_id) do nothing;
+
+-- seven fixture locations (deterministic pick over the now-ensured location_state rows) + one field.
 insert into ev1
   select 'loc' || chr(64 + rn::int), location_id
   from (select location_id, row_number() over (order by location_id) rn from public.location_state) s
