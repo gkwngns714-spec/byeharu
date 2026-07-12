@@ -5,6 +5,86 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — ACT-TRADE (queue #5): the trade-market activation script + the proof chain finally green
+
+**Request.** Queue slice #5 of the full-capacity plan (plan §B rung 3): the human-run flip tool for the
+trade market — `scripts/activate-trade.{sql,sh}` in the `activate-team-command` / `activate-captains` /
+`activate-exploration` idiom. NO migration in this slice; NO flag flips at merge time — the script is the
+recorded human go mechanism, run deliberately later.
+
+**Work done**
+- **`scripts/activate-trade.sql`** — one all-or-nothing BEGIN..COMMIT, zero psql meta-commands
+  (management-API-runner compatible). PRECONDITIONS (read-only; any failure rolls everything back):
+  migration head ≥ `20260618000173` AND 0173 recorded by version (head alone proves nothing — 0171/0172
+  are lower numbers); each starter port carries exactly 6 ACTIVE offers over the six 0073 goods (18 rows);
+  the anti-pump spread recomputed over every row; the 3 flagship routes re-derived profitable from the
+  LIVE rows (ore Slagworks→Haven, provisions Haven→Slagworks, machinery Slagworks→Driftmarch — the
+  econ-seed proof's independent-recompute style, cheap form); the DEPLOYED `get_market_offers` /
+  `market_buy` / `market_sell` bodies prosrc-pinned to the **0138 re-creates** via two positive tokens —
+  `public.mainship_resolve_docked_location(v_ship)` (absent from the 0136 stale bodies, comments included)
+  AND `trade_effective_price(` (absent from the pre-drift 0092 bodies) — so the flip physically cannot run
+  against a regressed body; relief knobs sane and READ-ONLY (`relief_credits` 250 within
+  0 < x ≤ `starting_credits` — relief must never out-pay the wallet seed, the 0095 farming-hole reasoning;
+  `relief_max_lifetime_claims` 3 in 1..10; `relief_cooldown_seconds` 86400 ≥ 3600); `starting_credits` and
+  `main_ship_price` present (price already 250 on prod runtime since the team activation — never rewritten
+  here). STAGE 1 (the ONLY writes): `trade_market_enabled` → true AND `trade_relief_enabled` → true — they
+  light TOGETHER (a lit market with dark relief reopens the softlock the floor exists to close). SMOKE
+  (read-only): both flags committed (raw + `cfg_bool`); `to_regprocedure` over the 4 client RPCs
+  (`get_market_offers(uuid)`, `market_buy(uuid,text,numeric,uuid)`, `market_sell(uuid,text,numeric,uuid)`,
+  `market_claim_relief(uuid)`) + the 8 internal leaves (resolve-owned/docked, `trade_effective_price`,
+  cargo add/consume, wallet ensure/debit/credit); exactly 18 active offers across exactly 3 ports; the
+  anti-pump CHECK constraint pinned by definition text (0085 left it unnamed); `ship_cargo_lots`
+  selectable. Markers `ACTIVATE_TRADE_PASS_{PRECONDITIONS,STAGE1,SMOKE}` + a final PASS line naming the
+  remaining step. Commented flag-only ROLLBACK (wallets/cargo/receipts/relief claims persist inert; the
+  anti-pump constraint makes single-station pumping structurally unprofitable while lit).
+- **`scripts/activate-trade.sh`** — selftest/run wrapper (confirm token `ACTIVATE_TRADE`). The DB-free
+  selftest pins: exactly 2 `set_game_config` call sites, both → true, exactly the two approved keys; no
+  knob rewrite (relief knobs / `starting_credits` / `main_ship_price` / caps), no other-window flag, no
+  direct table write, no DDL, no meta-command; one timed txn; rollback stays commented; the 0173 gate,
+  the 0138 prosrc pins, the route recomputes, the full smoke list, and the client-PR mount docs all
+  present. **Mutation-tested**: flipping a write to `'false'` fails the selftest; injecting a direct
+  `update game_config set …` (qualified or not, with or without WHERE) fails the selftest.
+- **Client-mount verification (the captains-slice lesson — claim only what mounts).** Repo-verified: the
+  one-line client PR flipping `TRADE_MARKET_ENABLED` mounts exactly (a) `MarketPanel` on the Port screen
+  main rail (`PortScreen.tsx:61`) — the ONLY newly visible surface — and (b) completes the ShipSwitcher
+  OR-gate (`ShipScreen.tsx:62`, `TRADE_MARKET_ENABLED || MAINSHIP_ADDITIONAL_ENABLED`) — the switcher is
+  ALREADY mounted because `MAINSHIP_ADDITIONAL_ENABLED` has been true since the 2026-07-12 team launch, so
+  it shows no new change. No other consumer of the constant exists (tradeApi/MarketPanel/ShipSwitcher
+  reference it in comments only). The panel's wallet/cargo reads are owner-read table reads
+  (`player_wallet`, `ship_cargo_lots ⋈ trade_goods`), not RPCs; prices ride `get_market_offers`.
+- **Docs:** FULL_CAPACITY_PLAN queue row 5 → script shipped (file brought over from the unmerged
+  `docs-full-capacity-plan` branch — this slice carries it if that branch has not merged first);
+  ROADMAP phase-10 row annotated.
+
+**Trade-proof-chain archaeology (this branch, earlier this wave).** CI history showed
+`trade-v1-proof.yml` had NEVER been green — every historical run failed identically, masked by
+path-filtered triggers. Four rot layers, all fixed on this branch before the activation script landed:
+1. **Stale 0C fixtures (wallet)** — the TRADE-FLEET-0C proof was authored at chain 0084 (pre-wallet) and
+   went stale the day 0091 (ships debit `main_ship_price` 1000) + 0093 (lazy wallet seed 1000) landed:
+   the 3rd commissioned ship always died `insufficient_credits`. Fixed by funding the proof wallet
+   in-txn (rolled back), citing 0091/0093 — the pricing itself is the designed credit sink.
+2. **Cap pin** — 0160 raised `max_main_ships_per_player` 3→24; the proof's cap-enforcement stage was
+   about to go latently stale, so the cap is now pinned back to 3 transient-in-txn (the property under
+   test is enforcement, not the prod value).
+3. **PROP2 non-deterministic ship picker** — all in-proof ships share transaction-frozen `now()` as
+   `created_at`, so order-by-created_at asc/desc was plan-dependent and 0160's `group_idx` shifted the
+   plan until both picks returned the SAME row; now ordered by `main_ship_id` (unique PK).
+4. **Latent `k`-variable ambiguity** — plpgsql variables named `k` collided with the temp tables' `k`
+   column (`variable_conflict=error`) in blocks that had never executed because the 0C step always
+   failed first; renamed to `sk` (the team-command-proof convention).
+After the fixes: all five proof selftests (0C, TM1, bootstrap, econ-seed, team-command) green locally;
+the real-chain run happens in CI's disposable Supabase.
+
+**Explicitly NOT in this slice:** running the flip (human-gated, owner-run), the one-line client PR
+(`TRADE_MARKET_ENABLED` → true — ships only AFTER a green prod run of the script), any migration, any
+knob retune.
+
+**Verification.** `bash scripts/activate-trade.sh selftest` green + both mutation tests fail as designed;
+the four trade proof selftests + team-command selftest untouched-green; `npx tsc -b` + `npx vite build`
+untouched-green (no client code changed).
+
+---
+
 ## 2026-07-12 — ECON-SEED-1: differentiated three-port economy seed (migration 0173, DARK)
 
 **Request.** Queue slice #4 of the full-capacity plan: seed the owner-approved multiport price table

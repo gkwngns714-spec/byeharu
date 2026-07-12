@@ -202,7 +202,7 @@ P2 contracts + P8 event sites first.
 | 2 | ACT-EXPLORE (script + 0172 reconcile) | **PR #103 — CI green, at the merge gate** |
 | 3 | ACT-MINING (script, same PR) | **PR #103** |
 | 4 | ECON-SEED-1 (mig 0173) **[D: price table — approved 2026-07-12]** | **PR #104 — CI re-running after the 0C fixture fix** |
-| 5 | ACT-TRADE (flip script + TRADE_MARKET_ENABLED client PR) | next |
+| 5 | ACT-TRADE (flip script + TRADE_MARKET_ENABLED client PR) | **script shipped** (`scripts/activate-trade.{sql,sh}`, slice-act-trade — awaiting the human flip, then the one-line client PR) |
 | 6 | SALVAGE-0/1 **[D: item prices]** | queued |
 | 7 | ZONES2-1 Ember Reach **[D: bd/min_power numbers]** | queued |
 | 8 | ZONES2-2 + reveal script | queued |
