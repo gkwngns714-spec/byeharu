@@ -1,4 +1,6 @@
 // FITTING-P14 verification — DARK POSTURE + contracts (slices A–G).
+// NOTE: catalog contract is 0183-INCLUSIVE (6 module types / 18 recipe rows) — this verifier
+// FAILS against prod until migration 0183 is applied (expected, not a regression).
 //   node scripts/verify-fitting.mjs
 //
 // Proves, with a throwaway authenticated user, that the whole module-fitting surface ships dark
@@ -9,8 +11,9 @@
 //     so the identical answer proves the gate fires FIRST)
 //   • get_my_ship_fittings → {ok:false, reason:'module_fitting_disabled'} (0116 read envelope)
 //   • module_types carries the 0111 fitting catalog columns PUBLICLY (slot_cost / stats_json —
-//     the item_types posture, deliberately inverted from mining's hidden fields: reading the four
-//     archetypes' seeded values back verbatim IS the posture assertion), every slot_cost >= 1
+//     the item_types posture, deliberately inverted from mining's hidden fields: reading the
+//     six archetypes' (0111 + the 0183 MOD2-1 pair) seeded values back verbatim IS the posture
+//     assertion), every slot_cost >= 1
 //   • ship_module_fittings / module_fitting_receipts are own-row-only (a fresh user sees zero
 //     rows) and have NO client write path (inserts denied)
 //   • internal surfaces (fitting_apply / fitting_execute_command / the client-envelope mapper)
@@ -52,12 +55,15 @@ const newUser = createUserFactory({ url, anonKey, emailPrefix: 'fittest', create
 // and strictly read-only (this script owns no set_game_config path at all).
 const cfgVal = async (client, k) => (await client.from('game_config').select('value').eq('key', k).maybeSingle()).data?.value
 
-// The 0111 seed contract, asserted verbatim (public Reference/Config — reading it IS the posture).
+// The 0111 + 0183 (MOD2-1) seed contract, asserted verbatim (public Reference/Config — reading
+// it IS the posture).
 const EXPECTED_FITTING_CATALOG = {
   autocannon_battery: { slot_cost: 1, stats: { attack: 10 } },
   vector_thruster_kit: { slot_cost: 1, stats: { evasion: 3, speed_mult_bonus: 0.1 } },
   expanded_cargo_lattice: { slot_cost: 2, stats: { cargo: 25 } },
   deep_scan_sensor_array: { slot_cost: 1, stats: { scan: 8 } },
+  shield_lattice: { slot_cost: 1, stats: { defense: 12 } },
+  mining_rig_extension: { slot_cost: 1, stats: { mining: 8 } },
 }
 const sortedJson = (o) => JSON.stringify(Object.entries(o ?? {}).sort())
 
@@ -103,7 +109,7 @@ async function main() {
       for (const [id, exp] of Object.entries(EXPECTED_FITTING_CATALOG)) {
         const row = rows.find((r) => r.id === id)
         row && row.slot_cost === exp.slot_cost && sortedJson(row.stats_json) === sortedJson(exp.stats)
-          ? ok(`${id}: slot_cost ${exp.slot_cost} + stats ${JSON.stringify(exp.stats)} (0111 seed verbatim)`)
+          ? ok(`${id}: slot_cost ${exp.slot_cost} + stats ${JSON.stringify(exp.stats)} (0111/0183 seed verbatim)`)
           : bad(`${id} seed`, row ? `slot_cost ${row.slot_cost}, stats ${JSON.stringify(row.stats_json)}` : 'row missing')
       }
     }

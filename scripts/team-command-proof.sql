@@ -113,10 +113,23 @@
 --            lit or dark. The DOUBLE inertness, both arms pinned. Reconciliation (checked): no
 --            earlier block calls the adapter after the CAPXP flip/accrual, so every existing
 --            adapter pin runs dark at level 1 and stays byte-valid unreconciled.
+--   MOD2 (MOD2-1, 0183) — the shield-line seeds end-to-end on a FRESH fixture user (free first
+--            commission → canonically docked = settled-SAFE for fitting, 0114; captain/module-
+--            free so the baseline decomposes exactly): both module gates asserted COMMITTED-dark
+--            first, then flipped in-txn only; the 0183 catalog pinned verbatim (shield_lattice
+--            defense 12 / mining_rig_extension mining 8, slot 1, the 6 exact recipe rows);
+--            ingredients granted ONLY via the real reward_grant sole writer at EXACTLY the
+--            recipe quantities; craft_module spends the exact price to zero, a second craft hits
+--            the insufficient_items boundary, the replay is verbatim with ONE minted instance;
+--            fit_module_to_ship + the 0180 adapter land survival = baseline + 12 EXACTLY (the
+--            hull-only 10 → 22 — the packet-F2 degenerate curve's first fitted move) and
+--            mining_yield + 8 EXACTLY, with nothing else moving but module_slots_used (the
+--            minus-key isolation pin; defense/mining archetypes take the engine else-0 tradeoff).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
--- mainship_send_enabled + captain_assignment_enabled ONLY inside this rolled-back transaction; the ROLLBACK reverts them, so every
+-- mainship_send_enabled + captain_assignment_enabled (+ captain_growth_enabled at CAPXP, and
+-- module_crafting_enabled + module_fitting_enabled at MOD2) ONLY inside this rolled-back transaction; the ROLLBACK reverts them, so every
 -- committed/production flag value stays false. It also transiently mirrors production config a fresh
 -- chain lacks (reveal_starter_ports) — all reverted by ROLLBACK. No committed flag/state changes.
 --
@@ -1851,6 +1864,136 @@ begin
   raise notice 'TEAMCMD_PASS_CAPLEVEL ok: committed knob 0.10 untouched; lit level-2 c1 exceeds the level-1 baseline by exactly round(knob × Σ(level-1)×attack, 2) (23 → 23.8 at the seeds) with every other key byte-identical; flag off + level 2 = hull + Σ captain attack exactly; flag on + level 1 = byte-identical to dark — the DOUBLE inertness, both arms pinned';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms)' as result;
+-- ════════ BLOCK MOD2 (MOD2-1, 0183): the shield line — grant → craft → fit → adapter delta ════════
+-- The FIRST end-to-end pin of a module DEFENSE stat through the whole dark pipeline: the 0183
+-- catalog seeds (shield_lattice defense 12 / mining_rig_extension mining 8, slot 1 each, recipes
+-- from live drops only), the REAL craft_module RPC (0109 — exact recipe spend to zero via the
+-- Inventory sole writers, one mint, verbatim replay, the insufficient_items boundary), the REAL
+-- fit_module_to_ship RPC (0113/0114 — a canonically-docked commissioned ship IS settled-SAFE),
+-- and the 0180 adapter fold: survival rises by EXACTLY the seeded 12 (hull-only 10 → 22 — the
+-- packet-F2 degenerate curve finally moves) and mining_yield by EXACTLY 8, with NOTHING else
+-- moving but module_slots_used (the CAPLEVEL minus-key isolation idiom). Fixture: a FRESH user uD
+-- with a free first commission — canonically docked (at_location, fit-legal per 0114), captain-
+-- free and module-free, so the survival baseline decomposes to the hull defense seed EXACTLY and
+-- no earlier block's fixture state is touched (every prior pin stays byte-valid). Ingredients
+-- arrive ONLY via the REAL Reward sole writer reward_grant() (the CAPXP orphan-grant idiom) —
+-- never a direct inventory write; modules only via the real craft/fit RPCs — never a direct
+-- module-table write. Both module gates are asserted COMMITTED-dark FIRST (nothing in-txn has
+-- touched them), then flipped in-txn only (rolled back).
+do $$
+begin
+  if (select value #>> '{}' from public.game_config where key = 'module_crafting_enabled') is distinct from 'false' then
+    raise exception 'MOD2 FAIL: committed module_crafting_enabled is % (want ''false'' — the 0107/0183 dark seeds)',
+      (select value #>> '{}' from public.game_config where key = 'module_crafting_enabled'); end if;
+  if (select value #>> '{}' from public.game_config where key = 'module_fitting_enabled') is distinct from 'false' then
+    raise exception 'MOD2 FAIL: committed module_fitting_enabled is % (want ''false'' — the 0107/0183 dark seeds)',
+      (select value #>> '{}' from public.game_config where key = 'module_fitting_enabled'); end if;
+end $$;
+
+update public.game_config set value='true'::jsonb where key='module_crafting_enabled';
+update public.game_config set value='true'::jsonb where key='module_fitting_enabled';
+
+do $$
+declare r jsonb; s0 jsonb; s1 jsonb; s2 jsonb; n int;
+  uD uuid; d1 uuid; v_shield uuid; v_rig uuid; v_hulldef numeric; ing record;
+begin
+  -- fresh fixture user (the signup idiom above) + the FREE first commission → canonically docked.
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uD;
+  insert into tcmd values ('uD', uD);
+  r := pg_temp.call_as(uD, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'MOD2 FAIL provision: %', r; end if;
+  select main_ship_id into d1 from public.main_ship_instances where player_id = uD;
+
+  -- the 0183 catalog seeds, pinned verbatim (shape + stats + slot_cost + full recipes).
+  select count(*) into n from public.module_types
+    where (id = 'shield_lattice'       and slot_type = 'defense' and slot_cost = 1 and stats_json = '{"defense": 12}'::jsonb)
+       or (id = 'mining_rig_extension' and slot_type = 'mining'  and slot_cost = 1 and stats_json = '{"mining": 8}'::jsonb);
+  if n <> 2 then raise exception 'MOD2 FAIL: % of 2 module rows carry the exact 0183 seed shape', n; end if;
+  select count(*) into n from public.module_recipe_ingredients
+    where (module_type_id, item_id, qty) in (
+      ('shield_lattice', 'repair_parts', 4), ('shield_lattice', 'pirate_alloy', 3), ('shield_lattice', 'scrap', 8),
+      ('mining_rig_extension', 'crystal', 2), ('mining_rig_extension', 'ore', 6), ('mining_rig_extension', 'scrap', 4));
+  if n <> 6 then raise exception 'MOD2 FAIL: % of 6 recipe rows carry the exact 0183 seed (module, item, qty)', n; end if;
+
+  -- grant EXACTLY the shield recipe via the REAL Reward sole writer, and verify it landed —
+  -- the craftability math: the listed items ARE the entire price, so exactly-enough must craft.
+  perform public.reward_grant('combat', gen_random_uuid(), uD, null,
+    '{"items": [{"item_id": "repair_parts", "quantity": 4}, {"item_id": "pirate_alloy", "quantity": 3}, {"item_id": "scrap", "quantity": 8}]}'::jsonb);
+  for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'shield_lattice' loop
+    if public.inventory_get_balance(uD, ing.item_id) <> ing.qty then
+      raise exception 'MOD2 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uD, ing.item_id), ing.qty; end if;
+  end loop;
+
+  -- the survival BASELINE decomposes to the hull defense seed exactly (uD is captain/module/loadout-free).
+  select coalesce((h.base_stats_json->>'defense')::numeric, 0) into v_hulldef
+    from public.main_ship_instances i join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
+    where i.main_ship_id = d1;
+  s0 := public.calculate_expedition_stats(uD, d1, '[]'::jsonb, 'none');
+  if (s0->>'survival')::numeric is distinct from v_hulldef then
+    raise exception 'MOD2 FAIL: bare-ship survival % (want the hull defense seed % exactly — the F2 hull-only baseline)',
+      s0->>'survival', v_hulldef; end if;
+
+  -- CRAFT via the real RPC: exact spend to ZERO, one instance + one receipt, verbatim replay.
+  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-1'', ''shield_lattice'')');
+  if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
+    raise exception 'MOD2 FAIL craft: %', r; end if;
+  v_shield := (r->>'instance_id')::uuid;
+  for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'shield_lattice' loop
+    if public.inventory_get_balance(uD, ing.item_id) <> 0 then
+      raise exception 'MOD2 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uD, ing.item_id); end if;
+  end loop;
+  -- the insufficient boundary: with the price fully spent, a SECOND craft must answer
+  -- insufficient_items (the 0109 envelope) and mint nothing.
+  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-2'', ''shield_lattice'')');
+  if (r->>'code') is distinct from 'insufficient_items' then
+    raise exception 'MOD2 FAIL: second craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
+  -- verbatim replay of the FIRST craft: no double spend, no double mint.
+  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-shield-1'', ''shield_lattice'')');
+  if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true
+     or (r->>'instance_id')::uuid is distinct from v_shield then
+    raise exception 'MOD2 FAIL replay: %', r; end if;
+  select count(*) into n from public.module_instances where player_id = uD;
+  if n <> 1 then raise exception 'MOD2 FAIL: % module instance(s) after craft+replay (want exactly 1)', n; end if;
+
+  -- FIT via the real RPC, then THE DELTA: survival = baseline + 12 EXACTLY (the 0183 shield
+  -- seed), slots 0 → 1, and NO other key moves (the minus-key isolation compare).
+  r := pg_temp.call_as(uD, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-1'')', v_shield, d1));
+  if (r->>'ok')::boolean is not true then raise exception 'MOD2 FAIL fit shield: %', r; end if;
+  s1 := public.calculate_expedition_stats(uD, d1, '[]'::jsonb, 'none');
+  if (s1->>'survival')::numeric is distinct from (s0->>'survival')::numeric + 12 then
+    raise exception 'MOD2 FAIL: fitted survival % (want baseline % + the 0183 shield defense 12 exactly)',
+      s1->>'survival', s0->>'survival'; end if;
+  if (s1->>'module_slots_used')::int is distinct from 1 then
+    raise exception 'MOD2 FAIL: module_slots_used % after the shield fit (want 1)', s1->>'module_slots_used'; end if;
+  if (s1 - 'survival' - 'module_slots_used') is distinct from (s0 - 'survival' - 'module_slots_used') then
+    raise exception 'MOD2 FAIL: the shield moved a non-defense key (defense archetype = the engine tradeoff posture): fitted % vs bare %', s1, s0; end if;
+
+  -- the MINING RIG end-to-end on the same ship: grant its exact recipe, craft, fit →
+  -- mining_yield = +8 EXACTLY, slots 1 → 2, same isolation pin.
+  perform public.reward_grant('combat', gen_random_uuid(), uD, null,
+    '{"items": [{"item_id": "crystal", "quantity": 2}, {"item_id": "ore", "quantity": 6}, {"item_id": "scrap", "quantity": 4}]}'::jsonb);
+  r := pg_temp.call_as(uD, 'public.craft_module(''mod2-rig-1'', ''mining_rig_extension'')');
+  if (r->>'ok')::boolean is not true then raise exception 'MOD2 FAIL craft rig: %', r; end if;
+  v_rig := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uD, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-2'')', v_rig, d1));
+  if (r->>'ok')::boolean is not true then raise exception 'MOD2 FAIL fit rig: %', r; end if;
+  s2 := public.calculate_expedition_stats(uD, d1, '[]'::jsonb, 'none');
+  if (s2->>'mining_yield')::numeric is distinct from (s1->>'mining_yield')::numeric + 8 then
+    raise exception 'MOD2 FAIL: fitted mining_yield % (want % + the 0183 rig mining 8 exactly)',
+      s2->>'mining_yield', s1->>'mining_yield'; end if;
+  if (s2->>'module_slots_used')::int is distinct from 2 then
+    raise exception 'MOD2 FAIL: module_slots_used % after the rig fit (want 2)', s2->>'module_slots_used'; end if;
+  if (s2 - 'mining_yield' - 'module_slots_used') is distinct from (s1 - 'mining_yield' - 'module_slots_used') then
+    raise exception 'MOD2 FAIL: the rig moved a non-mining key (mining archetype = the engine tradeoff posture): % vs %', s2, s1; end if;
+
+  raise notice 'TEAMCMD_PASS_MOD2 ok: committed module gates dark; 0183 seeds exact (defense 12 / mining 8, 6 recipe rows); exact-price craft spends to 0 with insufficient_items at the boundary + verbatim replay (1 instance); fit lands survival +12 exactly (hull 10 -> 22, the F2 curve moves) and mining_yield +8 exactly, nothing else but slots 1 then 2';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

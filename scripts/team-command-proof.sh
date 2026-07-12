@@ -29,7 +29,11 @@
 # the C2-2 captain-level-fold block (0180: the re-created adapter scales each captain's stats_json
 # contribution by the DOUBLY-gated (1 + (level-1) × captain_level_bonus_per_level) multiplier —
 # exact lit bonus over the level-1 baseline on the CAPXP level-2 fixture, flag-off + level-2 =
-# the level-1 world exactly, flag-on + level-1 byte-identical to dark, tradeoffs level-flat).
+# the level-1 world exactly, flag-on + level-1 byte-identical to dark, tradeoffs level-flat) plus
+# the MOD2-1 shield-line block (0183: both module gates committed-dark then in-txn-lit on a fresh
+# fixture user — exact-price craft via craft_module spending to zero with the insufficient_items
+# boundary + verbatim replay, fit via fit_module_to_ship, and the 0180 adapter deltas: survival
+# +12 exactly (hull-only 10 → 22) and mining_yield +8 exactly, minus-key isolation both fits).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -46,14 +50,14 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
   tp_assert_self_rolling_back "$SQL"
-  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled
+  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled
 
   # ── provisions via the REAL commission RPCs (no direct ship inserts as the primary path). ─────────
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
@@ -276,14 +280,42 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "the bonus under test must be REAL (a 0=0 compare can only false-green)" "$SQL" \
     || fail "harness does not GUARD the exact-bonus pin against a zero-bonus false-green"
 
-  # ── all fourteen block PASS markers present. ────────────────────────────────────────────────────────
+  # ── MOD2 (0183 / MOD2-1) pins, in assert form (a gutted .sql that only mentions them in prose
+  #    cannot false-green): the committed dark seeds for BOTH module gates; the real craft + fit
+  #    RPCs exercised; the exact-price spend-to-zero; the insufficient_items boundary; the exact
+  #    survival +12 / mining_yield +8 adapter deltas; and BOTH minus-key isolation pins. Plus the
+  #    sole-writer negatives: the harness never writes a Modules/Fitting/Inventory-owned table
+  #    directly — ingredients ride reward_grant, modules ride craft_module/fit_module_to_ship. ────
+  grep -qF "public.craft_module(''mod2-shield-1'', ''shield_lattice'')" "$SQL" \
+    || fail "harness does not craft the shield via the real craft_module RPC"
+  grep -qF "public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-1'')" "$SQL" \
+    || fail "harness does not fit the shield via the real fit_module_to_ship RPC"
+  grep -qF "(want ''false'' — the 0107/0183 dark seeds)" "$SQL" \
+    || fail "harness does not ASSERT the committed module gate seeds are false"
+  grep -qF "the recipe spend did not land the balance at 0 (exact price)" "$SQL" \
+    || fail "harness does not ASSERT the exact-price spend-to-zero"
+  grep -qF "(want insufficient_items — the exact-price boundary)" "$SQL" \
+    || fail "harness does not ASSERT the insufficient_items boundary after the exact spend"
+  grep -qF "(s0->>'survival')::numeric + 12" "$SQL" \
+    || fail "harness does not ASSERT the exact survival +12 shield delta"
+  grep -qF "(s1->>'mining_yield')::numeric + 8" "$SQL" \
+    || fail "harness does not ASSERT the exact mining_yield +8 rig delta"
+  grep -qF "the shield moved a non-defense key" "$SQL" \
+    || fail "harness does not ASSERT the shield minus-key isolation pin"
+  grep -qF "the rig moved a non-mining key" "$SQL" \
+    || fail "harness does not ASSERT the rig minus-key isolation pin"
+  grep -viE '^[[:space:]]*--' "$SQL" \
+    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|player_inventory|inventory_ledger|reward_grants)\b' \
+    && fail "harness directly mutates a Modules/Fitting/Inventory/Reward-owned table (sole-writer law violation)" || true
+
+  # ── all fifteen block PASS markers present. ────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 5 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel specifics; 0171 bump asserted-not-fixtured)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 7 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory; 8 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2 specifics; 0171 bump asserted-not-fixtured)"
   exit 0
 fi
 
@@ -291,8 +323,8 @@ fi
 tp_run_local "TEAM-COMMAND B-VERIFY" "$SQL" "$PASS_LINE" "$MARKERS"
 
 # post-run honesty check: EVERY committed flag the proof flips must still be false (the flips were rolled
-# back). Check all five the harness toggles in-txn, not just the team gate.
-for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled; do
+# back). Check all seven the harness toggles in-txn, not just the team gate.
+for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled; do
   committed="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = '$flag'), 'false')")" \
     || fail "could not read the committed '$flag' value"
   [ "$committed" = "false" ] || fail "committed $flag is '$committed' — the proof leaked a flag flip (must stay false)"
@@ -312,4 +344,4 @@ committed_xp="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{
   || fail "could not read the committed 'captain_xp_per_combat_grant' value"
 [ "$committed_xp" = "10" ] || fail "committed captain_xp_per_combat_grant is '$committed_xp' — the proof leaked the knob (must stay 10)"
 
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10)"
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10)"
