@@ -43,6 +43,26 @@ export async function fetchMyShipGroupMap(): Promise<Record<string, ShipGroupMap
   return map
 }
 
+// ── TEAMMAP-0 — the docked-location read for the team rollup. ──
+// A docked ship's fleet is 'present' with a current_location_id (the resolveMainShipMarker §D
+// coherence source; written by fleet_set_present at arrival, 0153) — this owner-RLS read is the
+// docked-location truth the pure deriveDockedTeamRollups fold consumes. Normalize-don't-throw (the
+// file's read style): transport error → [] → no rollup line / no dock badge, never a crash.
+export interface PresentShipFleetLite {
+  main_ship_id: string
+  current_location_id: string | null
+}
+
+export async function fetchMyPresentShipFleets(): Promise<PresentShipFleetLite[]> {
+  const { data, error } = await supabase
+    .from('fleets')
+    .select('main_ship_id, current_location_id')
+    .eq('status', 'present')
+    .not('main_ship_id', 'is', null)
+  if (error || !data) return []
+  return data as PresentShipFleetLite[]
+}
+
 // ── Slice B1 — owner-scoped group WRITE wrappers over the B0/B1 SECURITY DEFINER RPCs (DARK). ──
 // Thin: send only ids/values; the server derives the player from auth.uid(), re-checks the gate + ownership,
 // and is the SOLE authority. {ok:false} is a NORMAL (dark) outcome → normalized, never thrown (the

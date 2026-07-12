@@ -45,6 +45,10 @@ export interface FleetMovement {
   travel_seconds: number
   travel_distance: number
   reward_payload_json?: Record<string, number>
+  // TEAMMAP-0: the parent fleet's INFORMATIONAL team tag (fleets.group_id, 0168/0187 — display
+  // only; routing never reads it), flattened onto the row by fetchActiveMovements so the map can
+  // label a team's in-flight fleets. Optional + additive: consumers that don't need it ignore it.
+  group_id?: string | null
 }
 
 export interface LocationPresence {

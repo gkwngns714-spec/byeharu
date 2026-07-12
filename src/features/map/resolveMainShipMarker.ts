@@ -2,6 +2,7 @@ import type { MainShipLite } from './useGalaxyMapData'
 import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement, SpatialState } from './mainshipApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MapLocation } from './mapTypes'
+import { interpolateMovementPoint } from './movementInterpolation'
 
 // OSN-1 / OSN-2b / OSN-3-S1 — the SINGLE, pure, read-only resolver for the main ship's DISPLAY
 // position. Returns one WORLD-coordinate marker or `null`. It NEVER guesses, falls back, or combines
@@ -93,15 +94,10 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
     if (fleet.active_movement_id !== null) return null
     if (fleet.active_space_movement_id !== spaceMovement.id) return null
     if (presenceActive) return null
-    const dep = Date.parse(spaceMovement.depart_at)
-    const arr = Date.parse(spaceMovement.arrive_at)
-    if (!finite(dep) || !finite(arr) || arr <= dep) return null
-    if (!finite(spaceMovement.origin_x) || !finite(spaceMovement.origin_y) ||
-        !finite(spaceMovement.target_x) || !finite(spaceMovement.target_y)) return null
-    const t = Math.max(0, Math.min(1, (nowMs - dep) / (arr - dep)))
-    const x = spaceMovement.origin_x + t * (spaceMovement.target_x - spaceMovement.origin_x)
-    const y = spaceMovement.origin_y + t * (spaceMovement.target_y - spaceMovement.origin_y)
-    return make(spaceMovement.target_kind === 'base' ? 'returning' : 'outbound', 'open_space_fixed', x, y)
+    // TEAMMAP-2: the inline clamp-lerp moved to the ONE shared helper (same checks, same math).
+    const p = interpolateMovementPoint(spaceMovement, nowMs)
+    if (!p) return null
+    return make(spaceMovement.target_kind === 'base' ? 'returning' : 'outbound', 'open_space_fixed', p.x, p.y)
   }
 
   // §D (OSN-3 S1) — at_location: validated named-location position.
@@ -130,14 +126,10 @@ export function resolveMainShipMarker(inp: MarkerInputs, nowMs: number): ShipMar
     if (fleet && (fleet.status === 'moving' || fleet.status === 'returning')) {
       const mv = movements.find((m) => m.fleet_id === fleet.id && m.status === 'moving')
       if (!mv) return null
-      const dep = Date.parse(mv.depart_at)
-      const arr = Date.parse(mv.arrive_at)
-      if (!finite(dep) || !finite(arr) || arr <= dep) return null
-      if (!finite(mv.origin_x) || !finite(mv.origin_y) || !finite(mv.target_x) || !finite(mv.target_y)) return null
-      const t = Math.max(0, Math.min(1, (nowMs - dep) / (arr - dep)))
-      const x = mv.origin_x + t * (mv.target_x - mv.origin_x)
-      const y = mv.origin_y + t * (mv.target_y - mv.origin_y)
-      return make(mv.target_type === 'base' ? 'returning' : 'outbound', 'legacy_dynamic', x, y)
+      // TEAMMAP-2: the inline clamp-lerp moved to the ONE shared helper (same checks, same math).
+      const p = interpolateMovementPoint(mv, nowMs)
+      if (!p) return null
+      return make(mv.target_type === 'base' ? 'returning' : 'outbound', 'legacy_dynamic', p.x, p.y)
     }
     // Present at a named location — only when the entire named-location state is coherent.
     if (fleet && fleet.status === 'present') {

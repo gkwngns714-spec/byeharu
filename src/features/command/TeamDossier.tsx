@@ -45,6 +45,7 @@ export function TeamDossier({
   ships,
   rosterVersion,
   captainsLit,
+  dockRollup,
 }: {
   groupId: string
   groupIndex: number
@@ -56,6 +57,10 @@ export function TeamDossier({
   // whether the captain surface is server-lit (drives the "captains included" label copy only —
   // the totals RPC itself is gated on team_command alone and works regardless).
   captainsLit: boolean
+  // TEAMMAP-0: the docked-team rollup line ("Docked at <location> — n/n"), derived by the panel
+  // from the pure deriveDockedTeamRollups fold; null (no line) unless the WHOLE team is docked at
+  // one location. Display only — never a gate.
+  dockRollup?: string | null
 }) {
   const [totals, setTotals] = useState<{ version: number; res: GroupTotalsResult } | null>(null)
   const [open, setOpen] = useState(false)
@@ -102,6 +107,14 @@ export function TeamDossier({
           </Button>
         )}
       </div>
+
+      {/* TEAMMAP-0 — the docked-team rollup line (the roster card's "where is my team" answer;
+          the map's dock badge reads the same pure fold). Muted, display-only, existing tokens. */}
+      {dockRollup && (
+        <p data-testid="team-rollup" className="mt-1 text-[10px] text-ink-faint">
+          {dockRollup}
+        </p>
+      )}
 
       {memberCount <= 0 ? (
         <p className="mt-1 text-[10px] text-ink-faint">No ships yet — add ships to see team stats.</p>

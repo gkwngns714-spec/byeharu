@@ -4,15 +4,18 @@ import { Card, CardHeader, Badge, SectionLabel, Button, Notice, Skeleton, Icon }
 import {
   fetchMyShipGroups,
   fetchMyShipGroupMap,
+  fetchMyPresentShipFleets,
   upsertShipGroup,
   assignShipToGroup,
   deleteShipGroup,
   sendShipGroup,
   stopShipGroup,
   sendShipGroupHunt,
+  type PresentShipFleetLite,
   type ShipGroupMapEntry,
   type TeamRpcResult,
 } from './teamApi'
+import { deriveDockedTeamRollups } from './teamRollup'
 import { buildTeamRoster, nextTeamSlot, type GroupRow, type RosterShip } from './teamRoster'
 import { groupUpsertAvailability } from './teamMutations'
 import { sendableDestinations, groupSendAvailability } from './teamSend'
@@ -69,6 +72,9 @@ export function TeamRosterPanel() {
   const { selection, game } = useShellState()
   const [groups, setGroups] = useState<GroupRow[]>([])
   const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
+  // TEAMMAP-0: the docked-location read (a docked ship's 'present' fleet carries its location) —
+  // refetched with the group reads so the rollup can never lag a membership/send mutation.
+  const [presentFleets, setPresentFleets] = useState<PresentShipFleetLite[]>([])
   const [captainRoster, setCaptainRoster] = useState<GetMyCaptainInstancesResult | null>(null)
   const [rosterVersion, setRosterVersion] = useState(0) // bumped per reload — stales cached previews
   const [loading, setLoading] = useState(true)
@@ -83,23 +89,29 @@ export function TeamRosterPanel() {
   const [confirmHunt, setConfirmHunt] = useState<string | null>(null) // group_id pending hunt confirm (D4)
 
   const reload = useCallback(async () => {
-    const [g, m, cr] = await Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances()])
+    const [g, m, cr, pf] = await Promise.all([
+      fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
+    ])
     setGroups(g)
     setGroupMap(m)
     setCaptainRoster(cr)
+    setPresentFleets(pf)
     setRosterVersion((v) => v + 1) // membership may have changed — any cached preview is stale
     setLoading(false)
   }, [])
 
   // Initial load: inline .then so setState lands in an async callback, not synchronously in the effect body
-  // (react-hooks/set-state-in-effect). reload() reuses the same three fetches after every mutation.
+  // (react-hooks/set-state-in-effect). reload() reuses the same four fetches after every mutation.
   useEffect(() => {
     let active = true
-    void Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances()]).then(([g, m, cr]) => {
+    void Promise.all([
+      fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
+    ]).then(([g, m, cr, pf]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
       setCaptainRoster(cr)
+      setPresentFleets(pf)
       setLoading(false)
     })
     return () => {
@@ -181,6 +193,17 @@ export function TeamRosterPanel() {
   }, [ungroupedIdsKey, rosterVersion, loading])
   // Only data computed at the CURRENT roster version renders (the TeamDossier stamp discipline).
   const curSoloPower = soloPower !== null && soloPower.version === rosterVersion ? soloPower.byShip : null
+
+  // TEAMMAP-0: the pure docked-team rollup (live membership × 'present' fleets); the muted card
+  // line renders ONLY for a complete (n/n) dock, with the location named from the SAME shell
+  // world read every other panel uses (an unrevealed location shows no line — fail closed).
+  const dockRollups = deriveDockedTeamRollups(groups, groupMap, presentFleets)
+  const dockLineFor = (groupId: string): string | null => {
+    const r = dockRollups.find((x) => x.groupId === groupId)
+    if (!r || r.locationId === null) return null
+    const locName = game.locations.find((l) => l.id === r.locationId)?.name
+    return locName ? `Docked at ${locName} — ${r.dockedCount}/${r.memberCount}` : null
+  }
   const destinations = sendableDestinations(game.locations) // active, non-combat targets (server re-validates)
   const huntZones = huntableDestinations(game.locations) // active hunt_pirates targets — may be EMPTY today
 
@@ -408,6 +431,7 @@ export function TeamRosterPanel() {
                   ships={ships}
                   rosterVersion={rosterVersion}
                   captainsLit={captainSplit !== null}
+                  dockRollup={dockLineFor(group.group_id)}
                 />
 
                 {confirmDelete === group.group_id && (
