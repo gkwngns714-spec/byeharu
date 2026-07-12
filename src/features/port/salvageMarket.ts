@@ -55,14 +55,25 @@ export function salvageStickyLit(everLitThisMount: boolean, readEnabled: boolean
   return readEnabled || everLitThisMount
 }
 
+/**
+ * The ONE null-honest fold of a public-read `starting_credits` game_config value (jsonb number or
+ * numeric string) → number, or null when absent/unreadable/junk (= "seed unknown — make no
+ * claim"). EXTRACTED (SHIPYARD-3) so shipyard's config fold reuses this exact coercion instead of
+ * adding a third starting-credits fold (the salvage review already flagged the two:
+ * commissionContextFromConfig's fallback-0 fold serves the commission affordability math; THIS
+ * null-on-unknown fold serves honest wallet DISPLAY — '—' over a false 0).
+ */
+export function foldStartingCredits(value: unknown): number | null {
+  const n = value === null || value === undefined || value === '' ? NaN : Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
 export function salvageConfigFromRows(rows: Array<{ key: string; value: unknown }>): SalvageConfig {
   const byKey = new Map(rows.map((r) => [r.key, r.value]))
-  const sc = byKey.get('starting_credits')
-  const n = sc === null || sc === undefined || sc === '' ? NaN : Number(sc)
   return {
     // strict boolean: anything but jsonb true (including 'true' the string) reads as DARK.
     enabled: byKey.get('salvage_market_enabled') === true,
-    startingCredits: Number.isFinite(n) ? n : null,
+    startingCredits: foldStartingCredits(byKey.get('starting_credits')),
   }
 }
 
