@@ -5,6 +5,140 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — DEPLOYS: prod migration head 0169; team-command roadmap merged (main @ 9a292ed)
+
+**Merged.** The whole team-command roadmap (A → D4) + the Mission Control UI renewal (R0 → R4) are on
+`main` @ `9a292ed` (stacked slice branches landed via PRs #86/#87 and #97). **Zero open PRs.**
+
+**Deployed.** GitHub Pages auto-deploy live (players see the Mission Control UI). Migrations: the owner
+approved the pending production deployments — `0165` (C0), then `0166–0169` (D0–D3) — **prod head =
+`20260618000169`**. Everything team-shaped stays DARK: `team_command_enabled=false` (server, reject-before-read
+on every team RPC) + `TEAM_COMMAND_ENABLED=false` (compile-time; TeamRosterPanel not mounted). No flag flipped.
+
+**Next.** Activation is human-gated, never a slice: `docs/TEAM_COMMAND.md` "ACTIVATION CHECKLIST" — decision
+support in the new `docs/TEAM_ACTIVATION_PACKET.md`.
+
+---
+
+## 2026-07-12 — TEAM-COMMAND Slice D complete (D0–D4): team combat, dark (migrations 0166–0169)
+
+One line per sub-slice (full detail: `docs/TEAM_COMMAND.md`):
+- **D0 (0166, RPC-only).** `calculate_group_expedition_stats` — service_role-only team-stats authority:
+  per-member delegation to the *unmodified* `calculate_expedition_stats`, team-level folding ONLY (the eight
+  additive 0122 keys summed, `speed = min`; STRICT refuse-don't-clamp — any member raise refuses the team) +
+  the thin gated wrapper `get_my_group_expedition_totals` (any raise → one opaque `stats_invalid`).
+- **D1 (0167, schema + parity re-creates).** `combat_units` widened to carry a member main ship
+  (`main_ship_id` XOR `unit_type_id`, frozen attack/defense snapshots); the LIVE `process_combat_ticks`
+  (head 0046) + `report_create` (head 0026) re-created with provably-inert deltas only (coalesce-first reads
+  / member-row-gated branches — member rows have NO writer until D2). Three new internal leaves:
+  `combat_fleet_return_speed`, `mainship_sync_combat_hp`, `mainship_mark_combat_destroyed`.
+- **D2 (0168).** The team enters the engine: `send_ship_group_hunt` (ONE fleet per team over the 0050
+  narrow bridge; power = Σ member `combat_power`, speed = min — the D0 folding law), the
+  `group_sortie_members` manifest (manifest-wins routing law), and `combat_create_group_encounter` — the
+  FIRST member-row writer (raise-free by construction: a bad member degrades to an inert `alive_count=0`
+  row), routed by a single manifest-gated branch in the re-created `combat_create_encounter` (head 0023).
+- **D3 (0169).** Sortie settle: the escape/forced-extract branch marks surviving members `'returning'`
+  via the ONE 0152 leaf; the 0050 reconciler re-homes members once their manifest fleet finishes (exact-
+  complement race guard); manifests RETAINED (die with their fleet via the 0047 retention cascade); retreat
+  verified verbatim; **the M1 activation blocker FIXED** (the live single send now re-claims the ship row
+  under `FOR UPDATE` re-verifying `status='home'` — a lost `'hunting'→'traveling'` update now rejects).
+- **D4 (frontend-only).** The dark Hunt UI (hunt-zone select + two-click confirm in TeamRosterPanel),
+  the authoritative "Server totals" beside the C1 estimate, and combat-panel member-unit null-safety
+  (`combatUnitLabel`: uuid-shaped key → "Team ship xxxxxxxx"). **Roadmap A → D4 COMPLETE, fully dark.**
+
+**Proof.** `scripts/team-command-proof.{sql,sh}` (disposable write-then-ROLLBACK, CI workflow) gained the
+TEAMSTATS / COMBATPARITY / TEAMHUNT / TEAMSETTLE blocks — incl. the delegation pin (totals == the proof's own
+independent per-member sums), the tick parity pin (`player_damage` == Σ attack), the manifest-wins pin
+(mid-flight unassign leaves the sortie intact), and the M1 race pin.
+
+---
+
+## 2026-07-12 — UI RENEWAL R0–R4: Mission Control (PRs #86, #87–#91; frontend-only)
+
+The full visual renewal, shipped in five slices with no migration and no behavior change:
+- **R0** — Mission Control design-system foundation (tokens + primitives).
+- **R1** — Mission Control galaxy map (marker hierarchy, starfield, overlay slots).
+- **R2** — legacy panels converted to the Mission Control tokens + primitives (panel skins).
+- **R3** — screen composition: the Ship / Port / Command two-rail split.
+- **R4** — first-run, loading, and combat polish (Mission Control complete).
+
+**Verification:** `tsc -b` + `vite build` green per slice; pure-logic specs green; dark surfaces byte-identical.
+
+---
+
+## 2026-07-12 — TEAM-COMMAND Slices C0 + C1: captains into teams, dark (migration 0165)
+
+- **C0 (0165, RPC-only, ZERO data change).** `get_my_group_expedition_preview(p_group_id, p_activity)` —
+  dark read-only group preview; per member it calls the *unmodified* `calculate_expedition_stats` in a
+  per-member exception scope (`valid:false` + error, never a team 500); zero stat arithmetic in SQL. **Both**
+  captain-slot bumps (hull `base_captain_slots` 2→6 AND the instance backfill) are DEFERRED TO ACTIVATION —
+  the Ship screen renders both values ungated, so either bump would be player-visible while dark.
+- **C1 (frontend-only).** Captain roster inside the team roster: per-member assign/unassign via the existing
+  CAPTAIN-P15 commands verbatim (no new server authority), rendered only while
+  `isServerLit(get_my_captain_instances)`; plus the per-team expedition-preview UI (`aggregateTeamStats` —
+  display-only estimate; the authority is D0's).
+
+**Proof:** the team-command proof gained TEAMCMD_PASS_CAPTAINS (captain seed-bonus delta over an uncaptained
+baseline, uncaptained byte-parity with the solo preview, unassign-reverts; captains provisioned only via the
+sole writers).
+
+---
+
+## 2026-07-11 — TEAM-COMMAND Slice B complete: send/stop BY TEAM, dark (migrations 0161–0164 + UI + proof)
+
+- **B0 (0161).** The dark group write path: `upsert_ship_group` / `assign_ship_to_group` +
+  `mainship_resolve_owned_group` (explicit-only; dual same-`auth.uid()` resolution closes the same-player gap).
+- **B1 (0162).** `delete_ship_group` (lock + revalidate; members un-grouped by the 0160 `ON DELETE SET NULL`)
+  + the interactive (still dark) roster UI: create/rename/delete/assign, no optimistic UI.
+- **B-send (0163).** `send_ship_group_expedition` — loops the *unmodified* live send once per member inside
+  ONE all-or-nothing subtransaction; writes no movement row directly (no second movement engine).
+- **B-stop (0164).** `stop_ship_group_transit` — best-effort twin (per-member subtransactions; skip is
+  legitimate): halt every haltable via the unmodified live STOP=HOLD, aggregate `{stopped, skipped, failed}`.
+- **B-ui.** Send (destination select) + Stop controls in the roster, behind the compile-time gate.
+- **B-verify (PR #84).** The disposable write-then-ROLLBACK proof `scripts/team-command-proof.{sql,sh}` +
+  `.github/workflows/team-command-proof.yml` (a `.sql`/`.sh` proof, not the once-planned `.mjs`).
+
+---
+
+## 2026-07-09 — A0 FOUNDATION FIXUP + TEAM-COMMAND Slice A: team model (migrations 0159, 0160)
+
+- **A0 (PR #77, 0159).** The pre-team audit blockers closed: `get_my_docked_store` (0158) +
+  `get_my_expedition_preview` (0049) converted from unguarded arbitrary-ship reads to the
+  `mainship_resolve_owned_ship` pattern (trailing `p_main_ship_id`); the 3 client `.maybeSingle()` ship reads
+  made plural + selection-aware; ship selection lifted into ONE `shellState.selection` (was 3 disagreeing
+  instances).
+- **Slice A (PR #78, 0160).** `ship_groups` (one row per `(player_id, group_index 1..3)`, owner-select RLS,
+  created empty) + `main_ship_instances.group_id`; `max_main_ships_per_player` raised 3 → 24 (inert while
+  commissioning stays gated); `team_command_enabled` seeded `false`; dead `get_main_ship` (0043) dropped —
+  the last arbitrary-ship reader. Read-only TeamRosterPanel behind `TEAM_COMMAND_ENABLED = false`.
+
+---
+
+## 2026-07-09 — PR #75 merged: recall/return-home removed + stop-zoom fix; session handoff (#76)
+
+**#75 `fix-remove-recall`.** Recall/return-home removed end to end (port-centric: there is no home base to
+return to), the (0,0) "home" ship marker suppressed, full spaghetti cleanup + unit-test fixes, and the
+stop-zoom camera fix (single focus point → gentle neighbourhood zoom, not MAX_K). 214 pure-logic specs pass.
+**#76** — the session HANDOFF doc (machine setup, live state, team roadmap).
+
+---
+
+## 2026-07-08 — PORT-CENTRIC ACTIVATED on prod + station storage (migrations 0157/0158)
+
+**Activation (human-gated flag flips, per `docs/PORTCENTRIC_DECISION_PACKET.md`).** The game is now
+port-centric on the LIVE prod DB: `mainship_space_movement_enabled=true` (OSN port-to-port travel + docking),
+3 starter ports REVEALED (Haven / Slagworks / Driftmarch — reveal is one-way), and
+`station_storage_enabled=true`. Utility: `scripts/activate-port-centric.mjs --confirm`; rollback = flags only
+(reveal persists).
+
+**Station storage (PR #73, 0157/0158).** Per-port, per-player storage — the docked-port "Hangar": P1
+foundation (tables + sole writer) + P2 docked store/read surface (`get_my_docked_store`).
+
+**Port-centric UI (PR #74).** The home base removed from the app; map readability fixes (#72 wheel-zoom no
+longer scrolls the page; bigger location dots/labels).
+
+---
+
 ## 2026-07-07 — STOP = HOLD, Slice D2: client copy/comments now match the hold semantics
 
 **Request.** Replace the now-false "return home" wording in the visible Stop UI (and the stale in-code

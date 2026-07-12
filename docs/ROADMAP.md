@@ -83,19 +83,26 @@ become stronger."*
 | **8** ✅ | `calculate_expedition_stats()` (read/compute adapter; capacity hard-cap + tradeoffs, not a sum) | old fleet-stack path still owns combat; not live-wired yet |
 | **9** ✅ | Expedition UI reframe + **docked-port read surface** (`get_my_current_dock_services()` + `DockServicesPanel`, migration `0069`) | done & deployed; main-ship/expedition wording reconciled; dock surface shows the current port + active services only at `at_location` (today: Docking). OSN port-to-port is **enabled**; free coordinate travel is **server-gated off** (`mainship_coordinate_travel_enabled=false`, migration `0070`) |
 | 10 ⏳ | Trading (buy low / travel / sell high; **volume-only (m³)** ship-bound cargo, route danger) | **implemented DARK, NOT activated.** **FIXED product direction 2026-07-02** (see `DEV_LOG.md` 2026-07-02 + `TRADE_FLEET_0A_IMPACT_AUDIT.md`): **volume-only per-ship cargo (m³ canonical; NO kilograms/mass/dual-cap in V1), ship-bound cargo (never pooled), multiple persistent main ships as a Trading V1 foundation, commodities with fixed canonical m³ denominations, every market action targets one selected docked ship (atomic volume check), ships as first credit sink.** Out of V1 scope: pooled cargo, account trade inventory, remote market, **ship-to-ship transfer**, warehouses, auto-routes, P2P trade, dynamic supply/demand, cargo loss/insurance, mass/fuel mechanics. Retained: free-port eligibility, server-owned `market_offers`, lazy wallet, `trade_receipts` idempotency, per-offer allowance (re-scoped to a selected ship). **Sequence:** PORT-ENTRY (done, mig `0072`) → **TRADE-FLEET-0A** (read-only impact audit) → **TRADE-FLEET-0B** (explicit user-approved multi-ship + volume-cargo contract) → **TRADE-FLEET-0C** (coherent implementation slice) → **TRADE-MARKET-1** (server-authoritative market) → **TRADE-UI-1** (selected-ship market + fleet UI). **Status 2026-07-03:** the pipeline (TRADE-FLEET-0C `0073–0084`, TRADE-MARKET-1 `0085–0091`, TRADE-UI-1 client, docked-location cleanup helper `0092`, ECONOMY-BOOTSTRAP `0093–0095` — seed capital via the shared `wallet_ensure` + the no-softlock relief floor `market_claim_relief`, proven by the disposable self-rolling-back `scripts/trade-economy-bootstrap-proof.{sql,sh}` wired into `.github/workflows/trade-v1-proof.yml`) is **implemented DARK & PR-ready** on `autopilot/20260703-064048` (migration head `0095`; **not deployed/activated** — all trade flags/gates OFF, incl. `trade_relief_enabled=false`); see `DEV_LOG.md` 2026-07-03. |
-| 11 | Exploration (scan/discover → data/shards/blueprints) | pending discovery rewards; scan in **OSN** proximity of unexplored coordinates where applicable |
-| 12 | Mining (extract → ore/crystal/cores) | pending resource rewards; navigate via **OSN**, extract within proximity where applicable |
-| 13 | Module instances + crafting | instances, not stack-only |
-| 14 | Module fitting (`fit_module_to_ship`) | server-validated; feeds stats |
-| 15 | Captain instances + assignment | effects via `calculate_expedition_stats` |
-| 16 | Captain progression (consumes inventory) | inventory is the bridge |
-| 17 | Ranking / competition (weekly/monthly seasons; combat/trade/explore/mine) | reads finalized events; reset by season, not deletion |
-| 18 | Location investment (seasonal score vs persistent state) | no infinite exploit |
-| 19 | World balance / living economy (pirate pressure, price drift, field depletion) | world-state owns world-state |
-| 20 | Polish / expansion (map UI, portraits, icons, events; guilds/PvP much later, if ever) | |
+| 11 | Exploration (scan/discover → data/shards/blueprints) | **implemented DARK, not activated** (migrations `0097–0101`, `0146`; `exploration_enabled=false`). pending discovery rewards; scan in **OSN** proximity of unexplored coordinates where applicable |
+| 12 | Mining (extract → ore/crystal/cores) | **implemented DARK, not activated** (`mining_enabled=false`; incl. the `0143` double-extract guard). pending resource rewards; navigate via **OSN**, extract within proximity where applicable |
+| 13 | Module instances + crafting | **implemented DARK, not activated** (migrations `0107–0110`; `module_crafting_enabled=false`). instances, not stack-only |
+| 14 | Module fitting (`fit_module_to_ship`) | **implemented DARK, not activated** (migrations `0111–0116`; `module_fitting_enabled=false`). server-validated; feeds stats |
+| 15 | Captain instances + assignment | **implemented DARK, not activated** (migrations `0117–0122`; `captain_assignment_enabled=false`). effects via `calculate_expedition_stats` |
+| 16 | Captain progression (consumes inventory) | **implemented DARK, not activated** (`captain_progression_enabled=false`). inventory is the bridge |
+| 17 | Ranking / competition (weekly/monthly seasons; combat/trade/explore/mine) | **implemented DARK, not activated** (`ranking_enabled=false`; incl. `0144/0145/0147` counted grants + accrue cron). reads finalized events; reset by season, not deletion |
+| 18 | Location investment (seasonal score vs persistent state) | **implemented DARK, not activated** (`location_investment_enabled=false`). no infinite exploit |
+| 19 | World balance / living economy (pirate pressure, price drift, field depletion) | **implemented DARK, not activated** (`world_balance_enabled=false`; price drift `0136–0138`). world-state owns world-state |
+| 20 | Polish / expansion (map UI, portraits, icons, events; guilds/PvP much later, if ever) | **implemented DARK, not activated** (world events + UI asset catalog `0139–0142`; `phase20_polish_enabled=false`). NOTE: the **Mission Control UI renewal (R0–R4)** shipped LIVE 2026-07-12 as a frontend-only renewal — separate from this dark phase-20 content |
 
 **Each phase has its own acceptance criteria + verification; backend changes go through a
 migration with a `verify:*` script, and the engine's M2/M3/M4/M4.5 tests must stay green.**
+
+> **STATUS NOTE (2026-07-12): the TEAM-COMMAND system (the multi-ship amendment's expedition
+> "groups" — 3 teams of owned ships, team send/stop, captains-in-teams, team combat over the
+> existing engine) is implemented DARK end to end (slices A → D4, migrations `0160–0169`;
+> `team_command_enabled=false` + compile-time `TEAM_COMMAND_ENABLED=false`). See
+> `docs/TEAM_COMMAND.md` (slice record + ACTIVATION CHECKLIST) and
+> `docs/TEAM_ACTIVATION_PACKET.md` (the activation decision packet).**
 
 ## Cross-cutting initiative: Open-Space Navigation (OSN)
 
