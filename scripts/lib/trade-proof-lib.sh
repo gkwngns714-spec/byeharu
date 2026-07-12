@@ -34,8 +34,11 @@ tp_init() {
 }
 
 # ── (2) self-rolling-back: opens a txn, ends in ROLLBACK, and NEVER commits. ──────────────────────
+#    ROLLBACK must also be the last STATEMENT, not merely the last txn verb: psql AUTOCOMMITS any
+#    statement placed after the final rollback; (it runs OUTSIDE the txn), so trailing SQL would
+#    silently persist state — only comments/whitespace may follow.
 tp_assert_self_rolling_back() {
-  local sql="$1" last_verb
+  local sql="$1" last_verb rollback_ln same_line_rest trailing
   grep -qiE '^[[:space:]]*begin;' "$sql"    || fail "harness does not open a transaction (begin;)"
   grep -qiE '^[[:space:]]*rollback;' "$sql" || fail "harness does not end in ROLLBACK"
   # last SQL statement must be the ROLLBACK (strip any inline comment before matching).
@@ -43,6 +46,12 @@ tp_assert_self_rolling_back() {
   [ "$last_verb" = "rollback;" ] || fail "final transaction verb is not ROLLBACK (got '$last_verb')"
   # NO COMMIT anywhere (a stray commit would persist test state / a flag flip).
   grep -qiE '^[[:space:]]*commit;' "$sql" && fail "harness contains a COMMIT (must never persist state)" || true
+  # NOTHING but comments/whitespace may follow the final ROLLBACK — on its own line or any later one.
+  rollback_ln="$(grep -niE '^[[:space:]]*rollback;' "$sql" | tail -1 | cut -d: -f1)"
+  same_line_rest="$(sed -n "${rollback_ln}p" "$sql" | sed -E 's/^[[:space:]]*[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk];//' | sed -E 's/--.*//' | tr -d '[:space:]')"
+  [ -z "$same_line_rest" ] || fail "SQL follows the final ROLLBACK on its line (would autocommit outside the txn)"
+  trailing="$(tail -n +"$((rollback_ln + 1))" "$sql" | sed -E 's/--.*//' | tr -d '[:space:]')"
+  [ -z "$trailing" ] || fail "SQL follows the final ROLLBACK (would autocommit outside the txn)"
 }
 
 # ── (3) the dark flags are toggled ONLY inside the txn (between begin; and rollback;). ────────────
@@ -56,8 +65,12 @@ tp_assert_flags_inside_txn() {
   for flag in "$@"; do
     grep -qE "update public\.game_config set value='true'::jsonb where key='$flag';" "$sql" \
       || fail "harness does not enable the dark flag '$flag' inside the txn"
-    flag_ln="$(grep -nE "set value='true'::jsonb where key='$flag'" "$sql" | head -1 | cut -d: -f1)"
-    { [ "$begin_ln" -lt "$flag_ln" ] && [ "$flag_ln" -lt "$rollback_ln" ]; } || fail "'$flag' toggle is not strictly inside begin;..rollback;"
+    # EVERY occurrence (not just the first) must sit strictly inside begin;..rollback; — a second
+    # toggle appended after the ROLLBACK would autocommit outside the txn and persist the flag.
+    while IFS= read -r flag_ln; do
+      { [ "$begin_ln" -lt "$flag_ln" ] && [ "$flag_ln" -lt "$rollback_ln" ]; } \
+        || fail "a '$flag' toggle is not strictly inside begin;..rollback;"
+    done < <(grep -nE "set value='true'::jsonb where key='$flag'" "$sql" | cut -d: -f1)
   done
 }
 
