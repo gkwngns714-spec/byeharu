@@ -136,11 +136,23 @@
 --            byte-parity with the 0171 head at waves 8 and 10, rate-1 wave-8 gains EXACTLY one
 --            appended blueprint qty 1 (additive-only), wave 7 (w<8) and wave 1 stay
 --            blueprint-free at any rate (the deep-run threshold).
+--   SOUL0 (SOUL-0, 0186) — the per-ship trait foundation: committed `ship_traits_enabled` dark +
+--            the roll writer's gate-first reject (random uuid — no existence oracle, zero rows);
+--            the 8-trait catalog pinned verbatim (id + stats_json + hp_mult); determinism by
+--            INLINE RE-DERIVATION (pg_temp.soul_expect re-implements the pure-hash ':soul:' salt
+--            mapping, computed BEFORE each roll; fresh-commissioned fixture ships are drawn until
+--            one derived pair carries veteran_frame and one does not, so both hp branches run
+--            every time) — each roll lands EXACTLY the derived pair, slots distinct; the veteran
+--            arm's max_hp = round(base × 1.08) exactly with hp scaled, the plain arm's hp/max_hp
+--            byte-untouched; and a second roll is an idempotent replay (inserted 0, same traits,
+--            max_hp never re-raised). The roll fn is service-only with NO caller in the product
+--            (doubly dark); the harness never writes a Ship-Soul table directly (negative-grepped).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
--- mainship_send_enabled + captain_assignment_enabled (+ captain_growth_enabled at CAPXP, and
--- module_crafting_enabled + module_fitting_enabled at MOD2) ONLY inside this rolled-back transaction; the ROLLBACK reverts them, so every
+-- mainship_send_enabled + captain_assignment_enabled (+ captain_growth_enabled at CAPXP,
+-- module_crafting_enabled + module_fitting_enabled at MOD2, and ship_traits_enabled at
+-- SOUL0) ONLY inside this rolled-back transaction; the ROLLBACK reverts them, so every
 -- committed/production flag value stays false. It also transiently mirrors production config a fresh
 -- chain lacks (reveal_starter_ports) — all reverted by ROLLBACK. No committed flag/state changes.
 --
@@ -2120,6 +2132,176 @@ begin
   raise notice 'TEAMCMD_PASS_SHIPYARD0 ok: committed shipyard flag false + faucet knob 0 (dark); 2 T1 hulls exact (Mule 650/0.8/140 + Talon 420/1.3/20, names + stats); 2 recipe headers + 10 ingredient rows exact; rate-0 byte-parity with the 0171 head (wave 8 + wave 10, shard carried); rate-1 wave-8 gains exactly one appended blueprint (additive-only); w<8 + wave-1 thresholds hold at any rate';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark)' as result;
+-- ════════ BLOCK SOUL0 (SOUL-0, 0186): per-ship traits — deterministic roll, immutability, hp_mult ════════
+-- The trait FOUNDATION end-to-end on FRESH fixture users (free first commissions — captain/module-
+-- free, no earlier block's fixture state touched): the committed `ship_traits_enabled` seed
+-- asserted DARK first, and the roll writer's gate-first reject pinned with a RANDOM uuid (a
+-- reject-after-read regression would answer ship_not_found — no existence oracle) with ZERO rows
+-- written; the 0186 catalog pinned VERBATIM (8 traits exact: id + stats_json + hp_mult); then the
+-- flag flipped in-txn only. DETERMINISM is proven by INLINE RE-DERIVATION (the D0/D1 independent-
+-- computation idiom): pg_temp.soul_expect re-implements the pure-hash mapping (hashtextextended
+-- over the ':soul:' salts → ((h % n + n) % n) into the trait_type_id order under the SAME
+-- collate "C" pin as the writer — the collation law: byte order, never the DB default — with
+-- the same bounded (64) re-salt loop) and is computed BEFORE each roll — the fixture loop commissions fresh
+-- ships until one arm's derived pair CONTAINS veteran_frame (the sole hp_mult carrier) and one
+-- arm's does NOT, so BOTH hp branches are exercised every run even though ship ids are fresh
+-- uuids (the derivation, not a fixed id, is the pin — the rolls must land exactly the derived
+-- traits or the writer is not the pinned pure function). Veteran arm: max_hp = round(base × 1.08)
+-- exactly, hp scales with it (full-hp ship stays full). Plain arm: hp/max_hp byte-untouched.
+-- IMMUTABILITY: a second roll is an idempotent replay — inserted 0, same 2 rows, same traits,
+-- max_hp NOT re-raised (the double-apply hazard pin), and its ENVELOPE reports the STORED roll
+-- (traits + the ship's real hp_mult product — the 0186 M2 stored-row envelope, asserted so a
+-- future catalog change can never make a replay contradict the ship); the harness itself NEVER writes either
+-- Ship-Soul table directly (the sole-writer negative grep in the .sh). The roll fn is called
+-- directly (service context) — it is service_role-only with NO wrapper and NO caller in the
+-- product (doubly dark: flag + no caller; SOUL-1 owns the commission hook + adapter fold).
+create or replace function pg_temp.soul_expect(p_ship uuid) returns text[] language plpgsql as $$
+declare v_count int; v_h bigint; v_i1 int; v_i2 int; v_k int := 0; v_salt text; v_t1 text; v_t2 text;
+begin
+  select count(*) into v_count from public.ship_trait_types;
+  v_h  := hashtextextended(p_ship::text || ':soul:1', 0);
+  v_i1 := (((v_h % v_count) + v_count) % v_count)::int;
+  loop
+    v_k := v_k + 1;
+    if v_k > 64 then raise exception 'soul_expect: no distinct slot-2 index after 64 re-salts (mirrors the writer bound)'; end if;
+    v_salt := p_ship::text || ':soul:2' || case when v_k = 1 then '' else ':' || v_k end;
+    v_h  := hashtextextended(v_salt, 0);
+    v_i2 := (((v_h % v_count) + v_count) % v_count)::int;
+    exit when v_i2 <> v_i1;
+  end loop;
+  -- collate "C": the SAME derivation-order pin as the writer (byte order, never the DB default).
+  select trait_type_id into v_t1 from public.ship_trait_types order by trait_type_id collate "C" offset v_i1 limit 1;
+  select trait_type_id into v_t2 from public.ship_trait_types order by trait_type_id collate "C" offset v_i2 limit 1;
+  return array[v_t1, v_t2];
+end $$;
+
+do $$
+declare r jsonb; n int;
+begin
+  if (select value #>> '{}' from public.game_config where key = 'ship_traits_enabled') is distinct from 'false' then
+    raise exception 'SOUL0 FAIL: committed ship_traits_enabled is % (want ''false'' — the 0186 dark seed)',
+      (select value #>> '{}' from public.game_config where key = 'ship_traits_enabled'); end if;
+  -- gate-first while dark: a RANDOM uuid — a reject-after-read regression would answer
+  -- ship_not_found instead (no existence oracle); and nothing may be written.
+  r := public.soul_roll_traits_for_ship(gen_random_uuid());
+  if (r->>'code') is distinct from 'feature_disabled' then
+    raise exception 'SOUL0 FAIL dark: % (want the gate-first feature_disabled envelope)', r; end if;
+  select count(*) into n from public.main_ship_traits;
+  if n <> 0 then raise exception 'SOUL0 FAIL: % main_ship_traits rows written while dark (want 0)', n; end if;
+end $$;
+
+update public.game_config set value='true'::jsonb where key='ship_traits_enabled';
+
+do $$
+declare r jsonb; n int; i int;
+  u uuid; s uuid; shipv uuid; shipp uuid;
+  exp text[]; expv text[]; expp text[];
+  t1 text; t2 text; v_mult numeric;
+  v_max0 int; v_max1 int; v_hp1 int; v_maxp0 int;
+begin
+  -- the 0186 catalog, pinned verbatim (id + stats_json + hp_mult), and exactly 8 total.
+  select count(*) into n from public.ship_trait_types t
+    join (values
+      ('veteran_frame',      '{"defense": 5}'::jsonb,                            1.08::numeric),
+      ('tuned_thrusters',    '{"speed_mult_bonus": 0.08, "cargo": -3}'::jsonb,   1.0),
+      ('reinforced_plating', '{"defense": 8, "speed_mult_bonus": -0.04}'::jsonb, 1.0),
+      ('smugglers_holds',    '{"cargo": 8, "scan": -2}'::jsonb,                  1.0),
+      ('keen_arrays',        '{"scan": 5}'::jsonb,                               1.0),
+      ('hungry_guns',        '{"attack": 6, "defense": -3}'::jsonb,              1.0),
+      ('steady_rigger',      '{"mining": 4, "repair": 2}'::jsonb,                1.0),
+      ('ill_omened',         '{"evasion": 6, "attack": -2}'::jsonb,              1.0)
+    ) v(id, stats, mult)
+    on v.id = t.trait_type_id and t.stats_json = v.stats and t.hp_mult = v.mult;
+  if n <> 8 then
+    raise exception 'SOUL0 FAIL: % trait rows carry the exact seed (want 8 traits exact — the 0186 catalog verbatim)', n; end if;
+  select count(*) into n from public.ship_trait_types;
+  if n <> 8 then raise exception 'SOUL0 FAIL: catalog holds % rows (want exactly 8 — no strays)', n; end if;
+
+  -- fixture search: commission fresh ships until the INLINE DERIVATION says one pair carries
+  -- veteran_frame (the sole hp_mult carrier) and one does not — both hp branches exercised every
+  -- run. E[draws] ≈ 3 at 8 traits; 40 bounds the miss probability below 1e-4.
+  for i in 1..40 loop
+    exit when shipv is not null and shipp is not null;
+    insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+      values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+              'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+      returning id into u;
+    r := pg_temp.call_as(u, 'public.commission_first_main_ship()');
+    if (r->>'ok')::boolean is not true then raise exception 'SOUL0 FAIL provision: %', r; end if;
+    select main_ship_id into s from public.main_ship_instances where player_id = u;
+    exp := pg_temp.soul_expect(s);
+    if 'veteran_frame' = any(exp) then
+      if shipv is null then shipv := s; expv := exp; end if;
+    else
+      if shipp is null then shipp := s; expp := exp; end if;
+    end if;
+  end loop;
+  if shipv is null or shipp is null then
+    raise exception 'SOUL0 FAIL: could not draw both fixture arms (veteran + plain) in 40 commissions'; end if;
+
+  -- ── the VETERAN arm: exact derived traits, distinct slots, exact hp_mult application ────────
+  select max_hp into v_max0 from public.main_ship_instances where main_ship_id = shipv;
+  r := public.soul_roll_traits_for_ship(shipv);
+  if (r->>'ok')::boolean is not true or (r->>'inserted')::int is distinct from 2 then
+    raise exception 'SOUL0 FAIL roll(V): %', r; end if;
+  select count(*) into n from public.main_ship_traits where main_ship_id = shipv;
+  if n <> 2 then raise exception 'SOUL0 FAIL: % trait rows after the roll (want exactly 2)', n; end if;
+  select trait_type_id into t1 from public.main_ship_traits where main_ship_id = shipv and slot = 1;
+  select trait_type_id into t2 from public.main_ship_traits where main_ship_id = shipv and slot = 2;
+  if t1 is distinct from expv[1] or t2 is distinct from expv[2] then
+    raise exception 'SOUL0 FAIL: rolled (%, %) but the inline re-derivation says (%, %) — the roll is not the pinned pure function',
+      t1, t2, expv[1], expv[2]; end if;
+  if t1 = t2 then raise exception 'SOUL0 FAIL: slot1 = slot2 (%) — distinctness breach', t1; end if;
+  select a.hp_mult * b.hp_mult into v_mult
+    from public.ship_trait_types a, public.ship_trait_types b
+    where a.trait_type_id = expv[1] and b.trait_type_id = expv[2];
+  select max_hp, hp into v_max1, v_hp1 from public.main_ship_instances where main_ship_id = shipv;
+  if v_max1 is distinct from round(v_max0 * v_mult)::int then
+    raise exception 'SOUL0 FAIL: max_hp % after the veteran roll (want round(% × %) — the hp_mult exactly)',
+      v_max1, v_max0, v_mult; end if;
+  if v_hp1 is distinct from v_max1 then
+    raise exception 'SOUL0 FAIL: hp % after the full-hp veteran roll (want % — hp scales proportionally with max)',
+      v_hp1, v_max1; end if;
+
+  -- ── immutability: the second call is an idempotent replay — nothing may move ────────────────
+  r := public.soul_roll_traits_for_ship(shipv);
+  if (r->>'ok')::boolean is not true or (r->>'inserted')::int is distinct from 0 then
+    raise exception 'SOUL0 FAIL second roll: % (want inserted 0 — the idempotent replay)', r; end if;
+  -- the M2 stored-row envelope: the replay must report the ship's STORED roll — the same traits
+  -- AND the ship's real hp_mult product (1.08 on this veteran arm), never a re-derived default.
+  if (r->'traits'->>0) is distinct from expv[1] or (r->'traits'->>1) is distinct from expv[2]
+     or (r->>'hp_mult')::numeric is distinct from v_mult then
+    raise exception 'SOUL0 FAIL: the replay envelope does not report the STORED roll (got traits %/% hp_mult % — want %/% %)',
+      r->'traits'->>0, r->'traits'->>1, r->>'hp_mult', expv[1], expv[2], v_mult; end if;
+  select count(*) into n from public.main_ship_traits where main_ship_id = shipv;
+  if n <> 2 then raise exception 'SOUL0 FAIL: the second roll changed the row count to % (want still 2)', n; end if;
+  select count(*) into n from public.main_ship_traits
+    where main_ship_id = shipv
+      and ((slot = 1 and trait_type_id = expv[1]) or (slot = 2 and trait_type_id = expv[2]));
+  if n <> 2 then raise exception 'SOUL0 FAIL: the second roll changed a rolled trait (re-roll breach)'; end if;
+  select max_hp into n from public.main_ship_instances where main_ship_id = shipv;
+  if n is distinct from v_max1 then
+    raise exception 'SOUL0 FAIL: the second roll re-raised max_hp to % (want % — hp applies once)', n, v_max1; end if;
+
+  -- ── the PLAIN arm: exact derived traits, and hp/max_hp byte-untouched (no hp_mult carrier) ───
+  select max_hp into v_maxp0 from public.main_ship_instances where main_ship_id = shipp;
+  r := public.soul_roll_traits_for_ship(shipp);
+  if (r->>'ok')::boolean is not true or (r->>'inserted')::int is distinct from 2 then
+    raise exception 'SOUL0 FAIL roll(P): %', r; end if;
+  select trait_type_id into t1 from public.main_ship_traits where main_ship_id = shipp and slot = 1;
+  select trait_type_id into t2 from public.main_ship_traits where main_ship_id = shipp and slot = 2;
+  if t1 is distinct from expp[1] or t2 is distinct from expp[2] then
+    raise exception 'SOUL0 FAIL: plain arm rolled (%, %) but the inline re-derivation says (%, %) — the roll is not the pinned pure function',
+      t1, t2, expp[1], expp[2]; end if;
+  if t1 = t2 then raise exception 'SOUL0 FAIL: slot1 = slot2 (%) — distinctness breach', t1; end if;
+  select max_hp, hp into v_max1, v_hp1 from public.main_ship_instances where main_ship_id = shipp;
+  if v_max1 is distinct from v_maxp0 or v_hp1 is distinct from v_maxp0 then
+    raise exception 'SOUL0 FAIL: a plain (mult-1.0) roll moved hp/max_hp to %/% (want % untouched)',
+      v_hp1, v_max1, v_maxp0; end if;
+
+  raise notice 'TEAMCMD_PASS_SOUL0 ok: committed flag dark + gate-first reject with 0 rows; 0186 catalog pinned verbatim (8 exact); both rolls land exactly the inline re-derived traits (pure-hash determinism), slots distinct; veteran arm max_hp = round(base × 1.08) with hp scaled, plain arm byte-untouched; second roll = idempotent replay (0 inserts, same traits, stored-roll envelope incl. the real hp_mult, no hp re-raise)';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

@@ -245,6 +245,32 @@ the type switch, zone geometry, docked/last-safe-dock anchor ids) → only then 
 Schedule the recon early (read-only; informs P4/P8/P9 schema choices). The packet's D5 non-authorizations
 stand until each explicit gate.
 
+### P12 — SHIP-SOUL: per-ship original traits *(M — SOUL-0 SHIPPED dark as mig 0186; SOUL-1/2 + ACT-SOUL remain)*
+The owner directive: every ship has its own ORIGINAL stats/quirks — the Uncharted-Waters "this ship
+is MINE" identity. SOUL-0 (**shipped**, mig `0186`, slice-soul0): `ship_trait_types` (Reference/Config
+catalog, the 0117 posture — 8 birthmark traits [D owner-tunable], every magnitude below the same-stat
+module band, five of eight carrying a minus key per the law-4 tradeoff posture; `stats_json` in the
+ONE shared input vocabulary — self-assert-pinned against the 0180 adapter's module-read key set —
+plus `hp_mult >= 1.0`, `veteran_frame` 1.08 the sole carrier) + `main_ship_traits` (2 slots per ship,
+owner-read, INSERT-ONLY immutable) + `soul_roll_traits_for_ship` (service-only sole writer: traits
+are a PURE FUNCTION of the ship id — the 0041 determinism law via the 0176 `hashtextextended`
+pure-hash technique, `:soul:<slot>` salts, deterministic slot-2 re-salt to distinctness; idempotent
+`on conflict do nothing`, so a re-roll cannot exist; hp_mult applied once at roll, monotonic) — all
+behind NEW `ship_traits_enabled=false` and DOUBLY dark (nothing calls the roll fn). Proof = the
+`TEAMCMD_PASS_SOUL0` block in `team-command-proof` (catalog verbatim; rolls equal the proof's own
+inline hash re-derivation on both the veteran and plain fixture arms; exact hp_mult; idempotent-replay
+immutability). SOUL-1: the commission-path parity re-creates (roll at commission — every new ship is
+born with its soul) + the adapter fold (`calculate_expedition_stats` folds trait `stats_json`, the
+0122/0180 hunk discipline). SOUL-2: read surface + trait display in the Ship Dossier. ACT-SOUL: the
+backfill roll over EXISTING ships + the human flip — deterministic AT A FIXED CATALOG: the
+derivation maps into the catalog's size and byte order (collate "C", the 0186 collation law), so
+any catalog change BEFORE the backfill changes every unrolled ship's derivation; ACT-SOUL's flip
+script MUST assert catalog count = 8 (the catalog-freeze precondition, the ACT-HAUL
+precondition-block idiom) before rolling. Already-rolled ships are immutable rows — safe under any
+later catalog growth. Deps: none (rides the shipped adapter). Guard: the catalog stays migration-seeded
+(NO runtime writer); `main_ship_traits` keeps ONE writer and NO update/delete path, ever — a ship's
+soul never changes; all stats enter play ONLY via the ONE adapter (no parallel stat path).
+
 **Evaluated & deferred:** support-craft revival — NO (deprecated scaffolding per MAINSHIP_TRANSITION §★).
 PvP/guilds/visibility — NO until exploration/mining/trading all consume OSN (the ROADMAP timing rule).
 Coordinate-envelope growth — NO until the World-Range Recon. New expedition `activity_type`s — fold into
@@ -275,6 +301,7 @@ P2 contracts + P8 event sites first.
 | 14.5 | COORD-GUARD + ACT-COORD-TRAVEL (the Rung-0.5 prereq for the exploration/mining flips: resolver-guard the raw coordinate command — the A0-fix — BEFORE `mainship_coordinate_travel_enabled` can flip) | **shipped** — mig `0178` (0070-head parity re-create; trailing `p_main_ship_id` + `mainship_resolve_owned_ship`, fail-closed at N≠1; self-asserting) + the S6C ship-id passthrough (buildSpaceMoveRpcArgs / commandMainShipSpaceMove / useSpaceMoveCommand / GalaxyMap thread the SELECTED ship exactly like stop/settle/readiness — dark until the flip) + `scripts/activate-coordinate-travel.{sql,sh}` (guard-pinned preconditions, the ONE flag write, anchors + reachability + envelope smokes — awaiting the human flip; NO flip-time client PR: the coordinate UI is server-readiness-driven). COMPLETE signature-pin repoint list in TRADE_FLEET_0C_VERIFIER_REPOINT.md §#1 (incl. the COORD_SURFACE_COUNT arg-type census + the S6A exact-args / security-intent asserts) |
 | 15 | ACT-INVEST + ACT-WORLDBAL | queued |
 | 16 | EV-1 + ACT-PHASE20 **[D: thresholds 75 / 0.25 / 0.6–1.4 — proposed in the 0182 header, owner-tunable]** | **EV-1 shipped (dark)** — mig `0182` (slice-ev1): `worldstate_tick` re-created from its TRUE head (0137, grep-verified; parity diff clean) with the marked EV-1 hunks — ALL STATE-detected (never edge: a failed publish's condition still holds next minute, so the retry is genuine): pressure high (at/above `event_pressure_high_threshold=75`; critical ≥ threshold + half the headroom; a parked-high location re-announces daily — intended pressure-nagging) + eased (the exact complement, suppressed unless today's high was announced — a read-only lookup of the tick's own published rows), depletion warnings (post-regen reserve < `event_depletion_warn_fraction=0.25`, global-scope, field NAME only), drift extremes (`price_surge`/`price_crash` outside 0.6/1.4 — 1.4 grounded: the 0136 drift target caps at 1.5 under coeff 0.5, so the notional 1.6 is unreachable) — every publication through the EXISTING `world_events_publish` (never a direct insert; 5 call sites pinned), per-(subject, UTC-day) dedup keys, EACH publication its own begin/exception subtransaction (query_canceled re-raised; a publish failure logs a WARNING, never aborts the tick, never rolls back a sibling — D2), the four knobs read ONLY when `world_balance_enabled` and guarded (uncastable/NaN → seeded default + WARNING — a knob typo cannot kill the live heartbeat), double-dark (`world_balance_enabled` × publish's own `phase20_polish_enabled` gate), NO new cron (the 0033 60s heartbeat, self-asserted unchanged); proof `scripts/ev1-proof.{sql,sh}` in NEW `world-events-proof.yml` (family-pure host — trade-v1 stays trade-only). ACT-PHASE20 (the Rung-7 flips) remains |
+| 17 | SOUL-0 per-ship traits foundation **[D: the 8-trait table + magnitudes — proposed in the 0186 header, owner-tunable]** | **shipped (dark)** — mig `0186` (slice-soul0): `ship_trait_types` (the 0117 catalog posture — 8 birthmark traits, stats keys self-assert-pinned to the shared 0180 adapter input vocabulary, `hp_mult >= 1.0` with `veteran_frame` 1.08 the sole carrier) + `main_ship_traits` (2 slots per ship, owner-read, INSERT-ONLY immutable — no update/delete path anywhere) + `soul_roll_traits_for_ship` (service-only sole writer; traits = a pure `hashtextextended(':soul:')` function of the ship id, the 0041/0176 determinism technique; idempotent, hp_mult applied once + monotonic) — behind NEW `ship_traits_enabled=false`, DOUBLY dark (no caller yet). Proof = the `TEAMCMD_PASS_SOUL0` block in `team-command-proof` (catalog verbatim; rolls = the proof's own inline hash re-derivation on veteran + plain arms; exact hp_mult; idempotent-replay immutability). SOUL-1 (commission hook + adapter fold), SOUL-2 (read surface + dossier UI), ACT-SOUL (backfill roll — deterministic at a FIXED catalog, so the flip script must assert catalog count = 8 first — + the human flip) = later slices — see §C P12 |
 
 *(Then: the SHIPYARD line (P6 — SHIPYARD-0 shipped dark as mig 0185; SHIPYARD-1..3 + ACT-SHIPYARD
 remain) [D], MOD2-2, RR line, OB line, C2-4 — resequenced at the next plan review.

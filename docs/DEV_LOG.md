@@ -5,6 +5,121 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — SOUL-0: the per-ship traits foundation (mig 0186, doubly dark)
+
+**Request.** The SHIP-SOUL packet, slice 0 (owner directive: "each ship has its own ORIGINAL
+stats, skills — like Uncharted Waters"): the trait catalog + the per-ship instance table + the
+deterministic roll writer ONLY — no commission hook, no adapter change, no read RPC, no frontend
+(SOUL-1 owns the parity re-creates of the commission path + the adapter fold). All dark behind
+NEW `ship_traits_enabled=false`.
+
+**Work done**
+- **Stat-key verification (the 0183 lesson):** the adapter's TRUE head re-confirmed as `0180`
+  (grep: creates at 0044→0115→0122→0170→0180; 0181..0184 never re-create it); its module loop
+  reads stats_json keys `attack/defense/repair/cargo/scan/mining/evasion/speed_mult_bonus`
+  (0180:212–219). Every trait seeds ONLY these input keys. HONESTY DEVIATION from the 0183
+  prosrc pin, deliberate: the adapter reads that vocabulary from MODULES/captains/hulls — the
+  TRAITS fold lands in SOUL-1, so there is no trait read edge to prosrc-pin yet; the 0186
+  self-assert instead pins every seeded key against the HARDCODED vocabulary list (kept in
+  lockstep with 0180, commented as such) — the 0111/0117 nothing-reads-this-yet posture.
+- **mig `20260618000186_soul0_traits_foundation.sql`** *(0185 is claimed by the in-flight
+  slice-shipyard0 — numbering coordinated)*:
+  - `ship_trait_types` — the 0117 `captain_types` catalog posture verbatim (RLS public-read,
+    no write policy/grant, migration-seeded only): `trait_type_id/name/description/stats_json/`
+    `hp_mult` (numeric, `check (hp_mult >= 1.0)` — a trait never lowers hp). 8 seeds **[D]**,
+    every magnitude below the same-stat module band (0111/0183) and at-or-below the captain band
+    (0117), five of eight carrying a minus key (the law-4 tradeoff posture): veteran_frame
+    {defense 5, hp_mult 1.08 — the SOLE hp carrier} · tuned_thrusters {speed +0.08, cargo −3} ·
+    reinforced_plating {defense 8, speed −0.04} · smugglers_holds {cargo 8, scan −2} ·
+    keen_arrays {scan 5} · hungry_guns {attack 6, defense −3} · steady_rigger {mining 4,
+    repair 2} · ill_omened {evasion 6, attack −2}. Flavor copy in the 0042/0107/0117 register.
+  - `main_ship_traits` — 2 slots per ship (`slot in (1,2)`, `unique (main_ship_id, slot)`),
+    FK cascade to the ship, owner-read RLS via the 0074 EXISTS-on-the-ship idiom (authenticated
+    only, never anon), default table grants stripped (0176/0177 revoke posture), ZERO client
+    write privilege. INSERT-ONLY IMMUTABLE: no update/delete path exists anywhere; the extra
+    `unique (main_ship_id, trait_type_id)` makes slot-distinctness a schema fact (fail-closed).
+  - `soul_roll_traits_for_ship(p_main_ship_id)` — SECURITY DEFINER, **service_role only** (the
+    0145/0176 private-writer posture), gate-FIRST on the flag (envelope reject, never a raise).
+    **Hash technique:** traits are a PURE FUNCTION of the ship id — the 0041 determinism law via
+    the 0176 generator's shipped idiom (the packet's notional md5 normalized to the repo's
+    `hashtextextended`, which 0176 already proved GUC-stable): slot 1 =
+    `hashtextextended('<ship_id>:soul:1', 0)` mapped `((h % n + n) % n)` into the catalog's
+    `order by trait_type_id` total order; slot 2 re-salts deterministically
+    (`:soul:2`, then `:soul:2:<k>`) until distinct — a bounded loop (64) that raises rather than
+    silently falling back. NO random()/setseed anywhere (prosrc-pinned). Idempotent: both
+    inserts `on conflict (main_ship_id, slot) do nothing` — a re-call computes the same traits
+    and lands zero rows, so a RE-ROLL CANNOT EXIST. `hp_mult` applies ONLY when both rows landed
+    this call (a replay can never re-raise hp): `max_hp := round(base × mult)`, hp scaled
+    proportionally, both `>`-guarded monotonic (the 0171 never-lower posture); ship row locked
+    FOR UPDATE first (concurrent rolls serialize). DOUBLY DARK: flag false + NOTHING calls it.
+  - **Self-asserts:** 8 catalog rows pinned verbatim (id + stats_json + hp_mult) with no strays;
+    veteran_frame the only hp_mult carrier; every seeded stats key ∈ the hardcoded 0180
+    vocabulary; `main_ship_traits` empty; the flag dark; the roll fn prosrc carries the
+    `:soul:` salt + `hashtextextended` + the idempotent insert and carries NO session-RNG token
+    and NO update/delete against the traits table; ACLs (writer service-only via
+    `has_function_privilege`; both tables zero client write privilege via `has_table_privilege`;
+    catalog public-read, traits authenticated-only).
+- **Proof — new `TEAMCMD_PASS_SOUL0` block in `scripts/team-command-proof.{sql,sh}`** (17th
+  block, appended after SHIPYARD0): committed flag asserted dark + the roll writer's gate-first
+  reject probed with a RANDOM uuid (a reject-after-read regression would answer ship_not_found —
+  no existence oracle) and zero rows written; flag flipped in-txn only; catalog pinned verbatim
+  (the VALUES-join form). **Determinism by inline re-derivation** (the D0/D1
+  independent-computation idiom): `pg_temp.soul_expect` re-implements the salt/hash/order
+  mapping and is computed BEFORE each roll; fresh fixture users are commissioned (the real RPC)
+  until one derived pair CONTAINS veteran_frame and one does NOT (E[draws]≈3, bound 40) — so the
+  hp_mult arm and the plain arm are both exercised every run despite fresh uuids. Each roll must
+  land EXACTLY the derived pair (else "the roll is not the pinned pure function"), slots
+  distinct; veteran arm `max_hp = round(base × 1.08)` exactly with hp scaled (full-hp stays
+  full); plain arm hp/max_hp byte-untouched; second roll = idempotent replay (inserted 0, same
+  2 rows/traits, max_hp NOT re-raised — the double-apply hazard pin). Selftest greps added in
+  assert form + the Ship-Soul sole-writer negative grep (no direct insert/update/delete/copy on
+  either table anywhere in the harness); `ship_traits_enabled` added to the flags-inside-txn
+  assert and the post-run committed-false honesty loop. **Mutation-tested: 7 deliberate
+  guttings** (marker, flag flip removed, hp_mult pin, the derivation salt, a smuggled direct
+  traits insert, the replay pin, the catalog pin) — each fails the selftest; restored green.
+- **Verify:** team selftest green (17 markers); all other proof selftests green
+  (`osn-hub1a-production-catalog-verify.sh` selftest fails pre-existing on origin/main —
+  "single object rejected" — untouched by this slice); `tsc -b && vite build` green (no src
+  change). The real-chain arm rides `team-command-proof.yml`'s disposable-matrix job (no local
+  Docker on this machine).
+- **Docs:** FULL_CAPACITY_PLAN §C gains P12 SHIP-SOUL (SOUL-0 shipped dark; SOUL-1/2 + ACT-SOUL
+  remain) + queue row 17; SYSTEM_BOUNDARIES §1 gains the two rows (`ship_trait_types`
+  Reference/Config; `main_ship_traits` sole writer = the roll fn, insert-only). NO §2 Ship-Soul
+  system row yet — the roll fn exists but nothing calls it until SOUL-1 (the 0111/0117
+  no-live-system-row posture), deferral recorded here.
+
+**Coordination note (RESOLVED at rebase).** This slice was cut from a pre-#127 origin/main;
+slice-shipyard0 (PR #127, mig 0185 + the `TEAMCMD_PASS_SHIPYARD0` team-proof block) merged while
+it was in flight. Reconciled onto the new origin/main exactly as planned: BOTH team-proof blocks
+kept (SHIPYARD0 from main, SOUL0 appended after it — fixture-independent: SOUL0 uses only fresh
+users, and SHIPYARD0's in-txn shard/blueprint knob carries do not touch the roll path), MARKERS
+merged to **17**, the marker-count comment + both selftest/local echo lines merged to carry both
+slices, both sets of selftest greps preserved, and the final PASS select carries both phrases.
+Migration numbering holds (0185 shipyard on main; 0186 SOUL-0 next — no renumber needed). Docs
+union-merged (plan P6 SHIPYARD + P12 SHIP-SOUL; both SYSTEM_BOUNDARIES row sets; both DEV_LOG
+entries). Team selftest re-run green with 17 markers + a post-merge mutation spot-check.
+
+**Hostile-review absorption (APPROVED; 3 MEDIUMs fixed pre-merge while 0186 was unapplied).**
+M1 — the derivation order is now COLLATION-PINNED: `trait_type_id text collate "C"` on the
+column AND `order by trait_type_id collate "C"` in the writer + the proof's soul_expect
+(lockstep), self-asserted both ways (attcollation + the prosrc token) — the DB default
+collation can never re-order the catalog and shift unrolled derivations. M2 — catalog-growth
+honesty: the plan's ACT-SOUL charter now carries the FIXED-CATALOG qualifier + the
+catalog-freeze precondition (assert count = 8 before the backfill), and the roll envelope now
+reports the STORED rows (traits + the ship's real hp_mult product — also the N3 fix: a replay
+on a veteran ship reports 1.08, not a default), proof-pinned. M3 — the selftest's gate-flag
+hardening generalized: ANY `set_game_config('<gate>'…)` touch of the 8 boolean gates fails
+closed (the shipyard_enabled review lesson applied to all — knobs stay set_game_config, gates
+ride the raw in-txn update only). Nits: soul_expect's re-salt loop bounded at 64 (mirrors the
+writer), explicit || in the 0186 config description literal, this entry's block/marker counts
+corrected to 17th/17.
+
+
+**Bugs / fixes**
+- _(none — pure additive foundation; no live surface is touched.)_
+
+---
+
 ## 2026-07-12 — SHIPYARD-0: the ship-production foundation (mig 0185, dark)
 
 **Request.** The SHIPYARD charter, slice 0 (owner directive: "ships must be made through mining,
