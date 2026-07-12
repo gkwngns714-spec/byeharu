@@ -23,13 +23,19 @@ export const OSN_COORDINATE_TRAVEL_ENABLED = false as const
 // (DARK). Do NOT set true here — a human owns activation. Double fail-closed: even if a gate were flipped, the
 // server still rejects until its own flag is on.
 export const TRADE_MARKET_ENABLED = false as const
-export const MAINSHIP_ADDITIONAL_ENABLED = false as const
+// ACTIVATED 2026-07-12 (team-command launch): the server flag `mainship_additional_commission_enabled` was
+// flipped true by scripts/activate-team-command.sql (PASS). This mounts CommissionShipPanel + the ship
+// switcher (ShipScreen). Both fail-closed layers were flipped by a human, per the activation checklist.
+export const MAINSHIP_ADDITIONAL_ENABLED = true as const
 
 // ── TEAM-COMMAND Slice A — team-roster surface release gate (compile-time; UI fail-closed control). ──
 // "group" is the backend/DB/code word (ship_groups, main_ship_instances.group_id); "team" is the UI word —
 // this constant is the UI-side mirror of the server game_config flag `team_command_enabled` (seeded false in
 // migration 0160). The CommandScreen team roster stays invisible (and its owner-reads never run — the panel is
 // not mounted while this is false) until a HUMAN flips BOTH the server flag AND this constant. Default OFF
-// (DARK). Do NOT set true here — a human owns activation. Slice A ships only a READ-ONLY roster scaffold: no
-// team travel, no team combat, no ship commissioning.
-export const TEAM_COMMAND_ENABLED = false as const
+// (DARK until activation).
+// ACTIVATED 2026-07-12 (team-command launch): the server flag `team_command_enabled` was flipped true by
+// scripts/activate-team-command.sql (PASS — price 250, fleets 6, commissioning + modules lit alongside).
+// This mounts TeamRosterPanel (teams, captains-when-lit, expedition preview, team send/stop, Hunt).
+// Both fail-closed layers were flipped by a human, per docs/TEAM_COMMAND.md's ACTIVATION CHECKLIST.
+export const TEAM_COMMAND_ENABLED = true as const
