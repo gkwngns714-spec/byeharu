@@ -1,0 +1,57 @@
+name: SHIPYARD — hull-build order disposable proof (no production)
+
+# Runs the SHIPYARD-1 disposable proof on a single throwaway local Supabase — NEVER production:
+#   1. DB-free selftest: the harness is well-formed, self-rolling-back (opens a txn, toggles
+#      shipyard_enabled ONLY inside it via the raw-update idiom — never set_game_config — provisions
+#      via the real pipeline leaves, and ends in ROLLBACK with NO COMMIT — so it persists nothing
+#      and leaves the committed flag = false);
+#   2. a disposable local Supabase (the full chain incl. 0185 catalog + 0188 order RPC) running the
+#      real-chain matrix: dark gate (no existence oracle) → lit order happy path (exact spends on
+#      the M4.5 queue) → replay idempotency → blueprint/credit shortfalls → hull + captain-level
+#      gates → self-prereq impossibility → the 0038 queue-engine invisibility seam.
+# The proof flips NO committed flag. No `environment:` on any job — none can read production
+# secrets. Disposable local Supabase only. (Standalone workflow: team-command-proof is contended
+# by in-flight slices; modeled on trade-v1-proof.yml, reusing scripts/lib/trade-proof-lib.sh.)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-shipyard**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shipyard-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/shipyard-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0188)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: SHIPYARD-1 real-chain matrix (order RPC + queue seam)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/shipyard-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

@@ -172,9 +172,30 @@ remains the second source); self-asserting (exact hull/recipe shapes, F4 drop gr
 prosrc/field bundles/site bundles, hunk-token + rate-0 parity pins, flag dark); proof = the
 `TEAMCMD_PASS_SHIPYARD0` block in `team-command-proof` (catalog exact; rate-0 byte-parity / rate-1
 w≥8 exactly-one-appended-blueprint / w<8 + wave-1 thresholds — the SHARDDROP technique).
-SHIPYARD-1: the build command — `start_hull_build` on the REUSED M4.5 `build_orders` serial queue
-(never a second timer system), spending items via `inventory_spend` + credits via `wallet_debit`,
-enforcing the recipe gates (required hull / captain level when lit). SHIPYARD-2: build completion →
+SHIPYARD-1 **shipped** (mig `0188`, slice-shipyard1): the build command — `start_hull_build`
+(authenticated wrapper → private `production_start_hull_build`, the 0109 two-layer idiom; gate-first
+in both layers, no hull-existence oracle while dark) on the REUSED M4.5 `build_orders` serial queue
+(never a second timer system; additive generalization: nullable unit/base + `hull_type_id` FK to
+`hull_build_recipes` — only recipe-carrying hulls orderable, T0 stays commission-only — +
+`credits_spent` + the kind-coherence CHECK), spending items via `inventory_spend` + credits via
+`wallet_debit` (all-or-nothing under a per-player advisory lock), enforcing the 0185 recipe gates
+(required hull / captain level — dormant-NULL on T1, enforced when a recipe sets them) + the SHARED
+`max_build_orders` cap, receipted + replay-idempotent on (player, request_id) via
+`hull_build_receipts`. Orders land 'waiting' and are INVISIBLE to the 0038 engine by construction
+(the unit_types-join promotion + active-only processing, both prosrc-pinned by the 0188
+self-assert). **SHIPYARD-2 seam items (ALL must ship before ACT-SHIPYARD): the engine's hull arm
+(activation with recipe `build_seconds` + completion), delivery through the commission core, and
+hull-aware `cancel_build_order` refund semantics (today's 0038 cancel would eat a hull order's
+credits/items — refunds only metal_spent = 0; unreachable while dark).** A fourth seam risk —
+the 0047 retention reaper (terminal `build_orders` >30d) cascading receipts away and silently
+expiring the replay guarantee — was **RESOLVED IN-SLICE** (review H1): `hull_build_receipts.order_id`
+is nullable, FK ON DELETE SET NULL — receipts are the durable replay/audit ledger and outlive the
+reap (unlike the three items above, this is NOT a pre-flip requirement). Proof =
+`scripts/shipyard-proof.{sql,sh}` + `shipyard-proof.yml` (standalone workflow —
+team-command-proof is contended by in-flight slices; trade-proof-lib reused): dark gate/no-oracle ·
+exact-spend order · verbatim replay · blueprint/credit shortfalls · both gate arms · self-prereq
+impossibility · the engine seam · receipt survival past the REAL 0047 reaper.
+SHIPYARD-2: build completion →
 delivery — the queue completion commissions the built ship through the ONE commission build core
 (parity re-create taking `p_hull_type_id`, default `'starter_frigate'` → byte-inert — this IS the
 "next functional rework" that retires the SYSTEM_BOUNDARIES fleets-shim exception: repoint the
@@ -303,8 +324,9 @@ P2 contracts + P8 event sites first.
 | 16 | EV-1 + ACT-PHASE20 **[D: thresholds 75 / 0.25 / 0.6–1.4 — proposed in the 0182 header, owner-tunable]** | **EV-1 shipped (dark)** — mig `0182` (slice-ev1): `worldstate_tick` re-created from its TRUE head (0137, grep-verified; parity diff clean) with the marked EV-1 hunks — ALL STATE-detected (never edge: a failed publish's condition still holds next minute, so the retry is genuine): pressure high (at/above `event_pressure_high_threshold=75`; critical ≥ threshold + half the headroom; a parked-high location re-announces daily — intended pressure-nagging) + eased (the exact complement, suppressed unless today's high was announced — a read-only lookup of the tick's own published rows), depletion warnings (post-regen reserve < `event_depletion_warn_fraction=0.25`, global-scope, field NAME only), drift extremes (`price_surge`/`price_crash` outside 0.6/1.4 — 1.4 grounded: the 0136 drift target caps at 1.5 under coeff 0.5, so the notional 1.6 is unreachable) — every publication through the EXISTING `world_events_publish` (never a direct insert; 5 call sites pinned), per-(subject, UTC-day) dedup keys, EACH publication its own begin/exception subtransaction (query_canceled re-raised; a publish failure logs a WARNING, never aborts the tick, never rolls back a sibling — D2), the four knobs read ONLY when `world_balance_enabled` and guarded (uncastable/NaN → seeded default + WARNING — a knob typo cannot kill the live heartbeat), double-dark (`world_balance_enabled` × publish's own `phase20_polish_enabled` gate), NO new cron (the 0033 60s heartbeat, self-asserted unchanged); proof `scripts/ev1-proof.{sql,sh}` in NEW `world-events-proof.yml` (family-pure host — trade-v1 stays trade-only). ACT-PHASE20 (the Rung-7 flips) remains |
 | 17 | SOUL-0 per-ship traits foundation **[D: the 8-trait table + magnitudes — proposed in the 0186 header, owner-tunable]** | **shipped (dark)** — mig `0186` (slice-soul0): `ship_trait_types` (the 0117 catalog posture — 8 birthmark traits, stats keys self-assert-pinned to the shared 0180 adapter input vocabulary, `hp_mult >= 1.0` with `veteran_frame` 1.08 the sole carrier) + `main_ship_traits` (2 slots per ship, owner-read, INSERT-ONLY immutable — no update/delete path anywhere) + `soul_roll_traits_for_ship` (service-only sole writer; traits = a pure `hashtextextended(':soul:')` function of the ship id, the 0041/0176 determinism technique; idempotent, hp_mult applied once + monotonic) — behind NEW `ship_traits_enabled=false`, DOUBLY dark (no caller yet). Proof = the `TEAMCMD_PASS_SOUL0` block in `team-command-proof` (catalog verbatim; rolls = the proof's own inline hash re-derivation on veteran + plain arms; exact hp_mult; idempotent-replay immutability). SOUL-1 (commission hook + adapter fold), SOUL-2 (read surface + dossier UI), ACT-SOUL (backfill roll — deterministic at a FIXED catalog, so the flip script must assert catalog count = 8 first — + the human flip) = later slices — see §C P12 |
 
-*(Then: the SHIPYARD line (P6 — SHIPYARD-0 shipped dark as mig 0185; SHIPYARD-1..3 + ACT-SHIPYARD
-remain) [D], MOD2-2, RR line, OB line, C2-4 — resequenced at the next plan review.
+*(Then: the SHIPYARD line (P6 — SHIPYARD-0 shipped dark as mig 0185; SHIPYARD-1 shipped dark as
+mig 0188, slice-shipyard1 — the order RPC + queue seam; SHIPYARD-2/3 + ACT-SHIPYARD remain) [D],
+MOD2-2, RR line, OB line, C2-4 — resequenced at the next plan review.
 HAUL is now FULLY STOCKED: HAUL-3 shipped 0181/PR #117 and the ACT-HAUL flip script shipped
 (slice-act-haul) — only the human flip remains, ordered after ACT-TRADE. C2-3 shipped in PR #117.)*
 
