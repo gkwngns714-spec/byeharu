@@ -80,6 +80,22 @@ test('importance ranks by the reward/danger bands', () => {
   expect(markerImportance(loc({ base_difficulty: 25 }))).toBe(2) // "High" danger band
 })
 
+// DIFFICULTY-DISPLAY — the extended ZONES2 range (Ember Reach: bd 40/50/60, tiers 4/5) stays inside
+// the existing TOP band: already-major markers, always labelled. The marker hierarchy deliberately
+// stays coarse (locationDisplay.ts's Severe/Extreme words + the detail sheet carry the finer read).
+test('the extended difficulty/reward range (bd 40–60, tiers 4–5) maps to the top importance band', () => {
+  for (const l of [
+    loc({ location_type: 'pirate_hunt', activity_type: 'hunt_pirates', base_difficulty: 40, reward_tier: 4 }),
+    loc({ location_type: 'pirate_hunt', activity_type: 'hunt_pirates', base_difficulty: 50, reward_tier: 4 }),
+    loc({ location_type: 'pirate_hunt', activity_type: 'hunt_pirates', base_difficulty: 60, reward_tier: 5 }),
+  ]) {
+    expect(markerImportance(l)).toBe(2)
+    expect(markerStyle(l).radius).toBe(12) // same top size as bd 25 — no runaway growth
+    expect(labelTier(l)).toBe(0) // labelled at ANY zoom
+    expect(labelVisible(l, 0.4)).toBe(true)
+  }
+})
+
 test('size and halo scale monotonically with importance (hierarchy reads at a glance)', () => {
   const minor = markerStyle(loc())
   const notable = markerStyle(loc({ reward_tier: 1 }))

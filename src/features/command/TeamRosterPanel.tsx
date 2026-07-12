@@ -24,6 +24,7 @@ import { TeamPreviewSection } from './TeamPreviewSection'
 import { getMyCaptainInstances } from '../captains/captainsApi'
 import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { isServerLit } from '../../lib/useActivityPanelGuards'
+import { withPowerGate } from '../map/locationDisplay'
 
 // TEAM-COMMAND Slice B1 — INTERACTIVE team roster (backend "group" == UI "team").
 //
@@ -395,9 +396,14 @@ export function TeamRosterPanel() {
                     className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
                   >
                     <option value="">Hunt zone…</option>
+                    {/* DIFFICULTY-DISPLAY — surface the min_power gate in the option label (e.g.
+                        'Ember Gate — power 150+'; gate-free zones render the bare name, byte-
+                        identical to before). Read from game.locations, the SAME shell poll
+                        huntZones derives from — no new fetch; the server (power_below_required)
+                        remains the only real gate. huntName (confirm + summary) stays d.name. */}
                     {huntZones.map((d) => (
                       <option key={d.id} value={d.id}>
-                        {d.name}
+                        {withPowerGate(d.name, game.locations.find((l) => l.id === d.id)?.min_power_required ?? 0)}
                       </option>
                     ))}
                   </select>
