@@ -6,7 +6,8 @@ import { SpaceStopControls } from './SpaceStopControls'
 import { isActiveLegacyOutboundTransit, selectActiveLegacyMovement } from './spaceStopCommand'
 import { useLegacyStopTransitCommand } from './useSpaceStopCommand'
 import { MainShipCommand } from './MainShipCommand'
-import type { LocationType, MapLocation } from './mapTypes'
+import type { MapLocation } from './mapTypes'
+import { TYPE_LABEL, dangerLabel, rewardLabel } from './locationDisplay'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { MiningPanel } from '../mining/MiningPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
@@ -15,7 +16,7 @@ import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../com
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
 // stays the hero; the location detail panel now speaks the shared design language (IDENTITY →
 // RIGHT NOW → DETAILS, StatRow rows, plain player language — the raw status/difficulty/tier/
-// pressure/coordinate internals are humanized or dropped, see locationDisplay below), and the
+// pressure/coordinate internals are humanized or dropped, see locationDisplay.ts), and the
 // server-lit feature panels ride ONE overlay rail instead of floating as raw flow cards. Shared
 // polled data comes from the shell; the arrival settle lives in AppShell — never here.
 //
@@ -24,31 +25,20 @@ import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../com
 // surface, and GalaxyMap's coordinate-transit stop CTA — all mounted independent of feature flags
 // (their own state predicates decide, exactly as before).
 
-// ── Player-facing location display (design decision; the ONLY place these mappings live) ────────
+// ── Player-facing location display ───────────────────────────────────────────────────────────────
 // Humanized: location_type → a plain kind; base_difficulty → a danger word; reward_tier → a reward
-// word. DROPPED as dev-internal noise: raw coordinates, `status` (get_world_map returns only
-// active rows — the row could never read anything else), pressure/danger_modifier decimals, and
-// the active-fleets debug count.
-const TYPE_LABEL: Record<LocationType, string> = {
-  pirate_hunt: 'Pirate hunting ground',
-  pirate_den: 'Pirate den',
-  mining_site: 'Mining site',
-  derelict_station: 'Derelict station',
-  trade_outpost: 'Trade port',
-  rally_point: 'Rally point',
-  safe_zone: 'Safe waypoint',
-  event_site: 'Event site',
-}
+// word — the pure mappings live in locationDisplay.ts (ONE home; DIFFICULTY-DISPLAY moved them out
+// of this file and extended the bands past the old High/Rich saturation). DROPPED as dev-internal
+// noise: raw coordinates, `status` (get_world_map returns only active rows — the row could never
+// read anything else), pressure/danger_modifier decimals, and the active-fleets debug count. The
+// raw difficulty/tier NUMBERS return as mono metadata next to the words (decision-relevant once
+// zones spread across a 0–60 range), and min_power_required gets its own row when a gate exists.
 const typeBadge = (l: MapLocation): { tone: BadgeTone; text: string } =>
   l.location_type === 'trade_outpost'
     ? { tone: 'accent', text: 'Port' }
     : l.activity_type === 'none'
       ? { tone: 'success', text: 'Safe' }
       : { tone: 'danger', text: 'Hostile' }
-const dangerLabel = (difficulty: number): string =>
-  difficulty <= 0 ? 'None — safe space' : difficulty <= 10 ? 'Low' : difficulty <= 20 ? 'Moderate' : 'High'
-const rewardLabel = (tier: number): string =>
-  tier <= 0 ? 'None' : tier === 1 ? 'Modest' : tier === 2 ? 'Good' : 'Rich'
 
 export function MapScreen() {
   const {
@@ -219,8 +209,34 @@ export function MapScreen() {
 
           {/* 3 · DETAILS — humanized, decision-relevant facts only */}
           <dl className="mt-4 space-y-1.5 text-sm">
-            <StatRow label="Danger" value={dangerLabel(selected.base_difficulty)} />
-            <StatRow label="Rewards" value={rewardLabel(selected.reward_tier)} />
+            <StatRow
+              label="Danger"
+              value={dangerLabel(selected.base_difficulty)}
+              hint={
+                selected.base_difficulty > 0 ? (
+                  <span className="font-mono tabular-nums">({selected.base_difficulty})</span>
+                ) : undefined
+              }
+            />
+            <StatRow
+              label="Rewards"
+              value={rewardLabel(selected.reward_tier)}
+              hint={
+                selected.reward_tier > 0 ? (
+                  <span className="font-mono tabular-nums">(tier {selected.reward_tier})</span>
+                ) : undefined
+              }
+            />
+            {/* DIFFICULTY-DISPLAY — the team-combat power gate, previously rendered nowhere. Display
+                of data get_world_map already returns for this active row; the server RPC
+                (power_below_required) stays the only real gate. */}
+            {selected.min_power_required > 0 && (
+              <StatRow
+                label="Required power"
+                value={<span className="font-mono tabular-nums">{selected.min_power_required}</span>}
+                hint="(team combat gate)"
+              />
+            )}
             {selMeta && <StatRow label="Region" value={selMeta.sectorName} />}
           </dl>
         </aside>

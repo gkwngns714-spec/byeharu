@@ -38,8 +38,12 @@ export function isCombatMarker(l: MarkerStyleInputs): boolean {
 }
 
 /** Importance rank (0 minor · 1 notable · 2 major). Ports are always major (the dockable hubs the
- *  player navigates by); otherwise rank by the humanized reward/danger bands MapScreen already uses
- *  (reward_tier ≥3 = "Rich", base_difficulty >20 = "High" → major; any reward/danger/activity → notable). */
+ *  player navigates by); otherwise rank by reward/danger bands aligned with the humanized words in
+ *  locationDisplay.ts (reward_tier ≥3 = Rich+ , base_difficulty >20 = High+ → major; any
+ *  reward/danger/activity → notable). DIFFICULTY-DISPLAY note: the marker hierarchy deliberately
+ *  stays this coarse — the extended word bands (Severe/Extreme, bd 35/50; Bountiful/Legendary,
+ *  tier 4/5) all fall inside the existing top band here, so the new high-difficulty zones already
+ *  render as major markers; the finer read lives in the detail sheet's words + numbers. */
 export function markerImportance(l: MarkerStyleInputs): MarkerImportance {
   if (isDockablePortForDisplay(l.location_type)) return 2
   if (l.reward_tier >= 3 || l.base_difficulty > 20) return 2
