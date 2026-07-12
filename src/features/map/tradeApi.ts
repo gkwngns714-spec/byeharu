@@ -117,24 +117,38 @@ export interface GameConfigRow {
 }
 
 /**
- * Read the three public-read game_config knobs the commission affordance mirrors/displays
- * (server flag, ship cap, price — all display-only; the server re-checks every one). Error → []
- * so the pure coercion (commissionContextFromConfig) falls back to its fail-closed defaults.
+ * Read the four public-read game_config knobs the commission affordance mirrors/displays
+ * (server flag, ship cap, price, starting credits — all display-only; the server re-checks every
+ * one). starting_credits rides the SAME single select (no extra fetch): the wallet is lazy (0093
+ * seeds it at first debit), so a no-row player's effective balance is this knob, and the display
+ * must source it from server config, never a hardcode. Error → [] so the pure coercion
+ * (commissionContextFromConfig) falls back to its fail-closed defaults.
  */
 export async function getCommissionConfigRows(): Promise<GameConfigRow[]> {
   const { data, error } = await supabase
     .from('game_config')
     .select('key, value')
-    .in('key', ['mainship_additional_commission_enabled', 'max_main_ships_per_player', 'main_ship_price'])
+    .in('key', [
+      'mainship_additional_commission_enabled',
+      'max_main_ships_per_player',
+      'main_ship_price',
+      'starting_credits',
+    ])
   if (error || !data) return []
   return data as GameConfigRow[]
 }
 
 // ── owner-read wallet balance (player_wallet) ────────────────────────────────────────────────────
-/** Read the caller's credit balance (owner-read RLS). Lazy: no row yet → 0. numeric arrives as string. */
-export async function getWalletBalance(): Promise<number> {
+/**
+ * Read the caller's credit balance (owner-read RLS). The wallet row is LAZY (0093: seeded with
+ * starting_credits at first debit/credit), so "no row" does NOT mean broke — it means "still on
+ * starting credits". Returns null when no row exists (or the read failed) so callers can render
+ * the effective starting balance honestly instead of a false 0. numeric arrives as string.
+ */
+export async function getWalletBalance(): Promise<number | null | 'error'> {
   const { data, error } = await supabase.from('player_wallet').select('balance').maybeSingle()
-  if (error || !data) return 0
+  if (error) return 'error' // transient read failure — NOT "no row"; callers must not infer starting credits
+  if (!data) return null // genuinely no wallet row (lazy 0093 seed pending) → effective starting balance
   return Number((data as { balance: number | string }).balance) || 0
 }
 

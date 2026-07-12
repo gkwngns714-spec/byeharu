@@ -75,17 +75,31 @@ export function nextTeamSlot(groups: GroupRow[]): number | null {
   return null
 }
 
-export type CommissionReason = 'ok' | 'gate_dark' | 'cap_reached'
+export type CommissionReason = 'ok' | 'gate_dark' | 'cap_reached' | 'insufficient_credits'
 
 // Client-side mirror of commission_additional_main_ship()'s reject order (migration 0080/0091): the DARK gate
-// is checked BEFORE the cap, and the cap is `count >= cap`. Display-only — the server stays authoritative and
-// re-checks both. Lets the UI fail closed (e.g. hide/disable an add-ship affordance) without ever creating a ship.
+// is checked BEFORE the cap, the cap is `count >= cap`, and the CREDIT check comes AFTER the cap (0091 debits
+// under the lock only when price > 0 — a free ship never blocks on credits). The credit inputs are OPTIONAL:
+// callers that don't know the balance (or config) omit them and the mirror stays silent on affordability —
+// honest, because "unknown" must never block. Display-only — the server stays authoritative and re-checks all
+// three. Lets the UI fail closed (e.g. hide/disable an add-ship affordance) without ever creating a ship.
 export function commissionAvailability(input: {
   shipCount: number
   cap: number
   gateEnabled: boolean
+  /** The player's EFFECTIVE balance (wallet row, or the starting_credits seed when unseeded). */
+  effectiveBalance?: number
+  price?: number
 }): { canCommission: boolean; reason: CommissionReason } {
   if (!input.gateEnabled) return { canCommission: false, reason: 'gate_dark' }
   if (input.shipCount >= input.cap) return { canCommission: false, reason: 'cap_reached' }
+  if (
+    input.effectiveBalance !== undefined &&
+    input.price !== undefined &&
+    input.price > 0 && // 0091: `if v_price > 0 and not wallet_debit(…)` — price ≤ 0 skips the debit entirely
+    input.effectiveBalance < input.price
+  ) {
+    return { canCommission: false, reason: 'insufficient_credits' }
+  }
   return { canCommission: true, reason: 'ok' }
 }

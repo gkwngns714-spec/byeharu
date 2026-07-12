@@ -127,6 +127,41 @@ test('commissionAvailability: gate on + under cap → ok', () => {
   })
 })
 
+// ── credit mirror (0091: debit AFTER gate + cap, only when price > 0) — display-only ──────────────
+test('commissionAvailability: effective balance under a positive price → insufficient_credits', () => {
+  expect(
+    commissionAvailability({ shipCount: 1, cap: 3, gateEnabled: true, effectiveBalance: 400, price: 1000 }),
+  ).toEqual({ canCommission: false, reason: 'insufficient_credits' })
+})
+
+test('commissionAvailability: credits are checked AFTER gate and cap (the 0091 server order)', () => {
+  // broke AND dark → the gate reason wins; broke AND capped → the cap reason wins.
+  expect(
+    commissionAvailability({ shipCount: 1, cap: 3, gateEnabled: false, effectiveBalance: 0, price: 1000 }).reason,
+  ).toBe('gate_dark')
+  expect(
+    commissionAvailability({ shipCount: 3, cap: 3, gateEnabled: true, effectiveBalance: 0, price: 1000 }).reason,
+  ).toBe('cap_reached')
+})
+
+test('commissionAvailability: unknown balance/price → NO credit block (unknown must never block); price ≤ 0 is free', () => {
+  // credit inputs omitted (caller has not loaded the wallet/config yet) → the old three-input behavior.
+  expect(commissionAvailability({ shipCount: 1, cap: 3, gateEnabled: true })).toEqual({
+    canCommission: true,
+    reason: 'ok',
+  })
+  // 0091 skips the debit entirely when v_price ≤ 0 — a free ship never blocks on credits.
+  expect(
+    commissionAvailability({ shipCount: 1, cap: 3, gateEnabled: true, effectiveBalance: 0, price: 0 }),
+  ).toEqual({ canCommission: true, reason: 'ok' })
+})
+
+test('commissionAvailability: exactly-affordable (balance = price) → ok (the server debit succeeds at equality)', () => {
+  expect(
+    commissionAvailability({ shipCount: 1, cap: 3, gateEnabled: true, effectiveBalance: 1000, price: 1000 }),
+  ).toEqual({ canCommission: true, reason: 'ok' })
+})
+
 // ── nextTeamSlot — lowest free team slot 1..3, or null when capped at 3 (Slice B1) ─────────────────
 test('nextTeamSlot: empty → 1', () => {
   expect(nextTeamSlot([])).toBe(1)

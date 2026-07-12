@@ -3,7 +3,15 @@ import { Button, Card, CardHeader, Notice } from '../../components/ui'
 import { commissionAvailability } from '../command/teamRoster'
 import { commissionAdditionalMainShip, getCommissionConfigRows, getWalletBalance } from '../map/tradeApi'
 import type { SelectableShip } from '../map/useMainShipSelection'
-import { commissionContextFromConfig, commissionReasonMessage, type CommissionContext } from './commissionShip'
+import {
+  commissionAffordability,
+  commissionContextFromConfig,
+  commissionReasonMessage,
+  commissionShortfallMessage,
+  formatCredits,
+  walletBalanceLabel,
+  type CommissionContext,
+} from './commissionShip'
 
 // TEAM-ACTIVATION PREP — the DARK commission-ship affordance (the in-client path to ship #2+).
 //
@@ -16,12 +24,18 @@ import { commissionContextFromConfig, commissionReasonMessage, type CommissionCo
 // gates; the packet flips both in one window, but neither surface depends on the other).
 //
 // Availability is the EXISTING pure mirror commissionAvailability (teamRoster.ts — dark gate
-// BEFORE cap, the exact server order), fed from SERVER data only: ship count from the shell
-// selection's owner-read list, cap + server flag + price from public-read game_config (never
-// hardcoded — commissionContextFromConfig falls back to the server's own fallbacks, fail closed).
-// The button stays enabled on `ok` even when the balance looks short — the SERVER owns the credit
-// check (wallet_debit under the commission advisory lock, 0091); a reject surfaces through
-// commissionReasonMessage (insufficient_credits → "Not enough credits.").
+// BEFORE cap BEFORE credits, the exact server order), fed from SERVER data only: ship count from
+// the shell selection's owner-read list, cap + server flag + price + starting credits from
+// public-read game_config (never hardcoded — commissionContextFromConfig falls back to the
+// server's own fallbacks, fail closed).
+//
+// WALLET HONESTY (owner defect): the wallet row is LAZY (0093 — seeded with starting_credits at
+// first debit), so getWalletBalance returns null for a no-row player and this panel shows the
+// EFFECTIVE starting balance with an explicit "(starting credits)" hint instead of a false 0.
+// The buy button disables when the effective balance can't cover the price, with the shortfall
+// shown (commissionShortfallMessage) — DISPLAY-ONLY: the SERVER still owns the credit check
+// (wallet_debit under the commission advisory lock, 0091), and a server reject still surfaces
+// through commissionReasonMessage (insufficient_credits → "Not enough credits.").
 //
 // NON-OPTIMISTIC: submit awaits the RPC, then refetches the ship list/game state (onCommissioned)
 // AND its own context (balance moved, cap state may have) — the view never diverges from server
@@ -37,12 +51,17 @@ export function CommissionShipPanel({
   onCommissioned: () => Promise<void>
 }) {
   const [ctx, setCtx] = useState<CommissionContext | null>(null)
-  const [balance, setBalance] = useState<number | null>(null)
+  // undefined = not fetched yet; null = fetched, NO wallet row (lazy 0093 — effectively on
+  // starting credits); number = the seeded wallet's actual balance.
+  const [balance, setBalance] = useState<number | null | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'success' | 'warning'; text: string } | null>(null)
 
   const loadContext = useCallback(async () => {
-    const [rows, bal] = await Promise.all([getCommissionConfigRows(), getWalletBalance()])
+    const [rows, balRaw] = await Promise.all([getCommissionConfigRows(), getWalletBalance()])
+    // 'error' = transient read failure — treat as UNKNOWN (no starting-credits claim, no shortfall
+    // block; the server stays the authority on an actual buy attempt).
+    const bal = balRaw === 'error' ? undefined : balRaw
     setCtx(commissionContextFromConfig(rows))
     setBalance(bal)
   }, [])
@@ -51,21 +70,27 @@ export function CommissionShipPanel({
   // reuses the same fetch pair after a commission.
   useEffect(() => {
     let active = true
-    void Promise.all([getCommissionConfigRows(), getWalletBalance()]).then(([rows, bal]) => {
+    void Promise.all([getCommissionConfigRows(), getWalletBalance()]).then(([rows, balRaw]) => {
       if (!active) return
       setCtx(commissionContextFromConfig(rows))
-      setBalance(bal)
+      setBalance(balRaw === 'error' ? undefined : balRaw) // 'error' = unknown, never a claim
     })
     return () => {
       active = false
     }
   }, [])
 
-  // Fail closed while the context loads: cap 0 + gate false → gate_dark, the server's own order.
+  // Effective balance + shortfall (pure, display-only) — only once BOTH fetches landed; until
+  // then the mirror gets no credit inputs (unknown must never block) and the gate fails closed.
+  const aff = ctx && balance !== undefined ? commissionAffordability(balance, ctx) : null
+
+  // Fail closed while the context loads: cap 0 + gate false → gate_dark, the server's own order
+  // (gate → cap → credits). The credit inputs mirror 0091's debit-after-cap, display-only.
   const avail = commissionAvailability({
     shipCount: ships.length,
     cap: ctx?.cap ?? 0,
     gateEnabled: ctx?.serverEnabled === true,
+    ...(aff && ctx ? { effectiveBalance: aff.effectiveBalance, price: ctx.price } : {}),
   })
 
   const submit = async () => {
@@ -93,10 +118,12 @@ export function CommissionShipPanel({
     <Card tone="warning" data-testid="commission-ship-panel">
       <CardHeader title="Commission ship" subtitle="Grow your fleet — teams need ships" />
       <div className="flex items-center justify-between gap-3 text-xs text-ink-muted">
-        {/* Price + balance are SERVER data (public-read game_config / owner-read wallet). */}
+        {/* Price + balance are SERVER data (public-read game_config / owner-read wallet).
+            No wallet row ≠ broke: the lazy wallet (0093) means the effective balance is the
+            starting_credits seed — shown honestly as e.g. "1,000 cr (starting credits)". */}
         <span data-testid="commission-price">
-          {ctx ? `Price ${ctx.price} cr` : 'Price —'}
-          {balance != null ? ` · Balance ${balance} cr` : ''}
+          {ctx ? `Price ${formatCredits(ctx.price)} cr` : 'Price —'}
+          {aff ? ` · Balance ${walletBalanceLabel(aff)}` : ''}
         </span>
         <Button
           size="sm"
@@ -112,7 +139,9 @@ export function CommissionShipPanel({
       </div>
       {!avail.canCommission && (
         <Notice tone="neutral" className="mt-2" data-testid="commission-availability-note">
-          {commissionReasonMessage(avail.reason)}
+          {avail.reason === 'insufficient_credits' && aff
+            ? commissionShortfallMessage(aff.shortfall) // the shortfall, not just "not enough"
+            : commissionReasonMessage(avail.reason)}
         </Notice>
       )}
       {notice && (

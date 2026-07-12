@@ -8,16 +8,19 @@
 // mainshipStatusLabel pure-module pattern and are unit-tested in tests/commissionShip.spec.ts.
 
 // ── server-config coercion (public-read game_config rows → display context) ──────────────────────
-// The three knobs the affordance displays/mirrors are all public-read (game_config RLS, 0003):
+// The four knobs the affordance displays/mirrors are all public-read (game_config RLS, 0003):
 //   mainship_additional_commission_enabled (bool) · max_main_ships_per_player (int) ·
-//   main_ship_price (numeric). Values arrive as jsonb (boolean/number, historically sometimes a
-//   numeric string) — coerce defensively and FAIL CLOSED: unknown/absent flag → dark; absent
-//   numbers → the SERVER's own fallbacks (cap 3 per 0080, price 1000 per 0091), so the display
-//   mirror can never be more permissive than the server.
+//   main_ship_price (numeric) · starting_credits (numeric — the 0093 lazy-wallet seed, needed to
+//   show a no-wallet-row player their EFFECTIVE balance instead of a false 0). Values arrive as
+//   jsonb (boolean/number, historically sometimes a numeric string) — coerce defensively and FAIL
+//   CLOSED: unknown/absent flag → dark; absent numbers → the SERVER's own fallbacks (cap 3 per
+//   0080, price 1000 per 0091, starting credits 0 per wallet_ensure's coalesce in 0093), so the
+//   display mirror can never be more permissive than the server.
 export interface CommissionContext {
   serverEnabled: boolean
   cap: number
   price: number
+  startingCredits: number
 }
 
 export function commissionContextFromConfig(rows: Array<{ key: string; value: unknown }>): CommissionContext {
@@ -32,7 +35,47 @@ export function commissionContextFromConfig(rows: Array<{ key: string; value: un
     serverEnabled: byKey.get('mainship_additional_commission_enabled') === true,
     cap: num(byKey.get('max_main_ships_per_player'), 3), // the 0080 server-side coalesce fallback
     price: num(byKey.get('main_ship_price'), 1000), // the 0091 server-side coalesce fallback
+    startingCredits: num(byKey.get('starting_credits'), 0), // wallet_ensure's coalesce fallback (0093)
   }
+}
+
+// ── effective-balance affordability (display-only; the server's wallet_debit owns truth) ─────────
+// The wallet row is LAZY (0093: seeded with starting_credits at first debit), so a null balance
+// from getWalletBalance means "no row yet" → the player's EFFECTIVE balance is the server-config
+// starting_credits, not 0 ("I can buy a ship even though I have no money?" — owner; the truth was
+// the opposite: they HAD money and the display said 0). Pure: no IO, unit-tested.
+export interface CommissionAffordability {
+  effectiveBalance: number
+  fromStartingCredits: boolean // true → the wallet is unseeded; the balance shown is the seed value
+  shortfall: number // max(0, price − effectiveBalance); 0 ⇔ affordable
+}
+
+export function commissionAffordability(
+  balance: number | null,
+  ctx: Pick<CommissionContext, 'startingCredits' | 'price'>,
+): CommissionAffordability {
+  const fromStartingCredits = balance === null
+  const effectiveBalance = balance ?? ctx.startingCredits
+  return {
+    effectiveBalance,
+    fromStartingCredits,
+    shortfall: Math.max(0, ctx.price - effectiveBalance),
+  }
+}
+
+/** Grouped credit amount for display ('1,000') — deterministic, locale-pinned. */
+export function formatCredits(n: number): string {
+  return n.toLocaleString('en-US')
+}
+
+/** The balance line: '1,000 cr (starting credits)' for an unseeded wallet, else '250 cr'. */
+export function walletBalanceLabel(aff: CommissionAffordability): string {
+  return `${formatCredits(aff.effectiveBalance)} cr${aff.fromStartingCredits ? ' (starting credits)' : ''}`
+}
+
+/** The insufficient-credits note WITH the shortfall — display-only; the server re-checks. */
+export function commissionShortfallMessage(shortfall: number): string {
+  return `Not enough credits — ${formatCredits(shortfall)} cr short.`
 }
 
 // ── reason → player copy (the tradeReasonMessage pattern) ────────────────────────────────────────
