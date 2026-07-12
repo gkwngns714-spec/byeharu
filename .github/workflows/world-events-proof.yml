@@ -1,0 +1,60 @@
+name: WORLD-EVENTS — EV-1 worldstate threshold-event producer disposable proof (no production)
+
+# Runs the EV-1 disposable proof on a throwaway local Supabase — NEVER production:
+#   1. DB-free selftest: the harness is well-formed, self-rolling-back (opens a txn, toggles BOTH dark
+#      gates + every transient config write ONLY inside it, ends in ROLLBACK with NO COMMIT), drives
+#      depletion only via the real sole writer, and never inserts world_events directly;
+#   2. a disposable local Supabase (the full chain incl. 0182) running the real-chain matrix: dark tick
+#      -> zero events; pressure crossings (warning/critical/eased); depletion warning; drift extremes;
+#      the per-day dedup pin; the injected publish-failure never aborting the tick (the D2 cron-safety
+#      law); narrate-never-mutate.
+# HOST DECISION (recorded): a NEW family-pure workflow, NOT a 7th step in trade-v1-proof.yml —
+# trade-v1 is the trade-family host (its name, branch triggers, and matrix are trade-branded:
+# fleet-0c/market-1/bootstrap/econ-seed/salvage/haul), and team-command-proof is the team/captain host.
+# EV-1 is worldstate/world-events-family; grafting it onto trade-v1 would misfile the coverage, make
+# every trade branch pay for a worldstate matrix, and force 'slice-ev**' into trade-v1's triggers.
+# The repo convention is many small family-pure proof workflows — this is one more.
+# The proof flips NO committed flag; no `environment:` on any job — none can read production secrets.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-ev**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: world-events-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/ev1-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0182)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: EV-1 WORLD-EVENTS real-chain matrix
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/ev1-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
