@@ -203,7 +203,7 @@ P2 contracts + P8 event sites first.
 | 3 | ACT-MINING (script, same PR) | **PR #103** |
 | 4 | ECON-SEED-1 (mig 0173) **[D: price table — approved 2026-07-12]** | **PR #104 — CI re-running after the 0C fixture fix** |
 | 5 | ACT-TRADE (flip script + TRADE_MARKET_ENABLED client PR) | **script shipped** (`scripts/activate-trade.{sql,sh}`, slice-act-trade — awaiting the human flip, then the one-line client PR) |
-| 6 | SALVAGE-0/1 **[D: item prices]** | queued |
+| 6 | SALVAGE-0/1 **[D: item prices — proposed in the 0174 header, owner-tunable]** | **shipped (dark)** — mig `0174` (`port_item_demand` 3-port × 5-droppable seed + `salvage_market_enabled=false` + `sell_item_at_port` + `salvage_receipts`), proof `scripts/salvage-market-proof.{sql,sh}` wired into `trade-v1-proof.yml` (slice-salvage); UI + flip = #10 |
 | 7 | ZONES2-1 Ember Reach **[D: bd/min_power numbers — set 40/150, 50/220, 60/300 per packet §0.3 (≈4/6/8 kitted+captained ships)]** | **shipped** (mig `0175`, slice-zones2-ember — sector Ashen Frontier + zone Ember Reach ACTIVE-but-empty, 3 hunt sites seeded HIDDEN) |
 | 8 | ZONES2-2 + reveal script | **shipped** (`scripts/reveal-ember-reach.{sql,sh}` — awaiting the human reveal; recommend AFTER teams kit up) |
 | 9 | RANK-SEASON + ACT-RANKING **[D: season windows]** | queued |
