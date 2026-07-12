@@ -309,12 +309,26 @@ Checklist:
 
 | # | Decision | Proposal | Go/no-go |
 | --- | --- | --- | --- |
-| 1 | Enemy scaling vs team power | Option A (no formula change) + hull base stats `{attack 15, defense 10}` via parity adapter delta + light modules with teams; C-seeds later; B's knob in reserve | ☐ |
-| 2 | Multi-ship commissioning | Flip at team launch; `main_ship_price` 1000 → 250 (knob) | ☐ |
-| 3 | Captain slots / captains at launch | Launch uncaptained; fast-follow = bump SQL + `captain_assignment_enabled` (+ progression + a memory-shard drop) | ☐ |
-| 4 | `max_active_fleets` | 3 → 6 at flip (knob, reversible) | ☐ |
-| 5 | Deferred policies | Keep survive-at-0 on WIN; `retreat_safety` stays inactive; Low-2 polish = post-flip, not a gate | ☐ |
-| — | Exploration (independent) | Flip first (§7) | ☐ |
+| 1 | Enemy scaling vs team power | Option A (no formula change) + hull base stats `{attack 15, defense 10}` via parity adapter delta + light modules with teams; C-seeds later; B's knob in reserve | ✅ GO |
+| 2 | Multi-ship commissioning | Flip at team launch; `main_ship_price` 1000 → 250 (knob) | ✅ GO |
+| 3 | Captain slots / captains at launch | Launch uncaptained; fast-follow = bump SQL + `captain_assignment_enabled` (+ progression + a memory-shard drop) | ✅ GO |
+| 4 | `max_active_fleets` | 3 → 6 at flip (knob, reversible) | ✅ GO |
+| 5 | Deferred policies | Keep survive-at-0 on WIN; `retreat_safety` stays inactive; Low-2 polish = post-flip, not a gate | ✅ GO |
+| — | Exploration (independent) | Flip first (§7) | ✅ GO |
 
-*Proposals only. Every flip is a separate recorded human gate; the post-flip proof
+**DECISIONS TAKEN 2026-07-12: all recommendations approved** (owner: "go with the recommendations" —
+every row above as proposed). Prep shipped the same day: migration `20260618000170_team_activation_prep`
+(the §1.4 hull-stats parity delta + starter_frigate seed — pre-flip it is API-visible only: the values
+answer through `get_my_expedition_preview`, which no shipped UI calls today), the DARK client
+commissioning slice (`CommissionShipPanel` + the ship-switcher re-gate on ShipScreen, behind
+`MAINSHIP_ADDITIONAL_ENABLED` — closing the gap that `commission_additional_main_ship` had no client
+caller, i.e. §2's "a teams UI that can never contain a team"), and
+`scripts/activate-team-command.{sql,sh}` (the §6 staged flip, HUMAN-run: stage-1 knobs
+`main_ship_price`→250 / `max_active_fleets`→6, stage-2 flags commission + team + module
+crafting/fitting, stage-3 smoke asserts, marked rollback). The one-line client PR flipping
+`TEAM_COMMAND_ENABLED` + `MAINSHIP_ADDITIONAL_ENABLED` then mounts the roster/Hunt UI, the
+Commission-ship control, and the ship switcher. Captains remain the fast-follow window (§3); each
+script run and that client-flip PR stay their own recorded human gates.
+
+*Every flip is a separate recorded human gate; the post-flip proof
 (`scripts/team-command-proof.sh`) is mandatory before the activation is called done.*

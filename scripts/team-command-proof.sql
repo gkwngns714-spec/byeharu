@@ -10,6 +10,10 @@
 --            team_command_disabled while team_command_enabled=false. Called with RANDOM nonexistent
 --            ids by a real authenticated sub: a reject-AFTER-read regression would surface
 --            group_not_found / ship_not_found (or even write a group) and fail these checks.
+--   HULLSTATS (activation prep, 0170) — every hull row carries the seeded numeric base
+--            attack/defense (starter_frigate exactly {attack 15, defense 10}) and the re-created
+--            adapter (0122 head + the packet-§1.4 parity delta) FOLDS them: a factory-bare ship's
+--            combat_power/survival equal its hull seed exactly through the ONE adapter.
 --   WRITE  — upsert create+rename lands on ONE (player, group_index) row; index/name validation;
 --            assign/unassign persisted to the ship row; and the SAME-PLAYER integrity gap: every
 --            cross-player (ship, group) pairing or delete fails closed as *_not_found.
@@ -285,6 +289,36 @@ begin
   if n <> 1 then raise exception 'PROVISION FAIL: c2 is not stationary'; end if;
 
   raise notice 'provision ok: uA=3 uB=1 uC=2 ships via real RPCs; 5 normalized to home; c2 left stationary';
+end $$;
+
+-- ════════ BLOCK HULLSTATS (activation prep, 0170): hull base combat stats seeded + adapter-folded ════════
+-- Migration 0170 re-created calculate_expedition_stats (from its 0122 head) with the packet-§1.4
+-- parity delta — a_combat/a_survival += the HULL's base_stats_json attack/defense — and seeded
+-- starter_frigate {attack 15, defense 10}. Pins: every hull row carries numeric attack+defense
+-- (starter_frigate exactly 15/10), and the fold is LIVE through the ONE adapter: a factory-bare
+-- ship's combat_power/survival EQUAL its hull's seeded stats (nothing else can contribute — a1 has
+-- no loadout, no fittings, no captains at this point). Every later stat assert in this proof
+-- (captain +8/+4 deltas, D0 independent sums, D2 snapshot pins) recomputes through the SAME
+-- adapter, so those blocks stay value-independent of the seed by construction.
+do $$
+declare v_hull jsonb; s jsonb; n int;
+  uA uuid := (select v from tcmd where k='uA'); a1 uuid := (select v from tcmd where k='a1');
+begin
+  -- every hull row carries the seeded numeric combat stats (today: exactly starter_frigate).
+  select count(*) into n from public.main_ship_hull_types
+    where (base_stats_json->>'attack')::numeric is null or (base_stats_json->>'defense')::numeric is null;
+  if n <> 0 then raise exception 'HULLSTATS FAIL: % hull rows missing base attack/defense (want 0 — the 0170 seed)', n; end if;
+  select base_stats_json into v_hull from public.main_ship_hull_types where hull_type_id = 'starter_frigate';
+  if (v_hull->>'attack')::numeric is distinct from 15 or (v_hull->>'defense')::numeric is distinct from 10 then
+    raise exception 'HULLSTATS FAIL: starter_frigate base stats % (want attack 15 / defense 10 — the 0170 seed)', v_hull; end if;
+
+  -- the adapter folds the hull stats: a bare ship's combat_power/survival == the hull seed exactly.
+  s := public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none');
+  if (s->>'combat_power')::numeric is distinct from (v_hull->>'attack')::numeric
+     or (s->>'survival')::numeric is distinct from (v_hull->>'defense')::numeric then
+    raise exception 'HULLSTATS FAIL: bare-ship adapter stats (combat_power %, survival %) diverge from the hull seed %', s->>'combat_power', s->>'survival', v_hull; end if;
+
+  raise notice 'TEAMCMD_PASS_HULLSTATS ok: every hull row seeded (starter_frigate 15/10) and the adapter folds hull base stats (bare ship == hull seed exactly)';
 end $$;
 
 -- ════════ BLOCK WRITE: upsert/rename, validation, assign/unassign, and the same-player gap ════════
