@@ -177,29 +177,40 @@ export function ShipStatusCard({
 
   return (
     <Card tone="accent" data-testid="ship-status-card">
-      {/* 1 · IDENTITY — the ship's own name (renameable), the hull CLASS as the subtitle. */}
+      {/* 1 · IDENTITY — SHIP-DOSSIER: the hull CLASS leads, LOUD (owner: "And what type of ship
+          is it?" — that question must never need asking again). The class designator sits ABOVE
+          the personal name as an accent ops-register line ('SPARROW-CLASS FRIGATE'), inside the
+          heading (class + name ARE the ship's one identity); the ship's own renameable name stays
+          the big line. Was: the class as a faint CardHeader subtitle below the name. */}
       <CardHeader
         title={
-          <span className="inline-flex items-baseline gap-2">
-            <span data-testid="mainship-name">{ship.name}</span>
-            {!renaming && (
-              <button
-                type="button"
-                data-testid="mainship-rename-open"
-                aria-label="Rename ship"
-                className="text-xs font-normal text-ink-faint underline-offset-2 hover:text-ink hover:underline"
-                onClick={() => {
-                  setNameDraft(ship.name)
-                  setRenameError(null)
-                  setRenaming(true)
-                }}
-              >
-                Rename
-              </button>
-            )}
+          <span className="block">
+            <span
+              data-testid="mainship-class"
+              className="block font-mono text-sm font-semibold uppercase tracking-widest text-accent"
+            >
+              {hull?.name ?? ship.hull_type_id}
+            </span>
+            <span className="inline-flex items-baseline gap-2">
+              <span data-testid="mainship-name">{ship.name}</span>
+              {!renaming && (
+                <button
+                  type="button"
+                  data-testid="mainship-rename-open"
+                  aria-label="Rename ship"
+                  className="text-xs font-normal text-ink-faint underline-offset-2 hover:text-ink hover:underline"
+                  onClick={() => {
+                    setNameDraft(ship.name)
+                    setRenameError(null)
+                    setRenaming(true)
+                  }}
+                >
+                  Rename
+                </button>
+              )}
+            </span>
           </span>
         }
-        subtitle={hull?.name ?? ship.hull_type_id}
         aside={<Badge tone={badge.tone}>{badge.text}</Badge>}
         className="mb-3"
       />

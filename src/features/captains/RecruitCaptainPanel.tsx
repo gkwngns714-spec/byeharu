@@ -35,8 +35,12 @@ import { ItemChip } from '../../components/items'
 export function RecruitCaptainPanel({
   // Re-reads roster + recipes whenever the main-ship lifecycle changes (the sibling-panel idiom).
   lifecycleKey,
+  onChanged,
 }: {
   lifecycleKey: string
+  // SHIP-DOSSIER: fires AFTER a successful recruit's own refetch (recruiting CONSUMES inventory
+  // items) so sibling read surfaces (InventoryPanel) can re-read — never an optimistic patch.
+  onChanged?: () => void
 }) {
   const [roster, setRoster] = useState<GetMyCaptainInstancesResult | null>(null)
   const [recipes, setRecipes] = useState<CaptainRecipe[]>([])
@@ -61,6 +65,13 @@ export function RecruitCaptainPanel({
     void refresh()
   }, [refresh, lifecycleKey])
 
+  // SHIP-DOSSIER: post-success refetch + sibling notification (guarded commands only — the mount
+  // refresh must NOT ping siblings).
+  async function refreshAndNotify() {
+    await refresh()
+    onChanged?.()
+  }
+
   // One intentional Recruit per captain type — the shared guarded-submit body over the per-type key; the
   // server dedups on (player, request_id) and is the AUTHORITATIVE progression gate (feature_disabled
   // while dark) + spend/mint authority. request_id is a fresh crypto.randomUUID() STRING (TEXT param).
@@ -73,7 +84,7 @@ export function RecruitCaptainPanel({
       exec: () => recruitCaptain(crypto.randomUUID(), rec.captain_type_id),
       successNote: () => `Recruited ${rec.name}.`,
       errorNote: (res) => recruitCaptainErrorMessage(res),
-      refresh,
+      refresh: refreshAndNotify,
     })
   }
 

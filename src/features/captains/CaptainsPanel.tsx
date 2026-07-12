@@ -22,9 +22,13 @@ export function CaptainsPanel({
   mainShipId,
   // Re-reads the roster whenever the main-ship lifecycle changes (the ModulesPanel/MiningPanel idiom).
   lifecycleKey,
+  onChanged,
 }: {
   mainShipId: string | null
   lifecycleKey: string
+  // SHIP-DOSSIER: fires AFTER a successful assign/unassign's own refetch so sibling read surfaces
+  // (ShipDossier's Captains section) can re-read — cross-panel refetch wire, never optimistic.
+  onChanged?: () => void
 }) {
   const [roster, setRoster] = useState<GetMyCaptainInstancesResult | null>(null)
   // Per-captain (instance-id-keyed) pending + note Records — the ModulesPanel per-row guarded idiom.
@@ -46,6 +50,13 @@ export function CaptainsPanel({
     void refresh()
   }, [refresh, lifecycleKey])
 
+  // SHIP-DOSSIER: post-success refetch + sibling notification (guarded commands only — the mount
+  // refresh must NOT ping siblings).
+  async function refreshAndNotify() {
+    await refresh()
+    onChanged?.()
+  }
+
   // One intentional Assign per row — the shared guarded-submit body over the per-captain key; the server
   // dedups on (player, request_id) and is the final authority on ownership/slots/settled-safe. request_id
   // is a fresh crypto.randomUUID() STRING (the TEXT wrapper param). Failure copy: server message, else map.
@@ -59,7 +70,7 @@ export function CaptainsPanel({
       exec: () => assignCaptainToShip(crypto.randomUUID(), c.instance_id, mainShipId),
       successNote: () => `Assigned ${c.name}.`,
       errorNote: (res) => captainCommandErrorMessage(res),
-      refresh,
+      refresh: refreshAndNotify,
     })
   }
 
@@ -74,7 +85,7 @@ export function CaptainsPanel({
       exec: () => unassignCaptainFromShip(crypto.randomUUID(), c.instance_id),
       successNote: () => `Unassigned ${c.name}.`,
       errorNote: (res) => captainCommandErrorMessage(res),
-      refresh,
+      refresh: refreshAndNotify,
     })
   }
 
