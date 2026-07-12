@@ -1,5 +1,6 @@
 import { hasStore, type DockedStore } from '../map/dockStore'
 import { Card, SectionLabel, StatRow } from '../../components/ui'
+import { ItemTile } from '../../components/items'
 
 // STATION-STORAGE — the docked-port HANGAR surface, in the Ship/Port design language: IDENTITY (this port's
 // own store) → DETAILS (its stored resources + units as plain StatRows). EVE model: assets are location-bound —
@@ -10,11 +11,8 @@ import { Card, SectionLabel, StatRow } from '../../components/ui'
 // Read-only for now: depositing/withdrawing needs ship cargo + hauling (a deferred follow-up). Today the hangar
 // simply shows what is stored at the port you are docked at.
 
-const RESOURCE_LABELS: Record<string, string> = {
-  metal: 'Metal',
-  crystal: 'Crystal',
-  energy: 'Energy',
-}
+// Resource labels/glyphs come from the ONE item-visual catalog (components/items) — metal/energy
+// resolve as resources, crystal as the item_types material; unknown codes degrade to title-case.
 const UNIT_LABELS: Record<string, string> = {
   scout: 'Scouts',
   corvette: 'Corvettes',
@@ -51,16 +49,20 @@ export function StationHangar({ store }: { store: DockedStore }) {
           {store.resources.length > 0 && (
             <>
               <SectionLabel className="mt-4">Resources</SectionLabel>
-              <dl data-testid="station-hangar-resources" className="mt-2 space-y-1.5 text-sm">
+              {/* ITEM-VIZ: stored resources as ItemTiles (glyph in a tinted square + name + mono
+                  qty) — the grid-density "tablet" replaces the plain label/value rows. Testids
+                  unchanged: station-hangar-resources + station-hangar-resource-<code>. */}
+              <div data-testid="station-hangar-resources" className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {store.resources.map((r) => (
-                  <StatRow
+                  <ItemTile
                     key={r.resourceCode}
                     data-testid={`station-hangar-resource-${r.resourceCode}`}
-                    label={RESOURCE_LABELS[r.resourceCode] ?? titleCase(r.resourceCode)}
-                    value={Math.round(r.amount).toLocaleString()}
+                    id={r.resourceCode}
+                    kind="resource"
+                    qty={Math.round(r.amount)}
                   />
                 ))}
-              </dl>
+              </div>
             </>
           )}
           {store.units.length > 0 && (

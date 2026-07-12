@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react'
 import type { CombatEvent } from './combatTypes'
 import { SectionLabel } from '../../components/ui'
+import { ItemChip } from '../../components/items'
 
 // COSMETIC ONLY. Animates the server-generated combat_events into a readable feed.
 // Decides nothing — all values come from the server.
@@ -10,7 +12,7 @@ const cap = (s: unknown) => {
 }
 const num = (v: unknown) => (typeof v === 'number' ? v : Number(v ?? 0))
 
-function describe(e: CombatEvent): { icon: string; text: string } {
+function describe(e: CombatEvent): { icon: string; text: ReactNode } {
   const p = e.payload_json ?? {}
   switch (e.event_type) {
     case 'wave_spawned':
@@ -24,7 +26,16 @@ function describe(e: CombatEvent): { icon: string; text: string } {
     case 'unit_destroyed':
       return { icon: '☠️', text: `${num(p.count)} ${cap(p.group)} destroyed` }
     case 'explosion':
-      if (p.wave_cleared) return { icon: '💥', text: `Wave ${num(p.wave)} cleared. +${num(p.reward_metal)} metal pending` }
+      // ITEM-VIZ: the metal reward as an ItemChip (glyph + name + mono qty) — same payload data.
+      if (p.wave_cleared)
+        return {
+          icon: '💥',
+          text: (
+            <>
+              Wave {num(p.wave)} cleared. +<ItemChip id="metal" kind="resource" qty={num(p.reward_metal)} /> pending
+            </>
+          ),
+        }
       if (p.reason === 'fleet_lost') return { icon: '💀', text: 'Fleet destroyed' }
       return { icon: '💥', text: 'Explosion' }
     case 'retreat_started':

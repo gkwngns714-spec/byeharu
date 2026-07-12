@@ -7,6 +7,7 @@ import {
   type GetMyCaptainInstancesResult,
 } from './captainsTypes'
 import { Button, Card, CardHeader } from '../../components/ui'
+import { ItemChip } from '../../components/items'
 
 // CAPTAIN-P16 (post-audit UI, panel 4 of 4) — the dark Captain Progression (recruit) surface: the
 // recruitable captain types with their ingredient costs + a per-type Recruit action. Recruit is
@@ -96,7 +97,6 @@ export function RecruitCaptainPanel({
           {recipes.map((rec) => {
             const isPending = pending[rec.captain_type_id] ?? false
             const note = rowNote[rec.captain_type_id]
-            const cost = rec.ingredients.map((i) => `${i.item_name} ×${i.qty}`).join(' · ')
             return (
               <li key={rec.captain_type_id} data-testid={`recruit-recipe-${rec.captain_type_id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
@@ -105,7 +105,17 @@ export function RecruitCaptainPanel({
                     {rec.specialization}
                   </span>
                 </div>
-                <p className="text-ink-faint">{cost || '—'}</p>
+                {/* ITEM-VIZ: recruit costs as ItemChips (glyph via item_id; the server's own
+                    item_name stays the display label) instead of the raw joined cost string. */}
+                {rec.ingredients.length > 0 ? (
+                  <span className="mt-0.5 flex flex-wrap gap-1">
+                    {rec.ingredients.map((i) => (
+                      <ItemChip key={i.item_id} id={i.item_id} kind="item" qty={i.qty} label={i.item_name} />
+                    ))}
+                  </span>
+                ) : (
+                  <p className="text-ink-faint">—</p>
+                )}
                 <div className="mt-1">
                   <Button
                     variant="primary"

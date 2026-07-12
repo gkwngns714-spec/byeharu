@@ -12,6 +12,7 @@ import {
 import { tradeReasonMessage } from './tradeReasonMessage'
 import type { SelectableShip } from './useMainShipSelection'
 import { Button, Skeleton } from '../../components/ui'
+import { ItemGlyph, itemLabel } from '../../components/items'
 
 // TRADE-UI-1 — trade surface for the SELECTED ship. Shows the ship's name, wallet balance, occupied cargo
 // volume vs capacity (m³, from the ship_cargo_lots lot-sum — the authoritative volume model), and the docked
@@ -148,7 +149,14 @@ export function MarketPanel({ selectedShip }: { selectedShip: SelectableShip | n
                     return (
                       <Fragment key={o.offer_id}>
                         <tr className="border-t border-edge/60">
-                          <td className="py-1 capitalize text-ink">{o.good_id.replace(/_/g, ' ')}</td>
+                          {/* ITEM-VIZ: glyph + the 0073 catalog display name ('Raw Ore', 'Luxury
+                              Goods') instead of the CSS-capitalized raw good_id. */}
+                          <td className="py-1 text-ink">
+                            <span className="flex items-center gap-1.5">
+                              <ItemGlyph id={o.good_id} kind="good" size={14} className="shrink-0 text-success" />
+                              <span className="truncate">{itemLabel(o.good_id, 'good')}</span>
+                            </span>
+                          </td>
                           {/* Column name != field name: the "Buy" column shows the offer's sell_price (what the
                               buyer PAYS — what market_buy charges), and "Sell" shows buy_price (what the seller
                               RECEIVES — what market_sell pays). Do NOT "correct" these back to matching names. */}

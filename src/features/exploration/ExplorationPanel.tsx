@@ -7,6 +7,7 @@ import {
   type GetMyExplorationDiscoveriesResult,
 } from './explorationTypes'
 import { Button, OverlayPanel } from '../../components/ui'
+import { ItemChip } from '../../components/items'
 
 // EXPLORATION-P11 — the dark exploration surface: one Scan action + the player's discoveries list.
 // SERVER-DRIVEN visibility (no client flag constant): the panel reads get_my_exploration_discoveries
@@ -112,6 +113,18 @@ export function ExplorationPanel({
                   {d.secured_at ? 'Secured' : 'Pending'}
                 </span>
               </div>
+              {/* ITEM-VIZ: the discovery's reward bundle (already in the 0101 read, previously not
+                  shown) as ItemChips — glyph + humanized name + mono qty; metal rides alongside. */}
+              {((d.bundle.items ?? []).length > 0 || (d.bundle.metal ?? 0) > 0) && (
+                <span className="mt-0.5 flex flex-wrap gap-1">
+                  {(d.bundle.metal ?? 0) > 0 && (
+                    <ItemChip id="metal" kind="resource" qty={d.bundle.metal} />
+                  )}
+                  {(d.bundle.items ?? []).map((it) => (
+                    <ItemChip key={it.item_id} id={it.item_id} kind="item" qty={it.quantity} />
+                  ))}
+                </span>
+              )}
               <p className="font-mono text-ink-faint">
                 {Math.round(d.space_x)}, {Math.round(d.space_y)} · {new Date(d.discovered_at).toLocaleString()}
               </p>

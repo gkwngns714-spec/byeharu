@@ -7,6 +7,7 @@ import {
   type GetMyMiningExtractionsResult,
 } from './miningTypes'
 import { Button, OverlayPanel } from '../../components/ui'
+import { ItemChip } from '../../components/items'
 
 // MINING-P12 — the dark mining surface: one Extract action + the player's extraction history.
 // SERVER-DRIVEN visibility (no client flag constant): the panel reads get_my_mining_extractions
@@ -119,9 +120,21 @@ export function MiningPanel({
                   {e.secured_at ? 'Secured' : 'Pending'}
                 </span>
               </div>
-              <p className="text-ink-muted">
-                {(e.bundle.items ?? []).map((it) => `${it.item_id} ×${it.quantity}`).join(' · ') || '—'}
-              </p>
+              {/* ITEM-VIZ: the extraction bundle as ItemChips (glyph + humanized name + mono qty)
+                  instead of raw `item_id ×qty` strings — same server data, richer presentation.
+                  Any metal in the bundle renders alongside the items; an empty bundle stays '—'. */}
+              {(e.bundle.items ?? []).length > 0 || (e.bundle.metal ?? 0) > 0 ? (
+                <span className="mt-0.5 flex flex-wrap gap-1">
+                  {(e.bundle.metal ?? 0) > 0 && (
+                    <ItemChip id="metal" kind="resource" qty={e.bundle.metal} />
+                  )}
+                  {(e.bundle.items ?? []).map((it) => (
+                    <ItemChip key={it.item_id} id={it.item_id} kind="item" qty={it.quantity} />
+                  ))}
+                </span>
+              ) : (
+                <p className="text-ink-muted">—</p>
+              )}
               <p className="font-mono text-ink-faint">
                 {Math.round(e.space_x)}, {Math.round(e.space_y)} · {new Date(e.extracted_at).toLocaleString()}
               </p>
