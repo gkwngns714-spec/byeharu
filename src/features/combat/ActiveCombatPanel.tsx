@@ -6,6 +6,7 @@ import { requestRetreat } from './combatApi'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
 import { Card, Button, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
+import { ItemChip } from '../../components/items'
 
 // Display-only combat panel. All values are server-authoritative; the only action
 // is the Retreat request. Shows total + per-unit-type integrity, the pirate wave,
@@ -182,8 +183,12 @@ export function ActiveCombatPanel({
           Pending rewards {retreating && <span className="text-warning/80 normal-case">(locked)</span>}
         </SectionLabel>
         <p className="text-sm">
+          {/* ITEM-VIZ: pending reward codes as ItemChips (glyph + humanized name + mono qty)
+              instead of the raw `code: amount` strings; unknown codes degrade gracefully. */}
           {rewards.length === 0 ? <span className="text-ink-faint">none yet</span>
-            : rewards.map(([code, amt]) => <span key={code} className="mr-3 capitalize text-ink-muted">{code}: <span className="font-mono tabular-nums">{amt}</span></span>)}
+            : rewards.map(([code, amt]) => (
+                <ItemChip key={code} id={code} kind="resource" qty={amt} className="mr-2" />
+              ))}
         </p>
         <p className="mt-1 text-[11px] text-ink-faint">
           {retreating

@@ -7,6 +7,7 @@ import { fetchTicksForEncounter } from './combatApi'
 import { RoundLog } from './RoundLog'
 import type { CombatReport, CombatTick } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
+import { ItemChip } from '../../components/items'
 
 // UI-REBUILD (2b) — the ONE combat-reports surface, mounted in the Command destination. Merges the
 // old /reports page (CombatReportPage) and the inline dashboard list (CombatReportsView): the M6
@@ -54,9 +55,21 @@ export function ReportsSection({
     const e = Object.entries(obj ?? {}).filter(([, v]) => v > 0)
     return e.length ? e.map(([k, v]) => `${v} ${typeName(k)}`).join(', ') : 'none'
   }
-  const metal = (obj: Record<string, number>) => {
-    const m = obj?.metal ?? 0
-    return m > 0 ? `${m} metal` : 'none'
+  // ITEM-VIZ: every positive reward code as an ItemChip (glyph + humanized name + mono qty).
+  // DELIBERATE SUPERSET of the old `metal()` helper, not parity: the old string showed ONLY the
+  // metal key ('N metal' / 'none'); this renders ALL positive total_rewards_json codes, and the
+  // 'none' gate accordingly changed from metal<=0 to no-positive-code. Identical output today
+  // (metal is the only reward code the server writes), but future codes surface instead of hiding.
+  const rewardChips = (obj: Record<string, number>) => {
+    const e = Object.entries(obj ?? {}).filter(([, v]) => v > 0)
+    if (e.length === 0) return 'none'
+    return (
+      <span className="inline-flex flex-wrap justify-end gap-1">
+        {e.map(([code, amt]) => (
+          <ItemChip key={code} id={code} kind="resource" qty={amt} />
+        ))}
+      </span>
+    )
   }
   const locName = (id: string | null) =>
     (id && locations.find((l) => l.id === id)?.name) || 'unknown'
@@ -96,7 +109,7 @@ export function ReportsSection({
                       <>
                         <StatRow label="Ships recovered" value={ships(r.survivors_json)} />
                         <StatRow label="Ships lost" value={ships(r.total_losses_json)} />
-                        <StatRow label="Rewards" value={metal(r.total_rewards_json)} hint="(secured on safe return)" />
+                        <StatRow label="Rewards" value={rewardChips(r.total_rewards_json)} hint="(secured on safe return)" />
                       </>
                     ) : (
                       <StatRow label="Ships lost" value={ships(r.total_losses_json)} />

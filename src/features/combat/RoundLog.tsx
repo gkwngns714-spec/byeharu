@@ -3,6 +3,7 @@ import type { UnitType } from '../../lib/catalog'
 import { formatShortTime } from '../../lib/time'
 import type { CombatTick } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
+import { ItemChip } from '../../components/items'
 
 // M6: player-facing round-by-round log. Built ONLY from real combat_ticks fields
 // (player_damage, enemy_damage, wave_number, player_losses_json, reward_delta_json,
@@ -45,7 +46,13 @@ export function RoundLog({
               <span className="text-success">Wave {t.wave_number} cleared.</span> You dealt{' '}
               {/* UI R4: damage numerals in mono (ops telemetry) — rendered text unchanged. */}
               <span className="font-mono tabular-nums">{Math.round(t.player_damage)}</span> damage
-              {metal > 0 && <span className="text-warning/90"> · +{metal} metal pending</span>}
+              {/* ITEM-VIZ: the metal reward as an ItemChip (glyph + name + mono qty) — the same
+                  server reward_delta_json value, presented as the one item treatment. */}
+              {metal > 0 && (
+                <span className="text-warning/90">
+                  {' '}· +<ItemChip id="metal" kind="resource" qty={metal} /> pending
+                </span>
+              )}
               {losses && <> · lost {losses}</>}
             </span>
           )

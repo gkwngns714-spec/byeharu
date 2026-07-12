@@ -20,6 +20,7 @@ import {
   type ModuleInstance,
 } from './modulesTypes'
 import { Button, Card, CardHeader } from '../../components/ui'
+import { ItemChip, ItemGlyph, itemLabel } from '../../components/items'
 
 // MODULES-P13 — the dark module-crafting surface: the craftable catalog (recipes + the player's
 // balances) and the crafted-instances list. SERVER-DRIVEN visibility (no client flag constant):
@@ -114,8 +115,10 @@ export function ModulesPanel({
       successNote: () => `Crafted ${entry.name}.`,
       errorNote: (res) => {
         const base = res.message ?? craftModuleErrorMessage(res.code)
+        // ITEM-VIZ: humanize the shortfall's item id ('pirate_alloy' → 'Pirate Alloy') — the
+        // same real server have/need data, reader-friendly name.
         return res.code === 'insufficient_items' && res.item_id
-          ? `${base} (${res.item_id}: ${res.have ?? 0}/${res.need ?? 0})`
+          ? `${base} (${itemLabel(res.item_id, 'item')}: ${res.have ?? 0}/${res.need ?? 0})`
           : base
       },
       refresh,
@@ -186,24 +189,34 @@ export function ModulesPanel({
             return (
               <li key={entry.id} data-testid={`modules-catalog-${entry.id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-ink">{entry.name}</span>
+                  {/* ITEM-VIZ: the module's own glyph beside its catalog name. */}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <ItemGlyph id={entry.id} kind="module" size={14} className="shrink-0 text-accent" />
+                    <span className="truncate text-ink">{entry.name}</span>
+                  </span>
                   <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
                     {entry.slot_type}
                   </span>
                 </div>
-                <p className="text-ink-muted">
-                  {entry.ingredients.map((i, idx) => {
+                {/* ITEM-VIZ: recipe ingredients as ItemChips (glyph + humanized name + mono qty +
+                    the same real have-count hint); a lacking ingredient wears the danger tone —
+                    the exact information the raw `item_id ×qty (have n)` string carried. */}
+                <span className="mt-0.5 flex flex-wrap gap-1">
+                  {entry.ingredients.map((i) => {
                     const have = balances?.[i.item_id]
                     const lacking = balances != null && (have ?? 0) < i.qty
                     return (
-                      <span key={i.item_id} className={lacking ? 'text-danger' : undefined}>
-                        {idx > 0 && ' · '}
-                        {i.item_id} ×{i.qty}
-                        {balances != null && ` (have ${have ?? 0})`}
-                      </span>
+                      <ItemChip
+                        key={i.item_id}
+                        id={i.item_id}
+                        kind="item"
+                        qty={i.qty}
+                        alert={lacking}
+                        hint={balances != null ? `have ${have ?? 0}` : undefined}
+                      />
                     )
                   })}
-                </p>
+                </span>
                 <Button
                   variant="primary"
                   size="sm"
@@ -243,7 +256,11 @@ export function ModulesPanel({
             return (
               <li key={m.instance_id} data-testid={`modules-instance-${m.instance_id}`} className="text-[10px]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-ink">{m.name}</span>
+                  {/* ITEM-VIZ: the instance's module-type glyph beside its name. */}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <ItemGlyph id={m.module_type_id} kind="module" size={14} className="shrink-0 text-accent" />
+                    <span className="truncate text-ink">{m.name}</span>
+                  </span>
                   <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">{m.slot_type}</span>
                 </div>
                 <p className="font-mono text-ink-faint">{new Date(m.created_at).toLocaleString()}</p>

@@ -10,6 +10,7 @@ import {
 } from './haulBoard'
 import { haulReasonMessage } from './haulReasonMessage'
 import { Button, Card, CardHeader, SectionLabel } from '../../components/ui'
+import { ItemChip } from '../../components/items'
 
 // HAUL-3 — the dark port bulletin board: the docked port's fresh contract offers (good, qty,
 // reward, pickup deadline; one intentional Accept per row) and the caller's accepted contracts
@@ -24,9 +25,6 @@ import { Button, Card, CardHeader, SectionLabel } from '../../components/ui'
 // mirrors (haulBoard.ts) are display-only prechecks; their hints and every server reject flow
 // through the ONE haulReasonMessage mapper. Cargo shown against a contract is a display-only
 // lot-sum over the owner-read ship_cargo_lots — the server's under-lock sum is the truth.
-
-const titleGood = (goodId: string): string =>
-  goodId.charAt(0).toUpperCase() + goodId.slice(1).replace(/_/g, ' ')
 
 export function HaulBoardPanel({
   // The ship's server-reported docked location (PortScreen's dock projection) + the commanded ship.
@@ -157,10 +155,9 @@ export function HaulBoardPanel({
                 className="rounded border border-edge/60 bg-surface-2/40 px-2 py-1.5 text-[10px]"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-ink">
-                    {titleGood(o.good_id)}{' '}
-                    <span className="font-mono tabular-nums text-ink-muted">×{o.quantity}</span>
-                  </span>
+                  {/* ITEM-VIZ: the contract's good as an ItemChip (glyph + 0073 catalog name +
+                      mono ×qty) — replaces the local titlecase helper. */}
+                  <ItemChip id={o.good_id} kind="good" qty={o.quantity} className="min-w-0" />
                   <span className="shrink-0 font-mono tabular-nums text-warning">
                     {o.reward_credits.toLocaleString()} cr
                   </span>
@@ -227,10 +224,10 @@ export function HaulBoardPanel({
                 className="rounded border border-edge/60 bg-surface-2/40 px-2 py-1.5 text-[10px]"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-ink">
-                    {titleGood(m.good_id)}{' '}
-                    <span className="font-mono tabular-nums text-ink-muted">×{m.quantity}</span>
-                    <span className="text-ink-faint"> → {m.dest_name ?? 'Unknown port'}</span>
+                  {/* ITEM-VIZ: same chip treatment on the accepted-contract row. */}
+                  <span className="flex min-w-0 items-center gap-1 text-ink">
+                    <ItemChip id={m.good_id} kind="good" qty={m.quantity} className="min-w-0" />
+                    <span className="truncate text-ink-faint">→ {m.dest_name ?? 'Unknown port'}</span>
                   </span>
                   <span className="shrink-0 font-mono tabular-nums text-warning">
                     {m.reward_credits.toLocaleString()} cr
