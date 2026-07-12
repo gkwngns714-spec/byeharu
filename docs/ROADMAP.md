@@ -93,6 +93,7 @@ become stronger."*
 | 18 | Location investment (seasonal score vs persistent state) | **implemented DARK, not activated** (`location_investment_enabled=false`). no infinite exploit |
 | 19 | World balance / living economy (pirate pressure, price drift, field depletion) | **implemented DARK, not activated** (`world_balance_enabled=false`; price drift `0136–0138`). world-state owns world-state |
 | 20 | Polish / expansion (map UI, portraits, icons, events; guilds/PvP much later, if ever) | **implemented DARK, not activated** (world events + UI asset catalog `0139–0142`; `phase20_polish_enabled=false`). NOTE: the **Mission Control UI renewal (R0–R4)** shipped LIVE 2026-07-12 as a frontend-only renewal — separate from this dark phase-20 content |
+| 21 | Salvage market (combat loot → port credits; `FULL_CAPACITY_PLAN.md` §C P3 — the phase-21 economy wave) | **SALVAGE-0/1 implemented DARK, not activated** (mig `0174`: `port_item_demand` + `sell_item_at_port` + `salvage_receipts`; `salvage_market_enabled=false`; proof in `trade-v1-proof.yml`); SALVAGE-2 UI + ACT-SALVAGE flip are later queue slices |
 
 **Each phase has its own acceptance criteria + verification; backend changes go through a
 migration with a `verify:*` script, and the engine's M2/M3/M4/M4.5 tests must stay green.**

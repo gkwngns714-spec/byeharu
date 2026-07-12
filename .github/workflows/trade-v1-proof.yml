@@ -1,4 +1,4 @@
-name: TRADE-V1 — trade-fleet-0c + trade-market-1 + economy-bootstrap disposable proofs (no production)
+name: TRADE-V1 — trade-fleet-0c + trade-market-1 + economy-bootstrap + salvage disposable proofs (no production)
 
 # Runs ALL Trading-V1 disposable proofs together on a single throwaway local Supabase — NEVER production:
 #   1. DB-free selftests: every proof harness is well-formed, self-rolling-back (open a txn, toggle the dark
@@ -8,7 +8,8 @@ name: TRADE-V1 — trade-fleet-0c + trade-market-1 + economy-bootstrap disposabl
 #      bootstrap, and the multiport economy seed 0173) running all real-chain matrices — trade-fleet-0c
 #      (multi-ship + per-ship-command core, 0073..0084), then trade-market-1 (the atomic
 #      get_market_offers/buy/sell surface + priced add-ship, 0085..0091), then economy-bootstrap (seed capital
-#      + the no-softlock relief floor, 0093..0095), then econ-seed (the 3-port × 6-good price table, 0173).
+#      + the no-softlock relief floor, 0093..0095), then econ-seed (the 3-port × 6-good price table, 0173),
+#      then salvage-market (SALVAGE-0/1: the 3-port × 5-droppable item demand seed + sell_item_at_port, 0174).
 # The proofs flip NO committed flag: they enable the dark trade/relief capabilities only inside the rolled-back txn.
 # No `environment:` on any job — none can read production secrets. Disposable local Supabase only.
 
@@ -21,6 +22,7 @@ on:
       - 'trade-market-**'
       - 'trade-fleet-**'
       - 'slice-econ-**'
+      - 'slice-salvage**'
 
 permissions:
   contents: read
@@ -38,6 +40,7 @@ jobs:
       - run: bash scripts/trade-market-1-proof.sh selftest
       - run: bash scripts/trade-economy-bootstrap-proof.sh selftest
       - run: bash scripts/trade-econ-seed-proof.sh selftest
+      - run: bash scripts/salvage-market-proof.sh selftest
 
   disposable-matrix:
     runs-on: ubuntu-latest
@@ -69,6 +72,10 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           bash scripts/trade-econ-seed-proof.sh local
+      - name: SALVAGE-MARKET real-chain matrix (SALVAGE-0/1 item demand + sell_item_at_port)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/salvage-market-proof.sh local
       - name: Stop disposable stack (always)
         if: always()
         run: supabase stop --no-backup || true

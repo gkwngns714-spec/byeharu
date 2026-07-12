@@ -5,6 +5,56 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-12 — SALVAGE-0/1 (queue #6): the combat-loot → port-economy feed (dark)
+
+**Request.** Queue slice #6 of the full-capacity plan (plan §C P3): ports gain item buy-lists and the
+first item→credits path (closes gap G3). One PR = SALVAGE-0 (schema + seed + flag) + SALVAGE-1 (the sell
+RPC) + proof; the UI (SALVAGE-2) and the flip (ACT-SALVAGE) are later slices. Everything DARK behind the
+new `salvage_market_enabled` flag, seeded `false`.
+
+**Work done**
+- **Migration `20260618000174_salvage_market.sql`** —
+  `port_item_demand (location_id, item_id, unit_price > 0, active, PK (location_id, item_id))`:
+  Reference/Config posture, MIGRATION-SEEDED ONLY, no runtime writer (the `market_offers` 0085/0173
+  posture); buy-side only, so no pump loop can exist by construction. Seeded 3 ports × the FIVE items
+  that actually drop from combat (grep-verified against `pirate_loot_for_wave` — head 0041, 0171 the
+  only re-create): scrap 5/8/6, pirate_alloy 10/16/12, repair_parts 20/12/16, engine_parts 16/14/24,
+  weapon_parts 15/13/22 (Haven/Slagworks/Driftmarch — Slagworks the industrial recycler tops
+  scrap+alloy, Haven the city tops repair_parts, Driftmarch the frontier tops engine+weapon parts; all
+  **[D] owner-tunable**, math in the migration header: a typical 3-wave Snare run = 3 scrap + 1 alloy →
+  40 credits at the best port, mid of the 30–80 target; module ingredient baskets sell for ≤168 —
+  selling is the floor, crafting the ceiling). Progression items (`captain_memory_shard`,
+  `blueprint_fragment`, `artifact_core`) are NEVER sellable — excluded BY OMISSION, pinned by the
+  migration self-assert (by id AND by 0039 category) and the proof. `salvage_receipts` = the 0086
+  `trade_receipts` idempotency shape point-for-point (unique (main_ship_id, request_id),
+  replay-verbatim) as a NEW table — `trade_receipts.good_id` FKs `trade_goods`, structurally
+  trade-goods-specific, so item sales cannot reuse it without weakening a live FK.
+  **`sell_item_at_port(ship, item, qty numeric, req)`** — the 0090/0138 sell shape on items: SECURITY
+  DEFINER + search_path, atomic under the per-ship lock; reject order `not_authenticated` →
+  `salvage_market_disabled` (gate FIRST) → `invalid_request`/`invalid_item`/`invalid_quantity`
+  (items are INTEGER quantities — fractional rejects, never rounds) → `ship_not_found` → `not_docked`
+  (the ONE resolver `mainship_resolve_docked_location`) → `no_demand` → `idempotent_replay` →
+  `insufficient_items` (pre-check `inventory_get_balance`; enforcement = `inventory_spend`'s own FOR
+  UPDATE — the 0109 crafting posture) → ok: `inventory_spend` + `wallet_credit(qty × unit_price)` +
+  receipt, all in-function. ACL: revoke public/anon, grant authenticated. Pipeline law unchanged:
+  SALVAGE consumes inventory exactly like crafting; combat never grants credits directly.
+- **Proof `scripts/salvage-market-proof.{sql,sh}`** (trade-family — the trade-econ-seed lib-based
+  pattern; one BEGIN..ROLLBACK, selftest + local): dark reject with ZERO writes; flag on in-txn only →
+  full happy path (players via `commission_first_main_ship`, items via the REAL pipeline leaf
+  `public.reward_grant` — never a direct `player_inventory` insert; sell 3 repair_parts at Haven @20 →
+  wallet +60 EXACT, inventory 4→1 EXACT, one receipt with exact fields); idempotent replay (no double
+  credit/spend/receipt); guards (invalid_quantity 0/−3/2.5, in-transit `not_docked`, crystal
+  `no_demand`, over-held `insufficient_items` — all zero-write); the exact 15-row price table pinned by
+  full-outer-join; the never-sellable pin (progression absence by id + category, AND a HELD shard still
+  → `no_demand`). Wired as the 5th selftest + matrix step of `.github/workflows/trade-v1-proof.yml`;
+  `slice-salvage**` added to its branch triggers.
+- **Docs**: SYSTEM_BOUNDARIES rows for `port_item_demand` (Reference/Config) + `salvage_receipts`
+  (Salvage Market, sole writer `sell_item_at_port`) + the Salvage Market system contract (§E law, same
+  PR); FULL_CAPACITY_PLAN queue #6 → shipped (dark); ROADMAP phase row 21 (P3 economy wave).
+- **No client code** in this slice; tsc + vite untouched.
+
+---
+
 ## 2026-07-12 — ACT-TRADE (queue #5): the trade-market activation script + the proof chain finally green
 
 **Request.** Queue slice #5 of the full-capacity plan (plan §B rung 3): the human-run flip tool for the

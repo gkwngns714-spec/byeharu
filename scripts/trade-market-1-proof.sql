@@ -213,6 +213,12 @@ begin
   r := pg_temp.call_as(uT, format('public.market_buy(%L::uuid, %L, %s, %L::uuid)', v_ship, 'ore', 2, gen_random_uuid()));
   if (r->>'ok')::boolean is not true or (r->>'unit_price')::numeric <> 30 then raise exception 'P6 FAIL 2nd buy: %', r; end if;
   -- now: lot1 (3 @ 20, older) + lot2 (2 @ 30, newer) = 5 ore.
+  -- DETERMINISM FIXTURE (the PROP2 class): both lots share the transaction-frozen now() as
+  -- acquired_at, so the 0090 FIFO tiebreak (`order by acquired_at asc, lot_id asc`) falls to the
+  -- RANDOM uuid — a per-run coin flip on which lot is "older". Real play can't tie (each buy is its
+  -- own txn). Nudge lot1 explicitly older so FIFO is well-defined for the asserts below.
+  update public.ship_cargo_lots set acquired_at = acquired_at - interval '1 second'
+    where main_ship_id = v_ship and good_id = 'ore' and unit_cost_basis = 20;
 
   select balance into v_bal0 from public.player_wallet where player_id=uT;
   -- SELL 4 ore at buy_price=16 → FIFO consumes lot1(3@20) + 1 of lot2(1@30) → cost_basis = 3*20 + 1*30 = 90.
