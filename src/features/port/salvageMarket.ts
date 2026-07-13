@@ -1,4 +1,5 @@
 import { itemLabel } from '../../components/items'
+import { strictConfigFlag } from '../../lib/gameConfigFold'
 
 // SALVAGE-2 — PURE, framework-free types + client mirrors for the port salvage market (dark UI).
 //
@@ -71,8 +72,9 @@ export function foldStartingCredits(value: unknown): number | null {
 export function salvageConfigFromRows(rows: Array<{ key: string; value: unknown }>): SalvageConfig {
   const byKey = new Map(rows.map((r) => [r.key, r.value]))
   return {
-    // strict boolean: anything but jsonb true (including 'true' the string) reads as DARK.
-    enabled: byKey.get('salvage_market_enabled') === true,
+    // strict boolean via the ONE shared fold (lib/gameConfigFold): only jsonb true lights;
+    // 'true' the string / absent / [] read DARK. (starting_credits keeps its own null-honest fold.)
+    enabled: strictConfigFlag(rows, 'salvage_market_enabled'),
     startingCredits: foldStartingCredits(byKey.get('starting_credits')),
   }
 }
