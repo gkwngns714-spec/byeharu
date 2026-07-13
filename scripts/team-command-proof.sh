@@ -90,6 +90,17 @@
 # medbay(mismatch)+bridge(NULL) board byte-identical lit or dark; the unstationed arm pinned
 # structurally — LEFT station join + the literal-1 no-match ELSE — because no writer can produce a
 # station-NULL row post-0189 and the sole-writer law forbids fixturing one).
+# plus the SHIELD-2 regen-home block (0197: the out-of-combat idle regen in the re-created
+# process_mainship_expeditions + the commission base_shield copy — the committed idle knob '0' at
+# entry makes every earlier reconciler pass the knob-0 byte-parity witness; knob-0 zero-writes
+# pinned by an updated_at sentinel (the guarded statement never fires); the lit climb exact with
+# ceil pinned (knob 0.03), least-capped, full pools never rewritten; the active/retreating
+# encounter-membership exclusion + the destroyed exclusion both held on REAL fixtures; and both
+# real creators birth ships BORN FULL under a sanctioned surgically-raised-then-restored
+# base_shield=25 hull seed. SHIELD-2 gives shield_regen_idle_pct its consumer, so the IDLE knob
+# moves from the never-touch posture to the raised-and-restored-in-txn set_game_config idiom —
+# exactly what SHIELD-1 did for the combat knob — and the hull-table negative grep is tightened
+# (not dropped): only the `set base_shield` fixture form is permitted, with the restore required).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -106,10 +117,11 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-# (SOUL1 is the 21st marker, SHIELD1 the 22nd, DECKS3 the 23rd — the both-blocks-kept reconcile
-# routine (SHIELD-1 landed first, so DECKS3 rebased to the 23rd slot); the in-flight SHIPYARD-2
-# slice has its own proof file and does not touch this pair.)
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3"
+# (SOUL1 is the 21st marker, SHIELD1 the 22nd, DECKS3 the 23rd, SHIELD2 the 24th — the
+# both-blocks-kept reconcile routine (SHIELD-1 landed first, then DECKS-3 rebased to the 23rd
+# slot, then SHIELD-2 appended as the 24th); SHIPYARD-2 (#138, merged) has its own proof file and
+# never touched this pair.)
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -194,9 +206,21 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT the 0171 hull bump (base_captain_slots=6 as migration state)"
   grep -qF "(want 0 — the 0171 backfill)" "$SQL" \
     || fail "harness does not ASSERT the 0171 instance backfill (no ship below its hull)"
+  # TIGHTENED (not dropped) by SHIELD-2: insert/delete/copy on the hull table still always fail;
+  # the ONE sanctioned update form is the SHIELD2 block's `set base_shield` fixture surgery
+  # (base_shield has no runtime writer — ACT-SHIELD is the future data path), which must ALSO
+  # restore the seed to 0 (both forms required below). Every other hull update still fails.
   grep -viE '^[[:space:]]*--' "$SQL" \
-    | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?main_ship_hull_types\b' \
-    && fail "harness mutates main_ship_hull_types (the bump is migration 0171, never a fixture)" || true
+    | grep -qiE '(insert into|delete from|copy)[[:space:]]+(public\.)?main_ship_hull_types\b' \
+    && fail "harness inserts/deletes/copies main_ship_hull_types (migration-seeded only)" || true
+  grep -viE '^[[:space:]]*--' "$SQL" \
+    | grep -iE 'update[[:space:]]+(public\.)?main_ship_hull_types\b' \
+    | grep -qviE 'set base_shield' \
+    && fail "harness mutates a main_ship_hull_types column other than the sanctioned SHIELD-2 base_shield fixture (the 0171 bump law: hull stats are migrations, never fixtures)" || true
+  grep -qF "update public.main_ship_hull_types set base_shield = 25 where hull_type_id = 'starter_frigate'" "$SQL" \
+    || fail "harness does not arm the SHIELD-2 commission-copy fixture (base_shield = 25 surgery)"
+  grep -qF "update public.main_ship_hull_types set base_shield = 0 where hull_type_id = 'starter_frigate'" "$SQL" \
+    || fail "harness does not RESTORE base_shield to 0 after the commission-copy arm (the required restore)"
 
   # ── behavior specifics: all-or-nothing send rollback; the EXACT mixed + idempotent stop aggregates;
   #    the physical held-in-open-space shape; delete's SET-NULL member un-grouping. ───────────────────
@@ -496,12 +520,12 @@ if [ "$MODE" = "selftest" ]; then
       | grep -qE "update public\.game_config set .* where key='$knob'" \
       && fail "harness writes the shield knob '$knob' via a raw update (knobs ride set_game_config only)" || true
   done
-  # SHIELD-1 reconcile (0195): the COMBAT knob now HAS a consumer (the tick), so the SHIELD1 block
-  # raises it in-txn via the real set_game_config — required below with its restore. The IDLE knob
-  # keeps the FULL never-touch posture (its consumer is SHIELD-2's regen home; no exercise exists).
-  grep -viE '^[[:space:]]*--' "$SQL" \
-    | grep -q "set_game_config('shield_regen_idle_pct'" \
-    && fail "harness writes shield_regen_idle_pct via set_game_config (must never be touched — no consumer until SHIELD-2)" || true
+  # SHIELD-1 reconcile (0195): the COMBAT knob HAS a consumer (the tick), so the SHIELD1 block
+  # raises it in-txn via the real set_game_config — required below with its restore.
+  # SHIELD-2 reconcile (0197): the IDLE knob now HAS its consumer too (the reconciler's regen
+  # home), so it moves from the never-touch posture to the SAME raised-and-restored-in-txn idiom
+  # (required in the SHIELD2 pin section below; the committed-'0' honesty check after the local
+  # run still holds — the raise is in-txn only).
   grep -qF "public.mainship_sync_combat_shield(" "$SQL" \
     || fail "harness does not exercise the SHIELD-0 sync leaf"
   grep -qF "% of 3 shield columns carry integer/not-null/default-0" "$SQL" \
@@ -673,14 +697,50 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "must fall to the literal-1 ELSE" "$SQL" \
     || fail "harness does not PIN the literal-1 no-match ELSE (NULL affinity can never reach the knob arm)"
 
-  # ── all twenty-three block PASS markers present. ─────────────────────────────────────────────────────
+  # ── SHIELD2 (0197 / SHIELD-2) pins, in assert form (a gutted .sql that only mentions them in
+  #    prose cannot false-green): the committed-'0' entry pin (the byte-parity witness's honesty
+  #    condition); the knob-0 zero-writes sentinel pair (shield untouched AND updated_at
+  #    untouched — the statement never FIRES); the idle knob's raise-and-restore via the real
+  #    set_game_config (its consumer arrived — the SHIELD-1 combat-knob precedent) incl. the
+  #    ceil-pinning 0.03 arm; the exact climb / least cap / full-pool-never-rewritten trio; the
+  #    in-encounter exclusion on a REAL active encounter + the destroyed exclusion; and the
+  #    commission copy born FULL through BOTH real creators (the hull surgery + restore are
+  #    required by the tightened hull-table greps above). ────────────────────────────────────────
+  grep -qF "every reconciler pass above must have run dark" "$SQL" \
+    || fail "harness does not PIN the committed idle knob '0' at SHIELD2 entry (the byte-parity witness condition)"
+  grep -qF "shield moved to % under the committed knob ''0''" "$SQL" \
+    || fail "harness does not ASSERT the knob-0 pass leaves the damaged shield untouched"
+  grep -qF "a same-value UPDATE still writes rows; the v_idle > 0 guard must skip it entirely" "$SQL" \
+    || fail "harness does not ASSERT the updated_at sentinel (knob-0 must never FIRE the statement)"
+  grep -qF "set_game_config('shield_regen_idle_pct', '0.03'::jsonb)" "$SQL" \
+    || fail "harness does not raise the idle knob to the ceil-pinning 0.03 via the real set_game_config (in-txn)"
+  grep -qF "the climb must be CEIL, floor/trunc would land 4" "$SQL" \
+    || fail "harness does not PIN the ceil arithmetic (3 + ceil(40 × 0.03) = 5)"
+  grep -qF "(want 15 = 5 + ceil(40 × 0.25) exactly)" "$SQL" \
+    || fail "harness does not ASSERT the exact lit idle climb"
+  grep -qF "least(max_shield, 35 + 10) must bind, uncapped would be 45" "$SQL" \
+    || fail "harness does not ASSERT the least() cap at max_shield"
+  grep -qF "shield < max_shield must exclude it" "$SQL" \
+    || fail "harness does not ASSERT a FULL pool is never rewritten (the partial-index predicate)"
+  grep -qF "while an encounter is active/retreating the tick is the SOLE shield writer" "$SQL" \
+    || fail "harness does not ASSERT the in-encounter exclusion on a REAL active encounter"
+  grep -qF "dead ships do not regenerate; repair is the revival path" "$SQL" \
+    || fail "harness does not ASSERT the destroyed exclusion"
+  grep -qF "shield = max_shield = base_shield, BORN FULL through the build core" "$SQL" \
+    || fail "harness does not ASSERT the commission copy (born full via commission_first_main_ship → build)"
+  grep -qF "(want 25/25 — the two creators must stay consistent)" "$SQL" \
+    || fail "harness does not ASSERT the ensure creator's copy (creator consistency)"
+  grep -qF "set_game_config('shield_regen_idle_pct', '0'::jsonb)" "$SQL" \
+    || fail "harness does not restore the idle regen knob to the dark seed in-txn"
+
+  # ── all twenty-four block PASS markers present. ──────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped; shield combat knob raised-and-restored in-txn only, idle knob never touched)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2 specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config)"
   exit 0
 fi
 
@@ -728,13 +788,21 @@ committed_aff="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '
 [ "$committed_aff" = "0" ] || fail "committed station_affinity_bonus is '$committed_aff' — the proof leaked the knob (must stay 0)"
 
 # same honesty check for the 0191 SHIELD REGEN KNOBS: the SHIELD1 block raises the COMBAT knob to
-# '1' in-txn (SHIELD-1 wired its consumer) and restores it; the IDLE knob is never touched at all
-# (selftest negative grep — no consumer until SHIELD-2). The committed values must still be the
-# 0191 seeds '0' — a leak would silently regenerate live shields the moment pools go nonzero.
+# '1' in-txn (SHIELD-1 wired its consumer) and the SHIELD2 block raises the IDLE knob to
+# 0.03/0.25 in-txn (SHIELD-2 wired its consumer — the regen home); both are restored in-txn and
+# rolled back regardless. The committed values must still be the 0191 seeds '0' — a leak would
+# silently regenerate live shields the moment pools go nonzero.
 for knob in shield_regen_combat_pct shield_regen_idle_pct; do
   committed_sr="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = '$knob'), '0')")" \
     || fail "could not read the committed '$knob' value"
-  [ "$committed_sr" = "0" ] || fail "committed $knob is '$committed_sr' — must stay 0 (the proof never touches it)"
+  [ "$committed_sr" = "0" ] || fail "committed $knob is '$committed_sr' — the proof leaked the knob (must stay 0)"
 done
 
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled/ship_traits_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0; shield_regen_combat_pct/shield_regen_idle_pct still 0; station_affinity_bonus still 0)"
+# SHIELD-2 honesty check for the sanctioned base_shield fixture: the in-txn surgery (25, restored
+# 0, rolled back regardless) must never leak — a committed nonzero base_shield would silently arm
+# the commission copy in a dark game.
+committed_bs="$(psql "$DB_URL" -X -t -A -c "select coalesce((select base_shield::text from public.main_ship_hull_types where hull_type_id = 'starter_frigate'), '0')")" \
+  || fail "could not read the committed starter_frigate base_shield"
+[ "$committed_bs" = "0" ] || fail "committed starter_frigate base_shield is '$committed_bs' — the proof leaked the hull fixture (must stay 0 until ACT-SHIELD)"
+
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled/ship_traits_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0; shield_regen_combat_pct/shield_regen_idle_pct still 0; station_affinity_bonus still 0; starter_frigate base_shield still 0)"

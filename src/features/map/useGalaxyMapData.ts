@@ -26,6 +26,10 @@ export interface MainShipLite {
   hull_type_id: string
   hp: number
   max_hp: number
+  // SHIELD-2 (0191 columns): 0/0 on every ship until the human ACT-SHIELD flip. Additive read —
+  // kept congruent with the mainshipApi SHIP_COLS owner-ship read (the meter pair's data source).
+  shield: number
+  max_shield: number
   cargo_capacity: number
   // OSN-2 (migration 0054). NULL on every row today (legacy). Read-only here; no writer in OSN-2b.
   spatial_state: SpatialState | null
@@ -75,7 +79,7 @@ async function fetchMainShip(mainShipId?: string | null): Promise<MainShipLite |
   // a selection — the map then renders no main-ship marker rather than an arbitrary one.
   const { data, error } = await supabase
     .from('main_ship_instances')
-    .select('main_ship_id, name, status, hull_type_id, hp, max_hp, cargo_capacity, spatial_state, space_x, space_y')
+    .select('main_ship_id, name, status, hull_type_id, hp, max_hp, shield, max_shield, cargo_capacity, spatial_state, space_x, space_y')
     .order('created_at', { ascending: true }) // stable enumeration only; the pick is resolver-decided, not first-row
   if (error) return null // non-fatal: ship is optional in Phase 9A
   return resolveOwnedShip((data ?? []) as MainShipLite[], mainShipId)

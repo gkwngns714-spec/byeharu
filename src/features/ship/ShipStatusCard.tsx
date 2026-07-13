@@ -11,6 +11,8 @@ import type { MapLocation } from '../map/mapTypes'
 import { formatCountdown } from '../../lib/time'
 import { Badge, Button, Card, CardHeader, Meter, Notice, SectionLabel, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX } from './shipName'
+import { shipMeterPair } from './meterPair'
+import { MeterPairBars } from './MeterPairBars'
 
 // UI-REBUILD (2b, Ship interior) — THE one ship-status surface. Merges the two former panels
 // (MainShipPreview: card + repair + the only recall · MainShipPanel: derived status + destination
@@ -173,7 +175,10 @@ export function ShipStatusCard({
           ? { tone: 'success', text: destination ? `At ${destination}` : 'On station' }
           : { tone: 'neutral', text: 'Ready to launch' }
 
-  const hpPct = ship.max_hp > 0 ? (ship.hp / ship.max_hp) * 100 : 0
+  // SHIELD-2: the shared shield/hull pair view-model (pure — specs in tests/shipMeterPair.spec.ts).
+  // Data-gated: the shield row exists ONLY when max_shield > 0 (every ship is 0/0 on prod until
+  // the human ACT-SHIELD flip, so the card's DOM stays byte-identical today — no flag needed).
+  const meters = shipMeterPair(ship)
 
   return (
     <Card tone="accent" data-testid="ship-status-card">
@@ -261,11 +266,13 @@ export function ShipStatusCard({
           )}
         </div>
       )}
-      <div className="flex items-center justify-between text-xs text-ink-faint">
-        <span>Hull integrity</span>
-        <span className="text-ink">{ship.hp} / {ship.max_hp}</span>
-      </div>
-      <Meter pct={hpPct} tone={isDisabled ? 'danger' : hpPct < 100 ? 'accent' : 'success'} className="mt-1" />
+      {/* SHIELD-2: the classic pair — shield ABOVE hull, via the ONE shared bar component. The
+          hull row/tone are the pre-SHIELD-2 markup verbatim; the shield row is data-gated inside
+          (max_shield > 0 — nothing new renders while every ship is 0/0). */}
+      <MeterPairBars
+        pair={meters}
+        hullTone={isDisabled ? 'danger' : meters.hull.pct < 100 ? 'accent' : 'success'}
+      />
 
       {/* 2 · RIGHT NOW — one obvious primary action for the current state */}
       <div data-testid="ship-primary-action" className="mt-4 rounded-lg border border-edge bg-surface-2/50 p-3">

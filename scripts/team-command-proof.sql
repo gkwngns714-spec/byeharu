@@ -232,6 +232,20 @@
 --            structurally (LEFT station join + the literal-1 no-match ELSE in prosrc): no writer
 --            can produce a station-NULL row post-0189 and the sole-writer law forbids fixturing
 --            one.
+--   SHIELD2 (SHIELD-2, 0197) — the OUT-OF-COMBAT regen home + the commission copy: the committed
+--            idle knob is '0' at block entry (so every reconciler pass the blocks above ran —
+--            TEAMSETTLE's re-home, both race guards, both self-heals — executed the 0197 body
+--            dark: their green IS the knob-0 byte-parity witness); knob-0 ZERO-WRITES pinned by
+--            an updated_at sentinel on a damaged-shield fixture (the guarded statement never
+--            FIRES — a same-value UPDATE would still have stamped now()); the LIT arm (real
+--            set_game_config, restored) climbs by ceil(max_shield × knob) exactly (ceil pinned at
+--            knob 0.03), caps at max_shield via least, and never rewrites a FULL pool; the
+--            §1.3.2 EXCLUSION predicate holds on a REAL active encounter (the tick is the sole
+--            shield writer inside — instance shield untouched, non-vacuous vs the regen fixture)
+--            and on a destroyed hull (dead ships do not regenerate); and BOTH real creators
+--            (commission_first_main_ship → build + the legacy ensure) birth ships BORN FULL
+--            (25/25 = base_shield) under the sanctioned surgically-raised-then-restored hull seed
+--            (base_shield has no runtime writer — ACT-SHIELD is the future data path).
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -3412,6 +3426,193 @@ begin
   raise notice 'TEAMCMD_PASS_DECKS3 ok: committed seed ''0'' untouched; knob-0 totals with a gunnery-stationed matching captain = the pre-DECKS3 expectation to the byte; knob 0.15 lit = baseline + knob × the matched share exactly (attack × lvl_mult × knob — composed with a REAL level-2 multiplier, the bridge holder earning nothing, every other key byte-identical); a medbay(mismatch)+bridge(NULL) board is byte-identical lit or dark; the unstationed arm pinned structurally (LEFT join + the literal-1 ELSE)';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally)' as result;
+-- ══ BLOCK SHIELD2 — migration 0197: the out-of-combat regen home + the commission copy ═══════════
+-- 0197 re-created process_mainship_expeditions from its TRUE head (0169:446) with the ONE guarded
+-- set-based idle-regen hunk (knob-0 = the statement SKIPPED ENTIRELY — zero writes; lit = climb by
+-- ceil(max_shield × knob) capped by least; destroyed excluded; the §1.3.2 active/retreating
+-- encounter-membership EXCLUSION predicate — inside a live encounter the 3s tick is the SOLE
+-- shield writer), and both commission creators (build ← the 0194-body choreography, PR #138;
+-- ensure ← 0193) with the born-full base_shield → shield/max_shield copy.
+--   BYTE-PARITY ARM (stated, not re-run — the blocks above ARE the witness): every
+--          reconciler-exercising pin in this file — TEAMSETTLE's re-home, BOTH its race guards,
+--          and both self-heal arms ran process_mainship_expeditions() five times — executed THIS
+--          0197 body with the idle knob at its committed '0', where the regen statement is
+--          guarded out entirely. Their green IS the knob-0 byte-parity proof for the reconciler's
+--          pre-existing writes; this block adds the shield-specific arms and the committed-seed
+--          entry pin that makes that witness honest.
+--   ZERO-WRITES (knob 0) — a damaged-shield fixture (max 40 / shield 3 by the sanctioned
+--          surgery — the SHIELD1 posture: shields have no writer besides the tick-called leaf
+--          and now the lit reconciler statement) with updated_at pinned to a 1-hour-old
+--          sentinel: the knob-0 pass must leave shield = 3 AND updated_at = the sentinel EXACTLY.
+--          A same-value UPDATE would still have stamped updated_at = now() — this pin proves the
+--          statement never FIRES at knob 0, not merely that it never changes shield.
+--   LIT ARM (in-txn via the real set_game_config, restored '0' after) — knob '0.03':
+--          3 → 3 + ceil(40 × 0.03) = 3 + ceil(1.2) = 5 (pins CEIL specifically — floor/trunc
+--          would land 4); knob '0.25': 5 → 15 exactly; surgery to 35 → ONE pass lands 40 (the
+--          least() cap binds: uncapped would be 45); then the FULL ship (40/40) with a re-pinned
+--          sentinel is untouched (the 0191 partial-index predicate shield < max_shield excludes
+--          a full pool — full ships cost zero writes forever).
+--   EXCLUSIONS (lit) — a REAL 1-ship team hunt (the SHIELD1 recipe: fresh commission →
+--          home-normalize → surgery 40/3 → send_ship_group_hunt → movement_settle_arrival →
+--          ACTIVE encounter): the lit reconciler must NOT move its instance shield (want 3 —
+--          non-vacuous: the same predicate minus the live encounter matched fixture A above).
+--          Then the one-step-wipe defeat (enemy_attack_base 1000000, the TEAMSETTLE idiom,
+--          restored) destroys the ship; re-armed to 3/40 by surgery, the lit reconciler must
+--          leave the DESTROYED hull at 3 (dead ships do not regenerate — repair is the revival
+--          path).
+--   COMMISSION COPY — SANCTIONED HULL SURGERY (commented, negative-grep-tightened in the .sh to
+--          permit EXACTLY this `set base_shield` form + require the restore): base_shield := 25
+--          on starter_frigate — base_shield has NO runtime writer (ACT-SHIELD is the future data
+--          path), so a fixture write is the only way to arm the copy test. A REAL commission
+--          (commission_first_main_ship → port_entry_commission_build) lands a ship BORN FULL
+--          25/25 (shield = max_shield = base_shield — the h.base_hp/h.base_hp posture mirrored);
+--          the legacy ensure creator (fresh user, direct call — the SOUL1 idiom) lands 25/25 too
+--          (the two creators stay consistent). base_shield restored to 0 in-txn.
+do $$
+declare r jsonb; n int; v_val text; v_ts timestamptz;
+  uA uuid; sA uuid; uB uuid; sB uuid; gB uuid; uC uuid; sC uuid; uD uuid; sD uuid;
+  v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid; v_sh int; v_max int;
+begin
+  -- ── the committed-seed entry pin (the byte-parity witness's honesty condition) ────────────────
+  select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_idle_pct';
+  if v_val is distinct from '0' then
+    raise exception 'SHIELD2 FAIL: shield_regen_idle_pct is % entering the block (want the committed ''0'' — every reconciler pass above must have run dark)', coalesce(v_val, '<missing>'); end if;
+
+  -- ── fixture A: fresh REAL commission + the sanctioned damaged-shield surgery ──────────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uA;
+  r := pg_temp.call_as(uA, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL provision A: %', r; end if;
+  select main_ship_id into sA from public.main_ship_instances where player_id = uA;
+  -- SANCTIONED SURGERY (the SHIELD1 site's rationale verbatim) + the 1-hour-old updated_at sentinel.
+  update public.main_ship_instances
+     set max_shield = 40, shield = 3, updated_at = now() - interval '1 hour'
+   where main_ship_id = sA;
+  select updated_at into v_ts from public.main_ship_instances where main_ship_id = sA;
+
+  -- ── ZERO-WRITES: the knob-0 pass must not FIRE the statement (updated_at pin) ─────────────────
+  perform public.process_mainship_expeditions();
+  select shield, updated_at into v_sh, v_ts from public.main_ship_instances where main_ship_id = sA;
+  if v_sh is distinct from 3 then
+    raise exception 'SHIELD2 FAIL zero-writes: shield moved to % under the committed knob ''0'' (want 3 untouched)', v_sh; end if;
+  if v_ts is distinct from (now() - interval '1 hour') then
+    raise exception 'SHIELD2 FAIL zero-writes: updated_at moved under the committed knob ''0'' — the statement FIRED (a same-value UPDATE still writes rows; the v_idle > 0 guard must skip it entirely)'; end if;
+
+  -- ── LIT: ceil exactness, exact climb, the least() cap, and full-pool zero-cost ────────────────
+  perform public.set_game_config('shield_regen_idle_pct', '0.03'::jsonb);
+  perform public.process_mainship_expeditions();
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sA;
+  if v_sh is distinct from 5 then
+    raise exception 'SHIELD2 FAIL ceil: shield % (want 5 = 3 + ceil(40 × 0.03) — the climb must be CEIL, floor/trunc would land 4)', v_sh; end if;
+  perform public.set_game_config('shield_regen_idle_pct', '0.25'::jsonb);
+  perform public.process_mainship_expeditions();
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sA;
+  if v_sh is distinct from 15 then
+    raise exception 'SHIELD2 FAIL climb: shield % (want 15 = 5 + ceil(40 × 0.25) exactly)', v_sh; end if;
+  update public.main_ship_instances set shield = 35 where main_ship_id = sA;
+  perform public.process_mainship_expeditions();
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sA;
+  if v_sh is distinct from 40 then
+    raise exception 'SHIELD2 FAIL cap: shield % (want 40 — least(max_shield, 35 + 10) must bind, uncapped would be 45)', v_sh; end if;
+  update public.main_ship_instances set updated_at = now() - interval '1 hour' where main_ship_id = sA;
+  perform public.process_mainship_expeditions();
+  select shield, updated_at into v_sh, v_ts from public.main_ship_instances where main_ship_id = sA;
+  if v_sh is distinct from 40 or v_ts is distinct from (now() - interval '1 hour') then
+    raise exception 'SHIELD2 FAIL full-pool: a FULL shield was rewritten by the lit pass (want 40 + the sentinel — shield < max_shield must exclude it)'; end if;
+
+  -- ── fixture B: the REAL encounter (the SHIELD1 recipe) for both exclusion pins ────────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uB;
+  r := pg_temp.call_as(uB, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL provision B: %', r; end if;
+  select main_ship_id into sB from public.main_ship_instances where player_id = uB;
+  update public.main_ship_instances
+     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+   where main_ship_id = sB;
+  update public.fleets
+     set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where main_ship_id = sB and status = 'present';
+  update public.location_presence
+     set status = 'completed', updated_at = now()
+   where fleet_id in (select id from public.fleets where main_ship_id = sB and status = 'destroyed')
+     and status = 'active';
+  update public.main_ship_instances set max_shield = 40, shield = 3 where main_ship_id = sB;
+  select id into v_hunt from public.locations
+    where activity_type = 'hunt_pirates' and status = 'active'
+    order by min_power_required asc, base_difficulty asc limit 1;
+  if v_hunt is null then raise exception 'SHIELD2 FAIL: no active hunt_pirates location'; end if;
+  r := pg_temp.call_as(uB, 'public.upsert_ship_group(1, ''RegenWing'')');
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL group create: %', r; end if;
+  gB := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sB, gB));
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL assign: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL send: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+    raise exception 'SHIELD2 FAIL settle: %', r; end if;
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
+  if v_enc is null then raise exception 'SHIELD2 FAIL: no active encounter for the exclusion fixture'; end if;
+
+  -- IN-ENCOUNTER EXCLUDED: the lit reconciler must not move a live-encounter member's shield
+  -- (non-vacuous: fixture A above proved the same statement fires on an encounter-free ship).
+  perform public.process_mainship_expeditions();
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sB;
+  if v_sh is distinct from 3 then
+    raise exception 'SHIELD2 FAIL exclusion: the lit reconciler moved an in-encounter shield to % (want 3 — while an encounter is active/retreating the tick is the SOLE shield writer)', v_sh; end if;
+
+  -- one-step-wipe defeat (the TEAMSETTLE idiom; restored) → the DESTROYED exclusion.
+  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+  perform public.set_game_config('enemy_attack_base', '1'::jsonb);
+  select count(*) into n from public.main_ship_instances where main_ship_id = sB and status = 'destroyed';
+  if n <> 1 then raise exception 'SHIELD2 FAIL: the wipe tick did not destroy the exclusion fixture (fixture drift)'; end if;
+  update public.main_ship_instances set shield = 3 where main_ship_id = sB;   -- re-arm the dead hull (sanctioned surgery)
+  perform public.process_mainship_expeditions();
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sB;
+  if v_sh is distinct from 3 then
+    raise exception 'SHIELD2 FAIL destroyed: the lit reconciler regenerated a DESTROYED ship to % (want 3 — dead ships do not regenerate; repair is the revival path)', v_sh; end if;
+
+  -- ── THE COMMISSION COPY: born FULL through BOTH real creators ─────────────────────────────────
+  -- SANCTIONED HULL SURGERY: base_shield has NO runtime writer (ACT-SHIELD is the future data
+  -- path) — a fixture write is the only way to arm the copy test; restored below, and the .sh
+  -- selftest permits EXACTLY this `set base_shield` form on the hull table (every other hull
+  -- mutation still fails the negative grep).
+  update public.main_ship_hull_types set base_shield = 25 where hull_type_id = 'starter_frigate';
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uC;
+  r := pg_temp.call_as(uC, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL copy provision: %', r; end if;
+  select main_ship_id, shield, max_shield into sC, v_sh, v_max from public.main_ship_instances where player_id = uC;
+  if v_sh is distinct from 25 or v_max is distinct from 25 then
+    raise exception 'SHIELD2 FAIL copy: commissioned ship born %/% (want 25/25 — shield = max_shield = base_shield, BORN FULL through the build core)', v_sh, v_max; end if;
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uD;
+  select (public.ensure_main_ship_for_player(uD)).main_ship_id into sD;
+  select shield, max_shield into v_sh, v_max from public.main_ship_instances where main_ship_id = sD;
+  if v_sh is distinct from 25 or v_max is distinct from 25 then
+    raise exception 'SHIELD2 FAIL copy: ensure-created ship born %/% (want 25/25 — the two creators must stay consistent)', v_sh, v_max; end if;
+  update public.main_ship_hull_types set base_shield = 0 where hull_type_id = 'starter_frigate';   -- the required restore
+  perform public.set_game_config('shield_regen_idle_pct', '0'::jsonb);   -- restore the dark seed in-txn
+
+  raise notice 'TEAMCMD_PASS_SHIELD2 ok: committed idle knob ''0'' at entry (every reconciler pass above ran THIS 0197 body dark — TEAMSETTLE''s re-home/race-guard/self-heal pins ARE the knob-0 byte-parity witness); zero-writes pinned by the updated_at sentinel (knob 0 never fires the statement); lit climb exact (ceil pinned at 0.03: 3→5; 0.25: 5→15; least caps 35→40; a full pool is never rewritten); in-encounter exclusion holds on a REAL active encounter (non-vacuous vs fixture A) and a destroyed hull stays dead at 3; the commission copy births 25/25 through BOTH real creators (build via commission_first_main_ship + the legacy ensure) with base_shield surgically raised then restored; idle knob restored in-txn';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
