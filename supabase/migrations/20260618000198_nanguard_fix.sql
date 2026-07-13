@@ -499,7 +499,6 @@ declare
   v_src text;
   v_n   integer;
   v_tok text;
-  v_val text;
 begin
   -- ══ A) calculate_expedition_stats — BOTH guards now the WORKING idiom, the dead arm gone ════════
   select prosrc into v_src from pg_proc
@@ -587,13 +586,14 @@ begin
   if not has_function_privilege('service_role', 'public.process_mainship_expeditions()', 'execute') then
     raise exception 'NANGUARD self-assert FAIL: process_mainship_expeditions not granted to service_role'; end if;
 
-  -- ══ C) INERTNESS — all three knobs are still the committed '0' (0 is not NaN under either idiom,
-  --    so the fix is behaviorally inert at the seeds; every existing proof stays green) ════════════
-  foreach v_tok in array array['captain_level_bonus_per_level','station_affinity_bonus','shield_regen_idle_pct'] loop
-    select value #>> '{}' into v_val from public.game_config where key = v_tok;
-    if v_val is distinct from '0' then
-      raise exception 'NANGUARD self-assert FAIL: knob % reads % at apply time (want the committed ''0'' — NANGUARD is inert at seed)', v_tok, coalesce(v_val, '<missing>'); end if;
-  end loop;
+  -- ══ C) INERTNESS is INHERITED, not asserted here — NANGUARD writes NO game_config row (this
+  --    migration touches only the two function bodies), so this slice cannot change any knob seed
+  --    and asserting other slices' committed VALUES would be out of scope AND wrong (the level knob
+  --    captain_level_bonus_per_level is seeded '0.10' by 0180/C2-2 — inert via the FLAG gate +
+  --    level-1 ×0 bonus, NOT via a zero knob; only station_affinity_bonus and shield_regen_idle_pct
+  --    are seeded '0'). The fix flips only the guard OPERATOR, and 0 is not NaN under either idiom,
+  --    so behavior is unchanged at every committed seed — witnessed BEHAVIORALLY by the
+  --    TEAMCMD_PASS_NANGUARD proof block, not by a fragile seed-value pin. ═════════════════════════
 
-  raise notice 'NANGUARD self-assert ok: all THREE guard sites switched to the working = ''NaN''::double precision idiom (0182 precedent) — the level + affinity knobs in calculate_expedition_stats (exactly 2 NaN-floor sites) and the idle-regen knob in process_mainship_expeditions (exactly 1); the dead x <> x arm is gone at every knob site; every accumulated 0115/0122/0170/0180/0193/0196 + 0169/0197 hunk survives the re-create; no random(); ACLs server-only; all three knobs still committed ''0'' (behaviorally inert at seed — the fix bites only a post-flip bad knob write)';
+  raise notice 'NANGUARD self-assert ok: all THREE guard sites switched to the working = ''NaN''::double precision idiom (0182 precedent) — the level + affinity knobs in calculate_expedition_stats (exactly 2 NaN-floor sites) and the idle-regen knob in process_mainship_expeditions (exactly 1); the dead x <> x arm is gone at every knob site; every accumulated 0115/0122/0170/0180/0193/0196 + 0169/0197 hunk survives the re-create; no random(); ACLs server-only; NANGUARD writes no knob seed, so inertness is inherited (the fix flips only the guard operator; 0 is not NaN either way) and is proven behaviorally by TEAMCMD_PASS_NANGUARD — the fix bites only a post-flip bad knob write';
 end $$;
