@@ -759,7 +759,7 @@ begin
     raise exception 'P10 FAIL: an active-cancel delivered a ship';
   end if;
 
-  raise notice 'SHIPYARD_PASS_CANCEL_REFUND ok: waiting hull cancel -> exact full refund from the receipt bill (credits via Wallet, every ingredient via Inventory); double-cancel rejected, no double refund; post-cancel replay verbatim; active hull cancel -> the unit-arm 50% law (floored credits + floor-half per ingredient) exact';
+  raise notice 'SHIPYARD_PASS_CANCEL_REFUND ok: waiting hull cancel -> exact full refund from the receipt bill (credits via Wallet, every ingredient via Inventory); double-cancel rejected, no double refund; post-cancel replay verbatim; active hull cancel -> the unit-arm 50%% law (floored credits + floor-half per ingredient) exact';
 end $$;
 
 select 'SHIPYARD-1+2 PROOF PASSED (dark gate + no existence oracle; exact-spend order on the M4.5 queue; verbatim replay; blueprint/credit shortfalls all-or-nothing; hull + captain-level gates both arms; self-prereq impossible; engine seam CLOSED — cron-sweep promotion with recipe build_seconds, commission-core delivery with exact stats + name idiom, unit arm byte-parity, poisoned-delivery guard (no cron wedge), hull-aware cancel refunds; receipts outlive the 0047 reaper)' as result;
