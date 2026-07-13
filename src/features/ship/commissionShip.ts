@@ -1,3 +1,5 @@
+import { strictConfigFlag } from '../../lib/gameConfigFold'
+
 // TEAM-ACTIVATION PREP — pure logic for the DARK commission-ship affordance (no React/DOM/IO).
 //
 // The activation packet (docs/TEAM_ACTIVATION_PACKET.md §2, approved) flips multi-ship
@@ -31,8 +33,9 @@ export function commissionContextFromConfig(rows: Array<{ key: string; value: un
     return Number.isFinite(n) ? n : fallback
   }
   return {
-    // strict boolean: anything but jsonb true (including 'true' the string) reads as DARK.
-    serverEnabled: byKey.get('mainship_additional_commission_enabled') === true,
+    // strict boolean (the ONE shared fold — lib/gameConfigFold): anything but jsonb true
+    // (including 'true' the string) reads as DARK.
+    serverEnabled: strictConfigFlag(rows, 'mainship_additional_commission_enabled'),
     cap: num(byKey.get('max_main_ships_per_player'), 3), // the 0080 server-side coalesce fallback
     price: num(byKey.get('main_ship_price'), 1000), // the 0091 server-side coalesce fallback
     startingCredits: num(byKey.get('starting_credits'), 0), // wallet_ensure's coalesce fallback (0093)

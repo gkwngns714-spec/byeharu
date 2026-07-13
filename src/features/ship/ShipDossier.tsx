@@ -18,6 +18,8 @@ import {
   parseShipStatsPreview,
   shipStatsErrorMessage,
 } from './shipDossierView'
+import { shipTraitCards } from './shipTraits'
+import { fetchShipSoul, type ShipSoulData } from './soulApi'
 import { Card, CardHeader, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemTile } from '../../components/items'
 
@@ -58,6 +60,11 @@ import { ItemChip, ItemTile } from '../../components/items'
 //   · Captains — renders only when get_my_captain_instances answers ok (captain_assignment_enabled
 //     — DARK today, so this section renders NOTHING in production, exactly like every captain
 //     surface; isServerLit is the one predicate).
+//   · Traits (SOUL-2) — renders only when ship_traits_enabled is STRICTLY jsonb true (the shared
+//     strictConfigFlag fold, read from PUBLIC-READ game_config inside fetchShipSoul) AND this ship
+//     has stored trait rows. DARK today: fetchShipSoul's gate-first read costs ONE config select
+//     and ZERO trait reads, returns null, and the card's DOM stays byte-identical. Transport
+//     error while lit → null too (hidden — never a false 'no traits' empty).
 //   · Cargo hold — plain owner-read data (no feature flag): always shown once loaded.
 
 export function ShipDossier({
@@ -80,6 +87,8 @@ export function ShipDossier({
   const [ships, setShips] = useState<MainShipRow[] | null>(null)
   // SHIP-POWER: the raw preview envelope (parsed at render — the parser owns every malformed shape).
   const [statsPreview, setStatsPreview] = useState<unknown>(null)
+  // SOUL-2: the ship's rolled traits + catalog (null = dark gate / read error → section hidden).
+  const [soul, setSoul] = useState<ShipSoulData | null>(null)
 
   // Mounted guard — the shared idiom home (read-only panel: no submit guards needed).
   const { activeRef } = useActivityPanelGuards()
@@ -91,13 +100,14 @@ export function ShipDossier({
     // One batched read wave (the ModulesPanel refresh idiom). The two RPC reads carry their own
     // dark envelopes (each section fails closed on !ok); the two direct selects are owner-read
     // RLS and collapse to []/null on error inside their wrappers.
-    const [fit, cap, cargo, myShips, preview, decks] = await Promise.all([
+    const [fit, cap, cargo, myShips, preview, decks, soulData] = await Promise.all([
       getMyShipFittings(),
       getMyCaptainInstances(),
       getShipCargoLots(shipId),
       fetchMyMainShips(), // module_slots for the slot-usage line (the ModulesPanel picker source)
       fetchMyExpeditionPreview(shipId), // SHIP-POWER: THIS ship's server stats (transport error → null → hidden)
       getShipStations(), // DECKS-2: the station catalog (public-read; [] on error → list fallback)
+      fetchShipSoul(shipId), // SOUL-2: gate-first (dark → one config select, ZERO trait reads → null → hidden)
     ])
     if (!activeRef.current) return
     setFittings(fit)
@@ -106,6 +116,7 @@ export function ShipDossier({
     setShips(myShips)
     setStatsPreview(preview)
     setStations(decks)
+    setSoul(soulData)
   }, [activeRef, shipId]) // activeRef identity is stable — dep satisfies the lint rule
 
   // refreshKey is a deliberate re-fetch trigger (the ModulesPanel lifecycleKey dep idiom).
@@ -142,6 +153,11 @@ export function ShipDossier({
   const usedM3 = cargoUsedM3(lots)
   // SHIP-POWER: the strip's parse (pure; specs in tests/shipDossier.spec.ts).
   const shipStats = parseShipStatsPreview(statsPreview)
+  // SOUL-2: the traits view-model (pure join of stored rows × catalog, slot order; specs in
+  // tests/shipTraits.spec.ts). Non-null ONLY when the gate read lit AND this ship has stored
+  // rows — lit-with-zero-rows stays hidden (an unrolled pre-ACT-SOUL ship has no soul section
+  // yet, not an empty one), and a null soul (dark / read error) renders nothing.
+  const traitCards = soul && soul.rows.length > 0 ? shipTraitCards(soul.rows, soul.catalog) : null
   // The TeamDossier chip idiom, verbatim classes — ship stats and team stats read as ONE system.
   const chip = (label: string, value: number | string) => (
     <span key={label} className="inline-flex items-baseline gap-1 rounded border border-edge bg-surface px-1.5 py-0.5 text-[10px]">
@@ -178,6 +194,57 @@ export function ShipDossier({
             </div>
           )}
         </div>
+      )}
+
+      {/* TRAITS (SOUL-2) — the ship's rolled BIRTHMARKS (Uncharted-Waters "this ship is MINE"),
+          at the top with the ship's name/stats: identity before loadout. Server truth only: the
+          stored main_ship_traits rows joined against the public-read catalog — never a client
+          re-derivation of the roll. Name loud, flavor muted, stat effects as signed green/red
+          mono tokens (the house success/danger tones); the folded RESULT of these numbers is the
+          stats strip above — this section shows the WHY. DARK (ship_traits_enabled false) or any
+          read error → traitCards null → nothing renders (byte-identical card). */}
+      {traitCards && (
+        <>
+          <SectionLabel className="mt-4">Traits</SectionLabel>
+          <ul data-testid="soul-traits" className="mt-2 space-y-1.5">
+            {traitCards.map((t) =>
+              t.kind === 'trait' ? (
+                <li
+                  key={t.slot}
+                  data-testid={`soul-trait-${t.trait_type_id}`}
+                  className="rounded-lg border border-edge bg-surface-2/50 px-3 py-2"
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-sm text-ink">{t.name}</span>
+                    <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                      {t.effects.map((e) => (
+                        <span
+                          key={e.label}
+                          className={`font-mono text-[10px] tabular-nums ${
+                            e.tone === 'positive' ? 'text-success' : 'text-danger'
+                          }`}
+                        >
+                          {e.label}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-ink-faint">{t.description}</p>
+                </li>
+              ) : (
+                // fail-closed join miss: a stored row whose type is missing from the catalog read
+                // still shows (server truth never vanishes) — but only as an honest muted line.
+                <li
+                  key={t.slot}
+                  data-testid={`soul-trait-${t.trait_type_id}`}
+                  className="rounded-lg border border-dashed border-edge px-3 py-2 text-[10px] text-ink-faint"
+                >
+                  Unknown trait
+                </li>
+              ),
+            )}
+          </ul>
+        </>
       )}
 
       {/* FITTED MODULES — only while the fitting read surface is lit (module_fitting_enabled). */}
@@ -293,9 +360,6 @@ export function ShipDossier({
           )}
         </>
       )}
-
-      {/* SHIP-SOUL anchor: the Traits section lands here (between the crew and the hold) when
-          ship traits ship — same SectionLabel'd-group shape, same per-selected-ship scope. */}
 
       {/* CARGO HOLD — plain owner-read data (ship_cargo_lots via the ship-join RLS; reads anywhere,
           docked or not). Volume math is the MarketPanel lot-sum formula — the two surfaces agree. */}
