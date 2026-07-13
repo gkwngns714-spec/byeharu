@@ -72,6 +72,7 @@ function Harness() {
       movements={[]}
       teamGroups={[]}
       dockedTeamRollups={[]}
+      fleetPositions={[]}
       selectedId={null}
       onSelect={() => {}}
       deps={{

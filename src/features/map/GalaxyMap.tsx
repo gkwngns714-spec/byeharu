@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import type { MapLocation } from './mapTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MainShipLite } from './useGalaxyMapData'
-import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
+import type { FleetPosition, MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { shipLayer } from './SpaceRouteLine'
+import { fleetShipsLayer } from './fleetShipsLayer'
 import { teamMarkersLayer } from './teamMarkers'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
@@ -43,6 +44,7 @@ export function GalaxyMap({
   movements,
   teamGroups,
   dockedTeamRollups,
+  fleetPositions,
   selectedId,
   onSelect,
   deps,
@@ -58,6 +60,11 @@ export function GalaxyMap({
   // dark — the additive team layer then renders nothing and the map is byte-identical to today).
   teamGroups: GroupRow[]
   dockedTeamRollups: DockedTeamRollup[]
+  // FLEETMAP: EVERY owned ship's position (the whole-fleet projection). The fleet layer draws every ship
+  // EXCEPT the selected one so owning 2+ ships no longer hides the fleet; the selected ship (= the fetch-scoped
+  // `mainShip`) is drawn by the single shipLayer below. No separate selected-ship id prop is needed — the
+  // exclusion is keyed to `mainShip` so it can never disagree with what the single marker renders.
+  fleetPositions: FleetPosition[]
   selectedId: string | null
   onSelect: (id: string | null) => void
   // Test/integration injection seam; defaults to the real server readiness + movement-flag reads.
@@ -377,6 +384,22 @@ export function GalaxyMap({
             groups: teamGroups,
             rollups: dockedTeamRollups,
             locations,
+            norm,
+            k: view.k,
+          })}
+
+          {/* FLEETMAP — the whole-fleet layer: a subdued marker for every owned ship EXCEPT the selected one
+              (the get_my_fleet_positions projection), so owning 2+ ships no longer hides the entire fleet (the
+              single-ship resolver goes null at N≥2). The SELECTED ship is excluded here and drawn by the single
+              shipLayer below (ONE position/clock — its glyph + emphasis can never drift from a second marker);
+              the exclusion is keyed to `mainShip.main_ship_id`, exactly the ship that marker renders. Additive
+              beside the team markers; gated on the same `mainshipSendEnabled` gate as shipLayer (empty
+              projection or dark → renders nothing). The pure helper is what the unit test exercises. */}
+          {fleetShipsLayer({
+            mainshipSendEnabled,
+            positions: fleetPositions,
+            locations,
+            selectedShipId: mainShip?.main_ship_id ?? null,
             norm,
             k: view.k,
           })}
