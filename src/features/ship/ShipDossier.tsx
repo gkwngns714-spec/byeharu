@@ -22,6 +22,7 @@ import { shipTraitCards } from './shipTraits'
 import { fetchShipSoul, type ShipSoulData } from './soulApi'
 import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
+import type { ShipLocationResolved } from './shipLocation'
 import { Card, CardHeader, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemTile } from '../../components/items'
 
@@ -76,9 +77,15 @@ export function ShipDossier({
   // assign/unassign/recruit — the non-optimistic await→refetch discipline; craft/fit moved to
   // Port → Workshop with WORKSHOP, and land here via route remount instead).
   refreshKey,
+  // SHIPLOC — the selected ship's resolved LOCATION (from the shell's map poll, via the ONE shared
+  // resolver in ShipScreen). null = the threaded data does NOT correspond to the selected ship (a
+  // non-sole multi-ship selection, or still loading) → the strip shows "Location unavailable"
+  // rather than a wrong place. Display-only; the server is the source of truth.
+  location,
 }: {
   selectedShip: SelectableShip | null
   refreshKey: string
+  location: ShipLocationResolved | null
 }) {
   const [fittings, setFittings] = useState<GetMyShipFittingsResult | null>(null)
   const [roster, setRoster] = useState<GetMyCaptainInstancesResult | null>(null)
@@ -181,6 +188,24 @@ export function ShipDossier({
   return (
     <Card data-testid="ship-dossier">
       <CardHeader title="On this ship" subtitle={selectedShip.name} className="mb-2" />
+
+      {/* SHIPLOC — WHERE the ship is (owner: "in ship tab, i should be able to see where the ship
+          is, the location as well"). Location is identity, so it leads, right under the name: docked
+          port / in-transit destination + ETA / in combat / deep space / home. Resolved by the ONE
+          shared helper (shipLocation.ts) that ShipStatusCard beside also uses — server truth, no new
+          read. HONEST: a null resolution (a non-sole multi-ship selection today, or first paint)
+          shows "Location unavailable", never a wrong place. */}
+      <p data-testid="ship-location" className="mb-3 text-sm">
+        <span className="text-ink-faint">Location · </span>
+        {location ? (
+          <>
+            <span className="font-medium text-ink">{location.label}</span>
+            {location.etaText && <span className="text-ink-muted"> · arrives in {location.etaText}</span>}
+          </>
+        ) : (
+          <span className="text-ink-muted">Location unavailable</span>
+        )}
+      </p>
 
       {/* SHIELD-2 — the classic shield/hull pair (shield ABOVE hull), via the ONE shared bar
           component, ONLY once this ship has a real shield capacity (max_shield > 0; see the
