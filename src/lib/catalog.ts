@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { strictConfigFlag, type GameConfigFoldRow } from './gameConfigFold'
 
 // Shared reference data (Reference/Config system, read-only on the client).
 // Unit stats come from the server; the client mirrors them only for display/preview.
@@ -50,6 +51,17 @@ export async function fetchMainshipSendEnabled(): Promise<boolean> {
     .maybeSingle()
   if (error) return false
   return (data?.value as unknown) === true
+}
+
+// NO-HOME (0199) runtime gate for launch-from-dock. Unlike the two single-flag maybeSingle reads
+// above, the design REUSES the strict jsonb-true fold (strictConfigFlag, gameConfigFold.ts): fetch the
+// public-read game_config rows and fold the one key. true ⇔ the row exists AND its jsonb value is
+// exactly `true` (the server gates its own functions on the SAME flag via cfg_bool FIRST). Absent /
+// unreadable / any non-true shape → OFF, so the UI is byte-identical to today until a human flips it.
+export async function fetchLaunchFromDockEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('game_config').select('key, value')
+  if (error) return false
+  return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'launch_from_dock_enabled')
 }
 
 // OSN-3 S6A feature gate for the coordinate-movement (open-space) command surface. Same safe public

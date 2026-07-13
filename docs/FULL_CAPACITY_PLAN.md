@@ -101,6 +101,23 @@ second — server rejects are the authority (TEAM_COMMAND checklist).
 Each phase = dark slices, one green adversarially-reviewed PR per slice, flags + compile gates,
 parity-discipline for any live-function re-create, disposable rolled-back proof for DB slices.
 
+### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)*
+
+There is NO home base; ports are the only base; a ship acts from WHEREVER it is docked. The bug: SEND
+(`send_main_ship_expedition`) and HUNT (`send_ship_group_hunt`) require ship `status='home'` and launch
+from the legacy invisible base at (0,0); a docked ship can MOVE (`move_main_ship_to_location`, 0156) but
+not SEND/HUNT. **NO-HOME (0199, DARK behind `launch_from_dock_enabled`):** send/hunt ADDITIVELY accept a
+docked ship as a launch state (the settled-safe `spatial_state in ('home','at_location')` rule of
+0100/0105/0114/0121), launch from the docked port (the 0156 present-fleet origin), and take a chosen
+`p_return_location_id` (recorded on the additive `fleets.return_location_id`); the reconciler
+`process_mainship_expeditions` DOCKS the returning ship at that port (the 0153 helper) instead of
+re-homing, and `repair_main_ship` revives docked (recovery always works). Every DARK else-branch is the
+grep-verified TRUE head verbatim (parity discipline; team command is LIVE on prod). Client reads the
+flag at runtime via `strictConfigFlag` and, when lit, treats a docked-together team as sendable/huntable
+with a return-port control — byte-identical when dark. **ACT-NOHOME** (`scripts/activate-nohome.{sql,sh}`)
+flips the flag; the `TEAMCMD_PASS_NOHOME` proof block witnesses both arms. Orthogonal to team-command /
+mainship-send activation (it changes HOW a launch is sourced/returned, not WHETHER send/hunt are lit).
+
 ### P1 — ECON-SEED: the differentiated three-port economy *(S — SHIPPED as mig 0173 / PR #104)*
 Port role identities over the six 0073 goods: Haven = city/consumer, Slagworks = industrial,
 Driftmarch = frontier premium. Guaranteed routes: ore Slagworks→Haven +200/trip, provisions

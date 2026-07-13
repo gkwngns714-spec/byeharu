@@ -193,6 +193,35 @@ server-side functions — **never** by directly changing another system's tables
 > family's replacement by the OSN coordinate domain, Dock-0 becomes the helper's only caller and the write
 > may fold back inline (same condition as 0152's in-flight helper).
 
+> **NO-HOME — launch from the dock, dock at the return port (0199, DARK behind `launch_from_dock_enabled`).**
+> The owner's law: there is NO home base; ports are the only base; a ship acts from WHEREVER it is docked.
+> `send_main_ship_expedition` (0169 head) and `send_ship_group_hunt` (0168 head) were re-created under
+> parity discipline (DROP+CREATE, adding a trailing `p_return_location_id uuid DEFAULT NULL`; ACLs
+> re-asserted) with EVERY new behavior gated inside `if v_launch_from_dock then <NOHOME> else <head
+> verbatim> end` — DARK (flag false, the committed seed) is byte-identical to the head. LIT: (a) a DOCKED
+> ship (`status='stationary'`/`spatial_state='at_location'` — the settled-safe set of 0100/0105/0114/0121)
+> is a legal launch state IN ADDITION to home; (b) the outbound fleet departs FROM the docked port (the
+> single send re-departs the ship's OWN present fleet, the 0156 launch-from-present template; the team hunt
+> departs its ONE new fleet from the members' common docked port and dissolves the members' own docked
+> fleets), NOT the (0,0) base; (c) the chosen (or docked-origin) return port is recorded on the additive
+> nullable **`fleets.return_location_id`** (analogous to `origin_base_id`; ON DELETE SET NULL). **The
+> reconciler `process_mainship_expeditions` (0198 head) UPDATED: under the flag it re-homes NOTHING** —
+> instead, for each returning/hunting ship whose fleet is finished, the NEW Main-Ship-owned leaf
+> `nohome_dock_returning_ship(ship)` (service_role/internal, downward edges into Movement/Team-Command
+> reads) reads the recorded return port from the ship's own tagged fleet OR its manifest fleet,
+> re-presents that fleet at the port (`fleet_set_present` + `presence_create`, idempotent) and DOCKS the
+> ship via the ONE 0153 helper `mainship_mark_docked_at_location`; a ship with no recorded/valid return
+> port falls back to the legacy re-home (the 0198 write shape). The two 0198 set-based re-home CTEs remain
+> the flag-DARK else-branch verbatim, and the SHIELD-2 (0197) idle-regen hunk runs in BOTH paths. A
+> send-TO-a-port docks at the destination (`movement_settle_arrival` already docks a dockable arrival, so
+> the return param is recorded-but-inert there); a HUNT (non-dockable site) is where the reconciler
+> dock-at-return bites. `repair_main_ship` (0081 head) was CREATE-OR-REPLACE'd: DARK restores to
+> `status='home'` byte-identically; LIT revives DOCKED (`stationary`/`at_location`) — recovery still
+> always works (the safelock, never flag-gated). `send_ship_group_expedition` (0187) is UNTOUCHED — it
+> calls the single send with 2 positional args, which resolve to the widened function via the DEFAULT. No
+> `'home'` enum value removed; no home-based launch broken. RETIREMENT: `nohome_dock_returning_ship`
+> retires with the legacy `fleet_movements` main-ship family (same condition as the 0152/0153 helpers).
+
 > **Trade fan-out is acyclic.** Trade Market → {Wallet, Trade Cargo}, Trade Market → Main Ship (read-only, via
 > `mainship_resolve_docked_location`), and Main Ship → Wallet are all one-directional DOWNWARD edges. Wallet and
 > Trade Cargo are leaves — each writes only its own table and calls nothing above it. (The Trade Market →

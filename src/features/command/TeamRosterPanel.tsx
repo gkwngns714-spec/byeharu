@@ -31,6 +31,7 @@ import { isServerLit } from '../../lib/useActivityPanelGuards'
 import { withPowerGate } from '../map/locationDisplay'
 import { fetchMyExpeditionPreview } from '../map/mainshipApi'
 import { shipPowerFromPreview } from '../ship/shipDossierView'
+import { fetchLaunchFromDockEnabled } from '../../lib/catalog'
 
 // TEAM-COMMAND Slice B1 — INTERACTIVE team roster (backend "group" == UI "team").
 //
@@ -87,15 +88,18 @@ export function TeamRosterPanel() {
   const [destChoice, setDestChoice] = useState<Record<string, string>>({}) // per-team send destination id
   const [huntChoice, setHuntChoice] = useState<Record<string, string>>({}) // per-team hunt destination id
   const [confirmHunt, setConfirmHunt] = useState<string | null>(null) // group_id pending hunt confirm (D4)
+  const [launchFromDock, setLaunchFromDock] = useState(false) // NO-HOME (0199) runtime gate; dark → home-only readiness
 
   const reload = useCallback(async () => {
-    const [g, m, cr, pf] = await Promise.all([
+    const [g, m, cr, pf, lfd] = await Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
+      fetchLaunchFromDockEnabled(),
     ])
     setGroups(g)
     setGroupMap(m)
     setCaptainRoster(cr)
     setPresentFleets(pf)
+    setLaunchFromDock(lfd)
     setRosterVersion((v) => v + 1) // membership may have changed — any cached preview is stale
     setLoading(false)
   }, [])
@@ -106,12 +110,14 @@ export function TeamRosterPanel() {
     let active = true
     void Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-    ]).then(([g, m, cr, pf]) => {
+      fetchLaunchFromDockEnabled(),
+    ]).then(([g, m, cr, pf, lfd]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
       setCaptainRoster(cr)
       setPresentFleets(pf)
+      setLaunchFromDock(lfd)
       setLoading(false)
     })
     return () => {
@@ -384,7 +390,13 @@ export function TeamRosterPanel() {
               // RESOLVED destination, the send-gate convention: a chosen id that later drops out of
               // game.locations (poll marks it inactive/non-combat) must disarm Hunt too.
               locationValid: huntZones.some((d) => d.id === huntId),
-              allMembersReady: ships.every((s) => s.status === 'home'),
+              // NO-HOME (0199): dark → every ship home (byte-identical). Lit → a team fully docked at ONE
+              // port (rollup.locationId non-null) is ALSO ready; it launches from and docks back at that
+              // port. The server (widened send_ship_group_hunt) defaults the return port to the dock, so
+              // the roster passes no extra arg. hp isn't carried here — the server's under-lock check is truth.
+              allMembersReady:
+                ships.every((s) => s.status === 'home') ||
+                (launchFromDock && (dockRollups.find((x) => x.groupId === group.group_id)?.locationId ?? null) !== null),
             }).canHunt
             return (
               <div key={group.group_id} className="space-y-2 rounded-lg border border-edge/60 p-3">

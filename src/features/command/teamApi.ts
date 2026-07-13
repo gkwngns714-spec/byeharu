@@ -171,10 +171,19 @@ export async function fetchGroupExpeditionPreview(
 // active hunt_pirates location. Success carries { fleet_id, movement_id, arrive_at, member_count };
 // rejects arrive as the 0168 envelope vocabulary (see teamCombat.ts for the mirrored prefix + the
 // server-only tail).
-export async function sendShipGroupHunt(groupId: string, locationId: string): Promise<TeamRpcResult> {
+// NO-HOME (0199): the widened hunt takes an optional return port (p_return_location_id) — the port a
+// DOCKED team docks at after combat (a non-dockable hunt site has no dock of its own). Omitted (the
+// dark/home path) → the third arg defaults NULL server-side and the RPC behaves exactly as the 0168
+// head. Passing it is inert until launch_from_dock_enabled is lit.
+export async function sendShipGroupHunt(
+  groupId: string,
+  locationId: string,
+  returnLocationId?: string | null,
+): Promise<TeamRpcResult> {
   const { data, error } = await supabase.rpc('send_ship_group_hunt', {
     p_group_id: groupId,
     p_location: locationId,
+    ...(returnLocationId ? { p_return_location_id: returnLocationId } : {}),
   })
   if (error) return { ok: false, reason: 'unavailable' }
   return data as TeamRpcResult

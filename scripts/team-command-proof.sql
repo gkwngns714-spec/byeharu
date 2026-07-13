@@ -3684,6 +3684,177 @@ begin
   raise notice 'TEAMCMD_PASS_NANGUARD ok: all three knob guards fixed to the working = ''NaN''::double precision idiom and PROVEN non-vacuous — a jsonb "NaN" affinity knob (with a REAL gunnery-matched captain aboard) leaves calculate_expedition_stats byte-identical to the knob-0 baseline with a finite combat_power (never NaN), and a jsonb "NaN" idle-regen knob leaves process_mainship_expeditions a clean no-op (shield stays 3, no ceil(NaN)::integer abort) exactly as knob 0; both knobs restored to ''0'' in-txn (this block would have FAILED before 0198 — NaN would propagate/abort)';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed; 0198 NANGUARD: the dead x<>x NaN guards fixed to the working = ''NaN''::double precision idiom at all THREE knob sites (adapter level + affinity, reconciler idle-regen) — a jsonb "NaN" knob floors to 0 so calculate_expedition_stats stays byte-identical to the knob-0 baseline with a finite combat_power and process_mainship_expeditions is a clean no-op (no ceil(NaN)::integer abort), behaviorally inert at seed 0' as result;
+-- ════════ BLOCK NOHOME (NO-HOME, 0199): launch-from-dock + dock-at-return, DARK then in-txn LIT ════════
+-- Migration 0199 makes send/hunt ACCEPT a docked ship as a launch state IN ADDITION to home (the
+-- 0100/0105/0114/0121 settled-safe rule), launch from the docked port (the 0156 present-fleet origin),
+-- and dock the returning ship at a chosen/origin return port (the 0153 helper) instead of re-homing —
+-- ALL gated on launch_from_dock_enabled (seeded false). This block proves both arms on FRESH fixture
+-- users (the MOD2/TEAMMAP idiom). DARK arm: with the flag committed-false a DOCKED ship's send RAISES
+-- home-only (the byte-identical witness; every earlier block also ran with the flag committed-dark).
+-- LIT arm (flag flipped in-txn via set_game_config, restored + rolled back): a docked ship launches
+-- from its port (its OWN present fleet re-departs, origin_type='location'=the dock, NOT the base),
+-- records the return port, arrives + docks at the destination; and a docked team hunt launches from
+-- the port + the reconciler docks the returning member at the recorded return port (never home).
+do $$
+declare
+  r jsonb; n int; v_ok boolean;
+  uN uuid; sN uuid; v_fleet uuid; v_mv uuid; v_prev_fleet uuid;
+  uNT uuid; sNT uuid; gNT uuid; v_team_fleet uuid; v_team_mv uuid;
+  slag  uuid := (select v from tcmd where k='slag');
+  drift uuid := (select v from tcmd where k='drift');
+  v_hunt uuid;
+begin
+  -- ── (0) structural: the 0199 surface is deployed and the flag is committed DARK ──────────────────
+  if coalesce((select value #>> '{}' from public.game_config where key='launch_from_dock_enabled'),'false') <> 'false' then
+    raise exception 'NOHOME FAIL: launch_from_dock_enabled is not committed false (dark)'; end if;
+  if to_regprocedure('public.send_main_ship_expedition(jsonb, uuid, uuid)') is null
+     or to_regprocedure('public.send_ship_group_hunt(uuid, uuid, uuid)') is null
+     or to_regprocedure('public.nohome_dock_returning_ship(uuid)') is null then
+    raise exception 'NOHOME FAIL: the 0199 widened send/hunt or dock-at-return leaf is missing'; end if;
+  if not exists (select 1 from information_schema.columns
+      where table_schema='public' and table_name='fleets' and column_name='return_location_id') then
+    raise exception 'NOHOME FAIL: fleets.return_location_id missing'; end if;
+
+  -- the live send needs its own gate lit (committed dark; flipped in-txn via the RAW update — gates
+  -- ride the raw form, never set_game_config; restored below + rolled back regardless).
+  update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
+
+  -- ── (1) fixture: a fresh user + one ship, docked at Slagworks (home send → settle → dock) ─────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uN;
+  insert into public.player_wallet (player_id, balance) values (uN, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uN, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision: %', r; end if;
+  select main_ship_id into sN from public.main_ship_instances where player_id = uN;
+  -- normalize the commission to legacy home (the TEAMMAP idiom): home pair + retire the present fleet.
+  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now()
+    where main_ship_id = sN;
+  update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
+      current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
+    where main_ship_id = sN and status='present';
+  update public.location_presence set status='completed', updated_at=now()
+    where fleet_id in (select id from public.fleets where main_ship_id = sN and status='destroyed') and status='active';
+  -- home → Slagworks, settle → docked (flag still DARK: the ordinary home launch).
+  r := pg_temp.call_as(uN, format('public.send_main_ship_expedition(jsonb_build_array(%L::uuid), %L::uuid)', sN, slag));
+  v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements set depart_at=now()-interval '2 minutes', arrive_at=now()-interval '1 minute' where id=v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'present' then raise exception 'NOHOME FAIL: dock settle %', r; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='stationary' and spatial_state='at_location';
+  if n <> 1 then raise exception 'NOHOME FAIL: fixture ship not docked at Slagworks'; end if;
+  select id into v_prev_fleet from public.fleets where main_ship_id=sN and status='present' and current_location_id=slag;
+
+  -- ── (2) DARK WITNESS: flag committed-false → a DOCKED ship's send RAISES home-only ───────────────
+  v_ok := false;
+  begin
+    perform pg_temp.call_as(uN, format('public.send_main_ship_expedition(jsonb_build_array(%L::uuid), %L::uuid)', sN, drift));
+    v_ok := true;
+  exception when others then
+    if position('not available' in sqlerrm) = 0 then
+      raise exception 'NOHOME FAIL: docked-dark send raised unexpectedly: %', sqlerrm; end if;
+  end;
+  if v_ok then raise exception 'NOHOME FAIL: a docked ship SENT while launch_from_dock_enabled dark (want home-only raise)'; end if;
+
+  -- ── (3) LIT: flip the flag (raw update — the gate convention); the docked ship launches from its
+  --         OWN present fleet, from the port ─────────────────────────────────────────────────────────
+  update public.game_config set value='true'::jsonb where key='launch_from_dock_enabled';
+  r := pg_temp.call_as(uN, format('public.send_main_ship_expedition(jsonb_build_array(%L::uuid), %L::uuid)', sN, drift));
+  v_fleet := (r->>'fleet_id')::uuid;
+  v_mv    := (r->>'movement_id')::uuid;
+  if v_fleet is distinct from v_prev_fleet then
+    raise exception 'NOHOME FAIL: docked launch created a NEW fleet (want the ship''s OWN present fleet re-departed)'; end if;
+  if (r->>'return_location_id')::uuid is distinct from slag then
+    raise exception 'NOHOME FAIL: return port not recorded as the docked origin (want Slagworks)'; end if;
+  -- launched FROM the dock (origin_type='location'=Slagworks), NOT from the (0,0) base:
+  select count(*) into n from public.fleet_movements
+    where id=v_mv and origin_type='location' and origin_location_id=slag and target_type='location' and target_location_id=drift;
+  if n <> 1 then raise exception 'NOHOME FAIL: outbound movement did not depart from the docked port (Slagworks)'; end if;
+  select count(*) into n from public.fleets where id=v_fleet and status='moving' and return_location_id=slag;
+  if n <> 1 then raise exception 'NOHOME FAIL: the re-departed fleet is not moving with the return port recorded'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='traveling' and spatial_state is null;
+  if n <> 1 then raise exception 'NOHOME FAIL: ship not in-flight after the docked launch (home was never required)'; end if;
+  -- arrives + docks at the destination (movement_settle_arrival, 0153 — the send-to-port dock).
+  update public.fleet_movements set depart_at=now()-interval '2 minutes', arrive_at=now()-interval '1 minute' where id=v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'present' then raise exception 'NOHOME FAIL: destination dock settle %', r; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='stationary' and spatial_state='at_location';
+  if n <> 1 then raise exception 'NOHOME FAIL: ship not docked at the destination after the launch-from-dock trip'; end if;
+
+  -- ── (4) LIT team hunt from dock + reconciler dock-at-return (no combat drive needed) ─────────────
+  select id into v_hunt from public.locations where activity_type='hunt_pirates' and status='active'
+    order by coalesce(min_power_required,0) asc limit 1;
+  if v_hunt is null then raise exception 'NOHOME FAIL: no active hunt_pirates location'; end if;
+  update public.game_config set value='true'::jsonb where key='team_command_enabled';
+  -- fresh user + one docked ship + a 1-ship team.
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uNT;
+  insert into public.player_wallet (player_id, balance) values (uNT, 1000000) on conflict (player_id) do update set balance=excluded.balance;
+  r := pg_temp.call_as(uNT, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision team: %', r; end if;
+  select main_ship_id into sNT from public.main_ship_instances where player_id = uNT;
+  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now() where main_ship_id=sNT;
+  update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
+      current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
+    where main_ship_id=sNT and status='present';
+  update public.location_presence set status='completed', updated_at=now()
+    where fleet_id in (select id from public.fleets where main_ship_id=sNT and status='destroyed') and status='active';
+  r := pg_temp.call_as(uNT, format('public.send_main_ship_expedition(jsonb_build_array(%L::uuid), %L::uuid)', sNT, slag));
+  v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements set depart_at=now()-interval '2 minutes', arrive_at=now()-interval '1 minute' where id=v_mv;
+  perform public.movement_settle_arrival(v_mv);   -- docked at Slagworks
+  r := pg_temp.call_as(uNT, 'public.upsert_ship_group(1, ''DockWing'')');
+  gNT := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uNT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sNT, gNT));
+  -- LIT hunt: launch the docked team from the port, return port = Slagworks (the dock).
+  r := pg_temp.call_as(uNT, format('public.send_ship_group_hunt(%L::uuid, %L::uuid, %L::uuid)', gNT, v_hunt, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: docked team hunt rejected: %', r; end if;
+  v_team_fleet := (r->>'fleet_id')::uuid;
+  v_team_mv    := (r->>'movement_id')::uuid;
+  if (r->>'return_location_id')::uuid is distinct from slag then
+    raise exception 'NOHOME FAIL: team hunt return port not recorded (want Slagworks)'; end if;
+  select count(*) into n from public.fleet_movements where id=v_team_mv and origin_type='location' and origin_location_id=slag;
+  if n <> 1 then raise exception 'NOHOME FAIL: team hunt did not depart from the docked port'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='hunting';
+  if n <> 1 then raise exception 'NOHOME FAIL: team member not hunting after the docked launch'; end if;
+  -- the member's OWN docked present fleet was dissolved (it flies with the team now):
+  select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
+  if n <> 0 then raise exception 'NOHOME FAIL: the member''s docked present fleet was not dissolved'; end if;
+
+  -- simulate post-combat return: the team fleet completes back home + the member goes 'returning',
+  -- then the LIT reconciler DOCKS the member at the recorded return port (Slagworks), never home —
+  -- SPLITTING the shared team fleet back into the member's OWN tagged present fleet (review H1).
+  update public.fleets set status='completed', location_mode='base', active_movement_id=null, updated_at=now() where id=v_team_fleet;
+  update public.main_ship_instances set status='returning', spatial_state=null, space_x=null, space_y=null, updated_at=now() where main_ship_id=sNT;
+  perform public.process_mainship_expeditions();
+  select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='stationary' and spatial_state='at_location';
+  if n <> 1 then raise exception 'NOHOME FAIL: the reconciler did not dock the returning member (want stationary/at_location at the return port)'; end if;
+  -- H1: the returned member owns its OWN main_ship_id-tagged present fleet at the port (NOT a shared
+  -- untagged team fleet) — the per-ship handle every re-launch path (send/move/re-hunt) keys on.
+  select count(*) into n from public.fleets where main_ship_id=sNT and status='present' and current_location_id=slag;
+  if n <> 1 then raise exception 'NOHOME FAIL: the returned member has no per-ship tagged present fleet at the return port (H1 wedge)'; end if;
+  if exists (select 1 from public.main_ship_instances where main_ship_id=sNT and status='home') then
+    raise exception 'NOHOME FAIL: the returning member was re-homed under the lit flag (the NO-HOME law is violated)'; end if;
+  -- H1 REGRESSION WITNESS (the fix's teeth): the returned docked team can LAUNCH AGAIN — a SECOND hunt
+  -- from the port SUCCEEDS. Before the per-ship split fix this dead-ended (member_not_ready / no present
+  -- fleet), the exact wedge the current-before-fix dock left behind.
+  r := pg_temp.call_as(uNT, format('public.send_ship_group_hunt(%L::uuid, %L::uuid, %L::uuid)', gNT, v_hunt, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: a returned docked team could not launch again (H1 second-launch wedge): %', r; end if;
+  if (r->>'fleet_id')::uuid = v_team_fleet then raise exception 'NOHOME FAIL: the second hunt reused the OLD team fleet (want a fresh sortie)'; end if;
+
+  -- restore the flipped gates in-txn via the raw update (ROLLBACK reverts regardless — the .sh honesty
+  -- check re-confirms each committed flag is still false post-run).
+  update public.game_config set value='false'::jsonb where key='launch_from_dock_enabled';
+  update public.game_config set value='false'::jsonb where key='team_command_enabled';
+  update public.game_config set value='false'::jsonb where key='mainship_send_enabled';
+
+  raise notice 'TEAMCMD_PASS_NOHOME ok: flag committed dark; DARK a docked ship''s send RAISES home-only (byte-identical witness); LIT a docked ship re-departs its OWN present fleet FROM the port (origin_type=location=Slagworks, not the base), records the return port, and docks at the destination; a docked TEAM hunt launches ONE fleet from the port (member hunting, its docked fleet dissolved, return port recorded); the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home, SPLITTING the shared team fleet back into the member''s OWN tagged present fleet (H1) so the team LAUNCHES AGAIN — a second hunt from the port SUCCEEDS with a fresh sortie (the H1 regression witness); flags restored in-txn';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed; 0198 NANGUARD: the dead x<>x NaN guards fixed to the working = ''NaN''::double precision idiom at all THREE knob sites (adapter level + affinity, reconciler idle-regen) — a jsonb "NaN" knob floors to 0 so calculate_expedition_stats stays byte-identical to the knob-0 baseline with a finite combat_power and process_mainship_expeditions is a clean no-op (no ceil(NaN)::integer abort), behaviorally inert at seed 0; 0199 NO-HOME: launch-from-dock is committed DARK — a docked ship''s send RAISES home-only while the flag is false (the byte-identical witness); flipped in-txn, a docked ship re-departs its OWN present fleet FROM the docked port (origin_type=location, not the base) recording the return port and docks at the destination, a docked team hunt launches ONE fleet from the port with the return port recorded and its members'' docked fleets dissolved, and the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home; all NO-HOME flags restored in-txn' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
