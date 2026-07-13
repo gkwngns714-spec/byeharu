@@ -5,6 +5,47 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — NANGUARD: fix the inherited no-op NaN guards at all three knob sites (mig 0198, inert)
+
+**Request.** The NANGUARD follow-up (FULL_CAPACITY_PLAN queue row 20, found by the DECKS-3 hostile
+review): the house `case when v_raw <> v_raw then 0 else v_raw end` NaN-detect idiom is a NO-OP in
+PostgreSQL — PG deviates from IEEE-754 and makes `'NaN'::float8 = 'NaN'::float8` TRUE, so the
+`x <> x` arm is UNREACHABLE and a knob mis-set to the JSON string `"NaN"` passes straight through
+`greatest()` (NaN sorts above every numeric in PG) to poison / abort the guarded math. A real latent
+bug, inert only because the knobs are seeded '0' today.
+
+**Work done**
+- **True heads (grep-verified across ALL migrations):** `calculate_expedition_stats` ← 0196 (creates
+  0044→0115→0122→0170→0180→0193→0196, nothing later) — TWO guards live here: the 0180 LEVEL knob
+  (`captain_level_bonus_per_level`) and the 0196 AFFINITY knob (`station_affinity_bonus`).
+  `process_mainship_expeditions` ← 0197 (creates 0050→0169→0197) — ONE guard: the 0197 IDLE-REGEN
+  knob (`shield_regen_idle_pct`). **Checked and rejected a 4th site:** `process_combat_ticks` (0195)
+  reads `shield_regen_combat_pct` as a bare `coalesce(cfg_num(...),0)` — NO `x <> x` guard at all, so
+  there is nothing to fix there. **THREE guard sites, not four.**
+- **The fix (mig 0198, uncommitted):** re-created both affected functions from their TRUE heads
+  VERBATIM except the ONE marked `-- NANGUARD (0198)` hunk per guard — the operator `<>` becomes the
+  working `= 'NaN'::double precision` (the 0182 worldstate-knob precedent, 0182:204-207) and the
+  adjacent honesty-note comment that called the arm a no-op is corrected. Extract-and-diff clean: the
+  ONLY code delta is the guard operator at each of the three sites; every accumulated hunk
+  (0115/0122/0170/0180/0193/0196 in the adapter; the 0169 CTEs + 0197 regen hunk in the reconciler)
+  is byte-identical.
+- **Behaviorally inert at the seeds.** All three knobs are '0' today, and 0 is not NaN under either
+  idiom — so the fix changes NOTHING at the committed seeds. Every existing proof stayed green
+  unchanged. It is a correctness/robustness fix that bites ONLY a post-flip bad knob write.
+- **Proof.** Added `TEAMCMD_PASS_NANGUARD` (25th marker) to `team-command-proof.{sql,sh}`: it POISONS
+  a knob with the jsonb `"NaN"` string in-txn and proves the fixed guard floors it to 0 — the
+  affinity witness (a real gunnery-matched captain, non-vacuous) leaves the adapter byte-identical to
+  the knob-0 baseline with a finite combat_power (never NaN); the idle-regen witness leaves the
+  reconciler a clean no-op (shield stays 3, no `ceil(NaN)::integer` abort). Both knobs restored to '0'
+  in-txn. This block would have FAILED before 0198 (NaN propagates/aborts) — the witness the inert
+  envelope can't show. Self-asserts in 0198 pin the working token present + the dead `<>` token gone
+  at all three sites, the accumulated head hunks surviving, and the knobs still committed '0'.
+
+**Verification.** `team-command-proof.sh selftest` green (25 markers); 3 mutation guttings of the new
+NaN-floor pins fail-then-restore. Server-only — zero `src/` changes (tsc/vite N/A). Left uncommitted.
+
+---
+
 ## 2026-07-13 — SHIELD-2: out-of-combat regen + commission copy + the UI meter pair (mig 0197, inert — P13 complete dark)
 
 **Request.** The SHIELD charter, final slice: the idle regen home, the deferred commission

@@ -117,11 +117,11 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-# (SOUL1 is the 21st marker, SHIELD1 the 22nd, DECKS3 the 23rd, SHIELD2 the 24th — the
-# both-blocks-kept reconcile routine (SHIELD-1 landed first, then DECKS-3 rebased to the 23rd
-# slot, then SHIELD-2 appended as the 24th); SHIPYARD-2 (#138, merged) has its own proof file and
-# never touched this pair.)
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2"
+# (SOUL1 is the 21st marker, SHIELD1 the 22nd, DECKS3 the 23rd, SHIELD2 the 24th, NANGUARD the
+# 25th — the both-blocks-kept reconcile routine (SHIELD-1 landed first, then DECKS-3 rebased to the
+# 23rd slot, then SHIELD-2 appended as the 24th, then NANGUARD (0198) appended as the 25th);
+# SHIPYARD-2 (#138, merged) has its own proof file and never touched this pair.)
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -733,14 +733,34 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "set_game_config('shield_regen_idle_pct', '0'::jsonb)" "$SQL" \
     || fail "harness does not restore the idle regen knob to the dark seed in-txn"
 
-  # ── all twenty-four block PASS markers present. ──────────────────────────────────────────────────────
+  # ── NANGUARD (0198) pins, in assert form (a gutted .sql that only mentions them in prose cannot
+  #    false-green): the fix is INERT at seed 0, so the witness must POISON a knob with the jsonb
+  #    string "NaN" in-txn and prove the fixed guard floors it to 0 — the affinity witness must be
+  #    NON-VACUOUS (a real matched contribution, else a 0-share NaN can't reach the math), the
+  #    adapter output must stay byte-identical to the knob-0 baseline with a finite (never-NaN)
+  #    combat_power, the reconciler must stay a clean no-op (shield 3 untouched, no ceil(NaN)::int
+  #    abort), and BOTH poisoned knobs must be set via the jsonb "NaN" literal AND restored to '0'. ──
+  grep -qF "set_game_config('station_affinity_bonus', '\"NaN\"'::jsonb)" "$SQL" \
+    || fail "harness does not POISON the affinity knob with the jsonb \"NaN\" string (the NANGUARD witness)"
+  grep -qF "set_game_config('shield_regen_idle_pct', '\"NaN\"'::jsonb)" "$SQL" \
+    || fail "harness does not POISON the idle-regen knob with the jsonb \"NaN\" string (the NANGUARD witness)"
+  grep -qF "a 0-share NaN test can only false-green" "$SQL" \
+    || fail "harness does not GUARD the affinity NaN witness against a vacuous 0-share (non-vacuity pin)"
+  grep -qF "combat_power is NaN under a \"NaN\" affinity knob" "$SQL" \
+    || fail "harness does not ASSERT combat_power is a finite number (never NaN) under a \"NaN\" affinity knob"
+  grep -qF "want byte-identical to the knob-0 baseline — the fixed guard floors NaN to 0" "$SQL" \
+    || fail "harness does not ASSERT the \"NaN\" affinity knob is byte-identical to the knob-0 baseline"
+  grep -qF "want 3 untouched — the floor sends v_idle to 0 so the statement is skipped, never a NaN write" "$SQL" \
+    || fail "harness does not ASSERT the \"NaN\" idle-regen knob leaves the shield a clean no-op (no ceil(NaN)::int abort)"
+
+  # ── all twenty-five block PASS markers present. ──────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2 specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored)"
   exit 0
 fi
 
