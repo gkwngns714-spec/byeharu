@@ -1,13 +1,19 @@
 // THE strict game_config boolean fold — extracted (SOUL-2) so a new gate never re-writes the
-// `byKey.get(flag) === true` line again. Adopted by commissionContextFromConfig (commissionShip.ts)
-// and the SOUL-2 fold (shipTraits.ts). FOUR copies remain for the consolidation follow-up (the
-// salvage/shipyard files were under the in-flight PR #137 this slice — refactoring them here
-// would have manufactured a merge conflict):
-//   · salvageConfigFromRows           (features/port/salvageMarket.ts)
-//   · the SHIPYARD-3 config fold      (features/port/shipyard.ts — landed with #137)
-//   · fetchMainshipSendEnabled        (lib/catalog.ts:52 — the single-flag maybeSingle shape)
-//   · fetchMainshipSpaceMovementEnabled (lib/catalog.ts:66 — same maybeSingle shape)
-// PURE (no React/DOM/fetch — safe for the pure spec battery).
+// `byKey.get(flag) === true` line again. Adopted by commissionContextFromConfig (commissionShip.ts),
+// the SOUL-2 fold (shipTraits.ts), and — via the CONFIGFOLD follow-up — salvageConfigFromRows
+// (features/port/salvageMarket.ts) and shipyardConfigFromRows (features/port/shipyard.ts). This is
+// now the SOLE array/last-wins fold implementation.
+//
+// NOT routed through here (a deliberate honesty call, not an oversight):
+//   · fetchMainshipSendEnabled          (lib/catalog.ts — the single-flag maybeSingle shape)
+//   · fetchMainshipSpaceMovementEnabled (lib/catalog.ts — same maybeSingle shape)
+// Both do a bare `data?.value === true` on a row the QUERY already keyed (`.select('value')
+// .eq('key', …).maybeSingle()`) — there is no array and no `key` column to fold over. Forcing them
+// through strictConfigFlag would mean fabricating a synthetic `[{ key, value }]` row (re-attaching
+// the key the query already filtered on) — MORE code and indirection than the one-liner, and a
+// naive `[data]` wrap would silently fail dark (the row carries no `key`, so the Map keys on
+// undefined). The strict `=== true` semantics there are already identical; leaving them is the
+// less-code call. PURE (no React/DOM/fetch — safe for the pure spec battery).
 //
 // Semantics (the commissionContextFromConfig posture, verbatim): game_config.value is jsonb and
 // the activation scripts write jsonb `true` via set_game_config — ONLY jsonb true reads as lit.

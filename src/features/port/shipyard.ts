@@ -1,4 +1,5 @@
 import { itemLabel, titleCaseId } from '../../components/items'
+import { strictConfigFlag } from '../../lib/gameConfigFold'
 import { foldStartingCredits } from './salvageMarket'
 import { shipyardReasonMessage } from './shipyardReasonMessage'
 
@@ -64,8 +65,9 @@ export function shipyardConfigFromRows(rows: Array<{ key: string; value: unknown
   const rawMax = byKey.get('max_build_orders')
   const max = rawMax === null || rawMax === undefined || rawMax === '' ? NaN : Number(rawMax)
   return {
-    // strict boolean: anything but jsonb true (including 'true' the string) reads as DARK.
-    enabled: byKey.get('shipyard_enabled') === true,
+    // strict boolean via the ONE shared fold (lib/gameConfigFold): only jsonb true lights;
+    // 'true' the string / absent / [] read DARK.
+    enabled: strictConfigFlag(rows, 'shipyard_enabled'),
     startingCredits: foldStartingCredits(byKey.get('starting_credits')),
     maxBuildOrders: Number.isFinite(max) && max > 0 ? Math.floor(max) : null,
   }
