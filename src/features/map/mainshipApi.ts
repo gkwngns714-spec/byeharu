@@ -29,6 +29,10 @@ export interface MainShipRow {
   status: string
   hp: number
   max_hp: number
+  // SHIELD-2 (0191 columns): 0/0 on every ship until the human ACT-SHIELD flip — the meter pair
+  // is data-gated on max_shield > 0, so these ride along dark (additive columns, no flag).
+  shield: number
+  max_shield: number
   cargo_capacity: number
   captain_slots: number
   module_slots: number
@@ -52,7 +56,7 @@ export interface MainShipView {
 }
 
 const HULL_COLS = 'hull_type_id, name, base_hp, base_speed, base_cargo_capacity, base_captain_slots, base_module_slots'
-const SHIP_COLS = 'main_ship_id, name, status, hp, max_hp, cargo_capacity, captain_slots, module_slots, hull_type_id'
+const SHIP_COLS = 'main_ship_id, name, status, hp, max_hp, shield, max_shield, cargo_capacity, captain_slots, module_slots, hull_type_id'
 
 async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
   const { data } = await supabase.from('main_ship_hull_types').select(HULL_COLS).eq('hull_type_id', hullTypeId).maybeSingle()

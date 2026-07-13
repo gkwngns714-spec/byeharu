@@ -43,6 +43,8 @@ function ship(s: HState): MainShipLite | null {
     hull_type_id: 'starter_frigate',
     hp: 500,
     max_hp: 500,
+    shield: 0, // SHIELD-2: the 0191 columns ride the owner-ship read (0/0 = shieldless, prod today)
+    max_shield: 0,
     cargo_capacity: 50,
     spatial_state: s.shipSpatialState as MainShipLite['spatial_state'],
     space_x: 0,

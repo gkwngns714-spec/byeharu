@@ -5,6 +5,98 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — SHIELD-2: out-of-combat regen + commission copy + the UI meter pair (mig 0197, inert — P13 complete dark)
+
+**Request.** The SHIELD charter, final slice: the idle regen home, the deferred commission
+base_shield copy, and the shield/hull meter pair — everything inert while pools are 0/0 and
+`shield_regen_idle_pct` is '0'. Only the human ACT-SHIELD flip remains for P13.
+
+**Work done**
+- **True heads (grep-verified on main today):** `process_mainship_expeditions` ← 0169:446
+  (created 0050:234; ONLY re-create 0169 — SHIPYARD-2/SOUL-1/SHIELD-1 confirmed untouched);
+  `ensure_main_ship_for_player` ← 0193:175 (0043 → 0077 → 0078 → 0193);
+  `port_entry_commission_build` head is now **0194 on main** (SHIPYARD-2, PR #138, merged) —
+  re-created from that merged 0194 body + the shield hunk (see collision notes).
+- **mig `20260618000197_shield2_regen.sql`** *(0196 landed as DECKS-3, merged; 0197 is the next
+  free slot on rebased main; recorded in the header)*:
+  - **Idle regen** — the reconciler re-created (0169 head verbatim, extract-and-diff verified:
+    only the marked hunk + one blank line differ) with ONE guarded set-based statement AFTER the
+    two D3 CTEs: `shield := least(max_shield, shield + ceil(max_shield × knob))` where
+    `shield < max_shield` (the 0191 partial index) and `status <> 'destroyed'` and NOT EXISTS an
+    **active/retreating encounter membership** — the charter §1.3.2 double-writer EXCLUSION
+    predicate: in a live encounter the 3s tick is the sole shield writer, outside it the
+    reconciler is (a disjoint-writers partition, never a second lock). **DOUBLE-GUARDED
+    zero-knob:** `least(max, shield+0)` = shield, but a same-value UPDATE still fires row writes —
+    so `if v_idle > 0 then` skips the statement ENTIRELY (zero writes = byte-inert cron, stated
+    in the hunk). Knob read ONCE per invocation (declare initializer), carrying the C2-2
+    NaN-guard SHAPE for parity — **a documented no-op in PG** (NaN = NaN is true, so `x<>x` never
+    fires; a 'NaN' knob is NOT caught — NANGUARD follow-up), floored at 0 (a negative can never
+    drain). Return envelope unchanged
+    (`v_count + v_team` — regen rows uncounted).
+  - **Commission copy** — both creators' enumerated inserts gain
+    `shield, max_shield := h.base_shield, h.base_shield`: **BORN FULL** (the `h.base_hp, h.base_hp`
+    posture mirrored; [D] a fresh hull leaves the yard charged — ACT-SHIELD's backfill uses the
+    same shield=max shape). 0/0 while every hull is 0 (migration-asserted) = byte-identical to the
+    defaults it replaces. `ensure_main_ship_for_player` gets the copy too — its hull lookup was
+    already in scope (two added column refs, the cheapest honest form) and the two creators must
+    not fork the day base_shield rises.
+  - **Self-asserts:** idle knob '0' + every hull/instance 0 (deploy-inert); regen hunk tokens +
+    the guard-appears-before-statement order pin + exactly-one knob read + both D3 CTEs/race-guards
+    byte-intact + envelope token; exactly 1 reconciler cron job; build re-signing (old `(uuid)`
+    gone, starter default, Sparrow + `h.name` + FMRN + the SOUL-1 hook exactly once + fleets
+    insert unmoved + the copy INSIDE the insert) with both callers still single-arg; ensure's
+    copy + create-branch hook + commission lock; no `random()`; ACLs server-only; a live knob-0
+    reconciler smoke pass moves nothing.
+- **UI — the meter pair (data-gated, NO flag — the 0191 posture):** ONE pure view-model
+  (`src/features/ship/meterPair.ts` — shield reading null unless `max_shield > 0`, both pcts
+  clamped 0–100, non-finite fails closed, the sr-only pair label) + ONE shared component
+  (`src/features/ship/MeterPairBars.tsx` — shield ABOVE hull, the classic pair; hull markup =
+  the pre-SHIELD-2 ShipStatusCard block verbatim). ShipStatusCard renders the pair in place of
+  its hull bar (byte-identical DOM while shieldless); ShipDossier gains the WHOLE pair only when
+  `max_shield > 0` (it had no bar before — zero new DOM on prod where every ship is 0/0);
+  sr-only "Shield x/y · Hull x/y" rides the shield-shown branch only. `shield, max_shield` added
+  to the enumerated owner-ship selects (mainshipApi `SHIP_COLS` + `MainShipRow`, the
+  useGalaxyMapData `MainShipLite` read) — additive columns. TeamRosterPanel/TeamMapSend member
+  rows carry NO hp today (TeamRosterPanel:379 records it) → no shield readout there (skipped,
+  documented — the pair arrives when member rows learn hp). Specs:
+  `tests/shipMeterPair.spec.ts` (zero-max hidden / partial / full / clamping both ways /
+  fail-closed non-finite / sr label).
+- **Proof — `TEAMCMD_PASS_SHIELD2`** (24th marker; DECKS-3 landed as the 23rd, SHIELD-2 appended
+  as the 24th — the established both-blocks-kept idiom): committed-'0' entry pin (so TEAMSETTLE's five
+  reconciler passes above ARE the knob-0 byte-parity witness — stated, not re-run); knob-0
+  ZERO-WRITES via a 1-hour-old `updated_at` sentinel on a 40/3 fixture (the statement never
+  FIRES); lit arm in-txn via real `set_game_config` — knob 0.03 pins CEIL (3 → 5, floor would
+  land 4), 0.25 climbs 5 → 15 exactly, least caps 35 → 40, a FULL pool with a re-pinned sentinel
+  is never rewritten; the exclusion pins on REAL fixtures (a live 1-ship team-hunt encounter —
+  instance shield untouched, non-vacuous vs the regen fixture — then the one-step-wipe defeat and
+  a re-armed DESTROYED hull stays at 3); the commission copy births 25/25 through BOTH real
+  creators under a sanctioned `base_shield = 25` hull surgery, restored. `.sh`: idle knob moved
+  never-touch → raised-and-restored-in-txn (its consumer arrived — the SHIELD-1 combat-knob
+  precedent); the hull-table negative grep TIGHTENED not dropped (insert/delete/copy always fail;
+  updates only in the `set base_shield` form, raise + restore both required); 13 new assert-form
+  pins; a committed-base_shield=0 honesty check after the local run.
+- **Docs:** FULL_CAPACITY_PLAN §C P13 (SHIELD-2 shipped; P13 complete dark; the ACT-SHIELD flip
+  script charter written — preconditions/monotonic backfill/instance copy/knobs 0.02 combat +
+  0.10 idle [D] Sparrow 100 / Mule 130 / Talon 85 [D]/smoke) + queue row 18; SYSTEM_BOUNDARIES
+  (`shield` = TWO runtime writers disjoint by the exclusion predicate; `max_shield` = the two
+  creators' inserts exactly; the direct-set-statement-not-leaf [D] recorded); DEV_LOG.
+- **Collision notes (all landed-fact now):** (a) 0196 → DECKS-3 (merged), 0197 taken. (b)
+  `port_entry_commission_build`: PR #138 (SHIPYARD-2, mig 0194) merged and re-signed it
+  `(uuid, text)`; this slice carries the merged 0194 BODY + the shield hunk with order-robust
+  drops (`drop function if exists (uuid)` then create-or-replace `(uuid, text)`, ACL re-asserted).
+  The apply chain 0193 → 0194 → 0196 → 0197 lands every accumulated hunk in the last body
+  (extract-and-diff verified byte-for-byte against merged 0194). (c) The proof marker slot:
+  DECKS-3 landed as the 23rd, SHIELD-2 appended as the 24th.
+
+**Verification.** `team-command-proof.sh selftest` green (24 markers as-built); 3 mutation
+guttings (zero-writes guard, regen exactness, exclusion predicate) each fail-then-restore;
+migration bodies extract-and-diffed against their heads (reconciler/build/ensure — only the
+marked hunks differ); `tsc -b` + `vite build` green; the full pure spec battery by explicit list
+green (incl. the new shipMeterPair.spec.ts); eslint clean on every touched src file
+(`tests/harness/galaxyCoordHarness.tsx` carries 3 PRE-EXISTING errors, not introduced here).
+
+---
+
 ## 2026-07-13 — DECKS-3: station affinity bonuses — the adapter's knob-gated matched-station multiplier (mig 0196, inert)
 
 **Request.** The DECKS charter, slice 3: when a captain's specialization matches their held

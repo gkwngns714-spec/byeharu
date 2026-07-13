@@ -20,6 +20,8 @@ import {
 } from './shipDossierView'
 import { shipTraitCards } from './shipTraits'
 import { fetchShipSoul, type ShipSoulData } from './soulApi'
+import { shipMeterPair } from './meterPair'
+import { MeterPairBars } from './MeterPairBars'
 import { Card, CardHeader, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemTile } from '../../components/items'
 
@@ -143,7 +145,16 @@ export function ShipDossier({
   // ── per-ship projections (pure selectors — specs in tests/shipDossier.spec.ts) ────────────────
   const litFittings = isServerLit(fittings) ? fittingsForShip(fittings.fittings ?? [], shipId) : null
   const slotsUsed = litFittings ? fittedSlotsUsed(litFittings) : 0
-  const slotLimit = resolveOwnedShip(ships ?? [], shipId)?.module_slots ?? null
+  // The dossier's OWN row for this ship (already fetched for the slot line) — also feeds the
+  // SHIELD-2 meter pair below (shield/max_shield ride the same SHIP_COLS owner read).
+  const dossierShip = resolveOwnedShip(ships ?? [], shipId)
+  const slotLimit = dossierShip?.module_slots ?? null
+  // SHIELD-2: the shield/hull pair view-model (pure — specs in tests/shipMeterPair.spec.ts).
+  // The dossier had NO integrity bar before this slice, so the WHOLE pair is gated on the shield
+  // reading existing (max_shield > 0): every ship is 0/0 on prod until the human ACT-SHIELD flip,
+  // so the card's DOM stays byte-identical today — data-gated, no flag needed. (ShipStatusCard
+  // beside it keeps its always-on hull bar; this card only joins the pair once shields are real.)
+  const meters = dossierShip ? shipMeterPair(dossierShip) : null
   const litCaptains = isServerLit(roster) ? captainsForShip(roster.captains ?? [], shipId) : null
   // DECKS-2: the decks board view-model (pure; specs in tests/deckStations.spec.ts). null while
   // the roster is dark (nothing renders — unchanged posture) or the catalog read failed (list
@@ -170,6 +181,15 @@ export function ShipDossier({
   return (
     <Card data-testid="ship-dossier">
       <CardHeader title="On this ship" subtitle={selectedShip.name} className="mb-2" />
+
+      {/* SHIELD-2 — the classic shield/hull pair (shield ABOVE hull), via the ONE shared bar
+          component, ONLY once this ship has a real shield capacity (max_shield > 0; see the
+          derivation note above — renders NOTHING on prod today). */}
+      {meters?.shield && (
+        <div className="mb-3" data-testid="dossier-meters">
+          <MeterPairBars pair={meters} hullTone={meters.hull.pct < 100 ? 'accent' : 'success'} />
+        </div>
+      )}
 
       {/* SHIP-POWER — this ship's own stats strip (top): the same four numbers the TeamDossier
           strip totals across a team, for ONE ship, in the same chip language. Server truth: the
