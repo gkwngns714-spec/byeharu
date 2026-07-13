@@ -8,6 +8,7 @@ import { InventoryPanel } from '../inventory/InventoryPanel'
 import { ShipSwitcher } from '../map/ShipSwitcher'
 import { MAINSHIP_ADDITIONAL_ENABLED, TRADE_MARKET_ENABLED } from '../map/osnReleaseGates'
 import { CommissionShipPanel } from './CommissionShipPanel'
+import { resolveShipLocationLabel } from './shipLocation'
 import { PageHeader, Screen, screenRailClass, screenSplitClass } from '../../components/ui'
 
 // UI-REBUILD (2b, Ship interior) — the Ship destination: ONE merged ship-status surface
@@ -28,6 +29,19 @@ export function ShipScreen() {
   // command just changed (non-optimistic: the command panel refetched itself first, then pinged us).
   const [loadoutRev, bumpLoadoutRev] = useReducer((n: number) => n + 1, 0)
   const readRefreshKey = `${lifecycleKey}|r${loadoutRev}`
+
+  // SHIPLOC — the selected ship's LOCATION for the dossier (owner: "in ship tab, i should be able to
+  // see where the ship is"). The shell's map poll resolves the SOLE ship's fleet/movement today
+  // (fetchMainShip no-id → null at N≥2), so it corresponds to the selected ship ONLY when the
+  // selection IS that resolved ship. When it does, resolve the location with the ONE shared helper
+  // (the same one ShipStatusCard above uses); otherwise pass null so the dossier honestly shows
+  // "Location unavailable" rather than a wrong place. Per-ship location for a non-sole ship arrives
+  // later via the MAP slice's fleet-positions projection.
+  const locFleet = map.mainShipFleet
+  const locMove = locFleet ? (map.movements.find((m) => m.fleet_id === locFleet.id && m.status === 'moving') ?? null) : null
+  const locationMatchesSelected =
+    !!shipSelection.selectedShipId && map.mainShip?.main_ship_id === shipSelection.selectedShipId
+  const shipLocation = locationMatchesSelected ? resolveShipLocationLabel(locFleet, locMove, game.locations) : null
   // TRADE-UI-1 — client selected-ship model, now the ONE shell instance (A0 lifted it here; Port's MarketPanel
   // reads the SAME selection). Consumed by the DARK ShipSwitcher only (compile-gated false + server-rejected).
 
@@ -65,6 +79,7 @@ export function ShipScreen() {
             key={shipSelection.selectedShipId ?? 'no-ship'}
             selectedShip={shipSelection.selectedShip}
             refreshKey={readRefreshKey}
+            location={shipLocation}
           />
           {/* WORKSHOP: ModulesPanel (craft & fit) moved to PortScreen — fitting is port-work
               (the 0114 settled-SAFE law); the dossier above keeps the read-only fitted view. */}

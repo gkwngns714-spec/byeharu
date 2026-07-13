@@ -8,11 +8,11 @@ import {
 } from '../map/mainshipApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MapLocation } from '../map/mapTypes'
-import { formatCountdown } from '../../lib/time'
 import { Badge, Button, Card, CardHeader, Meter, Notice, SectionLabel, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX } from './shipName'
 import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
+import { resolveShipLocationLabel } from './shipLocation'
 
 // UI-REBUILD (2b, Ship interior) — THE one ship-status surface. Merges the two former panels
 // (MainShipPreview: card + repair + the only recall · MainShipPanel: derived status + destination
@@ -146,16 +146,15 @@ export function ShipStatusCard({
   const isDisabled = ship.status === 'destroyed' // disabled/needs-repair, never deletion (10F)
   const displayStatus = isDisabled ? 'disabled' : deriveMainShipStatus(fleet)
   const move = fleet ? movements.find((m) => m.fleet_id === fleet.id && m.status === 'moving') : undefined
-  const locName = (id: string | null | undefined) => (id && locations.find((l) => l.id === id)?.name) || null
-  const destination = move
-    ? move.target_type === 'base'
-      ? 'base'
-      : (locName(move.target_location_id) ?? 'its destination')
-    : displayStatus === 'present'
-      ? locName(fleet?.current_location_id)
-      : null
-  const heading = move?.mission_type === 'return_home' || displayStatus === 'returning'
-  const countdown = move ? formatCountdown(move.arrive_at) : null
+  // SHIPLOC — the shared location resolver owns the name/destination/countdown derivation this card
+  // used to inline (now single-sourced, reused by ShipDossier). This card's render is byte-identical:
+  // it still uses its OWN displayStatus/badge/branch/progress; only destination/heading/etaText are
+  // sourced here. (When isDisabled the repair branch renders instead, so destination is never shown —
+  // the helper deriving it from the fleet regardless is inert.)
+  const loc = resolveShipLocationLabel(fleet, move ?? null, locations)
+  const destination = loc.destination
+  const heading = loc.heading
+  const countdown = loc.etaText
   const progress = move
     ? (() => {
         const dep = new Date(move.depart_at).getTime()
