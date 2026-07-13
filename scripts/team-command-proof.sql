@@ -3613,6 +3613,77 @@ begin
   raise notice 'TEAMCMD_PASS_SHIELD2 ok: committed idle knob ''0'' at entry (every reconciler pass above ran THIS 0197 body dark — TEAMSETTLE''s re-home/race-guard/self-heal pins ARE the knob-0 byte-parity witness); zero-writes pinned by the updated_at sentinel (knob 0 never fires the statement); lit climb exact (ceil pinned at 0.03: 3→5; 0.25: 5→15; least caps 35→40; a full pool is never rewritten); in-encounter exclusion holds on a REAL active encounter (non-vacuous vs fixture A) and a destroyed hull stays dead at 3; the commission copy births 25/25 through BOTH real creators (build via commission_first_main_ship + the legacy ensure) with base_shield surgically raised then restored; idle knob restored in-txn';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed' as result;
+-- ══ BLOCK NANGUARD — migration 0198: the dead NaN guards fixed at all three knob-read sites ═══════
+-- 0198 re-created calculate_expedition_stats (0196 head) and process_mainship_expeditions (0197
+-- head) with ONLY the guard operator flipped from the PG-no-op `x <> x` to the working
+-- `= 'NaN'::double precision` (the 0182 precedent) at each knob site — the level + affinity knobs in
+-- the adapter, the idle-regen knob in the reconciler. INERT at seed 0 (0 is not NaN either way), so
+-- every block above stayed green UNCHANGED. This block is the TARGETED witness the inert envelope
+-- can't show: with a knob mis-set to the jsonb string "NaN", the FIXED guard floors it to 0 and the
+-- function behaves as if the knob were 0 — NOT a NaN poison / abort. It would have FAILED before the
+-- fix (NaN propagates through greatest() → the adapter yields/aborts on NaN; the reconciler's
+-- ceil(max_shield × NaN)::integer aborts). Both knobs set "NaN" in-txn, called, then restored to '0'.
+--   AFFINITY (adapter) — a fresh gunnery-stationed gunnery_veteran (spec 'combat' = gunnery affinity
+--          'combat', a REAL match so v_aff_mult = 1 + v_aff_bonus is actually evaluated — the NaN
+--          reaches the math, non-vacuous): the knob-"NaN" totals must be BYTE-IDENTICAL to the
+--          knob-0 baseline (the floor sent NaN→0) and combat_power a finite number, never NaN.
+--   IDLE REGEN (reconciler) — the same ship surgically damaged to 40/3 (shield < max_shield, not
+--          destroyed, no encounter → a real regen candidate): under knob "NaN" the FIXED guard
+--          floors v_idle to 0 so `if v_idle > 0` skips the statement ENTIRELY — the pass returns
+--          cleanly (no NaN write, no ceil(NaN)::integer abort) and the shield stays 3.
+do $$
+declare
+  uA uuid; sA uuid; capA uuid; s_base jsonb; s_nan jsonb; v_cp numeric; v_match numeric; v_sh int;
+begin
+  -- entry posture: both target knobs are the committed '0' (DECKS3 + SHIELD2 restored them in-txn).
+  if (select value #>> '{}' from public.game_config where key = 'station_affinity_bonus') is distinct from '0'
+     or (select value #>> '{}' from public.game_config where key = 'shield_regen_idle_pct') is distinct from '0' then
+    raise exception 'NANGUARD FAIL: a target knob is not the committed ''0'' at block entry (the witness must start inert)'; end if;
+
+  -- ══ AFFINITY WITNESS (calculate_expedition_stats) ══════════════════════════════════════════════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uA;
+  if (pg_temp.call_as(uA, 'public.commission_first_main_ship()')->>'ok')::boolean is not true then
+    raise exception 'NANGUARD FAIL: affinity-witness provision failed'; end if;
+  select main_ship_id into sA from public.main_ship_instances where player_id = uA;
+  capA := public.captains_mint_instance(uA, 'gunnery_veteran', 'tcmd-nanguard-a');
+  perform public.captain_assign_apply(uA, capA, sA, 'gunnery');
+  -- the match must be REAL (gunnery affinity 'combat' = captain spec 'combat') so v_aff_mult folds
+  -- the knob — otherwise the NaN would never reach the math and the witness would false-green.
+  select coalesce(sum(coalesce((t.stats_json->>'attack')::numeric,0)),0) into v_match
+    from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    join public.captain_types t on t.id = ci.captain_type_id
+    join public.ship_stations ss on ss.station_id = sca.station
+    where sca.main_ship_id = sA and ss.affinity_specialization = t.specialization;
+  if v_match <= 0 then
+    raise exception 'NANGUARD FAIL: the affinity witness has no real matched contribution (% — a 0-share NaN test can only false-green)', v_match; end if;
+
+  s_base := public.calculate_expedition_stats(uA, sA, '[]'::jsonb, 'none');   -- knob committed '0'
+  perform public.set_game_config('station_affinity_bonus', '"NaN"'::jsonb);   -- the poison a bad flip would write
+  s_nan  := public.calculate_expedition_stats(uA, sA, '[]'::jsonb, 'none');   -- the FIXED guard floors NaN -> 0
+  perform public.set_game_config('station_affinity_bonus', '0'::jsonb);       -- restore the dark seed in-txn
+  v_cp := (s_nan->>'combat_power')::numeric;
+  if v_cp = 'NaN'::numeric then
+    raise exception 'NANGUARD FAIL: combat_power is NaN under a "NaN" affinity knob — the guard did not floor it (the dead x<>x arm is back)'; end if;
+  if s_nan is distinct from s_base then
+    raise exception 'NANGUARD FAIL: a "NaN" affinity knob changed the adapter output (want byte-identical to the knob-0 baseline — the fixed guard floors NaN to 0): "NaN" % vs 0 %', s_nan, s_base; end if;
+
+  -- ══ IDLE-REGEN WITNESS (process_mainship_expeditions) ══════════════════════════════════════════
+  -- reuse sA (out of combat, not destroyed) surgically damaged so it is a real regen candidate.
+  update public.main_ship_instances set max_shield = 40, shield = 3 where main_ship_id = sA;
+  perform public.set_game_config('shield_regen_idle_pct', '"NaN"'::jsonb);    -- the poison a bad flip would write
+  perform public.process_mainship_expeditions();   -- FIXED guard floors v_idle -> 0 -> statement skipped (no ceil(NaN)::int abort)
+  perform public.set_game_config('shield_regen_idle_pct', '0'::jsonb);        -- restore the dark seed in-txn
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sA;
+  if v_sh is distinct from 3 then
+    raise exception 'NANGUARD FAIL: a "NaN" idle-regen knob moved the shield to % (want 3 untouched — the floor sends v_idle to 0 so the statement is skipped, never a NaN write)', v_sh; end if;
+
+  raise notice 'TEAMCMD_PASS_NANGUARD ok: all three knob guards fixed to the working = ''NaN''::double precision idiom and PROVEN non-vacuous — a jsonb "NaN" affinity knob (with a REAL gunnery-matched captain aboard) leaves calculate_expedition_stats byte-identical to the knob-0 baseline with a finite combat_power (never NaN), and a jsonb "NaN" idle-regen knob leaves process_mainship_expeditions a clean no-op (shield stays 3, no ceil(NaN)::integer abort) exactly as knob 0; both knobs restored to ''0'' in-txn (this block would have FAILED before 0198 — NaN would propagate/abort)';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed; 0198 NANGUARD: the dead x<>x NaN guards fixed to the working = ''NaN''::double precision idiom at all THREE knob sites (adapter level + affinity, reconciler idle-regen) — a jsonb "NaN" knob floors to 0 so calculate_expedition_stats stays byte-identical to the knob-0 baseline with a finite combat_power and process_mainship_expeditions is a clean no-op (no ceil(NaN)::integer abort), behaviorally inert at seed 0' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
