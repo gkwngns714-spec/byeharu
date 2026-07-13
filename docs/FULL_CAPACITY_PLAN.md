@@ -183,26 +183,79 @@ in both layers, no hull-existence oracle while dark) on the REUSED M4.5 `build_o
 `max_build_orders` cap, receipted + replay-idempotent on (player, request_id) via
 `hull_build_receipts`. Orders land 'waiting' and are INVISIBLE to the 0038 engine by construction
 (the unit_types-join promotion + active-only processing, both prosrc-pinned by the 0188
-self-assert). **SHIPYARD-2 seam items (ALL must ship before ACT-SHIPYARD): the engine's hull arm
-(activation with recipe `build_seconds` + completion), delivery through the commission core, and
-hull-aware `cancel_build_order` refund semantics (today's 0038 cancel would eat a hull order's
-credits/items — refunds only metal_spent = 0; unreachable while dark).** A fourth seam risk —
+self-assert). **SHIPYARD-2 seam items — ALL THREE pre-flip requirements RESOLVED (mig `0194`,
+slice-shipyard2): the engine's hull arm (activation with recipe `build_seconds` + completion),
+delivery through the commission core, and hull-aware `cancel_build_order` refund semantics** —
+see the SHIPYARD-2 shipped entry below. A fourth seam risk —
 the 0047 retention reaper (terminal `build_orders` >30d) cascading receipts away and silently
 expiring the replay guarantee — was **RESOLVED IN-SLICE** (review H1): `hull_build_receipts.order_id`
 is nullable, FK ON DELETE SET NULL — receipts are the durable replay/audit ledger and outlive the
-reap (unlike the three items above, this is NOT a pre-flip requirement). Proof =
+reap (unlike the three items above, this was never a pre-flip requirement). Proof =
 `scripts/shipyard-proof.{sql,sh}` + `shipyard-proof.yml` (standalone workflow —
 team-command-proof is contended by in-flight slices; trade-proof-lib reused): dark gate/no-oracle ·
 exact-spend order · verbatim replay · blueprint/credit shortfalls · both gate arms · self-prereq
 impossibility · the engine seam · receipt survival past the REAL 0047 reaper.
-SHIPYARD-2: build completion →
-delivery — the queue completion commissions the built ship through the ONE commission build core
-(parity re-create taking `p_hull_type_id`, default `'starter_frigate'` → byte-inert — this IS the
-"next functional rework" that retires the SYSTEM_BOUNDARIES fleets-shim exception: repoint the
-sanctioned `fleets` writes through a Fleet-exposed function, re-derive the frozen prosrc-md5 pins,
-delete the exception note in the same PR). SHIPYARD-3: shipyard UI (recipe list + build queue panel,
-server-lit). ACT-SHIPYARD: the human flip script — **preconditions: mining lit (the ore/crystal
-faucet) + trade/salvage lit (the credits faucet)**, blueprint knob raised [D] in the same window.
+SHIPYARD-2 **shipped** (mig `0194`, slice-shipyard2 — RENUMBERED from 0192 per 0193's recorded
+collision choreography): build completion → DELIVERY, dark +
+double-inert (no hull order can exist while `shipyard_enabled` is false, and with zero hull rows
+every re-created body behaves byte-identically — the unit arm's proofs stay green). The 0038
+queue engine re-created from its TRUE head (grep-verified: 0036/0038 the only create sites) with
+marked hunks: `production_start_next` gains the hull candidate branch (oldest waiting hull via the
+strict `hull_build_recipes` join competes with the oldest waiting unit by `queued_at`; duration =
+recipe `build_seconds` under the 0038 min floor, no `build_time_scale` — recipe seconds are
+owner-tuned directly) + the per-player 'production_start' advisory xact lock (review M1 — closes
+the pre-existing concurrent-promotion race past max_active; strictly a race-closure, the one
+deliberate unit-path delta); `process_build_queue` guards `base_merge_units` behind a hull-null
+kind dispatch, runs the HULL arm of its completion loop in a PER-ORDER begin/exception
+subtransaction (review H1, the EV-1 per-publication precedent, query_canceled re-raised: a
+permanently-failing delivery — e.g. the commission port undockable — leaves THAT order active for
+retry and never wedges other players' completions; the unit arm keeps the exact 0038 abort
+posture), and gains the hull-only PROMOTER SWEEP (hull orders enqueue with no immediate start —
+the 0188 order RPC is untouched; the 30s cron promotes, ≤30s activation latency, self-healing);
+`production_complete_order` delivers a completed hull through the ONE commission build core —
+`port_entry_commission_build` re-created from its 0193 TRUE head (the 0184 body + SOUL-1's gated
+trait-roll hook, carried verbatim — a delivered hull is born with its soul when lit) taking
+`p_hull_type_id` default `'starter_frigate'` (byte-inert: both existing callers are single-arg;
+the starter path keeps the exact 'Sparrow' output) — under the 0184 `main_ship_commission`
+naming-race lock; a delivered hull
+gets its catalog stats verbatim + the 0184 name idiom with the class name riding the hull row and
+the numeral counting ALL of the player's ships across classes (a third ship that is a first Mule
+= 'Mule-class Hauler III' — the per-player-ordinal law, not a per-class counter), docked at the
+commission port (Haven Reach — the charter's
+"ordering port" is unrecorded on 0188 orders, so the 0184 behavior is kept, documented [D]);
+delivery deliberately does NOT check `max_main_ships_per_player` (the cap guards the commission
+RPCs; a built hull is bought and paid — recorded for the flip review [D]). `cancel_build_order`
+re-created with the hull refund arm MATCHING the unit arm's semantics [D]: waiting → 100%,
+active → 50% floored (credits via `wallet_credit` 0093 — no idempotency key, the FOR UPDATE
+status flip is the sole and sufficient credit double-refund guard — + ingredients via
+per-deposit-keyed `inventory_deposit` 0039, the bill read from the durable
+`hull_build_receipts.ingredients_json`;
+receipt never rewritten — replay stays verbatim after delivery AND after cancel). **The
+fleets-shim retirement the charter sketched here is EXPLICITLY DEFERRED** [D]: build is NOT one
+of the three md5-pinned PORT-ENTRY bodies (pins = writer / commission_first / normalize,
+grep-verified; 0184's build re-create is the precedent), all three pinned bodies are
+byte-untouched, and the fleets insert inside build is byte-identical — retiring the exception
+would force a hygiene-only re-create of the FROZEN pinned `normalize_main_ship_dock`, exactly the
+live-path risk the SYSTEM_BOUNDARIES note forbids; the exception note is updated (not deleted)
+with this recorded deferral — boundary hygiene, NOT a pre-flip requirement. Proof extended (the
+same standalone harness): `SHIPYARD_PASS_PROMOTE` (cron-sweep promotion with recipe
+build_seconds exact; serial one-slot law across kinds) · `SHIPYARD_PASS_DELIVER` (two-timestamp
+exact-duration fast-forward — the frozen-now() `complete_after_queue` CHECK law — → exact
+stats/name delivery docked at the port; unit order promotes/completes
+byte-identically — the exact 0038 formula + `base_merge_units`; post-delivery replay verbatim) ·
+`SHIPYARD_PASS_DELIVERY_GUARD` (a POISONED delivery — port undockable, in-txn fixture — leaves
+its order active and uncounted while a second player's co-tick unit completion proceeds; fixture
+restored → the next tick self-heals and delivers) ·
+`SHIPYARD_PASS_CANCEL_REFUND` (exact full refund from the receipt bill; double-cancel rejected,
+no double refund; post-cancel replay verbatim; active-cancel floor-half exact) — the original 8
+markers stay green (P6's engine-invisibility block honestly rewritten to pin the CLOSED seam).
+SHIPYARD-3 **shipped** (PR #137, slice-shipyard3 — client-only: the ShipyardPanel recipe list +
+build queue on PortScreen, dark behind `shipyard_enabled` / server-lit; no migration, no engine
+edits — merged while SHIPYARD-2 was in review, reconciled here). ACT-SHIPYARD: the human flip script — **preconditions: mining lit (the ore/crystal
+faucet) + trade/salvage lit (the credits faucet)**, blueprint knob raised [D] in the same window;
+still needs: the `shipyard_enabled` flip + the `blueprint_fragment_drop_rate` faucet knob raise +
+those preconditions (all three pre-flip engine seams are now closed; the deferred fleets-shim
+retirement does NOT gate the flip).
 Deps: credits flowing (Rung 3/P3) + ACT-MINING. Guard: stats only ever enter play via
 `base_stats_json` through the 0170 adapter fold — no new stat path; the recipe tables stay
 Reference/Config (migration-seeded, NO runtime writer); combat never grants ships.
@@ -387,7 +440,10 @@ P2 contracts + P8 event sites first.
 | 18 | SHIELD-0 shield foundation **[D: base_shield at flip Sparrow 100 / Mule 130 / Talon 85 + regen 0.02 combat / 0.10 idle — the §C P13 proposals, owner-tunable at ACT-SHIELD]** | **shipped (dark)** — mig `0191` (slice-shield0): the hp-mirrored shield columns (`base_shield` + instance `shield`/`max_shield` integer default 0 with the 0043-shaped CHECKs, `max_shield` 0-legal) + `combat_units.shield_max`/`shield_current` (0167 snapshot shape; pairing CHECK adapted member-only — live member rows stay NULL-legal until SHIELD-1) + the `mainship_sync_combat_shield` leaf (the 0167 sibling posture + both clamps; NO caller yet) + `shield_regen_combat_pct`/`shield_regen_idle_pct` seeded '0' + the `shield < max_shield` partial regen index (matches zero rows). Data-gated (NO flag); zero function re-creates (the 0184/0078 commission heads enumerate columns → default-0 rides free). Proof = the `TEAMCMD_PASS_SHIELD0` block in `team-command-proof`. **SHIELD-1 shipped (inert)** — mig `0195` (slice-shield1): the 0168/0169-head tick/creator parity re-creates (member shield snapshot NULL-for-shieldless in the one-read pass, ONE absorb point with hull-only overflow, hoisted knob regen capped at max, the 0191 leaf's FIRST caller gated on a non-NULL pool; integrity/defeat/reports byte-unchanged, self-assert-pinned); proof = `TEAMCMD_PASS_SHIELD1` (22nd marker, reconciled after SOUL-1's 21st — both blocks kept, the established idiom). SHIELD-2 (regen home + UI + the commission base_shield copy), ACT-SHIELD (monotonic backfill + knobs) = later slices — see §C P13 |
 
 *(Then: the SHIPYARD line (P6 — SHIPYARD-0 shipped dark as mig 0185; SHIPYARD-1 shipped dark as
-mig 0188, slice-shipyard1 — the order RPC + queue seam; SHIPYARD-2/3 + ACT-SHIPYARD remain) [D],
+mig 0188, slice-shipyard1 — the order RPC + queue seam; SHIPYARD-2 shipped dark as mig 0194,
+slice-shipyard2 — the engine's hull arm + commission-core delivery + hull-aware cancel refunds,
+ALL pre-flip seams closed; SHIPYARD-3 shipped client-only via PR #137; only ACT-SHIPYARD
+remains) [D],
 MOD2-2, RR line, OB line, C2-4 — resequenced at the next plan review.
 HAUL is now FULLY STOCKED: HAUL-3 shipped 0181/PR #117 and the ACT-HAUL flip script shipped
 (slice-act-haul) — only the human flip remains, ordered after ACT-TRADE. C2-3 shipped in PR #117.)*

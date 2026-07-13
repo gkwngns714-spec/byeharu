@@ -5,6 +5,128 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — SHIPYARD-2: hull-build DELIVERY (mig 0194, dark) — all pre-flip seams closed
+
+**Request.** The SHIPYARD charter, slice 2: make the 0038 queue engine DELIVER hulls and close ALL
+THREE recorded pre-flip requirements from the 0188 seam list — the engine's hull arm (activation
+with recipe `build_seconds` + completion), delivery through the ONE commission build core, and
+hull-aware `cancel_build_order` refunds. Dark behind `shipyard_enabled` + double-inert. Hardened
+against the hostile review (B1 proof-constraint blocker, H1 cron-wedge, M1 promotion race, L1/N1
+wording) and RENUMBERED 0192 → 0194 after SOUL-1 (mig 0193, PR #136) landed first — exactly the
+choreography 0193's collision note prescribed.
+
+**Work done**
+- **True heads (grep-verified before writing; re-verified after #134/#135/#136 merged):**
+  `production_start_next` / `production_complete_order` / `process_build_queue` /
+  `cancel_build_order` — 0038 (0036/0038 the only create sites; every later mention is a
+  grant/comment; 0190–0193 touch none); `port_entry_commission_build` — **0193** (0080 → 0184 NAME
+  hunk → 0193 SOUL-1 gated trait-roll hook; grep-verified only callers =
+  `port_entry_commission_writer` 0080 + `commission_additional_main_ship` 0091, both single-arg);
+  `wallet_credit` — 0093; `inventory_deposit` — 0039. `train_units` / `production_create_order`
+  untouched (still head 0038).
+- **mig `20260618000194_shipyard2_delivery.sql`** — five marked-hunk parity re-creates, each
+  extract-and-diff-verified against its head:
+  (a) `production_start_next` + the HULL arm: the oldest waiting hull row (strict
+  `hull_build_recipes` join — the unit arm's `unit_types` join byte-intact) competes with the oldest
+  waiting unit by `queued_at` (strictly-older hull wins, ties to the unit arm); hull duration =
+  `greatest(min_build_seconds, recipe build_seconds)` — no `build_time_scale` [D: recipe seconds are
+  owner-tuned directly; quantity always 1]; PLUS the per-player 'production_start' advisory xact
+  lock at the top (review M1 — two concurrent start_next calls could both read v_active=0 and
+  promote TWO rows past max=1 through diverging skip-locked picks; the 0078 lock idiom closes it;
+  the ONE deliberate unit-path delta, strictly a race-closure); (b) `process_build_queue`:
+  kind-dispatched completion loop — the UNIT arm keeps the exact 0038 statements unguarded, the
+  HULL arm runs in its OWN begin/exception subtransaction (review H1, the EV-1 per-publication
+  precedent, query_canceled re-raised: a permanently-failing delivery — reachable via a disabled
+  commission-port docking service — must never wedge the whole cron; the failed order stays
+  'active', a NOTICE logs it, other players' completions proceed) — plus the hull-only PROMOTER
+  SWEEP (hull orders enqueue with NO immediate start — the 0188 order RPC is untouched [D: one
+  fewer live re-create; ≤30s cron latency; self-healing]; zero hull rows → the sweep selects
+  nobody → byte-identical cron); (c)
+  `production_complete_order`: the 0038 completion UPDATE + RETURNING, then hull delivery through
+  the ONE commission core under the per-player `main_ship_commission` lock (the 0184 naming-race
+  law); atomic per order, the raise confined by (b)'s guard;
+  (d) `cancel_build_order`: unit arm byte-identical; hull refund arm MATCHING the unit semantics
+  [D]: waiting → 100%, active → 50% floored — credits via `wallet_credit` (NO idempotency key;
+  the FOR UPDATE status flip is the sole and sufficient credit double-refund guard — review L1),
+  ingredients via `inventory_deposit`, each DEPOSIT keyed `hull_cancel:<order>:<item>`, the bill
+  read from the durable
+  `hull_build_receipts.ingredients_json` (missing receipt = hard raise — impossible by 0188
+  atomicity; the receipt is NEVER rewritten, replay stays verbatim post-delivery AND post-cancel);
+  (e) `port_entry_commission_build` re-signed `(uuid) → (uuid, text default 'starter_frigate')`
+  from the **0193 head** (old signature dropped — single-arg calls would be ambiguous; both
+  existing callers ride the default to the byte-inert 0193 starter behavior — 'Sparrow' literal
+  AND the SOUL-1 gated trait-roll hook carried verbatim, so a delivered hull is born with its
+  soul when lit, the P12 "every new ship" reading); a non-starter hull rides the same insert path
+  with its catalog stats and the 0184 name idiom — class name from the hull row, the numeral
+  counting ALL of the player's ships across classes (a third ship that is a first Mule =
+  'Mule-class Hauler III', the per-player-ordinal law, NOT a per-class counter — review N1);
+  delivery lands
+  docked at Haven Reach [D: the charter's "ordering port" is unrecorded on 0188 orders — 0184
+  behavior kept, documented]; delivery does NOT check `max_main_ships_per_player` [D: the cap
+  guards commission RPCs; a built hull is bought and paid — recorded for the flip review].
+  Self-asserts: dark + zero hull orders (double-inert), unit-arm byte tokens, hunk tokens (M1
+  lock, H1 guard + query_canceled re-raise + token order), old-signature-gone + starter default +
+  callers-still-single-arg + the SOUL-1 hook surviving with EXACTLY one gated roll call, fleets
+  insert unmoved, determinism (no random()), ACLs, the 0188 receipt-only replay grounding, the
+  shared `max_build_orders` predicate at both cap sites (cap coherence verified — promotion only
+  moves rows between the two counted states).
+- **Fleets-shim retirement EXPLICITLY DEFERRED [D]** (the charter had sketched it here): build is
+  NOT md5-pinned (pins = writer / commission_first / normalize — grep-verified; 0184 precedent),
+  all three pinned bodies byte-untouched, the fleets insert byte-identical; full retirement would
+  force a hygiene-only re-create of the FROZEN pinned `normalize_main_ship_dock` — the exact
+  live-path risk the exception note forbids. §1 `fleets` row updated with the recorded deferral;
+  retirement stays a named follow-up (NOT an ACT-SHIPYARD pre-flip requirement).
+- **Proof** `scripts/shipyard-proof.{sql,sh}` extended (same standalone workflow): P6 honestly
+  rewritten (the invisibility seam is CLOSED — prosrc both-arms pins; kind-coherence + shared-cap
+  unchanged) + 4 new markers: `SHIPYARD_PASS_PROMOTE` (cron-sweep promotion, recipe build_seconds
+  exact, serial one-slot law across kinds, order RPC still enqueues waiting),
+  `SHIPYARD_PASS_DELIVER` (two-timestamp EXACT-DURATION fast-forward — review B1: the proof is one
+  txn with now() frozen at T and queued_at = T, so a shift past the duration would land
+  complete_at < queued_at and trip the 0038 `build_orders_complete_after_queue` CHECK; the
+  exact-duration shift lands complete_at = T, due AND constraint-legal → exact stats/name
+  delivery — 'SY1 Test Dreadnought II' + 'Mule-class Hauler III' — docked present/location fleet
+  at the commission port, canonical at_location; unit order promotes/completes IDENTICALLY: the
+  exact 0038 formula + `base_merge_units` +2, no ship; post-delivery replay verbatim),
+  `SHIPYARD_PASS_DELIVERY_GUARD` (review H1's pin: poison the commission port's docking service
+  in-txn → a second player's co-tick due unit completion PROCEEDS, the poisoned hull order stays
+  active and uncounted, no ship minted; restore the fixture → the next tick self-heals and
+  delivers exactly one ship), `SHIPYARD_PASS_CANCEL_REFUND`
+  (exact full refund from the receipt bill 16/4/6/8/2 + the 400 credits; double-cancel rejected,
+  no double refund; post-cancel replay verbatim; active-cancel floor-half 8/2/3/4/1 + 200 exact).
+  12 markers total; provisioning stays real-leaf-only (bootstrap_me + production_create_order added
+  for the unit-parity/co-tick fixtures, selftest-pinned).
+- **Verification:** selftest green (12 markers); 4 mutation guttings fail-then-restore
+  (deliver pin / refund exactness / unit-parity pin / poison-guard pin — each selftest-FAILED when
+  gutted, restored sha-verified byte-identical); every re-created body extract-and-diffed against
+  its head — marked hunks only (build diffed against the 0193 head: signature + name-source +
+  hull-select hunks, the SOUL-1 hook byte-identical). HONESTY NOTE: no local Docker/Supabase stack
+  exists on this machine, so the disposable CI job (shipyard-proof.yml, full-chain apply + the
+  12-marker real run) is the FIRST real execution of the extended harness — every P8/P9/P9G/P10
+  fixture timestamp was desk-checked against the 0038 (`complete_after_queue`, status domain, kind
+  coherence) and 0188 (receipts) CHECKs after the B1 fix. No client code touched (SHIPYARD-3 owns
+  UI).
+- Docs synced: FULL_CAPACITY_PLAN §C P6 (seam list → RESOLVED; SHIPYARD-2 shipped entry + the
+  deferral; ACT-SHIPYARD still needs flag flip + blueprint knob + mining/trade preconditions),
+  SYSTEM_BOUNDARIES (`fleets` / `build_orders` / Production / Main Ship rows), this DEV_LOG.
+
+**Bugs / fixes**
+- _(pre-flip fixes by design)_ the 0038 engine could never start a hull timer (unit_types-join
+  pick) and would have eaten a cancelled hull order's credits/items (metal-only refund) — both
+  closed here before ACT-SHIPYARD, exactly as the 0188 seam list recorded.
+
+**Open follow-ups**
+- ACT-SHIPYARD flip script (SHIPYARD-3 shipped client-only via PR #137 while this slice was in review; + the recorded [D]s to review:
+  Haven-only delivery, no ship-cap check at delivery, active-cancel floor-half).
+- The deferred fleets-shim retirement (Fleet-exposed commission/dock repoint + pin re-derivation).
+- MERGE-RACE: **RESOLVED** — SOUL-1 (0193) landed first and this slice followed its recorded
+  choreography exactly (renumber to 0194 + re-create build from the 0193 head so the roll hook
+  and the delivery hunks coexist; the 0194 self-assert pins the hook's survival). Any FUTURE
+  build re-create must now start from the 0194 head — note it changed the SIGNATURE to
+  `(uuid, text default 'starter_frigate')` (a stale `(uuid)`-shaped re-create would reintroduce
+  ambiguity and fail the 0194-era asserts loudly).
+
+---
+
 ## 2026-07-13 — SHIELD-1: the shield enters the live combat engine (mig 0195, inert while all pools are 0/NULL)
 
 **Request.** The SHIELD charter, slice 1: the tick/creator parity re-creates — member encounters
@@ -67,6 +189,8 @@ highest-parity-discipline slice of the train: two LIVE combat functions re-creat
 guttings (absorb-arithmetic pin, zero-parity pin, defeat-hull-only pin) each fail-then-restore;
 migration bodies diffed against the extracted heads — only the marked hunks differ; hostile-review blocker fixed (undeclared v_hull0 in the proof lit arm — CI's disposable chain is the lit arm's first runtime execution); tsc/vite n/a
 (no client change — server-only migration + proof + docs, confirmed via git status).
+
+---
 
 ## 2026-07-13 — SOUL-1: ship traits go functional — commission roll hook + adapter trait fold (mig 0193, dark)
 
