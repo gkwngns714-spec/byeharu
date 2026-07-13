@@ -5,6 +5,69 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — SHIELD-1: the shield enters the live combat engine (mig 0195, inert while all pools are 0/NULL)
+
+**Request.** The SHIELD charter, slice 1: the tick/creator parity re-creates — member encounters
+snapshot the pool, in-combat regen, shield-absorbs-first damage, the 0191 leaf wired. The
+highest-parity-discipline slice of the train: two LIVE combat functions re-created.
+
+**Work done**
+- **True heads re-verified by grep over ALL migrations:** `combat_create_group_encounter` ←
+  0168:359 (its ONLY create site); `process_combat_ticks` ← 0169:93 (0017→0022→0023→0030→0032→
+  0041→0046→0167→0169, nothing later). The solo `combat_create_encounter` (0168:481) verified
+  member-row-free — its legacy path inserts catalog `fleet_units` rows only, and the 0168:446
+  group-creator insert is the ONLY `combat_units` insert carrying `main_ship_id` — so it is
+  deliberately NOT re-created (documented in the 0195 header).
+- **mig `20260618000195_shield1_tick.sql`** *(0193 SOUL-1 merged; 0194 promised to SHIPYARD-2's renumber — this slice took 0195)* —
+  both bodies copied verbatim from the heads, every delta a `-- SHIELD-1 (0195):` marked hunk,
+  extract-and-diff verified:
+  - **Creator:** `msi.shield`/`msi.max_shield` join `msi.hp` in the SAME manifest read (the 0168
+    one-read law); a live member with `max_shield > 0` snapshots `shield_max` frozen +
+    `shield_current` = the CURRENT pool; a shieldless ship (every ship until ACT-SHIELD) and a
+    degraded member snapshot **NULL/NULL, not 0/0** — the write-count-parity decision (NULL keeps
+    regen/absorb/leaf provably skipped; the 0191 pairing CHECK's optional IFF tightening declined:
+    a shieldless member's honest snapshot is "none").
+  - **Tick:** (a) in-combat regen at the top of the per-row loop —
+    `least(shield_max, shield_current + shield_max × knob)`, NULL-propagating (the D1 0167:12-14
+    idiom; the pairing CHECK guarantees the pair is never mixed); (b) THE ONE ABSORB POINT —
+    `v_absorb := least(coalesce(pool, 0), damage)`, hull takes ONLY the overflow, no second damage
+    path; (c) `mainship_sync_combat_shield(ship, round(pool))` beside its hp sibling, gated on a
+    non-NULL pool (the leaf's FIRST caller; both leaves SECURITY DEFINER + service-role-only — the
+    0167:559-564 precedent); (d) UNTOUCHED: hull-only integrity accounting (Σ hp_max), hull-only
+    defeat (a shielded ship at hull 0 is dead), report/tick jsonb keys; (e) the knob HOISTED to
+    one `cfg_num` read per invocation, in the existing pre-loop knob block.
+  - **Self-asserts:** marked-hunk tokens present in prosrc; old-head fingerprints absent (the
+    pre-shield select/roster/insert/damage/update shapes); hull-only integrity + defeat expressions
+    token-pinned; legacy jsonb key idiom pinned; RNG unchanged (creator 0, tick exactly the head's
+    1 variance call); knob read exactly once and before the loop; client ACL closed; knob '0',
+    all combat rows shield-NULL, all instances 0/0, missing-row leaf inert.
+  - **Scope note:** the commission `base_shield` → `max_shield` copy DEFERRED to SHIELD-2 (a
+    provable no-op while every hull is 0; keeps this slice's re-create surface minimal).
+- **Proof — new `TEAMCMD_PASS_SHIELD1` block in `team-command-proof.{sql,sh}`** (22nd marker,
+  reconciled after SOUL-1's 21st at the rebase — **collision resolved:** both blocks kept and
+  the MARKERS list merged to 22, the established idiom): ZERO state (member rows exist from the earlier
+  blocks, none carries a snapshot, no fought ship's instance shield ever moved — and the earlier
+  COMBATPARITY/TEAMHUNT/TEAMSETTLE exact-damage pins ran against THIS tick with all pools 0, which
+  IS the zero-parity proof); LIT arm in-txn (max_shield 40 / shield 3 by sanctioned direct update —
+  shields have no writer besides the tick-called leaf — then a REAL 1-ship team hunt): snapshot
+  40/3 carries the CURRENT pool, knob-'0' tick drains min(pool, damage) exactly with the hull
+  taking only the overflow (vs the block's OWN independent damage derivation, variance 0),
+  knob-'1' regen climbs 0→40 exactly then CAPS at max the next tick (non-degenerate under the
+  3 < damage < 40 guard), the leaf mirrors round(pool) each tick with hp consistent, combat_ticks
+  integrity stays hull-only at a nonzero pool, and the one-step-wipe defeat kills the
+  fully-shielded ship at hull 0 (D1 terminal). Knob + `enemy_attack_base` restored in-txn. `.sh`:
+  16 new assert-form pins; the combat knob moved from the never-touch posture to the
+  raised-and-restored-in-txn knob idiom (SHIELD-1 gave it its consumer) while the idle knob keeps
+  never-touch; committed-'0' honesty checks retained for both.
+- **Docs:** FULL_CAPACITY_PLAN §C P13 (SHIELD-1 shipped; SHIELD-2 next = regen home + UI +
+  commission copy; ACT-SHIELD after) + queue row 18; SYSTEM_BOUNDARIES (combat tick = the
+  in-combat shield writer; the leaf's caller list = `process_combat_ticks` exactly).
+
+**Verification.** `team-command-proof.sh selftest` green (22 markers post-rebase); 3 mutation
+guttings (absorb-arithmetic pin, zero-parity pin, defeat-hull-only pin) each fail-then-restore;
+migration bodies diffed against the extracted heads — only the marked hunks differ; hostile-review blocker fixed (undeclared v_hull0 in the proof lit arm — CI's disposable chain is the lit arm's first runtime execution); tsc/vite n/a
+(no client change — server-only migration + proof + docs, confirmed via git status).
+
 ## 2026-07-13 — SOUL-1: ship traits go functional — commission roll hook + adapter trait fold (mig 0193, dark)
 
 **Request.** The SHIP-SOUL charter (P12), slice 1: every new ship is born with its soul WHEN LIT
@@ -60,7 +123,7 @@ each rolled trait's `stats_json` at the 0170 seam — all still dark behind `shi
   claimed by in-flight SHIPYARD-2 → 0193 taken. **SHIPYARD-2 choreography (both directions,
   explicit — SOUL-1 is landing FIRST):** SHIPYARD-2 (in flight, currently numbered 0192, with its
   own `port_entry_commission_build` re-create from the 0184 head) MUST at its rebase (a) RENUMBER
-  to >= 0194 — a 0192 applying after this 0193 on prod would silently erase the SOUL-1 hook
+  to >= 0195 — a 0192 applying after this 0193 on prod would silently erase the SOUL-1 hook
   (last create-or-replace wins), and on fresh chains 0193 applying after a 0192 would erase its
   delivery hunks — and (b) re-create build from THIS migration's head (0193 = the 0184 body + the
   SOUL-1 hook) so both hunks coexist. (Had SHIPYARD-2 landed first, this slice would have

@@ -202,6 +202,21 @@
 --            birth under the hook), and the gate is re-darkened before TEAMMAP so every
 --            pre-SOUL-1 block (incl. SHIELD0's leaf-smoke commission and TEAMMOVE's docked hop)
 --            keeps byte-identical behavior.
+--   SHIELD1 (SHIELD-1, 0195) — the shield enters the LIVE combat engine (the tick/creator parity
+--            re-creates): ZERO STATE first — member combat rows exist from the earlier blocks yet
+--            NONE carries a shield snapshot (the creator's shieldless NULL/NULL gate on real rows)
+--            and NO fought ship's instance shield ever moved (the leaf never fires for a NULL
+--            pool — write-count parity); the earlier exact-damage blocks (COMBATPARITY / TEAMHUNT /
+--            TEAMSETTLE) ran against THIS tick with every pool 0, so their green IS the zero-parity
+--            proof for damage/hp/reports. LIT ARM in-txn: a fresh fixture ship armed max_shield 40
+--            / shield 3 by direct update (sanctioned — no writer besides the tick-called leaf
+--            exists), real 1-ship team hunt; the member row snapshots 40/3 (max frozen, CURRENT
+--            pool carried); integrity = hull ONLY; knob-'0' tick drains min(pool, damage) exactly
+--            with the hull taking only the overflow (vs the block's OWN independent damage
+--            derivation); knob-'1' regen climbs 0 → 40 exactly then CAPS at max on the next tick;
+--            the 0191 leaf mirrors round(pool) to the ship row each tick; and the one-step-wipe
+--            defeat proves a FULLY-shielded ship still dies at hull 0 (defeat + integrity stay
+--            hull-only; the D1 terminal fires). Knob + enemy_attack_base restored in-txn.
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -2493,9 +2508,12 @@ end $$;
 -- ════════ BLOCK SHIELD0 (SHIELD-0, 0191): the shield foundation is deploy-inert + the leaf clamps ════════
 -- Migration 0191 is schema + one leaf + two knobs, ZERO engine edits (SHIELD-1 owns the tick
 -- re-creates, SHIELD-2 the regen home). This block proves the whole slice is INERT as deployed —
--- the knobs are asserted committed-'0' and NEVER raised, even in-txn: no consumer exists to
--- exercise at a non-zero rate (the SHIPYARD0 shipyard_enabled never-flip posture; the .sh selftest
--- negative-greps any touch of either knob). The leaf smoke runs on a FRESH fixture user (the
+-- the knobs are asserted committed-'0' and never raised BEFORE this point in the txn. SHIELD-1
+-- reconcile (0195): the COMBAT knob now HAS a consumer (the tick), so the later SHIELD1 block
+-- raises it in-txn via the real set_game_config (the SHARDDROP/CAPXP knob idiom) and restores it;
+-- the IDLE knob keeps the full never-touch posture (its consumer is SHIELD-2's regen home — the
+-- .sh selftest still negative-greps any touch of it, and the raw-update form of both).
+-- The leaf smoke runs on a FRESH fixture user (the
 -- MOD2/TEAMMAP idiom); setting the fixture ship's max_shield directly in-txn is sanctioned fixture
 -- surgery (the provisioning-normalization precedent on main_ship_instances) — NO runtime writer of
 -- max_shield exists yet to do it through, which is itself part of the slice's inertness story.
@@ -2974,6 +2992,235 @@ begin
   raise notice 'TEAMCMD_PASS_SOUL1 ok: dark commission = zero trait rows + byte-identical adapter before/after a direct roll (knob-gated read); lit fold = dark baseline + the stored traits'' stats_json sums exactly per key (independent catalog join, 0=0 guarded), speed inside the ONE multiplier, no non-stat key moved; lit commission births exactly 2 derivation-matching traits (the hook IS the 0186 roll); veteran arm max_hp = round(base × mult) once at commission with the adapter never re-scaling; ensure creates WITH soul when lit, zero rows when dark, and a lit ensure REPLAY never rolls an existing unrolled ship whose lit output = its dark self (the empty-loop arm)';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law)' as result;
+-- ════════ BLOCK SHIELD1 (SHIELD-1, 0195): the shield enters the live combat engine ════════
+-- Migration 0195 re-created the two combat engine functions from their TRUE heads
+-- (combat_create_group_encounter ← 0168; process_combat_ticks ← 0169) with marked SHIELD-1 hunks:
+-- the member shield snapshot at encounter creation (NULL/NULL for a shieldless ship — EVERY ship
+-- today), in-combat regen (knob-driven, hoisted single read), shield-absorbs-first damage with ONE
+-- absorb point, and the 0191 sync leaf gaining its FIRST caller (gated on a non-NULL pool, so
+-- shieldless rows fire NO shield write — write-count parity).
+-- SOUL-1 RECONCILE (verified): BLOCK SOUL1 above exits with ship_traits_enabled re-darkened, so
+-- this block's fresh commission rolls NO traits (no hp_mult, no adapter fold — the hull-only hp
+-- baseline this block reads dynamically holds either way), and SOUL1 sends nothing into combat,
+-- so the zero-state asserts below (member rows / instance shields) see exactly the pre-SOUL1 set.
+--   ZERO-PARITY — the live parity proof is the blocks ABOVE: COMBATPARITY (legacy exact damage,
+--          both directions, variance 0), TEAMHUNT (member exact damage + hp sync), and TEAMSETTLE
+--          (escape/defeat/reconcile) all ran against the SHIELD-1 tick earlier in THIS file with
+--          every pool at 0 → every snapshot NULL and every pin byte-exact — their green IS the
+--          zero-parity proof for damage math, hp sync, and reports. This arm adds the
+--          shield-SPECIFIC zero state: member combat rows exist (the arm cannot vacuously green),
+--          NONE carries a shield snapshot (the creator's shieldless NULL/NULL gate on real rows),
+--          and NO fought ship's instance shield ever moved (the leaf never fires for a NULL pool).
+--   LIT ARM (in-txn) — a fresh fixture ship gets max_shield 40 / shield 3 by DIRECT update
+--          (sanctioned fixture surgery: shields still have NO writer besides the tick-called leaf —
+--          the 0191 posture; ACT-SHIELD is the future data path; commented at the site), then a
+--          REAL 1-ship team hunt via send_ship_group_hunt → movement_settle_arrival →
+--          combat_create_group_encounter → process_combat_ticks (all real RPCs/engine):
+--          the member row snapshots shield_max 40 FROZEN + shield_current 3 (the CURRENT pool,
+--          never max — the one-read carry); player_integrity_max = hull hp ONLY (shield excluded);
+--          tick 1 (knob COMMITTED '0'): regen arithmetically inert on a LIT pool, absorb-first
+--          EXACT against this block's OWN independent damage derivation (the COMBATPARITY
+--          formula, variance 0) — the shield drops by min(pool, damage) = the whole 3-point pool
+--          and the hull takes ONLY the overflow (damage - 3);
+--          tick 2 (knob '1' via the real set_game_config — SHIELD-1 gave the combat knob its
+--          consumer, so the SHARDDROP/CAPXP in-txn knob idiom now applies): regen climbs 0 → 40
+--          exactly (max × 1), absorb leaves 40 - damage, the hull is untouched (zero overflow);
+--          tick 3: regen is CAPPED at max_shield — uncapped would land (40-damage)+40-damage,
+--          the row must land 40 - damage again (strictly different while 0 < damage < 40, which
+--          is guarded); the leaf mirrors round(pool) to the ship row after every tick with hp
+--          byte-consistent and the ship still hunting; combat_ticks integrity stays HULL-only
+--          while the pool is nonzero (the accounting-unchanged pin);
+--          tick 4 (enemy_attack_base 1000000 — the TEAMSETTLE one-step-wipe idiom): a ship whose
+--          pool regenerated to FULL still dies the moment its hull reaches 0 — defeat detection
+--          is HULL-only, integrity lands 0, the D1 destroyed terminal fires on the ship row.
+--          Knob and enemy_attack_base restored in-txn after (leak checks stay meaningful).
+do $$
+declare r jsonb; n int; uV uuid; sV uuid; gV uuid;
+  v_hunt uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
+  v_waves int; v_started timestamptz; v_danger int;
+  v_defbase double precision; v_bd double precision; v_def double precision;
+  v_dmg double precision; v_pool double precision; v_abs double precision;
+  v_sh_exp double precision; v_hull_exp double precision; v_hull0 double precision;
+  v_sh double precision; v_hull double precision; v_shmax double precision; v_pre double precision;
+  v_val text; t record;
+begin
+  -- ── ZERO-PARITY arm (asserted BEFORE any shield is lit in this txn) ──────────────────────────
+  -- the combat knob must still be the COMMITTED '0' here (SHIELD0 pinned it committed; this block
+  -- is the only writer below, in-txn only).
+  select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_combat_pct';
+  if v_val is distinct from '0' then
+    raise exception 'SHIELD1 FAIL: shield_regen_combat_pct is % entering the block (want the committed ''0'')', coalesce(v_val, '<missing>'); end if;
+  -- member rows exist from the earlier blocks — the zero-state assert cannot vacuously green.
+  select count(*) into n from public.combat_units where main_ship_id is not null;
+  if n = 0 then raise exception 'SHIELD1 FAIL: no member combat rows exist to zero-state-check (fixture drift)'; end if;
+  select count(*) into n from public.combat_units where shield_max is not null or shield_current is not null;
+  if n <> 0 then
+    raise exception 'SHIELD1 FAIL: % combat row(s) carry a shield (want 0 — the SHIELD-1 zero state: no shield snapshot on any pre-lit member row)', n; end if;
+  -- no fought ship's instance shield ever moved: the leaf never fires for a NULL pool (the
+  -- write-count parity decision, observable on every ship the earlier blocks sent into combat).
+  select count(*) into n from public.main_ship_instances msi
+    where msi.shield <> 0
+      and exists (select 1 from public.combat_units cu where cu.main_ship_id = msi.main_ship_id);
+  if n <> 0 then
+    raise exception 'SHIELD1 FAIL: % fought ship(s) carry a nonzero instance shield (want 0 — the leaf must never fire for NULL pools)', n; end if;
+
+  -- ── LIT-ARM fixture: fresh user + REAL commission + the ONE sanctioned home normalization ─────
+  perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
+  perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uV;
+  r := pg_temp.call_as(uV, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL provision: %', r; end if;
+  select main_ship_id into sV from public.main_ship_instances where player_id = uV;
+  update public.main_ship_instances
+     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+   where main_ship_id = sV;
+  update public.fleets
+     set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where main_ship_id = sV and status = 'present';
+  update public.location_presence
+     set status = 'completed', updated_at = now()
+   where fleet_id in (select id from public.fleets where main_ship_id = sV and status = 'destroyed')
+     and status = 'active';
+  -- SANCTIONED SURGERY (commented per the slice charter): light the pool directly — shields have
+  -- NO writer besides the tick-called 0191 leaf (ACT-SHIELD is the future data path), so a fixture
+  -- write is the only way to arm the lit tests; max 40 with a PARTIAL pool 3 so the snapshot
+  -- provably carries the CURRENT value, tick 1 fully drains it, and regen has headroom to cap.
+  update public.main_ship_instances set max_shield = 40, shield = 3 where main_ship_id = sV;
+
+  -- a 1-ship team via the real RPCs, sent at the same lowest-gate hunt destination the earlier
+  -- combat blocks used.
+  select id into v_hunt from public.locations
+    where activity_type = 'hunt_pirates' and status = 'active'
+    order by min_power_required asc, base_difficulty asc limit 1;
+  if v_hunt is null then raise exception 'SHIELD1 FAIL: no active hunt_pirates location'; end if;
+  r := pg_temp.call_as(uV, 'public.upsert_ship_group(1, ''ShieldWing'')');
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL group create: %', r; end if;
+  gV := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uV, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sV, gV));
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL assign: %', r; end if;
+  r := pg_temp.call_as(uV, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gV, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL send: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+    raise exception 'SHIELD1 FAIL settle: %', r; end if;
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
+  if v_enc is null then raise exception 'SHIELD1 FAIL: no active encounter for the lit sortie'; end if;
+
+  -- SNAPSHOT: max FROZEN at 40, current = the CURRENT pool 3 (never max — the one-read carry);
+  -- and the encounter integrity is the hull hp ONLY (the shield pool is NOT integrity).
+  select shield_max, shield_current, hp_current into v_shmax, v_sh, v_hull0
+    from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
+  if v_shmax is distinct from 40::double precision or v_sh is distinct from 3::double precision then
+    raise exception 'SHIELD1 FAIL: snapshot landed %/% (want 40/3 — max frozen, CURRENT pool carried)', v_shmax, v_sh; end if;
+  -- integrity == the hull hp EXACTLY; since the ship carries a 3-point pool, equality with the
+  -- hull alone already excludes the shield (hull ≠ hull + 3 — no second conjunct needed).
+  select count(*) into n from public.combat_encounters
+    where id = v_enc and player_integrity_max is not distinct from v_hull0;
+  if n <> 1 then
+    raise exception 'SHIELD1 FAIL: player_integrity_max is not the hull hp alone (integrity accounting must stay hull-only)'; end if;
+
+  -- THE INDEPENDENT DAMAGE DERIVATION (the COMBATPARITY formula, variance pinned 0; danger is
+  -- txn-stable: now() is constant and no wave clears in four ticks — guarded below).
+  select waves_cleared, started_at into v_waves, v_started from public.combat_encounters where id = v_enc;
+  v_danger  := 1 + v_waves + floor(extract(epoch from (now() - v_started)) / coalesce(cfg_num('danger_time_divisor_seconds'), 180))::integer;
+  v_defbase := coalesce(cfg_num('defense_curve_base'), 100);
+  select base_difficulty into v_bd from public.locations where id = v_hunt;
+  select defense_snapshot into v_def from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
+  v_dmg := v_bd * coalesce(cfg_num('enemy_attack_base'),1.0)
+           * (1 + v_danger * coalesce(cfg_num('enemy_attack_danger_scale'),0.25));
+  v_dmg := v_dmg * v_defbase / (v_defbase + v_def) * 1.0;
+  -- the pins below need 3 < damage < 40: tick 1 must FULLY drain the 3-point pool with a real
+  -- hull overflow, and ticks 2/3 must leave a nonzero pool (else the cap pin degenerates 0=0).
+  if v_dmg <= 3 or v_dmg >= 40 then
+    raise exception 'SHIELD1 FAIL guard: per-tick damage % outside (3, 40) — the absorb/cap pins would degenerate (re-size the fixture)', v_dmg; end if;
+
+  -- ── TICK 1 (knob '0'): regen inert on a LIT pool; absorb-first exact ──────────────────────────
+  v_pool := v_sh;                                   -- 3, regen term = 40 × 0 = 0 (knob-zero inertness)
+  v_abs  := least(v_pool, v_dmg);                   -- = 3 (full drain; guard: dmg > 3)
+  v_sh_exp   := v_pool - v_abs;                     -- = 0
+  v_hull_exp := v_hull0 - (v_dmg - v_abs);          -- hull takes ONLY the overflow
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+  select shield_max, shield_current, hp_current into v_shmax, v_sh, v_hull
+    from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
+  if v_sh is distinct from v_sh_exp then
+    raise exception 'SHIELD1 FAIL tick1 absorb: shield % (want % — the pool drops by min(pool, damage) exactly)', v_sh, v_sh_exp; end if;
+  if v_hull is distinct from v_hull_exp then
+    raise exception 'SHIELD1 FAIL tick1 overflow: hull % (want % — the hull takes ONLY the overflow)', v_hull, v_hull_exp; end if;
+  if v_shmax is distinct from 40::double precision then
+    raise exception 'SHIELD1 FAIL tick1: shield_max moved to % (want 40 — frozen at snapshot)', v_shmax; end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id = sV and status = 'hunting'
+      and shield = round(v_sh_exp)::integer and hp = round(greatest(0, v_hull_exp))::integer;
+  if n <> 1 then raise exception 'SHIELD1 FAIL tick1: the leaf did not mirror round(pool) to the ship row (want shield % / hp %)', round(v_sh_exp)::integer, round(greatest(0, v_hull_exp))::integer; end if;
+
+  -- ── TICK 2 (knob '1' in-txn): regen climbs 0 → max exactly; hull untouched (zero overflow) ────
+  perform public.set_game_config('shield_regen_combat_pct', '1'::jsonb);
+  v_pool := least(40::double precision, v_sh + 40 * 1);   -- 0 + 40 = 40: the exact climb
+  v_abs  := least(v_pool, v_dmg);                         -- = dmg (guard: dmg < 40)
+  v_sh_exp := v_pool - v_abs;                             -- = 40 - dmg
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+  select shield_current, hp_current into v_sh, v_hull
+    from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
+  if v_sh is distinct from v_sh_exp then
+    raise exception 'SHIELD1 FAIL tick2 regen: shield % (want % — the pool climbs by max_shield × knob, then absorbs)', v_sh, v_sh_exp; end if;
+  if v_hull is distinct from v_hull_exp then
+    raise exception 'SHIELD1 FAIL tick2: hull % moved under a full-absorb tick (want % untouched)', v_hull, v_hull_exp; end if;
+  -- integrity stays HULL-only while the pool is NONZERO (the accounting-unchanged pin, made
+  -- non-degenerate by the guard: v_sh_exp = 40 - dmg > 0 here).
+  select * into t from public.combat_ticks where encounter_id = v_enc and tick_number = 2;
+  if t.id is null then raise exception 'SHIELD1 FAIL: no tick-2 row (tick logging is on)'; end if;
+  if t.player_integrity_before is distinct from v_hull_exp or t.player_integrity_after is distinct from greatest(0, v_hull_exp) then
+    raise exception 'SHIELD1 FAIL tick2 integrity: %/% (want %/% — hull-only, the shield pool is NOT integrity)',
+      t.player_integrity_before, t.player_integrity_after, v_hull_exp, greatest(0, v_hull_exp); end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id = sV and shield = round(v_sh_exp)::integer;
+  if n <> 1 then raise exception 'SHIELD1 FAIL tick2: the leaf did not mirror the regenerated pool (want shield %)', round(v_sh_exp)::integer; end if;
+
+  -- ── TICK 3: the regen CAP — least(max, pool + max × knob) must bind ───────────────────────────
+  -- uncapped would be (40 - dmg) + 40 - dmg = 80 - 2×dmg; capped is 40 - dmg; strictly different
+  -- while 0 < dmg < 40 (guarded above), so equality below IS the cap pin.
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+  select shield_current, hp_current into v_sh, v_hull
+    from public.combat_units where encounter_id = v_enc and main_ship_id = sV;
+  if v_sh is distinct from v_sh_exp then
+    raise exception 'SHIELD1 FAIL tick3 cap: shield % (want % — regen must cap at max_shield, never overshoot)', v_sh, v_sh_exp; end if;
+  if v_hull is distinct from v_hull_exp then
+    raise exception 'SHIELD1 FAIL tick3: hull % moved under a full-absorb tick (want % untouched)', v_hull, v_hull_exp; end if;
+  select waves_cleared into n from public.combat_encounters where id = v_enc;
+  if n <> v_waves then
+    raise exception 'SHIELD1 FAIL guard: a wave cleared mid-test (danger drifted — the exact pins above are void)'; end if;
+
+  -- ── TICK 4: DEFEAT IS HULL-ONLY — a shielded ship at hull 0 is dead ───────────────────────────
+  v_pre := v_sh;   -- the pool entering the defeat tick (> 0 by the guard; regen even tops it to 40)
+  if v_pre <= 0 then raise exception 'SHIELD1 FAIL guard: the defeat-arm pool is not positive (the pin would be vacuous)'; end if;
+  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- one-step hull wipe (the TEAMSETTLE idiom)
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+  select count(*) into n from public.combat_encounters
+    where id = v_enc and status = 'defeat' and ended_at is not null and player_integrity_current = 0;
+  if n <> 1 then
+    raise exception 'SHIELD1 FAIL defeat: a shielded ship at hull 0 must be dead (defeat is hull-only; encounter did not settle defeat with integrity 0)'; end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id = sV and status = 'destroyed' and hp = 0 and spatial_state is null;
+  if n <> 1 then raise exception 'SHIELD1 FAIL defeat: the D1 destroyed terminal did not fire on the shielded member'; end if;
+  perform public.set_game_config('enemy_attack_base', '1'::jsonb);          -- restore the engine default
+  perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);    -- restore the dark seed in-txn
+
+  raise notice 'TEAMCMD_PASS_SHIELD1 ok: zero state pinned (member rows exist, none carries a snapshot, no fought ship''s instance shield ever moved — COMBATPARITY/TEAMHUNT/TEAMSETTLE ran their exact pins against THIS tick as the parity proof); lit arm exact vs the independent damage derivation — snapshot 40/3 carries the CURRENT pool, knob-0 tick fully drains min(pool,damage) with the hull taking only the overflow, knob-1 regen climbs 0→40 then CAPS at max, the leaf mirrors round(pool) each tick with hp consistent, integrity stays hull-only at a nonzero pool, and the fully-shielded ship still dies at hull 0 (defeat hull-only, D1 terminal); knob + enemy_attack_base restored in-txn';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
