@@ -97,7 +97,7 @@ WITH expected(sig) AS (VALUES
   ('public.cancel_build_order(uuid)'),
   ('public.get_my_expedition_preview(jsonb, text)'),
   ('public.get_osn_movement_readiness()'),
-  ('public.send_main_ship_expedition(jsonb, uuid)'),
+  ('public.send_main_ship_expedition(jsonb, uuid, uuid)'),   -- NO-HOME (0199): widened with p_return_location_id
   ('public.request_main_ship_return(uuid)'),
   ('public.repair_main_ship()'),
   ('public.move_main_ship_to_location(uuid, uuid)'),

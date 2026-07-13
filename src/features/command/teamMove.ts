@@ -47,6 +47,14 @@ export function groupMoveAvailability(input: {
 //   'send'           — no docked member → the original home-team send arm.
 // Callers pass a legal expedition destination (teamDestinationKind already classified it); this
 // classifier deliberately does not re-check destination legality.
+//
+// NO-HOME (0199) — the `launchFromDock` gate (DEFAULT false → byte-identical to the pre-slice
+// classifier, and every existing test that omits it stays green). When the server's
+// launch_from_dock_enabled flag is LIT, the widened send_ship_group_expedition (each member launches
+// from its OWN dock via the widened single send, 0199) makes a docked team SENDABLE — so the
+// 'docked_unready' arm (any/split-port docked member) becomes a plain 'send'. 'move' (fully docked at
+// ONE other port) and 'docked_here' (fully docked at THIS port) still win first: a gathered team
+// relocating as one is the more precise action, and a team already here has nothing to do.
 export type TeamMapSendAction = 'send' | 'move' | 'docked_here' | 'docked_unready'
 
 export function teamMapSendAction(input: {
@@ -55,6 +63,8 @@ export function teamMapSendAction(input: {
   dockedCount: number
   dockedLocationId: string | null
   destinationId: string
+  /** NO-HOME (0199): the runtime launch_from_dock_enabled flag. DEFAULT false → the pre-slice behavior. */
+  launchFromDock?: boolean
 }): TeamMapSendAction {
   const mv = groupMoveAvailability({
     gateEnabled: true, // the sheet mounts behind TEAM_COMMAND_ENABLED; the server re-checks its gate
@@ -65,6 +75,7 @@ export function teamMapSendAction(input: {
   })
   if (mv.canMove) return 'move'
   if (mv.reason === 'already_there') return 'docked_here'
-  if (input.dockedCount > 0) return 'docked_unready'
+  // NO-HOME: with launch-from-dock lit, a docked team can send from its dock(s) — no longer doomed.
+  if (input.dockedCount > 0) return input.launchFromDock ? 'send' : 'docked_unready'
   return 'send'
 }

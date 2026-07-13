@@ -21,6 +21,7 @@ import { groupHuntAvailability } from './teamCombat'
 import { deriveDockedTeamRollups } from './teamRollup'
 import { teamMapSendAction } from './teamMove'
 import { teamReasonMessage } from './teamReasonMessage'
+import { fetchLaunchFromDockEnabled } from '../../lib/catalog'
 
 // TEAM-MAP-SEND — "Send a team here" on MapScreen's location detail sheet (owner order: send
 // teams FROM THE MAP by clicking locations). Mounted by MapScreen behind the compile-time
@@ -61,6 +62,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   const [groups, setGroups] = useState<GroupRow[] | null>(null) // null = loading (render nothing yet)
   const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
   const [presentFleets, setPresentFleets] = useState<PresentShipFleetLite[]>([]) // docked-team rollup input
+  const [launchFromDock, setLaunchFromDock] = useState(false) // NO-HOME (0199) runtime gate; dark → today's behavior
   const [powers, setPowers] = useState<Record<string, number>>({}) // group_id → authoritative combat power
   const [busy, setBusy] = useState<string | null>(null) // key of the command in flight
   const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
@@ -71,14 +73,18 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   // async callback, not synchronously in the effect body (react-hooks/set-state-in-effect).
   useEffect(() => {
     let active = true
-    void Promise.all([fetchMyShipGroups(), fetchMyShipGroupMap(), fetchMyPresentShipFleets()]).then(
-      ([g, m, pf]) => {
-        if (!active) return
-        setGroups(g)
-        setGroupMap(m)
-        setPresentFleets(pf)
-      },
-    )
+    void Promise.all([
+      fetchMyShipGroups(),
+      fetchMyShipGroupMap(),
+      fetchMyPresentShipFleets(),
+      fetchLaunchFromDockEnabled(),
+    ]).then(([g, m, pf, lfd]) => {
+      if (!active) return
+      setGroups(g)
+      setGroupMap(m)
+      setPresentFleets(pf)
+      setLaunchFromDock(lfd)
+    })
     return () => {
       active = false
     }
@@ -162,6 +168,15 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
           // render it enabled), or 'send' (the original arm). kind==='expedition' already proved
           // the destination legal; the server (0190) stays the sole authority under its locks.
           const rollup = dockRollups.find((d) => d.groupId === g.group_id)
+          // NO-HOME (0199): a team fully docked at ONE port (rollup.locationId non-null) is launch-ready
+          // when launch_from_dock_enabled is lit — it launches from that port and docks back there. Dark
+          // → allReady === allHome, so hunts still require every ship home (byte-identical).
+          const dockedTogetherId = rollup?.locationId ?? null
+          const allReady = allHome || (launchFromDock && members.length > 0 && dockedTogetherId !== null)
+          // NO-HOME: the return port a docked hunt docks at afterward — the port the team launched from
+          // (the picker's natural default; a non-dockable hunt site has no dock of its own). Null when
+          // dark or when the team isn't docked-together → the server defaults it and re-homes as before.
+          const returnLocationId = launchFromDock ? dockedTogetherId : null
           const arm =
             kind === 'expedition'
               ? teamMapSendAction({
@@ -169,6 +184,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                   dockedCount: rollup?.dockedCount ?? 0,
                   dockedLocationId: rollup?.locationId ?? null,
                   destinationId: location.id,
+                  launchFromDock,
                 })
               : null
           // kind==='hunt' already proved the destination active + hunt_pirates → locationValid true.
@@ -177,7 +193,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
             groupResolved: true,
             memberCount: members.length,
             locationValid: true,
-            allMembersReady: allHome,
+            allMembersReady: allReady,
           }).canHunt
           const armed = confirmHunt?.groupId === g.group_id && confirmHunt.locationId === location.id
           return (
@@ -255,8 +271,20 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                   </Button>
                 )}
               </div>
-              {kind === 'hunt' && members.length > 0 && !allHome && (
-                <p className="mt-1 text-[10px] text-ink-faint">Every ship must be home to hunt.</p>
+              {kind === 'hunt' && members.length > 0 && !allReady && (
+                <p className="mt-1 text-[10px] text-ink-faint">
+                  {launchFromDock
+                    ? 'Every ship must be home, or the whole team docked together at one port, to hunt.'
+                    : 'Every ship must be home to hunt.'}
+                </p>
+              )}
+              {/* NO-HOME (0199): the return-port picker's minimal form — a docked hunt launches from and
+                  returns to the team's dock. Only shows when the flag is lit AND the team is
+                  docked-together (a launch-from-dock hunt); dark → nothing, byte-identical. */}
+              {kind === 'hunt' && launchFromDock && dockedTogetherId !== null && allReady && (
+                <p className="mt-1 text-[10px] text-ink-faint" data-testid={`team-hunt-return-${g.group_id}`}>
+                  Launches from and docks back at its current port.
+                </p>
               )}
               {arm === 'docked_unready' && (
                 <p className="mt-1 text-[10px] text-ink-faint">
@@ -277,7 +305,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                       onClick={() =>
                         void run(
                           `hunt:${g.group_id}`,
-                          () => sendShipGroupHunt(g.group_id, location.id),
+                          () => sendShipGroupHunt(g.group_id, location.id, returnLocationId),
                           (res) => {
                             const n = (res.member_count as number | undefined) ?? members.length
                             return `Sent ${g.name} — ${n} ship${n === 1 ? '' : 's'} — hunting at ${location.name}.`

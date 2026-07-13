@@ -5,6 +5,63 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — NO-HOME: launch-from-dock + dock-at-return (mig 0199, DARK behind `launch_from_dock_enabled`)
+
+**Request (owner's absolute law).** There is NO home base; ports are the only base; a ship acts from
+WHEREVER it is docked. Today SEND (`send_main_ship_expedition`, 0169) and HUNT (`send_ship_group_hunt`,
+0168) require ship `status='home'` and launch the outbound fleet from the legacy invisible base at
+(0,0); a docked ship (`status='stationary'` + `spatial_state='at_location'`) can MOVE
+(`move_main_ship_to_location`, 0156) but cannot SEND/HUNT — the bug. Fix it, DARK behind a new flag so
+prod is untouched until the owner flips it.
+
+**Design (locked with the owner, built exactly).**
+- **Additive dual-state launch, not removal.** Send/hunt ACCEPT a docked ship as a legal launch state
+  IN ADDITION to home — mirroring the settled-safe rule the game already uses for explore/mine/fit/
+  captain (`spatial_state in ('home','at_location')`, 0100/0105/0114/0121). A docked launch departs
+  FROM its docked port (the present-fleet origin, the 0156 template), NOT the (0,0) base.
+- **Player-chosen return port.** Send/hunt gain a trailing `p_return_location_id uuid DEFAULT NULL`.
+  The port is recorded on the fleet (additive nullable `fleets.return_location_id`). A send-TO-a-port
+  docks at the destination (the return param is recorded-but-inert; `movement_settle_arrival` already
+  docks a dockable arrival). A HUNT (non-dockable combat site) docks the team at the recorded return
+  port after combat: the reconciler `process_mainship_expeditions` DOCKS the returning ship there (the
+  canonical pair via the 0153 helper `mainship_mark_docked_at_location` + a leaf that re-presents the
+  fleet at the port) instead of re-homing.
+- **Flag-gated.** New flag `launch_from_dock_enabled` seeded `false`. DARK → send/hunt/reconciler/
+  repair behave EXACTLY as today (home-only, base origin, re-home) — every else-branch is the
+  grep-verified TRUE head body verbatim. LIT → the dual-state + docked launch + dock-at-return.
+
+**Work done.**
+- **Migration 0199** — flag seed (dark) + `fleets.return_location_id`; re-creates (parity discipline,
+  `if v_launch_from_dock then <NOHOME> else <head verbatim> end`): `send_main_ship_expedition`
+  (DROP+CREATE +param), `send_ship_group_hunt` (DROP+CREATE +param), `process_mainship_expeditions`
+  (CREATE OR REPLACE + the `nohome_dock_returning_ship` leaf), `repair_main_ship` (CREATE OR REPLACE —
+  LIT revives docked, not home; recovery still always works). `send_ship_group_expedition` (0187) is
+  UNTOUCHED — it calls the single send with 2 positional args, which resolve to the widened function
+  via the DEFAULT. Self-asserts pin the flag dark, the column, and the DARK heads verbatim.
+- **ACT-NOHOME** — `scripts/activate-nohome.{sql,sh}` (the activate-team-command idiom): flips the flag
+  true with preconditions + smoke, one timed BEGIN..COMMIT, commented rollback. Selftest green.
+- **Proof** — `scripts/team-command-proof.{sql,sh}` gains `TEAMCMD_PASS_NOHOME` (the 26th marker):
+  DARK arm = a docked ship's send RAISES home-only (byte-identical witness); LIT arm in-txn = a docked
+  ship re-departs its OWN present fleet from the port + docks at the destination, and a docked team
+  hunt launches from the port with the reconciler docking the returning member at the recorded return
+  port — never home. The flag is added to the committed-false honesty loop + the gate lists.
+- **Client (DARK byte-identical — every gate flag defaults false):** `fetchLaunchFromDockEnabled`
+  (catalog.ts, REUSING `strictConfigFlag`); `teamMapSendAction` gains `launchFromDock` (lit →
+  `docked_unready` becomes `send`); `TeamMapSend` + `TeamRosterPanel` read the flag and treat a
+  docked-together team as hunt-ready + pass the return port; `teamApi.sendShipGroupHunt` gains an
+  optional `returnLocationId`; `mainshipStatusLabel` maps `stationary → "Docked — ready to launch"`.
+  Single-ship docked launch already works via `move_main_ship_to_location` (canMoveHere), so
+  `MainShipCommand` needed no gate change.
+
+**Verification.** `tsc -b` + `vite build` green; eslint clean on touched files; the pure battery
+(team + teammap + resolver + status-label specs, 171+12 cases) green, incl. new NO-HOME classifier
+cases; ACT-NOHOME + ACT-TEAMCMD + team-command-proof `.sh` selftests green. **DB-dependent proof
+(selftest apply + mutation guttings) NOT run — docker/supabase-local unavailable on this machine (the
+standing Supabase apply gate); the SQL + proof are written to be applied+run by the human behind that
+gate.**
+
+---
+
 ## 2026-07-13 — NANGUARD: fix the inherited no-op NaN guards at all three knob sites (mig 0198, inert)
 
 **Request.** The NANGUARD follow-up (FULL_CAPACITY_PLAN queue row 20, found by the DECKS-3 hostile

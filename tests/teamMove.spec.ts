@@ -89,3 +89,33 @@ test('THE LAW: a team with ANY docked member never classifies as send', () => {
     }
   }
 })
+
+// ── NO-HOME (0199): the launchFromDock gate. DEFAULT-false above stays byte-identical; lit flips
+//    'docked_unready' → 'send' (the widened server send launches each member from its own dock). ──
+test('NO-HOME: partial/split dock + launchFromDock lit → send (was docked_unready when dark)', () => {
+  // partial dock
+  expect(
+    teamMapSendAction({ memberCount: 2, dockedCount: 1, dockedLocationId: null, destinationId: 'port-2', launchFromDock: true }),
+  ).toBe('send')
+  // split dock
+  expect(
+    teamMapSendAction({ memberCount: 2, dockedCount: 2, dockedLocationId: null, destinationId: 'port-2', launchFromDock: true }),
+  ).toBe('send')
+})
+
+test('NO-HOME: move + docked_here still win over the lit send (relocate/no-op are more precise)', () => {
+  // fully docked ELSEWHERE → still move, even with the flag lit
+  expect(
+    teamMapSendAction({ memberCount: 2, dockedCount: 2, dockedLocationId: 'port-1', destinationId: 'port-2', launchFromDock: true }),
+  ).toBe('move')
+  // fully docked at THIS port → still docked_here
+  expect(
+    teamMapSendAction({ memberCount: 2, dockedCount: 2, dockedLocationId: 'port-2', destinationId: 'port-2', launchFromDock: true }),
+  ).toBe('docked_here')
+})
+
+test('NO-HOME: launchFromDock lit never changes a no-docked-member team (still send)', () => {
+  expect(
+    teamMapSendAction({ memberCount: 2, dockedCount: 0, dockedLocationId: null, destinationId: 'port-2', launchFromDock: true }),
+  ).toBe('send')
+})

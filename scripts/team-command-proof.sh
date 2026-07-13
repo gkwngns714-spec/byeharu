@@ -119,16 +119,17 @@ SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 # the block PASS markers and the final PASS line this proof must exercise.
 # (SOUL1 is the 21st marker, SHIELD1 the 22nd, DECKS3 the 23rd, SHIELD2 the 24th, NANGUARD the
 # 25th — the both-blocks-kept reconcile routine (SHIELD-1 landed first, then DECKS-3 rebased to the
-# 23rd slot, then SHIELD-2 appended as the 24th, then NANGUARD (0198) appended as the 25th);
-# SHIPYARD-2 (#138, merged) has its own proof file and never touched this pair.)
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD"
+# 23rd slot, then SHIELD-2 appended as the 24th, then NANGUARD (0198) appended as the 25th), then
+# NO-HOME (0199) appended as the 26th; SHIPYARD-2 (#138, merged) has its own proof file and never
+# touched this pair.)
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_NOHOME"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
   tp_assert_self_rolling_back "$SQL"
-  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled
+  tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled launch_from_dock_enabled
 
   # ── GATE-FLAG set_game_config hardening (the shipyard_enabled review-M lesson, applied to every
   #    boolean gate): tp_assert_flags_inside_txn only fences the RAW-update form, so a smuggled
@@ -136,7 +137,7 @@ if [ "$MODE" = "selftest" ]; then
   #    flag flip and evade it. The harness's ONLY sanctioned gate flip is the raw in-txn update —
   #    set_game_config is reserved for the numeric KNOBS (shard/xp/blueprint rates) — so ANY
   #    set_game_config touch of a gate, anywhere in the file, fails closed. ─────────────────────────
-  for gate in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled; do
+  for gate in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled launch_from_dock_enabled; do
     grep -viE '^[[:space:]]*--' "$SQL" \
       | grep -q "set_game_config('$gate'" \
       && fail "harness writes the gate '$gate' via set_game_config (gates ride the raw in-txn update only)" || true
@@ -753,14 +754,29 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "want 3 untouched — the floor sends v_idle to 0 so the statement is skipped, never a NaN write" "$SQL" \
     || fail "harness does not ASSERT the \"NaN\" idle-regen knob leaves the shield a clean no-op (no ceil(NaN)::int abort)"
 
-  # ── all twenty-five block PASS markers present. ──────────────────────────────────────────────────────
+  # ── NO-HOME (0199) witness pins (the NANGUARD posture — a future edit can't gut a NOHOME assertion and
+  #    stay green): (a) launch origin is the docked LOCATION, not the base; (b) the return port is recorded;
+  #    (c) the reconciler DOCKS the returner, never re-homes it under the flag; (d) H1 — a returned docked
+  #    team can LAUNCH AGAIN (the second-launch regression witness the per-ship split guarantees). ─────────
+  grep -qF "origin_type='location' and origin_location_id=slag and target_type='location'" "$SQL" \
+    || fail "NOHOME: harness does not ASSERT the docked launch departs from the port LOCATION (not the base)"
+  grep -qF "(r->>'return_location_id')::uuid is distinct from slag" "$SQL" \
+    || fail "NOHOME: harness does not ASSERT the chosen/origin return port is recorded on the launch envelope"
+  grep -qF "the returning member was re-homed under the lit flag" "$SQL" \
+    || fail "NOHOME: harness does not ASSERT the reconciler DOCKS (never re-homes) the returner under the flag"
+  grep -qF "a returned docked team could not launch again" "$SQL" \
+    || fail "NOHOME: harness does not ASSERT the H1 second-launch witness (a returned team hunts AGAIN)"
+  grep -qF "has no per-ship tagged present fleet at the return port (H1 wedge)" "$SQL" \
+    || fail "NOHOME: harness does not ASSERT the H1 per-ship fleet split (each returned member owns a tagged fleet)"
+
+  # ── all twenty-six block PASS markers present. ──────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard/0199-nohome specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored)"
   exit 0
 fi
 
@@ -769,7 +785,7 @@ tp_run_local "TEAM-COMMAND B-VERIFY" "$SQL" "$PASS_LINE" "$MARKERS"
 
 # post-run honesty check: EVERY committed flag the proof flips must still be false (the flips were rolled
 # back). Check all eight the harness toggles in-txn, not just the team gate.
-for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled; do
+for flag in team_command_enabled mainship_additional_commission_enabled mainship_send_enabled captain_assignment_enabled captain_growth_enabled module_crafting_enabled module_fitting_enabled ship_traits_enabled launch_from_dock_enabled; do
   committed="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = '$flag'), 'false')")" \
     || fail "could not read the committed '$flag' value"
   [ "$committed" = "false" ] || fail "committed $flag is '$committed' — the proof leaked a flag flip (must stay false)"
@@ -825,4 +841,7 @@ committed_bs="$(psql "$DB_URL" -X -t -A -c "select coalesce((select base_shield:
   || fail "could not read the committed starter_frigate base_shield"
 [ "$committed_bs" = "0" ] || fail "committed starter_frigate base_shield is '$committed_bs' — the proof leaked the hull fixture (must stay 0 until ACT-SHIELD)"
 
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled/ship_traits_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0; shield_regen_combat_pct/shield_regen_idle_pct still 0; station_affinity_bonus still 0; starter_frigate base_shield still 0)"
+# (the 0199 NO-HOME flag launch_from_dock_enabled is covered by the committed-false flag loop above —
+#  the NOHOME block flips it 'true' in-txn to prove the lit launch/dock-at-return and it must roll back.)
+
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled/ship_traits_enabled/launch_from_dock_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0; shield_regen_combat_pct/shield_regen_idle_pct still 0; station_affinity_bonus still 0; starter_frigate base_shield still 0)"

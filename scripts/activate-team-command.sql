@@ -161,7 +161,7 @@ begin
     'public.stop_ship_group_transit(uuid)',
     'public.get_my_group_expedition_preview(uuid, text)',
     'public.get_my_group_expedition_totals(uuid, text)',
-    'public.send_ship_group_hunt(uuid, uuid)',
+    'public.send_ship_group_hunt(uuid, uuid, uuid)',   -- NO-HOME (0199): widened with p_return_location_id (default null)
     'public.calculate_group_expedition_stats(uuid, uuid, text)',
     'public.combat_create_group_encounter(uuid)',
     'public.calculate_expedition_stats(uuid, uuid, jsonb, text)'] loop

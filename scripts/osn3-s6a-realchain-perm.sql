@@ -64,7 +64,7 @@ begin
   if not (expected @> actual) then raise notice 'NOTE: extra authenticated-executable fn(s): %', (select array_agg(x) from unnest(actual) x where not (x = any(expected))); end if;
   if not has_function_privilege('anon','public.get_world_map()'::regprocedure,'EXECUTE') then raise exception 'PERM FAIL: anon lost get_world_map'; end if;
   if not has_function_privilege('authenticated','public.repair_main_ship()'::regprocedure,'EXECUTE') then raise exception 'PERM FAIL: repair_main_ship lost authenticated execute'; end if;
-  if not has_function_privilege('authenticated','public.send_main_ship_expedition(jsonb, uuid)'::regprocedure,'EXECUTE') then raise exception 'PERM FAIL: send_main_ship_expedition lost authenticated execute'; end if;
+  if not has_function_privilege('authenticated','public.send_main_ship_expedition(jsonb, uuid, uuid)'::regprocedure,'EXECUTE') then raise exception 'PERM FAIL: send_main_ship_expedition lost authenticated execute'; end if;  -- NO-HOME (0199): widened with p_return_location_id
   if not has_function_privilege('authenticated','public.move_main_ship_to_location(uuid, uuid)'::regprocedure,'EXECUTE') then raise exception 'PERM FAIL: move_main_ship_to_location lost authenticated execute'; end if;
   raise notice 'PERM ok: canonical client-RPC inventory = prior 13 + command_main_ship_space_move; no server fn exposed; legacy main-ship RPCs intact';
 end $$;

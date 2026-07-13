@@ -69,6 +69,13 @@ export function resolveMainShipStatusLabel(inp: MainShipStatusLabelInputs): stri
 // module. Pure (no marker/movement/location inputs), and it exposes no location name — nothing to leak.
 const INSTANCE_STATUS_LABELS: Record<string, string> = {
   home: 'Ready to launch',
+  // NO-HOME (0199): a docked ship (status='stationary'/spatial_state='at_location') reads as "Docked"
+  // rather than falling back to the raw 'stationary' code. Deliberately NOT "ready to launch": while the
+  // launch_from_dock_enabled flag is dark a docked ship CANNOT launch, so a launch promise here would
+  // overpromise and break the "UI byte-identical until flip" guarantee (review M1). "Docked" is honest in
+  // both flag states — an improvement over the raw fallback with no promise; the send UI (which reads the
+  // flag) is where launch-readiness is surfaced once lit.
+  stationary: 'Docked',
   traveling: 'Traveling',
   hunting: 'Hunting',
   trading: 'Trading',
