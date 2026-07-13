@@ -28,12 +28,16 @@ const TABS: readonly { to: string; label: string; icon: IconName }[] = [
 ]
 
 export function AppShell() {
-  const map = useGalaxyMapData()
+  // A0: the ONE selected-ship model, mounted exactly once here (was duplicated per-screen). Every destination
+  // reads/writes the same selection through useShellState().selection. Mounted BEFORE the map hook so the
+  // selected-ship id can be threaded into it (FLEETMAP).
+  const selection = useMainShipSelection()
+  // FLEETMAP: thread the shell-selected ship into the map data — the single-ship reads (marker / route /
+  // command) then address the SELECTED ship (the single-ship resolver otherwise returns null at N≥2), and the
+  // whole-fleet layer highlights it. Changing selection re-polls the map (its own load dep).
+  const map = useGalaxyMapData(4000, selection.selectedShipId)
   const game = useGameState()
   const combat = useCombat()
-  // A0: the ONE selected-ship model, mounted exactly once here (was duplicated per-screen). Every destination
-  // reads/writes the same selection through useShellState().selection.
-  const selection = useMainShipSelection()
 
   // Both settle legs in one mount (see header). The legacy leg needs the active main-ship fleet's
   // moving row — the ONE shared selector (MapScreen's stop CTA uses the same one).

@@ -114,6 +114,51 @@ export async function fetchMyMainShips(): Promise<MainShipRow[]> {
   return (data ?? []) as MainShipRow[]
 }
 
+// ── FLEETMAP: whole-fleet map positions (the honest multi-ship fix) ─────────────────
+//
+// The client mirror of the get_my_fleet_positions() projection (migration 0200). ONE owner-read that returns
+// EVERY owned non-destroyed ship's placeable position, replacing the N-fanout of the singular fetchers above.
+// The server (via mainship_space_validate_context) decides each ship's `place`; the pure resolveFleetMarkers
+// resolver turns these into map markers (docked → look up the port coords; transit → interpolate the segment;
+// in_space → space_x/space_y). Coordinates arrive as jsonb numbers (double precision), never numeric strings.
+
+export type FleetPositionPlace = 'transit' | 'in_space' | 'docked' | 'hidden'
+
+/** A committed movement segment for client-side interpolation (the shared movementInterpolation contract). */
+export interface FleetPositionSegment {
+  origin_x: number
+  origin_y: number
+  target_x: number
+  target_y: number
+  target_kind: string // 'base' → returning; anything else → outbound
+  depart_at: string
+  arrive_at: string
+}
+
+export interface FleetPosition {
+  main_ship_id: string
+  name: string
+  class: string // hull_type_id
+  status: string
+  spatial_state: SpatialState | null
+  place: FleetPositionPlace
+  location_id: string | null // docked: the present fleet's current location
+  space_x: number | null // in_space only
+  space_y: number | null // in_space only
+  segment: FleetPositionSegment | null // transit only
+}
+
+/**
+ * Owner-read ALL of the caller's ships' map positions in ONE call (get_my_fleet_positions, 0200). Returns []
+ * on error or pre-deploy (the RPC not yet present) — non-fatal, so the map falls back to its single-ship
+ * marker and never error-states. NOT gated by a flag: it is a pure additive owner read.
+ */
+export async function fetchMyFleetPositions(): Promise<FleetPosition[]> {
+  const { data, error } = await supabase.rpc('get_my_fleet_positions')
+  if (error || !Array.isArray(data)) return []
+  return data as FleetPosition[]
+}
+
 // ── Phase 10D: main-ship send/return + live status ────────────────────────────────
 
 export type MainShipDisplayStatus = 'home' | 'traveling' | 'present' | 'returning'

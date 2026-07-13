@@ -7,8 +7,8 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import { fetchMainshipSendEnabled } from '../../lib/catalog'
 import {
   fetchActiveMainShipFleet, fetchHeldMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
-  resolveOwnedShip,
-  type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
+  fetchMyFleetPositions, resolveOwnedShip,
+  type FleetPosition, type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
 import { fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets } from '../command/teamApi'
 import { deriveDockedTeamRollups, type DockedTeamRollup } from '../command/teamRollup'
@@ -70,6 +70,10 @@ export interface GalaxyMapData {
   // false none of the team reads run and both stay empty — the map renders byte-identical to today.
   teamGroups: GroupRow[]
   dockedTeamRollups: DockedTeamRollup[]
+  // FLEETMAP: the whole-fleet position projection (get_my_fleet_positions, 0200) — ONE owner-read of EVERY
+  // owned non-destroyed ship, polled with the rest of the map. The fleet layer draws a marker per ship, so a
+  // player owning 2+ ships is no longer invisible on the map (the single-ship resolver goes null at N≥2). [].
+  fleetPositions: FleetPosition[]
   refresh: () => Promise<void>
 }
 
@@ -100,9 +104,10 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainShipSpaceMovement: null,
   teamGroups: [],
   dockedTeamRollups: [],
+  fleetPositions: [],
 }
 
-export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
+export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = null): GalaxyMapData {
   const [state, setState] = useState(EMPTY)
   const staticRef = useRef<{
     locations: MapLocation[]
@@ -129,10 +134,15 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         staticRef.current = { locations, meta, mainshipSendEnabled }
       }
 
-      const [movements, locationStates, mainShip] = await Promise.all([
+      const [movements, locationStates, mainShip, fleetPositions] = await Promise.all([
         fetchActiveMovements(),
         fetchLocationStates(),
-        fetchMainShip(),
+        // FLEETMAP: the single-ship reads now address the SELECTED ship (was implicitly the sole ship — null
+        // at N≥2). The whole-fleet projection is fetched in the SAME parallel batch (owner-read, [] on error),
+        // but gated on the SAME `mainshipSendEnabled` data-dark gate as its layer — a dark/pre-flip env does
+        // ZERO fleet-positions reads (the layer would render nothing anyway).
+        fetchMainShip(selectedShipId),
+        staticRef.current.mainshipSendEnabled ? fetchMyFleetPositions() : Promise.resolve<FleetPosition[]>([]),
       ])
       // The active linked fleet (zero units) drives the live main-ship status. Only read it
       // when a ship exists; absent ship or no in-flight fleet → null (home).
@@ -181,11 +191,12 @@ export function useGalaxyMapData(pollMs = 4000): GalaxyMapData {
         mainShipSpaceMovement,
         teamGroups,
         dockedTeamRollups,
+        fleetPositions,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))
     }
-  }, [])
+  }, [selectedShipId])
 
   useEffect(() => {
     let active = true
