@@ -16,10 +16,10 @@
 --     fold / 0193 trait fold), extract-and-diff verified, and the 0180 + 0193 prosrc pins are
 --     RE-RUN in §3 so a dropped hunk cannot land.
 --   ██ COLLISION NOTES (numbering + proof — RESOLVED at this slice's rebase; actual landing order):
---   · 0194 stays CLAIMED by the in-flight SHIPYARD-2 slice (its renumber per the 0193 header
---     choreography). SHIPYARD-2 re-creates port_entry_commission_build (never the adapter), so
---     the two slices' FUNCTION sets are disjoint: whichever lands second rebases numbers only,
---     no body re-application needed in either direction.
+--   · 0194 LANDED as SHIPYARD-2 (PR #138 — its renumber per the 0193 header choreography) while
+--     this slice was in flight. SHIPYARD-2 re-creates port_entry_commission_build (never the
+--     adapter) and carries its own proof file — function sets disjoint, no proof collision:
+--     this slice's rebase over it changed nothing here.
 --   · 0195 LANDED as SHIELD-1 (PR #139) while this slice was in flight — this migration
 --     RENUMBERED 0195 → 0196. SHIELD-1's engine re-creates are the 0168/0169 combat heads — NOT
 --     the adapter — so the 0193 true head above still stands (re-grepped post-rebase). SHIELD-1's

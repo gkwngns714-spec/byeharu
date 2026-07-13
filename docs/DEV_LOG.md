@@ -74,11 +74,18 @@ proposed flip value 0.15 [D owner-tunable — documented, never seeded].
   fix), SYSTEM_BOUNDARIES (§1 `ship_stations` — `affinity_specialization` went functional, the
   adapter is its downward reader; §8 the adapter's new LEFT-join edge into Captain's own
   catalog).
-- **Collision notes (resolved at the rebase):** 0194 stays promised to the in-flight SHIPYARD-2
-  renumber (its function set — `port_entry_commission_build` — is disjoint from this slice's, so
-  whichever lands second rebases NUMBERS only); SHIELD-1 landed FIRST (mig 0195, PR #139, its
-  proof marker the 22nd) → this slice renumbered 0195→0196 and its proof block reconciled to the
-  23rd slot, both-blocks-kept (the SOUL-1/TEAMMOVE routine); no migration-body collision.
+- **Collision notes (resolved at the rebases):** SHIPYARD-2 landed as 0194 (PR #138 — its
+  function set, `port_entry_commission_build`, is disjoint from this slice's and it carries its
+  own proof file: the rebase over it changed nothing of this slice); SHIELD-1 landed FIRST (mig
+  0195, PR #139, its proof marker the 22nd) → this slice renumbered 0195→0196 and its proof
+  block reconciled to the 23rd slot, both-blocks-kept (the SOUL-1/TEAMMOVE routine); no
+  migration-body collision anywhere (the adapter's 0193 head re-grepped after every rebase).
+  CI CATCH after the first push: the SHIELD-1 proof-merge resolution left the superseded
+  pre-SHIELD1 final PASS-select's line-HEAD dangling on the DECKS3 banner line — its `select '`
+  opened a string that swallowed the block's comment lines until the next quote (a parse error
+  the static selftest cannot see: grep pins don't parse quote balance); fixed by deleting the
+  dangling fragment — the one TRUE final select, carrying both the SHIELD-1 and DECKS-3
+  clauses, was already correct.
 
 **Verification.** Hostile review: APPROVED (extract-and-diff clean, arithmetic re-derived
 independently; the one MEDIUM — the inherited NaN-guard no-op — documented honestly + NANGUARD
