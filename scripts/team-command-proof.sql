@@ -217,6 +217,21 @@
 --            the 0191 leaf mirrors round(pool) to the ship row each tick; and the one-step-wipe
 --            defeat proves a FULLY-shielded ship still dies at hull 0 (defeat + integrity stay
 --            hull-only; the D1 terminal fires). Knob + enemy_attack_base restored in-txn.
+--   DECKS3 (DECKS-3, 0196) — STATION AFFINITY on the adapter (the 0193 head re-created with the
+--            knob-gated `station_affinity_bonus` multiplier composed at the 0180 scale sites):
+--            the committed seed '0' pinned untouched; KNOB-0 PARITY — with a gunnery-stationed
+--            MATCHING level-2 combat captain aboard (the CAPLEVEL pair as the 0189 auto-assign
+--            stationed them: bridge + gunnery), c1's combat_power equals the PRE-DECKS3
+--            expectation to the byte (hull + Σ attack × lvl_mult, derived independently); LIT
+--            (knob 0.15 in-txn via the real set_game_config) — combat_power = baseline + knob ×
+--            the MATCHED share EXACTLY (attack × lvl_mult × knob — the bonus COMPOSES with a real
+--            level-2 multiplier; the bridge holder, affinity NULL, earns nothing — guarded
+--            matched-share < full-sum), every other envelope key byte-identical (tradeoffs
+--            affinity-flat); NOMATCH — a fresh medbay(support≠combat)+bridge(NULL) board answers
+--            hull + Σ attack exactly and is byte-identical lit or dark; UNSTATIONED — pinned
+--            structurally (LEFT station join + the literal-1 no-match ELSE in prosrc): no writer
+--            can produce a station-NULL row post-0189 and the sole-writer law forbids fixturing
+--            one.
 --
 -- ── DARK-CAPABILITY EXERCISE (sanctioned; never crosses the flag human-gate) ──────────────────────
 -- The harness enables team_command_enabled + mainship_additional_commission_enabled +
@@ -3221,6 +3236,182 @@ begin
   raise notice 'TEAMCMD_PASS_SHIELD1 ok: zero state pinned (member rows exist, none carries a snapshot, no fought ship''s instance shield ever moved — COMBATPARITY/TEAMHUNT/TEAMSETTLE ran their exact pins against THIS tick as the parity proof); lit arm exact vs the independent damage derivation — snapshot 40/3 carries the CURRENT pool, knob-0 tick fully drains min(pool,damage) with the hull taking only the overflow, knob-1 regen climbs 0→40 then CAPS at max, the leaf mirrors round(pool) each tick with hp consistent, integrity stays hull-only at a nonzero pool, and the fully-shielded ship still dies at hull 0 (defeat hull-only, D1 terminal); knob + enemy_attack_base restored in-txn';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0)' as result;
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, -- ════════ BLOCK DECKS3 (DECKS-3, 0196): station affinity — knob-0 parity + the exact matched bonus ════════
+-- Migration 0196 re-created calculate_expedition_stats from its 0193 head with the marked DECKS-3
+-- delta: `station_affinity_bonus` (committed '0') read ONCE at entry; the captain loop LEFT-joins
+-- the held station (ship_captain_assignments.station → ship_stations, 0189); a captain whose
+-- specialization equals the station's affinity_specialization folds at contribution × v_lvl_mult
+-- × (1 + knob) — everything else (mismatch, the no-affinity Bridge, unstationed) at EXACTLY ×1.0.
+-- FIXTURES: c1 (uC) carries the CAPLEVEL level-2 pair exactly as the auto-assign left them —
+-- capa on BRIDGE (the sort-1 auto-pick; affinity NULL), capb on GUNNERY (sort-2; affinity
+-- 'combat' = the gunnery_veteran specialization — the MATCH), with captain_growth_enabled still
+-- lit in-txn (the CAPLEVEL exit posture, knob 0.10) so the affinity bonus provably COMPOSES with
+-- a REAL level multiplier (the matched share = attack × 1.1 × 1.15 — never attack × 1.15); plus a
+-- FRESH ship whose two combat captains hold MEDBAY (affinity 'support' — the mismatch) and BRIDGE
+-- (affinity NULL) — its lit envelope must be byte-identical to its knob-0 self. ship_traits stays
+-- dark (zero trait rows asserted) so every combat_power decomposition is exact.
+--   KNOB0    — the committed seed '0' pinned untouched; the adapter with a stationed MATCHING
+--              captain aboard answers the PRE-DECKS3 expectation to the byte: hull attack +
+--              Σ attack × lvl_mult (the CAPLEVEL independent-sum arithmetic re-derived at DECKS-3
+--              time — ×(1+0) = ×1.0 exactly, the seeded-zero inertness arm).
+--   LITBONUS — knob 0.15 in-txn (the REAL set_game_config — the SHARDDROP/CAPXP numeric-knob
+--              idiom): combat_power = the knob-0 baseline + round(knob × the MATCHED share, 2)
+--              EXACTLY, the matched share derived independently (attack × lvl_mult over matched
+--              rows only — guarded REAL and guarded PARTIAL: a bridge holder that wrongly matched
+--              would overshoot), every other envelope key byte-identical (gunnery seeds carry
+--              attack only; tradeoffs stay affinity-flat).
+--   NOMATCH  — the fresh no-match board, knob still 0.15: combat_power = hull + Σ captain attack
+--              exactly (level-1 lvl_mult = 1), and the WHOLE envelope byte-identical to its
+--              knob-0 self (medbay 'support' ≠ 'combat' and bridge NULL both take the ×1.0 ELSE).
+--   UNSTATIONED (structural) — no writer can produce a station-NULL row post-0189 (the sole
+--              writer always resolves a station; the 0189 backfill left none; unassign deletes
+--              the row) and the harness may not fixture one (the Captain sole-writer law), so the
+--              arm is pinned STRUCTURALLY, the SHIELD0 prosrc-pin precedent: the adapter carries
+--              the LEFT station join (an inner join would DROP an unstationed captain's whole
+--              contribution — a dark-parity breach, not a missing bonus) and the ONE no-match
+--              CASE whose ELSE is the literal 1 (NULL affinity — no station or the Bridge — can
+--              never reach the knob arm; behaviorally the same ELSE branch the two bridge
+--              fixtures above exercise).
+do $$
+declare s0 jsonb; s1 jsonb; m0 jsonb; m1 jsonb; n int; r jsonb;
+  uC uuid := (select v from tcmd where k='uC'); c1 uuid := (select v from tcmd where k='c1');
+  uX uuid; x1 uuid; capm uuid; capn uuid;
+  v_lvl_knob numeric; v_aff_knob numeric;
+  v_hull numeric; v_base_sum numeric; v_match numeric; v_hullx numeric; v_capx numeric;
+  v_src text;
+begin
+  -- committed seed (nothing in-txn has touched this key — this block is its only toucher): '0'.
+  if (select value #>> '{}' from public.game_config where key = 'station_affinity_bonus') is distinct from '0' then
+    raise exception 'DECKS3 FAIL: committed station_affinity_bonus is % (want ''0'' — the 0196 affinity seed)',
+      (select value #>> '{}' from public.game_config where key = 'station_affinity_bonus'); end if;
+
+  -- preconditions: growth lit (the CAPLEVEL exit posture — the composition arm needs a real level
+  -- multiplier), traits dark (SOUL1's exit posture — exact decomposition needs the fold skipped),
+  -- c1 module-free and trait-free, and the CAPLEVEL pair holding exactly bridge + gunnery (the
+  -- 0189 lowest-sort auto-pick order of their two assigns), both level 2, spec 'combat'.
+  if not public.cfg_bool('captain_growth_enabled') then
+    raise exception 'DECKS3 FAIL precondition: captain_growth_enabled is not lit in-txn (the CAPLEVEL exit posture)'; end if;
+  v_lvl_knob := public.cfg_num('captain_level_bonus_per_level');
+  if v_lvl_knob <= 0 then
+    raise exception 'DECKS3 FAIL precondition: captain_level_bonus_per_level is % — the composition arm needs a REAL level multiplier', v_lvl_knob; end if;
+  if public.cfg_bool('ship_traits_enabled') then
+    raise exception 'DECKS3 FAIL precondition: ship_traits_enabled lit at block entry (SOUL1 must leave it dark)'; end if;
+  select count(*) into n from public.ship_module_fittings where main_ship_id = c1;
+  if n <> 0 then raise exception 'DECKS3 FAIL precondition: c1 carries % fitted module(s) (want 0 — exact decomposition)', n; end if;
+  select count(*) into n from public.main_ship_traits where main_ship_id = c1;
+  if n <> 0 then raise exception 'DECKS3 FAIL precondition: c1 carries % trait row(s) (want 0 — exact decomposition)', n; end if;
+  select count(*) into n from public.ship_captain_assignments where main_ship_id = c1;
+  if n <> 2 then raise exception 'DECKS3 FAIL precondition: % assignment(s) on c1 (want the CAPLEVEL pair of 2)', n; end if;
+  select count(*) into n from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    join public.captain_types t on t.id = ci.captain_type_id
+    join public.ship_stations ss on ss.station_id = sca.station
+    where sca.main_ship_id = c1 and sca.station = 'gunnery'
+      and t.specialization = 'combat' and ss.affinity_specialization = 'combat' and ci.level = 2;
+  if n <> 1 then raise exception 'DECKS3 FAIL precondition: % gunnery-stationed level-2 combat captain(s) on c1 (want exactly 1 — the MATCH must be REAL: catalog affinity = captain specialization)', n; end if;
+  select count(*) into n from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    join public.ship_stations ss on ss.station_id = sca.station
+    where sca.main_ship_id = c1 and sca.station = 'bridge'
+      and ss.affinity_specialization is null and ci.level = 2;
+  if n <> 1 then raise exception 'DECKS3 FAIL precondition: % bridge-stationed level-2 captain(s) on c1 (want exactly 1 — a NULL-affinity holder must be aboard)', n; end if;
+
+  -- THE INDEPENDENT EXPECTATIONS (catalog/instance joins, never the adapter): c1's hull attack,
+  -- the full Σ attack × lvl_mult (the pre-DECKS3 world), and the MATCHED share of that sum
+  -- (affinity = specialization rows only) the DECKS-3 bonus applies to.
+  select coalesce((h.base_stats_json->>'attack')::numeric, 0) into v_hull
+    from public.main_ship_instances i
+    join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
+    where i.main_ship_id = c1;
+  select coalesce(sum(coalesce((t.stats_json->>'attack')::numeric, 0) * (1 + (ci.level - 1) * v_lvl_knob)), 0),
+         coalesce(sum(case when ss.affinity_specialization = t.specialization
+                           then coalesce((t.stats_json->>'attack')::numeric, 0) * (1 + (ci.level - 1) * v_lvl_knob)
+                           else 0 end), 0)
+    into v_base_sum, v_match
+    from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    join public.captain_types t on t.id = ci.captain_type_id
+    left join public.ship_stations ss on ss.station_id = sca.station
+    where sca.main_ship_id = c1;
+  if v_match <= 0 then
+    raise exception 'DECKS3 FAIL precondition: the matched share under test must be REAL (a 0=0 compare can only false-green) — matched Σ attack × lvl_mult is %', v_match; end if;
+  if v_match >= v_base_sum then
+    raise exception 'DECKS3 FAIL precondition: matched share % >= full captain sum % — a NON-matching captain must be aboard (bridge affinity NULL) or the bridge-earns-nothing half is untested', v_match, v_base_sum; end if;
+
+  -- ── KNOB0: with the seed '0', a stationed MATCHING captain earns NOTHING — the totals answer
+  --    the pre-DECKS3 expectation to the byte (hull + Σ attack × lvl_mult, the CAPLEVEL form). ──
+  s0 := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'none');
+  if (s0->>'combat_power')::numeric is distinct from round(v_hull + v_base_sum, 2) then
+    raise exception 'DECKS3 FAIL: knob-0 combat_power % diverged from the pre-DECKS3 expectation % (hull + Σ attack × lvl_mult — the seeded-zero arm must be ×1.0 exactly)',
+      s0->>'combat_power', round(v_hull + v_base_sum, 2); end if;
+
+  -- ── LITBONUS: knob 0.15 in-txn — the matched share scales by exactly knob × (attack × lvl_mult),
+  --    composed with the level fold; the bridge holder earns nothing; nothing else moves. ──────────
+  perform public.set_game_config('station_affinity_bonus', '0.15'::jsonb);
+  v_aff_knob := public.cfg_num('station_affinity_bonus');
+  s1 := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'none');
+  if (s1->>'combat_power')::numeric is distinct from round(v_hull + v_base_sum + v_aff_knob * v_match, 2) then
+    raise exception 'DECKS3 FAIL: lit combat_power % (want % — the exact DECKS-3 affinity bonus: the knob-0 baseline + knob × the MATCHED share only, attack × lvl_mult × knob composed with the level fold; a bridge that wrongly matched would overshoot this)',
+      s1->>'combat_power', round(v_hull + v_base_sum + v_aff_knob * v_match, 2); end if;
+  if (s1 - 'combat_power') is distinct from (s0 - 'combat_power') then
+    raise exception 'DECKS3 FAIL: the affinity fold moved a non-captain-stat key (gunnery seeds carry attack only; tradeoffs must stay affinity-flat): lit % vs knob-0 %', s1, s0; end if;
+
+  -- ── NOMATCH: a fresh board with NO match anywhere — medbay (support ≠ combat) + bridge (NULL) —
+  --    stays ×1.0 exactly with the knob LIT, byte-identical to its knob-0 self. ────────────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uX;
+  r := pg_temp.call_as(uX, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'DECKS3 FAIL provision: %', r; end if;
+  select main_ship_id into x1 from public.main_ship_instances where player_id = uX;
+  capm := public.captains_mint_instance(uX, 'gunnery_veteran', 'tcmd-decks3-m');
+  capn := public.captains_mint_instance(uX, 'gunnery_veteran', 'tcmd-decks3-n');
+  perform public.captain_assign_apply(uX, capm, x1, 'medbay');
+  perform public.captain_assign_apply(uX, capn, x1, 'bridge');
+  -- the mismatch must be REAL (catalog affinity 'support' ≠ specialization 'combat'), the bridge
+  -- NULL, both captains level 1 (lvl_mult exactly 1), the board module/trait-free.
+  select count(*) into n from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    join public.captain_types t on t.id = ci.captain_type_id
+    left join public.ship_stations ss on ss.station_id = sca.station
+    where sca.main_ship_id = x1 and ci.level = 1 and t.specialization = 'combat'
+      and ((sca.station = 'medbay' and ss.affinity_specialization = 'support')
+        or (sca.station = 'bridge' and ss.affinity_specialization is null));
+  if n <> 2 then raise exception 'DECKS3 FAIL precondition: the no-match board is not medbay(support)+bridge(NULL) level-1 combat pair (% of 2)', n; end if;
+  select count(*) into n from public.main_ship_traits where main_ship_id = x1;
+  if n <> 0 then raise exception 'DECKS3 FAIL precondition: the fresh board carries % trait row(s) (want 0 — commissioned dark)', n; end if;
+  select coalesce((h.base_stats_json->>'attack')::numeric, 0) into v_hullx
+    from public.main_ship_instances i
+    join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
+    where i.main_ship_id = x1;
+  select coalesce(sum(coalesce((t.stats_json->>'attack')::numeric, 0)), 0) into v_capx
+    from public.ship_captain_assignments sca
+    join public.captain_instances ci on ci.id = sca.captain_instance_id
+    join public.captain_types t on t.id = ci.captain_type_id
+    where sca.main_ship_id = x1;
+  m1 := public.calculate_expedition_stats(uX, x1, '[]'::jsonb, 'none');
+  if (m1->>'combat_power')::numeric is distinct from round(v_hullx + v_capx, 2) then
+    raise exception 'DECKS3 FAIL: lit no-match combat_power % (want hull % + Σ captain attack % exactly — mismatched/bridge captains must stay ×1.0 with the knob lit)',
+      m1->>'combat_power', v_hullx, v_capx; end if;
+  perform public.set_game_config('station_affinity_bonus', '0'::jsonb);
+  m0 := public.calculate_expedition_stats(uX, x1, '[]'::jsonb, 'none');
+  if m1 is distinct from m0 then
+    raise exception 'DECKS3 FAIL: the no-match board diverged between knob 0.15 and knob 0 (must be byte-identical — no match anywhere on board: medbay support ≠ combat, bridge affinity NULL): % vs %', m1, m0; end if;
+
+  -- ── UNSTATIONED (structural): the LEFT join + the literal-1 ELSE pinned in prosrc (no writer
+  --    can produce a station-NULL row post-0189; the sole-writer law forbids fixturing one). ──────
+  select prosrc into v_src from pg_proc
+    where oid = 'public.calculate_expedition_stats(uuid, uuid, jsonb, text)'::regprocedure;
+  if position('left join ship_stations' in v_src) = 0 then
+    raise exception 'DECKS3 FAIL: the adapter station read is not a LEFT join — an unstationed captain would be DROPPED from the fold instead of folding at ×1.0'; end if;
+  if position('v_aff_mult := case when c.affinity_specialization = c.specialization then 1 + v_aff_bonus else 1 end' in v_src) = 0 then
+    raise exception 'DECKS3 FAIL: the one no-match CASE vanished — NULL affinity (unstationed or the bridge) must fall to the literal-1 ELSE, never a knob read per row'; end if;
+
+  -- exit posture: the knob is already back at '0' in-txn (set above; ROLLBACK reverts regardless).
+  raise notice 'TEAMCMD_PASS_DECKS3 ok: committed seed ''0'' untouched; knob-0 totals with a gunnery-stationed matching captain = the pre-DECKS3 expectation to the byte; knob 0.15 lit = baseline + knob × the matched share exactly (attack × lvl_mult × knob — composed with a REAL level-2 multiplier, the bridge holder earning nothing, every other key byte-identical); a medbay(mismatch)+bridge(NULL) board is byte-identical lit or dark; the unstationed arm pinned structurally (LEFT join + the literal-1 ELSE)';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

@@ -5,6 +5,91 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-13 — DECKS-3: station affinity bonuses — the adapter's knob-gated matched-station multiplier (mig 0196, inert)
+
+**Request.** The DECKS charter, slice 3: when a captain's specialization matches their held
+station's `affinity_specialization` (`ship_stations`, 0189 — Gunnery=combat, Engineering=mining,
+Logistics=trade, Sensors=exploration, Medbay=support, Bridge=NULL), scale THAT captain's
+stats_json contribution in `calculate_expedition_stats` by `(1 + station_affinity_bonus)` —
+EXACTLY the shape of the shipped 0180 captain-level fold. Dark/inert behind the zero-seeded knob;
+proposed flip value 0.15 [D owner-tunable — documented, never seeded].
+
+**Work done**
+- **True head (grep-verified, re-verified after the SHIELD-1/SOUL-2/SHIPYARD-3 rebase):**
+  `calculate_expedition_stats` → **0193** (SOUL-1: creates at 0044 → 0115 → 0122 → 0170 → 0180 →
+  0193; nothing later re-creates it — SHIELD-1's 0195 re-creates the 0168/0169 combat engine
+  heads, never the adapter). Re-created from THE 0193 BODY with marked `-- DECKS-3 (0196)` hunks
+  only — extract-and-diff run during the build: the diff is exactly the marked hunks, every
+  accumulated hunk (0115/0122/0170/0180/0193) carried.
+- **mig `20260618000196_decks3_affinity.sql`** *(0194 promised to SHIPYARD-2's renumber; 0195
+  landed as SHIELD-1 — this slice renumbered to 0196)* — (a) knob `station_affinity_bonus` seeded
+  '0' (byte-inert: ×(1+0) = ×1.0 exactly — the 0180 double-inertness law, second arm = no-match
+  ×1.0 regardless of the knob; the 0180 guard SHAPE + floor-at-0 posture mirrored byte-for-byte,
+  read ONCE at entry — never per row. **HONESTY NOTE (hostile review M1):** the inherited `x <> x`
+  NaN-detect arm is a NO-OP in PostgreSQL — `'NaN'::float8 = 'NaN'::float8` is TRUE, PG deviates
+  from IEEE 754 — so that arm is unreachable and a knob mis-set to "NaN" WOULD poison matched
+  captains' stats; kept byte-for-byte anyway (0180 parity outweighs a mid-slice idiom fork),
+  documented in-body with a marked note, and the paired fix is QUEUED as FULL_CAPACITY_PLAN row 20
+  **NANGUARD** — both adapter sites to the working `= 'NaN'::float8` idiom + their pinned
+  self-asserts, one slice). (b) The adapter delta: ONE added LEFT join
+  (`ship_captain_assignments.station` → `ship_stations.affinity_specialization`; LEFT deliberately
+  — an unstationed row must KEEP folding at ×1.0, an inner join would silently drop that captain's
+  whole contribution; post-0189 no writer can even produce a station-NULL row — defense-in-depth),
+  ONE no-match CASE (`v_aff_mult := case when affinity = specialization then 1 + knob else 1 end`
+  — NULL = x is NULL → the ELSE, so unstationed and the NULL-affinity Bridge take the same
+  literal-1 branch as a plain mismatch), and ` * v_aff_mult` composed at the EXISTING eight 0180
+  scale sites (contribution × v_lvl_mult × v_aff_mult — commutative arithmetic, pinned token
+  order; the captain's specialization was ALREADY in the loop via `captain_types` 0122, no new
+  read). Tradeoffs stay affinity-flat (never a stealth cost raise). No second captain loop.
+  (c) Self-asserts: knob committed + reads exactly 0 (deploy-inert or refuse); the 0189
+  six-station affinity mapping re-asserted verbatim; prosrc pins — 1 once-at-entry knob read,
+  the 0180 guard/floor shape, 1 LEFT station join (and exactly 1 `join ship_stations` token
+  total), 1 no-match CASE, exactly 8 `* v_lvl_mult * v_aff_mult` composed sites and exactly 8
+  `* v_aff_mult` total (no ninth site), tradeoffs unscaled, no random(); EVERY 0180 level pin +
+  0193 trait pin + 0115/0122/0170 hunk token RE-RUN on the re-create (the accumulated-hunk law);
+  ACL server-only re-asserted.
+- **Proof** — `TEAMCMD_PASS_DECKS3` appended to `team-command-proof` (the **23rd** marker,
+  reconciled after SHIELD1's 22nd at the rebase — both blocks kept, the established idiom):
+  committed seed '0' pinned; KNOB-0 PARITY — c1 with the CAPLEVEL level-2 pair exactly as the
+  0189 auto-assign stationed them (capa BRIDGE/NULL, capb GUNNERY/combat — a stationed MATCHING
+  captain aboard) answers the PRE-DECKS3 expectation to the byte (hull + Σ attack × lvl_mult,
+  derived independently — the CAPLEVEL arithmetic re-stated); LIT (knob 0.15 in-txn via the real
+  `set_game_config`, the numeric-knob idiom) — combat_power = baseline + knob × the MATCHED share
+  EXACTLY (attack × lvl_mult × knob: the bonus provably COMPOSES with a real level-2 multiplier,
+  1.1 × 1.15 — and the matched share is guarded REAL and guarded PARTIAL, so a bridge that
+  wrongly matched would overshoot), every other envelope key byte-identical; NOMATCH — a fresh
+  medbay(support≠combat)+bridge(NULL) board via the real sole writer's explicit-station arm
+  answers hull + Σ attack exactly and is byte-identical between knob 0.15 and knob 0;
+  UNSTATIONED — pinned STRUCTURALLY (the SHIELD0 prosrc-pin precedent: LEFT join + the literal-1
+  ELSE), honest reason recorded: no writer can produce a station-NULL row post-0189 (writer
+  always resolves a station, the backfill nulled none, unassign deletes the row) and the harness
+  may not fixture one (the Captain sole-writer negative grep). The .sh gains the DECKS3
+  assert-form pins, the 23-marker list, and the committed-knob honesty check
+  (`station_affinity_bonus` still '0' post-run — the SHARDDROP posture). DECKS3 runs AFTER
+  SHIELD1 (verified: SHIELD1 touches no captain/growth/trait state — its knob writes are
+  restored in-txn — so the DECKS3 preconditions hold).
+- **Docs:** FULL_CAPACITY_PLAN (queue row 19 — DECKS-3 shipped inert; **ACT-DECKS3 = ONE knob
+  write**, `set_game_config('station_affinity_bonus','0.15')` [D proposed, owner-tunable],
+  rollback = the same write back to '0'; knob indexed; NEW row 20 **NANGUARD** — the paired NaN
+  fix), SYSTEM_BOUNDARIES (§1 `ship_stations` — `affinity_specialization` went functional, the
+  adapter is its downward reader; §8 the adapter's new LEFT-join edge into Captain's own
+  catalog).
+- **Collision notes (resolved at the rebase):** 0194 stays promised to the in-flight SHIPYARD-2
+  renumber (its function set — `port_entry_commission_build` — is disjoint from this slice's, so
+  whichever lands second rebases NUMBERS only); SHIELD-1 landed FIRST (mig 0195, PR #139, its
+  proof marker the 22nd) → this slice renumbered 0195→0196 and its proof block reconciled to the
+  23rd slot, both-blocks-kept (the SOUL-1/TEAMMOVE routine); no migration-body collision.
+
+**Verification.** Hostile review: APPROVED (extract-and-diff clean, arithmetic re-derived
+independently; the one MEDIUM — the inherited NaN-guard no-op — documented honestly + NANGUARD
+queued, never fixed mid-slice). `team-command-proof.sh selftest` green (23 markers post-rebase);
+mutation guttings (affinity exactness / knob-0 parity / mismatch-stays-1.0) each
+fail-then-restore; the migration's prosrc pin counts verified statically against the extracted
+body; `tsc`/`vite` n/a — server-only slice, zero client files touched (confirmed via git
+status).
+
+---
+
 ## 2026-07-13 — SHIPYARD-2: hull-build DELIVERY (mig 0194, dark) — all pre-flip seams closed
 
 **Request.** The SHIPYARD charter, slice 2: make the 0038 queue engine DELIVER hulls and close ALL

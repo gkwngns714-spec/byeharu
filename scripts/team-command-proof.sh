@@ -80,7 +80,16 @@
 # round(pool) each tick, integrity + defeat stay hull-only — a fully-shielded ship dies at hull 0).
 # SHIELD-1 gives shield_regen_combat_pct its consumer, so that knob joins the in-txn
 # set_game_config knob idiom (raised '1', restored '0'); shield_regen_idle_pct keeps the full
-# never-touch posture until SHIELD-2 builds its consumer).
+# never-touch posture until SHIELD-2 builds its consumer)
+# plus the DECKS-3 station-affinity block (0196: the re-created adapter scales a captain whose
+# specialization matches their held station's affinity_specialization by (1 +
+# station_affinity_bonus), composed at the 0180 scale sites — committed seed '0' pinned; knob-0
+# totals with a gunnery-stationed matching captain = the pre-DECKS3 expectation to the byte; knob
+# 0.15 in-txn = baseline + knob × the independently-derived MATCHED share exactly (composed with a
+# REAL level-2 multiplier, the NULL-affinity bridge holder earning nothing); a
+# medbay(mismatch)+bridge(NULL) board byte-identical lit or dark; the unstationed arm pinned
+# structurally — LEFT station join + the literal-1 no-match ELSE — because no writer can produce a
+# station-NULL row post-0189 and the sole-writer law forbids fixturing one).
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -97,9 +106,10 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 
 # the block PASS markers and the final PASS line this proof must exercise.
-# (SOUL1 is the 21st marker, SHIELD1 the 22nd — appended after main's 20 (…SHIELD0, TEAMMOVE);
-# the in-flight SHIPYARD-2 slice claims the next slot and reconciles here at ITS rebase.)
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1"
+# (SOUL1 is the 21st marker, SHIELD1 the 22nd, DECKS3 the 23rd — the both-blocks-kept reconcile
+# routine (SHIELD-1 landed first, so DECKS3 rebased to the 23rd slot); the in-flight SHIPYARD-2
+# slice has its own proof file and does not touch this pair.)
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -629,14 +639,48 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "set_game_config('shield_regen_combat_pct', '0'::jsonb)" "$SQL" \
     || fail "harness does not restore the combat regen knob to the dark seed in-txn"
 
-  # ── all twenty-two block PASS markers present. ────────────────────────────────────────────────────────
+  # ── DECKS3 (0196 / DECKS-3) pins, in assert form (a gutted .sql that only mentions them in
+  #    prose cannot false-green): the committed knob seed '0'; the knob-0 parity assert (the
+  #    pre-DECKS3 expectation with a stationed MATCHING captain aboard); the real set_game_config
+  #    knob raise to 0.15 in-txn; the matched-share 0=0 guard AND the matched<full guard (the
+  #    bridge-earns-nothing half must be testable); the exact-bonus assert; the isolation pin; the
+  #    explicit-station mismatch fixture riding the REAL sole writer; the mismatch/bridge
+  #    byte-identity; and the structural unstationed pins (LEFT join + the literal-1 ELSE). The
+  #    knob is a numeric KNOB (the SHARDDROP/CAPXP posture), never a gate — its committed-'0'
+  #    honesty check runs in local mode below. ─────────────────────────────────────────────────────
+  grep -qF "(want ''0'' — the 0196 affinity seed)" "$SQL" \
+    || fail "harness does not ASSERT the committed station_affinity_bonus seed is '0'"
+  grep -qF "diverged from the pre-DECKS3 expectation" "$SQL" \
+    || fail "harness does not ASSERT knob-0 byte-parity (the pre-DECKS3 expectation with a stationed matching captain)"
+  grep -qF "set_game_config('station_affinity_bonus', '0.15'::jsonb)" "$SQL" \
+    || fail "harness does not raise the affinity knob via the real set_game_config (in-txn)"
+  grep -qF "the matched share under test must be REAL (a 0=0 compare can only false-green)" "$SQL" \
+    || fail "harness does not GUARD the matched share against a zero-share false-green"
+  grep -qF "a NON-matching captain must be aboard (bridge affinity NULL)" "$SQL" \
+    || fail "harness does not GUARD that a NULL-affinity holder is aboard (the bridge-earns-nothing half)"
+  grep -qF "the exact DECKS-3 affinity bonus" "$SQL" \
+    || fail "harness does not ASSERT the exact affinity bonus (baseline + knob × the matched share, composed with the level fold)"
+  grep -qF "the affinity fold moved a non-captain-stat key" "$SQL" \
+    || fail "harness does not ASSERT the affinity fold moves ONLY the captain-contributed combat_power"
+  grep -qF "public.captain_assign_apply(uX, capm, x1, 'medbay')" "$SQL" \
+    || fail "harness does not station the mismatch captain explicitly via the real sole writer"
+  grep -qF "mismatched/bridge captains must stay" "$SQL" \
+    || fail "harness does not ASSERT the no-match absolute baseline (hull + Σ attack exactly, knob lit)"
+  grep -qF "must be byte-identical — no match anywhere on board" "$SQL" \
+    || fail "harness does not ASSERT the mismatch/bridge board is byte-identical lit or dark"
+  grep -qF "an unstationed captain would be DROPPED from the fold" "$SQL" \
+    || fail "harness does not PIN the LEFT station join (the structural unstationed arm)"
+  grep -qF "must fall to the literal-1 ELSE" "$SQL" \
+    || fail "harness does not PIN the literal-1 no-match ELSE (NULL affinity can never reach the knob arm)"
+
+  # ── all twenty-three block PASS markers present. ─────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped; shield combat knob raised-and-restored in-txn only, idle knob never touched)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3 specifics; 0171 bump asserted-not-fixtured; shipyard_enabled never flipped; shield combat knob raised-and-restored in-txn only, idle knob never touched)"
   exit 0
 fi
 
@@ -676,6 +720,13 @@ committed_sy="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{
   || fail "could not read the committed 'shipyard_enabled' value"
 [ "$committed_sy" = "false" ] || fail "committed shipyard_enabled is '$committed_sy' — must stay false (the proof never touches it)"
 
+# same honesty check for the 0196 AFFINITY KNOB: the DECKS3 block raises it to 0.15 in-txn; the
+# committed value must still be the 0196 seed '0' — a leak here would silently start paying
+# station-affinity bonuses in a game whose owner never flipped ACT-DECKS3.
+committed_aff="$(psql "$DB_URL" -X -t -A -c "select coalesce((select value #>> '{}' from public.game_config where key = 'station_affinity_bonus'), '0')")" \
+  || fail "could not read the committed 'station_affinity_bonus' value"
+[ "$committed_aff" = "0" ] || fail "committed station_affinity_bonus is '$committed_aff' — the proof leaked the knob (must stay 0)"
+
 # same honesty check for the 0191 SHIELD REGEN KNOBS: the SHIELD1 block raises the COMBAT knob to
 # '1' in-txn (SHIELD-1 wired its consumer) and restores it; the IDLE knob is never touched at all
 # (selftest negative grep — no consumer until SHIELD-2). The committed values must still be the
@@ -686,4 +737,4 @@ for knob in shield_regen_combat_pct shield_regen_idle_pct; do
   [ "$committed_sr" = "0" ] || fail "committed $knob is '$committed_sr' — must stay 0 (the proof never touches it)"
 done
 
-echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled/ship_traits_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0; shield_regen_combat_pct/shield_regen_idle_pct still 0)"
+echo "TEAM-COMMAND B-VERIFY LOCAL PROOF: OVERALL_PASS (committed team_command_enabled/mainship_additional_commission_enabled/mainship_send_enabled/captain_assignment_enabled/captain_growth_enabled/module_crafting_enabled/module_fitting_enabled/shipyard_enabled/ship_traits_enabled all still false; captain_shard_drop_rate still 0; captain_xp_per_combat_grant still 10; blueprint_fragment_drop_rate still 0; shield_regen_combat_pct/shield_regen_idle_pct still 0; station_affinity_bonus still 0)"
