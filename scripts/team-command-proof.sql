@@ -31,7 +31,7 @@
 --   CAPTAINS (Slice C0, 0165) — get_my_group_expedition_preview rejects dark BEFORE the team-flag
 --            flip; invalid_activity / group_not_found (random + cross-player) / empty_group; a
 --            captained member's stats carry the captain seed bonus over the uncaptained baseline
---            with captain_slots_limit=6 (the 0171 captains-launch bump — asserted in setup, no
+--            with captain_slots_limit=8 (the ROOMS-8 6→8 bump — asserted in setup, no
 --            longer fixtured in-txn); an uncaptained member's group stats
 --            are byte-identical to its solo get_my_expedition_preview; unassigning reverts the
 --            delta. Captains are provisioned ONLY via the sole writers (captains_mint_instance /
@@ -375,18 +375,17 @@ update public.game_config set value='true'::jsonb where key='mainship_additional
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 update public.game_config set value='true'::jsonb where key='captain_assignment_enabled';
 
--- CAPTAINS-LAUNCH RECONCILIATION (0171): the once-deferred hull bump + instance backfill NOW SHIP
--- as migration 20260618000171 (the captains fast-follow prep), and this disposable chain always
--- runs with ALL migrations applied — so base_captain_slots is 6 BEFORE any fixture exists. The
--- proof's former in-txn fixture bump (the pre-0171 activation rehearsal) is therefore RETIRED and
--- REPLACED BY AN ASSERT: the MIGRATION, not the harness, provides the 6-seat capacity the CAPTAINS
--- block pins. Ships commissioned below copy 6 at commission; the 0171 instance backfill is asserted
--- as a no-op on the fresh chain (monotonic — zero laggards can exist).
+-- CAPTAINS-LAUNCH RECONCILIATION (0171 → ROOMS-8 0203): the once-deferred hull bump + instance
+-- backfill ship as migrations, and this disposable chain always runs with ALL migrations applied —
+-- so base_captain_slots is 8 (the ROOMS-8 6→8 raise, 0203) BEFORE any fixture exists. The MIGRATION,
+-- not the harness, provides the 8-seat capacity the CAPTAINS block pins. Ships commissioned below
+-- copy 8 at commission; the instance backfill is asserted as a no-op on the fresh chain (monotonic —
+-- zero laggards can exist).
 do $$
 declare n int;
 begin
-  select count(*) into n from public.main_ship_hull_types where base_captain_slots is distinct from 6;
-  if n <> 0 then raise exception 'SETUP FAIL: % hull row(s) not at base_captain_slots 6 (want 0 — the 0171 captains-launch bump)', n; end if;
+  select count(*) into n from public.main_ship_hull_types where base_captain_slots is distinct from 8;
+  if n <> 0 then raise exception 'SETUP FAIL: % hull row(s) not at base_captain_slots 8 (want 0 — the ROOMS-8 6→8 bump, 0203)', n; end if;
   select count(*) into n from public.main_ship_instances i
     join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
     where i.captain_slots < h.base_captain_slots;
@@ -619,12 +618,12 @@ begin
   select count(*) into n from jsonb_array_elements(r->'members') e where (e->>'valid')::boolean;
   if n <> 2 then raise exception 'CAPTAINS FAIL baseline validity: %', r->'members'; end if;
   select e->'stats' into base from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a1::text;
-  -- captain_slots_limit=6: migration 0171 (captains-launch prep) ships the once-deferred hull bump
-  -- + instance backfill, so a fresh all-migrations chain seeds base_captain_slots=6 — these ships
-  -- copied 6 at commission (asserted in setup, no fixture bump), and it flows through the ONE
-  -- adapter into the preview's stats.
-  if (base->>'captain_slots_limit')::int is distinct from 6 then
-    raise exception 'CAPTAINS FAIL: baseline captain_slots_limit % (want 6 — the 0171 captains-launch bump)', base->>'captain_slots_limit'; end if;
+  -- captain_slots_limit=8: the ROOMS-8 6→8 raise (0203, on top of the 0171 bump) ships as a
+  -- migration, so a fresh all-migrations chain seeds base_captain_slots=8 — these ships copied 8 at
+  -- commission (asserted in setup, no fixture bump), and it flows through the ONE adapter into the
+  -- preview's stats.
+  if (base->>'captain_slots_limit')::int is distinct from 8 then
+    raise exception 'CAPTAINS FAIL: baseline captain_slots_limit % (want 8 — the ROOMS-8 6→8 bump)', base->>'captain_slots_limit'; end if;
   if (base->>'captain_slots_used')::int is distinct from 0 then
     raise exception 'CAPTAINS FAIL: baseline captain_slots_used % (want 0)', base->>'captain_slots_used'; end if;
 
@@ -636,7 +635,7 @@ begin
   perform public.captain_assign_apply(uA, cap1, a1);
   perform public.captain_assign_apply(uA, cap2, a1);
 
-  -- CAPTAINED: a1's stats show the seed bonus over the baseline; slots book 2 used of 6.
+  -- CAPTAINED: a1's stats show the seed bonus over the baseline; slots book 2 used of 8.
   r := pg_temp.call_as(uA, format('public.get_my_group_expedition_preview(%L::uuid, ''none'')', gA1));
   if (r->>'ok')::boolean is not true then raise exception 'CAPTAINS FAIL captained preview: %', r; end if;
   select e->'stats' into capped from jsonb_array_elements(r->'members') e where e->>'main_ship_id' = a1::text;
@@ -644,8 +643,8 @@ begin
     raise exception 'CAPTAINS FAIL: captained combat_power % (want baseline % + 8)', capped->>'combat_power', base->>'combat_power'; end if;
   if (capped->>'captain_slots_used')::int is distinct from 2 then
     raise exception 'CAPTAINS FAIL: captained captain_slots_used % (want 2)', capped->>'captain_slots_used'; end if;
-  if (capped->>'captain_slots_limit')::int is distinct from 6 then
-    raise exception 'CAPTAINS FAIL: captained captain_slots_limit % (want 6)', capped->>'captain_slots_limit'; end if;
+  if (capped->>'captain_slots_limit')::int is distinct from 8 then
+    raise exception 'CAPTAINS FAIL: captained captain_slots_limit % (want 8)', capped->>'captain_slots_limit'; end if;
 
   -- UNCAPTAINED MEMBER PARITY: a2's stats in the GROUP preview must be byte-identical to its SOLO
   -- get_my_expedition_preview stats (same adapter, same inputs — the group RPC adds no arithmetic).
@@ -751,9 +750,9 @@ begin
     where e->>'main_ship_id' = a1::text and (e->>'valid')::boolean is false;
   if n <> 1 then raise exception 'TEAMSTATS FAIL: preview did not mark a1 valid:false: %', p->'members'; end if;
 
-  -- restore the CAPTAINS-block fixture shape for the SEND/STOP blocks: slots back to the in-txn
-  -- activation value, captain unassigned (sole writer), and totals answers ok again.
-  update public.main_ship_instances set captain_slots = 6, updated_at = now() where main_ship_id = a1;
+  -- restore the CAPTAINS-block fixture shape for the SEND/STOP blocks: slots back to the migration
+  -- value (8 — the ROOMS-8 raise), captain unassigned (sole writer), and totals answers ok again.
+  update public.main_ship_instances set captain_slots = 8, updated_at = now() where main_ship_id = a1;
   perform public.captain_assign_apply(uA, cap1, null);
   r := pg_temp.call_as(uA, format('public.get_my_group_expedition_totals(%L::uuid, ''none'')', gA1));
   if (r->>'ok')::boolean is not true then raise exception 'TEAMSTATS FAIL post-restore totals: %', r; end if;
@@ -1930,10 +1929,10 @@ begin
 
   -- FIXTURE REPAIR (CI 2026-07-12): the TEAMHUNT degrade case zeroed b1's captain_slots mid-flight
   -- (the adapter-raise surgery) and nothing restored it — no block called the adapter on b1 again
-  -- until THIS one, so the call raised 'captains use 1 slots, limit 0'. Restore the 0171 value
+  -- until THIS one, so the call raised 'captains use 1 slots, limit 0'. Restore the 0203 value
   -- before the adapter calls (in-txn; ROLLBACK reverts regardless).
-  update public.main_ship_instances set captain_slots = 6, updated_at = now()
-    where main_ship_id = b1 and captain_slots < 6;
+  update public.main_ship_instances set captain_slots = 8, updated_at = now()
+    where main_ship_id = b1 and captain_slots < 8;
 
   -- preconditions: the CAPXP flip left the flag LIT in-txn; the fixture levels are exactly as the
   -- accrual left them (2 level-2 captains on c1; 1 level-1 captain on the grantless b1); c1 is
@@ -2328,12 +2327,12 @@ begin
     where (hull_type_id = 'bulk_hauler' and name = 'Mule-class Hauler'
            and base_hp = 650 and base_speed = 0.8
            and base_cargo_capacity = 140 and base_cargo_capacity_m3 = 140.0
-           and base_support_capacity = 10 and base_captain_slots = 6 and base_module_slots = 2
+           and base_support_capacity = 10 and base_captain_slots = 8 and base_module_slots = 2
            and base_stats_json = '{"attack": 5, "defense": 15}'::jsonb)
        or (hull_type_id = 'strike_corvette' and name = 'Talon-class Corvette'
            and base_hp = 420 and base_speed = 1.3
            and base_cargo_capacity = 20 and base_cargo_capacity_m3 = 20.0
-           and base_support_capacity = 10 and base_captain_slots = 6 and base_module_slots = 4
+           and base_support_capacity = 10 and base_captain_slots = 8 and base_module_slots = 4
            and base_stats_json = '{"attack": 30, "defense": 10}'::jsonb);
   if n <> 2 then raise exception 'SHIPYARD0 FAIL: % of 2 T1 hull rows carry the exact 0185 seed (stats + display names)', n; end if;
 

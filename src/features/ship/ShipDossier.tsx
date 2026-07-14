@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
+import { isServerLit, runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { fetchMyExpeditionPreview, fetchMyMainShips, resolveOwnedShip, type MainShipRow } from '../map/mainshipApi'
 import { getMyShipFittings } from '../modules/modulesApi'
-import { getMyCaptainInstances, getShipStations } from '../captains/captainsApi'
-import { deckBoard, type ShipStation } from '../captains/deckStations'
+import { configureShipRoom, getMyCaptainInstances, getMyShipRoomSlots, getShipStations } from '../captains/captainsApi'
+import { roomPickerOptions, roomSlotBoard, stationLabel, type ShipStation } from '../captains/deckStations'
 import { CaptainXpBar } from '../captains/CaptainXpBar'
 import { getShipCargoLots, type ShipCargoLot } from '../map/tradeApi'
 import type { SelectableShip } from '../map/useMainShipSelection'
 import type { GetMyShipFittingsResult } from '../modules/modulesTypes'
-import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
+import {
+  roomConfigErrorMessage,
+  type ConfigureRoomResult,
+  type GetMyCaptainInstancesResult,
+  type GetShipRoomSlotsResult,
+} from '../captains/captainsTypes'
 import {
   aggregateCargo,
   captainsForShip,
@@ -90,9 +95,14 @@ export function ShipDossier({
 }) {
   const [fittings, setFittings] = useState<GetMyShipFittingsResult | null>(null)
   const [roster, setRoster] = useState<GetMyCaptainInstancesResult | null>(null)
-  // DECKS-2: the six-station catalog (public-read Reference/Config; [] = read failed → the
+  // DECKS-2 / ROOMS-8: the room catalog (public-read Reference/Config; [] = read failed → the
   // captains section falls back to its pre-DECKS list shape, never a broken board).
   const [stations, setStations] = useState<ShipStation[]>([])
+  // ROOMS-8: THIS ship's 8 configurable room-slots (dark-gated read; null-not-ok → no board).
+  const [roomSlotsRes, setRoomSlotsRes] = useState<GetShipRoomSlotsResult | null>(null)
+  // ROOMS-8: per-slot pending + note for the room-config picker (the CaptainsPanel Record idiom).
+  const [configPending, setConfigPending] = useState<Record<number, boolean>>({})
+  const [configNote, setConfigNote] = useState<Record<number, string | null>>({})
   const [lots, setLots] = useState<ShipCargoLot[] | null>(null)
   const [ships, setShips] = useState<MainShipRow[] | null>(null)
   // SHIP-POWER: the raw preview envelope (parsed at render — the parser owns every malformed shape).
@@ -100,23 +110,27 @@ export function ShipDossier({
   // SOUL-2: the ship's rolled traits + catalog (null = dark gate / read error → section hidden).
   const [soul, setSoul] = useState<ShipSoulData | null>(null)
 
-  // Mounted guard — the shared idiom home (read-only panel: no submit guards needed).
-  const { activeRef } = useActivityPanelGuards()
+  // Guards — the shared idiom home. ROOMS-8 makes this panel a (light) command surface too: the
+  // room-config picker submits configure_ship_room through runGuardedCommand, so it needs the full
+  // guards object (mounted + in-flight), not just activeRef.
+  const guards = useActivityPanelGuards()
+  const { activeRef } = guards
 
   const shipId = selectedShip?.main_ship_id ?? null
 
   const refresh = useCallback(async () => {
     if (!shipId) return
-    // One batched read wave (the ModulesPanel refresh idiom). The two RPC reads carry their own
-    // dark envelopes (each section fails closed on !ok); the two direct selects are owner-read
-    // RLS and collapse to []/null on error inside their wrappers.
-    const [fit, cap, cargo, myShips, preview, decks, soulData] = await Promise.all([
+    // One batched read wave (the ModulesPanel refresh idiom). The RPC reads carry their own dark
+    // envelopes (each section fails closed on !ok); the direct selects are owner-read RLS and
+    // collapse to []/null on error inside their wrappers.
+    const [fit, cap, cargo, myShips, preview, decks, rooms, soulData] = await Promise.all([
       getMyShipFittings(),
       getMyCaptainInstances(),
       getShipCargoLots(shipId),
       fetchMyMainShips(), // module_slots for the slot-usage line (the ModulesPanel picker source)
       fetchMyExpeditionPreview(shipId), // SHIP-POWER: THIS ship's server stats (transport error → null → hidden)
-      getShipStations(), // DECKS-2: the station catalog (public-read; [] on error → list fallback)
+      getShipStations(), // DECKS-2/ROOMS-8: the room catalog (public-read; [] on error → list fallback)
+      getMyShipRoomSlots(shipId), // ROOMS-8: THIS ship's 8 configurable slots (dark → not-ok → no board)
       fetchShipSoul(shipId), // SOUL-2: gate-first (dark → one config select, ZERO trait reads → null → hidden)
     ])
     if (!activeRef.current) return
@@ -126,6 +140,7 @@ export function ShipDossier({
     setShips(myShips)
     setStatsPreview(preview)
     setStations(decks)
+    setRoomSlotsRes(rooms)
     setSoul(soulData)
   }, [activeRef, shipId]) // activeRef identity is stable — dep satisfies the lint rule
 
@@ -164,10 +179,12 @@ export function ShipDossier({
   // beside it keeps its always-on hull bar; this card only joins the pair once shields are real.)
   const meters = dossierShip ? shipMeterPair(dossierShip) : null
   const litCaptains = isServerLit(roster) ? captainsForShip(roster.captains ?? [], shipId) : null
-  // DECKS-2: the decks board view-model (pure; specs in tests/deckStations.spec.ts). null while
-  // the roster is dark (nothing renders — unchanged posture) or the catalog read failed (list
-  // fallback below).
-  const board = litCaptains && stations.length > 0 ? deckBoard(stations, litCaptains) : null
+  // ROOMS-8: THIS ship's configured room-slots (dark → not-ok → null → list fallback below).
+  const slots = isServerLit(roomSlotsRes) ? (roomSlotsRes.slots ?? []) : null
+  // ROOMS-8: the room-slot board view-model (pure; specs in tests/roomSlots.spec.ts). null while
+  // the roster is dark (nothing renders — unchanged posture) or the slot read failed (list
+  // fallback below). Each row is a fitted room + its staffing captain (station == room_type_id).
+  const roomBoard = litCaptains && slots ? roomSlotBoard(slots, litCaptains) : null
   const stacks = aggregateCargo(lots)
   const usedM3 = cargoUsedM3(lots)
   // SHIP-POWER: the strip's parse (pure; specs in tests/shipDossier.spec.ts).
@@ -185,6 +202,24 @@ export function ShipDossier({
     </span>
   )
   const num = (v: number | null): number | string => v ?? '—'
+
+  // ROOMS-8: change which room type occupies a slot (configure_ship_room). The guarded-submit body
+  // (the CaptainsPanel assign idiom): per-slot key, pending/note Records, server-authoritative on
+  // ownership/settled-safe/distinct-room/a-captain-still-staffs. Success note names the placed room
+  // from the server's own echo; on success refresh re-reads the board.
+  async function configureRoom(slotIndex: number, roomTypeId: string) {
+    if (!shipId) return
+    await runGuardedCommand<ConfigureRoomResult>({
+      key: `room-${slotIndex}`,
+      guards,
+      setPending: (on) => setConfigPending((p) => ({ ...p, [slotIndex]: on })),
+      setNote: (note) => setConfigNote((n) => ({ ...n, [slotIndex]: note })),
+      exec: () => configureShipRoom(shipId, slotIndex, roomTypeId),
+      successNote: (res) => `Room set to ${stationLabel(stations, res.room_type_id)}.`,
+      errorNote: (res) => roomConfigErrorMessage(res),
+      refresh,
+    })
+  }
 
   return (
     <Card data-testid="ship-dossier">
@@ -322,58 +357,87 @@ export function ShipDossier({
         </>
       )}
 
-      {/* CAPTAINS — server-lit gated (captain_assignment_enabled — DARK today → renders NOTHING,
-          label included, exactly like every captain surface; the decks board changes nothing
-          about that posture — the isServerLit gate is unchanged and the one predicate).
-          DECKS-2: the section IS the decks board — six named station rows (ship_stations order),
-          each holding its captain or an "Empty station" slot (the owner order: "in ship i should
-          be able to see decks … with empty slots"). Pure derivation in deckBoard (specs:
-          tests/deckStations.spec.ts); catalog read failed ([]) → the exact pre-DECKS list shape
-          (fail closed to yesterday, never a broken board). Acting stays in CaptainsPanel beside —
-          this card remains the ship's paper. */}
+      {/* CAPTAINS & ROOMS — server-lit gated (captain_assignment_enabled — DARK today → renders
+          NOTHING, label included, exactly like every captain surface; ROOMS-8 changes nothing about
+          that posture — the isServerLit gate is unchanged and the one predicate).
+          ROOMS-8: the section IS the room-slot board — the ship's 8 CONFIGURABLE room-slots (owner
+          order: "8 captain slots … we can also change room by modifying the ships … able to
+          choose"): each slot shows its fitted room, a picker to CHANGE the room (configure_ship_room),
+          and the captain staffing it (or "Empty room"). Pure derivation in roomSlotBoard (specs:
+          tests/roomSlots.spec.ts); slot read failed (null) → the exact pre-DECKS list shape (fail
+          closed to yesterday, never a broken board). Captain assign/unassign still lives in
+          CaptainsPanel beside; this card owns the ROOM config. */}
       {litCaptains && (
         <>
-          <SectionLabel className="mt-4">Captains</SectionLabel>
-          {board ? (
+          <SectionLabel className="mt-4">Captains &amp; rooms</SectionLabel>
+          {roomBoard ? (
             <ul data-testid="dossier-captains" className="mt-2 space-y-1.5">
-              {board.rows.map(({ station, captain }) => (
-                <li
-                  key={station.station_id}
-                  data-testid={`deck-station-${station.station_id}`}
-                  className="flex items-center justify-between gap-2 text-sm"
-                >
-                  <span className="w-24 shrink-0 text-[10px] uppercase tracking-wide text-ink-faint">
-                    {station.name}
-                  </span>
-                  {captain ? (
-                    <div
-                      data-testid={`dossier-captain-${captain.instance_id}`}
-                      className="flex min-w-0 flex-1 flex-col gap-0.5"
-                    >
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-ink">{captain.name}</span>
-                        <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
-                          {captain.specialization}
+              {roomBoard.rows.map(({ slot, captain }) => {
+                const staffed = captain != null
+                const isPending = configPending[slot.slot_index] ?? false
+                const note = configNote[slot.slot_index]
+                const options = roomPickerOptions(stations, slots ?? [], slot.slot_index)
+                return (
+                  <li
+                    key={slot.slot_index}
+                    data-testid={`room-slot-${slot.slot_index}`}
+                    className="flex flex-col gap-0.5 text-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      {/* the room picker — CHANGE which room type fills this slot. Disabled while a
+                          captain still staffs it (the server's room_occupied reject, pre-empted for
+                          UX) or a config is in flight. A staffed room shows its name as the only
+                          option label; the free-slot picker offers every not-elsewhere-fitted room. */}
+                      <select
+                        data-testid={`room-pick-${slot.slot_index}`}
+                        aria-label={`Room for slot ${slot.slot_index}`}
+                        value={slot.room_type_id}
+                        disabled={staffed || isPending}
+                        onChange={(e) => void configureRoom(slot.slot_index, e.target.value)}
+                        className="w-28 shrink-0 rounded border border-edge bg-surface-2 px-1 py-0.5 text-[10px] text-ink disabled:opacity-70"
+                      >
+                        {options.map((room) => (
+                          <option key={room.station_id} value={room.station_id}>
+                            {room.name}
+                          </option>
+                        ))}
+                      </select>
+                      {captain ? (
+                        <div
+                          data-testid={`dossier-captain-${captain.instance_id}`}
+                          className="flex min-w-0 flex-1 flex-col gap-0.5"
+                        >
+                          <span className="flex items-center justify-between gap-2">
+                            <span className="truncate text-ink">{captain.name}</span>
+                            <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
+                              {captain.specialization}
+                            </span>
+                          </span>
+                          {/* C2-3 — the shipped XP bar + level chip (dark): null while every captain
+                              is level-1/0-xp → row byte-identical today, progression visible exactly
+                              as in CaptainsPanel / TeamMemberCaptains. */}
+                          <CaptainXpBar xp={captain.xp} level={captain.level} instanceId={captain.instance_id} />
+                        </div>
+                      ) : (
+                        <span
+                          data-testid={`room-empty-${slot.slot_index}`}
+                          className="flex-1 rounded border border-dashed border-edge px-1.5 py-0.5 text-[10px] text-ink-faint"
+                        >
+                          Empty room
                         </span>
-                      </span>
-                      {/* C2-3 — the shipped XP bar + level chip (dark): null while every captain is
-                          level-1/0-xp (captain_growth_enabled false) → row byte-identical today,
-                          progression visible exactly as in CaptainsPanel / TeamMemberCaptains. */}
-                      <CaptainXpBar xp={captain.xp} level={captain.level} instanceId={captain.instance_id} />
+                      )}
                     </div>
-                  ) : (
-                    <span
-                      data-testid={`deck-empty-${station.station_id}`}
-                      className="flex-1 rounded border border-dashed border-edge px-1.5 py-0.5 text-[10px] text-ink-faint"
-                    >
-                      Empty station
-                    </span>
-                  )}
-                </li>
-              ))}
-              {/* general quarters: a captain with no/unknown station (pre-backfill data or a
-                  malformed row) still shows — the board never hides an assigned captain. */}
-              {board.unstationed.map((c) => (
+                    {note && (
+                      <p data-testid={`room-note-${slot.slot_index}`} className="text-[10px] text-accent">
+                        {note}
+                      </p>
+                    )}
+                  </li>
+                )
+              })}
+              {/* general quarters: a captain with no/unknown room (pre-backfill data or a malformed
+                  row) still shows — the board never hides an assigned captain. */}
+              {roomBoard.unstationed.map((c) => (
                 <li key={c.instance_id} data-testid={`dossier-captain-${c.instance_id}`} className="text-sm">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-ink">{c.name}</span>
@@ -400,10 +464,10 @@ export function ShipDossier({
               ))}
             </ul>
           ) : null}
-          {/* fallback path only (catalog read failed → no board): the pre-DECKS empty note. The
-              lit board already SAYS empty — six "Empty station" slots — so the paragraph would be
+          {/* fallback path only (slot read failed → no board): the pre-DECKS empty note. The lit
+              board already SAYS empty — eight "Empty room" slots — so the paragraph would be
               redundant noise beside it. */}
-          {!board && litCaptains.length === 0 && (
+          {!roomBoard && litCaptains.length === 0 && (
             <p data-testid="dossier-captains-empty" className="mt-2 text-sm text-ink-faint">
               No captain assigned.
             </p>

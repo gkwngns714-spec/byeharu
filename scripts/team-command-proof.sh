@@ -207,10 +207,10 @@ if [ "$MODE" = "selftest" ]; then
   #    (captains-launch prep) now SHIPS the once-deferred hull bump + instance backfill, so the
   #    harness ASSERTS the migration state instead of fixturing it — and must never write the hull
   #    table again (the retired pre-0171 fixture bump must not creep back). ─────────────────────────
-  grep -q "captain_slots_limit')::int is distinct from 6" "$SQL" \
-    || fail "harness does not ASSERT captain_slots_limit=6 (is distinct from form)"
-  grep -qF "(want 0 — the 0171 captains-launch bump)" "$SQL" \
-    || fail "harness does not ASSERT the 0171 hull bump (base_captain_slots=6 as migration state)"
+  grep -q "captain_slots_limit')::int is distinct from 8" "$SQL" \
+    || fail "harness does not ASSERT captain_slots_limit=8 (is distinct from form)"
+  grep -qF "(want 0 — the ROOMS-8 6→8 bump, 0203)" "$SQL" \
+    || fail "harness does not ASSERT the ROOMS-8 hull bump (base_captain_slots=8 as migration state)"
   grep -qF "(want 0 — the 0171 backfill)" "$SQL" \
     || fail "harness does not ASSERT the 0171 instance backfill (no ship below its hull)"
   # TIGHTENED (not dropped) by SHIELD-2: insert/delete/copy on the hull table still always fail;

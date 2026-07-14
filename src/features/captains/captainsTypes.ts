@@ -79,6 +79,43 @@ export function captainCommandErrorMessage(res: { reason?: string; message?: str
   )
 }
 
+// ── ROOMS-8 (0203): the configurable room-slot surface — the read + the config command envelopes ───
+// get_my_ship_room_slots(p_main_ship_id) → lit: { ok:true, slots:[...] }; dark: { ok:false,
+// reason:'captain_assignment_disabled' } (rooms ride the SAME captain gate); not-owned/not-authed
+// their own reasons; transport error → { ok:false }. The slot rows are ShipRoomSlot (deckStations.ts).
+export type GetShipRoomSlotsResult =
+  | { ok: true; slots?: import('./deckStations').ShipRoomSlot[] }
+  | { ok: false; reason?: string }
+
+// configure_ship_room(p_main_ship_id, p_slot_index, p_room_type_id) → success echoes the placed
+// room; failure is REASON-keyed with a server message (the 0203 wrapper mapper). REASONS (enumerated
+// from 0203): captain_assignment_disabled (dark) · not_authenticated · ship_not_settled ·
+// ship_not_owned · invalid_slot · unknown_slot · unknown_room · room_duplicate · room_occupied ·
+// unavailable (transport fallback).
+export type ConfigureRoomResult =
+  | { ok: true; main_ship_id: string; slot_index: number; room_type_id: string }
+  | { ok: false; reason?: string; message?: string }
+
+const ROOM_CONFIG_ERROR_COPY: Record<string, string> = {
+  captain_assignment_disabled: 'Rooms are not available yet.',
+  not_authenticated: 'You must be signed in.',
+  ship_not_settled: 'The ship must be settled at home or docked to change its rooms.',
+  ship_not_owned: 'That ship is not yours.',
+  invalid_slot: 'That room slot does not exist.',
+  unknown_slot: 'That room slot does not exist.',
+  unknown_room: 'That room type does not exist.',
+  room_duplicate: 'That room already fills another slot on this ship.',
+  room_occupied: 'A captain still staffs this room. Unassign them first.',
+  unavailable: 'Room configuration is unavailable right now.',
+}
+export function roomConfigErrorMessage(res: { reason?: string; message?: string }): string {
+  return (
+    res.message ??
+    ROOM_CONFIG_ERROR_COPY[res.reason ?? 'unavailable'] ??
+    ROOM_CONFIG_ERROR_COPY.unavailable
+  )
+}
+
 // ── CAPTAIN-P16 (post-audit UI, panel 4 of 4): recruitment (progression) types ─────────────────────
 
 /** One raw ingredient row of the public-read captain_recipe_ingredients catalog (0125). */

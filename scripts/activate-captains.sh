@@ -55,7 +55,7 @@ if [ "$MODE" = "selftest" ]; then
   [ "$n" = "2" ] || fail "operation must be exactly ONE BEGIN..COMMIT (found $n txn verbs)"
   printf '%s' "$CLEAN" | grep -q 'lock_timeout' && printf '%s' "$CLEAN" | grep -q 'statement_timeout' || fail "operation must set timeouts"
   printf '%s' "$CLEAN" | grep -q "20260618000171" || fail "operation must precondition on the 0171 captains-launch prep migration"
-  printf '%s' "$CLEAN" | grep -qF "base_captain_slots is distinct from 6" || fail "operation must precondition on the hull bump (every hull at 6 seats)"
+  printf '%s' "$CLEAN" | grep -qF "base_captain_slots is distinct from 8" || fail "operation must precondition on the hull bump (every hull at 8 seats — the ROOMS-8 0203 raise)"
   printf '%s' "$CLEAN" | grep -qF "i.captain_slots < h.base_captain_slots" || fail "operation must precondition on the instance backfill"
 
   # writes: ONLY the owned set_game_config writer, exactly the three approved keys, exact values;

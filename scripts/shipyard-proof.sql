@@ -548,7 +548,7 @@ begin
   if not exists (select 1 from public.main_ship_instances
                    where player_id=uB and hull_type_id='bulk_hauler' and name='Mule-class Hauler III'
                      and hp=650 and max_hp=650 and cargo_capacity=140 and cargo_capacity_m3=140.0
-                     and support_capacity=10 and captain_slots=6 and module_slots=2
+                     and support_capacity=10 and captain_slots=8 and module_slots=2
                      and status='stationary' and spatial_state='at_location') then
     raise exception 'P9 FAIL: the delivered Mule is not the exact hull stats/name shape (want Mule-class Hauler III, 650hp, 140 cargo)';
   end if;

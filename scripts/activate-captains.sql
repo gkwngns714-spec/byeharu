@@ -8,7 +8,7 @@
 -- ── WHAT IT DOES (one transaction; COMMIT only if every assert passes) ───────────────────────────
 --   PRECONDITIONS (no write until these hold):
 --     • migration head >= 20260618000171 (the captains-launch prep migration is deployed);
---     • the pinned slot bump REALLY applied: every hull row has base_captain_slots = 6, and the
+--     • the pinned slot bump REALLY applied: every hull row has base_captain_slots = 8, and the
 --       instance backfill is complete (no ship's captain_slots below its hull's value);
 --     • every config key this script writes already exists (no typo can invent a key).
 --   STAGE 1 — the economy knob (reversible one-liner, set_game_config):
@@ -80,10 +80,10 @@ begin
     raise exception 'PRECONDITION FAIL: migration head % < 20260618000171 — deploy the captains-launch prep migration first', coalesce(v_head, '(none)');
   end if;
 
-  -- the pinned bump really applied: EVERY hull at 6 seats…
-  select count(*) into n from public.main_ship_hull_types where base_captain_slots is distinct from 6;
+  -- the pinned bump really applied: EVERY hull at 8 seats (the ROOMS-8 6→8 raise, 0203)…
+  select count(*) into n from public.main_ship_hull_types where base_captain_slots is distinct from 8;
   if n <> 0 then
-    raise exception 'PRECONDITION FAIL: % hull row(s) without base_captain_slots = 6 (the 0171 bump)', n;
+    raise exception 'PRECONDITION FAIL: % hull row(s) without base_captain_slots = 8 (the ROOMS-8 0203 bump)', n;
   end if;
   -- …and the instance backfill complete: no ship below its hull's seat count.
   select count(*) into n
@@ -102,7 +102,7 @@ begin
     raise exception 'PRECONDITION FAIL: game_config key(s) missing: %', v_missing;
   end if;
 
-  raise notice 'ACTIVATE_CAPTAINS_PASS_PRECONDITIONS ok: head %, hulls at 6 seats, backfill complete, all 3 config keys present', v_head;
+  raise notice 'ACTIVATE_CAPTAINS_PASS_PRECONDITIONS ok: head %, hulls at 8 seats, backfill complete, all 3 config keys present', v_head;
 end $$;
 
 -- ══════════ STAGE 1 — the shard-drop knob (the 0171 drop source goes live) ══════════

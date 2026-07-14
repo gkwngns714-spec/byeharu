@@ -2,7 +2,9 @@ import { supabase } from '../../lib/supabase'
 import type {
   AssignCaptainResult,
   CaptainRecipe,
+  ConfigureRoomResult,
   GetMyCaptainInstancesResult,
+  GetShipRoomSlotsResult,
   RecipeIngredient,
   RecruitCaptainResult,
   UnassignCaptainResult,
@@ -76,6 +78,35 @@ export async function getShipStations(): Promise<ShipStation[]> {
     .order('sort', { ascending: true })
   if (error || !data) return []
   return data as ShipStation[]
+}
+
+// ── ROOMS-8 (0203): the configurable room-slot read + config command ────────────────────────────────
+
+/** Read ONE owned ship's 8 configurable room-slots (get_my_ship_room_slots, 0203; owner-scoped,
+ *  dark-gated on the SAME captain flag). Dark → { ok:false, reason:'captain_assignment_disabled' };
+ *  transport error → { ok:false } (fail-closed — the board simply doesn't render). */
+export async function getMyShipRoomSlots(mainShipId: string): Promise<GetShipRoomSlotsResult> {
+  const { data, error } = await supabase.rpc('get_my_ship_room_slots', { p_main_ship_id: mainShipId })
+  if (error) return { ok: false }
+  return data as GetShipRoomSlotsResult
+}
+
+/** Configure which room type occupies a ship's slot (configure_ship_room, 0203; server-authoritative
+ *  on ownership / settled-safe / distinct-room / a room a captain still staffs). Naturally
+ *  idempotent (setting a slot to its current room is a no-op success). Transport error →
+ *  { ok:false, reason:'unavailable' } (fail-closed). */
+export async function configureShipRoom(
+  mainShipId: string,
+  slotIndex: number,
+  roomTypeId: string,
+): Promise<ConfigureRoomResult> {
+  const { data, error } = await supabase.rpc('configure_ship_room', {
+    p_main_ship_id: mainShipId,
+    p_slot_index: slotIndex,
+    p_room_type_id: roomTypeId,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as ConfigureRoomResult
 }
 
 // ── CAPTAIN-P16 (post-audit UI, panel 4 of 4): recruitment (progression) ───────────────────────────
