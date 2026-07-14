@@ -5,6 +5,69 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-15 — SESSION WRAP: the FLEET RESHAPE + audit-fix batch is COMPLETE (all merged, all DARK) — pending state = owner-gated
+
+**What this entry is.** A consolidated close-out for the fleet-control-model reshape and the 7-agent-audit
+fixes. Every slice below is **merged to `main`** and **deploy-inert** (each new behavior sits behind a
+`game_config` flag/knob seeded false/0, so the LIVE game is unchanged until the owner flips). This wrap also
+records the lighter client slices that shipped without their own top-level entry, and the exact
+owner-gated state so a future session can resume cold.
+
+**The reshape — the owner's new control model** ("everything moves as a fleet; a lone ship goes nowhere;
+a fleet needs a command ship; each ship carries a command buff that only fires as command ship and applies
+fleet-wide; 8 configurable rooms + 8 captains per ship"):
+
+- **FLEET-RENAME** (#153, client) — "team" → **fleet**, and the "main ship" jargon the owner hated
+  ("WTF is move main ship?") replaced with the ship's own name throughout. `data-testid`s and internal
+  identifiers (`ship_groups`/`group_id`) kept STABLE — pure display rename, no schema churn.
+- **ROOMS-8** (#154, mig 0203, DARK `captain_assignment_enabled`) — 8 configurable room slots per ship over
+  a large room catalog; captain slots 6→8. _(own entry below.)_
+- **FLEET-CONTROL** (#155, mig 0204, DARK `fleet_control_enabled`) — command-ship control model; a fleet is
+  inert without one; 8-ship cap. _(own entry below.)_
+- **RETURN-PORT** (#156, client, gated `launch_from_dock_enabled`) — the owner's "I want to move freely, not
+  return to whatever port I came from" fix: a return-port `<select>` on fleet hunts (reusing
+  `sendableDestinations` via new `returnPortOptions`); the MOVE path already docks-at-destination. Replaces
+  the hard-coded return-to-origin.
+- **COMMAND-BUFFS** (#157, mig 0205, DARK `command_buffs_enabled`) — the finale: per-tier buff catalog,
+  random-at-commission roll, fleet-wide through the active command ship. _(own entry below.)_
+
+**The audit fixes:**
+
+- **POLISH** (#158, client) — killed the "At home port"/"home" label leak (→ "Idle"); de-duped the map
+  double-drawing a docked fleet (`deriveTeamRepresentedShipIds` excludes fleet-badge ships from the chevron
+  layer); Mk-II module glyphs + "Mk-II" labels.
+- **ACT-SCRIPTS** (#159) — the owner-run flip scripts the audit found MISSING (`activate-{shield,soul,
+  salvage,decks3,shipyard}.{sql,sh}` + new `docs/ACTIVATION_GUIDE.md`). The headline: **activate-shipyard
+  opens the build loop** (`shipyard_enabled` + `blueprint_fragment_drop_rate` 0→0.15) — the audit's #1 gap,
+  the faucet that walled ships off from being buildable at all. All NEW files; no shared-doc collisions.
+- **CRON-GUARD** (#160, mig 0206) — per-row exception isolation for the two hottest legacy crons; pure
+  hardening, no flag. _(own entry directly below.)_
+
+**Migration chain now at 0206.** New dark flags this batch: `fleet_control_enabled`, `command_buffs_enabled`
+(both false). ROOMS-8 rides the existing `captain_assignment_enabled`.
+
+**PENDING — ALL owner-gated (nothing here is mine to do; recorded so it isn't lost):**
+
+1. **Two decisions.**
+   - _Command-ship buff STACKING._ Current fold SUMS every command ship's buff, so a player who designates
+     all 8 ships in a fleet as command ships stacks 8 buffs. Owner leaned "backups" (one active buff; extras
+     are insurance). If backups-only: a **1-line `limit 1`** in the adapter's command-buff fold. Left as-is
+     (sum) pending the owner's word.
+   - _ACT-flip [D] numbers._ The `activate-*` scripts carry default values (shields 100/130/85 + 0.02/0.10;
+     soul backfill=yes, catalog count=8; salvage 0174 prices; decks3 station-affinity +0.15; shipyard faucet
+     0.15). Owner says "defaults" or adjusts before the flip.
+2. **Deploy migs 0203/0204/0205/0206** to prod (owner runs the approval one-liner — classifier-gated away
+   from me).
+3. **Flip order** (per `docs/ACTIVATION_GUIDE.md`): captains → **decks3**; **mining + combat → shipyard**
+   (= the build-a-ship loop); **fleet_control → command_buffs**; shields/salvage pair with hunting.
+
+**Bugs / fixes (this batch, already resolved in-flight).** MOD2-2 zero-arg `RAISE` "50%" → `%%` (swept all
+41 sites); FLEET-CONTROL deploy-window regression (`fetchMyShipGroupMap` widened its live query with
+`is_command_ship` → would blank all fleets pre-migration; fixed by decoupling the read with a null-safe
+fold); CRON-GUARD CI broken-pipe harness flake (proof logic passed; re-run merged clean).
+
+---
+
 ## 2026-07-15 — CRON-GUARD: per-row exception isolation for the two hottest legacy crons (mig 0206, pure hardening, NO flag)
 
 **Request (audit).** The 7-agent audit flagged a latent global-wedge landmine: the two hottest legacy
