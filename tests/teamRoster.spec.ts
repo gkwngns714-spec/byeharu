@@ -4,9 +4,13 @@ import {
   resolveOwnedGroup,
   commissionAvailability,
   nextTeamSlot,
+  fleetPositionLocationLabel,
+  teamGatherState,
   type GroupRow,
   type RosterShip,
 } from '../src/features/command/teamRoster'
+import type { FleetPosition } from '../src/features/map/mainshipApi'
+import type { MapLocation } from '../src/features/map/mapTypes'
 
 // TEAM-COMMAND Slice A — pure-logic specs (no app/Supabase). Covers the three required areas:
 // group ownership (resolveOwnedGroup), max-ship-cap behavior (commissionAvailability), and
@@ -180,4 +184,109 @@ test('nextTeamSlot: all three slots used → null (never offers a 4th team)', ()
 test('nextTeamSlot: tolerates unordered + duplicate input, stays within 1..3', () => {
   const slot = nextTeamSlot([group({ group_index: 3 }), group({ group_index: 3 }), group({ group_index: 1 })])
   expect(slot).toBe(2)
+})
+
+// ── fleetPositionLocationLabel — FLEETMAP row → the ONE leak-safe location string (TEAM-FRIENDLY) ──
+const loc = (over: Partial<MapLocation> & Pick<MapLocation, 'id' | 'name'>): MapLocation => ({
+  location_type: 'trade_outpost',
+  x: 0,
+  y: 0,
+  base_difficulty: 0,
+  reward_tier: 0,
+  activity_type: 'trade',
+  min_power_required: 0,
+  is_public: true,
+  status: 'active',
+  ...over,
+})
+const pos = (over: Partial<FleetPosition> & Pick<FleetPosition, 'main_ship_id' | 'place'>): FleetPosition => ({
+  name: 'Ship',
+  class: 'sloop',
+  status: 'stationary',
+  spatial_state: null,
+  location_id: null,
+  space_x: null,
+  space_y: null,
+  segment: null,
+  ...over,
+})
+const world: MapLocation[] = [
+  loc({ id: 'haven', name: 'Haven Reach' }),
+  loc({ id: 'ember', name: 'Ember Gate', location_type: 'pirate_hunt', activity_type: 'hunt_pirates' }),
+]
+
+test('fleetPositionLocationLabel: docked → "Docked at <port>"', () => {
+  expect(fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'docked', location_id: 'haven' }), world)).toBe(
+    'Docked at Haven Reach',
+  )
+})
+
+test('fleetPositionLocationLabel: docked at a COMBAT site → "In combat at …" (resolver reuse)', () => {
+  expect(fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'docked', location_id: 'ember' }), world)).toBe(
+    'In combat at Ember Gate',
+  )
+})
+
+test('fleetPositionLocationLabel: docked at a HIDDEN port → generic "Docked", never a leaked id', () => {
+  const label = fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'docked', location_id: 'secret' }), world)
+  expect(label).toBe('Docked')
+  expect(label).not.toContain('secret')
+})
+
+test('fleetPositionLocationLabel: in_space → "In deep space"', () => {
+  expect(fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'in_space', space_x: 5, space_y: 5 }), world)).toBe(
+    'In deep space',
+  )
+})
+
+test('fleetPositionLocationLabel: transit return leg (target_kind base) → "Returning home"', () => {
+  const label = fleetPositionLocationLabel(
+    pos({
+      main_ship_id: 's1',
+      place: 'transit',
+      segment: {
+        origin_x: 0, origin_y: 0, target_x: 1, target_y: 1,
+        target_kind: 'base', depart_at: '2026-01-01T00:00:00Z', arrive_at: '2026-01-01T00:05:00Z',
+      },
+    }),
+    world,
+  )
+  expect(label).toBe('Returning home')
+})
+
+test('fleetPositionLocationLabel: outbound transit fails closed (segment has no target id) → "In transit to its destination"', () => {
+  const label = fleetPositionLocationLabel(
+    pos({
+      main_ship_id: 's1',
+      place: 'transit',
+      segment: {
+        origin_x: 0, origin_y: 0, target_x: 1, target_y: 1,
+        target_kind: 'location', depart_at: '2026-01-01T00:00:00Z', arrive_at: '2026-01-01T00:05:00Z',
+      },
+    }),
+    world,
+  )
+  expect(label).toBe('In transit to its destination')
+})
+
+test('fleetPositionLocationLabel: hidden placement or missing row → null (omit, never guess)', () => {
+  expect(fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'hidden' }), world)).toBeNull()
+  expect(fleetPositionLocationLabel(undefined, world)).toBeNull()
+})
+
+// ── teamGatherState — co-location/readiness fold for the same-location notice (TEAM-FRIENDLY) ──
+test('teamGatherState: no members → empty', () => {
+  expect(teamGatherState({ memberCount: 0, allHome: false, dockedLocationId: null })).toBe('empty')
+})
+
+test('teamGatherState: every member docked at ONE port → co_located (from the rollup, not a second fold)', () => {
+  expect(teamGatherState({ memberCount: 2, allHome: false, dockedLocationId: 'haven' })).toBe('co_located')
+})
+
+test('teamGatherState: all home (no dock) → all_home', () => {
+  expect(teamGatherState({ memberCount: 2, allHome: true, dockedLocationId: null })).toBe('all_home')
+})
+
+test('teamGatherState: split ports / in transit, not all home → scattered', () => {
+  expect(teamGatherState({ memberCount: 2, allHome: false, dockedLocationId: null })).toBe('scattered')
 })
