@@ -1,0 +1,60 @@
+name: REPAIR-ECON — paid hull-repair economy disposable proof (no production)
+
+# Runs the REPAIR-ECON disposable proof on a single throwaway local Supabase — NEVER production:
+#   1. DB-free selftest: the harness is well-formed, self-rolling-back (opens a txn, toggles
+#      repair_economy_enabled ONLY inside it via the raw-update idiom, provisions via the real RPCs
+#      — commission_first_main_ship; damage via a fixture hp write, never a direct repair_receipts
+#      insert — and ends in ROLLBACK with NO COMMIT, so it persists nothing and leaves the committed
+#      flag = false);
+#   2. a disposable local Supabase (the full chain incl. 0201) running the real-chain matrix: dark
+#      gate (no existence oracle) → 0.5 knob seed pin → lit full mend (exact credits debited for
+#      exact hp restored + receipt) → partial mend → replay idempotency → amount/ownership/full/dock/
+#      credit guards → THE SAFELOCK SEAM (destroyed ship rejected by the paid path + recovered FREE
+#      by the untouched repair_main_ship even with the economy flag lit).
+# The proof flips NO committed flag. No `environment:` on any job — none can read production secrets.
+# Disposable local Supabase only. (Standalone workflow: team-command-proof's MOD2 block is contended
+# by a parallel MOD2-2 slice; modeled on shipyard-proof.yml / salvage-market flow, reusing
+# scripts/lib/trade-proof-lib.sh.)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-repairecon**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-econ-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/repair-econ-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0201)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: REPAIR-ECON real-chain matrix (paid repair + safelock seam)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/repair-econ-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

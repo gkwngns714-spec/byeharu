@@ -4,6 +4,7 @@ import { DockedPortCard } from './DockedPortCard'
 import { HaulBoardPanel } from './HaulBoardPanel'
 import { PortPickerPanel } from './PortPickerPanel'
 import { SalvageMarketPanel } from './SalvageMarketPanel'
+import { RepairPanel } from './RepairPanel'
 import { ShipyardPanel } from './ShipyardPanel'
 import { StationHangar } from './StationHangar'
 import { derivePortsWithShips, resolveChosenShipId } from './portPicker'
@@ -137,6 +138,18 @@ export function PortScreen() {
                 dock projection (this docked branch). ORDER side only — cancel is the SHIPYARD-2
                 seam (see the panel header). */}
             <ShipyardPanel
+              lifecycleKey={lifecycleKey}
+              locationId={dock.locationId}
+              mainShipId={chosenShipId}
+            />
+            {/* REPAIR-ECON (dark, flag-gated): the paid hull-repair desk — a ship-recovery SERVICE on
+                the main rail. No read RPC exists for repair (0201), so the panel gates itself on the
+                server's own repair_economy_enabled flag read honestly from PUBLIC-READ game_config (the
+                SalvageMarketPanel posture) — flag false (production today) → renders null, so production
+                is byte-unchanged. THE SEAM: a destroyed ship shows the free-recovery note here, never a
+                paid Repair button (the free repair_main_ship safelock handles destroyed ships).
+                locationId is the SERVER dock projection (this docked branch). */}
+            <RepairPanel
               lifecycleKey={lifecycleKey}
               locationId={dock.locationId}
               mainShipId={chosenShipId}
