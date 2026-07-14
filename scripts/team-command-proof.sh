@@ -34,6 +34,12 @@
 # fixture user — exact-price craft via craft_module spending to zero with the insufficient_items
 # boundary + verbatim replay, fit via fit_module_to_ship, and the 0180 adapter deltas: survival
 # +12 exactly (hull-only 10 → 22) and mining_yield +8 exactly, minus-key isolation both fits)
+# plus the MOD2-2 Mk-II tier block (0202: autocannon_battery_mk2 attack 18 / shield_lattice_mk2
+# defense 20, both slot_cost 2 — each on its own fresh fixture user since a slot-2 pair overflows
+# the 3-slot frigate; exact-price craft + insufficient_items boundary; the shield fit lands survival
+# +20 exactly on the else-0 arm, and the autocannon fit lands the FULL weapon tradeoff — combat_power
+# +18, pirate_attention +4, speed × 0.94 exactly — the first end-to-end pin of the weapon slot_type
+# tradeoff arm, minus-key isolation both fits)
 # plus the SHIPYARD-0 foundation block (0185: shipyard_enabled + blueprint_fragment_drop_rate
 # asserted COMMITTED-dark and never flipped; the 2 T1 hull rows + 2 recipe headers + 10 ingredient
 # rows pinned exact; the blueprint faucet at its deterministic endpoints — rate-0 byte-parity with
@@ -122,7 +128,7 @@ SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 # 23rd slot, then SHIELD-2 appended as the 24th, then NANGUARD (0198) appended as the 25th), then
 # NO-HOME (0199) appended as the 26th; SHIPYARD-2 (#138, merged) has its own proof file and never
 # touched this pair.)
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_NOHOME"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_MOD22 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_NOHOME"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -403,6 +409,34 @@ if [ "$MODE" = "selftest" ]; then
   grep -viE '^[[:space:]]*--' "$SQL" \
     | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(module_instances|module_craft_receipts|ship_module_fittings|module_fitting_receipts|module_types|module_recipe_ingredients|player_inventory|inventory_ledger|reward_grants)\b' \
     && fail "harness directly mutates a Modules/Fitting/Inventory/Reward-owned table (sole-writer law violation)" || true
+
+  # ── MOD22 (0202 / MOD2-2) pins, in assert form (a gutted .sql that only mentions them in prose
+  #    cannot false-green): the exact 0202 Mk-II catalog (attack 18 / defense 20, slot_cost 2); BOTH
+  #    Mk-II crafted + fitted via the real RPCs; the exact survival +20 shield delta (else-0 arm) and
+  #    the FULL weapon tradeoff arm — combat_power +18, pirate_attention +4, the biting speed penalty
+  #    — plus both isolation pins. The sole-writer negative is the shared grep above (whole file). ──
+  grep -qF "public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')" "$SQL" \
+    || fail "harness does not craft the Mk-II shield via the real craft_module RPC"
+  grep -qF "public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'')" "$SQL" \
+    || fail "harness does not craft the Mk-II autocannon via the real craft_module RPC"
+  grep -qF "public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod22-fit-a'')" "$SQL" \
+    || fail "harness does not fit the Mk-II autocannon via the real fit_module_to_ship RPC"
+  grep -qF "% of 2 Mk-II module rows carry the exact 0202 seed shape" "$SQL" \
+    || fail "harness does not ASSERT the exact 0202 Mk-II catalog (attack 18 / defense 20, slot_cost 2)"
+  grep -qF "(s0->>'survival')::numeric + 20" "$SQL" \
+    || fail "harness does not ASSERT the exact survival +20 Mk-II shield delta"
+  grep -qF "(s0->>'combat_power')::numeric + 18" "$SQL" \
+    || fail "harness does not ASSERT the exact combat_power +18 Mk-II autocannon delta"
+  grep -qF "(s0->>'pirate_attention')::numeric + 4" "$SQL" \
+    || fail "harness does not ASSERT the exact pirate_attention +4 weapon tradeoff (2 × slot_cost 2)"
+  grep -qF "v_base_speed * (1 - 0.06)" "$SQL" \
+    || fail "harness does not ASSERT the exact slot-2 weapon speed penalty (× 0.94)"
+  grep -qF "the weapon speed penalty did not bite" "$SQL" \
+    || fail "harness does not GUARD the speed penalty against a 0-penalty false-green"
+  grep -qF "the Mk-II shield moved a non-defense key" "$SQL" \
+    || fail "harness does not ASSERT the Mk-II shield minus-key isolation pin"
+  grep -qF "the Mk-II autocannon moved a key outside {combat_power, pirate_attention, speed, slots}" "$SQL" \
+    || fail "harness does not ASSERT the Mk-II autocannon minus-key isolation pin (the weapon tradeoff set)"
 
   # ── SHIPYARD0 (0185 / SHIPYARD-0) pins, in assert form (a gutted .sql that only mentions them in
   #    prose cannot false-green): BOTH committed dark seeds (the flag is never flipped, even in-txn
@@ -769,14 +803,14 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "has no per-ship tagged present fleet at the return port (H1 wedge)" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the H1 per-ship fleet split (each returned member owns a tagged fleet)"
 
-  # ── all twenty-six block PASS markers present. ──────────────────────────────────────────────────────
+  # ── all twenty-seven block PASS markers present. ──────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard/0199-nohome specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; 8 dark flags toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0202-mod22/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard/0199-nohome specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored)"
   exit 0
 fi
 

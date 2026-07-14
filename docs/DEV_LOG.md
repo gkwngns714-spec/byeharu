@@ -70,6 +70,63 @@ galaxy.spec.ts excluded) green incl. 21 new repair specs; eslint clean on touche
 
 ---
 
+## 2026-07-14 — MOD2-2: the Mk-II module tier (mig 0202, DARK behind the EXISTING module gates)
+
+**Request.** P7 MODULES-2, next slice: the Mk-II module tier, dark behind the existing module gates
+(NO new flag). MOD2-1 (mig 0183) shipped the base defense/mining line; MOD2-2 is the higher tier the
+P7 line specs — `autocannon_battery_mk2` (attack 18) "same for shield", `slot_cost 2` so 3-slot ships
+face a real tradeoff. Mirror MOD2-1 exactly: pure catalog content, zero engine edits.
+
+**Built (mig 0202, uncommitted — the exact 0183 shape).**
+- **Two Mk-II module_types rows.** `autocannon_battery_mk2` (slot_type `weapon`, slot_cost 2,
+  `{"attack": 18}`) and `shield_lattice_mk2` (slot_type `defense`, slot_cost 2, `{"defense": 20}`).
+  The tier is a flat **+8** on the base stat across both lines (autocannon 10→18, shield 12→20) — one
+  rule, [D] owner-tunable. `slot_cost 2` is the capacity-tradeoff law made real: a 3-slot frigate
+  carries at most one Mk-II + one base module. Both REUSE shipped archetypes (no new slot_type) — the
+  weapon arm pays the adapter's existing attention/speed tradeoff (×slot_cost), the defense arm the
+  else-0 posture (0183's shield).
+- **Six recipe rows (live drops only, F4).** Both Mk-II share the progression pair
+  `blueprint_fragment 2 + artifact_core 1`; the third is the line's base component (`weapon_parts 6`
+  for the autocannon, `repair_parts 6` for the shield — mirroring the base tier's split). Grounding
+  self-asserted: blueprint_fragment/weapon_parts/repair_parts vs the deployed `pirate_loot_for_wave`
+  prosrc (head 0185); artifact_core vs the Singularity Scar mining-field bundle (0103, the crystal/ore
+  idiom — it is no combat drop). **HONEST FAUCET GATE:** blueprint_fragment's combat faucet
+  (`blueprint_fragment_drop_rate`) is committed **0**, and its only non-combat source is the SINGLE
+  one-shot exploration site (0098, qty 1 — it is NOT a mining-field drop; 0103 seeds artifact_core but
+  no blueprint_fragment). So the shipped-config lifetime ceiling for blueprint_fragment is 1, but each
+  Mk-II needs qty 2 → **both Mk-II modules are UNCRAFTABLE under every shipped config until the combat
+  faucet is lit** (`blueprint_fragment_drop_rate > 0`) — a SEPARATE activation this slice does not
+  ride. This is a deliberate deep-gate that self-corrects at the flip, the EXACT dependency
+  SHIPYARD-0's T1 ships already carry (bulk_hauler / strike_corvette each need blueprint_fragment 2
+  behind the same closed faucet, 0185).
+- **Self-asserts (0183 verbatim shape).** exact seeded shapes (2 modules + 6 recipe rows, no strays);
+  each fits the smallest hull (slot_cost 2 ≤ min base_module_slots, today bulk_hauler's 2); every
+  ingredient item-typed with a live drop source; the stats-key prosrc pins (`attack`/`defense` are
+  adapter-read, `combat_power`/`survival` outputs present) PLUS a new pin that the weapon slot_type
+  tradeoff (attention 2 / speed 0.03 per slot_cost) is a live adapter rule — so a future adapter can't
+  silently make the Mk-II a free upgrade; craftable shape; **no new flag** (the gates keep their
+  committed value — the seed is deploy-inert additive catalog content behind the SAME `module_crafting_
+  enabled`/`module_fitting_enabled` gates as MOD2-1).
+
+**Deploy-inert.** Landing 0202 changes NO player-visible behavior until (and only until) the existing
+module gates are lit — the same captains/module activation path MOD2-1 rides. No new mechanic, no flag.
+
+**Proof — the sibling `TEAMCMD_PASS_MOD22` block** (extends `team-command-proof.{sql,sh}`; marker
+count 26→27). Two fresh fixture users, one Mk-II each (a slot-2 + slot-2 pair overflows the 3-slot
+starter frigate): the shield fit lands **survival +20 exactly** on the else-0 arm (nothing else but 2
+slots), and the autocannon fit lands **combat_power +18** plus the **first end-to-end pin of the
+weapon tradeoff arm** — **pirate_attention +4** (weapon 2 × slot_cost 2) and **speed × 0.94 exactly**
+(the slot-2 penalty, guarded against a 0-penalty false-green), nothing else but 2 slots. Both:
+exact-price craft spends to 0 with the `insufficient_items` boundary + minus-key isolation. Also
+bumped the module-catalog verify contracts (`verify-modules`/`verify-fitting`) 6→8 types / 18→24
+recipe rows.
+
+**Verify.** Proof selftest green with the new MOD22 block; 3 mutation guttings (survival +20 → +19,
+combat_power +18 → +17, speed penalty 0.06 → 0.0) each fail-then-restore; verify scripts syntax-clean
+with the bumped contracts. Server-only slice — zero `src/` changes. Left UNCOMMITTED.
+
+---
+
 ## 2026-07-13 — NO-HOME: launch-from-dock + dock-at-return (mig 0199, DARK behind `launch_from_dock_enabled`)
 
 **Request (owner's absolute law).** There is NO home base; ports are the only base; a ship acts from
