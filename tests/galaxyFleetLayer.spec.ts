@@ -74,6 +74,38 @@ test('a selected ship that IS placeable still yields NO fleet-layer marker (no d
   expect(fleetLayerMarkers([pos({ main_ship_id: 'ship-1' })], LOCS, 'ship-1', midMs)).toEqual([])
 })
 
+// ── FLEETMAP de-dup: a ship a TEAM marker already represents is excluded from the chevron layer ──
+test('the fleet layer EXCLUDES ships a team marker already draws (docked-together / in-flight team members)', () => {
+  const positions = [pos({ main_ship_id: 'ship-1' }), pos({ main_ship_id: 'ship-2' }), pos({ main_ship_id: 'ship-solo', location_id: 'loc-A' })]
+  const drawn = fleetLayerMarkers(positions, LOCS, null, midMs, new Set(['ship-1', 'ship-2']))
+  expect(drawn.map((m) => m.main_ship_id)).toEqual(['ship-solo'])
+})
+
+test('team exclusion + selected exclusion compose: only the ungrouped non-selected ship draws a chevron', () => {
+  const positions = [
+    pos({ main_ship_id: 'ship-sel' }), // selected → single MainShipMarker owns it
+    pos({ main_ship_id: 'ship-team' }), // team-represented → its team badge owns it
+    pos({ main_ship_id: 'ship-solo', location_id: 'loc-A' }), // ungrouped, not selected → draws
+  ]
+  const drawn = fleetLayerMarkers(positions, LOCS, 'ship-sel', midMs, new Set(['ship-team']))
+  expect(drawn.map((m) => m.main_ship_id)).toEqual(['ship-solo'])
+})
+
+test('fleetShipsLayer threads teamRepresentedShipIds into the FleetShipsMarkers node as a Set', () => {
+  const layer = fleetShipsLayer({
+    mainshipSendEnabled: true,
+    positions: [pos({ main_ship_id: 'ship-1' })],
+    locations: LOCS,
+    selectedShipId: null,
+    teamRepresentedShipIds: ['ship-1'],
+    norm,
+    k: 1,
+  })
+  const props = layer[0].props as { teamRepresentedShipIds?: ReadonlySet<string> }
+  expect(props.teamRepresentedShipIds instanceof Set).toBe(true)
+  expect(props.teamRepresentedShipIds!.has('ship-1')).toBe(true)
+})
+
 // ── FleetShipMarker (hook-free) — subdued fleetmate only; never the selected emphasis ──
 const marker = (over: Partial<FleetMarker> = {}): FleetMarker => ({
   main_ship_id: 'ship-9',

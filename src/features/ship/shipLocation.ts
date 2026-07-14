@@ -22,7 +22,7 @@ import { formatCountdown } from '../../lib/time'
 // shell's map poll resolves the sole ship today — fetchMainShip no-id → null at N≥2). When the
 // selected ship is NOT that resolved ship, the caller passes NO resolution (the dossier shows
 // "Location unavailable") — it never asks this helper to guess. So a null fleet+movement here
-// means a genuine idle-at-home ship (kind 'home'), never "we don't know". Per-ship location for a
+// means a genuine idle/undeployed ship (kind 'idle'), never "we don't know". Per-ship location for a
 // non-sole ship arrives later via the MAP slice's fleet-positions projection.
 
 export type ShipLocationKind =
@@ -31,7 +31,7 @@ export type ShipLocationKind =
   | 'returning' // a moving return-home leg
   | 'combat' // present at a hostile/hunt site (pirate_hunt / pirate_den / hunt_pirates)
   | 'deep-space' // present but at no named location (open space)
-  | 'home' // no active fleet — idle at the home port
+  | 'idle' // no active fleet — the ship is idle/undeployed (NO-HOME LAW: there is no "home port")
 
 export interface ShipLocationResolved {
   kind: ShipLocationKind
@@ -112,8 +112,10 @@ export function resolveShipLocationLabel(
     return { kind: 'returning', label: 'Returning home', etaText, destination, heading }
   }
 
-  // no active fleet → the ship is idle at its home port (status 'home'); a fleet in an odd state with
-  // no movement row degrades to a plain "In transit" rather than a false place.
-  if (!fleet) return { kind: 'home', label: 'At home port', etaText, destination, heading }
+  // no active fleet → the ship is idle/undeployed. NO-HOME LAW: ports are the ONLY base — there is no
+  // "home port" — so the label must NOT claim one; a neutral "Idle" is the honest read (it also agrees
+  // with the sibling ShipStatusCard, which shows this same idle ship as "Ready to launch"). A fleet in
+  // an odd state with no movement row degrades to a plain "In transit" rather than a false place.
+  if (!fleet) return { kind: 'idle', label: 'Idle', etaText, destination, heading }
   return { kind: 'in-transit', label: 'In transit', etaText, destination, heading }
 }

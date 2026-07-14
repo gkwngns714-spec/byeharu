@@ -30,13 +30,15 @@ test('the hardcoded catalogs match the migrations (counts + spot ids)', () => {
   // the real force; when a seed migration lands, extend itemGlyphs.ts and bump these counts.
   expect(ITEM_TYPE_IDS.length).toBe(12) // 0039's 10 + 0097's 2
   expect(TRADE_GOOD_IDS.length).toBe(6) // 0073
-  expect(MODULE_TYPE_IDS.length).toBe(6) // 0107's 4 + 0183's 2
+  expect(MODULE_TYPE_IDS.length).toBe(8) // 0107's 4 + 0183's 2 + 0202 mod2-2's 2 (Mk-II)
   expect(ITEM_TYPE_IDS).toContain('pirate_alloy')
   expect(ITEM_TYPE_IDS).toContain('anomaly_shard')
   expect(TRADE_GOOD_IDS).toContain('luxury_goods')
   expect(MODULE_TYPE_IDS).toContain('deep_scan_sensor_array')
   expect(MODULE_TYPE_IDS).toContain('shield_lattice')
   expect(MODULE_TYPE_IDS).toContain('mining_rig_extension')
+  expect(MODULE_TYPE_IDS).toContain('autocannon_battery_mk2')
+  expect(MODULE_TYPE_IDS).toContain('shield_lattice_mk2')
   expect(RESOURCE_IDS).toContain('metal')
 })
 
@@ -75,7 +77,23 @@ test('labels are the real seeded display names', () => {
   expect(itemLabel('deep_scan_sensor_array', 'module')).toBe('Deep-Scan Sensor Array') // 0107's hyphen
   expect(itemLabel('shield_lattice', 'module')).toBe('Shield Lattice') // 0183
   expect(itemLabel('mining_rig_extension', 'module')).toBe('Mining Rig Extension') // 0183
+  expect(itemLabel('autocannon_battery_mk2', 'module')).toBe('Autocannon Battery Mk-II') // 0202 mod2-2
+  expect(itemLabel('shield_lattice_mk2', 'module')).toBe('Shield Lattice Mk-II') // 0202 mod2-2
   expect(itemLabel('metal', 'resource')).toBe('Metal')
+})
+
+test('MOD2-2 Mk-II modules resolve to real glyphs (echoing the base tier) — never the unknown fallback', () => {
+  for (const id of ['autocannon_battery_mk2', 'shield_lattice_mk2'] as const) {
+    const v = getItemGlyph(id, 'module')
+    expect(v.known, `${id} must be a known subject`).toBe(true)
+    expect(v.category).toBe('module')
+    expect(v.paths.length).toBeGreaterThan(0)
+    // Distinct from the base tier (a Mk-II accent), but NOT the generic unknown container.
+    expect(JSON.stringify(v.paths)).not.toBe(JSON.stringify(getItemGlyph('warp_coil').paths))
+  }
+  // the upgrade echoes its base silhouette (shares the base's leading hull/turret strokes)
+  expect(getItemGlyph('autocannon_battery_mk2', 'module').paths[0].d).toBe(getItemGlyph('autocannon_battery', 'module').paths[0].d)
+  expect(getItemGlyph('shield_lattice_mk2', 'module').paths[0].d).toBe(getItemGlyph('shield_lattice', 'module').paths[0].d)
 })
 
 test("the 'ore' namespace collision resolves honestly by kind (item 'Ore' vs 0073's 'Raw Ore')", () => {

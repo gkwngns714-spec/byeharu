@@ -12,6 +12,7 @@ import {
 } from './mainshipApi'
 import { fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets } from '../command/teamApi'
 import { deriveDockedTeamRollups, type DockedTeamRollup } from '../command/teamRollup'
+import { deriveTeamRepresentedShipIds } from './teamMarkers'
 import type { GroupRow } from '../command/teamRoster'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 
@@ -70,6 +71,10 @@ export interface GalaxyMapData {
   // false none of the team reads run and both stay empty — the map renders byte-identical to today.
   teamGroups: GroupRow[]
   dockedTeamRollups: DockedTeamRollup[]
+  // FLEETMAP de-dup: the ship ids a TEAM marker already represents (a complete docked-team badge or an
+  // in-flight moving-team badge). The whole-fleet chevron layer skips these so a docked/moving team is not
+  // drawn as a badge AND a stack of redundant individual chevrons. Empty while TEAM_COMMAND is dark.
+  teamRepresentedShipIds: string[]
   // FLEETMAP: the whole-fleet position projection (get_my_fleet_positions, 0200) — ONE owner-read of EVERY
   // owned non-destroyed ship, polled with the rest of the map. The fleet layer draws a marker per ship, so a
   // player owning 2+ ships is no longer invisible on the map (the single-ship resolver goes null at N≥2). [].
@@ -110,6 +115,7 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainShipSpaceMovement: null,
   teamGroups: [],
   dockedTeamRollups: [],
+  teamRepresentedShipIds: [],
   fleetPositions: [],
   fleetControlEnabled: false,
   mainShipInFleet: false,
@@ -184,6 +190,12 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
           ? await Promise.all([fetchMyShipGroupMap(), fetchMyPresentShipFleets()])
           : [{}, []]
       const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets)
+      // FLEETMAP de-dup: which owned ships are ALREADY drawn by a team marker (docked-team badge or
+      // in-flight moving badge) — reuses the SAME rollup + teamMarkers derivations (no second fold),
+      // intersected with the live membership map, so the fleet chevron layer can skip them.
+      const teamRepresentedShipIds = [
+        ...deriveTeamRepresentedShipIds({ membership: groupMap, rollups: dockedTeamRollups, movements, groups: teamGroups, nowMs: Date.now() }),
+      ]
       // FLEET-CONTROL (0204): is the resolved main ship in a fleet? groupMap is the SAME owner-RLS
       // membership read the roster uses (fetched only when the player has ≥1 team). A ship not in a
       // fleet → MainShipCommand shows "add this ship to a fleet to move it" when the flag is lit.
@@ -206,6 +218,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         mainShipSpaceMovement,
         teamGroups,
         dockedTeamRollups,
+        teamRepresentedShipIds,
         fleetPositions,
         fleetControlEnabled: staticRef.current.fleetControlEnabled,
         mainShipInFleet,

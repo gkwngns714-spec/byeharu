@@ -19,6 +19,8 @@ import { resolveFleetMarkers, type FleetMarker } from './resolveFleetMarkers'
 // existing `mainshipSendEnabled` data-dark gate (parity with the single-ship marker) — dark environments render
 // byte-identical.
 
+const EMPTY_IDS: ReadonlySet<string> = new Set()
+
 // State → design-system token color (mirrors MainShipMarker: returning=accent, outbound=warning,
 // in_space=success) with docked as a neutral parked tone.
 function stateColor(state: FleetMarker['state']): string {
@@ -34,15 +36,17 @@ function stateColor(state: FleetMarker['state']): string {
   }
 }
 
-/** The markers the fleet LAYER draws: every placeable owned ship EXCEPT the selected one (which the single
- *  shipLayer/MainShipMarker owns entirely). Pure — the shared position resolver + a selection filter. */
+/** The markers the fleet LAYER draws: every placeable owned ship EXCEPT the selected one (owned by the single
+ *  shipLayer/MainShipMarker) AND except any ship a TEAM marker already represents (a docked-team badge or an
+ *  in-flight moving badge) — no ship is drawn twice. Pure — the shared position resolver + selection filter. */
 export function fleetLayerMarkers(
   positions: readonly FleetPosition[],
   locations: readonly Pick<MapLocation, 'id' | 'x' | 'y'>[],
   selectedShipId: string | null,
   nowMs: number,
+  teamRepresentedShipIds: ReadonlySet<string> = EMPTY_IDS,
 ): FleetMarker[] {
-  return resolveFleetMarkers(positions, locations, selectedShipId, nowMs).filter((m) => !m.selected)
+  return resolveFleetMarkers(positions, locations, selectedShipId, nowMs, teamRepresentedShipIds).filter((m) => !m.selected)
 }
 
 /** One subdued fleetmate marker: a small state-colored chevron with a faint halo, dimmed so the selected
@@ -81,17 +85,19 @@ export function FleetShipsMarkers({
   positions,
   locations,
   selectedShipId,
+  teamRepresentedShipIds,
   norm,
   k,
 }: {
   positions: FleetPosition[]
   locations: Pick<MapLocation, 'id' | 'x' | 'y'>[]
   selectedShipId: string | null
+  teamRepresentedShipIds?: ReadonlySet<string>
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
 }) {
   const [now, setNow] = useState(() => Date.now())
-  const markers = fleetLayerMarkers(positions, locations, selectedShipId, now)
+  const markers = fleetLayerMarkers(positions, locations, selectedShipId, now, teamRepresentedShipIds ?? EMPTY_IDS)
   const moving = markers.some((m) => m.state === 'outbound' || m.state === 'returning')
 
   useEffect(() => {
@@ -120,6 +126,9 @@ export function fleetShipsLayer(args: {
   positions: FleetPosition[]
   locations: Pick<MapLocation, 'id' | 'x' | 'y'>[]
   selectedShipId: string | null
+  // FLEETMAP de-dup: ship ids a TEAM marker already represents (docked-team badge / in-flight moving badge).
+  // Members of a drawn team are skipped here so they are not double-drawn as redundant chevrons.
+  teamRepresentedShipIds?: readonly string[]
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
 }): ReactElement[] {
@@ -131,6 +140,8 @@ export function fleetShipsLayer(args: {
       positions: args.positions,
       locations: args.locations,
       selectedShipId: args.selectedShipId,
+      teamRepresentedShipIds:
+        args.teamRepresentedShipIds && args.teamRepresentedShipIds.length > 0 ? new Set(args.teamRepresentedShipIds) : EMPTY_IDS,
       norm: args.norm,
       k: args.k,
     }),

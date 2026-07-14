@@ -69,7 +69,7 @@ export const TRADE_GOOD_IDS = [
   'luxury_goods',
 ] as const
 
-/** module_types seeds — 0107 (4) + 0183 mod2 shield line (2). */
+/** module_types seeds — 0107 (4) + 0183 mod2 shield line (2) + 0202 mod2-2 Mk-II line (2). */
 export const MODULE_TYPE_IDS = [
   'autocannon_battery',
   'vector_thruster_kit',
@@ -77,6 +77,8 @@ export const MODULE_TYPE_IDS = [
   'deep_scan_sensor_array',
   'shield_lattice',
   'mining_rig_extension',
+  'autocannon_battery_mk2',
+  'shield_lattice_mk2',
 ] as const
 
 /** Base-resource codes that render on player surfaces (combat rewards, station hangar). */
@@ -204,6 +206,14 @@ const GLYPHS = {
     { d: 'M9 11.5l4-8M13.5 11.5l4-8' },
     { d: 'M3 21h18', soft: true },
   ],
+  // Mk-II autocannon — the SAME turret silhouette (dome + twin raised barrels + deck), stamped with a
+  // small "II" on the dome so it reads as the upgraded battery (0202 mod2-2).
+  autocannon_battery_mk2: [
+    { d: 'M5.5 17a6.5 6.5 0 0 1 13 0v1.5h-13V17Z' },
+    { d: 'M9 11.5l4-8M13.5 11.5l4-8' },
+    { d: 'M11 16v-2.2M13 16v-2.2', soft: true },
+    { d: 'M3 21h18', soft: true },
+  ],
   // Expansion lattice — a reinforced 3×3 structural grid in its frame.
   expanded_cargo_lattice: [
     { d: 'M4.5 4.5h15v15h-15v-15Z' },
@@ -220,6 +230,14 @@ const GLYPHS = {
     { d: 'M12 3l7 2.5v5c0 4.5-2.8 8-7 10.5C7.8 18.5 5 15 5 10.5v-5L12 3Z' },
     { d: 'M12 8l2.6 1.5v3L12 14l-2.6-1.5v-3L12 8Z' },
     { d: 'M12 8V5.5M12 14v3M9.4 9.5 7 8.2M14.6 9.5 17 8.2M9.4 12.5l-2.2 1.3M14.6 12.5l2.2 1.3', soft: true },
+  ],
+  // Mk-II shield lattice — the SAME shield + hex-node + spokes silhouette, but the lower spoke is
+  // replaced by a small "II" beneath the node so it reads as the reinforced upgrade (0202 mod2-2).
+  shield_lattice_mk2: [
+    { d: 'M12 3l7 2.5v5c0 4.5-2.8 8-7 10.5C7.8 18.5 5 15 5 10.5v-5L12 3Z' },
+    { d: 'M12 8l2.6 1.5v3L12 14l-2.6-1.5v-3L12 8Z' },
+    { d: 'M12 8V5.5M9.4 9.5 7 8.2M14.6 9.5 17 8.2M9.4 12.5l-2.2 1.3M14.6 12.5l2.2 1.3', soft: true },
+    { d: 'M11 18.4v-2.6M13 18.4v-2.6', soft: true },
   ],
   // Mining rig arm — mast + boom + cable over a drill cone, chips on the ground line.
   mining_rig_extension: [
@@ -311,6 +329,16 @@ const MODULE_SUBJECTS: Record<string, Subject> = {
     label: 'Mining Rig Extension', // 0183 mod2 seed
     category: 'module',
     glyph: GLYPHS.mining_rig_extension,
+  },
+  autocannon_battery_mk2: {
+    label: 'Autocannon Battery Mk-II', // 0202 mod2-2 — the upgraded autocannon
+    category: 'module',
+    glyph: GLYPHS.autocannon_battery_mk2,
+  },
+  shield_lattice_mk2: {
+    label: 'Shield Lattice Mk-II', // 0202 mod2-2 — the reinforced shield lattice
+    category: 'module',
+    glyph: GLYPHS.shield_lattice_mk2,
   },
 }
 

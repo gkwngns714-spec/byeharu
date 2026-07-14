@@ -98,6 +98,37 @@ export function resolveTeamDockBadges(rollups: readonly DockedTeamRollup[]): Tea
     }))
 }
 
+// ── FLEETMAP de-dup — the set of owned ship ids ALREADY represented by a TEAM marker ─────────────────
+// A docked-together team draws a dock badge ("Fleet X n/n") and an in-flight team draws a moving badge;
+// the whole-fleet chevron layer (fleetShipsLayer) would otherwise ALSO draw each member as an individual
+// chevron at the same coordinates — the team badge stacked over redundant chevrons. This returns the ship
+// ids the team layer already covers so the chevron layer can skip them, the SAME exclusion posture the
+// selected ship already uses.
+//
+// It reuses the SAME two derivations the team layer renders — resolveTeamDockBadges (complete docked
+// rollups) + resolveTeamMarkers (in-flight moving groups) — so there is NO second docked-team fold, then
+// intersects the marked GROUP ids with the LIVE membership map (main_ship_instances.group_id). A group
+// with no marker contributes nothing; a ship in no marked group keeps its own chevron (solo/ungrouped
+// ships still draw). Pure; the nowMs only picks which groups are in flight (that set is time-stable).
+export function deriveTeamRepresentedShipIds(args: {
+  membership: Readonly<Record<string, { group_id: string | null }>>
+  rollups: readonly DockedTeamRollup[]
+  movements: readonly FleetMovement[]
+  groups: readonly GroupRow[]
+  nowMs: number
+}): Set<string> {
+  const markedGroups = new Set<string>()
+  for (const b of resolveTeamDockBadges(args.rollups)) markedGroups.add(b.groupId)
+  for (const m of resolveTeamMarkers(args.movements, args.groups, args.nowMs)) markedGroups.add(m.groupId)
+  const ids = new Set<string>()
+  if (markedGroups.size === 0) return ids
+  for (const shipId of Object.keys(args.membership)) {
+    const gid = args.membership[shipId].group_id
+    if (gid !== null && markedGroups.has(gid)) ids.add(shipId)
+  }
+  return ids
+}
+
 // ── Presentation ────────────────────────────────────────────────────────────────────────────────────
 
 /** One in-flight team badge: accent diamond + haloed label. Pointer-transparent, tokens only. */

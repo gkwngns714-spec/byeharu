@@ -44,6 +44,7 @@ export function GalaxyMap({
   movements,
   teamGroups,
   dockedTeamRollups,
+  teamRepresentedShipIds,
   fleetPositions,
   selectedId,
   onSelect,
@@ -60,6 +61,9 @@ export function GalaxyMap({
   // dark — the additive team layer then renders nothing and the map is byte-identical to today).
   teamGroups: GroupRow[]
   dockedTeamRollups: DockedTeamRollup[]
+  // FLEETMAP de-dup: ship ids a TEAM marker already represents (docked-team badge / in-flight moving badge);
+  // the fleet chevron layer skips them so a team is never drawn as a badge AND redundant member chevrons.
+  teamRepresentedShipIds: string[]
   // FLEETMAP: EVERY owned ship's position (the whole-fleet projection). The fleet layer draws every ship
   // EXCEPT the selected one so owning 2+ ships no longer hides the fleet; the selected ship (= the fetch-scoped
   // `mainShip`) is drawn by the single shipLayer below. No separate selected-ship id prop is needed — the
@@ -400,6 +404,9 @@ export function GalaxyMap({
             positions: fleetPositions,
             locations,
             selectedShipId: mainShip?.main_ship_id ?? null,
+            // FLEETMAP de-dup: skip any ship a team marker already draws (docked-team badge / in-flight
+            // moving badge) so a docked fleet renders its "Fleet X n/n" badge WITHOUT redundant chevrons.
+            teamRepresentedShipIds,
             norm,
             k: view.k,
           })}

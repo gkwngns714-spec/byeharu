@@ -30,14 +30,21 @@ export interface FleetMarker {
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
 
+const EMPTY_EXCLUDE: ReadonlySet<string> = new Set()
+
 export function resolveFleetMarkers(
   positions: readonly FleetPosition[],
   locations: readonly Pick<MapLocation, 'id' | 'x' | 'y'>[],
   selectedShipId: string | null,
   nowMs: number,
+  // FLEETMAP de-dup: ship ids ALREADY drawn by a TEAM marker (a dock badge or an in-flight moving badge).
+  // Such a ship is skipped here so it is NOT double-drawn as a redundant chevron beneath its team badge —
+  // the SAME exclusion posture as the selected ship (whose glyph is owned by the single MainShipMarker).
+  excludeShipIds: ReadonlySet<string> = EMPTY_EXCLUDE,
 ): FleetMarker[] {
   const out: FleetMarker[] = []
   for (const p of positions) {
+    if (excludeShipIds.has(p.main_ship_id)) continue // a team marker already represents this ship → no redundant chevron
     let x: number | null = null
     let y: number | null = null
     let state: FleetMarkerState | null = null
