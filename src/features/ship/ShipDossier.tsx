@@ -4,6 +4,7 @@ import { fetchMyExpeditionPreview, fetchMyMainShips, resolveOwnedShip, type Main
 import { getMyShipFittings } from '../modules/modulesApi'
 import { getMyCaptainInstances, getShipStations } from '../captains/captainsApi'
 import { deckBoard, type ShipStation } from '../captains/deckStations'
+import { CaptainXpBar } from '../captains/CaptainXpBar'
 import { getShipCargoLots, type ShipCargoLot } from '../map/tradeApi'
 import type { SelectableShip } from '../map/useMainShipSelection'
 import type { GetMyShipFittingsResult } from '../modules/modulesTypes'
@@ -345,15 +346,21 @@ export function ShipDossier({
                     {station.name}
                   </span>
                   {captain ? (
-                    <span
+                    <div
                       data-testid={`dossier-captain-${captain.instance_id}`}
-                      className="flex min-w-0 flex-1 items-center justify-between gap-2"
+                      className="flex min-w-0 flex-1 flex-col gap-0.5"
                     >
-                      <span className="truncate text-ink">{captain.name}</span>
-                      <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
-                        {captain.specialization}
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate text-ink">{captain.name}</span>
+                        <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
+                          {captain.specialization}
+                        </span>
                       </span>
-                    </span>
+                      {/* C2-3 — the shipped XP bar + level chip (dark): null while every captain is
+                          level-1/0-xp (captain_growth_enabled false) → row byte-identical today,
+                          progression visible exactly as in CaptainsPanel / TeamMemberCaptains. */}
+                      <CaptainXpBar xp={captain.xp} level={captain.level} instanceId={captain.instance_id} />
+                    </div>
                   ) : (
                     <span
                       data-testid={`deck-empty-${station.station_id}`}
@@ -367,30 +374,28 @@ export function ShipDossier({
               {/* general quarters: a captain with no/unknown station (pre-backfill data or a
                   malformed row) still shows — the board never hides an assigned captain. */}
               {board.unstationed.map((c) => (
-                <li
-                  key={c.instance_id}
-                  data-testid={`dossier-captain-${c.instance_id}`}
-                  className="flex items-center justify-between gap-2 text-sm"
-                >
-                  <span className="truncate text-ink">{c.name}</span>
-                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
-                    {c.specialization}
-                  </span>
+                <li key={c.instance_id} data-testid={`dossier-captain-${c.instance_id}`} className="text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-ink">{c.name}</span>
+                    <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
+                      {c.specialization}
+                    </span>
+                  </div>
+                  <CaptainXpBar xp={c.xp} level={c.level} instanceId={c.instance_id} />
                 </li>
               ))}
             </ul>
           ) : litCaptains.length > 0 ? (
             <ul data-testid="dossier-captains" className="mt-2 space-y-1.5">
               {litCaptains.map((c) => (
-                <li
-                  key={c.instance_id}
-                  data-testid={`dossier-captain-${c.instance_id}`}
-                  className="flex items-center justify-between gap-2 text-sm"
-                >
-                  <span className="truncate text-ink">{c.name}</span>
-                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
-                    {c.specialization}
-                  </span>
+                <li key={c.instance_id} data-testid={`dossier-captain-${c.instance_id}`} className="text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-ink">{c.name}</span>
+                    <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
+                      {c.specialization}
+                    </span>
+                  </div>
+                  <CaptainXpBar xp={c.xp} level={c.level} instanceId={c.instance_id} />
                 </li>
               ))}
             </ul>
