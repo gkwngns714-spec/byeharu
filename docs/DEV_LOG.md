@@ -5,6 +5,66 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-15 — COMMAND-BUFFS: the FINALE of the fleet reshape — fleet-wide command buffs (mig 0205, DARK behind `command_buffs_enabled`)
+
+**Request (owner).** "Each tier will have ~10 buffs, assigned RANDOMLY when bought or manufactured. More
+buffs added later — keep in mind for spaghetti." + "Command ship will provide those buffs … a buff slot,
+activated only when the ship is set on command ship." + (on the fleet-wide themed bonus) "That is the
+spirit." Each ship rolls a tiered command buff at build; that buff applies FLEET-WIDE, but only when the
+ship is set as its fleet's COMMAND SHIP.
+
+**No spaghetti — this maps onto SHIP-SOUL almost exactly (reuse, never a new mechanism).**
+1. **Catalog** — `command_buff_types` (the `ship_trait_types` 0186 mold: `buff_id` collate-"C" / `tier` /
+   `name` / `description` / `stats_json` in the shared 0180/0198 adapter vocabulary), organized by ship
+   TIER via the new additive `main_ship_hull_types.tier` column (`starter_frigate`=T0;
+   `bulk_hauler`/`strike_corvette`=T1 — the 0185 split). ~10 buffs seeded per tier (themed:
+   gunnery→fleet attack, engineering→fleet speed, logistics→fleet cargo, …; modest FLEET-WIDE
+   magnitudes). EXTENSIBLE: additive on-conflict-do-nothing seeds — a later buff never re-derives a
+   rolled ship (the SOUL catalog-growth handling).
+2. **Roll** — the ship BUFF SLOT `main_ship_instances.command_buff_id` (nullable FK), rolled
+   DETERMINISTICALLY (`hashtextextended('<ship_id>:cmdbuff',0)` → the tier pool's collate-"C" order — the
+   0186 pure-hash law, no RNG) by an AFTER-INSERT trigger (`trg_command_buff_roll` — the ROOMS-8 0203
+   seed-trigger seam, covers every commission path WITHOUT re-creating a commission function) + a
+   monotonic backfill, both through the ONE writer `command_buff_roll_for_ship`. IMMUTABLE once set
+   (NULL-guarded write). ALWAYS-ON additive data (NOT flag-gated) — inert until the fold.
+
+**The adapter fold (the ONE re-create — parity critical).** `calculate_expedition_stats` TRUE head
+grep-verified **0198** (NANGUARD; FLEET-CONTROL 0204 and ROOMS-8 0203 did NOT touch it). Re-created from
+that head VERBATIM with ONE marked COMMAND-BUFFS hunk: when `command_buffs_enabled` AND the ship is in a
+fleet (`group_id` not null), fold the fleet's ACTIVE command ship(s)' `command_buff_id` →
+`command_buff_types.stats_json` FLEET-WIDE into THIS ship's totals (the shared additive 8-key fold;
+multiple command ships sum — backups; NO tradeoff CASE / NO scaling — a command buff is a pure fleet
+bonus). DOUBLE-GATED: flag false → the loop is skipped entirely (dark = byte-identical); flag true +
+ungrouped / no command ship → empty loop (byte-identical) — the DECKS-3/level double inertness.
+**Extract-and-diff CONFIRMED:** the re-create is the 0198 body byte-identical except the marked hunk (3
+declares + the fold loop + `+ v_cmdbuff_speed_bonus` in the ONE speed multiplier) — **every accumulated
+0115 modules / 0122 captains / 0170 hull / 0180 level / 0193 traits / 0196 affinity / 0198 nanguard hunk
+survived byte-for-byte** (re-pinned by the §9 accumulated-hunk law). DEPENDENCY (documented): the fold
+needs `fleet_control_enabled` too (is_command_ship is only meaningfully set through FLEET-CONTROL); the
+fold itself gates on `command_buffs_enabled` alone.
+
+**Client.** ShipDossier gains a runtime-flag-gated **Command buff** line (name + effect + "applies to the
+whole fleet when this ship is the command ship") — `commandBuff.ts` (pure view, reuses the SOUL-2
+`traitEffects` formatter) + `commandBuffApi.ts` (gate-first reads: config → catalog + the ship's
+`command_buff_id`) + the dossier section. DARK today (`command_buffs_enabled` false) → hidden,
+byte-identical.
+
+**Proof / activation / docs.** `team-command-proof` gains `TEAMCMD_PASS_CMDBUFF` (29th marker): DARK
+parity (a designated command ship's buff inert, adapter byte-identical); LIT in-txn (flip
+`command_buffs_enabled` + `fleet_control_enabled`) — a fleet with a command ship whose buff = +X → every
+member's totals gain X exactly (independent catalog derivation), a non-command-ship's buff dormant, two
+command ships sum both buffs, a zero-command fleet folds nothing, an ungrouped ship folds nothing; the
+commission trigger's roll = the inline hash re-derivation. `.sh` selftest pins + the 3 gutting targets
+(buff-fold exactness / dark parity / no-command-no-buff). ACT-COMMAND-BUFFS
+(`scripts/activate-command-buffs.{sql,sh}`, `command_buffs_enabled`→true, catalog-freeze +
+buff-slot-coverage + FLEET-CONTROL-dependency preconditions). Docs: FULL_CAPACITY_PLAN §FLEET buff slice,
+SYSTEM_BOUNDARIES (`command_buff_id` writer = the roll trigger; the `command_buff_types` catalog; the
+adapter's new read). LAWS held: parity ABSOLUTE (extract-and-diff, marked hunk only, dark byte-identical),
+no spaghetti (SOUL catalog+roll + ROOMS-8 trigger + shared adapter fold idiom reused), 0041 determinism,
+deploy-inert dark. Left UNCOMMITTED.
+
+---
+
 ## 2026-07-14 — ROOMS-8: configurable ship rooms — 8 slots, a large room catalog, per-slot config (mig 0203, DARK behind `captain_assignment_enabled`)
 
 **Request (owner).** "Each ship will have 8 captain slots, and the captains will be inserted
