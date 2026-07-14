@@ -51,6 +51,22 @@ initiatives).
 | G8 | **No repair economy**: `repair_main_ship` is the free/instant safelock (0052) — flagged as temporary (ROADMAP §Repair & Recovery). **ADDRESSED (dark, mig 0201 REPAIR-ECON):** a paid hull-repair economy `repair_ship_hull_at_port` (credits/hp, at-port, DAMAGED-alive ships) now exists behind `repair_economy_enabled=false`; the free destroyed-ship safelock is preserved UNTOUCHED (the seam). Awaits ACT-REPAIR. |
 | G9 | **No onboarding/retention scaffolding**: no first-session guidance, no dailies/contracts, no reveal cadence for the hidden-world pattern (0066 proved reveal works) |
 
+### Hardening notes (latent-defect fixes, not target-loop gaps)
+
+- **H-CRON (RESOLVED, mig 0206 CRON-GUARD).** The 7-agent audit flagged a latent global-wedge landmine:
+  the two hottest legacy crons — `process_fleet_movements` (30s) and `process_combat_ticks` (3s) — ran all
+  their rows in ONE transaction with NO per-row exception isolation, so a single failing row aborted the
+  WHOLE run and re-raised every tick forever, for EVERY player (reachable today: a movement to a location
+  whose `activity_type` is an allowed-but-undispatched value → `activity_start` 'unknown activity' raise).
+  0206 applies the SAME per-row `begin/exception` subtransaction the queue engine already uses
+  (`process_build_queue`, mig 0194 — the EV-1 0182 precedent): a raising row is logged (WARNING) + skipped
+  + left in place to retry, and the loop continues; `query_canceled` re-raised. Pure hardening, NO flag,
+  deploy-safe — byte-identical on the success path (extract-and-diff verified), strictly-safer on the
+  error path. Proof: `TEAMCMD_PASS_CRONGUARD`. **Follow-ups (separate behavior changes, deliberately out
+  of scope):** the audit's **G3-arrival** legacy status re-check; and advancing a persistently-failing
+  cron row to a terminal state so it stops spinning (it retries forever today, but no longer wedges
+  others — the same trade `process_build_queue` makes).
+
 ---
 
 ## B. THE ACTIVATION LADDER
