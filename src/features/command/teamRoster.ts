@@ -1,3 +1,8 @@
+import { resolveShipLocationLabel } from '../ship/shipLocation'
+import type { FleetPosition, FleetPositionSegment, MainShipFleet } from '../map/mainshipApi'
+import type { FleetMovement } from '../fleets/fleetTypes'
+import type { MapLocation } from '../map/mapTypes'
+
 // TEAM-COMMAND Slice A — pure, server-truth-free roster + ownership logic.
 //
 // TERMINOLOGY: "group" is the backend/DB word (ship_groups, main_ship_instances.group_id); "team" is the UI
@@ -73,6 +78,85 @@ export function nextTeamSlot(groups: GroupRow[]): number | null {
   const used = new Set(groups.map((g) => g.group_index))
   for (let i = 1; i <= 3; i++) if (!used.has(i)) return i
   return null
+}
+
+// TEAM-FRIENDLY — adapt a get_my_fleet_positions row (FLEETMAP, migration 0200) to the ONE shared
+// location resolver (resolveShipLocationLabel / SHIPLOC) so the team roster shows the SAME leak-safe
+// location strings the ship screen shows — never a second location fold. The projection carries the
+// server-decided `place` + location_id (docked) + segment (transit); we shape those into the
+// resolver's (fleet, movement) inputs and return only its `.label`.
+//
+// HONEST: a ship absent from the projection, or a 'hidden' placement (home / destroyed / incoherent —
+// the FLEETMAP "no marker" case), yields null → the row shows its humanized status only, never a
+// guessed place. A transit segment carries coordinates, not a target location id, so an outbound leg
+// fails closed to "In transit to its destination" (the resolver's own fallback) — honest, never a
+// wrong port. Pure: names resolve solely from the passed world locations.
+export function fleetPositionLocationLabel(
+  pos: FleetPosition | undefined,
+  locations: MapLocation[],
+): string | null {
+  if (!pos) return null
+  if (pos.place === 'docked' || pos.place === 'in_space') {
+    const fleet: MainShipFleet = {
+      id: '',
+      status: 'present',
+      current_location_id: pos.place === 'docked' ? pos.location_id : null,
+      location_mode: null,
+      active_movement_id: null,
+      active_space_movement_id: null,
+    }
+    return resolveShipLocationLabel(fleet, null, locations).label
+  }
+  if (pos.place === 'transit' && pos.segment) {
+    return resolveShipLocationLabel(null, movementFromSegment(pos.segment), locations).label
+  }
+  return null // 'hidden' (home/destroyed/incoherent) or a transit row with no segment → omit, never guess
+}
+
+// A transit segment → the minimal FleetMovement the resolver reads (target_type / target_location_id /
+// mission_type / arrive_at). target_kind='base' ⇒ the return-home leg; the segment carries no target
+// location id, so the outbound name is left null and the resolver fails closed to "its destination".
+function movementFromSegment(seg: FleetPositionSegment): FleetMovement {
+  return {
+    id: '',
+    fleet_id: '',
+    origin_type: '',
+    origin_x: seg.origin_x,
+    origin_y: seg.origin_y,
+    target_type: seg.target_kind,
+    target_location_id: null,
+    target_base_id: null,
+    target_x: seg.target_x,
+    target_y: seg.target_y,
+    mission_type: seg.target_kind === 'base' ? 'return_home' : 'expedition',
+    status: 'moving',
+    depart_at: seg.depart_at,
+    arrive_at: seg.arrive_at,
+    travel_seconds: 0,
+    travel_distance: 0,
+  }
+}
+
+export type TeamGatherState = 'empty' | 'all_home' | 'co_located' | 'scattered'
+
+// TEAM-FRIENDLY — the team's co-location/readiness state for the roster's inline notice + the
+// Send/Hunt-disabled reason. Folded from the REUSED deriveDockedTeamRollups output (dockedLocationId
+// is non-null ONLY when every member is docked at ONE port) plus the same per-member status==='home'
+// check the card already uses for its send/hunt gate. NOT a second co-location fold — co-location
+// comes straight from the rollup. Pure.
+//   • empty      — no members.
+//   • co_located — every member docked at ONE port (rollup.locationId non-null).
+//   • all_home   — every member idle at home (the home-team send/hunt readiness state).
+//   • scattered  — members split across ports / in transit → not gathered, not all home.
+export function teamGatherState(input: {
+  memberCount: number
+  allHome: boolean
+  dockedLocationId: string | null
+}): TeamGatherState {
+  if (input.memberCount <= 0) return 'empty'
+  if (input.dockedLocationId !== null) return 'co_located'
+  if (input.allHome) return 'all_home'
+  return 'scattered'
 }
 
 export type CommissionReason = 'ok' | 'gate_dark' | 'cap_reached' | 'insufficient_credits'
