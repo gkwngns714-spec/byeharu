@@ -92,3 +92,76 @@ export function stationForCommand(pick: string): string | null {
 export function stationLabel(stations: ShipStation[], stationId: string): string {
   return stations.find((s) => s.station_id === stationId)?.name ?? stationId
 }
+
+// ── ROOMS-8 (0203): the CONFIGURABLE room-slot board ──────────────────────────────────────────────
+// A ship now has 8 configurable room-slots (ship_room_slots, 0203): the player CHOOSES which room
+// type occupies each slot, and captains staff the rooms. The board is driven by the SHIP'S slots
+// (get_my_ship_room_slots), not the whole catalog — a captain's station is the slot's room_type_id
+// (so the 0196 adapter reads its affinity unchanged). These helpers are display-side derivation
+// only; the 0203 server (the distinct-room unique, configure_ship_room's rejects, the slot-scoped
+// captain_assign_apply) stays the enforcer.
+
+/** One configured room-slot of a ship (get_my_ship_room_slots, 0203). affinity_specialization is
+ *  the fitted room's favored specialization (0117 vocabulary or null) — the 0196 adapter fold input. */
+export interface ShipRoomSlot {
+  slot_index: number
+  room_type_id: string
+  name: string
+  affinity_specialization: string | null
+}
+
+/** One room-slot board row: a slot (its fitted room) and whoever staffs it (null = "Empty room"). */
+export interface RoomSlotBoardRow {
+  slot: ShipRoomSlot
+  captain: CaptainInstance | null
+}
+
+/** The room-slot board over ONE ship's configured slots (get_my_ship_room_slots) + that ship's
+ *  captains (pre-filtered — captainsForShip). Every slot appears exactly once, in slot_index order;
+ *  the captain whose station equals the slot's room_type_id staffs it. A captain whose station is
+ *  null (general quarters), unknown to the ship's slots, or a duplicate holder (the server's uniques
+ *  make both impossible — defensive) lands in `unstationed`, input order preserved; the
+ *  deterministic duplicate winner is the lexically-lowest instance_id (the deckBoard idiom). */
+export function roomSlotBoard(
+  slots: ShipRoomSlot[],
+  shipCaptains: CaptainInstance[],
+): { rows: RoomSlotBoardRow[]; unstationed: CaptainInstance[] } {
+  const ordered = [...slots].sort((a, b) => a.slot_index - b.slot_index)
+  const byRoom = new Map<string, CaptainInstance>()
+  const unstationed: CaptainInstance[] = []
+  const fittedRooms = new Set(ordered.map((s) => s.room_type_id))
+  for (const c of shipCaptains) {
+    const st = c.station ?? null
+    if (st === null || !fittedRooms.has(st)) {
+      unstationed.push(c)
+      continue
+    }
+    const holder = byRoom.get(st)
+    if (!holder) {
+      byRoom.set(st, c)
+    } else if (c.instance_id < holder.instance_id) {
+      byRoom.set(st, c)
+      unstationed.push(holder)
+    } else {
+      unstationed.push(c)
+    }
+  }
+  return {
+    rows: ordered.map((slot) => ({ slot, captain: byRoom.get(slot.room_type_id) ?? null })),
+    unstationed,
+  }
+}
+
+/** The picker options for ONE slot: every catalog room EXCEPT rooms already fitted in ANOTHER slot
+ *  on this ship (a room fills at most one slot — the server's room_duplicate reject). The slot's OWN
+ *  current room stays selectable (it is the select's current value). Catalog order. */
+export function roomPickerOptions(
+  catalog: ShipStation[],
+  slots: ShipRoomSlot[],
+  slotIndex: number,
+): ShipStation[] {
+  const usedByOthers = new Set(
+    slots.filter((s) => s.slot_index !== slotIndex).map((s) => s.room_type_id),
+  )
+  return orderStations(catalog).filter((room) => !usedByOthers.has(room.station_id))
+}

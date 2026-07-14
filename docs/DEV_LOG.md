@@ -5,6 +5,74 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-14 — ROOMS-8: configurable ship rooms — 8 slots, a large room catalog, per-slot config (mig 0203, DARK behind `captain_assignment_enabled`)
+
+**Request (owner).** "Each ship will have 8 captain slots, and the captains will be inserted
+accordingly." + "create many rooms as possible" (Command Deck, Gunnery, Engine Room, Outpost, Medbay,
+Sensors, Armory, Cargo Hold, Bridge, Sickbay …) + "we can also change room by modifying the ships …
+able to choose." Reshape ships so each has 8 CONFIGURABLE room-slots drawn from a large extensible
+catalog, captains staff the rooms. EXTEND the 0189 decks system — do NOT fork a parallel one.
+
+**The load-bearing constraint (kept).** DECKS-3's adapter `calculate_expedition_stats` (head 0196)
+folds a captain's affinity via `left join ship_stations st on st.station_id = a.station`. ROOMS-8 keeps
+`ship_captain_assignments.station` = a `ship_stations.station_id` (now a "room type"), so that read-shape
+is BYTE-UNTOUCHED and the adapter is **NOT re-created** (confirmed absent from the diff — a parallel
+COMMAND-BUFFS slice owns the next adapter re-create; two in flight = the 0143/0146 collision).
+
+**Design (built exactly — mig `0203`).**
+1. **Captain slots 6→8** — the 0171 pinned-bump idiom verbatim: every hull's `base_captain_slots`→8 +
+   the instance backfill, `<`-guarded (monotonic/idempotent). Player-visible-cosmetic on deploy (the
+   0171 accepted posture — no seat can be occupied while dark). IRREVERSIBILITY LAW: roll back flags,
+   never slots.
+2. **A large room catalog** — `ship_stations` IS the room catalog; ADD eight rooms (`command_deck`,
+   `armory`, `cargo_hold`, `workshop`, `comms`, `outpost`, `sickbay`, `observatory`; sorts 7..14,
+   affinities in the 0117 vocabulary or NULL) via on-conflict-do-nothing. The frozen six (0189/0196)
+   keep their ids/sorts/affinities — the DECKS-3 mapping is verbatim. Extensible: more rooms = one
+   additive seed.
+3. **8 configurable room-slots per ship** — NEW `ship_room_slots` (main_ship_id, slot_index 1..8,
+   room_type_id → ship_stations; **distinct rooms per ship** unique, so a slot's room is a unique
+   placement key exactly like the 0189 station axis). Defaults = the 8 lowest-sort rooms, seeded by an
+   AFTER-INSERT trigger on `main_ship_instances` (covers EVERY commission path without re-creating one)
+   + a monotonic backfill for existing ships. Sole writer `ship_room_configure` (client wrapper
+   `configure_ship_room`); read `get_my_ship_room_slots`; both dark-gated on the SAME captain flag
+   (no new flag).
+4. **Slot-scoped captain assignment** — `captain_assign_apply` re-created from its TRUE head (0189, its
+   only re-create) with the marked `-- ROOMS-8 (0203)` hunks ONLY: the explicit-room existence check +
+   the auto-assign walk now scope to THIS ship's configured slots (was the whole catalog). Signature
+   unchanged → create-or-replace; the station insert, headcount cap, and every 0189 reject/order are
+   byte-identical (extract-and-diff). A captain can only staff a room the ship has FITTED
+   (`unknown_station` for any non-fitted catalog room).
+5. **Client (ShipDossier).** The Captains section becomes the ROOM-SLOT board: 8 rows, each a room
+   picker (`room-pick-<i>` → `configure_ship_room` via the CaptainsPanel `runGuardedCommand` idiom,
+   disabled while a captain staffs it) + the staffing captain (`dossier-captain-<id>` + `CaptainXpBar`)
+   or "Empty room". New pure helpers `roomSlotBoard`/`roomPickerOptions` (specs `tests/roomSlots.spec.ts`).
+   Server-lit gated → renders NOTHING on prod today (deploy-inert). `deckBoard` kept (still tested).
+
+**Gating.** Everything rides the existing captain gate `captain_assignment_enabled` (DARK, unflipped).
+The slot bump + catalog seeds + slot rows are additive/monotonic data no live path reads while dark;
+the config/read RPCs reject `captain_assignment_disabled` before any read (anti-probe, no oracle).
+
+**Proof.** `scripts/decks-proof.{sql,sh}` extended (DECKS is its own standalone pair): 8-slot default
+seed, slot-scoped named/auto/non-fitted assign, room config happy + room_duplicate/unknown_room/
+invalid_slot/room_occupied rejects, cap-first authority at the 9th captain, the **DECKS-3 affinity fold
+still fires through the preserved read-shape** (`ROOMS8_PASS_AFFINITY` — knob raised in-txn → combat_power
+rises), deterministic monotonic station + slot backfills. Selftest green + 3 mutation guttings
+fail-then-restore. The 6→8 raise's blast radius (`team-command-proof`, `shipyard-proof`,
+`activate-captains.{sql,sh}`) reconciled 6→8 the same way 0171 did 2→6.
+
+**Verify.** `tsc -b` + `vite build` green; `roomSlots`+`deckStations`+ship/team pure battery green;
+eslint clean on touched files; the adapter confirmed NOT in the diff. Left UNCOMMITTED (the human
+Supabase apply gate).
+
+**Known fail-safe follow-up (NOT fixed here — separate small client slice).** `CaptainsPanel`'s assign
+station-picker still lists FREE rooms from the WHOLE `ship_stations` catalog (14) rather than the ship's
+8 FITTED slots. It is fail-safe: its AUTO default resolves the lowest-sort fitted free room server-side,
+and an explicit pick of a non-fitted room gets the server's honest `unknown_station` reject. Scoping the
+picker to fitted-only rooms (it would need to read `get_my_ship_room_slots`) is deferred — the panel is
+dark, and ROOMS-8's client scope was the ShipDossier room board.
+
+---
+
 ## 2026-07-14 — REPAIR-ECON: paid hull-repair economy (mig 0201, DARK behind `repair_economy_enabled`)
 
 **Request (FULL_CAPACITY_PLAN §C P9 / gap G8).** Ships come home DAMAGED (not deleted); repair is the

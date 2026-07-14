@@ -162,9 +162,27 @@ Deps: none (pure data). Guard: zero engine edits in 1/2.
 C2-0: additive `captain_instances.xp/level` + flag `captain_growth_enabled`. C2-1: XP accrual as a
 **downward reader of finalized `reward_grants`** (the exact commit-safe 0144/0145 anti-join idiom) with a
 `captain_counted_grants` ledger. C2-2: level curve → adapter parity delta (`stats × (1 + level_bonus)`,
-byte-inert at level 1). C2-3: XP bars in TeamMemberCaptains. C2-4: the 6→8 slot raise (separate additive
-migration, lit-time decision). Deps: Rung 0. Guard: Captain system stays sole writer; XP reads finalized
-grants exactly like Ranking does — combat never writes captain XP mid-tick.
+byte-inert at level 1). C2-3: XP bars in TeamMemberCaptains. **C2-4: the 6→8 slot raise — SHIPPED (dark)
+inside ROOMS-8 (mig 0203, slice-rooms8): all hulls `base_captain_slots`→8 + instance backfill (the 0171
+idiom), folded into the CONFIGURABLE-ROOMS reshape below.** Deps: Rung 0. Guard: Captain system stays sole
+writer; XP reads finalized grants exactly like Ranking does — combat never writes captain XP mid-tick.
+
+**ROOMS-8 — configurable ship rooms (owner order 2026-07): "8 captain slots … create many rooms …
+change room by modifying the ships … able to choose"). SHIPPED (dark)** — mig `0203` (slice-rooms8),
+extends the 0189/0196 decks system, DOES NOT fork it. (1) captain slots 6→8 (C2-4 above). (2) `ship_stations`
+IS the room catalog — eight rooms appended (additive on-conflict-do-nothing; the frozen six + the 0196
+affinity mapping unmoved). (3) NEW `ship_room_slots` (main_ship_id, slot_index 1..8, room_type_id;
+distinct rooms per ship) = the ship's 8 configurable slots the player CHOOSES — sole writer
+`ship_room_configure` (wrapper `configure_ship_room`), read `get_my_ship_room_slots`, defaults seeded by
+an AFTER-INSERT trigger + monotonic backfill. (4) `captain_assign_apply` re-created from its 0189 head
+(marked hunks ONLY) to scope station resolution to the ship's FITTED slots — **the DECKS-3 adapter
+`calculate_expedition_stats` was NOT re-created** (`ship_captain_assignments.station` stays a
+`ship_stations.station_id`, so the 0196 LEFT-join read-shape is byte-untouched — a parallel COMMAND-BUFFS
+slice owns the next adapter re-create). (5) client: the ShipDossier Captains section becomes the 8-slot
+room board (room picker + staffing captain), server-lit gated → deploy-inert. Proof = the extended
+`decks-proof.{sql,sh}` (8-slot seed, slot-scoped assign, room config rejects, cap-first, the affinity fold
+STILL firing through the preserved read-shape, station + slot backfills). Rides the existing captain gate
+`captain_assignment_enabled` (no new flag). ACT: lights with the captains flip (ACT-CAPTAINS).
 
 ### P6 — SHIPYARD: ships are BUILT, not bought *(M/L — SHIPYARD-0 SHIPPED dark as mig 0185; supersedes the old HULLS-2 line per the SHIPYARD charter)*
 **The production model (owner directive: "ships must be made through mining, production, level
