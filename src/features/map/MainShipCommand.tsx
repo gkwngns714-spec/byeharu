@@ -50,7 +50,8 @@ export function MainShipCommand({
   // being genuinely held (spatial_state='in_space', no active fleet) AND its held fleet being resolved.
   const canSendFromHold = !!mainShip && mainShip.spatial_state === 'in_space' && !fleet && !!heldFleet
   const actionable = canSendFromHome || canMoveHere || canSendFromHold
-  const actionLabel = canMoveHere ? 'Move main ship here' : 'Send main ship'
+  const shipName = mainShip?.name ?? 'your ship'
+  const actionLabel = canMoveHere ? `Move ${shipName} here` : `Send ${shipName}`
   const actionVerb = canMoveHere ? 'Move' : 'Send'
 
   async function doAction() {
@@ -63,13 +64,13 @@ export function MainShipCommand({
       // so a stale present→moving transition is rejected cleanly rather than mis-firing.
       if (canMoveHere && presentFleet) {
         await moveMainShipToLocation(presentFleet.id, location.id) // 10H: depart current location → here
-        setSuccess(`Main ship moving to ${location.name}.`)
+        setSuccess(`${mainShip?.name ?? 'Your ship'} moving to ${location.name}.`)
       } else if (canSendFromHome && mainShip) {
         await sendMainShipExpedition(mainShip.main_ship_id, location.id) // verified 10C RPC (from base)
-        setSuccess(`Main ship dispatched to ${location.name}.`)
+        setSuccess(`${mainShip.name} dispatched to ${location.name}.`)
       } else if (canSendFromHold && heldFleet) {
         await moveMainShipToLocation(heldFleet.id, location.id) // Slice B: depart from the held point
-        setSuccess(`Main ship departing to ${location.name}.`)
+        setSuccess(`${mainShip?.name ?? 'Your ship'} departing to ${location.name}.`)
       } else {
         return // not actionable (state changed under us) — server would reject anyway
       }
@@ -86,14 +87,14 @@ export function MainShipCommand({
 
   return (
     <div data-testid="mainship-command" className="mt-3 rounded-lg border border-accent/20 bg-surface-2/50 p-3">
-      <SectionLabel className="mb-0 text-accent/90">🛰 Send main ship</SectionLabel>
+      <SectionLabel className="mb-0 text-accent/90">🛰 Send ship</SectionLabel>
 
       {/* No commissioned ship → neutral read-only note (NO commission action in 10D). */}
       {!mainShip ? (
-        <p data-testid="mainship-command-none" className="mt-2 text-sm text-ink-muted">No main ship yet.</p>
+        <p data-testid="mainship-command-none" className="mt-2 text-sm text-ink-muted">No ship yet.</p>
       ) : isCombat ? (
         <p data-testid="mainship-command-combat" className="mt-2 text-sm text-ink-muted">
-          Main ships can't enter combat zones yet.
+          This ship can't enter combat zones yet.
         </p>
       ) : (
         <>
@@ -114,15 +115,15 @@ export function MainShipCommand({
 
           {isHere ? (
             <p data-testid="mainship-already-here" className="mt-3 text-center text-xs text-ink-muted">
-              Main ship is already here.
+              {mainShip.name} is already here.
             </p>
           ) : status === 'destroyed' ? (
             <p data-testid="mainship-send-disabled" className="mt-3 text-center text-xs text-warning/90">
-              Main ship is disabled. Repair it before sending.
+              {mainShip.name} is disabled. Repair it before sending.
             </p>
           ) : !actionable ? (
             <p data-testid="mainship-send-unavailable" className="mt-3 text-center text-xs text-ink-faint">
-              Main ship is currently {status}.
+              {mainShip.name} is currently {status}.
             </p>
           ) : !confirming ? (
             <Button
@@ -138,7 +139,7 @@ export function MainShipCommand({
           ) : (
             <div className="mt-3 rounded-lg border border-accent/30 bg-surface-2/60 p-2.5">
               <p className="text-sm text-ink">
-                {actionVerb} your main ship to <span className="font-medium">{location.name}</span>?
+                {actionVerb} {mainShip.name} to <span className="font-medium">{location.name}</span>?
               </p>
               <div className="mt-2 flex gap-2">
                 <Button

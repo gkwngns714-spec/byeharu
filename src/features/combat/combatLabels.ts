@@ -11,5 +11,5 @@
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export function combatUnitLabel(id: string, unitTypes: { id: string; name: string }[]): string {
-  return unitTypes.find((t) => t.id === id)?.name ?? (UUID_RE.test(id) ? `Team ship ${id.slice(0, 8)}` : id)
+  return unitTypes.find((t) => t.id === id)?.name ?? (UUID_RE.test(id) ? `Fleet ship ${id.slice(0, 8)}` : id)
 }

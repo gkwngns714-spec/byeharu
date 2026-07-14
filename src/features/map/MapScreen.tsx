@@ -161,7 +161,7 @@ export function MapScreen() {
                 errorMessage={legacyStop.state.errorMessage}
                 outcome={legacyStop.state.outcome}
                 onStop={() => void legacyStop.submit().finally(() => void refresh())}
-                title="Main ship in transit"
+                title="Ship in transit"
                 stopLabel="Stop — hold here"
                 stoppedMessage="Holding position in open space."
               />
@@ -240,7 +240,7 @@ export function MapScreen() {
               <StatRow
                 label="Required power"
                 value={<span className="font-mono tabular-nums">{selected.min_power_required}</span>}
-                hint="(team combat gate)"
+                hint="(fleet combat gate)"
               />
             )}
             {selMeta && <StatRow label="Region" value={selMeta.sectorName} />}

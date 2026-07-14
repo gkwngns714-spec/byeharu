@@ -9,7 +9,7 @@ import { teamReasonMessage } from '../src/features/command/teamReasonMessage'
 // "Team order unavailable." — never a raw code.
 // Run: `npx playwright test teamReasonMessage.spec.ts`.
 
-const FALLBACK = 'Team order unavailable.'
+const FALLBACK = 'Fleet order unavailable.'
 
 test('every known team-RPC reject reason maps to specific player text (not the fallback, never the raw code)', () => {
   const known = [

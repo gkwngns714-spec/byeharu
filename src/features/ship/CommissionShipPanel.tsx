@@ -116,7 +116,7 @@ export function CommissionShipPanel({
 
   return (
     <Card tone="warning" data-testid="commission-ship-panel">
-      <CardHeader title="Commission ship" subtitle="Grow your fleet — teams need ships" />
+      <CardHeader title="Commission ship" subtitle="Grow your fleet — fleets need ships" />
       <div className="flex items-center justify-between gap-3 text-xs text-ink-muted">
         {/* Price + balance are SERVER data (public-read game_config / owner-read wallet).
             No wallet row ≠ broke: the lazy wallet (0093) means the effective balance is the

@@ -54,7 +54,7 @@ export function ShipScreen() {
   // panels: their lit-ness is server-decided at runtime, so a screen-owned header could label a void.
   return (
     <Screen wide>
-      <PageHeader eyebrow="Ops · Vessel" title="Ship" subtitle="Your main ship" />
+      <PageHeader eyebrow="Ops · Vessel" title="Ship" subtitle="Your ship" />
       <div className={screenSplitClass()}>
         <div className={screenRailClass('main')}>
           {/* THE ship surface: identity + hull integrity, the one right-now action (repair /

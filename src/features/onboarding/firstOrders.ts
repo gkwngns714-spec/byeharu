@@ -90,7 +90,7 @@ export function deriveFirstOrders(input: FirstOrdersInput): FirstOrderStep[] {
       id: 'second-ship',
       label: 'Commission a second ship',
       done: input.shipCount >= 2,
-      hint: 'Buy a second hull on the Ship screen and start building a team.',
+      hint: 'Buy a second hull on the Ship screen and start building a fleet.',
     })
   }
 

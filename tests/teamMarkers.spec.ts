@@ -72,17 +72,17 @@ test('multi-fleet group (expedition): ONE badge at the LEAD (earliest-ETA) fleet
   const out = resolveTeamMarkers([late, early], groups, midMs)
   expect(out).toHaveLength(1)
   expect(out[0].groupId).toBe('g1')
-  expect(out[0].label).toBe('Team Alpha · 2 ships')
+  expect(out[0].label).toBe('Fleet Alpha · 2 ships')
   expect(out[0].fleetCount).toBe(2)
   expect(out[0].arriveAt).toBe('2026-01-01T00:05:00Z')
   // position = the lead's interpolated point, via the SAME shared helper
   expect({ x: out[0].x, y: out[0].y }).toEqual(interpolateMovementPoint(early, midMs))
 })
 
-test('single-fleet group (hunt): badge at the fleet interpolated position, bare team label', () => {
+test('single-fleet group (hunt): badge at the fleet interpolated position, bare fleet label', () => {
   const out = resolveTeamMarkers([mv({ group_id: 'g2' })], groups, midMs)
   expect(out).toHaveLength(1)
-  expect(out[0].label).toBe('Team Bravo')
+  expect(out[0].label).toBe('Fleet Bravo')
   expect({ x: out[0].x, y: out[0].y }).toEqual({ x: 50, y: 100 })
 })
 
@@ -132,13 +132,13 @@ const rollup = (o: Partial<DockedTeamRollup> = {}): DockedTeamRollup => ({
   ...o,
 })
 
-test('dock badges: complete rollups map to "Team <name> n/n"; partial/split/empty produce none', () => {
+test('dock badges: complete rollups map to "Fleet <name> n/n"; partial/split/empty produce none', () => {
   const out = resolveTeamDockBadges([
     rollup(), // complete → badge
     rollup({ groupId: 'g2', name: 'Bravo', dockedCount: 1, locationId: null }), // partial → none
     rollup({ groupId: 'g3', name: 'Empty', memberCount: 0, dockedCount: 0, locationId: null }), // empty → none
   ])
-  expect(out).toEqual([{ groupId: 'g1', label: 'Team Alpha 2/2', locationId: 'loc-A' }])
+  expect(out).toEqual([{ groupId: 'g1', label: 'Fleet Alpha 2/2', locationId: 'loc-A' }])
 })
 
 // ── teamMarkersLayer — the GalaxyMap wiring proof (element-tree convention) ─────────────────────────
@@ -167,7 +167,7 @@ test('layer: one TeamDockBadge per complete rollup, positioned at the port throu
   expect(badge).toBeTruthy()
   const props = badge!.props as { groupId: string; label: string; x: number; y: number; stack: number }
   expect(props.groupId).toBe('g1')
-  expect(props.label).toBe('Team Alpha 2/2')
+  expect(props.label).toBe('Fleet Alpha 2/2')
   expect({ x: props.x, y: props.y }).toEqual({ x: 100, y: 200 })
   expect(props.stack).toBe(0)
 })

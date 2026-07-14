@@ -69,7 +69,7 @@ export function PortEntryPanel({
           <Card tone="accent" className="text-sm" data-testid="port-entry-claim">
             <p className="font-medium text-accent">Commission your first ship</p>
             <p className="mt-1 text-ink-muted">
-              Claim your main ship. It will begin docked at <span className="font-medium text-ink">Haven</span>, ready to explore.
+              Claim your ship. It will begin docked at <span className="font-medium text-ink">Haven</span>, ready to explore.
             </p>
             {/* UI R4: the ONE error callout (Notice) instead of a hand-rolled line — same testid/string. */}
             {errorText && actionKind === 'commission' && (

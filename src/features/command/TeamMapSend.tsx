@@ -140,7 +140,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   return (
     <div data-testid="team-map-send" className="mt-4 border-t border-edge/60 pt-3">
       <div className="flex items-center justify-between gap-2">
-        <SectionLabel>Send a team here</SectionLabel>
+        <SectionLabel>Send a fleet here</SectionLabel>
         {kind === 'hunt' && <Badge tone="danger">Combat</Badge>}
       </div>
 
@@ -232,7 +232,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                       )
                     }
                   >
-                    Move team here
+                    Move fleet here
                   </Button>
                 ) : arm === 'docked_here' ? (
                   /* TEAMMOVE-1 — the team already sits docked at THIS port: nothing to do (a send
@@ -258,7 +258,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                       )
                     }
                   >
-                    Send team
+                    Send fleet
                   </Button>
                 ) : (
                   <Button
@@ -274,7 +274,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
               {kind === 'hunt' && members.length > 0 && !allReady && (
                 <p className="mt-1 text-[10px] text-ink-faint">
                   {launchFromDock
-                    ? 'Every ship must be home, or the whole team docked together at one port, to hunt.'
+                    ? 'Every ship must be home, or the whole fleet docked together at one port, to hunt.'
                     : 'Every ship must be home to hunt.'}
                 </p>
               )}
@@ -288,7 +288,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
               )}
               {arm === 'docked_unready' && (
                 <p className="mt-1 text-[10px] text-ink-faint">
-                  Some ships are docked away — gather the team at one port to move it, or bring every
+                  Some ships are docked away — gather the fleet at one port to move it, or bring every
                   ship home to send it.
                 </p>
               )}

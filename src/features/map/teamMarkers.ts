@@ -70,7 +70,7 @@ export function resolveTeamMarkers(
     const name = nameById.get(gid) as string
     out.push({
       groupId: gid,
-      label: list.length > 1 ? `Team ${name} · ${list.length} ships` : `Team ${name}`,
+      label: list.length > 1 ? `Fleet ${name} · ${list.length} ships` : `Fleet ${name}`,
       x: p.x,
       y: p.y,
       fleetCount: list.length,
@@ -93,7 +93,7 @@ export function resolveTeamDockBadges(rollups: readonly DockedTeamRollup[]): Tea
     .filter((r): r is DockedTeamRollup & { locationId: string } => r.locationId !== null && r.memberCount > 0)
     .map((r) => ({
       groupId: r.groupId,
-      label: `Team ${r.name} ${r.dockedCount}/${r.memberCount}`,
+      label: `Fleet ${r.name} ${r.dockedCount}/${r.memberCount}`,
       locationId: r.locationId,
     }))
 }
