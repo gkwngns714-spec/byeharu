@@ -15,7 +15,7 @@ import {
   type TeamRpcResult,
 } from './teamApi'
 import { fleetCommandState, type GroupRow } from './teamRoster'
-import { teamDestinationKind } from './teamDestination'
+import { teamDestinationKind, returnPortOptions } from './teamDestination'
 import { groupSendAvailability } from './teamSend'
 import { groupHuntAvailability } from './teamCombat'
 import { deriveDockedTeamRollups } from './teamRollup'
@@ -58,7 +58,7 @@ import { fetchLaunchFromDockEnabled, fetchFleetControlEnabled } from '../../lib/
 // authoritative.
 
 export function TeamMapSend({ location, onSent }: { location: MapLocation; onSent: () => void }) {
-  const { selection } = useShellState()
+  const { selection, map } = useShellState()
   const [groups, setGroups] = useState<GroupRow[] | null>(null) // null = loading (render nothing yet)
   const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
   const [presentFleets, setPresentFleets] = useState<PresentShipFleetLite[]>([]) // docked-team rollup input
@@ -69,6 +69,9 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
   // armed hunt confirm — carries the location it was armed for (stale-destination disarm by derivation)
   const [confirmHunt, setConfirmHunt] = useState<{ groupId: string; locationId: string } | null>(null)
+  // RETURN-PORT (NO-HOME 0199): the player's chosen dock-after-hunt port, per fleet. Absent → the
+  // launch port default (never FORCED back to origin; the default is a convenience, not a lock).
+  const [returnChoice, setReturnChoice] = useState<Record<string, string>>({})
 
   // ONE membership fetch per open sheet (see module header). Inline .then so setState lands in an
   // async callback, not synchronously in the effect body (react-hooks/set-state-in-effect).
@@ -180,10 +183,16 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
           // → allReady === allHome, so hunts still require every ship home (byte-identical).
           const dockedTogetherId = rollup?.locationId ?? null
           const allReady = allHome || (launchFromDock && members.length > 0 && dockedTogetherId !== null)
-          // NO-HOME: the return port a docked hunt docks at afterward — the port the team launched from
-          // (the picker's natural default; a non-dockable hunt site has no dock of its own). Null when
-          // dark or when the team isn't docked-together → the server defaults it and re-homes as before.
-          const returnLocationId = launchFromDock ? dockedTogetherId : null
+          // RETURN-PORT (NO-HOME 0199): the port a docked hunt docks at afterward. The player PICKS it
+          // (returnChoice) from the dockable ports; absent → the launch port default (dockedTogetherId,
+          // the picker's pre-selected convenience — byte-identical to the prior hard-coded behavior when
+          // untouched). Null when dark or when the team isn't docked-together → the server defaults it and
+          // re-homes exactly as before. The fleet is NEVER forced back to origin — the default is freely
+          // changeable to any dockable port, and the server (0168 + the 0199 reconciler) enforces it.
+          const returnLocationId =
+            launchFromDock && dockedTogetherId !== null
+              ? (returnChoice[g.group_id] ?? dockedTogetherId)
+              : null
           const arm =
             kind === 'expedition'
               ? teamMapSendAction({
@@ -292,14 +301,42 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                     : 'Every ship must be home to hunt.'}
                 </p>
               )}
-              {/* NO-HOME (0199): the return-port picker's minimal form — a docked hunt launches from and
-                  returns to the team's dock. Only shows when the flag is lit AND the team is
-                  docked-together (a launch-from-dock hunt); dark → nothing, byte-identical. */}
-              {kind === 'hunt' && launchFromDock && dockedTogetherId !== null && allReady && (
-                <p className="mt-1 text-[10px] text-ink-faint" data-testid={`team-hunt-return-${g.group_id}`}>
-                  Launches from and docks back at its current port.
-                </p>
-              )}
+              {/* RETURN-PORT (NO-HOME 0199): the fleet chooses where it docks AFTER the hunt — never
+                  forced back to origin. Only meaningful when the flag is lit AND the team is docked-
+                  together (a launch-from-dock hunt), i.e. exactly when the 0199 dock-at-return reconciler
+                  is live; dark → this never renders and the legacy re-home path stands (byte-identical).
+                  Options reuse the send picker's dockable-port list (returnPortOptions); the launch port
+                  is pre-selected as a convenience but freely changeable to any dockable port. */}
+              {kind === 'hunt' &&
+                launchFromDock &&
+                dockedTogetherId !== null &&
+                allReady &&
+                (() => {
+                  const { options } = returnPortOptions(map.locations, dockedTogetherId)
+                  const chosen = returnChoice[g.group_id] ?? dockedTogetherId
+                  return (
+                    <div className="mt-1.5" data-testid={`team-hunt-return-${g.group_id}`}>
+                      <label className="block text-[10px] text-ink-faint" htmlFor={`return-port-${g.group_id}`}>
+                        Dock the fleet after the hunt at
+                      </label>
+                      <select
+                        id={`return-port-${g.group_id}`}
+                        data-testid="fleet-return-port-picker"
+                        value={chosen}
+                        onChange={(e) => setReturnChoice((c) => ({ ...c, [g.group_id]: e.target.value }))}
+                        disabled={busy !== null}
+                        aria-label={`Return port for ${g.name}`}
+                        className="mt-1 rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
+                      >
+                        {options.map((o) => (
+                          <option key={o.id} value={o.id} data-testid={`fleet-return-port-option-${o.id}`}>
+                            {o.id === dockedTogetherId ? `${o.name} (launch port)` : o.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )
+                })()}
               {arm === 'docked_unready' && (
                 <p className="mt-1 text-[10px] text-ink-faint">
                   Some ships are docked away — gather the fleet at one port to move it, or bring every
