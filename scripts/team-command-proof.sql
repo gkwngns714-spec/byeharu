@@ -2128,6 +2128,163 @@ begin
   raise notice 'TEAMCMD_PASS_MOD2 ok: committed module gates dark; 0183 seeds exact (defense 12 / mining 8, 6 recipe rows); exact-price craft spends to 0 with insufficient_items at the boundary + verbatim replay (1 instance); fit lands survival +12 exactly (hull 10 -> 22, the F2 curve moves) and mining_yield +8 exactly, nothing else but slots 1 then 2';
 end $$;
 
+-- ════════ BLOCK MOD22 (MOD2-2, 0202): the Mk-II tier — craft → fit → adapter delta (2 lines) ════════
+-- The 0202 catalog seeds (autocannon_battery_mk2 attack 18 / shield_lattice_mk2 defense 20, BOTH
+-- slot_cost 2, the shared progression pair blueprint_fragment 2 + artifact_core 1 + a line
+-- component) proven end-to-end through the SAME dark pipeline MOD2-1 pinned — no new flag, the
+-- module gates lit in-txn by the MOD2 block above. Two firsts over MOD2-1: (1) a slot_cost-2 module
+-- (the capacity-tradeoff law made real — two of three frigate slots), and (2) the WEAPON slot_type
+-- tradeoff arm end-to-end (attention +4 / speed −0.06 for a slot-2 weapon — the 0115/0198 CASE
+-- MOD2-1's else-0 modules never exercised). Because a slot-2 + slot-2 pair (4) exceeds the 3-slot
+-- starter frigate, EACH Mk-II rides its OWN fresh fixture user (uE shield, uF autocannon) — the
+-- MOD2 fresh-user idiom, one module per ship, so no earlier block's fixture is touched and each fit
+-- stays inside the cap. Ingredients arrive ONLY via the real Reward sole writer reward_grant();
+-- modules only via the real craft_module / fit_module_to_ship RPCs — never a direct table write.
+do $$
+declare r jsonb; s0 jsonb; s1 jsonb; n int;
+  uE uuid; uF uuid; dE uuid; dF uuid; v_mk2s uuid; v_mk2a uuid; ing record;
+  v_base_speed numeric; v_exp_speed numeric;
+begin
+  -- the gates are LIT in-txn by the MOD2 block above (module_crafting/fitting_enabled → true);
+  -- this block depends on that lit state (the craft/fit RPCs run the lit path). Asserted, not
+  -- re-flipped — the committed-dark pin + the flip both live in the MOD2 block (no double-flip).
+  if not public.cfg_bool('module_crafting_enabled') or not public.cfg_bool('module_fitting_enabled') then
+    raise exception 'MOD22 FAIL: module gates are not lit in-txn (the MOD2 block must flip them first)'; end if;
+
+  -- the 0202 catalog seeds, pinned verbatim (shape + stats + slot_cost + full recipes, no strays).
+  select count(*) into n from public.module_types
+    where (id = 'autocannon_battery_mk2' and slot_type = 'weapon'  and slot_cost = 2 and stats_json = '{"attack": 18}'::jsonb)
+       or (id = 'shield_lattice_mk2'     and slot_type = 'defense' and slot_cost = 2 and stats_json = '{"defense": 20}'::jsonb);
+  if n <> 2 then raise exception 'MOD22 FAIL: % of 2 Mk-II module rows carry the exact 0202 seed shape', n; end if;
+  select count(*) into n from public.module_recipe_ingredients
+    where (module_type_id, item_id, qty) in (
+      ('autocannon_battery_mk2', 'blueprint_fragment', 2), ('autocannon_battery_mk2', 'artifact_core', 1), ('autocannon_battery_mk2', 'weapon_parts', 6),
+      ('shield_lattice_mk2', 'blueprint_fragment', 2), ('shield_lattice_mk2', 'artifact_core', 1), ('shield_lattice_mk2', 'repair_parts', 6));
+  if n <> 6 then raise exception 'MOD22 FAIL: % of 6 Mk-II recipe rows carry the exact 0202 seed (module, item, qty)', n; end if;
+  select count(*) into n from public.module_recipe_ingredients where module_type_id in ('autocannon_battery_mk2', 'shield_lattice_mk2');
+  if n <> 6 then raise exception 'MOD22 FAIL: the two Mk-II modules carry % recipe rows (want exactly 6 — no strays)', n; end if;
+
+  -- ── uE: the Mk-II SHIELD (defense 20, slot_cost 2 — the else-0 arm: a CLEAN survival delta) ─────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uE;
+  insert into tcmd values ('uE', uE);
+  r := pg_temp.call_as(uE, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'MOD22 FAIL provision uE: %', r; end if;
+  select main_ship_id into dE from public.main_ship_instances where player_id = uE;
+
+  -- grant EXACTLY the shield-Mk-II recipe via the real Reward sole writer; verify it landed.
+  perform public.reward_grant('combat', gen_random_uuid(), uE, null,
+    '{"items": [{"item_id": "blueprint_fragment", "quantity": 2}, {"item_id": "artifact_core", "quantity": 1}, {"item_id": "repair_parts", "quantity": 6}]}'::jsonb);
+  for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'shield_lattice_mk2' loop
+    if public.inventory_get_balance(uE, ing.item_id) <> ing.qty then
+      raise exception 'MOD22 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uE, ing.item_id), ing.qty; end if;
+  end loop;
+
+  s0 := public.calculate_expedition_stats(uE, dE, '[]'::jsonb, 'none');
+
+  -- CRAFT via the real RPC: exact spend to ZERO, insufficient_items boundary, verbatim replay, 1 mint.
+  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')');
+  if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
+    raise exception 'MOD22 FAIL craft shield: %', r; end if;
+  v_mk2s := (r->>'instance_id')::uuid;
+  for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'shield_lattice_mk2' loop
+    if public.inventory_get_balance(uE, ing.item_id) <> 0 then
+      raise exception 'MOD22 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uE, ing.item_id); end if;
+  end loop;
+  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-2'', ''shield_lattice_mk2'')');
+  if (r->>'code') is distinct from 'insufficient_items' then
+    raise exception 'MOD22 FAIL: second shield craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
+  r := pg_temp.call_as(uE, 'public.craft_module(''mod22-shield-1'', ''shield_lattice_mk2'')');
+  if (r->>'ok')::boolean is not true or (r->>'idempotent_replay')::boolean is not true
+     or (r->>'instance_id')::uuid is distinct from v_mk2s then
+    raise exception 'MOD22 FAIL replay shield: %', r; end if;
+  select count(*) into n from public.module_instances where player_id = uE;
+  if n <> 1 then raise exception 'MOD22 FAIL: % module instance(s) after shield craft+replay (want exactly 1)', n; end if;
+
+  -- FIT → survival = baseline + 20 EXACTLY (the 0202 shield seed); slots 0 → 2 (the slot_cost-2
+  -- capacity spend); NOTHING else moves (defense = the else-0 tradeoff arm — the minus-key pin).
+  r := pg_temp.call_as(uE, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod22-fit-s'')', v_mk2s, dE));
+  if (r->>'ok')::boolean is not true then raise exception 'MOD22 FAIL fit shield: %', r; end if;
+  s1 := public.calculate_expedition_stats(uE, dE, '[]'::jsonb, 'none');
+  if (s1->>'survival')::numeric is distinct from (s0->>'survival')::numeric + 20 then
+    raise exception 'MOD22 FAIL: fitted survival % (want baseline % + the 0202 shield defense 20 exactly)',
+      s1->>'survival', s0->>'survival'; end if;
+  if (s1->>'module_slots_used')::int is distinct from 2 then
+    raise exception 'MOD22 FAIL: module_slots_used % after the Mk-II shield fit (want 2 — slot_cost 2)', s1->>'module_slots_used'; end if;
+  if (s1 - 'survival' - 'module_slots_used') is distinct from (s0 - 'survival' - 'module_slots_used') then
+    raise exception 'MOD22 FAIL: the Mk-II shield moved a non-defense key (defense = the engine/else-0 tradeoff posture): fitted % vs bare %', s1, s0; end if;
+
+  -- ── uF: the Mk-II AUTOCANNON (attack 18, slot_cost 2, 'weapon' — the FULL tradeoff arm) ─────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uF;
+  insert into tcmd values ('uF', uF);
+  r := pg_temp.call_as(uF, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'MOD22 FAIL provision uF: %', r; end if;
+  select main_ship_id into dF from public.main_ship_instances where player_id = uF;
+  select h.base_speed into v_base_speed
+    from public.main_ship_instances i join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
+    where i.main_ship_id = dF;
+
+  perform public.reward_grant('combat', gen_random_uuid(), uF, null,
+    '{"items": [{"item_id": "blueprint_fragment", "quantity": 2}, {"item_id": "artifact_core", "quantity": 1}, {"item_id": "weapon_parts", "quantity": 6}]}'::jsonb);
+  for ing in select item_id, qty from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2' loop
+    if public.inventory_get_balance(uF, ing.item_id) <> ing.qty then
+      raise exception 'MOD22 FAIL: pre-craft balance of % is % (want exactly the recipe qty %)',
+        ing.item_id, public.inventory_get_balance(uF, ing.item_id), ing.qty; end if;
+  end loop;
+
+  s0 := public.calculate_expedition_stats(uF, dF, '[]'::jsonb, 'none');
+  -- the bare-ship speed is un-penalized (a_spd_pen = 0: hull + no modules) — the delta's anchor.
+  if (s0->>'speed')::numeric is distinct from round(greatest(0.2, v_base_speed), 3) then
+    raise exception 'MOD22 FAIL: bare-ship speed % (want the un-penalized hull base_speed % exactly)', s0->>'speed', round(greatest(0.2, v_base_speed), 3); end if;
+
+  r := pg_temp.call_as(uF, 'public.craft_module(''mod22-auto-1'', ''autocannon_battery_mk2'')');
+  if (r->>'ok')::boolean is not true or coalesce((r->>'idempotent_replay')::boolean, false) then
+    raise exception 'MOD22 FAIL craft autocannon: %', r; end if;
+  v_mk2a := (r->>'instance_id')::uuid;
+  for ing in select item_id from public.module_recipe_ingredients where module_type_id = 'autocannon_battery_mk2' loop
+    if public.inventory_get_balance(uF, ing.item_id) <> 0 then
+      raise exception 'MOD22 FAIL: post-craft balance of % is % — the recipe spend did not land the balance at 0 (exact price)',
+        ing.item_id, public.inventory_get_balance(uF, ing.item_id); end if;
+  end loop;
+  r := pg_temp.call_as(uF, 'public.craft_module(''mod22-auto-2'', ''autocannon_battery_mk2'')');
+  if (r->>'code') is distinct from 'insufficient_items' then
+    raise exception 'MOD22 FAIL: second autocannon craft answered % (want insufficient_items — the exact-price boundary)', r; end if;
+
+  -- FIT → the WEAPON tradeoff arm, pinned EXACTLY (the first end-to-end pin of it): combat_power
+  -- = baseline + 18 (the attack seed); pirate_attention = baseline + 4 (weapon 2 × slot_cost 2);
+  -- speed = round(greatest(0.2, base × (1 − 0.03×2)), 3) — the tradeoff really bites; slots 0 → 2;
+  -- and NO OTHER key moves (the minus-key isolation over exactly the four the weapon touches).
+  r := pg_temp.call_as(uF, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod22-fit-a'')', v_mk2a, dF));
+  if (r->>'ok')::boolean is not true then raise exception 'MOD22 FAIL fit autocannon: %', r; end if;
+  s1 := public.calculate_expedition_stats(uF, dF, '[]'::jsonb, 'none');
+  if (s1->>'combat_power')::numeric is distinct from (s0->>'combat_power')::numeric + 18 then
+    raise exception 'MOD22 FAIL: fitted combat_power % (want baseline % + the 0202 autocannon attack 18 exactly)',
+      s1->>'combat_power', s0->>'combat_power'; end if;
+  if (s1->>'pirate_attention')::numeric is distinct from (s0->>'pirate_attention')::numeric + 4 then
+    raise exception 'MOD22 FAIL: fitted pirate_attention % (want baseline % + the weapon tradeoff 2 × slot_cost 2 = 4 exactly)',
+      s1->>'pirate_attention', s0->>'pirate_attention'; end if;
+  v_exp_speed := round(greatest(0.2, v_base_speed * (1 - 0.06)), 3);
+  if (s1->>'speed')::numeric is distinct from v_exp_speed then
+    raise exception 'MOD22 FAIL: fitted speed % (want base %  × (1 − 0.06 slot-2 weapon penalty) = % exactly)',
+      s1->>'speed', v_base_speed, v_exp_speed; end if;
+  if (s1->>'speed')::numeric >= (s0->>'speed')::numeric then
+    raise exception 'MOD22 FAIL: the weapon speed penalty did not bite (fitted % >= bare % — a 0-penalty false-green)', s1->>'speed', s0->>'speed'; end if;
+  if (s1->>'module_slots_used')::int is distinct from 2 then
+    raise exception 'MOD22 FAIL: module_slots_used % after the Mk-II autocannon fit (want 2 — slot_cost 2)', s1->>'module_slots_used'; end if;
+  if (s1 - 'combat_power' - 'pirate_attention' - 'speed' - 'module_slots_used')
+       is distinct from (s0 - 'combat_power' - 'pirate_attention' - 'speed' - 'module_slots_used') then
+    raise exception 'MOD22 FAIL: the Mk-II autocannon moved a key outside {combat_power, pirate_attention, speed, slots}: fitted % vs bare %', s1, s0; end if;
+
+  raise notice 'TEAMCMD_PASS_MOD22 ok: gates lit in-txn; 0202 seeds exact (attack 18 / defense 20, slot_cost 2, 6 recipe rows); BOTH Mk-II exact-price craft spend to 0 with insufficient_items at the boundary; shield fit lands survival +20 exactly (else-0 arm — nothing else but 2 slots); autocannon fit lands combat_power +18 + the weapon tradeoff pirate_attention +4 and speed × 0.94 exactly, nothing else but 2 slots (the first weapon-tradeoff-arm pin)';
+end $$;
+
 -- ════════ BLOCK SHIPYARD0 (SHIPYARD-0, 0185): T1 hull/recipe catalog + the blueprint faucet ════════
 -- Migration 0185 seeded the ship-production foundation DARK: `shipyard_enabled='false'`, the two
 -- T1 hulls (bulk_hauler / strike_corvette — the 0184 Mule/Talon register), their build recipes
