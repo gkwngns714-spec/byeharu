@@ -1,9 +1,12 @@
+import { useMemo, useState } from 'react'
 import { useShellState } from '../../app/shellState'
 import { DockedPortCard } from './DockedPortCard'
 import { HaulBoardPanel } from './HaulBoardPanel'
+import { PortPickerPanel } from './PortPickerPanel'
 import { SalvageMarketPanel } from './SalvageMarketPanel'
 import { ShipyardPanel } from './ShipyardPanel'
 import { StationHangar } from './StationHangar'
+import { derivePortsWithShips, resolveChosenShipId } from './portPicker'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { MarketPanel } from '../map/MarketPanel'
 import { ModulesPanel } from '../modules/ModulesPanel'
@@ -23,8 +26,37 @@ import { EmptyState, Icon, PageHeader, Screen, screenRailClass, screenSplitClass
 
 export function PortScreen() {
   const { map, selection: shipSelection } = useShellState()
-  const lifecycleKey = `${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
-  const dock = useDockServices(lifecycleKey, { mainShipId: map.mainShip?.main_ship_id ?? null })
+
+  // PORT-HUB — the Port tab is a HUB you drive by picking a port where you have docked ships. The ports
+  // are derived from the whole-fleet position projection (get_my_fleet_positions, 0200 — REUSED via
+  // map.fleetPositions; no new fetcher), grouped by port and named from the world map. A ship in transit
+  // or open space is NOT a port entry (honest — you can't act at a port you're not at). This is purely
+  // ADDITIVE: in a dark / pre-flip env fleetPositions is [] (the same data-dark gate as its map layer),
+  // so `ports` is empty, `chosenShipId` falls to null → the RPC's sole-ship shim, and the screen behaves
+  // byte-identically to before the picker existed.
+  const portNames = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const loc of map.locations) m[loc.id] = loc.name
+    return m
+  }, [map.locations])
+  const ports = useMemo(
+    () => derivePortsWithShips(map.fleetPositions, (id) => portNames[id]),
+    [map.fleetPositions, portNames],
+  )
+
+  // The player's explicit pick (null = follow the default). Effective acting ship = the pick if it is
+  // still docked, else the shared selected ship if docked, else the FIRST docked ship (one docked ship →
+  // auto-selected, no forced picking). Null when nothing is docked (→ the sole-ship shim / empty state).
+  const [pickedShipId, setPickedShipId] = useState<string | null>(null)
+  const preferredShipId = pickedShipId ?? shipSelection.selectedShipId ?? map.mainShip?.main_ship_id ?? null
+  const chosenShipId = resolveChosenShipId(ports, preferredShipId)
+
+  // The lifecycle refetch key now leads with the CHOSEN ship: switching the picked port/ship re-reads the
+  // dock context (useDockServices also refetches on its mainShipId dep) and every lifecycleKey-keyed panel
+  // (store, Workshop, salvage, shipyard, invest, haul). The main-ship lifecycle fields ride along so a
+  // status/movement transition still ticks a refetch as before.
+  const lifecycleKey = `${chosenShipId ?? 'none'}|${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
+  const dock = useDockServices(lifecycleKey, { mainShipId: chosenShipId })
   // STATION-STORAGE — the docked port's own hangar (dark by default; server returns empty while the flag is off).
   const store = useDockStore(lifecycleKey)
   // TRADE-UI-1 — selected-ship model for the DARK MarketPanel, now the ONE shell instance (A0 lifted it; Ship
@@ -40,19 +72,24 @@ export function PortScreen() {
   return (
     <Screen wide>
       <PageHeader eyebrow="Ops · Dock" title="Port" subtitle="Dock services & trade" />
+      {/* PORT-HUB — the port picker: pick which of your docked ports to act at. Renders only when you
+          have at least one docked ship; one ship → its port shows here (highlighted), no forced pick.
+          The chosen (port, ship) drives the dock context + every action panel below. */}
+      <PortPickerPanel ports={ports} chosenShipId={chosenShipId} onPick={setPickedShipId} />
       {!isDocked(dock) ? (
-        // Friendly empty state (the server says not docked) — the Port has nothing to offer in space.
+        // Honest empty state: none of your ships are at a port to act from (or the chosen ship isn't
+        // docked). The Port has nothing to offer until a ship is berthed somewhere.
         <EmptyState
           data-testid="port-not-docked"
           className="mx-auto w-full max-w-3xl"
           icon={<Icon name="anchor" size={28} />}
-          title="Not docked"
+          title="No docked ships"
           body={
             <>
-              <p>Dock at a port to access its services.</p>
+              <p>None of your ships are docked at a port right now.</p>
               <p className="mt-2 text-xs text-ink-faint">
-                Pick a port on the <span className="text-ink">Map</span> and travel there — this screen
-                opens up once you're docked.
+                Send a ship to a port on the <span className="text-ink">Map</span> — this screen opens
+                up with its trade, build, and other services once a ship is berthed there.
               </p>
             </>
           }
@@ -89,7 +126,7 @@ export function PortScreen() {
             <SalvageMarketPanel
               lifecycleKey={lifecycleKey}
               locationId={dock.locationId}
-              mainShipId={map.mainShip?.main_ship_id ?? null}
+              mainShipId={chosenShipId}
             />
             {/* SHIPYARD-3 (dark, flag-gated): the hull build order desk — a port SERVICE sibling
                 on the main rail beside the trade family. No read RPC exists for the shipyard
@@ -102,7 +139,7 @@ export function PortScreen() {
             <ShipyardPanel
               lifecycleKey={lifecycleKey}
               locationId={dock.locationId}
-              mainShipId={map.mainShip?.main_ship_id ?? null}
+              mainShipId={chosenShipId}
             />
           </div>
           <div className={screenRailClass('aside')}>
@@ -113,8 +150,8 @@ export function PortScreen() {
                 unless the server lit get_location_development, so production is byte-unchanged. */}
             <InvestmentPanel
               lifecycleKey={lifecycleKey}
-              locationId={map.mainShipPresence?.location_id ?? null}
-              mainShipId={map.mainShip?.main_ship_id ?? null}
+              locationId={dock.locationId}
+              mainShipId={chosenShipId}
             />
             {/* HAUL-3 (dark, server-lit only): the port contract bulletin. Renders null unless the
                 server lit get_port_contracts (haul_contracts_disabled while dark) — production is
@@ -122,7 +159,7 @@ export function PortScreen() {
             <HaulBoardPanel
               lifecycleKey={lifecycleKey}
               locationId={dock.locationId}
-              mainShipId={map.mainShip?.main_ship_id ?? null}
+              mainShipId={chosenShipId}
             />
           </div>
         </div>
