@@ -124,8 +124,39 @@ inactive-fleet disable/hint in `TeamMapSend`). Proof = the `TEAMCMD_PASS_FLEETCT
 FYI of how many existing fleets go inactive at flip time (every command-shipless fleet, since no ship is a
 command ship on deploy); NO client PR needed (runtime-flag-gated). Does NOT touch the adapter
 (`calculate_expedition_stats`) or captains/decks/ShipDossier — reuses `ship_groups` + the group RPCs; the
-whole reshape is ONE additive column + marked hunks. COMMAND-BUFFS (later) may fold command-ship buffs
+whole reshape is ONE additive column + marked hunks. COMMAND-BUFFS (below) folds command-ship buffs
 through the adapter re-create; FLEET-CONTROL deliberately does not.
+
+### FLEET — command buffs: the FINALE of the fleet reshape *(M — SHIPPED dark as mig 0205; the OWNER'S COMMAND-BUFF DESIGN)*
+
+The finale of the fleet reshape, DARK behind a new flag `command_buffs_enabled` (seeded false). Owner's
+words: "each tier will have ~10 buffs, assigned RANDOMLY when bought or manufactured … command ship will
+provide those buffs … a buff slot, activated only when the ship is set on command ship." This maps onto
+SHIP-SOUL almost exactly (no new mechanism): **(1) a CATALOG** — `command_buff_types` (the `ship_trait_types`
+0186 mold: `buff_id` collate-"C" / `tier` / `name` / `description` / `stats_json` in the shared 0180/0198
+adapter vocabulary), organized by ship TIER via the new additive `main_ship_hull_types.tier` column
+(`starter_frigate`=T0; `bulk_hauler`/`strike_corvette`=T1 — the 0185 split), ~10 buffs per tier, themed
+(gunnery→fleet attack, engineering→fleet speed, logistics→fleet cargo, …), EXTENSIBLE (additive
+on-conflict seeds — a later buff never re-derives a rolled ship). **(2) a ROLL** — the ship's BUFF SLOT
+`main_ship_instances.command_buff_id` (nullable FK), rolled DETERMINISTICALLY at commission
+(`hashtextextended('<ship_id>:cmdbuff',0)` → the tier pool's collate-"C" order — the 0186 pure-hash law,
+no RNG) by an AFTER-INSERT trigger (the ROOMS-8 0203 seed-trigger seam — covers every commission path
+WITHOUT re-creating a commission function) + a monotonic backfill; IMMUTABLE once set (NULL-guarded
+write). The roll is ALWAYS-ON additive data — NOT flag-gated; inert until the fold. **(3) the FOLD** —
+`calculate_expedition_stats` re-created from its TRUE head **0198** (NANGUARD; the ONE adapter re-create
+of this program, extract-and-diff pinned — every accumulated 0115/0122/0170/0180/0193/0196/0198 hunk
+byte-identical, only the marked COMMAND-BUFFS hunk differs) with ONE hunk: when `command_buffs_enabled`
+AND the ship is in a fleet (`group_id` not null), fold the fleet's ACTIVE command ship(s)' rolled buff
+`stats_json` FLEET-WIDE into THIS ship's totals (the shared additive 8-key fold; multiple command ships
+sum — backups). DOUBLE-GATED: flag false → the loop is skipped entirely (dark = byte-identical); flag
+true + ungrouped / no command ship → empty loop (byte-identical) — the DECKS-3/level double inertness.
+DEPENDENCY: the fold needs `fleet_control_enabled` too (is_command_ship is only meaningfully set through
+FLEET-CONTROL) — the fold itself gates on `command_buffs_enabled` alone. Client: the ShipDossier gains a
+runtime-flag-gated **Command buff** line (name + effect + "applies to the whole fleet when this ship is
+the command ship") reusing the SOUL-2 trait-display idiom. Proof = the `TEAMCMD_PASS_CMDBUFF` block (dark
+parity + lit fleet-wide fold exactness + no-command-no-buff + the group_id gate). **ACT-COMMAND-BUFFS**
+(`scripts/activate-command-buffs.{sql,sh}`) flips the flag — FLAG-ONLY, with a catalog-freeze +
+buff-slot-coverage precondition and the FLEET-CONTROL dependency; NO client PR needed (runtime-flag-gated).
 
 ### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)*
 

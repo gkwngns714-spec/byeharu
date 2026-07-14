@@ -26,6 +26,8 @@ import {
 } from './shipDossierView'
 import { shipTraitCards } from './shipTraits'
 import { fetchShipSoul, type ShipSoulData } from './soulApi'
+import { shipCommandBuffCard } from './commandBuff'
+import { fetchShipCommandBuff, type ShipCommandBuffData } from './commandBuffApi'
 import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
 import type { ShipLocationResolved } from './shipLocation'
@@ -109,6 +111,9 @@ export function ShipDossier({
   const [statsPreview, setStatsPreview] = useState<unknown>(null)
   // SOUL-2: the ship's rolled traits + catalog (null = dark gate / read error → section hidden).
   const [soul, setSoul] = useState<ShipSoulData | null>(null)
+  // COMMAND-BUFFS (0205): the ship's rolled command buff + catalog (null = dark gate / read error →
+  // line hidden). The buff is dormant until this ship is its fleet's ACTIVE command ship.
+  const [commandBuff, setCommandBuff] = useState<ShipCommandBuffData | null>(null)
 
   // Guards — the shared idiom home. ROOMS-8 makes this panel a (light) command surface too: the
   // room-config picker submits configure_ship_room through runGuardedCommand, so it needs the full
@@ -123,7 +128,7 @@ export function ShipDossier({
     // One batched read wave (the ModulesPanel refresh idiom). The RPC reads carry their own dark
     // envelopes (each section fails closed on !ok); the direct selects are owner-read RLS and
     // collapse to []/null on error inside their wrappers.
-    const [fit, cap, cargo, myShips, preview, decks, rooms, soulData] = await Promise.all([
+    const [fit, cap, cargo, myShips, preview, decks, rooms, soulData, buffData] = await Promise.all([
       getMyShipFittings(),
       getMyCaptainInstances(),
       getShipCargoLots(shipId),
@@ -132,6 +137,7 @@ export function ShipDossier({
       getShipStations(), // DECKS-2/ROOMS-8: the room catalog (public-read; [] on error → list fallback)
       getMyShipRoomSlots(shipId), // ROOMS-8: THIS ship's 8 configurable slots (dark → not-ok → no board)
       fetchShipSoul(shipId), // SOUL-2: gate-first (dark → one config select, ZERO trait reads → null → hidden)
+      fetchShipCommandBuff(shipId), // COMMAND-BUFFS (0205): gate-first (dark → one config select, ZERO buff reads → null → hidden)
     ])
     if (!activeRef.current) return
     setFittings(fit)
@@ -142,6 +148,7 @@ export function ShipDossier({
     setStations(decks)
     setRoomSlotsRes(rooms)
     setSoul(soulData)
+    setCommandBuff(buffData)
   }, [activeRef, shipId]) // activeRef identity is stable — dep satisfies the lint rule
 
   // refreshKey is a deliberate re-fetch trigger (the ModulesPanel lifecycleKey dep idiom).
@@ -194,6 +201,11 @@ export function ShipDossier({
   // rows — lit-with-zero-rows stays hidden (an unrolled pre-ACT-SOUL ship has no soul section
   // yet, not an empty one), and a null soul (dark / read error) renders nothing.
   const traitCards = soul && soul.rows.length > 0 ? shipTraitCards(soul.rows, soul.catalog) : null
+  // COMMAND-BUFFS (0205): the ship's ONE rolled command buff, joined to the catalog (pure; specs in
+  // tests/commandBuff.spec.ts). Non-null ONLY when the gate lit AND the ship carries a buff — an
+  // unrolled ship (buffId null) stays hidden, and a null commandBuff (dark / read error) renders
+  // nothing. The buff is DORMANT: it applies fleet-wide only when this ship is the command ship.
+  const commandBuffCard = commandBuff ? shipCommandBuffCard(commandBuff.buffId, commandBuff.catalog) : null
   // The TeamDossier chip idiom, verbatim classes — ship stats and team stats read as ONE system.
   const chip = (label: string, value: number | string) => (
     <span key={label} className="inline-flex items-baseline gap-1 rounded border border-edge bg-surface px-1.5 py-0.5 text-[10px]">
@@ -325,6 +337,56 @@ export function ShipDossier({
               ),
             )}
           </ul>
+        </>
+      )}
+
+      {/* COMMAND BUFF (COMMAND-BUFFS, 0205) — the ship's ONE rolled command buff (the finale of the
+          owner's fleet reshape: "command ship will provide those buffs … a buff slot"). Server truth
+          only: the stored command_buff_id joined against the public-read catalog — never a client
+          re-derivation of the roll. DORMANT by design: the effect applies FLEET-WIDE only when this
+          ship is set as its fleet's command ship, and only once the owner lights the fold — the copy
+          says so plainly. DARK (command_buffs_enabled false) or any read error / unrolled ship →
+          commandBuffCard null → nothing renders (byte-identical card). */}
+      {commandBuffCard && (
+        <>
+          <SectionLabel className="mt-4">Command buff</SectionLabel>
+          {commandBuffCard.kind === 'buff' ? (
+            <div
+              data-testid="command-buff"
+              data-buff-id={commandBuffCard.buff_id}
+              className="mt-2 rounded-lg border border-edge bg-surface-2/50 px-3 py-2"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate text-sm text-ink">{commandBuffCard.name}</span>
+                <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                  {commandBuffCard.effects.map((e) => (
+                    <span
+                      key={e.label}
+                      className={`font-mono text-[10px] tabular-nums ${
+                        e.tone === 'positive' ? 'text-success' : 'text-danger'
+                      }`}
+                    >
+                      {e.label}
+                    </span>
+                  ))}
+                </span>
+              </div>
+              <p className="mt-0.5 text-[10px] text-ink-faint">{commandBuffCard.description}</p>
+              <p data-testid="command-buff-note" className="mt-1 text-[10px] text-ink-muted">
+                Applies to the whole fleet when this ship is the command ship.
+              </p>
+            </div>
+          ) : (
+            // fail-closed join miss: a stored buff id absent from the catalog read still shows
+            // (server truth never vanishes) — but only as an honest muted line.
+            <div
+              data-testid="command-buff"
+              data-buff-id={commandBuffCard.buff_id}
+              className="mt-2 rounded-lg border border-dashed border-edge px-3 py-2 text-[10px] text-ink-faint"
+            >
+              Unknown command buff
+            </div>
+          )}
         </>
       )}
 

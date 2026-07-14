@@ -4154,6 +4154,167 @@ begin
   raise notice 'TEAMCMD_PASS_NOHOME ok: flag committed dark; DARK a docked ship''s send RAISES home-only (byte-identical witness); LIT a docked ship re-departs its OWN present fleet FROM the port (origin_type=location=Slagworks, not the base), records the return port, and docks at the destination; a docked TEAM hunt launches ONE fleet from the port (member hunting, its docked fleet dissolved, return port recorded); the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home, SPLITTING the shared team fleet back into the member''s OWN tagged present fleet (H1) so the team LAUNCHES AGAIN — a second hunt from the port SUCCEEDS with a fresh sortie (the H1 regression witness); flags restored in-txn';
 end $$;
 
+-- ════════ BLOCK CMDBUFF (COMMAND-BUFFS, 0205): fleet-wide command-buff fold, DARK then in-txn LIT ══
+-- Migration 0205 adds a per-hull command-buff TIER, a command_buff_types catalog (~10 per tier), a
+-- ship BUFF SLOT (main_ship_instances.command_buff_id, rolled deterministically at commission by an
+-- AFTER-INSERT trigger, immutable), and — gated on command_buffs_enabled (seeded false) — folds a
+-- fleet's ACTIVE command ship(s)' rolled buff FLEET-WIDE into every fleet member's totals through the
+-- ONE adapter (calculate_expedition_stats). This block proves both arms on a FRESH fixture user (the
+-- FLEETCTRL/NOHOME idiom), calling the adapter DIRECTLY (service-role, like the TEAMSTATS block) and
+-- deriving the expected delta INDEPENDENTLY from the catalog (the delegation-not-reimplementation
+-- posture — the proof never re-derives WHICH buff rolled; it reads the ship's stored buff and folds
+-- its stats_json itself). team_command_enabled + the commission gates are ON (lines 373-374); this
+-- block flips ONLY command_buffs_enabled (+ fleet_control_enabled for realism), restored + rolled
+-- back regardless.
+do $$
+declare
+  r jsonb; n int;
+  uCB uuid; sA uuid; sB uuid; gCB uuid;
+  v_base numeric;             -- starter_frigate base_speed (for the multiplicative speed fold)
+  v_t0 int;                   -- T0 pool size (the derivation modulus)
+  v_buff_a text; v_buff_b text; v_expect text;
+  abuff jsonb; bbuff jsonb;   -- A's / B's rolled buff stats_json (independent, from the catalog)
+  base_a jsonb; base_b jsonb; lit jsonb;
+begin
+  -- ── (0) structural: command_buffs_enabled committed DARK; the catalog/column/tier deployed ────────
+  if coalesce((select value #>> '{}' from public.game_config where key='command_buffs_enabled'),'false') <> 'false' then
+    raise exception 'CMDBUFF FAIL: command_buffs_enabled is not committed false (dark)'; end if;
+  if to_regprocedure('public.command_buff_roll_for_ship(uuid)') is null then
+    raise exception 'CMDBUFF FAIL: command_buff_roll_for_ship not deployed'; end if;
+  if not exists (select 1 from information_schema.columns
+      where table_schema='public' and table_name='main_ship_instances' and column_name='command_buff_id') then
+    raise exception 'CMDBUFF FAIL: main_ship_instances.command_buff_id missing'; end if;
+  if not exists (select 1 from information_schema.columns
+      where table_schema='public' and table_name='main_ship_hull_types' and column_name='tier') then
+    raise exception 'CMDBUFF FAIL: main_ship_hull_types.tier missing'; end if;
+  select count(*) into v_t0 from public.command_buff_types where tier='T0';
+  if v_t0 < 10 then raise exception 'CMDBUFF FAIL: T0 pool holds % (want >= 10 per tier)', v_t0; end if;
+  select count(*) into n from public.command_buff_types where tier='T1';
+  if n < 10 then raise exception 'CMDBUFF FAIL: T1 pool holds % (want >= 10 per tier)', n; end if;
+  select base_speed into v_base from public.main_ship_hull_types where hull_type_id='starter_frigate';
+  -- the team RPCs (upsert_ship_group / assign_ship_to_group) need the live team gate; the NOHOME block
+  -- above left it committed-false in-txn — re-enable it here (raw update — the gate convention), restored
+  -- below + rolled back regardless (the .sh honesty check re-confirms it committed false post-run).
+  update public.game_config set value='true'::jsonb where key='team_command_enabled';
+
+  -- ── (1) fixture: a fresh user + 2 starter_frigates (T0), both assigned to ONE fleet ───────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uCB;
+  insert into public.player_wallet (player_id, balance) values (uCB, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uCB, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'CMDBUFF FAIL provision first: %', r; end if;
+  r := pg_temp.call_as(uCB, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then
+    raise exception 'CMDBUFF FAIL provision additional: %', r; end if;
+  select (array_agg(main_ship_id order by created_at))[1], (array_agg(main_ship_id order by created_at))[2]
+    into sA, sB from public.main_ship_instances where player_id=uCB;
+  if sA is null or sB is null then raise exception 'CMDBUFF FAIL: expected 2 fixture ships'; end if;
+
+  -- ── (2) the COMMISSION TRIGGER rolled a buff for BOTH ships (always-on additive data) ─────────────
+  select command_buff_id into v_buff_a from public.main_ship_instances where main_ship_id=sA;
+  select command_buff_id into v_buff_b from public.main_ship_instances where main_ship_id=sB;
+  if v_buff_a is null or v_buff_b is null then
+    raise exception 'CMDBUFF FAIL: the AFTER-INSERT commission trigger did not roll a buff for a new ship'; end if;
+  -- both rolls are from the ship's TIER pool (starter_frigate = T0 — a roll never crosses tiers).
+  if (select tier from public.command_buff_types where buff_id=v_buff_a) is distinct from 'T0'
+     or (select tier from public.command_buff_types where buff_id=v_buff_b) is distinct from 'T0' then
+    raise exception 'CMDBUFF FAIL: a rolled buff is not from the ship''s tier pool (T0)'; end if;
+  -- DETERMINISM (the 0186 pure-hash pin): independently RE-DERIVE sA's buff and match the stored roll.
+  select buff_id into v_expect from public.command_buff_types where tier='T0'
+    order by buff_id collate "C"
+    offset (((hashtextextended(sA::text||':cmdbuff',0) % v_t0) + v_t0) % v_t0) limit 1;
+  if v_expect is distinct from v_buff_a then
+    raise exception 'CMDBUFF FAIL: the stored buff is not the deterministic hash derivation (want %, got %)', v_expect, v_buff_a; end if;
+  select stats_json into abuff from public.command_buff_types where buff_id=v_buff_a;
+  select stats_json into bbuff from public.command_buff_types where buff_id=v_buff_b;
+
+  r := pg_temp.call_as(uCB, 'public.upsert_ship_group(1, ''BuffFleet'')'); gCB := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uCB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sA, gCB));
+  if (r->>'ok')::boolean is not true then raise exception 'CMDBUFF FAIL assign A: %', r; end if;
+  r := pg_temp.call_as(uCB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sB, gCB));
+  if (r->>'ok')::boolean is not true then raise exception 'CMDBUFF FAIL assign B: %', r; end if;
+
+  -- ── (3) BASELINE (flag DARK): the bare-ship adapter output for A and B (no modules/captains/traits) ─
+  base_a := public.calculate_expedition_stats(uCB, sA, '[]'::jsonb, 'none');
+  base_b := public.calculate_expedition_stats(uCB, sB, '[]'::jsonb, 'none');
+
+  -- ── (4) DARK PARITY: designate A a command ship WHILE DARK → the buff is INERT (adapter byte-
+  --        identical to the baseline). set_fleet_command_ship is not flag-gated (0204). ──────────────
+  r := pg_temp.call_as(uCB, format('public.set_fleet_command_ship(%L::uuid, true)', sA));
+  if (r->>'ok')::boolean is not true then raise exception 'CMDBUFF FAIL set command (dark): %', r; end if;
+  lit := public.calculate_expedition_stats(uCB, sB, '[]'::jsonb, 'none');
+  if lit is distinct from base_b then
+    raise exception 'CMDBUFF FAIL: a command ship''s buff folded while command_buffs_enabled DARK (want byte-identical to the baseline — the buff must be INERT)'; end if;
+
+  -- ── (5) LIT: flip command_buffs_enabled (+ fleet_control_enabled) via the raw update ──────────────
+  update public.game_config set value='true'::jsonb where key='command_buffs_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_control_enabled';
+
+  -- FLEET-WIDE BUFF-FOLD EXACTNESS: a NON-command member (B) gains the command ship A's buff EXACTLY,
+  -- key by key, and B's OWN rolled buff stays DORMANT (else the delta would double). Independent
+  -- derivation from the catalog (abuff) — the delegation posture.
+  lit := public.calculate_expedition_stats(uCB, sB, '[]'::jsonb, 'none');
+  if (lit->>'combat_power')::numeric is distinct from (base_b->>'combat_power')::numeric + coalesce((abuff->>'attack')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: combat_power did not gain the command buff attack exactly (buff-fold exactness)'; end if;
+  if (lit->>'survival')::numeric is distinct from (base_b->>'survival')::numeric + coalesce((abuff->>'defense')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: survival did not gain the command buff defense exactly'; end if;
+  if (lit->>'repair')::numeric is distinct from (base_b->>'repair')::numeric + coalesce((abuff->>'repair')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: repair did not gain the command buff repair exactly'; end if;
+  if (lit->>'cargo_capacity')::numeric is distinct from (base_b->>'cargo_capacity')::numeric + coalesce((abuff->>'cargo')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: cargo_capacity did not gain the command buff cargo exactly'; end if;
+  if (lit->>'scouting')::numeric is distinct from (base_b->>'scouting')::numeric + coalesce((abuff->>'scan')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: scouting did not gain the command buff scan exactly'; end if;
+  if (lit->>'mining_yield')::numeric is distinct from (base_b->>'mining_yield')::numeric + coalesce((abuff->>'mining')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: mining_yield did not gain the command buff mining exactly'; end if;
+  if (lit->>'retreat_safety')::numeric is distinct from (base_b->>'retreat_safety')::numeric + coalesce((abuff->>'evasion')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: retreat_safety did not gain the command buff evasion exactly'; end if;
+  -- speed: the MULTIPLICATIVE fold on a bare ship — base_speed × (1 + buff speed_mult_bonus), floored 0.2, 3dp.
+  if (lit->>'speed')::numeric is distinct from round(greatest(0.2, v_base * (1 + coalesce((abuff->>'speed_mult_bonus')::numeric,0))), 3) then
+    raise exception 'CMDBUFF FAIL: speed did not gain the command buff speed_mult_bonus exactly'; end if;
+  -- every non-folded key stays byte-identical to the baseline (the slot/limit envelope is untouched).
+  if (lit->>'captain_slots_limit') is distinct from (base_b->>'captain_slots_limit')
+     or (lit->>'pirate_attention')::numeric is distinct from (base_b->>'pirate_attention')::numeric then
+    raise exception 'CMDBUFF FAIL: the fold moved a non-buff key (want only the 8 folded keys to change)'; end if;
+
+  -- FLEET-WIDE includes the COMMAND SHIP ITSELF (it is a member of its own fleet).
+  lit := public.calculate_expedition_stats(uCB, sA, '[]'::jsonb, 'none');
+  if (lit->>'combat_power')::numeric is distinct from (base_a->>'combat_power')::numeric + coalesce((abuff->>'attack')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: the command ship itself did not receive its own fleet-wide buff'; end if;
+
+  -- MULTIPLE command ships (backups) SUM: designate B a command ship too → B now folds A''s AND B''s buff.
+  r := pg_temp.call_as(uCB, format('public.set_fleet_command_ship(%L::uuid, true)', sB));
+  if (r->>'ok')::boolean is not true then raise exception 'CMDBUFF FAIL set command B: %', r; end if;
+  lit := public.calculate_expedition_stats(uCB, sB, '[]'::jsonb, 'none');
+  if (lit->>'combat_power')::numeric is distinct from
+     (base_b->>'combat_power')::numeric + coalesce((abuff->>'attack')::numeric,0) + coalesce((bbuff->>'attack')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: two command ships did not SUM both buffs (backups)'; end if;
+
+  -- ── (6) NO COMMAND SHIP → NO BUFF: stand both down → the fleet is buff-less (byte-identical baseline) ─
+  r := pg_temp.call_as(uCB, format('public.set_fleet_command_ship(%L::uuid, false)', sA));
+  r := pg_temp.call_as(uCB, format('public.set_fleet_command_ship(%L::uuid, false)', sB));
+  lit := public.calculate_expedition_stats(uCB, sB, '[]'::jsonb, 'none');
+  if lit is distinct from base_b then
+    raise exception 'CMDBUFF FAIL: a fleet with ZERO command ships still folded a buff (want no buff — byte-identical to the baseline)'; end if;
+
+  -- ── (7) the group_id GATE: an UNGROUPED ship never folds a fleet buff (re-arm A, ungroup B) ────────
+  r := pg_temp.call_as(uCB, format('public.set_fleet_command_ship(%L::uuid, true)', sA));
+  r := pg_temp.call_as(uCB, format('public.assign_ship_to_group(%L::uuid, null)', sB));
+  lit := public.calculate_expedition_stats(uCB, sB, '[]'::jsonb, 'none');
+  if lit is distinct from base_b then
+    raise exception 'CMDBUFF FAIL: an ungrouped ship folded a fleet buff (the group_id gate breach)'; end if;
+
+  -- restore the flipped gates in-txn via the raw update (ROLLBACK reverts regardless — the .sh honesty
+  -- check re-confirms each committed flag is still false post-run).
+  update public.game_config set value='false'::jsonb where key='command_buffs_enabled';
+  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
+  update public.game_config set value='false'::jsonb where key='team_command_enabled';
+
+  raise notice 'TEAMCMD_PASS_CMDBUFF ok: command_buffs_enabled committed dark; the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
+end $$;
+
 select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed; 0198 NANGUARD: the dead x<>x NaN guards fixed to the working = ''NaN''::double precision idiom at all THREE knob sites (adapter level + affinity, reconciler idle-regen) — a jsonb "NaN" knob floors to 0 so calculate_expedition_stats stays byte-identical to the knob-0 baseline with a finite combat_power and process_mainship_expeditions is a clean no-op (no ceil(NaN)::integer abort), behaviorally inert at seed 0; 0199 NO-HOME: launch-from-dock is committed DARK — a docked ship''s send RAISES home-only while the flag is false (the byte-identical witness); flipped in-txn, a docked ship re-departs its OWN present fleet FROM the docked port (origin_type=location, not the base) recording the return port and docks at the destination, a docked team hunt launches ONE fleet from the port with the return port recorded and its members'' docked fleets dissolved, and the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home; all NO-HOME flags restored in-txn' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
