@@ -101,6 +101,32 @@ second — server rejects are the authority (TEAM_COMMAND checklist).
 Each phase = dark slices, one green adversarially-reviewed PR per slice, flags + compile gates,
 parity-discipline for any live-function re-create, disposable rolled-back proof for DB slices.
 
+### FLEET — the fleet control-model *(S/M — SHIPPED dark as mig 0204; the OWNER'S FLEET-CONTROL RESHAPE)*
+
+After FLEET-RENAME (team→fleet copy) landed, this phase adds the MECHANICS of the owner's control-model,
+DARK behind a new flag `fleet_control_enabled` (seeded false) so the LIVE fleet-command game is
+byte-unchanged until the owner flips it. The three rules: **(1) caps** — max 3 fleets (already:
+`ship_groups` `(player, group_index 1..3)` unique, 0160), **up to 8 ships per fleet** (the new lit-only
+`fleet_full` cap in `assign_ship_to_group`), min 1 (inherent); **(2) a fleet needs ≥1 COMMAND SHIP to be
+active** — the additive per-ship designation `main_ship_instances.is_command_ship` (sole writer
+`set_fleet_command_ship`, owner-scoped, ALWAYS settable [additive data, inert until the flag gates
+movement], setting true requires the ship be in a fleet → `ship_not_in_fleet`; a fleet may carry MULTIPLE
+command ships as backups); **(3) everything moves as a FLEET** — a fleet with zero command ships is
+INACTIVE, so the three LIVE group RPCs (`send_ship_group_expedition` 0187 head, `move_ship_group_to_location`
+0190 head, `send_ship_group_hunt` **0199** head — re-created from their TRUE heads with ONE marked
+flag-gated hunk each) reject `fleet_inactive_no_command` when lit; the client hides the per-ship Move
+affordance (`MainShipCommand`) and routes movement through fleets, guiding a lone ship to "add this ship to a
+fleet to move it". DARK = byte-identical (extract-and-diff pinned; the column is ignored, no client surface).
+Client mirrors are runtime-flag-gated via `strictConfigFlag('fleet_control_enabled')` / `fetchFleetControlEnabled`
+(command-ship toggle + Active/inactive indicator + the 8-cap in the add-ship picker in `TeamRosterPanel`;
+inactive-fleet disable/hint in `TeamMapSend`). Proof = the `TEAMCMD_PASS_FLEETCTRL` block (both arms).
+**ACT-FLEET-CONTROL** (`scripts/activate-fleet-control.{sql,sh}`) flips the flag — FLAG-ONLY, with a smoke
+FYI of how many existing fleets go inactive at flip time (every command-shipless fleet, since no ship is a
+command ship on deploy); NO client PR needed (runtime-flag-gated). Does NOT touch the adapter
+(`calculate_expedition_stats`) or captains/decks/ShipDossier — reuses `ship_groups` + the group RPCs; the
+whole reshape is ONE additive column + marked hunks. COMMAND-BUFFS (later) may fold command-ship buffs
+through the adapter re-create; FLEET-CONTROL deliberately does not.
+
 ### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)*
 
 There is NO home base; ports are the only base; a ship acts from WHEREVER it is docked. The bug: SEND

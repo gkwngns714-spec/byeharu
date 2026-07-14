@@ -25,6 +25,10 @@ const REASON_MESSAGES: Record<string, string> = {
   no_home_base: 'The fleet has no home port to launch from.',
   // preview/totals reads (0165/0166)
   invalid_activity: 'That activity isn’t recognized for fleet orders.',
+  // FLEET-CONTROL (0204): the fleet control-model rejects (movement RPCs + assign cap + command-ship setter)
+  fleet_inactive_no_command: 'This fleet has no command ship — designate one to move, send, or hunt with it.',
+  fleet_full: 'This fleet is full (8 ships max) — remove a ship or use another fleet.',
+  ship_not_in_fleet: 'Add this ship to a fleet before making it a command ship.',
 }
 
 /** A short player-facing message for a server/transport team reason; unknown → generic "Fleet order unavailable." */

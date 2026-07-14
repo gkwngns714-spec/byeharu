@@ -3840,6 +3840,149 @@ begin
   raise notice 'TEAMCMD_PASS_NANGUARD ok: all three knob guards fixed to the working = ''NaN''::double precision idiom and PROVEN non-vacuous — a jsonb "NaN" affinity knob (with a REAL gunnery-matched captain aboard) leaves calculate_expedition_stats byte-identical to the knob-0 baseline with a finite combat_power (never NaN), and a jsonb "NaN" idle-regen knob leaves process_mainship_expeditions a clean no-op (shield stays 3, no ceil(NaN)::integer abort) exactly as knob 0; both knobs restored to ''0'' in-txn (this block would have FAILED before 0198 — NaN would propagate/abort)';
 end $$;
 
+-- ════════ BLOCK FLEETCTRL (FLEET-CONTROL, 0204): command-ship model + 8-ship cap, DARK then in-txn LIT ══
+-- Migration 0204 adds a per-ship command-ship designation (main_ship_instances.is_command_ship; sole
+-- writer set_fleet_command_ship) and gates, on fleet_control_enabled (seeded false): (a) the three group
+-- movement RPCs REJECT a fleet with zero command ships (fleet_inactive_no_command) and (b)
+-- assign_ship_to_group enforces an 8-ship-per-fleet cap (fleet_full). This block proves both arms on a
+-- FRESH fixture user (the NOHOME/MOD2 idiom). team_command_enabled + mainship_send_enabled are ON here
+-- (lines 373/375); this block flips ONLY fleet_control_enabled (raw update — the gate convention),
+-- restored + rolled back regardless. is_command_ship is settable regardless of the flag (additive data),
+-- so the setter is exercised while lit here for a clean before/after.
+do $$
+declare
+  r jsonb; n int; v_cmd boolean; i int;
+  uF uuid; f uuid[]; gCmd uuid; gCap uuid;
+  slag  uuid := (select v from tcmd where k='slag');
+  drift uuid := (select v from tcmd where k='drift');
+  v_hunt uuid;
+begin
+  -- ── (0) structural: fleet_control_enabled committed DARK; the surface deployed ──────────────────────
+  if coalesce((select value #>> '{}' from public.game_config where key='fleet_control_enabled'),'false') <> 'false' then
+    raise exception 'FLEETCTRL FAIL: fleet_control_enabled is not committed false (dark)'; end if;
+  if to_regprocedure('public.set_fleet_command_ship(uuid, boolean)') is null then
+    raise exception 'FLEETCTRL FAIL: set_fleet_command_ship(uuid,boolean) not deployed'; end if;
+  if not exists (select 1 from information_schema.columns
+      where table_schema='public' and table_name='main_ship_instances' and column_name='is_command_ship') then
+    raise exception 'FLEETCTRL FAIL: main_ship_instances.is_command_ship missing'; end if;
+  select id into v_hunt from public.locations where activity_type='hunt_pirates' and status='active'
+    order by coalesce(min_power_required,0) asc limit 1;
+  if v_hunt is null then raise exception 'FLEETCTRL FAIL: no active hunt_pirates location'; end if;
+
+  -- ── (1) fixture: a fresh user + 11 ships, all normalized to legacy home (the TEAMMAP normalization) ──
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uF;
+  insert into public.player_wallet (player_id, balance) values (uF, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uF, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL provision first: %', r; end if;
+  for i in 1..10 loop
+    r := pg_temp.call_as(uF, 'public.commission_additional_main_ship()');
+    if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then
+      raise exception 'FLEETCTRL FAIL provision additional %: %', i, r; end if;
+  end loop;
+  update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
+      current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
+    where player_id=uF and status='present';
+  update public.location_presence set status='completed', updated_at=now()
+    where fleet_id in (select id from public.fleets where player_id=uF and status='destroyed') and status='active';
+  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now()
+    where player_id=uF;
+  select array_agg(main_ship_id order by created_at) into f from public.main_ship_instances where player_id=uF;
+  if array_length(f,1) <> 11 then raise exception 'FLEETCTRL FAIL: expected 11 fixture ships, got %', array_length(f,1); end if;
+
+  r := pg_temp.call_as(uF, 'public.upsert_ship_group(1, ''CmdFleet'')'); gCmd := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uF, 'public.upsert_ship_group(2, ''CapFleet'')'); gCap := (r->>'group_id')::uuid;
+  if gCmd is null or gCap is null then raise exception 'FLEETCTRL FAIL: fleet slots not created'; end if;
+
+  -- ── DARK arm (fleet_control_enabled still false): NO command requirement, NO 8-cap ──────────────────
+  -- D1 no-cap: assign f[3..11] (9 ships) to gCap — the 9th SUCCEEDS (a lit fleet_full check would reject).
+  for i in 3..11 loop
+    r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f[i], gCap));
+    if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL dark assign f[%]: %', i, r; end if;
+  end loop;
+  select count(*) into n from public.main_ship_instances where group_id=gCap;
+  if n <> 9 then raise exception 'FLEETCTRL FAIL: gCap holds % (want 9 — no 8-cap while dark)', n; end if;
+
+  -- D2 no-command-requirement: assign f[1],f[2] to gCmd (NO command ship) and SEND while dark → succeeds;
+  -- fleet_inactive_no_command must NEVER appear while dark (byte-identical to today's group send).
+  r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f[1], gCmd));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL dark assign f1: %', r; end if;
+  r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f[2], gCmd));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL dark assign f2: %', r; end if;
+  r := pg_temp.call_as(uF, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gCmd, slag));
+  if (r->>'reason') is not distinct from 'fleet_inactive_no_command' then
+    raise exception 'FLEETCTRL FAIL: a no-command fleet was blocked while dark (want no command requirement): %', r; end if;
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL: dark no-command send did not succeed: %', r; end if;
+
+  -- ── LIT arm: flip fleet_control_enabled (raw update — the gate convention) ───────────────────────────
+  update public.game_config set value='true'::jsonb where key='fleet_control_enabled';
+
+  -- L1 inactive fleet rejects on ALL THREE movement RPCs (gCap: 9 ships, ZERO command ships). The command
+  -- gate fires BEFORE the destination/readiness reads, so a home-ship send, a non-docked move, and a VALID
+  -- hunt destination all surface fleet_inactive_no_command (never member_not_ready / invalid_location).
+  r := pg_temp.call_as(uF, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gCap, slag));
+  if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL lit send inactive: %', r; end if;
+  r := pg_temp.call_as(uF, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gCap, drift));
+  if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL lit move inactive: %', r; end if;
+  r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gCap, v_hunt));
+  if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL lit hunt inactive: %', r; end if;
+
+  -- L2 activation: designate a command ship (owner-scoped, NOT flag-gated) → the fleet is ACTIVE (the
+  -- fleet_inactive_no_command reject DISAPPEARS) and the designation PERSISTS.
+  r := pg_temp.call_as(uF, format('public.set_fleet_command_ship(%L::uuid, true)', f[5]));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL set command: %', r; end if;
+  select is_command_ship into v_cmd from public.main_ship_instances where main_ship_id=f[5];
+  if v_cmd is not true then raise exception 'FLEETCTRL FAIL: is_command_ship did not persist on the designated ship'; end if;
+  r := pg_temp.call_as(uF, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gCap, slag));
+  if (r->>'reason') is not distinct from 'fleet_inactive_no_command' then
+    raise exception 'FLEETCTRL FAIL: the fleet is still inactive after designating a command ship: %', r; end if;
+
+  -- L3 8-cap: unassign f[10],f[11] (gCap → 7), the 8th assign is OK, the 9th rejects fleet_full and is
+  -- NOT written (the fleet stays at 8). The cap counts members other than the ship being written.
+  r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, null)', f[10]));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL unassign f10: %', r; end if;
+  r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, null)', f[11]));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL unassign f11: %', r; end if;
+  select count(*) into n from public.main_ship_instances where group_id=gCap;
+  if n <> 7 then raise exception 'FLEETCTRL FAIL: gCap not at 7 after unassigns (got %)', n; end if;
+  r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f[10], gCap));  -- the 8th
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL: the 8th member was rejected (want ok): %', r; end if;
+  r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f[11], gCap));  -- the 9th
+  if (r->>'reason') is distinct from 'fleet_full' then raise exception 'FLEETCTRL FAIL: the 9th member was not rejected fleet_full: %', r; end if;
+  select count(*) into n from public.main_ship_instances where group_id=gCap;
+  if n <> 8 then raise exception 'FLEETCTRL FAIL: gCap not held at 8 (the rejected 9th must not have been written): got %', n; end if;
+
+  -- L3.5 per-fleet command-role reset: a command ship's role is CLEARED when it changes fleets (moved or
+  -- unassigned) — command must be re-designated in each fleet. Designate f[3] (a gCap member), then move it
+  -- out (unassign) → is_command_ship is reset to false by the assign write.
+  r := pg_temp.call_as(uF, format('public.set_fleet_command_ship(%L::uuid, true)', f[3]));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL: designate f3 for the reset witness: %', r; end if;
+  select is_command_ship into v_cmd from public.main_ship_instances where main_ship_id=f[3];
+  if v_cmd is not true then raise exception 'FLEETCTRL FAIL: reset witness precondition — f3 not a command ship'; end if;
+  r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, null)', f[3]));
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL: unassign f3 for the reset witness: %', r; end if;
+  select is_command_ship into v_cmd from public.main_ship_instances where main_ship_id=f[3];
+  if v_cmd is not false then raise exception 'FLEETCTRL FAIL: the command role was NOT cleared when the ship changed fleets (per-fleet reset breach)'; end if;
+
+  -- L4 designation guard + clearing: a ship NOT in a fleet cannot be a command ship (f[11] is ungrouped
+  -- after the rejected assign). Clearing is always allowed; clearing gCap's only command ship
+  -- RE-inactivates the fleet (the round-trip witness).
+  r := pg_temp.call_as(uF, format('public.set_fleet_command_ship(%L::uuid, true)', f[11]));
+  if (r->>'reason') is distinct from 'ship_not_in_fleet' then raise exception 'FLEETCTRL FAIL: designating an ungrouped ship was not rejected ship_not_in_fleet: %', r; end if;
+  r := pg_temp.call_as(uF, format('public.set_fleet_command_ship(%L::uuid, false)', f[5]));  -- stand down
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL: clearing a command ship was rejected: %', r; end if;
+  r := pg_temp.call_as(uF, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gCap, slag));
+  if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL: standing down the last command ship did not re-inactivate the fleet: %', r; end if;
+
+  -- restore the flag to the committed dark seed (rolled back regardless — the honesty loop checks it).
+  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
+
+  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: flag committed dark; DARK a zero-command fleet SENDS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on send/move/hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
+end $$;
+
 -- ════════ BLOCK NOHOME (NO-HOME, 0199): launch-from-dock + dock-at-return, DARK then in-txn LIT ════════
 -- Migration 0199 makes send/hunt ACCEPT a docked ship as a launch state IN ADDITION to home (the
 -- 0100/0105/0114/0121 settled-safe rule), launch from the docked port (the 0156 present-fleet origin),

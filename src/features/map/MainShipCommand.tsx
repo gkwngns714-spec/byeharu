@@ -24,12 +24,19 @@ export function MainShipCommand({
   fleet,
   heldFleet,
   onSent,
+  fleetControlEnabled = false,
+  shipInFleet = false,
 }: {
   location: MapLocation
   mainShip: MainShipLite | null
   fleet: MainShipFleet | null
   heldFleet: MainShipFleet | null
   onSent: () => Promise<void>
+  // FLEET-CONTROL (0204): when lit, everything moves as a FLEET — a lone ship can't move from here.
+  // Hide the per-ship Send/Move affordance and route movement through the Fleets screen; a ship not in
+  // a fleet gets guidance to add it first. Dark (default false) → byte-identical to today.
+  fleetControlEnabled?: boolean
+  shipInFleet?: boolean
 }) {
   const [confirming, setConfirming] = useState(false)
   const [sending, setSending] = useState(false)
@@ -113,7 +120,15 @@ export function MainShipCommand({
             </Notice>
           )}
 
-          {isHere ? (
+          {fleetControlEnabled ? (
+            // FLEET-CONTROL (0204): everything moves as a FLEET — the per-ship Send/Move affordance is
+            // hidden and movement is routed through fleets. A ship not in a fleet is told to add it first.
+            <p data-testid="mainship-fleet-guidance" className="mt-3 text-center text-xs text-ink-muted">
+              {shipInFleet
+                ? `Move ${mainShip.name} with its fleet from the Fleets screen.`
+                : 'Add this ship to a fleet to move it.'}
+            </p>
+          ) : isHere ? (
             <p data-testid="mainship-already-here" className="mt-3 text-center text-xs text-ink-muted">
               {mainShip.name} is already here.
             </p>
