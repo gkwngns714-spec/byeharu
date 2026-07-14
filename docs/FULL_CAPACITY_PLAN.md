@@ -48,7 +48,7 @@ initiatives).
 | G5 | **Content ceiling is shallow**: 8 locations total (3 hunts capped at bd 25, 2 safe, 3 ports), 1 hull, 4 modules, 5 captains, 5+5 hidden sites/fields, `min_power_required=0` everywhere | 0002/0066 seeds; packet F3 |
 | G6 | **No progression depth**: captains have no XP (C2 unbuilt), no module tiers, `survival` has only the hull's 10 (no defense module exists — packet F2), commissioning hardcodes `starter_frigate` (0080:57) |
 | G7 | **No live world dynamics**: `world_events` has writers but no producer; world-state pressure doesn't gate anything the player feels; zones don't react to crossings (A8 is a future contract) |
-| G8 | **No repair economy**: `repair_main_ship` is the free/instant safelock (0052) — flagged as temporary (ROADMAP §Repair & Recovery) |
+| G8 | **No repair economy**: `repair_main_ship` is the free/instant safelock (0052) — flagged as temporary (ROADMAP §Repair & Recovery). **ADDRESSED (dark, mig 0201 REPAIR-ECON):** a paid hull-repair economy `repair_ship_hull_at_port` (credits/hp, at-port, DAMAGED-alive ships) now exists behind `repair_economy_enabled=false`; the free destroyed-ship safelock is preserved UNTOUCHED (the seam). Awaits ACT-REPAIR. |
 | G9 | **No onboarding/retention scaffolding**: no first-session guidance, no dailies/contracts, no reveal cadence for the hidden-world pattern (0066 proved reveal works) |
 
 ---
@@ -322,6 +322,35 @@ system). RR-2: recovery redesign per MAINSHIP_TRANSITION §13 (destroyed → rec
 Haven fallback per A7) with the 0052 safelock preserved as the compatibility path until a flagged cutover.
 RR-3: UI. Deps: credits (Rung 3/P3). Guard: one owner — Repair extends Main Ship + Production; the free
 safelock is replaced by a flagged cutover with rollback, never edited in place.
+
+**REPAIR-ECON v1 SHIPPED DARK (mig `0201`, slice-repairecon):** the honest-minimal core of RR-1 + RR-3.
+A NEW paid RPC `repair_ship_hull_at_port(p_main_ship_id, p_repair_hp, p_request_id)` mends a DAMAGED-but-
+alive ship's HULL for credits at a port — reject-before-read, all-or-nothing, idempotent on
+`(main_ship_id, request_id)` via a new `repair_receipts` table (the 0174 salvage_receipts shape). Reject
+order: `not_authenticated → repair_economy_disabled` (gate FIRST) `→ invalid_amount` (integer hp)
+`→ ship_not_found → ship_destroyed` (THE SEAM — see below) `→ not_docked → idempotent_replay →
+nothing_to_repair → repair_misconfigured → insufficient_credits → ok`. Fan-out is downward-only: resolve/
+lock/dock (reused `mainship_resolve_owned_ship` / `mainship_space_lock_context` /
+`mainship_resolve_docked_location`) → `cfg_num` knob → `wallet_debit` (0093, false-if-poor) → its own hp
+heal → its own receipt. Cost model [D owner-tunable]: `total = hp_restored × repair_credits_per_hp`
+(seeded **0.5** → a full 500-hp Frigate rebuild = 250cr = one ship's price; a ~120-hp dent = 60cr = a
+Snare-run salvage); the request is CLAMPED to the actual missing hull (over-request tops up, never
+over-charges). **THE SEAM (the G8 mandate, preserved):** DESTROYED ships (status='destroyed') are
+REJECTED by the paid path and keep the FREE, ungated, instant `repair_main_ship` safelock (0052 head,
+re-created verbatim-else-branch by 0199) — this slice leaves that function UNTOUCHED (a new additive RPC,
+no re-create, no parity risk). **v1 scope (deliberate):** hull only (shield self-regens, 0197 — paying to
+top a self-refilling bar is a non-feature), credits only, INSTANT at-port. FULL_CAPACITY_PLAN RR-1's
+richer model (repair_parts materials + M4.5-queue duration) and MAINSHIP_TRANSITION §13's open
+cost/duration questions are the documented FOLLOW-UP behind the SAME flag ([D] `repair_parts_per_hp` /
+`repair_seconds_per_hp`) — a re-create of THIS new RPC, never the live safelock. Client: `RepairPanel`
+(dark, on the Port main rail — the SalvageMarketPanel dark-panel mold: strict `strictConfigFlag` fold
+read FIRST, sticky-lit, server-receipted cost, advise-on-shortfall; a destroyed ship shows the
+free-recovery note, never a paid button; renders nothing while dark). Proof: standalone
+`scripts/repair-econ-proof.{sql,sh}` + `.github/workflows/repair-econ-proof.yml` (REPAIR_PASS_* markers:
+dark gate, 0.5 knob, full mend exact-debit + receipt, partial mend, replay idempotency, guards,
+destroyed-safelock seam free + intact). **ACT-REPAIR** ready: `scripts/activate-repair-econ.{sql,sh}`
+(flips `repair_economy_enabled`; preconditions pin the paid-RPC gate/seam bodies AND that
+`repair_main_ship` stays ungated). AWAITS the owner's flip.
 
 ### P10 — ONBOARD: first-session experience *(S, frontend-heavy)*
 OB-1: a client-side "First Orders" checklist derived from server state (dock → hunt Snare → craft

@@ -5,6 +5,71 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-14 — REPAIR-ECON: paid hull-repair economy (mig 0201, DARK behind `repair_economy_enabled`)
+
+**Request (FULL_CAPACITY_PLAN §C P9 / gap G8).** Ships come home DAMAGED (not deleted); repair is the
+recovery loop. Today `repair_main_ship` (0052 head, re-created verbatim-else-branch by 0199) is the
+FREE, INSTANT safelock — it only recovers a `destroyed` ship (restores full hp + re-homes/docks), the
+temporary no-progress-loss guarantee. G8: the ECONOMY is what's missing, not that destroyed-recovery
+should cost. Build the paid repair as a real economy, DARK behind a new flag, WITHOUT breaking the
+safelock.
+
+**Design (built exactly).**
+- **A NEW additive RPC, not a re-create of the safelock.** `repair_ship_hull_at_port(p_main_ship_id,
+  p_repair_hp, p_request_id)` mends a DAMAGED-but-alive ship's HULL for credits at a port. The live
+  `repair_main_ship` / `dev_set_main_ship_destroyed` are UNTOUCHED (not in the diff) — zero parity risk.
+- **THE SEAM (the G8 mandate).** DESTROYED ships (`status='destroyed'`) are REJECTED by the paid path
+  (`ship_destroyed`) and keep the FREE, ungated, instant `repair_main_ship` safelock. The two recovery
+  paths never overlap: destroyed → free safelock (unchanged); damaged-alive → new paid repair.
+- **Reject-before-read, all-or-nothing, idempotent** (the 0174 salvage mold): `not_authenticated →
+  repair_economy_disabled` (gate FIRST) `→ invalid_amount` (integer hp — null/≤0/fractional/>1e6)
+  `→ ship_not_found → ship_destroyed → not_docked → idempotent_replay → nothing_to_repair →
+  repair_misconfigured → insufficient_credits → ok`. Fan-out downward only: reused
+  `mainship_resolve_owned_ship` (ownership) / `mainship_space_lock_context` (per-ship lock) /
+  `mainship_resolve_docked_location` (the settled-safe dock rule) → `cfg_num` knob → `wallet_debit`
+  (0093, false-if-poor) → its own hp heal → its own `repair_receipts` (new table, the salvage_receipts
+  shape: unique (main_ship_id, request_id), owner-read via the ship). The request is CLAMPED to the
+  actual missing hull (over-request tops up to max_hp, never over-charges).
+- **Cost model [D owner-tunable].** `total = hp_restored × repair_credits_per_hp`, seeded conservatively
+  **0.5**: a full 500-hp Frigate rebuild = 250 cr (one ship's price); a ~120-hp combat dent = 60 cr (a
+  Snare-run's salvage, the 0174 30..80 band). A retune is a one-row `set_game_config` write, no deploy.
+- **v1 scope (deliberate — the honest-minimal slice).** HULL only (shield SELF-REGENS, 0197 — paying to
+  top a self-refilling bar is a non-feature); CREDITS only; INSTANT at-port. FULL_CAPACITY_PLAN RR-1's
+  richer model (repair_parts materials + M4.5-queue duration) and MAINSHIP_TRANSITION §13's open
+  cost/duration questions are the documented FOLLOW-UP behind the SAME flag ([D] `repair_parts_per_hp` /
+  `repair_seconds_per_hp`) — a re-create of THIS new RPC, never the live safelock. (ROADMAP's Repair &
+  Recovery section points to §13's cost/duration as OPEN design; the directive's steer was v1 = simplest
+  honest, so instant + credits-only, divergence documented.)
+
+**Client (dark, the SalvageMarketPanel mold).** `RepairPanel` on the Port main rail: strict
+`strictConfigFlag` fold of `repair_economy_enabled` read FIRST from public game_config (renders NOTHING
+while dark → production byte-unchanged), sticky-lit, an owner-read of the chosen ship's hull (Meter bar),
+a whole-hp stepper (default = full mend) + `Full` button, server-priced cost, ONE Repair (server-
+receipted, advise-on-shortfall). A DESTROYED ship shows the free-recovery note here, never a paid button.
+Pure mirror `repairEconomy.ts` (reuses `strictConfigFlag` + salvage's `foldStartingCredits` /
+`salvageStickyLit` / `salvageWalletDisplay`), `repairApi.ts`, `repairReasonMessage.ts`.
+
+**Proof.** Standalone `scripts/repair-econ-proof.{sql,sh}` + `.github/workflows/repair-econ-proof.yml`
+(NOT team-command-proof — a parallel MOD2-2 slice owns that block), reusing `scripts/lib/trade-proof-lib.sh`.
+REPAIR_PASS_* markers: dark gate (no oracle) · 0.5 knob seed · full mend (120 hp → clamp → restore 120,
+debit 60 exact, hull→max, 1 receipt) · partial mend (40 of 100 → 20 cr) · replay idempotency (no double
+debit/heal/receipt) · guards (invalid_amount 0/-3/2.5, cross-player ship_not_found, full-hull
+nothing_to_repair, in-transit not_docked, broke insufficient_credits — all zero-write) · THE SAFELOCK
+SEAM (destroyed rejected by the paid path + recovered FREE by `repair_main_ship` even with the economy
+flag LIT). Selftest green; 3 mutation guttings fail-then-restore.
+
+**ACT-REPAIR.** `scripts/activate-repair-econ.{sql,sh}` (the activate idiom): one timed UTC BEGIN..COMMIT
+flipping `repair_economy_enabled`; preconditions pin the paid-RPC gate/seam bodies AND that
+`repair_main_ship` stays UNGATED + destroyed-only (the free path is unaffected by the flip); a zero-write
+gate-open smoke under a fake JWT. Awaits the owner's flip.
+
+**Verify.** `repair-econ-proof.sh selftest` + `activate-repair-econ.sh selftest` green; 3 guttings caught;
+`tsc -b` + `vite build` green (RepairPanel mounts on the Port screen); full pure battery (637 specs,
+galaxy.spec.ts excluded) green incl. 21 new repair specs; eslint clean on touched files. **Migration
+0201; DARK; deploy-inert; UNCOMMITTED.**
+
+---
+
 ## 2026-07-13 — NO-HOME: launch-from-dock + dock-at-return (mig 0199, DARK behind `launch_from_dock_enabled`)
 
 **Request (owner's absolute law).** There is NO home base; ports are the only base; a ship acts from
