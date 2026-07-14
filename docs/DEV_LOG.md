@@ -5,6 +5,59 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-15 — CRON-GUARD: per-row exception isolation for the two hottest legacy crons (mig 0206, pure hardening, NO flag)
+
+**Request (audit).** The 7-agent audit flagged a latent global-wedge landmine: the two hottest legacy
+crons — `process_fleet_movements` (30s) and `process_combat_ticks` (3s) — process all their rows in ONE
+transaction with NO per-row exception isolation. A single failing row aborts the WHOLE cron run and
+re-raises every tick FOREVER, for EVERY player. Reachable today: a movement whose target location has an
+allowed-but-undispatched `activity_type` (e.g. `mine_resource` — in the 0002 CHECK domain, but
+`activity_start` 0018 raises `'unknown activity'`) wedges every player's arrivals every 30s; any composed
+writer raise inside the tick body wedges every player's combat every 3s.
+
+**Fix — the house pattern, already proven.** `process_build_queue` (mig 0194, the EV-1 0182 / SHIPYARD-2
+precedent) already wraps each order's completion in its OWN `begin/exception` subtransaction. This slice
+applies that same per-row guard to the two unguarded crons: each per-row body (per-movement in
+`process_fleet_movements`, per-encounter in `process_combat_ticks`) now runs in its own subtransaction —
+on a row raise it logs a WARNING (row id + `sqlerrm`), rolls that row back to its pre-iteration state,
+and CONTINUES to the next row; `query_canceled` is RE-RAISED (never swallow a statement-timeout cancel —
+the 0194/0182 posture). `v_count` sits inside the guard, so a failed row is UNCOUNTED.
+
+**Parity discipline (ABSOLUTE — LIVE hot crons).** Each function was re-created from its grep-verified
+TRUE head (`process_fleet_movements` ← 0151, `process_combat_ticks` ← 0195 SHIELD-1) with ONE marked
+`CRON-GUARD (0206)` hunk — the begin/exception wrapper. Extract-and-diff verified: after removing the
+added wrapper lines the body is BYTE-IDENTICAL to its head (empty diff). Every accumulated hunk survives —
+combat keeps the SHIELD-1 regen/absorb/pool/gated-leaf + hp sync, the hull-only integrity + both defeat
+predicates, the D1 legacy-key idiom, the whole reward pipeline. On the SUCCESS path a subtransaction around
+a non-erroring body is transparent → behavior byte-identical to today (the existing TEAMSETTLE /
+COMBATPARITY / TEAMHUNT settle/tick proofs run their exacts against these re-created bodies and stay
+green). The change manifests ONLY on the error path, where skip+log+continue is strictly safer than
+aborting the whole cron for everyone.
+
+**No flag — pure hardening, deploy-safe** (byte-identical on the normal path; strictly-safer on the error
+path). No gate, no data flip, no schedule change. Server-only — zero `src/` changes.
+
+**Trade-off (documented; matches 0194 exactly).** A persistently-failing row is left in its pre-iteration
+state and retries every tick — it can spin forever — but it NO LONGER WEDGES OTHERS. Advancing a poison
+row to a terminal state to stop the retry (and the audit's G3 legacy arrival status re-check) are SEPARATE
+behavior changes — deliberately out of scope, named follow-ups.
+
+**Proof.** `scripts/team-command-proof.{sql,sh}` extended with `TEAMCMD_PASS_CRONGUARD` (the 30th marker):
+on a FRESH fixture user per arm, a POISONED row (a `mine_resource`-repointed movement whose settle raises;
+a `ship_hp`-0 unit forcing the tick's `ceil(hp/ship_hp)` to divide by zero) does NOT wedge the run — a
+SECOND HEALTHY row in the SAME run still processes, the poison is logged+skipped (left in place, UNCOUNTED,
+never silently completed), and un-poisoning self-heals it next run (the SHIPYARD-2 DELIVERY_GUARD shape).
+Selftest green + 3 mutation guttings (the two anti-wedge asserts + the not-silently-completed assert)
+fail-then-restore. The migration's own self-asserts pin the guard shape, the loop-body wrap (token order),
+byte-parity of both bodies, every surviving hunk, determinism, and the closed client ACL.
+
+**Open follow-ups**
+- (follow-up, separate behavior change) G3: the legacy arrival status re-check.
+- (follow-up, separate behavior change) advance a persistently-failing cron row to a terminal state to
+  stop the infinite per-tick retry (a poison row currently spins forever, but no longer wedges others).
+
+---
+
 ## 2026-07-15 — COMMAND-BUFFS: the FINALE of the fleet reshape — fleet-wide command buffs (mig 0205, DARK behind `command_buffs_enabled`)
 
 **Request (owner).** "Each tier will have ~10 buffs, assigned RANDOMLY when bought or manufactured. More

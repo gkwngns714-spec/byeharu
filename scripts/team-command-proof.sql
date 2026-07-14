@@ -4315,6 +4315,171 @@ begin
   raise notice 'TEAMCMD_PASS_CMDBUFF ok: command_buffs_enabled committed dark; the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed; 0198 NANGUARD: the dead x<>x NaN guards fixed to the working = ''NaN''::double precision idiom at all THREE knob sites (adapter level + affinity, reconciler idle-regen) — a jsonb "NaN" knob floors to 0 so calculate_expedition_stats stays byte-identical to the knob-0 baseline with a finite combat_power and process_mainship_expeditions is a clean no-op (no ceil(NaN)::integer abort), behaviorally inert at seed 0; 0199 NO-HOME: launch-from-dock is committed DARK — a docked ship''s send RAISES home-only while the flag is false (the byte-identical witness); flipped in-txn, a docked ship re-departs its OWN present fleet FROM the docked port (origin_type=location, not the base) recording the return port and docks at the destination, a docked team hunt launches ONE fleet from the port with the return port recorded and its members'' docked fleets dissolved, and the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home; all NO-HOME flags restored in-txn' as result;
+-- ════════ BLOCK CRONGUARD (CRON-GUARD, 0206): per-row exception isolation for the two hottest ═════
+-- legacy crons — the POISON-ROW proof. process_fleet_movements (30s) and process_combat_ticks (3s)
+-- run all their rows in ONE txn; before 0206 a single raising row aborted the WHOLE run and re-raised
+-- every tick forever for ALL players. 0206 wraps each per-row body in its OWN begin/exception
+-- subtransaction (the 0194 per-order guard, mirrored). This block proves — on a FRESH fixture user
+-- per arm (the FLEETCTRL/NOHOME/CMDBUFF idiom) — that a POISONED row engineered to raise inside the
+-- loop does NOT wedge the run: a SECOND HEALTHY row in the SAME run still processes, the poisoned row
+-- is logged+SKIPPED (left in its pre-iteration state to retry, NEVER silently completed) and is
+-- UNCOUNTED, and after the poison is removed the next run self-heals it (the SHIPYARD-2 DELIVERY_GUARD
+-- proof shape). The success path is unchanged — the whole proof above (TEAMSETTLE / COMBATPARITY /
+-- TEAMHUNT settle/tick pins) ran its exacts against THESE re-created bodies and stayed green: that
+-- green IS the success-path byte-parity witness; this block adds the ERROR-path arm each cron lacked.
+do $$
+declare
+  r jsonb; n int; v_done int;
+  slag uuid := (select v from tcmd where k='slag');
+  -- movements arm
+  uMV uuid; v_baseMV uuid; v_zone uuid; v_mine uuid;
+  v_fh uuid; v_mvh uuid;      -- healthy fleet + movement
+  v_fp uuid; v_mvp uuid;      -- poison  fleet + movement
+  -- combat arm
+  uCC uuid; v_baseCC uuid; v_hunt uuid;
+  v_fhc uuid; v_mvhc uuid; v_fpc uuid; v_mvpc uuid;
+  v_ench uuid; v_encp uuid; v_tp0 integer;
+begin
+  -- ══════════════ ARM A — process_fleet_movements (30s): a poisoned movement must not wedge ═══════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uMV;
+  perform set_config('request.jwt.claims', json_build_object('sub', uMV::text, 'role','authenticated')::text, true);
+  perform public.bootstrap_me();
+  select id into v_baseMV from public.bases where player_id=uMV order by created_at limit 1;
+  if v_baseMV is null then raise exception 'CRONGUARD FAIL: bootstrap_me made no base for uMV'; end if;
+
+  -- DRAIN the world's currently-due movements (process_fleet_movements is a GLOBAL cron; now() is
+  -- txn-constant so nothing new becomes due afterward) — so the count below reflects ONLY our 2 rows.
+  perform public.process_fleet_movements();
+
+  -- two HEALTHY sends to Slagworks (activity 'none') → two due-able 'moving' movements.
+  r := pg_temp.call_as(uMV, format('public.send_fleet_to_location(%L::uuid, %L::uuid, %L::jsonb)',
+        v_baseMV, slag, '[{"unit_type_id":"scout","quantity":5}]'::jsonb));
+  v_fh := (r->>'fleet_id')::uuid; v_mvh := (r->>'movement_id')::uuid;
+  if v_fh is null then raise exception 'CRONGUARD FAIL healthy send: %', r; end if;
+  r := pg_temp.call_as(uMV, format('public.send_fleet_to_location(%L::uuid, %L::uuid, %L::jsonb)',
+        v_baseMV, slag, '[{"unit_type_id":"scout","quantity":5}]'::jsonb));
+  v_fp := (r->>'fleet_id')::uuid; v_mvp := (r->>'movement_id')::uuid;
+  if v_fp is null then raise exception 'CRONGUARD FAIL poison send: %', r; end if;
+
+  -- make both due (rewind the clock; depart_at rewound too so arrive_at > depart_at stays satisfied).
+  update public.fleet_movements set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+    where id in (v_mvh, v_mvp);
+
+  -- POISON the second movement (the EXACT audit bug): a fixture location whose activity_type is an
+  -- allowed-but-undispatched value (mine_resource — in the 0002 CHECK domain, but activity_start 0018
+  -- raises 'unknown activity' for it). Repoint the poison movement at it so its settle raises INSIDE
+  -- the cron loop (presence_create → activity_start → raise).
+  insert into public.locations (zone_id, name, location_type, x, y, activity_type, status)
+    select zone_id, 'CronGuard Mine '||substr(gen_random_uuid()::text,1,8), location_type, x+1, y+1, 'mine_resource', 'active'
+      from public.locations where id = slag
+    returning id into v_mine;
+  update public.fleet_movements set target_location_id = v_mine where id = v_mvp;
+
+  -- RUN the cron. Before 0206 the poison raise aborts the WHOLE run and the healthy movement NEVER
+  -- settles (and the txn aborts); with the CRON-GUARD the poison is caught+skipped and the healthy
+  -- movement settles in the SAME run.
+  select public.process_fleet_movements() into v_done;
+  if v_done <> 1 then
+    raise exception 'CRONGUARD FAIL: expected exactly 1 settled movement (the healthy one; the poison must be uncounted), got %', v_done;
+  end if;
+  -- the HEALTHY movement settled (the anti-wedge crown jewel: a second healthy row in the SAME run processed).
+  if not exists (select 1 from public.fleet_movements where id=v_mvh and status='arrived') then
+    raise exception 'CRONGUARD FAIL: the poison movement wedged the healthy movement (cron wedge — the healthy row did not settle)';
+  end if;
+  -- the POISON movement is logged+SKIPPED — left 'moving' (pre-iteration state), NOT silently completed.
+  if not exists (select 1 from public.fleet_movements where id=v_mvp and status='moving') then
+    raise exception 'CRONGUARD FAIL: the poison movement did not stay moving for retry (skip semantics breach)';
+  end if;
+  if exists (select 1 from public.fleet_movements where id=v_mvp and status='arrived') then
+    raise exception 'CRONGUARD FAIL: the poison movement was SILENTLY COMPLETED (arrived) instead of logged+skipped';
+  end if;
+
+  -- SELF-HEALING (the DELIVERY_GUARD shape): un-poison → the next run settles the once-poisoned movement.
+  update public.locations set activity_type='none' where id=v_mine;
+  select public.process_fleet_movements() into v_done;
+  if v_done <> 1 then raise exception 'CRONGUARD FAIL: the restored movement retry did not settle exactly 1, got %', v_done; end if;
+  if not exists (select 1 from public.fleet_movements where id=v_mvp and status='arrived') then
+    raise exception 'CRONGUARD FAIL: the restored retry did not settle the once-poisoned movement (self-heal)';
+  end if;
+
+  -- ══════════════ ARM B — process_combat_ticks (3s): a poisoned encounter must not wedge ═════════
+  perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);  -- deterministic tick (knob; rolled back)
+
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uCC;
+  perform set_config('request.jwt.claims', json_build_object('sub', uCC::text, 'role','authenticated')::text, true);
+  perform public.bootstrap_me();
+  select id into v_baseCC from public.bases where player_id=uCC order by created_at limit 1;
+
+  -- lowest-gate active hunt location; drop its power gate to 0 so a small fleet qualifies (a sanctioned
+  -- in-txn locations fixture, rolled back — the COMBATPARITY config idiom).
+  select id into v_hunt from public.locations where activity_type='hunt_pirates' and status='active'
+    order by min_power_required asc, base_difficulty asc limit 1;
+  if v_hunt is null then raise exception 'CRONGUARD FAIL: no active hunt_pirates location'; end if;
+  update public.locations set min_power_required = 0 where id = v_hunt;
+
+  -- DRAIN currently-due encounters (global cron) so the tick count reflects ONLY our two.
+  perform public.process_combat_ticks();
+
+  -- TWO real hunt fleets → settle arrivals → TWO active encounters (the COMBATPARITY chain).
+  r := pg_temp.call_as(uCC, format('public.send_fleet_to_location(%L::uuid, %L::uuid, %L::jsonb)',
+        v_baseCC, v_hunt, '[{"unit_type_id":"scout","quantity":40}]'::jsonb));
+  v_fhc := (r->>'fleet_id')::uuid; v_mvhc := (r->>'movement_id')::uuid;
+  if v_fhc is null then raise exception 'CRONGUARD FAIL hunt send healthy: %', r; end if;
+  r := pg_temp.call_as(uCC, format('public.send_fleet_to_location(%L::uuid, %L::uuid, %L::jsonb)',
+        v_baseCC, v_hunt, '[{"unit_type_id":"scout","quantity":40}]'::jsonb));
+  v_fpc := (r->>'fleet_id')::uuid; v_mvpc := (r->>'movement_id')::uuid;
+  if v_fpc is null then raise exception 'CRONGUARD FAIL hunt send poison: %', r; end if;
+
+  update public.fleet_movements set depart_at = now()-interval '2 minutes', arrive_at = now()-interval '1 minute'
+    where id in (v_mvhc, v_mvpc);
+  if (public.movement_settle_arrival(v_mvhc)->>'settled')::boolean is not true then raise exception 'CRONGUARD FAIL settle healthy encounter'; end if;
+  if (public.movement_settle_arrival(v_mvpc)->>'settled')::boolean is not true then raise exception 'CRONGUARD FAIL settle poison encounter'; end if;
+  select id into v_ench from public.combat_encounters where fleet_id=v_fhc and status='active';
+  select id into v_encp from public.combat_encounters where fleet_id=v_fpc and status='active';
+  if v_ench is null or v_encp is null then raise exception 'CRONGUARD FAIL: expected two active encounters'; end if;
+
+  -- POISON the second encounter: a degenerate combat_units row (ship_hp 0 with alive_count>0) makes
+  -- the tick's per-unit ceil(hp/ship_hp) divide by zero — a raise INSIDE the per-encounter body (the
+  -- class the guard confines). hp_current stays > 0 so the row is not defeated before the divide.
+  update public.combat_units set ship_hp = 0 where encounter_id = v_encp;
+  select tick_number into v_tp0 from public.combat_encounters where id=v_encp;
+
+  -- make both due and run the tick.
+  update public.combat_encounters set last_resolved_at = now()-interval '1 minute' where id in (v_ench, v_encp);
+  select public.process_combat_ticks() into v_done;
+  if v_done <> 1 then
+    raise exception 'CRONGUARD FAIL: expected exactly 1 ticked encounter (the healthy; the poison must be uncounted), got %', v_done;
+  end if;
+  -- the HEALTHY encounter ticked (the anti-wedge crown jewel: a second encounter in the SAME tick processed).
+  if not exists (select 1 from public.combat_encounters where id=v_ench and tick_number > 0) then
+    raise exception 'CRONGUARD FAIL: the poison encounter wedged the healthy encounter (the healthy tick did not run)';
+  end if;
+  -- the POISON encounter is skipped — rolled back to pre-tick (tick_number unchanged), still active.
+  if exists (select 1 from public.combat_encounters where id=v_encp and tick_number <> v_tp0) then
+    raise exception 'CRONGUARD FAIL: the poison encounter advanced despite raising (guard leaked partial writes)';
+  end if;
+  if not exists (select 1 from public.combat_encounters where id=v_encp and status='active') then
+    raise exception 'CRONGUARD FAIL: the poison encounter did not stay active for retry';
+  end if;
+
+  -- SELF-HEALING: un-poison → the next tick advances the once-poisoned encounter.
+  update public.combat_units set ship_hp = 1 where encounter_id = v_encp;
+  update public.combat_encounters set last_resolved_at = now()-interval '1 minute' where id = v_encp;
+  select public.process_combat_ticks() into v_done;
+  if v_done <> 1 then raise exception 'CRONGUARD FAIL: the restored combat retry did not tick exactly 1, got %', v_done; end if;
+  if not exists (select 1 from public.combat_encounters where id=v_encp and tick_number > v_tp0) then
+    raise exception 'CRONGUARD FAIL: the restored retry did not advance the once-poisoned encounter (self-heal)';
+  end if;
+
+  raise notice 'TEAMCMD_PASS_CRONGUARD ok: both hot legacy crons per-row-isolated (the 0194 per-order guard, mirrored). MOVEMENTS — a poison movement (repointed at a mine_resource location so settle raises via activity_start ''unknown activity'') did NOT wedge the run: a second HEALTHY movement in the SAME run settled (arrived), the poison stayed ''moving'' (logged+skipped, NEVER silently completed) and was UNCOUNTED (exactly 1 settled), and un-poisoning self-healed it next run. COMBAT — a poison encounter (a ship_hp-0 unit forcing the tick''s ceil(hp/ship_hp) to divide by zero) did NOT wedge the tick: a second HEALTHY encounter ticked in the SAME run, the poison rolled back to its pre-tick state (tick_number unchanged, still active) and was UNCOUNTED, and un-poisoning self-healed it next tick. The success path is byte-identical — the whole proof above ran its exacts against these re-created bodies and stayed green';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed; 0198 NANGUARD: the dead x<>x NaN guards fixed to the working = ''NaN''::double precision idiom at all THREE knob sites (adapter level + affinity, reconciler idle-regen) — a jsonb "NaN" knob floors to 0 so calculate_expedition_stats stays byte-identical to the knob-0 baseline with a finite combat_power and process_mainship_expeditions is a clean no-op (no ceil(NaN)::integer abort), behaviorally inert at seed 0; 0199 NO-HOME: launch-from-dock is committed DARK — a docked ship''s send RAISES home-only while the flag is false (the byte-identical witness); flipped in-txn, a docked ship re-departs its OWN present fleet FROM the docked port (origin_type=location, not the base) recording the return port and docks at the destination, a docked team hunt launches ONE fleet from the port with the return port recorded and its members'' docked fleets dissolved, and the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home; all NO-HOME flags restored in-txn; 0206 CRON-GUARD: the two hottest legacy crons (process_fleet_movements 30s / process_combat_ticks 3s) are per-row-isolated (the 0194 per-order begin/exception guard, mirrored) — a poisoned row (a mine_resource-repointed movement whose settle raises via activity_start, or a ship_hp-0 unit forcing the tick to divide by zero) is logged+skipped and UNCOUNTED while a SECOND HEALTHY row in the SAME run still processes, and un-poisoning self-heals it next run; the success path is byte-identical (the settle/tick proofs above ran their exacts against these re-created bodies)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.

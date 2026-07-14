@@ -296,7 +296,12 @@ mission allowed · fleet limit · not-already-assigned)
 → `Base.reserve_units` → `Fleet.create` → `Movement.create` → `Fleet.set_moving`
 
 **`process_fleet_movements()`** *(cron 30s · `FOR UPDATE SKIP LOCKED` · idempotent on `resolved_at`;
-since 0151 its loop body IS the shared per-movement helper `movement_settle_arrival` — byte-equivalent)*
+since 0151 its loop body IS the shared per-movement helper `movement_settle_arrival` — byte-equivalent;
+**PER-ROW ISOLATED since 0206 (CRON-GUARD)**: each per-movement settle runs in its OWN begin/exception
+subtransaction (the 0194 per-order guard, mirrored) — a raising movement (e.g. an allowed-but-undispatched
+location `activity_type` → `activity_start` raise) is logged (WARNING) + skipped + left in place to retry
+and can NO LONGER abort the whole run / wedge every player. `query_canceled` re-raised; byte-identical on
+the success path)*
 - outbound arrival → `Movement.mark_arrived` → `Fleet.set_present` → `Presence.create`
   *(→ `WorldState.register_presence` + `Activity.start` → `Combat.create_encounter` for hunt)*
 - return arrival → `Movement.mark_arrived` → `Base.merge_units` → `Fleet.complete`
@@ -321,7 +326,12 @@ interaction: main-ship targets are activity 'none', payload stays '{}'. Response
 space_x, space_y}` — no arrive_at. 0155 replaced the 0149/0152 return-home transform; Slice B adds legacy
 re-departure from the held position, Slice C the client copy)*
 
-**`process_combat_ticks()`** *(cron 10–15s · locked · idempotent on `last_resolved_at`/`ended_at`)*
+**`process_combat_ticks()`** *(cron 3s · locked · idempotent on `last_resolved_at`/`ended_at`;
+**PER-ROW ISOLATED since 0206 (CRON-GUARD)**: each per-encounter tick runs in its OWN begin/exception
+subtransaction (the 0194 per-order guard, mirrored) — any raise in the encounter body (a composed writer,
+or a degenerate per-unit divide) is logged (WARNING) + skipped + left in its pre-tick state to retry and
+can NO LONGER abort the whole 3s tick for ALL encounters. `query_canceled` re-raised; byte-identical on
+the success path — every accumulated SHIELD-1/D1 hunk survives)*
 → load units via `Fleet.get` → spawn wave → `Fleet.apply_losses` → accrue pending
 reward on encounter → insert `combat_round`
 → on end: rewards ride the return movement as a `{metal?, items[]}` bundle and are

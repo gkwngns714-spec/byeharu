@@ -128,9 +128,10 @@ SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 # 23rd slot, then SHIELD-2 appended as the 24th, then NANGUARD (0198) appended as the 25th), then
 # NO-HOME (0199) appended as the 26th; then FLEET-CONTROL (0204) inserted before NOHOME as the 27th
 # marker (NOHOME shifts to the 28th tail); then COMMAND-BUFFS (0205) appended as the 29th tail —
-# the FINALE of the fleet reshape. SHIPYARD-2 (#138, merged) has its own proof file and never
-# touched this pair.)
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_MOD22 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_FLEETCTRL TEAMCMD_PASS_NOHOME TEAMCMD_PASS_CMDBUFF"
+# the FINALE of the fleet reshape; then CRON-GUARD (0206) appended as the 30th tail — the poison-row
+# proof that the two hottest legacy crons no longer wedge on a single failing row. SHIPYARD-2 (#138,
+# merged) has its own proof file and never touched this pair.)
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_MOD22 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_FLEETCTRL TEAMCMD_PASS_NOHOME TEAMCMD_PASS_CMDBUFF TEAMCMD_PASS_CRONGUARD"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -868,14 +869,41 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "public.calculate_expedition_stats(uCB, sB, '[]'::jsonb, 'none')" "$SQL" \
     || fail "CMDBUFF: harness does not call the adapter directly for the independent per-key derivation"
 
-  # ── all twenty-nine block PASS markers present. ──────────────────────────────────────────────────────
+  # ── CRON-GUARD (0206) witness pins, in assert form (a gutted .sql that only mentions them in prose
+  #    cannot false-green): BOTH crons proven poison-isolated. The THREE mutation-gutting targets are
+  #    the two anti-wedge asserts (a healthy row still processes despite a poison row in the SAME run)
+  #    and the not-silently-completed assert. Plus: the exact-1-count (poison UNCOUNTED) on both arms,
+  #    the poison MECHANISMS (a mine_resource-repointed movement that raises in settle; a ship_hp-0
+  #    unit forcing the tick divide-by-zero), the guard-skip-not-advance pins, and BOTH self-heals. ──
+  grep -qF "the poison movement wedged the healthy movement (cron wedge" "$SQL" \
+    || fail "CRONGUARD: harness does not ASSERT the movements anti-wedge (a healthy movement settles despite the poison — gutting target: movements anti-wedge)"
+  grep -qF "the poison encounter wedged the healthy encounter" "$SQL" \
+    || fail "CRONGUARD: harness does not ASSERT the combat anti-wedge (a healthy encounter ticks despite the poison — gutting target: combat anti-wedge)"
+  grep -qF "was SILENTLY COMPLETED (arrived) instead of logged+skipped" "$SQL" \
+    || fail "CRONGUARD: harness does not ASSERT the poison movement is not silently completed (gutting target: not-silently-completed)"
+  grep -qF "the poison must be uncounted), got %" "$SQL" \
+    || fail "CRONGUARD: harness does not ASSERT the exact-1 count (the poison row is UNCOUNTED) on both crons"
+  grep -qF "'mine_resource', 'active'" "$SQL" \
+    || fail "CRONGUARD: harness does not POISON a movement via a mine_resource location (settle raises in activity_start)"
+  grep -qF "update public.combat_units set ship_hp = 0 where encounter_id = v_encp" "$SQL" \
+    || fail "CRONGUARD: harness does not POISON an encounter via a ship_hp-0 unit (tick divide-by-zero)"
+  grep -qF "did not stay moving for retry (skip semantics breach)" "$SQL" \
+    || fail "CRONGUARD: harness does not ASSERT the poison movement stays 'moving' (logged+skipped, not advanced)"
+  grep -qF "advanced despite raising (guard leaked partial writes)" "$SQL" \
+    || fail "CRONGUARD: harness does not ASSERT the poison encounter rolled back to its pre-tick state"
+  grep -qF "did not settle the once-poisoned movement (self-heal)" "$SQL" \
+    || fail "CRONGUARD: harness does not ASSERT the movements self-heal after un-poisoning"
+  grep -qF "did not advance the once-poisoned encounter (self-heal)" "$SQL" \
+    || fail "CRONGUARD: harness does not ASSERT the combat self-heal after un-poisoning"
+
+  # ── all thirty block PASS markers present. ───────────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; dark flags (incl. command_buffs_enabled) toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0202-mod22/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard/0199-nohome/0205-cmdbuff specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; dark flags (incl. command_buffs_enabled) toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0202-mod22/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard/0199-nohome/0205-cmdbuff/0206-cronguard specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored)"
   exit 0
 fi
 
