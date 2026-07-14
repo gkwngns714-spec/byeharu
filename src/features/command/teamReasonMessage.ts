@@ -8,26 +8,26 @@
 
 const REASON_MESSAGES: Record<string, string> = {
   // shared prefix (every team RPC, 0163/0165/0166/0168/0190)
-  team_command_disabled: 'Team commands are not available right now.',
-  not_authenticated: 'Sign in to command teams.',
-  group_not_found: 'That team no longer exists.',
-  empty_group: 'That team has no ships yet — add ships in the Teams panel.',
+  team_command_disabled: 'Fleet commands are not available right now.',
+  not_authenticated: 'Sign in to command fleets.',
+  group_not_found: 'That fleet no longer exists.',
+  empty_group: 'That fleet has no ships yet — add ships in the Fleets panel.',
   // expedition send (0163) + docked-team move (0190): the all-or-nothing member loops
-  member_send_failed: 'A ship in the team couldn’t depart, so nothing moved.',
+  member_send_failed: 'A ship in the fleet couldn’t depart, so nothing moved.',
   // hunt send (0168)
-  invalid_location: 'This destination can’t take a team right now.',
+  invalid_location: 'This destination can’t take a fleet right now.',
   // shared readiness reject: hunt (0168 — every ship home and battle-ready) and docked-team move
   // (0190 — every ship docked together at one port)
-  member_not_ready: 'Every ship in the team must be ready first — home for a hunt, docked together for a move.',
+  member_not_ready: 'Every ship in the fleet must be ready first — home for a hunt, docked together for a move.',
   fleet_limit_reached: 'Too many fleets are already deployed — wait for one to return.',
-  stats_invalid: 'The team’s stats couldn’t be verified — check each ship in the Teams panel.',
-  power_below_required: 'The team’s combat power is below what this zone requires.',
-  no_home_base: 'The team has no home port to launch from.',
+  stats_invalid: 'The fleet’s stats couldn’t be verified — check each ship in the Fleets panel.',
+  power_below_required: 'The fleet’s combat power is below what this zone requires.',
+  no_home_base: 'The fleet has no home port to launch from.',
   // preview/totals reads (0165/0166)
-  invalid_activity: 'That activity isn’t recognized for team orders.',
+  invalid_activity: 'That activity isn’t recognized for fleet orders.',
 }
 
-/** A short player-facing message for a server/transport team reason; unknown → generic "Team order unavailable." */
+/** A short player-facing message for a server/transport team reason; unknown → generic "Fleet order unavailable." */
 export function teamReasonMessage(reason: string): string {
-  return REASON_MESSAGES[reason] ?? 'Team order unavailable.'
+  return REASON_MESSAGES[reason] ?? 'Fleet order unavailable.'
 }

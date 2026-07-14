@@ -93,7 +93,7 @@ export function TeamPreviewSection({
           value={activity}
           onChange={(e) => setActivity(e.target.value)}
           disabled={busy}
-          aria-label={`Preview activity for team ${groupIndex}`}
+          aria-label={`Preview activity for fleet ${groupIndex}`}
           className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
         >
           {PREVIEW_ACTIVITY_TYPES.map((a) => (
@@ -113,7 +113,7 @@ export function TeamPreviewSection({
       </div>
 
       {current && !current.ok && (
-        <Notice tone="warning">Couldn’t preview this team ({current.reason}).</Notice>
+        <Notice tone="warning">Couldn’t preview this fleet ({current.reason}).</Notice>
       )}
 
       {currentTotals && !currentTotals.ok && (
@@ -156,7 +156,7 @@ export function TeamPreviewSection({
               <StatRow
                 label="slowest speed"
                 value={agg.slowestSpeed ?? '—'}
-                hint={agg.slowestSpeed !== null ? '(the team moves at its slowest member)' : undefined}
+                hint={agg.slowestSpeed !== null ? '(the fleet moves at its slowest member)' : undefined}
               />
             </dl>
             <ul className="space-y-0.5 border-t border-edge/60 pt-1.5 text-[10px]">

@@ -99,7 +99,7 @@ export function TeamDossier({
     <div data-testid={`team-dossier-${groupIndex}`} className="rounded-lg border border-edge bg-surface-2/50 px-3 py-2">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[10px] text-ink-faint">
-          Team stats · authoritative (server truth{captainsLit ? ', captains included' : ''})
+          Fleet stats · authoritative (server truth{captainsLit ? ', captains included' : ''})
         </p>
         {memberCount > 0 && (
           <Button size="sm" variant="ghost" onClick={() => setOpen((o) => !o)}>
@@ -117,10 +117,10 @@ export function TeamDossier({
       )}
 
       {memberCount <= 0 ? (
-        <p className="mt-1 text-[10px] text-ink-faint">No ships yet — add ships to see team stats.</p>
+        <p className="mt-1 text-[10px] text-ink-faint">No ships yet — add ships to see fleet stats.</p>
       ) : cur === null ? (
         <p className="mt-1 text-[10px] text-ink-faint" aria-busy="true">
-          Fetching team stats…
+          Fetching fleet stats…
         </p>
       ) : !cur.ok ? (
         <p className="mt-1 text-[10px] text-warning">{teamReasonMessage(cur.reason)}</p>

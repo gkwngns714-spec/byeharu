@@ -75,24 +75,24 @@ export function SpaceMoveControls({
       </p>
     )
   } else if (eligibility === 'no_ship') {
-    body = <p data-testid="s6c-no-ship" className="mt-1 text-xs text-ink-faint">No main ship.</p>
+    body = <p data-testid="s6c-no-ship" className="mt-1 text-xs text-ink-faint">No ship.</p>
   } else if (eligibility === 'destroyed') {
     body = (
       <p data-testid="s6c-ineligible" className="mt-1 text-xs text-warning/90">
-        Main ship is disabled. Repair it first.
+        Your ship is disabled. Repair it first.
       </p>
     )
   } else if (eligibility === 'in_transit') {
     body = (
       <p data-testid="s6c-ineligible" className="mt-1 text-xs text-ink-muted">
-        Main ship is already travelling.
+        Your ship is already travelling.
       </p>
     )
   } else if (phase === 'success' && serverTarget) {
     body = (
       <div className="mt-1">
         <Notice tone="success" data-testid="s6c-success" className="px-2 py-1.5 text-xs">
-          ✓ Main ship moving to open-space coordinate {fmt(serverTarget)}.
+          ✓ Your ship moving to open-space coordinate {fmt(serverTarget)}.
         </Notice>
         <Button variant="secondary" size="sm" data-testid="s6c-clear" onClick={onClear} className="mt-2 w-full">
           Done

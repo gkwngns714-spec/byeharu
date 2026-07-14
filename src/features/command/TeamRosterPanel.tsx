@@ -274,11 +274,11 @@ export function TeamRosterPanel() {
                 void run(
                   `assign:${s.main_ship_id}`,
                   () => assignShipToGroup(s.main_ship_id, null),
-                  () => `Removed ${s.name} from its team.`,
+                  () => `Removed ${s.name} from its fleet.`,
                 )
               }
             >
-              Remove from team
+              Remove from fleet
             </Button>
           </div>
         )}
@@ -302,15 +302,15 @@ export function TeamRosterPanel() {
   return (
     <Card>
       <CardHeader
-        title="Teams"
-        subtitle="Group your ships into teams and command them together."
+        title="Fleets"
+        subtitle="Group your ships into fleets and command them together."
         aside={<Badge tone="warning">Preview</Badge>}
       />
 
       {/* TEAM-UX: the one-line "how" — the old subtitle was a feature laundry list that never told a new
           player the ORDER of operations (create a team FIRST, then add ships). */}
       <p className="mb-3 text-xs text-ink-faint">
-        How teams work: create a team, add ships to it, then send or hunt with the whole team in one order.
+        How fleets work: create a fleet, add ships to it, then send or hunt with the whole fleet in one order.
       </p>
 
       {notice && (
@@ -334,11 +334,11 @@ export function TeamRosterPanel() {
           {teams.length === 0 ? (
             <div className="rounded-lg border border-dashed border-edge p-6 text-center">
               <Icon name="command" size={28} className="mx-auto text-ink-faint" />
-              <h3 className="mt-2 text-sm font-semibold text-ink">Create your first team</h3>
+              <h3 className="mt-2 text-sm font-semibold text-ink">Create your first fleet</h3>
               <p className="mx-auto mt-1 max-w-xs text-xs text-ink-muted">
                 {ungrouped.length > 0
-                  ? `You have ${ungrouped.length} ship${ungrouped.length === 1 ? '' : 's'} ready to crew — create a team, then add ${ungrouped.length === 1 ? 'it' : 'them'} with “+ Add ship”.`
-                  : 'Ships join teams here — create a team, then add your ships to it.'}
+                  ? `You have ${ungrouped.length} ship${ungrouped.length === 1 ? '' : 's'} ready to crew — create a fleet, then add ${ungrouped.length === 1 ? 'it' : 'them'} with “+ Add ship”.`
+                  : 'Ships join fleets here — create a fleet, then add your ships to it.'}
               </p>
               {openSlot !== null && (
                 <Button
@@ -347,9 +347,9 @@ export function TeamRosterPanel() {
                   className="mt-3"
                   busy={busy === 'create'}
                   disabled={busy !== null}
-                  onClick={() => void run('create', () => upsertShipGroup(openSlot, 'Team'))}
+                  onClick={() => void run('create', () => upsertShipGroup(openSlot, 'Fleet'))}
                 >
-                  + Create your first team
+                  + Create your first fleet
                 </Button>
               )}
             </div>
@@ -360,9 +360,9 @@ export function TeamRosterPanel() {
                 variant="secondary"
                 busy={busy === 'create'}
                 disabled={busy !== null}
-                onClick={() => void run('create', () => upsertShipGroup(openSlot, 'Team'))}
+                onClick={() => void run('create', () => upsertShipGroup(openSlot, 'Fleet'))}
               >
-                + Create team
+                + Create fleet
               </Button>
             )
           )}
@@ -410,14 +410,14 @@ export function TeamRosterPanel() {
               <div key={group.group_id} className="space-y-2 rounded-lg border border-edge/60 p-3">
                 <div className="flex items-center justify-between gap-2">
                   <SectionLabel>
-                    Team {group.group_index} · {ships.length} ship{ships.length === 1 ? '' : 's'}
+                    Fleet {group.group_index} · {ships.length} ship{ships.length === 1 ? '' : 's'}
                   </SectionLabel>
                   <div className="flex items-center gap-1.5">
                     <input
                       value={draft}
                       onChange={(e) => setDrafts((d) => ({ ...d, [group.group_id]: e.target.value }))}
                       className="w-28 rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
-                      aria-label={`Rename team ${group.group_index}`}
+                      aria-label={`Rename fleet ${group.group_index}`}
                     />
                     <Button
                       size="sm"
@@ -480,7 +480,7 @@ export function TeamRosterPanel() {
 
                 {confirmDelete === group.group_id && (
                   <Notice tone="danger">
-                    Delete this team? Its ships stay — they’re just un-grouped.
+                    Delete this fleet? Its ships stay — they’re just un-grouped.
                     <span className="ml-2 inline-flex gap-1.5">
                       <Button
                         size="sm"
@@ -503,7 +503,7 @@ export function TeamRosterPanel() {
                 )}
 
                 {ships.length === 0 ? (
-                  <p className="text-xs text-ink-faint">No ships in this team yet — use “+ Add ship” below.</p>
+                  <p className="text-xs text-ink-faint">No ships in this fleet yet — use “+ Add ship” below.</p>
                 ) : (
                   <div className="space-y-1.5">{ships.map(shipRow)}</div>
                 )}
@@ -521,7 +521,7 @@ export function TeamRosterPanel() {
                         </Button>
                       </div>
                       {ungrouped.length === 0 ? (
-                        <p className="text-xs text-ink-faint">Every ship is already on a team.</p>
+                        <p className="text-xs text-ink-faint">Every ship is already on a fleet.</p>
                       ) : (
                         ungrouped.map((s) => {
                           // TEAM-FRIENDLY: the canonical add surface — each pickable ship shows the
@@ -596,7 +596,7 @@ export function TeamRosterPanel() {
                     value={destId}
                     onChange={(e) => setDestChoice((d) => ({ ...d, [group.group_id]: e.target.value }))}
                     disabled={busy !== null}
-                    aria-label={`Send destination for team ${group.group_index}`}
+                    aria-label={`Send destination for fleet ${group.group_index}`}
                     className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
                   >
                     <option value="">Destination…</option>
@@ -657,7 +657,7 @@ export function TeamRosterPanel() {
                       setConfirmHunt((c) => (c === group.group_id ? null : c))
                     }}
                     disabled={busy !== null || huntZones.length === 0}
-                    aria-label={`Hunt zone for team ${group.group_index}`}
+                    aria-label={`Hunt zone for fleet ${group.group_index}`}
                     className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
                   >
                     <option value="">Hunt zone…</option>
@@ -687,7 +687,7 @@ export function TeamRosterPanel() {
 
                 {confirmHunt === group.group_id && (
                   <Notice tone="danger">
-                    Confirm hunt? The whole team commits to combat at {huntName || 'the selected zone'}.
+                    Confirm hunt? The whole fleet commits to combat at {huntName || 'the selected zone'}.
                     <span className="ml-2 inline-flex gap-1.5">
                       <Button
                         size="sm"
@@ -733,8 +733,8 @@ export function TeamRosterPanel() {
           {teams.length > 0 && (
             <p className="text-xs text-ink-muted">
               {ungrouped.length === 0
-                ? 'All ships are assigned to a team.'
-                : `${ungrouped.length} ship${ungrouped.length === 1 ? '' : 's'} not on a team yet — open a team’s “+ Add ship” to assign ${ungrouped.length === 1 ? 'it' : 'them'}.`}
+                ? 'All ships are assigned to a fleet.'
+                : `${ungrouped.length} ship${ungrouped.length === 1 ? '' : 's'} not on a fleet yet — open a fleet’s “+ Add ship” to assign ${ungrouped.length === 1 ? 'it' : 'them'}.`}
             </p>
           )}
         </div>
