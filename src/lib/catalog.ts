@@ -64,6 +64,18 @@ export async function fetchLaunchFromDockEnabled(): Promise<boolean> {
   return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'launch_from_dock_enabled')
 }
 
+// FLEET-CONTROL (0204) runtime gate for the fleet control-model. Same strict jsonb-true fold as
+// fetchLaunchFromDockEnabled (the server gates its group RPCs on the SAME flag via cfg_bool FIRST).
+// true ⇔ fleet_control_enabled's row exists AND its jsonb value is exactly `true`. Absent / unreadable
+// / any non-true shape → OFF, so the client is byte-identical to today until a human flips it: no
+// command-ship control, no active/inactive indicator, no 8-cap surfacing, and MainShipCommand keeps
+// the per-ship Move affordance. Read only.
+export async function fetchFleetControlEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('game_config').select('key, value')
+  if (error) return false
+  return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'fleet_control_enabled')
+}
+
 // OSN-3 S6A feature gate for the coordinate-movement (open-space) command surface. Same safe public
 // read path + boolean semantics as fetchMainshipSendEnabled above. Absent or unreadable → OFF. Read
 // only. NOTE (S6A): nothing renders coordinate-command UI yet — this is a typed seed for S6B's gating;

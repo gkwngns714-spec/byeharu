@@ -73,6 +73,66 @@ dark, and ROOMS-8's client scope was the ShipDossier room board.
 
 ---
 
+## 2026-07-14 — FLEET-CONTROL: the fleet control-model (mig 0204, DARK behind `fleet_control_enabled`)
+
+**Request (owner directive — the core of the fleet control-model reshape).** After FLEET-RENAME (team→fleet
+copy) merged, add the MECHANICS, DARK behind a new flag `fleet_control_enabled` (seeded false) so the LIVE
+fleet-command game is byte-unchanged until the owner flips it: (1) caps — max 3 fleets (already), up to 8
+ships each, min 1; (2) a fleet needs ≥1 COMMAND SHIP to be active; (3) everything moves as a FLEET — a lone
+ship can't move.
+
+**Design (built exactly, all gated on the flag).**
+- **Command-ship designation.** Additive `main_ship_instances.is_command_ship boolean not null default false`
+  + a partial index `idx_msi_command_ship (group_id) where is_command_ship`. Meaningful only relative to the
+  ship's fleet (group_id); a fleet may have MULTIPLE command ships (extras are backups). New RPC
+  `set_fleet_command_ship(p_main_ship_id, p_is_command)` — owner-scoped (the 0081 resolver), the SOLE writer.
+  DECISION (documented in the migration): the designation is ALWAYS settable (NOT flag-gated — additive data,
+  inert until the flag gates movement); setting to true requires the ship be in a fleet (`ship_not_in_fleet`),
+  clearing is always allowed. **The command role is PER-FLEET and cleared on move** (review): when
+  `assign_ship_to_group` changes a ship's `group_id` (moved to a different fleet, or unassigned) it resets
+  `is_command_ship` to false — always-on, inert while dark — so command must be explicitly re-designated in
+  each fleet (never a silently-inherited role).
+- **A fleet with zero command ships is INACTIVE.** The three LIVE group movement RPCs
+  (`send_ship_group_expedition` 0187 head, `move_ship_group_to_location` 0190 head, `send_ship_group_hunt`
+  **0199** head — the NO-HOME 3-arg widening, NOT 0168) are re-created from their TRUE heads with ONE marked
+  flag-gated hunk each: `if v_fleet_control then <reject fleet_inactive_no_command if no command ship> end`.
+  Placed after the empty-group check, BEFORE the destination/lock/readiness reads (reject-before-read on the
+  caller's own fleet). DARK = byte-identical (extract-and-diff confirmed: the only non-hunk delta is the added
+  `v_fleet_control` declare + an unused `v_members` counter in assign).
+- **The 8-ship-per-fleet cap.** `assign_ship_to_group` (0161 head) re-created with a marked flag-gated hunk:
+  lit → assigning to a fleet already holding 8 OTHER members rejects `fleet_full`; dark → no cap (current
+  behavior). Unassign and re-assign of the same ship are never capped.
+- **Client (all runtime-flag-gated via `strictConfigFlag('fleet_control_enabled')` / `fetchFleetControlEnabled`,
+  dark = today byte-identical).** `teamApi.setFleetCommandShip` wrapper + `fetchMyShipGroupMap` widened with
+  `is_command_ship`. Pure mirrors in `teamRoster.ts` (`fleetCommandState`, `fleetCapacityState`,
+  `canToggleCommandShip`, `FLEET_MAX_SHIPS=8`) + `tests/fleetControl.spec.ts`. `TeamRosterPanel`: the "Set as
+  command ship" / "Stand down" control + a "Command ship" badge, the fleet Active/inactive indicator ("Fleet
+  inactive — set a command ship"), and the 8-cap surfaced in the add-ship picker. Deploy-window safety (review HIGH):
+  `fetchMyShipGroupMap`'s base membership select keeps ONLY pre-existing columns and reads `is_command_ship`
+  in a SEPARATE query folded by the pure `buildShipGroupMap` — a missing column on a pre-0204 DB (the client
+  auto-deploys ahead of the approval-gated migration) degrades to "no command-ship data", NEVER to blanked
+  live rosters; pinned by a `tests/fleetControl.spec.ts` null-command-read spec. `TeamMapSend`: disables
+  Send/Move/Hunt + a hint when the fleet is inactive. `MainShipCommand`: hides the per-ship Move affordance
+  when lit and shows guidance ("Add this ship to a fleet to move it" / "Move … with its fleet from the Fleets
+  screen"); wired via new shell fields `fleetControlEnabled` + `mainShipInFleet`. `teamReasonMessage` maps the
+  three new rejects.
+- **Proof.** `team-command-proof.{sql,sh}` gained `TEAMCMD_PASS_FLEETCTRL` (the 27th marker; NOHOME is now the
+  28th tail): DARK arm (a zero-command fleet SENDS; a 9th assign SUCCEEDS — no cap) then in-txn LIT arm (zero
+  command → `fleet_inactive_no_command` on send/move/hunt; designate → active + `is_command_ship` persists;
+  8th assign OK, 9th `fleet_full`, held at 8; ungrouped → `ship_not_in_fleet`; stand-down re-inactivates). The
+  flag flips in-txn only + the committed-false honesty loop covers it. Selftest green; 3 mutation guttings
+  fail-then-restore verified.
+- **Activation.** `scripts/activate-fleet-control.{sql,sh}` — FLAG-ONLY flip with preconditions (0204
+  recorded, the surface prosrc-pinned, team_command committed true) + a smoke FYI counting the fleets that go
+  inactive at flip time. NO client PR needed (runtime-flag-gated).
+
+**Anti-spaghetti / parity.** Reused `ship_groups` + the group RPCs; `is_command_ship` is ONE additive column;
+NO adapter (`calculate_expedition_stats` untouched), NO decks/ShipDossier touched. Parity discipline held:
+the 3 live group RPCs re-created from true heads, marked flag-gated hunks, DARK byte-identical. Migration
+0204 (0203 taken by ROOMS-8, already merged). tsc + vite + eslint green; team pure battery green.
+
+---
+
 ## 2026-07-14 — REPAIR-ECON: paid hull-repair economy (mig 0201, DARK behind `repair_economy_enabled`)
 
 **Request (FULL_CAPACITY_PLAN §C P9 / gap G8).** Ships come home DAMAGED (not deleted); repair is the

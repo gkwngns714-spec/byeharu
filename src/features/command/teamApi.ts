@@ -1,5 +1,5 @@
 import { supabase } from '../../lib/supabase'
-import type { GroupRow } from './teamRoster'
+import { buildShipGroupMap, type GroupRow, type ShipGroupMapEntry, type ShipMembershipRow } from './teamRoster'
 import type { PreviewMember } from './teamSkillset'
 
 // TEAM-COMMAND Slice A — owner-scoped reads for team/group data (DARK).
@@ -26,21 +26,31 @@ export async function fetchMyShipGroups(): Promise<GroupRow[]> {
 // widened the SELECT with `captain_slots` (an existing owner-RLS column — the mainshipApi SHIP_COLS read
 // already selects it; zero server change) so the captain sub-surface can feed captainAssignAvailability a
 // SERVER-reported slot count instead of a hardcoded 2/6.
-export interface ShipGroupMapEntry {
-  group_id: string | null // null = ungrouped
-  captain_slots: number | null // null = unexpectedly absent → callers skip the client slot precheck
-}
+// ShipGroupMapEntry moved to teamRoster.ts (the pure buildShipGroupMap home); re-exported here so every
+// existing importer (TeamRosterPanel / TeamMapSend / useGalaxyMapData) is unchanged.
+export type { ShipGroupMapEntry }
 
 export async function fetchMyShipGroupMap(): Promise<Record<string, ShipGroupMapEntry>> {
+  // The BASE membership read selects ONLY pre-existing columns (main_ship_id / group_id / captain_slots),
+  // so it can NEVER error against a DB that predates a later-added column. This is load-bearing: this read
+  // drives the LIVE roster/map membership, and the client (Pages) auto-deploys AHEAD of the approval-gated
+  // migration — if a widened select errored, every live team-command player would briefly see all fleets
+  // dissolved. FLEET-CONTROL (0204) therefore reads is_command_ship in a SEPARATE query that fail-closes to
+  // "no command-ship data" (every ship false) — the pure buildShipGroupMap folds them, membership-first.
   const { data, error } = await supabase
     .from('main_ship_instances')
     .select('main_ship_id, group_id, captain_slots')
   if (error || !data) return {}
-  const map: Record<string, ShipGroupMapEntry> = {}
-  for (const r of data as { main_ship_id: string; group_id: string | null; captain_slots: number | null }[]) {
-    map[r.main_ship_id] = { group_id: r.group_id ?? null, captain_slots: r.captain_slots ?? null }
-  }
-  return map
+  // FLEET-CONTROL (0204): the command-ship designation, read SEPARATELY so a missing column (pre-0204 DB)
+  // or any transport error can NEVER nuke membership above — buildShipGroupMap treats null as "no command
+  // data" and keeps every ship's fleet. Harmless while dark (the client renders no command-ship surface).
+  const { data: cmd, error: cmdErr } = await supabase
+    .from('main_ship_instances')
+    .select('main_ship_id, is_command_ship')
+  return buildShipGroupMap(
+    data as ShipMembershipRow[],
+    cmdErr || !cmd ? null : (cmd as { main_ship_id: string; is_command_ship: boolean | null }[]),
+  )
 }
 
 // ── TEAMMAP-0 — the docked-location read for the team rollup. ──
@@ -90,6 +100,20 @@ export async function assignShipToGroup(
   const { data, error } = await supabase.rpc('assign_ship_to_group', {
     p_main_ship_id: mainShipId,
     p_group_id: groupId,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
+// set_fleet_command_ship (0204) — toggle a ship's command-ship designation. Owner-scoped, NOT flag-gated
+// (the designation is additive data, inert until fleet_control_enabled lights the movement requirement);
+// setting to true requires the ship be in a fleet (server rejects ship_not_in_fleet otherwise). Thin,
+// normalize-don't-throw (the file's write style). A fleet needs ≥1 command ship to be ACTIVE (able to
+// move/send/hunt) once fleet_control_enabled is lit.
+export async function setFleetCommandShip(mainShipId: string, isCommand: boolean): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('set_fleet_command_ship', {
+    p_main_ship_id: mainShipId,
+    p_is_command: isCommand,
   })
   if (error) return { ok: false, reason: 'unavailable' }
   return data as TeamRpcResult

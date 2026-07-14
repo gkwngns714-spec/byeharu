@@ -20,6 +20,10 @@ export interface RosterShip {
   name: string
   status: string
   group_id: string | null // null = ungrouped; a dangling id (group not owned/loaded) is ALSO treated as ungrouped
+  // FLEET-CONTROL (0204): the command-ship designation, carried through so the card can count command
+  // ships and derive the fleet active/inactive state. Optional (defaults false) — undefined ⇒ not a
+  // command ship, so pre-0204 callers/tests need no change.
+  is_command_ship?: boolean
 }
 
 export interface TeamRosterTeam {
@@ -157,6 +161,100 @@ export function teamGatherState(input: {
   if (input.dockedLocationId !== null) return 'co_located'
   if (input.allHome) return 'all_home'
   return 'scattered'
+}
+
+// ── FLEET-CONTROL (0204) — pure mirrors of the server's fleet control-model (all fail-closed/dark-safe). ──
+
+/** The per-fleet ship cap the assign path enforces when lit (0204: reject the 9th member `fleet_full`). */
+export const FLEET_MAX_SHIPS = 8
+
+export interface FleetCommandState {
+  active: boolean
+  commandCount: number
+}
+
+// A fleet needs ≥1 COMMAND SHIP to be ACTIVE (able to move/send/hunt) — the server rejects an inactive
+// fleet with fleet_inactive_no_command (0204), gated on fleet_control_enabled. DARK → a fleet is NEVER
+// "inactive" (today's behavior: movement never required a command ship), so active is always true. LIT →
+// active ⇔ at least one member is a command ship. Pure display/gate mirror; the server stays authoritative.
+export function fleetCommandState(input: {
+  commandCount: number
+  fleetControlEnabled: boolean
+}): FleetCommandState {
+  if (!input.fleetControlEnabled) return { active: true, commandCount: input.commandCount }
+  return { active: input.commandCount >= 1, commandCount: input.commandCount }
+}
+
+// Mirror of the assign path's 8-ship-per-fleet cap (0204). DARK → no cap (today's behavior: assign never
+// counted). LIT → atCap once the fleet already holds FLEET_MAX_SHIPS members; the add-ship picker
+// disables + hints at that point (the server still re-checks and is the only real gate). `remaining` is
+// null while dark (no cap to count against). Pure.
+export function fleetCapacityState(input: {
+  memberCount: number
+  fleetControlEnabled: boolean
+}): { atCap: boolean; remaining: number | null; max: number } {
+  if (!input.fleetControlEnabled) return { atCap: false, remaining: null, max: FLEET_MAX_SHIPS }
+  return {
+    atCap: input.memberCount >= FLEET_MAX_SHIPS,
+    remaining: Math.max(0, FLEET_MAX_SHIPS - input.memberCount),
+    max: FLEET_MAX_SHIPS,
+  }
+}
+
+// Mirror of set_fleet_command_ship's designation guard (0204): a ship must be IN a fleet to be a command
+// ship (the server rejects ship_not_in_fleet otherwise). Clearing (isCommand=false) is always allowed.
+// The roster only renders the toggle on grouped members, so this is a defense-in-depth mirror. Pure.
+export function canToggleCommandShip(input: { shipGroupId: string | null; isCommand: boolean }): boolean {
+  if (!input.isCommand) return true // clearing is always allowed
+  return input.shipGroupId != null
+}
+
+// The per-ship membership map entry (the fetchMyShipGroupMap shape). group_id null = ungrouped;
+// captain_slots null = unexpectedly absent (callers skip the client slot precheck); is_command_ship is
+// the FLEET-CONTROL (0204) designation, defaulting false.
+export interface ShipGroupMapEntry {
+  group_id: string | null
+  captain_slots: number | null
+  is_command_ship: boolean
+}
+
+/** Base membership row — ONLY pre-existing columns (a widened read here would be a deploy-window hazard). */
+export interface ShipMembershipRow {
+  main_ship_id: string
+  group_id: string | null
+  captain_slots: number | null
+}
+
+/** The decoupled FLEET-CONTROL command-ship row (may be unavailable on a pre-0204 DB). */
+export interface ShipCommandRow {
+  main_ship_id: string
+  is_command_ship: boolean | null
+}
+
+// Fold the (decoupled) membership + command-ship reads into the per-ship map. THE INVARIANT: membership
+// comes SOLELY from `base` — the command-ship read is a pure OVERLAY. When `command` is null (the read
+// failed / the column is absent on a pre-migration DB), every ship keeps is_command_ship=false and
+// membership is untouched: the roster still shows correct fleets, just no command badges (inert while the
+// flag is dark). A missing column can never drop a fleet. Pure — unit-tested in tests/fleetControl.spec.ts.
+export function buildShipGroupMap(
+  base: ShipMembershipRow[],
+  command: ShipCommandRow[] | null,
+): Record<string, ShipGroupMapEntry> {
+  const map: Record<string, ShipGroupMapEntry> = {}
+  for (const r of base) {
+    map[r.main_ship_id] = {
+      group_id: r.group_id ?? null,
+      captain_slots: r.captain_slots ?? null,
+      is_command_ship: false,
+    }
+  }
+  if (command) {
+    for (const r of command) {
+      const entry = map[r.main_ship_id]
+      if (entry) entry.is_command_ship = r.is_command_ship === true
+    }
+  }
+  return map
 }
 
 export type CommissionReason = 'ok' | 'gate_dark' | 'cap_reached' | 'insufficient_credits'

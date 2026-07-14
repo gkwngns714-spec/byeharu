@@ -4,7 +4,7 @@ import { fetchWorldMap, fetchLocationStates } from './mapApi'
 import type { LocationState, MapLocation } from './mapTypes'
 import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
-import { fetchMainshipSendEnabled } from '../../lib/catalog'
+import { fetchMainshipSendEnabled, fetchFleetControlEnabled } from '../../lib/catalog'
 import {
   fetchActiveMainShipFleet, fetchHeldMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
   fetchMyFleetPositions, resolveOwnedShip,
@@ -74,6 +74,12 @@ export interface GalaxyMapData {
   // owned non-destroyed ship, polled with the rest of the map. The fleet layer draws a marker per ship, so a
   // player owning 2+ ships is no longer invisible on the map (the single-ship resolver goes null at N≥2). [].
   fleetPositions: FleetPosition[]
+  // FLEET-CONTROL (0204): the runtime gate (read once, like mainshipSendEnabled) + whether the resolved
+  // main ship is in a fleet. When the flag is lit, MapScreen hides MainShipCommand's per-ship Move
+  // affordance and routes movement through fleets; a ship not in a fleet gets guidance. Both are
+  // dark-inert: fleetControlEnabled false → MainShipCommand is byte-identical to today.
+  fleetControlEnabled: boolean
+  mainShipInFleet: boolean
   refresh: () => Promise<void>
 }
 
@@ -105,6 +111,8 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   teamGroups: [],
   dockedTeamRollups: [],
   fleetPositions: [],
+  fleetControlEnabled: false,
+  mainShipInFleet: false,
 }
 
 export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = null): GalaxyMapData {
@@ -113,13 +121,14 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     locations: MapLocation[]
     meta: Record<string, LocationMeta>
     mainshipSendEnabled: boolean
+    fleetControlEnabled: boolean
   } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [world, mainshipSendEnabled] = await Promise.all([
-          fetchWorldMap(), fetchMainshipSendEnabled(),
+        const [world, mainshipSendEnabled, fleetControlEnabled] = await Promise.all([
+          fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetControlEnabled(),
         ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -131,7 +140,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
             }
           }
         }
-        staticRef.current = { locations, meta, mainshipSendEnabled }
+        staticRef.current = { locations, meta, mainshipSendEnabled, fleetControlEnabled }
       }
 
       const [movements, locationStates, mainShip, fleetPositions] = await Promise.all([
@@ -175,6 +184,12 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
           ? await Promise.all([fetchMyShipGroupMap(), fetchMyPresentShipFleets()])
           : [{}, []]
       const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets)
+      // FLEET-CONTROL (0204): is the resolved main ship in a fleet? groupMap is the SAME owner-RLS
+      // membership read the roster uses (fetched only when the player has ≥1 team). A ship not in a
+      // fleet → MainShipCommand shows "add this ship to a fleet to move it" when the flag is lit.
+      const mainShipInFleet =
+        mainShip != null &&
+        ((groupMap as Record<string, { group_id: string | null }>)[mainShip.main_ship_id]?.group_id ?? null) != null
 
       setState({
         loading: false,
@@ -192,6 +207,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         teamGroups,
         dockedTeamRollups,
         fleetPositions,
+        fleetControlEnabled: staticRef.current.fleetControlEnabled,
+        mainShipInFleet,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))

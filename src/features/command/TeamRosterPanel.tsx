@@ -11,6 +11,7 @@ import {
   sendShipGroup,
   stopShipGroup,
   sendShipGroupHunt,
+  setFleetCommandShip,
   type PresentShipFleetLite,
   type ShipGroupMapEntry,
   type TeamRpcResult,
@@ -21,6 +22,8 @@ import {
   nextTeamSlot,
   fleetPositionLocationLabel,
   teamGatherState,
+  fleetCommandState,
+  fleetCapacityState,
   type GroupRow,
   type RosterShip,
 } from './teamRoster'
@@ -39,7 +42,7 @@ import { withPowerGate } from '../map/locationDisplay'
 import { fetchMyExpeditionPreview, fetchMyFleetPositions, type FleetPosition } from '../map/mainshipApi'
 import { mainShipInstanceStatusLabel } from '../map/mainshipStatusLabel'
 import { shipPowerFromPreview } from '../ship/shipDossierView'
-import { fetchLaunchFromDockEnabled } from '../../lib/catalog'
+import { fetchLaunchFromDockEnabled, fetchFleetControlEnabled } from '../../lib/catalog'
 
 // TEAM-COMMAND Slice B1 — INTERACTIVE team roster (backend "group" == UI "team").
 //
@@ -101,11 +104,12 @@ export function TeamRosterPanel() {
   const [huntChoice, setHuntChoice] = useState<Record<string, string>>({}) // per-team hunt destination id
   const [confirmHunt, setConfirmHunt] = useState<string | null>(null) // group_id pending hunt confirm (D4)
   const [launchFromDock, setLaunchFromDock] = useState(false) // NO-HOME (0199) runtime gate; dark → home-only readiness
+  const [fleetControl, setFleetControl] = useState(false) // FLEET-CONTROL (0204) gate; dark → no command-ship/cap surface
 
   const reload = useCallback(async () => {
-    const [g, m, cr, pf, fp, lfd] = await Promise.all([
+    const [g, m, cr, pf, fp, lfd, fc] = await Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-      fetchMyFleetPositions(), fetchLaunchFromDockEnabled(),
+      fetchMyFleetPositions(), fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(),
     ])
     setGroups(g)
     setGroupMap(m)
@@ -113,6 +117,7 @@ export function TeamRosterPanel() {
     setPresentFleets(pf)
     setFleetPositions(fp)
     setLaunchFromDock(lfd)
+    setFleetControl(fc)
     setRosterVersion((v) => v + 1) // membership may have changed — any cached preview is stale
     setLoading(false)
   }, [])
@@ -123,8 +128,8 @@ export function TeamRosterPanel() {
     let active = true
     void Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-      fetchMyFleetPositions(), fetchLaunchFromDockEnabled(),
-    ]).then(([g, m, cr, pf, fp, lfd]) => {
+      fetchMyFleetPositions(), fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(),
+    ]).then(([g, m, cr, pf, fp, lfd, fc]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
@@ -132,6 +137,7 @@ export function TeamRosterPanel() {
       setPresentFleets(pf)
       setFleetPositions(fp)
       setLaunchFromDock(lfd)
+      setFleetControl(fc)
       setLoading(false)
     })
     return () => {
@@ -176,6 +182,7 @@ export function TeamRosterPanel() {
     name: s.name,
     status: s.status,
     group_id: groupMap[s.main_ship_id]?.group_id ?? null,
+    is_command_ship: groupMap[s.main_ship_id]?.is_command_ship ?? false,
   }))
   const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
   const openSlot = nextTeamSlot(groups)
@@ -264,7 +271,7 @@ export function TeamRosterPanel() {
         {/* Remove is the only per-ship membership control that remains on a member row — the ONE add
             surface is each team's "+ Add ship" picker (below). Same assign RPC + run key; await → refetch. */}
         {s.group_id != null && (
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <Button
               size="sm"
               variant="ghost"
@@ -280,6 +287,46 @@ export function TeamRosterPanel() {
             >
               Remove from fleet
             </Button>
+            {/* FLEET-CONTROL (0204): the command-ship toggle. Only surfaces when fleet_control_enabled is
+                lit (dark → byte-identical to today). A fleet needs ≥1 command ship to move/send/hunt;
+                a command ship carries a badge and can be stood down. Same run key/discipline. */}
+            {fleetControl &&
+              (s.is_command_ship ? (
+                <>
+                  <Badge tone="accent">Command ship</Badge>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    busy={busy === `command:${s.main_ship_id}`}
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void run(
+                        `command:${s.main_ship_id}`,
+                        () => setFleetCommandShip(s.main_ship_id, false),
+                        () => `${s.name} is no longer a command ship.`,
+                      )
+                    }
+                  >
+                    Stand down
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  busy={busy === `command:${s.main_ship_id}`}
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void run(
+                      `command:${s.main_ship_id}`,
+                      () => setFleetCommandShip(s.main_ship_id, true),
+                      () => `${s.name} is now a command ship.`,
+                    )
+                  }
+                >
+                  Set as command ship
+                </Button>
+              ))}
           </div>
         )}
         {/* Slice C1 — per-member captains, ONLY while the captain feature is server-lit (grouped AND
@@ -370,6 +417,12 @@ export function TeamRosterPanel() {
           {teams.map(({ group, ships }) => {
             const draft = drafts[group.group_id] ?? group.name
             const nameOk = groupUpsertAvailability({ gateEnabled: true, groupIndex: group.group_index, name: draft }).canUpsert
+            // FLEET-CONTROL (0204): the fleet's command-ship / active-inactive state + the 8-ship cap.
+            // Both mirror the server (dark → active always, no cap). commandCount folds the roster's own
+            // per-member designation (owner-RLS read); the server re-checks under its locks.
+            const commandCount = ships.filter((s) => s.is_command_ship).length
+            const cmd = fleetCommandState({ commandCount, fleetControlEnabled: fleetControl })
+            const cap = fleetCapacityState({ memberCount: ships.length, fleetControlEnabled: fleetControl })
             const destId = destChoice[group.group_id] ?? ''
             const destName = destinations.find((d) => d.id === destId)?.name ?? ''
             const sendOk = groupSendAvailability({ gateEnabled: true, groupResolved: true, memberCount: ships.length }).canSend
@@ -438,6 +491,21 @@ export function TeamRosterPanel() {
                     </Button>
                   </div>
                 </div>
+
+                {/* FLEET-CONTROL (0204): the fleet active/inactive indicator. Only when lit (dark → nothing,
+                    byte-identical). A fleet with zero command ships cannot move/send/hunt — the server
+                    rejects fleet_inactive_no_command; here we say so up front and point at the fix. */}
+                {fleetControl &&
+                  ships.length > 0 &&
+                  (cmd.active ? (
+                    <p className="text-xs text-ink-muted" data-testid={`fleet-active-${group.group_id}`}>
+                      Active — {commandCount} command ship{commandCount === 1 ? '' : 's'}.
+                    </p>
+                  ) : (
+                    <Notice tone="warning" data-testid={`fleet-inactive-${group.group_id}`}>
+                      Fleet inactive — set a command ship to move, send, or hunt with this fleet.
+                    </Notice>
+                  ))}
 
                 {/* TEAM-DOSSIER — the always-visible authoritative stats strip (Power/Speed/Cargo/
                     Survival/Members from D0's totals RPC, auto-fetched) + per-ship Breakdown (C0's
@@ -520,7 +588,13 @@ export function TeamRosterPanel() {
                           Done
                         </Button>
                       </div>
-                      {ungrouped.length === 0 ? (
+                      {cap.atCap ? (
+                        // FLEET-CONTROL (0204): the fleet is at the 8-ship cap — the server would reject
+                        // fleet_full. Surface it instead of offering a doomed Add.
+                        <p className="text-xs text-warning/90" data-testid={`fleet-full-${group.group_id}`}>
+                          This fleet is full — {cap.max} ships max. Remove a ship to add another.
+                        </p>
+                      ) : ungrouped.length === 0 ? (
                         <p className="text-xs text-ink-faint">Every ship is already on a fleet.</p>
                       ) : (
                         ungrouped.map((s) => {
@@ -553,7 +627,7 @@ export function TeamRosterPanel() {
                                   size="sm"
                                   variant="secondary"
                                   busy={busy === `assign:${s.main_ship_id}`}
-                                  disabled={busy !== null}
+                                  disabled={busy !== null || cap.atCap}
                                   onClick={() =>
                                     void run(
                                       `assign:${s.main_ship_id}`,
@@ -574,7 +648,7 @@ export function TeamRosterPanel() {
                     <Button
                       size="sm"
                       variant="secondary"
-                      disabled={busy !== null || ungrouped.length === 0}
+                      disabled={busy !== null || ungrouped.length === 0 || cap.atCap}
                       onClick={() => setAddShipFor(group.group_id)}
                     >
                       + Add ship
@@ -582,9 +656,11 @@ export function TeamRosterPanel() {
                   )}
                   {addShipFor !== group.group_id && (
                     <span className="ml-2 text-[10px] text-ink-faint">
-                      {ungrouped.length === 0
-                        ? 'No unassigned ships.'
-                        : `${ungrouped.length} ship${ungrouped.length === 1 ? '' : 's'} available to add.`}
+                      {cap.atCap
+                        ? `Fleet full (${cap.max} ships max).`
+                        : ungrouped.length === 0
+                          ? 'No unassigned ships.'
+                          : `${ungrouped.length} ship${ungrouped.length === 1 ? '' : 's'} available to add.`}
                     </span>
                   )}
                 </div>

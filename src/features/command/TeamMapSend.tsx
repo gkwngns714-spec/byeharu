@@ -14,14 +14,14 @@ import {
   type ShipGroupMapEntry,
   type TeamRpcResult,
 } from './teamApi'
-import type { GroupRow } from './teamRoster'
+import { fleetCommandState, type GroupRow } from './teamRoster'
 import { teamDestinationKind } from './teamDestination'
 import { groupSendAvailability } from './teamSend'
 import { groupHuntAvailability } from './teamCombat'
 import { deriveDockedTeamRollups } from './teamRollup'
 import { teamMapSendAction } from './teamMove'
 import { teamReasonMessage } from './teamReasonMessage'
-import { fetchLaunchFromDockEnabled } from '../../lib/catalog'
+import { fetchLaunchFromDockEnabled, fetchFleetControlEnabled } from '../../lib/catalog'
 
 // TEAM-MAP-SEND — "Send a team here" on MapScreen's location detail sheet (owner order: send
 // teams FROM THE MAP by clicking locations). Mounted by MapScreen behind the compile-time
@@ -63,6 +63,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
   const [presentFleets, setPresentFleets] = useState<PresentShipFleetLite[]>([]) // docked-team rollup input
   const [launchFromDock, setLaunchFromDock] = useState(false) // NO-HOME (0199) runtime gate; dark → today's behavior
+  const [fleetControl, setFleetControl] = useState(false) // FLEET-CONTROL (0204) gate; dark → no inactive-fleet blocking
   const [powers, setPowers] = useState<Record<string, number>>({}) // group_id → authoritative combat power
   const [busy, setBusy] = useState<string | null>(null) // key of the command in flight
   const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
@@ -78,12 +79,14 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
       fetchMyShipGroupMap(),
       fetchMyPresentShipFleets(),
       fetchLaunchFromDockEnabled(),
-    ]).then(([g, m, pf, lfd]) => {
+      fetchFleetControlEnabled(),
+    ]).then(([g, m, pf, lfd, fc]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
       setPresentFleets(pf)
       setLaunchFromDock(lfd)
+      setFleetControl(fc)
     })
     return () => {
       active = false
@@ -157,6 +160,10 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
           const members = selection.ships.filter((s) => groupMap[s.main_ship_id]?.group_id === g.group_id)
           const power = powers[g.group_id]
           const allHome = members.length > 0 && members.every((s) => s.status === 'home')
+          // FLEET-CONTROL (0204): a fleet with zero command ships is INACTIVE and the server rejects
+          // fleet_inactive_no_command. Dark → always active (byte-identical). Lit → gate the arms below.
+          const commandCount = members.filter((s) => groupMap[s.main_ship_id]?.is_command_ship).length
+          const cmd = fleetCommandState({ commandCount, fleetControlEnabled: fleetControl })
           const sendOk = groupSendAvailability({
             gateEnabled: true,
             groupResolved: true,
@@ -220,7 +227,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                     data-testid={`team-move-${g.group_id}`}
                     busy={busy === `move:${g.group_id}`}
                     busyLabel="Moving…"
-                    disabled={busy !== null}
+                    disabled={busy !== null || !cmd.active}
                     onClick={() =>
                       void run(
                         `move:${g.group_id}`,
@@ -246,7 +253,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                     variant="secondary"
                     busy={busy === `send:${g.group_id}`}
                     busyLabel="Sending…"
-                    disabled={busy !== null || !sendOk || arm === 'docked_unready'}
+                    disabled={busy !== null || !sendOk || arm === 'docked_unready' || !cmd.active}
                     onClick={() =>
                       void run(
                         `send:${g.group_id}`,
@@ -264,13 +271,20 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                   <Button
                     size="sm"
                     variant="secondary"
-                    disabled={busy !== null || !huntOk || armed}
+                    disabled={busy !== null || !huntOk || armed || !cmd.active}
                     onClick={() => setConfirmHunt({ groupId: g.group_id, locationId: location.id })}
                   >
                     Hunt here
                   </Button>
                 )}
               </div>
+              {/* FLEET-CONTROL (0204): a fleet with no command ship is inactive — say why the arm is
+                  disabled and point at the Fleets screen (dark → this never renders). */}
+              {fleetControl && members.length > 0 && !cmd.active && (
+                <p className="mt-1 text-[10px] text-warning/90" data-testid={`team-inactive-${g.group_id}`}>
+                  This fleet has no command ship — set one in the Fleets panel to move, send, or hunt.
+                </p>
+              )}
               {kind === 'hunt' && members.length > 0 && !allReady && (
                 <p className="mt-1 text-[10px] text-ink-faint">
                   {launchFromDock
@@ -301,7 +315,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                       variant="danger"
                       busy={busy === `hunt:${g.group_id}`}
                       busyLabel="Sending…"
-                      disabled={busy !== null || !huntOk}
+                      disabled={busy !== null || !huntOk || !cmd.active}
                       onClick={() =>
                         void run(
                           `hunt:${g.group_id}`,

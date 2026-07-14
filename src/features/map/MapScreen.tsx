@@ -47,7 +47,7 @@ export function MapScreen() {
     map: {
       loading, error, locations, meta, mainShip, movements,
       mainshipSendEnabled, mainShipFleet, mainShipHeldFleet, mainShipPresence, mainShipSpaceMovement,
-      teamGroups, dockedTeamRollups, fleetPositions, refresh,
+      teamGroups, dockedTeamRollups, fleetPositions, fleetControlEnabled, mainShipInFleet, refresh,
     },
   } = useShellState()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -210,6 +210,8 @@ export function MapScreen() {
               fleet={mainShipFleet}
               heldFleet={mainShipHeldFleet}
               onSent={refresh}
+              fleetControlEnabled={fleetControlEnabled}
+              shipInFleet={mainShipInFleet}
             />
           )}
 
