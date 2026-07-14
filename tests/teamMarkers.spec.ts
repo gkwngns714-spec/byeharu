@@ -3,6 +3,7 @@ import {
   resolveTeamMarkers,
   resolveTeamDockBadges,
   teamMarkersLayer,
+  deriveTeamRepresentedShipIds,
   TeamMovingMarkers,
   TeamDockBadge,
 } from '../src/features/map/teamMarkers'
@@ -139,6 +140,46 @@ test('dock badges: complete rollups map to "Fleet <name> n/n"; partial/split/emp
     rollup({ groupId: 'g3', name: 'Empty', memberCount: 0, dockedCount: 0, locationId: null }), // empty → none
   ])
   expect(out).toEqual([{ groupId: 'g1', label: 'Fleet Alpha 2/2', locationId: 'loc-A' }])
+})
+
+// ── deriveTeamRepresentedShipIds — the FLEETMAP de-dup set (which ships a team marker already draws) ──
+test('de-dup: members of a COMPLETE docked team (its dock badge) are represented', () => {
+  const ids = deriveTeamRepresentedShipIds({
+    membership: { s1: { group_id: 'g1' }, s2: { group_id: 'g1' }, solo: { group_id: null } },
+    rollups: [rollup()], // g1 complete (n/n) → dock badge drawn
+    movements: [],
+    groups,
+    nowMs: midMs,
+  })
+  expect([...ids].sort()).toEqual(['s1', 's2'])
+})
+
+test('de-dup: members of an IN-FLIGHT moving team (its moving badge) are represented', () => {
+  const ids = deriveTeamRepresentedShipIds({
+    membership: { s1: { group_id: 'g2' }, s2: { group_id: 'g2' } },
+    rollups: [],
+    movements: [mv({ group_id: 'g2' })], // g2 moving → moving badge drawn
+    groups,
+    nowMs: midMs,
+  })
+  expect([...ids].sort()).toEqual(['s1', 's2'])
+})
+
+test('de-dup: a ship in NO marked group (solo, or a partial/incoherent team) keeps its own chevron', () => {
+  const ids = deriveTeamRepresentedShipIds({
+    membership: { solo: { group_id: null }, partial: { group_id: 'g2' } },
+    rollups: [rollup({ groupId: 'g2', name: 'Bravo', dockedCount: 1, locationId: null })], // partial → no badge
+    movements: [], // g2 not in flight either
+    groups,
+    nowMs: midMs,
+  })
+  expect(ids.size).toBe(0)
+})
+
+test('de-dup: no groups / no markers → empty set (dark posture; every ship keeps its chevron)', () => {
+  expect(
+    deriveTeamRepresentedShipIds({ membership: { s1: { group_id: 'g1' } }, rollups: [], movements: [], groups: [], nowMs: midMs }).size,
+  ).toBe(0)
 })
 
 // ── teamMarkersLayer — the GalaxyMap wiring proof (element-tree convention) ─────────────────────────

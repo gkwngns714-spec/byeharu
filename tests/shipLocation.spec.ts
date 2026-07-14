@@ -107,10 +107,11 @@ test('returning — a return-home movement → "Returning home" (no destination 
   expect(r.etaText).not.toBeNull()
 })
 
-test('null / home — no active fleet is a genuine idle-at-home ship, not a crash', () => {
+test('null / idle — no active fleet is a genuine idle/undeployed ship (no-home: never "home"), not a crash', () => {
   const r = resolveShipLocationLabel(null, null, LOCS)
-  expect(r.kind).toBe('home')
-  expect(r.label).toBe('At home port')
+  expect(r.kind).toBe('idle')
+  expect(r.label).toBe('Idle')
+  expect(r.label.toLowerCase()).not.toContain('home')
   expect(r.destination).toBeNull()
   expect(r.etaText).toBeNull()
 })

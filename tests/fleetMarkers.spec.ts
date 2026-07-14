@@ -143,3 +143,20 @@ test('no selection → nothing flagged selected', () => {
   const m = resolveFleetMarkers([base(), base({ main_ship_id: 'ship-2', location_id: 'loc-B' })], LOCS, null, midMs)
   expect(m.every((x) => !x.selected)).toBe(true)
 })
+
+// ── FLEETMAP de-dup — a ship a TEAM marker already represents is SKIPPED here (no redundant chevron) ──
+test('excludeShipIds — ships already drawn by a team marker are skipped; solo/ungrouped ships still draw', () => {
+  const ships = [
+    base({ main_ship_id: 'ship-1', location_id: 'loc-A' }), // team member (docked-together fleet) → skipped
+    base({ main_ship_id: 'ship-2', location_id: 'loc-A' }), // team member → skipped
+    base({ main_ship_id: 'ship-solo', location_id: 'loc-B' }), // ungrouped → still drawn
+  ]
+  const m = resolveFleetMarkers(ships, LOCS, null, midMs, new Set(['ship-1', 'ship-2']))
+  expect(m.map((x) => x.main_ship_id)).toEqual(['ship-solo'])
+})
+
+test('empty exclude set (the default) draws every placeable ship — byte-identical to today', () => {
+  const ships = [base({ main_ship_id: 'ship-1' }), base({ main_ship_id: 'ship-2', location_id: 'loc-B' })]
+  expect(resolveFleetMarkers(ships, LOCS, null, midMs, new Set()).map((x) => x.main_ship_id)).toEqual(['ship-1', 'ship-2'])
+  expect(resolveFleetMarkers(ships, LOCS, null, midMs).map((x) => x.main_ship_id)).toEqual(['ship-1', 'ship-2'])
+})
