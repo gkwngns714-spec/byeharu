@@ -51,9 +51,12 @@ single coincide and the arm would prove nothing).
 
 **Verify.** `npm run build` (tsc -b + vite build) green; eslint clean on the touched client files;
 `commandBuff`+`fleetControl`+`roomSlots` unit specs green (21); `team-command-proof.sh selftest` +
-`activate-command-buffs.sh selftest` green. ██ NOT RUN: the full `team-command-proof.sh run` against a real
-DB — `psql` is not installed on this box, so the CMDBUFF block's inverted arm is proven STATICALLY (selftest
-+ grep pins) but has NOT been executed. It must run green against a DB before/with the 0203–0206 deploy. ██
+`activate-command-buffs.sh selftest` green. **The full proof RAN GREEN against a real DB in CI** — the
+`slice-**`-triggered `team-command-proof.yml` `disposable-matrix` job (2m6s) stands up a throwaway local
+Supabase, applies the FULL migration chain including THIS edited 0205, and executed all 31 `TEAMCMD_PASS_*`
+markers incl. `TEAMCMD_PASS_CMDBUFF` — so the inverted ONE-BUFF arm + the ANTI-STACK pin are proven by
+execution, not just by grep. (Locally this box has no `psql`, so the local run is selftest-only; CI is the
+real-DB path and it is the one that counts.)
 
 **Open follow-ups**
 - (follow-up) 0204's two `order by created_at limit 1` picks share the txn-constant-`now()` tie and should
