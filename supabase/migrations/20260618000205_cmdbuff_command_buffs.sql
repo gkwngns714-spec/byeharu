@@ -36,12 +36,14 @@
 -- 0044→0115→0122→0170→0180→0193→0196→0198, grep-verified; FLEET-CONTROL 0204 and ROOMS-8 0203 did
 -- NOT touch it, re-verified). Re-created from that head VERBATIM with ONE marked
 -- `-- COMMAND-BUFFS (0205)` hunk: when cfg_bool('command_buffs_enabled') AND this ship is in a fleet
--- (v_ship.group_id not null), fold the fleet's ACTIVE command ship(s)' rolled buff stats_json
+-- (v_ship.group_id not null), fold the fleet's FIRST ACTIVE command ship's rolled buff stats_json
 -- FLEET-WIDE into THIS ship's totals (the same additive fold shape + shared 8-key vocabulary as the
 -- module / trait fold; NO tradeoff CASE — a command buff is a pure fleet bonus, its costs, if any,
--- live in its stats_json). DOUBLE-GATED: flag false → the loop is skipped ENTIRELY (dark = zero
--- command_buff reads, byte-identical output); flag true + no command ship / ungrouped ship = an
--- empty loop (byte-identical output) — the DECKS-3 / level double inertness.
+-- live in its stats_json). ONE BUFF ONLY — no stacking, no backups (owner decision 2026-07-16): the
+-- fold takes the FIRST command ship (order by created_at, main_ship_id — limit 1); any other
+-- designated command ship's buff is DORMANT. DOUBLE-GATED: flag false → the loop is skipped
+-- ENTIRELY (dark = zero command_buff reads, byte-identical output); flag true + no command ship /
+-- ungrouped ship = an empty loop (byte-identical output) — the DECKS-3 / level double inertness.
 -- DEPENDENCY (documented): is_command_ship is only meaningfully set when FLEET-CONTROL is used, so
 -- the fold in practice needs fleet_control_enabled too; but the FOLD itself gates ONLY on
 -- command_buffs_enabled (the roll + catalog are additive / always-on and never gated).
@@ -64,8 +66,9 @@
 insert into public.game_config (key, value, description) values
   ('command_buffs_enabled', 'false',
    'COMMAND-BUFFS (0205): server gate for the FLEET-WIDE command-buff fold. When true, '
-   'calculate_expedition_stats folds a fleet''s ACTIVE command ship(s)'' rolled command_buff_types '
-   'stats_json into EVERY fleet member''s totals (dormant otherwise). The per-ship roll + the '
+   'calculate_expedition_stats folds the fleet''s FIRST ACTIVE command ship''s rolled '
+   'command_buff_types stats_json into EVERY fleet member''s totals (dormant otherwise) — ONE buff '
+   'per fleet, no stacking and no backups: extra command ships'' buffs never apply. The roll + the '
    'catalog are additive / always-on and NOT gated by this flag — only the FOLD is. In practice the '
    'fold needs fleet_control_enabled too (is_command_ship is only meaningfully set under '
    'FLEET-CONTROL). OFF on live — dark until a human flips it.')
@@ -192,8 +195,10 @@ alter table public.main_ship_instances
 comment on column public.main_ship_instances.command_buff_id is
   'COMMAND-BUFFS (0205): the ship''s ONE rolled command buff (command_buff_types.buff_id) — a '
   'deterministic function of the ship id + its hull tier, IMMUTABLE once set (the sole writer''s '
-  'UPDATE is NULL-guarded). DORMANT until this ship is an ACTIVE command ship (is_command_ship, '
-  '0204) in a fleet AND command_buffs_enabled is lit — then it folds FLEET-WIDE through the adapter.';
+  'UPDATE is NULL-guarded). DORMANT until this ship is its fleet''s FIRST ACTIVE command ship '
+  '(is_command_ship, 0204; first = order by created_at, main_ship_id) AND command_buffs_enabled is '
+  'lit — then it folds FLEET-WIDE through the adapter. ONE buff per fleet: a command ship that is '
+  'not the first folds NOTHING (no stacking, no backups — owner decision 2026-07-16).';
 
 -- ── §5) command_buff_roll_for_ship — THE sole writer (deterministic, idempotent, service-only) ────
 -- The soul_roll_traits_for_ship (0186) shape, single-slot: NOT gated (the roll is always-on additive
@@ -451,17 +456,28 @@ begin
   -- END SOUL-1 (0193) trait-fold hunk — everything below is the 0180 head, byte-identical, except
   -- the ONE marked final-speed line.
 
-  -- COMMAND-BUFFS (0205): the ship's FLEET's ACTIVE command ship(s)' rolled command buffs feed the
-  -- SAME accumulators — placed adjacent to the trait fold because a command buff is a FLEET-level
-  -- identity contribution, additive ahead of the equipment loops (all contributions are additive
-  -- into one accumulator set, so order cannot change the sum — adjacency is documentation, not
-  -- arithmetic). Same key vocabulary + coalesce-to-0 as the trait / module loops — the ONE fold
-  -- idiom, no second buff reader. DOUBLE-GATED: the loop is skipped ENTIRELY while dark (zero
-  -- command_buff reads, byte-identical output), and an ungrouped ship (group_id null) or a fleet
-  -- with no ACTIVE command ship carrying a buff yields an EMPTY loop (byte-identical output). NO
-  -- tradeoff CASE and NO scaling — a command buff is a pure fleet bonus (its costs, if any, live in
-  -- its stats_json minus keys). Owner-scoped defense-in-depth on the self-join (cs.player_id =
-  -- v_ship.player_id): a fleet is one player's, so this can never fold a foreign ship's buff.
+  -- COMMAND-BUFFS (0205): the ship's FLEET's ONE ACTIVE command buff feeds the SAME accumulators —
+  -- placed adjacent to the trait fold because a command buff is a FLEET-level identity
+  -- contribution, additive ahead of the equipment loops (all contributions are additive into one
+  -- accumulator set, so order cannot change the sum — adjacency is documentation, not arithmetic).
+  -- Same key vocabulary + coalesce-to-0 as the trait / module loops — the ONE fold idiom, no second
+  -- buff reader. DOUBLE-GATED: the loop is skipped ENTIRELY while dark (zero command_buff reads,
+  -- byte-identical output), and an ungrouped ship (group_id null) or a fleet with no ACTIVE command
+  -- ship carrying a buff yields an EMPTY loop (byte-identical output). NO tradeoff CASE and NO
+  -- scaling — a command buff is a pure fleet bonus (its costs, if any, live in its stats_json minus
+  -- keys). Owner-scoped defense-in-depth on the self-join (cs.player_id = v_ship.player_id): a
+  -- fleet is one player's, so this can never fold a foreign ship's buff.
+  --
+  -- ONE BUFF — NO STACKING, NO BACKUPS (owner decision, 2026-07-16). A fleet may carry SEVERAL
+  -- designated command ships (0204 places no one-command-ship constraint), but only the FIRST one's
+  -- buff applies: `order by ... limit 1`. Every other command ship's buff is DORMANT — designating
+  -- extra command ships is a movement/activity choice and can NEVER be a stat gain. (Superseded the
+  -- original SUM-all-command-ships fold, which let a player stack 8 buffs by designating all 8.)
+  -- DETERMINISM (0041): the order is created_at THEN main_ship_id, never created_at alone —
+  -- created_at defaults to now(), which is TRANSACTION-CONSTANT (0043), so ships commissioned in the
+  -- SAME txn share a timestamp and created_at alone is NOT a total order (an arbitrary buff would
+  -- win, and re-runs could differ). The main_ship_id PK tiebreak makes the pick a deterministic
+  -- total order — the same "hash/collate a total order, never rely on a tie" law as the 0186 roll.
   if v_cmdbuffs_enabled and v_ship.group_id is not null then
     for cb in
       select cbt.stats_json
@@ -470,6 +486,8 @@ begin
       where cs.group_id = v_ship.group_id
         and cs.player_id = v_ship.player_id
         and cs.is_command_ship
+      order by cs.created_at, cs.main_ship_id
+      limit 1
     loop
       a_combat    := a_combat    + coalesce((cb.stats_json->>'attack')::numeric, 0);
       a_survival  := a_survival  + coalesce((cb.stats_json->>'defense')::numeric, 0);

@@ -127,7 +127,9 @@ byte-unchanged until the owner flips it. The three rules: **(1) caps** — max 3
 active** — the additive per-ship designation `main_ship_instances.is_command_ship` (sole writer
 `set_fleet_command_ship`, owner-scoped, ALWAYS settable [additive data, inert until the flag gates
 movement], setting true requires the ship be in a fleet → `ship_not_in_fleet`; a fleet may carry MULTIPLE
-command ships as backups); **(3) everything moves as a FLEET** — a fleet with zero command ships is
+command ships — redundancy for the ACTIVE/movement requirement only, NOT a buff stack: exactly one
+command buff ever applies, the first ship's, per the 2026-07-16 owner decision); **(3) everything
+moves as a FLEET** — a fleet with zero command ships is
 INACTIVE, so the three LIVE group RPCs (`send_ship_group_expedition` 0187 head, `move_ship_group_to_location`
 0190 head, `send_ship_group_hunt` **0199** head — re-created from their TRUE heads with ONE marked
 flag-gated hunk each) reject `fleet_inactive_no_command` when lit; the client hides the per-ship Move
@@ -162,9 +164,13 @@ write). The roll is ALWAYS-ON additive data — NOT flag-gated; inert until the 
 `calculate_expedition_stats` re-created from its TRUE head **0198** (NANGUARD; the ONE adapter re-create
 of this program, extract-and-diff pinned — every accumulated 0115/0122/0170/0180/0193/0196/0198 hunk
 byte-identical, only the marked COMMAND-BUFFS hunk differs) with ONE hunk: when `command_buffs_enabled`
-AND the ship is in a fleet (`group_id` not null), fold the fleet's ACTIVE command ship(s)' rolled buff
-`stats_json` FLEET-WIDE into THIS ship's totals (the shared additive 8-key fold; multiple command ships
-sum — backups). DOUBLE-GATED: flag false → the loop is skipped entirely (dark = byte-identical); flag
+AND the ship is in a fleet (`group_id` not null), fold the fleet's FIRST ACTIVE command ship's rolled
+buff `stats_json` FLEET-WIDE into THIS ship's totals (the shared additive 8-key fold). **ONE buff per
+fleet — no stacking, no backups** (owner decision 2026-07-16): `order by created_at, main_ship_id
+limit 1`; any further designated command ship's buff is DORMANT, so designating extra command ships
+is a movement/activity choice and can never be a stat gain. (The `main_ship_id` PK tiebreak is load-
+bearing: `created_at` defaults to `now()`, which is txn-constant, so it alone is not a total order.)
+DOUBLE-GATED: flag false → the loop is skipped entirely (dark = byte-identical); flag
 true + ungrouped / no command ship → empty loop (byte-identical) — the DECKS-3/level double inertness.
 DEPENDENCY: the fold needs `fleet_control_enabled` too (is_command_ship is only meaningfully set through
 FLEET-CONTROL) — the fold itself gates on `command_buffs_enabled` alone. Client: the ShipDossier gains a

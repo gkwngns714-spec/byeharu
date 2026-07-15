@@ -112,7 +112,8 @@ export function ShipDossier({
   // SOUL-2: the ship's rolled traits + catalog (null = dark gate / read error → section hidden).
   const [soul, setSoul] = useState<ShipSoulData | null>(null)
   // COMMAND-BUFFS (0205): the ship's rolled command buff + catalog (null = dark gate / read error →
-  // line hidden). The buff is dormant until this ship is its fleet's ACTIVE command ship.
+  // line hidden). The buff is dormant until this ship is its fleet's FIRST ACTIVE command ship
+  // (one buff per fleet — no stacking, no backups).
   const [commandBuff, setCommandBuff] = useState<ShipCommandBuffData | null>(null)
 
   // Guards — the shared idiom home. ROOMS-8 makes this panel a (light) command surface too: the
@@ -204,7 +205,8 @@ export function ShipDossier({
   // COMMAND-BUFFS (0205): the ship's ONE rolled command buff, joined to the catalog (pure; specs in
   // tests/commandBuff.spec.ts). Non-null ONLY when the gate lit AND the ship carries a buff — an
   // unrolled ship (buffId null) stays hidden, and a null commandBuff (dark / read error) renders
-  // nothing. The buff is DORMANT: it applies fleet-wide only when this ship is the command ship.
+  // nothing. The buff is DORMANT: it applies fleet-wide only when this ship is its fleet's FIRST
+  // command ship (one buff per fleet — extra command ships fold nothing).
   const commandBuffCard = commandBuff ? shipCommandBuffCard(commandBuff.buffId, commandBuff.catalog) : null
   // The TeamDossier chip idiom, verbatim classes — ship stats and team stats read as ONE system.
   const chip = (label: string, value: number | string) => (
@@ -344,8 +346,9 @@ export function ShipDossier({
           owner's fleet reshape: "command ship will provide those buffs … a buff slot"). Server truth
           only: the stored command_buff_id joined against the public-read catalog — never a client
           re-derivation of the roll. DORMANT by design: the effect applies FLEET-WIDE only when this
-          ship is set as its fleet's command ship, and only once the owner lights the fold — the copy
-          says so plainly. DARK (command_buffs_enabled false) or any read error / unrolled ship →
+          ship is its fleet's FIRST command ship (ONE buff per fleet — no stacking, no backups; owner
+          decision 2026-07-16), and only once the owner lights the fold — the copy says so plainly.
+          DARK (command_buffs_enabled false) or any read error / unrolled ship →
           commandBuffCard null → nothing renders (byte-identical card). */}
       {commandBuffCard && (
         <>
@@ -373,7 +376,8 @@ export function ShipDossier({
               </div>
               <p className="mt-0.5 text-[10px] text-ink-faint">{commandBuffCard.description}</p>
               <p data-testid="command-buff-note" className="mt-1 text-[10px] text-ink-muted">
-                Applies to the whole fleet when this ship is the command ship.
+                Applies to the whole fleet when this ship is its fleet's first command ship. A fleet
+                gets one command buff — extra command ships add nothing.
               </p>
             </div>
           ) : (

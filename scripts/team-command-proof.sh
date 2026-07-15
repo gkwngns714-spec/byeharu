@@ -846,8 +846,11 @@ if [ "$MODE" = "selftest" ]; then
   #    cannot false-green): the committed-dark flag; the commission-trigger roll = the deterministic hash
   #    derivation; the DARK inertness (a designated command ship's buff is inert while dark, byte-identical
   #    to the baseline); the LIT fleet-wide buff-fold EXACTNESS (combat_power gains the buff attack exactly);
-  #    the ZERO-command-fleet no-buff; and the group_id gate (an ungrouped ship folds nothing). The three
-  #    mutation-gutting targets are the buff-fold-exactness / dark-parity / no-command-no-buff asserts. ────
+  #    the ONE-BUFF rule + its ANTI-STACK pin (two command ships fold ONLY the first's buff — no stacking,
+  #    no backups, owner decision 2026-07-16 — the winner derived from the adapter's own total order);
+  #    the ZERO-command-fleet no-buff; and the group_id gate (an ungrouped ship folds nothing). The four
+  #    mutation-gutting targets are the buff-fold-exactness / dark-parity / no-command-no-buff / anti-stack
+  #    asserts. ────
   grep -qF "CMDBUFF FAIL: command_buffs_enabled is not committed false (dark)" "$SQL" \
     || fail "CMDBUFF: harness does not ASSERT the committed-dark flag"
   grep -qF "the stored buff is not the deterministic hash derivation" "$SQL" \
@@ -858,8 +861,15 @@ if [ "$MODE" = "selftest" ]; then
     || fail "CMDBUFF: harness does not ASSERT the LIT fleet-wide buff-fold exactness (gutting target: buff-fold exactness)"
   grep -qF "the command ship itself did not receive its own fleet-wide buff" "$SQL" \
     || fail "CMDBUFF: harness does not ASSERT the command ship receives its own fleet-wide buff"
-  grep -qF "two command ships did not SUM both buffs (backups)" "$SQL" \
-    || fail "CMDBUFF: harness does not ASSERT multiple command ships sum their buffs (backups)"
+  grep -qF "two command ships did not fold EXACTLY ONE buff" "$SQL" \
+    || fail "CMDBUFF: harness does not ASSERT the ONE-BUFF arm (two command ships fold only the first's buff)"
+  grep -qF "two command ships STACKED both buffs (the pre-2026-07-16 sum fold is back)" "$SQL" \
+    || fail "CMDBUFF: harness does not ASSERT the ANTI-STACK pin (gutting target: no stacking, no backups)"
+  # the ONE-BUFF winner must be derived from the SAME total order the adapter uses (created_at THEN the
+  # main_ship_id PK tiebreak — created_at alone is NOT a total order, now() being txn-constant), and
+  # never hardcoded to fixture A. Pin the independent derivation's ordering clause.
+  grep -qF "order by cs.created_at, cs.main_ship_id" "$SQL" \
+    || fail "CMDBUFF: harness does not derive the ONE-BUFF winner from the adapter's (created_at, main_ship_id) total order"
   grep -qF "a fleet with ZERO command ships still folded a buff" "$SQL" \
     || fail "CMDBUFF: harness does not ASSERT the no-command-ship-no-buff arm (gutting target: no-command-no-buff)"
   grep -qF "an ungrouped ship folded a fleet buff (the group_id gate breach)" "$SQL" \

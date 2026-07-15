@@ -9,7 +9,12 @@ import { traitEffects, type TraitEffect } from './shipTraits'
 // command_buff_types catalog. The client never re-derives the roll — only the join of what the
 // server stored. The stat numbers rendered are the catalog's stats_json verbatim (the same
 // input-vocabulary hunks the 0205 adapter folds server-side). The buff is DORMANT until the ship is
-// its fleet's ACTIVE command ship AND command_buffs_enabled is lit — the dossier says so in copy.
+// its fleet's FIRST ACTIVE command ship AND command_buffs_enabled is lit — the dossier says so in
+// copy. ONE buff per fleet (owner decision 2026-07-16): the server folds only the first command
+// ship's buff (order by created_at, main_ship_id — limit 1), so a second command ship's buff adds
+// NOTHING. This module renders a ship's OWN rolled buff regardless — whether it is currently the
+// one that applies is a fleet-level question the dossier's copy explains rather than computing here
+// (the client never re-derives a server fold).
 //
 // DARK (command_buffs_enabled — seeded false, 0205): the fold below is the ONE strict jsonb-true
 // coercion (strictConfigFlag — shared with the trait / commission / salvage folds, never a re-copy).

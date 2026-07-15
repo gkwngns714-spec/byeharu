@@ -5,6 +5,66 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-16 — CMDBUFF-ONE: the owner's stacking decision — ONE command buff per fleet, the FIRST command ship's (amends 0205, still DARK)
+
+**Decision (owner).** "One buff is active, no backups. There is only one buff, the first ship on a fleet."
+This SETTLES the stacking question the 2026-07-15 wrap left open, and it lands STRICTER than the "backups"
+lean recorded there: extras are not insurance, they are simply dormant. Clarified in-session: the
+command-ship GATE stays (a buff still only fires from a designated command ship) — "first ship" is the
+tiebreak among a fleet's command ships, NOT a replacement for the designation. The alternative reading
+(oldest ship in the fleet buffs regardless of designation) was explicitly rejected — it would have severed
+the command-ship↔buff link the owner designed in the first place.
+
+**The change — 0205 EDITED IN PLACE (not a new migration).** 0205 is merged to `main` but has NEVER been
+deployed (the whole 0203–0206 chain is still pending), so amending it is correct and leaves no dead
+migration; the chain STAYS at 0206. The adapter fold gains `order by cs.created_at, cs.main_ship_id` +
+`limit 1` — the sum-all-command-ships loop becomes a take-the-first loop. Everything else about the slice is
+untouched: the catalog, the deterministic roll, the trigger, the gates, the 8-key vocabulary.
+
+**DETERMINISM — the load-bearing detail (the `limit 1` alone would have been a BUG).** The obvious
+`order by created_at limit 1` is NOT deterministic here: `main_ship_instances.created_at` defaults to
+`now()` (0043), and `now()` is TRANSACTION-CONSTANT — every ship commissioned in the same txn shares a
+timestamp, so `created_at` alone is not a total order and an ARBITRARY command ship's buff would win (and
+could differ between runs / between the proof and the adapter). The `main_ship_id` PK tiebreak makes it a
+total order. The house already had this smell: 0204 carries two `order by created_at limit 1` picks with the
+same latent tie — NAMED FOLLOW-UP below, deliberately not swept in this slice.
+
+**Blast radius swept (every place that documented "sum — backups").** The 0205 fold + its header/flag/column
+comments; `team-command-proof.sql`'s CMDBUFF block (the SUM arm INVERTED — see proof); `team-command-proof.sh`
+(the sum grep-pin replaced by a ONE-BUFF pin + a new ANTI-STACK pin + an ordering-law pin; 3 gutting targets
+→ 4); `activate-command-buffs.sql`'s behavior header + PASS banner (what the owner reads AT flip time);
+`FULL_CAPACITY_PLAN` §FLEET (both the fold para and the "MULTIPLE command ships as backups" line — corrected
+to redundancy-for-activeness, NOT a buff stack); the ShipDossier copy + `commandBuff.ts` header.
+
+**Client copy (player-facing, the honest-label posture).** "Applies to the whole fleet when this ship is the
+command ship" was TRUE under sum and became a LIE under one-buff (a second command ship's dossier would
+promise a fleet buff that never fires). Now: "…when this ship is its fleet's first command ship. A fleet gets
+one command buff — extra command ships add nothing." The client still renders a ship's OWN rolled buff and
+does NOT re-derive which one currently applies (a server fold is never re-implemented client-side).
+
+**Proof — the SUM arm inverted, not deleted.** The CMDBUFF block's "two command ships SUM both buffs" arm now
+asserts EXACTLY ONE buff folds, and the winner is derived INDEPENDENTLY by the proof from the same
+(created_at, main_ship_id) law rather than hardcoding fixture A (the fixtures are same-txn → tied created_at,
+so a hardcoded A would have been the very flake this slice exists to prevent). Plus a new ANTI-STACK pin: the
+total must NOT equal base+A+B (self-skipping in the degenerate both-buffs-zero-attack case, where sum and
+single coincide and the arm would prove nothing).
+
+**Verify.** `npm run build` (tsc -b + vite build) green; eslint clean on the touched client files;
+`commandBuff`+`fleetControl`+`roomSlots` unit specs green (21); `team-command-proof.sh selftest` +
+`activate-command-buffs.sh selftest` green. ██ NOT RUN: the full `team-command-proof.sh run` against a real
+DB — `psql` is not installed on this box, so the CMDBUFF block's inverted arm is proven STATICALLY (selftest
++ grep pins) but has NOT been executed. It must run green against a DB before/with the 0203–0206 deploy. ██
+
+**Open follow-ups**
+- (follow-up) 0204's two `order by created_at limit 1` picks share the txn-constant-`now()` tie and should
+  take the same `, main_ship_id` tiebreak. Not swept here (out of this slice's scope; 0204 is undeployed too,
+  so it is still a free in-place fix).
+- (owner) the ACT-flip `[D]` numbers stay at defaults by decision — "we will try the game itself and will
+  modify". They are `game_config` rows, so tuning is an `update game_config` (or a re-run of the activate
+  script with an edited `[D]`), never a code change or a redeploy.
+
+---
+
 ## 2026-07-15 — SESSION WRAP: the FLEET RESHAPE + audit-fix batch is COMPLETE (all merged, all DARK) — pending state = owner-gated
 
 **What this entry is.** A consolidated close-out for the fleet-control-model reshape and the 7-agent-audit

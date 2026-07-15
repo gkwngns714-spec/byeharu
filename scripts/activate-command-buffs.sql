@@ -9,11 +9,14 @@
 -- build/deploy time. Each run of this file IS the recorded human go decision.
 --
 -- ██ THE BEHAVIOR CHANGE (read before flipping) ██
---   Flipping this flag makes a fleet's ACTIVE command ship(s)' rolled command buff apply FLEET-WIDE:
---   calculate_expedition_stats starts folding the buff's stats into EVERY fleet member's totals (combat
---   power / survival / cargo / speed / …). A fleet with no command ship, or a game where no ship is a
---   command ship, sees NO change — the fold is inert without an is_command_ship member. So the visible
---   impact scales with how many fleets already have a command ship designated (the smoke reports it).
+--   Flipping this flag makes a fleet's FIRST ACTIVE command ship's rolled command buff apply
+--   FLEET-WIDE: calculate_expedition_stats starts folding the buff's stats into EVERY fleet member's
+--   totals (combat power / survival / cargo / speed / …). ONE BUFF PER FLEET — no stacking, no
+--   backups (owner decision 2026-07-16): the fold takes `order by created_at, main_ship_id limit 1`,
+--   so a second/third designated command ship contributes NOTHING. A fleet with no command ship, or a
+--   game where no ship is a command ship, sees NO change — the fold is inert without an
+--   is_command_ship member. So the visible impact scales with how many fleets already have a command
+--   ship designated (the smoke reports it), and is capped at ONE buff per fleet regardless.
 --   DEPENDENCY: is_command_ship is only meaningfully SET through the FLEET-CONTROL surface, so this
 --   activation REQUIRES fleet_control_enabled to already be committed true — otherwise players have no
 --   way to designate command ships and the buffs can never light.
@@ -181,7 +184,7 @@ begin
   raise notice 'ACTIVATE_CMDBUFF_PASS_SMOKE ok: flag committed true; % active command ship(s) across % fleets now folding buffs fleet-wide', v_active, v_total;
 end $$;
 
-select 'COMMAND-BUFFS ACTIVATION PASS — the fleet-wide command-buff fold is LIVE. calculate_expedition_stats now folds a fleet''s ACTIVE command ship(s)'' rolled command buff into every fleet member''s totals. NO client PR is needed: the dossier Command buff line is runtime-flag-gated (strictConfigFlag/fetchShipCommandBuff) and lights on the next config poll. IMMEDIATE PLAYER IMPACT: every fleet with a designated command ship gains that ship''s buff fleet-wide; fleets with no command ship are unchanged until their owner sets one.' as result;
+select 'COMMAND-BUFFS ACTIVATION PASS — the fleet-wide command-buff fold is LIVE. calculate_expedition_stats now folds a fleet''s FIRST ACTIVE command ship''s rolled command buff into every fleet member''s totals — ONE buff per fleet, no stacking and no backups (extra command ships fold nothing). NO client PR is needed: the dossier Command buff line is runtime-flag-gated (strictConfigFlag/fetchShipCommandBuff) and lights on the next config poll. IMMEDIATE PLAYER IMPACT: every fleet with a designated command ship gains that ONE ship''s buff fleet-wide; fleets with no command ship are unchanged until their owner sets one.' as result;
 
 commit;
 

@@ -4157,9 +4157,10 @@ end $$;
 -- ════════ BLOCK CMDBUFF (COMMAND-BUFFS, 0205): fleet-wide command-buff fold, DARK then in-txn LIT ══
 -- Migration 0205 adds a per-hull command-buff TIER, a command_buff_types catalog (~10 per tier), a
 -- ship BUFF SLOT (main_ship_instances.command_buff_id, rolled deterministically at commission by an
--- AFTER-INSERT trigger, immutable), and — gated on command_buffs_enabled (seeded false) — folds a
--- fleet's ACTIVE command ship(s)' rolled buff FLEET-WIDE into every fleet member's totals through the
--- ONE adapter (calculate_expedition_stats). This block proves both arms on a FRESH fixture user (the
+-- AFTER-INSERT trigger, immutable), and — gated on command_buffs_enabled (seeded false) — folds the
+-- fleet's FIRST ACTIVE command ship's rolled buff FLEET-WIDE into every fleet member's totals through
+-- the ONE adapter (calculate_expedition_stats). ONE buff per fleet — no stacking, no backups (owner
+-- decision 2026-07-16): extra command ships are DORMANT. This block proves both arms on a FRESH user (the
 -- FLEETCTRL/NOHOME idiom), calling the adapter DIRECTLY (service-role, like the TEAMSTATS block) and
 -- deriving the expected delta INDEPENDENTLY from the catalog (the delegation-not-reimplementation
 -- posture — the proof never re-derives WHICH buff rolled; it reads the ship's stored buff and folds
@@ -4175,6 +4176,9 @@ declare
   v_buff_a text; v_buff_b text; v_expect text;
   abuff jsonb; bbuff jsonb;   -- A's / B's rolled buff stats_json (independent, from the catalog)
   base_a jsonb; base_b jsonb; lit jsonb;
+  -- the ONE-BUFF arm (owner decision 2026-07-16): the winner of the fleet's command ships under the
+  -- adapter's ordering law (created_at, main_ship_id), derived independently by this proof.
+  v_first_buff text; v_first_stats jsonb;
 begin
   -- ── (0) structural: command_buffs_enabled committed DARK; the catalog/column/tier deployed ────────
   if coalesce((select value #>> '{}' from public.game_config where key='command_buffs_enabled'),'false') <> 'false' then
@@ -4284,13 +4288,33 @@ begin
   if (lit->>'combat_power')::numeric is distinct from (base_a->>'combat_power')::numeric + coalesce((abuff->>'attack')::numeric,0) then
     raise exception 'CMDBUFF FAIL: the command ship itself did not receive its own fleet-wide buff'; end if;
 
-  -- MULTIPLE command ships (backups) SUM: designate B a command ship too → B now folds A''s AND B''s buff.
+  -- ONE BUFF — NO STACKING, NO BACKUPS (owner decision 2026-07-16; supersedes the original SUM arm).
+  -- Designate B a command ship TOO → the fleet now holds TWO command ships, but ONLY the FIRST one's
+  -- buff may apply. A is first (same-txn fixtures share created_at — now() is txn-constant — so the
+  -- main_ship_id PK tiebreak decides; this proof asserts against the SAME total order the adapter
+  -- uses, derived independently below, rather than assuming A wins).
   r := pg_temp.call_as(uCB, format('public.set_fleet_command_ship(%L::uuid, true)', sB));
   if (r->>'ok')::boolean is not true then raise exception 'CMDBUFF FAIL set command B: %', r; end if;
+  -- the INDEPENDENT derivation of "first": the proof re-computes the winner from the same ordering
+  -- law (created_at, main_ship_id) and expects THAT ship's buff — never a hardcoded A.
+  select cs.command_buff_id into v_first_buff
+    from public.main_ship_instances cs
+   where cs.group_id = (select group_id from public.main_ship_instances where main_ship_id = sB)
+     and cs.player_id = uCB and cs.is_command_ship
+   order by cs.created_at, cs.main_ship_id
+   limit 1;
+  select stats_json into v_first_stats from public.command_buff_types where buff_id = v_first_buff;
   lit := public.calculate_expedition_stats(uCB, sB, '[]'::jsonb, 'none');
   if (lit->>'combat_power')::numeric is distinct from
-     (base_b->>'combat_power')::numeric + coalesce((abuff->>'attack')::numeric,0) + coalesce((bbuff->>'attack')::numeric,0) then
-    raise exception 'CMDBUFF FAIL: two command ships did not SUM both buffs (backups)'; end if;
+     (base_b->>'combat_power')::numeric + coalesce((v_first_stats->>'attack')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: two command ships did not fold EXACTLY ONE buff (the first by created_at,main_ship_id — want no stacking, no backups)'; end if;
+  -- the ANTI-STACK pin: the total must NOT be the sum of both buffs. Skipped only in the degenerate
+  -- case where both ships rolled a zero-attack buff (then sum = single and the arm proves nothing).
+  if coalesce((abuff->>'attack')::numeric,0) + coalesce((bbuff->>'attack')::numeric,0)
+     is distinct from coalesce((v_first_stats->>'attack')::numeric,0)
+     and (lit->>'combat_power')::numeric is not distinct from
+         (base_b->>'combat_power')::numeric + coalesce((abuff->>'attack')::numeric,0) + coalesce((bbuff->>'attack')::numeric,0) then
+    raise exception 'CMDBUFF FAIL: two command ships STACKED both buffs (the pre-2026-07-16 sum fold is back)'; end if;
 
   -- ── (6) NO COMMAND SHIP → NO BUFF: stand both down → the fleet is buff-less (byte-identical baseline) ─
   r := pg_temp.call_as(uCB, format('public.set_fleet_command_ship(%L::uuid, false)', sA));
@@ -4312,7 +4336,7 @@ begin
   update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
-  raise notice 'TEAMCMD_PASS_CMDBUFF ok: command_buffs_enabled committed dark; the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
+  raise notice 'TEAMCMD_PASS_CMDBUFF ok: command_buffs_enabled committed dark; the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, TWO command ships fold EXACTLY ONE buff — the first by (created_at, main_ship_id), independently derived — and never the stacked sum (no stacking, no backups — owner decision 2026-07-16), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
 end $$;
 
 -- ════════ BLOCK CRONGUARD (CRON-GUARD, 0206): per-row exception isolation for the two hottest ═════
