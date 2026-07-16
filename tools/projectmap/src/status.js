@@ -10,10 +10,11 @@ export const STATUS = {
   DARK:        { key: 'DARK',        label: 'Dark (built, gated off)', color: 0xa66cff, hex: '#a66cff', desc: 'Deployed to prod but its flag is false. Code is live, behaviour is not.' },
   MIGRATED:    { key: 'MIGRATED',    label: 'Merged, not deployed', color: 0xffb03a, hex: '#ffb03a', desc: 'On main but NOT in the production database yet. Waiting on the deploy gate.' },
   ALWAYS_ON:   { key: 'ALWAYS_ON',   label: 'Live, ungated',        color: 0x35c1e0, hex: '#35c1e0', desc: 'In prod with no feature flag — additive data or always-on infrastructure.' },
+  PLANNED:     { key: 'PLANNED',     label: 'Planned, not built',   color: 0x8e99b8, hex: '#8e99b8', desc: 'Written down in the plan, with no migration behind it yet. This is the future.' },
   NEEDS_CHECK: { key: 'NEEDS_CHECK', label: 'Needs checking',       color: 0xff5470, hex: '#ff5470', desc: 'Production state could not be proven from the repo or the live read.' },
 }
 
-export const STATUS_ORDER = ['LIVE', 'ALWAYS_ON', 'DARK', 'MIGRATED', 'NEEDS_CHECK']
+export const STATUS_ORDER = ['LIVE', 'ALWAYS_ON', 'DARK', 'MIGRATED', 'PLANNED', 'NEEDS_CHECK']
 
 /**
  * Work out the deploy frontier from hard evidence.
@@ -160,7 +161,63 @@ export function deriveStatuses(graph, live) {
     }
   }
 
-  // 4. systems — roll up from the tables they own
+  // 4. the future — plan phases and activation rungs.
+  // These are the only nodes that describe intent rather than code, so they are
+  // the only ones that can be PLANNED. A rung's colour answers the question the
+  // ladder actually poses: is this done, ready to flip, or blocked?
+  const outOf = (id, type) => graph.edges.filter((e) => e.source === id && e.type === type).map((e) => e.target)
+  for (const n of graph.nodes) {
+    if (n.kind !== 'phase' && n.kind !== 'rung') continue
+
+    const flagIds = [...outOf(n.id, 'delivers'), ...outOf(n.id, 'flips')]
+    const flagNames = flagIds.map((f) => byId.get(f)?.label).filter(Boolean)
+    const migIds = outOf(n.id, 'delivered-by')
+
+    if (n.kind === 'phase' && n.planned) {
+      status.set(n.id, STATUS.PLANNED)
+      why.set(n.id, 'named in FULL_CAPACITY_PLAN with no migration behind it — not built yet')
+      continue
+    }
+    if (!frontier.flagsKnown) { status.set(n.id, STATUS.NEEDS_CHECK); why.set(n.id, 'no live read available'); continue }
+    if (!flagNames.length && !migIds.length) {
+      status.set(n.id, STATUS.NEEDS_CHECK)
+      why.set(n.id, 'the plan names no flag, script, or migration for this — nothing to check it against')
+      continue
+    }
+
+    const known = flagNames.filter((f) => f in prod)
+    const absent = flagNames.filter((f) => !(f in prod))
+    const migStatuses = migIds.map((m) => status.get(m)).filter(Boolean)
+
+    if (absent.length || migStatuses.some((s) => s === STATUS.MIGRATED)) {
+      status.set(n.id, STATUS.MIGRATED)
+      why.set(n.id, n.kind === 'rung'
+        ? `blocked — ${absent.length ? `${absent.join(', ')} is not in production` : 'a migration behind it has not deployed'}`
+        : 'a migration or flag behind this has not reached production')
+    } else if (known.length && known.every((f) => prod[f] === true)) {
+      status.set(n.id, STATUS.LIVE)
+      why.set(n.id, n.kind === 'rung' ? 'done — every flag this rung flips is already on' : 'shipped and live')
+    } else if (known.some((f) => prod[f] === true)) {
+      const on = known.filter((f) => prod[f])
+      const off = known.filter((f) => !prod[f])
+      // A rung is a job. Half-done is not done — it is still owed, so it stays
+      // in the "still to flip" colour rather than being waved through as live.
+      status.set(n.id, n.kind === 'rung' ? STATUS.DARK : STATUS.LIVE)
+      why.set(n.id, n.kind === 'rung'
+        ? `still owed — ${off.join(', ')} is off (${on.join(', ')} already on)`
+        : `partly on — ${on.join(', ')} live, ${off.join(', ')} still off`)
+    } else if (known.length) {
+      status.set(n.id, STATUS.DARK)
+      why.set(n.id, n.kind === 'rung'
+        ? `ready to flip — everything is deployed, ${known.join(', ')} is just off`
+        : `built and deployed, gated off by ${known.join(', ')}`)
+    } else {
+      status.set(n.id, STATUS.ALWAYS_ON)
+      why.set(n.id, 'its migrations are in production and it has no gate')
+    }
+  }
+
+  // 5. systems — roll up from the tables they own
   for (const n of graph.nodes) {
     if (n.kind !== 'system') continue
     const owned = graph.edges.filter((e) => e.type === 'owned-by' && e.target === n.id).map((e) => status.get(e.source))

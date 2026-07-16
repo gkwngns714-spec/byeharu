@@ -4,8 +4,8 @@ import { layout } from './layout.js'
 import { createTree } from './tree.js'
 import { deriveStatuses, STATUS, STATUS_ORDER } from './status.js'
 
-const KIND_SIZE = { system: 5.2, flag: 3.4, table: 2.4, migration: 1.7, function: 1.3 }
-const EDGE_TYPES = ['creates', 'supersedes', 'extends', 'alters', 'drops', 'seeds', 'gated-by', 'calls', 'touches', 'owned-by']
+const KIND_SIZE = { system: 5.2, rung: 4.6, phase: 4.2, flag: 3.4, table: 2.4, migration: 1.7, function: 1.3 }
+const EDGE_TYPES = ['creates', 'supersedes', 'extends', 'alters', 'drops', 'seeds', 'gated-by', 'calls', 'touches', 'owned-by', 'delivers', 'delivered-by', 'flips', 'waits-on']
 const EDGE_DESC = {
   creates: 'migration defines a function/table',
   supersedes: 'migration re-creates a function an earlier one defined',
@@ -17,6 +17,10 @@ const EDGE_DESC = {
   calls: 'function calls another function',
   touches: 'function reads/writes a table',
   'owned-by': 'table belongs to a system (sole writer)',
+  delivers: 'a plan slice delivers this feature gate',
+  'delivered-by': 'a plan slice was delivered by this migration',
+  flips: 'an activation rung flips this flag',
+  'waits-on': 'this rung waits on the one before it',
 }
 
 const base = import.meta.env.BASE_URL || '/'
@@ -82,8 +86,8 @@ scene.add(lines)
 // ── filter state ──────────────────────────────────────────────────────────────
 const state = {
   status: new Set(STATUS_ORDER),
-  kind: new Set(['system', 'flag', 'table', 'migration', 'function']),
-  edge: new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by']),
+  kind: new Set(['system', 'rung', 'phase', 'flag', 'table', 'migration', 'function']),
+  edge: new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by', 'delivers', 'flips', 'waits-on']),
   query: '',
   selected: null,
 }
@@ -166,7 +170,7 @@ for (const k of STATUS_ORDER) {
   }))
 }
 const kf = document.getElementById('kindFilters')
-for (const k of ['system', 'flag', 'table', 'migration', 'function']) {
+for (const k of ['rung', 'phase', 'system', 'flag', 'table', 'migration', 'function']) {
   kf.append(checkbox({
     label: k, count: kindCounts[k] ?? 0, checked: true,
     onChange: (on) => on ? state.kind.add(k) : state.kind.delete(k),
@@ -187,12 +191,12 @@ document.getElementById('search').addEventListener('input', (e) => {
 })
 document.getElementById('reset').addEventListener('click', () => {
   state.status = new Set(STATUS_ORDER)
-  state.kind = new Set(['system', 'flag', 'table', 'migration', 'function'])
-  state.edge = new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by'])
+  state.kind = new Set(['rung', 'phase', 'system', 'flag', 'table', 'migration', 'function'])
+  state.edge = new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by', 'delivers', 'flips', 'waits-on'])
   state.query = ''; state.selected = null
   document.getElementById('search').value = ''
   document.querySelectorAll('#controls input[type=checkbox]').forEach((c, i) => {
-    const groups = [STATUS_ORDER.length, 5, EDGE_TYPES.length]
+    const groups = [STATUS_ORDER.length, 7, EDGE_TYPES.length]
     c.checked = i < groups[0] + groups[1] ? true : state.edge.has(EDGE_TYPES[i - groups[0] - groups[1]])
   })
   document.getElementById('inspect').classList.remove('on')
@@ -319,6 +323,7 @@ function pick(e) { const n = hit(e); select(n ? n.id : null) }
 
 // ── tabs: the 3D web, and the 조직도 hierarchy ─────────────────────────────────
 const TREE_HINT = {
+  roadmap: 'The only view that looks forward. Both lists come from FULL_CAPACITY_PLAN.md: the activation ladder (§B) is the ordered flips still owed — violet means everything is deployed and it is only waiting on a human. The development queue (§C) is the slices; grey means planned with nothing built behind it.',
   system: 'Who owns what. Systems come from the sole-writer matrix in SYSTEM_BOUNDARIES. Tables sit under their owner; a function sits under the system whose tables it touches, or — failing that — under the system whose functions it calls. Anything that fits neither is left unclassified rather than forced.',
   build: 'Every migration in the order it landed, grouped by the day git first recorded it — the filename stamps are synthetic and would pile all 205 into one bucket. Each migration lists what it created.',
   feature: 'Every feature gate, and the migrations that seed or read it. Sorted live first, unproven last.',
@@ -337,6 +342,7 @@ function setTab(next) {
   search.value = ''
   search.placeholder = next === 'tree' ? 'Search the tree…' : 'Search nodes…'
   if (next === 'tree') {
+    const firstOpen = !tree
     tree ??= createTree({
       graph, status, svg: document.getElementById('tree'),
       onSelect: (nodeId, treeNode) => {
@@ -352,7 +358,10 @@ function setTab(next) {
           <div class="det">${treeNode?.total ?? 0} item(s) beneath this.</div>`
       },
     })
-    tree.setQuery('')
+    // The <select> defaults to the first option; make the tree agree with it
+    // rather than quietly rendering a different arrangement than it advertises.
+    if (firstOpen) tree.setMode(document.getElementById('treeMode').value)
+    else tree.setQuery('')
   } else {
     state.query = ''; apply()
   }

@@ -149,6 +149,112 @@ if (existsSync(bPath)) {
   }
 }
 
+// ── the future ────────────────────────────────────────────────────────────────
+// Everything above describes what EXISTS. The plans describe what is meant to.
+// FULL_CAPACITY_PLAN.md carries two structured lists worth reading:
+//   §C — a development queue (### P3 — SALVAGE … *(S/M)*), where the heading
+//        itself says whether the slice shipped
+//   §B — an activation ladder (**Rung 3 — Trade market.**), the ordered list of
+//        human flag-flips still owed
+// Both name their migrations and flags in backticks, so they can be wired to the
+// real graph instead of floating as decoration.
+
+// '20260618000204' -> 204, so a plan saying "mig 0204" can find its migration.
+const seqOf = (stamp) => parseInt(stamp.slice(8), 10)
+const migBySeq = new Map(migrations.map((m) => [seqOf(m.stamp), m.stamp]))
+
+// A plan rarely names its flag directly — it names the activation script that
+// flips it ("prep shipped: `activate-exploration`"). So follow that one hop and
+// read the script, rather than guessing the flag from the rung's title.
+const SCRIPTS = join(REPO, 'scripts')
+const flagsOfScript = new Map()
+function scriptFlags(name) {
+  if (flagsOfScript.has(name)) return flagsOfScript.get(name)
+  let found = []
+  for (const ext of ['.sql', '.sh', '.mjs']) {
+    const p = join(SCRIPTS, `${name}${ext}`)
+    if (!existsSync(p)) continue
+    const src = readFileSync(p, 'utf8')
+    found.push(...[...src.matchAll(/'([a-z_0-9]+_enabled)'/g)].map((m) => m[1]))
+  }
+  found = [...new Set(found)].filter((f) => allFlags.includes(f))
+  flagsOfScript.set(name, found)
+  return found
+}
+
+const refsIn = (text) => {
+  const migs = []
+  for (const m of text.matchAll(/\bmigs?\.?\s+((?:\d{4})(?:\s*(?:[+/,]|and|–|-)\s*\d{4})*)/gi)) {
+    for (const d of m[1].matchAll(/\d{4}/g)) {
+      const stamp = migBySeq.get(parseInt(d[0], 10))
+      if (stamp) migs.push(stamp)
+    }
+  }
+  const named = [...new Set([...text.matchAll(/`([a-z_0-9]+_enabled)`/g)].map((m) => m[1]))]
+    .filter((f) => allFlags.includes(f))
+  // Follow any `activate-x` script the text names — but ONLY as a fallback.
+  // A script mentions its preconditions as well as its target (e.g.
+  // activate-coordinate-travel checks mainship_space_movement_enabled but flips
+  // only coordinate travel), so union-ing the two over-collects and would call a
+  // pending rung "done". When the plan names a flag outright, trust that.
+  const viaScript = []
+  for (const s of text.matchAll(/`(activate-[a-z0-9-]+)[`.]/g)) viaScript.push(...scriptFlags(s[1]))
+  return {
+    migs: [...new Set(migs)],
+    flags: named.length ? named : [...new Set(viaScript)],
+    named: named.length > 0,
+  }
+}
+
+const plans = { phases: [], rungs: [] }
+const planPath = join(DOCS, 'FULL_CAPACITY_PLAN.md')
+if (existsSync(planPath)) {
+  const md = readFileSync(planPath, 'utf8')
+
+  // §C — development queue. Split on ### headings, keep the ones that look like
+  // a queue slice (P<n>, or a named track like FLEET).
+  const secs = md.split(/\n(?=### )/)
+  for (const sec of secs) {
+    const head = sec.split('\n')[0]
+    // greedy to the LAST ')*' — plan headings nest parens, e.g.
+    // "*(M — COMPLETE dark: SHIELD-0/1/2 ALL SHIPPED (migs 0191/0195/0197); …)*"
+    const m = head.match(/^###\s+(P\d+|FLEET|[A-Z][A-Z0-9-]{2,})\s+—\s+([^*]+?)\s*(?:\*\((.*)\)\*)?\s*$/)
+    if (!m) continue
+    const [, key, title, meta = ''] = m
+    // A slice is only "built" if the heading says so. Anything else is a plan.
+    const built = /SHIPPED|COMPLETE|STOCKED/i.test(meta)
+    const { migs, flags } = refsIn(sec)
+    plans.phases.push({
+      key, title: title.trim(), meta: meta.trim(), built,
+      migs, flags, detail: sec.slice(0, 420).replace(/\s+/g, ' ').trim(),
+    })
+  }
+
+  // §B — activation ladder: **Rung 3 — Trade market.** …
+  const ladder = md.split(/\n## /).find((s) => /^B\. THE ACTIVATION LADDER/.test(s)) ?? ''
+  for (const b of ladder.split(/\n(?=- \*\*Rung )/)) {
+    const m = b.match(/^- \*\*Rung ([\d.]+)\s*—\s*([^.(*]+)/)
+    if (!m) continue
+    const title = m[2].trim()
+    const { migs, flags, named } = refsIn(b)
+    // Some rungs name neither flag nor script ("Rollback: flag"). Try the one
+    // checkable hop left: a script named after the rung. If there is no such
+    // script, leave it unlinked — better an honest gap than an invented edge.
+    let via = !flags.length ? null : named ? 'named in the plan' : 'read from the activation script the plan names'
+    let resolved = flags
+    if (!resolved.length) {
+      const guess = `activate-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
+      const f = scriptFlags(guess)
+      if (f.length) { resolved = f; via = `inferred from scripts/${guess}.sql` }
+    }
+    plans.rungs.push({
+      key: `Rung ${m[1]}`, order: parseFloat(m[1]), title,
+      migs, flags: resolved, via,
+      detail: b.slice(0, 420).replace(/\s+/g, ' ').trim(),
+    })
+  }
+}
+
 // ── nodes ─────────────────────────────────────────────────────────────────────
 const nodes = []
 const push = (n) => { nodes.push(n); return n.id }
@@ -182,6 +288,20 @@ for (const f of allFlags) {
 }
 for (const s of new Set(ownership.values())) {
   push({ id: `system:${s}`, kind: 'system', label: s, detail: 'system owner (SYSTEM_BOUNDARIES)' })
+}
+for (const p of plans.phases) {
+  push({
+    id: `phase:${p.key}`, kind: 'phase', label: `${p.key} — ${p.title}`,
+    planned: !p.built && !p.migs.length,
+    size: p.meta, file: 'docs/FULL_CAPACITY_PLAN.md', detail: p.detail,
+  })
+}
+for (const r of plans.rungs) {
+  push({
+    id: `rung:${r.key}`, kind: 'rung', label: `${r.key} — ${r.title}`,
+    order: r.order, via: r.via, file: 'docs/FULL_CAPACITY_PLAN.md',
+    detail: r.via ? `Flag link ${r.via}. ${r.detail}` : `No flag or activation script named in the plan for this rung. ${r.detail}`,
+  })
 }
 
 // ── edges ─────────────────────────────────────────────────────────────────────
@@ -243,6 +363,21 @@ for (const m of migrations) {
 // table -> system ownership
 for (const [t, s] of ownership) if (tableSet.has(t)) link(`table:${t}`, `system:${s}`, 'owned-by')
 
+// plan -> the real things that deliver it
+for (const p of plans.phases) {
+  for (const stamp of p.migs) link(`phase:${p.key}`, `mig:${stamp}`, 'delivered-by')
+  for (const f of p.flags) link(`phase:${p.key}`, `flag:${f}`, 'delivers')
+}
+for (const r of plans.rungs) {
+  for (const f of r.flags) link(`rung:${r.key}`, `flag:${f}`, 'flips')
+  for (const stamp of r.migs) link(`rung:${r.key}`, `mig:${stamp}`, 'delivered-by')
+}
+// the ladder is an ordered chain — rung N waits on rung N-1
+const rungsOrdered = [...plans.rungs].sort((a, b) => a.order - b.order)
+for (let i = 1; i < rungsOrdered.length; i++) {
+  link(`rung:${rungsOrdered[i].key}`, `rung:${rungsOrdered[i - 1].key}`, 'waits-on')
+}
+
 // ── de-dupe ───────────────────────────────────────────────────────────────────
 const nodeIds = new Set(nodes.map((n) => n.id))
 const seenEdge = new Set()
@@ -262,10 +397,13 @@ const graph = {
     tables: allTables.length,
     flags: allFlags.length,
     systems: new Set(ownership.values()).size,
+    phases: plans.phases.length,
+    rungs: plans.rungs.length,
     nodes: nodes.length,
     edges: cleanEdges.length,
   },
   boundariesParsed: boundariesFound,
+  plansParsed: plans.phases.length > 0,
   nodes,
   edges: cleanEdges,
 }

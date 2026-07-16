@@ -194,7 +194,52 @@ function byFeature(graph, status) {
   }
 }
 
-const BUILDERS = { system: bySystem, build: byBuildOrder, feature: byFeature }
+/**
+ * What's next — the only view that looks forward.
+ *
+ * Two lists, both read from FULL_CAPACITY_PLAN.md: the activation ladder (the
+ * ordered flips still owed) and the development queue (slices, built or not).
+ */
+function byRoadmap(graph, status) {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+  const kids = (id) => graph.edges
+    .filter((e) => e.source === id && ['flips', 'delivers', 'delivered-by'].includes(e.type))
+    .map((e) => ({
+      id: `t:${id}:${e.target}`, nodeId: e.target, label: byId.get(e.target).label,
+      kind: byId.get(e.target).kind, status: status.get(e.target), note: e.type, children: [],
+    }))
+
+  const rungs = graph.nodes.filter((n) => n.kind === 'rung').sort((a, b) => a.order - b.order)
+  const phases = graph.nodes.filter((n) => n.kind === 'phase')
+    .sort((a, b) => {
+      const pa = parseInt(a.label.match(/^P(\d+)/)?.[1] ?? '99', 10)
+      const pb = parseInt(b.label.match(/^P(\d+)/)?.[1] ?? '99', 10)
+      return pa - pb || a.label.localeCompare(b.label)
+    })
+
+  const node = (n) => ({
+    id: `t:${n.id}`, nodeId: n.id, label: n.label, kind: n.kind,
+    status: status.get(n.id), children: kids(n.id),
+  })
+
+  return {
+    id: 'root', label: 'Byeharu — what is next', kind: 'root',
+    children: [
+      {
+        id: 'g:ladder', kind: 'group', label: `activation ladder (${rungs.length} rungs, in order)`,
+        note: 'The flips still owed, from FULL_CAPACITY_PLAN §B. Green = already on. Violet = everything is deployed and it is just waiting for a human to flip it. Amber = blocked, something has not reached prod.',
+        children: rungs.map(node),
+      },
+      {
+        id: 'g:queue', kind: 'group', label: `development queue (${phases.length} slices)`,
+        note: 'From FULL_CAPACITY_PLAN §C. Grey = planned, nothing built behind it yet.',
+        children: phases.map(node),
+      },
+    ],
+  }
+}
+
+const BUILDERS = { system: bySystem, build: byBuildOrder, feature: byFeature, roadmap: byRoadmap }
 
 // ── render ───────────────────────────────────────────────────────────────────
 

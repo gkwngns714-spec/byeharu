@@ -6,10 +6,13 @@
   "tables": 79,
   "flags": 28,
   "systems": 29,
-  "nodes": 544,
-  "edges": 1453
+  "phases": 16,
+  "rungs": 9,
+  "nodes": 569,
+  "edges": 1518
  },
  "boundariesParsed": true,
+ "plansParsed": true,
  "nodes": [
   {
    "id": "mig:20260616000001",
@@ -4434,6 +4437,231 @@
    "kind": "system",
    "label": "Ship Soul",
    "detail": "system owner (SYSTEM_BOUNDARIES)"
+  },
+  {
+   "id": "phase:FLEET",
+   "kind": "phase",
+   "label": "FLEET — the fleet control-model",
+   "planned": false,
+   "size": "S/M — SHIPPED dark as mig 0204; the OWNER'S FLEET-CONTROL RESHAPE",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### FLEET — the fleet control-model *(S/M — SHIPPED dark as mig 0204; the OWNER'S FLEET-CONTROL RESHAPE)* After FLEET-RENAME (team→fleet copy) landed, this phase adds the MECHANICS of the owner's control-model, DARK behind a new flag `fleet_control_enabled` (seeded false) so the LIVE fleet-command game is byte-unchanged until the owner flips it. The three rules: **(1) caps** — max 3 fleets (already: `ship_group"
+  },
+  {
+   "id": "phase:FLEET",
+   "kind": "phase",
+   "label": "FLEET — command buffs: the FINALE of the fleet reshape",
+   "planned": false,
+   "size": "M — SHIPPED dark as mig 0205; the OWNER'S COMMAND-BUFF DESIGN",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### FLEET — command buffs: the FINALE of the fleet reshape *(M — SHIPPED dark as mig 0205; the OWNER'S COMMAND-BUFF DESIGN)* The finale of the fleet reshape, DARK behind a new flag `command_buffs_enabled` (seeded false). Owner's words: \"each tier will have ~10 buffs, assigned RANDOMLY when bought or manufactured … command ship will provide those buffs … a buff slot, activated only when the ship is set on command"
+  },
+  {
+   "id": "phase:P0",
+   "kind": "phase",
+   "label": "P0 — NO-HOME: launch from the dock, dock at the return port",
+   "planned": false,
+   "size": "S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)* There is NO home base; ports are the only base; a ship acts from WHEREVER it is docked. The bug: SEND (`send_main_ship_expedition`) and HUNT (`send_ship_group_hunt`) require ship `status='home'` and launch from the legacy invisible base at (0,0); a docked ship can MOVE (`move_main_ship_to_"
+  },
+  {
+   "id": "phase:P1",
+   "kind": "phase",
+   "label": "P1 — ECON-SEED: the differentiated three-port economy",
+   "planned": false,
+   "size": "S — SHIPPED as mig 0173 / PR #104",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P1 — ECON-SEED: the differentiated three-port economy *(S — SHIPPED as mig 0173 / PR #104)* Port role identities over the six 0073 goods: Haven = city/consumer, Slagworks = industrial, Driftmarch = frontier premium. Guaranteed routes: ore Slagworks→Haven +200/trip, provisions Haven→Slagworks +200, machinery Slagworks→Driftmarch +384 (full table + proof in 0173 / `trade-econ-seed-proof`). `market_offers` stays"
+  },
+  {
+   "id": "phase:P2",
+   "kind": "phase",
+   "label": "P2 — HAUL: contracts & logistics between ports",
+   "planned": false,
+   "size": "M — FULLY STOCKED DARK: HAUL-0/1/2/3 shipped as migs 0176 + 0179 + 0181; ACT-HAUL flip script SHIPPED — awaiting the human flip, AFTER trade",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P2 — HAUL: contracts & logistics between ports *(M — FULLY STOCKED DARK: HAUL-0/1/2/3 shipped as migs 0176 + 0179 + 0181; ACT-HAUL flip script SHIPPED — awaiting the human flip, AFTER trade)* NPC delivery contracts: a per-port bulletin offers \"deliver N×good to port B by T for C credits + bonus.\" Slices: HAUL-0 `haul_contracts` schema + flag + templates (dark, service-role writers — **shipped**, 0176); HAUL-1"
+  },
+  {
+   "id": "phase:P3",
+   "kind": "phase",
+   "label": "P3 — SALVAGE: combat-loot → port-economy feed",
+   "planned": true,
+   "size": "S/M",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P3 — SALVAGE: combat-loot → port-economy feed *(S/M)* Ports gain item buy-lists: `port_item_demand (location_id, item_id, unit_price)` — migration-seeded, per-port differentiated (Slagworks pays best for scrap/pirate_alloy, Haven for repair_parts, Driftmarch for engine_parts; progression items `captain_memory_shard`/`blueprint_fragment`/`artifact_core` are **never** sellable). Slices: SALVAGE-0 schema+seed+fl"
+  },
+  {
+   "id": "phase:P4",
+   "kind": "phase",
+   "label": "P4 — ZONES-2: the C-seeds — new zone, difficulty tiers, reveal cadence",
+   "planned": false,
+   "size": "S — ZONES2-1/2 SHIPPED as mig 0175 + `scripts/reveal-ember-reach.{sql,sh}`; hidden, awaiting the human reveal",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P4 — ZONES-2: the C-seeds — new zone, difficulty tiers, reveal cadence *(S — ZONES2-1/2 SHIPPED as mig 0175 + `scripts/reveal-ember-reach.{sql,sh}`; hidden, awaiting the human reveal)* ZONES2-1: additive `locations` seed — \"Ember Reach\" with 3 hunt sites at bd 40 / min_power 150, bd 50 / 220, bd 60 / 300 (≈4/6/8 kitted+captained ships per packet §0.3 math), seeded `status='hidden'`. ZONES2-2: a reveal operatio"
+  },
+  {
+   "id": "phase:P5",
+   "kind": "phase",
+   "label": "P5 — CAPTAIN-C2: progression",
+   "planned": false,
+   "size": "M",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P5 — CAPTAIN-C2: progression *(M)* C2-0: additive `captain_instances.xp/level` + flag `captain_growth_enabled`. C2-1: XP accrual as a **downward reader of finalized `reward_grants`** (the exact commit-safe 0144/0145 anti-join idiom) with a `captain_counted_grants` ledger. C2-2: level curve → adapter parity delta (`stats × (1 + level_bonus)`, byte-inert at level 1). C2-3: XP bars in TeamMemberCaptains. **C2-4:"
+  },
+  {
+   "id": "phase:P6",
+   "kind": "phase",
+   "label": "P6 — SHIPYARD: ships are BUILT, not bought",
+   "planned": false,
+   "size": "M/L — SHIPYARD-0 SHIPPED dark as mig 0185; supersedes the old HULLS-2 line per the SHIPYARD charter",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P6 — SHIPYARD: ships are BUILT, not bought *(M/L — SHIPYARD-0 SHIPPED dark as mig 0185; supersedes the old HULLS-2 line per the SHIPYARD charter)* **The production model (owner directive: \"ships must be made through mining, production, level requirement and more\"):** T0 = `starter_frigate` — the existing credits-only commission, UNTOUCHED. T1 = **bulk_hauler** ('Mule-class Hauler': hp 650, speed 0.8, cargo 140"
+  },
+  {
+   "id": "phase:P7",
+   "kind": "phase",
+   "label": "P7 — MODULES-2: tiers + the defense line",
+   "planned": false,
+   "size": "S/M — MOD2-1 SHIPPED as mig 0183 + the team-proof MOD2 block; dark behind the existing module gates",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P7 — MODULES-2: tiers + the defense line *(S/M — MOD2-1 SHIPPED as mig 0183 + the team-proof MOD2 block; dark behind the existing module gates)* MOD2-1 **shipped** (mig `0183`, slice-mod2): `shield_lattice` (slot_type `defense`, slot 1, `{\"defense\": 12}` → the adapter's `survival` output — key names prosrc-verified against the 0180 head's module loop at migration time) with recipe repair_parts 4 + pirate_alloy"
+  },
+  {
+   "id": "phase:P8",
+   "kind": "phase",
+   "label": "P8 — EVENTS-LIVE: world events as a live system",
+   "planned": false,
+   "size": "M — EV-1 SHIPPED dark as mig 0182; EV-2/EV-3 + the Rung-7 flips remain",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P8 — EVENTS-LIVE: world events as a live system *(M — EV-1 SHIPPED dark as mig 0182; EV-2/EV-3 + the Rung-7 flips remain)* EV-1 (**shipped**, mig `0182` / `scripts/ev1-proof.{sql,sh}` / `world-events-proof.yml`): `worldstate_tick` publishes STATE-detected threshold events through the existing `world_events_publish` (`pressure_high` warning/critical while at/above `event_pressure_high_threshold=75` — a parked-"
+  },
+  {
+   "id": "phase:P9",
+   "kind": "phase",
+   "label": "P9 — REPAIR-ECON: Repair & Recovery",
+   "planned": true,
+   "size": "M/L — the designed initiative",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P9 — REPAIR-ECON: Repair & Recovery *(M/L — the designed initiative)* RR-0: `repair` service rows in `location_services` at the 3 ports + flag `port_repair_enabled` (the WORLDHUB vocabulary already includes `repair`). RR-1: `repair_ship_at_port` (docked-verified, cost = f(missing hp) in credits + repair_parts, duration via the **reused M4.5 build-queue**, not a second timer system). RR-2: recovery redesign pe"
+  },
+  {
+   "id": "phase:P10",
+   "kind": "phase",
+   "label": "P10 — ONBOARD: first-session experience",
+   "planned": true,
+   "size": "S, frontend-heavy",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P10 — ONBOARD: first-session experience *(S, frontend-heavy)* OB-1: a client-side \"First Orders\" checklist derived from server state (dock → hunt Snare → craft autocannon → fit → create team → commission #2) — read-only, zero new server surface. OB-2: a `starting_contract` (P2 template) paying the first 250-credit ship. OB-3: copy/empty-state polish. Deps: none for OB-1. Guard: onboarding *reads* game state;"
+  },
+  {
+   "id": "phase:P11",
+   "kind": "phase",
+   "label": "P11 — WORLD-MODEL (the long arc): PORTCENTRIC F1→F2",
+   "planned": true,
+   "size": "L, decision-heavy",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P11 — WORLD-MODEL (the long arc): PORTCENTRIC F1→F2 *(L, decision-heavy)* F1 read-only World Model Recon (PORTCENTRIC Part E §1–10 — the only authorized next step there) → F2 resolves D4 (stable world-object identity, `space_anchors.kind` generalization, capability table replacing the type switch, zone geometry, docked/last-safe-dock anchor ids) → only then Gen-1 expansion seeding. Schedule the recon early (r"
+  },
+  {
+   "id": "phase:P12",
+   "kind": "phase",
+   "label": "P12 — SHIP-SOUL: per-ship original traits",
+   "planned": false,
+   "size": "M — SOUL-0 SHIPPED dark as mig 0186; SOUL-1 SHIPPED dark as mig 0193; SOUL-2 + ACT-SOUL remain",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P12 — SHIP-SOUL: per-ship original traits *(M — SOUL-0 SHIPPED dark as mig 0186; SOUL-1 SHIPPED dark as mig 0193; SOUL-2 + ACT-SOUL remain)* The owner directive: every ship has its own ORIGINAL stats/quirks — the Uncharted-Waters \"this ship is MINE\" identity. SOUL-0 (**shipped**, mig `0186`, slice-soul0): `ship_trait_types` (Reference/Config catalog, the 0117 posture — 8 birthmark traits [D owner-tunable], eve"
+  },
+  {
+   "id": "phase:P13",
+   "kind": "phase",
+   "label": "P13 — SHIELD: regenerating ship shields",
+   "planned": false,
+   "size": "M — COMPLETE dark: SHIELD-0/1/2 ALL SHIPPED (migs 0191/0195/0197); only the human ACT-SHIELD flip remains",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### P13 — SHIELD: regenerating ship shields *(M — COMPLETE dark: SHIELD-0/1/2 ALL SHIPPED (migs 0191/0195/0197); only the human ACT-SHIELD flip remains)* The owner directive: ships get a SHIELD that regenerates during and outside combat. SHIELD-0 (**shipped**, mig `0191`, slice-shield0): the schema foundation, DEPLOY-INERT and **data-gated — deliberately NO `shield_enabled` flag** (the 0170 hull-stats posture: the"
+  },
+  {
+   "id": "rung:Rung 0",
+   "kind": "rung",
+   "label": "Rung 0 — Captains",
+   "order": 0,
+   "via": "read from the activation script the plan names",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "Flag link read from the activation script the plan names. - **Rung 0 — Captains (prep shipped: mig 0171 + `activate-captains`).** Bump 2→6 + shard drop (`captain_shard_drop_rate`, launch 0.15). Risk: the bump is one-way once slots 3–6 fill. Rollback: **flags only, never slot counts**."
+  },
+  {
+   "id": "rung:Rung 0.5",
+   "kind": "rung",
+   "label": "Rung 0.5 — Coordinate travel",
+   "order": 0.5,
+   "via": "named in the plan",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "Flag link named in the plan. - **Rung 0.5 — Coordinate travel (prep shipped: mig 0178 COORD-GUARD + `activate-coordinate-travel`)** — the REACHABILITY prerequisite for rungs 1–2: exploration/mining sites sit out to ±4200 and require a settled `in_space` ship within 750 units, while every dockable anchor lives in bbox x −50…70, y −30…80 (WORLD_RECON_F1 §7) — port-to-port travel reaches NO site, only free coordinate travel does. Flip `"
+  },
+  {
+   "id": "rung:Rung 1",
+   "kind": "rung",
+   "label": "Rung 1 — Exploration",
+   "order": 1,
+   "via": "read from the activation script the plan names",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "Flag link read from the activation script the plan names. - **Rung 1 — Exploration (prep shipped: mig 0172 + `activate-exploration`).** Hard-gated on the 0172 writer reconcile (the H1 strand fix). **REQUIRES Rung 0.5 first (reachability — see above).** Rollback: flag; discoveries persist harmlessly."
+  },
+  {
+   "id": "rung:Rung 2",
+   "kind": "rung",
+   "label": "Rung 2 — Mining",
+   "order": 2,
+   "via": "read from the activation script the plan names",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "Flag link read from the activation script the plan names. - **Rung 2 — Mining (prep shipped: `activate-mining`).** Post-flip watch: `secured_at IS NULL` rows = pending yields securing on next safe settle. **REQUIRES Rung 0.5 first (reachability).** Rollback: flag."
+  },
+  {
+   "id": "rung:Rung 3",
+   "kind": "rung",
+   "label": "Rung 3 — Trade market",
+   "order": 3,
+   "via": "named in the plan",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "Flag link named in the plan. - **Rung 3 — Trade market.** Prereq: ECON-SEED-1 (mig 0173, §C P1). Flip `trade_market_enabled` + `trade_relief_enabled` + the one-line `TRADE_MARKET_ENABLED` client PR. Relief floor = the no-softlock backstop, light together. Rollback: flags; wallets/cargo/receipts persist inert; the `check (sell_price >= buy_price)` constraint prevents single-station pumps by construction."
+  },
+  {
+   "id": "rung:Rung 4",
+   "kind": "rung",
+   "label": "Rung 4 — Station storage",
+   "order": 4,
+   "via": "named in the plan",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "Flag link named in the plan. - **Rung 4 — Station storage.** Prereq: trade live. Flip `station_storage_enabled` after `verify-station-storage.mjs`. The substrate P2 hauling stands on."
+  },
+  {
+   "id": "rung:Rung 5",
+   "kind": "rung",
+   "label": "Rung 5 — Ranking",
+   "order": 5,
+   "via": "inferred from scripts/activate-ranking.sql",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "Flag link inferred from scripts/activate-ranking.sql. - **Rung 5 — Ranking.** Prereqs: a season (`ranking_season_open`, runtime-created, never migration-seeded) + ≥3 of the 4 `reward_grants` dimensions accruing (light after rungs 1–3). Risk near zero (read-only downward leaf). Rollback: flag; standings freeze intact."
+  },
+  {
+   "id": "rung:Rung 6",
+   "kind": "rung",
+   "label": "Rung 6 — Location investment",
+   "order": 6,
+   "via": null,
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "No flag or activation script named in the plan for this rung. - **Rung 6 — Location investment.** Prereq: a real credit faucet (trade live) + pair with P8's event narration so contributions are felt. Rollback: flag; append-only ledger persists."
+  },
+  {
+   "id": "rung:Rung 7",
+   "kind": "rung",
+   "label": "Rung 7 — World balance + world events",
+   "order": 7,
+   "via": "named in the plan",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "Flag link named in the plan. - **Rung 7 — World balance + world events.** Prereq: trade + mining live (price drift / field depletion need consumers — note 0172 restored the depletion hooks 0143 had clobbered). Flip `world_balance_enabled`, then `phase20_polish_enabled` together with P8's producer so the feed isn't empty. Watch `price_multiplier` bounds for a week. ---"
   }
  ],
  "edges": [
@@ -11883,6 +12111,331 @@
    "source": "table:main_ship_traits",
    "target": "system:Ship Soul",
    "type": "owned-by"
+  },
+  {
+   "source": "phase:FLEET",
+   "target": "mig:20260618000204",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:FLEET",
+   "target": "flag:fleet_control_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:FLEET",
+   "target": "mig:20260618000205",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:FLEET",
+   "target": "flag:command_buffs_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P0",
+   "target": "mig:20260618000199",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P0",
+   "target": "flag:launch_from_dock_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P1",
+   "target": "mig:20260618000173",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P2",
+   "target": "mig:20260618000176",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P2",
+   "target": "mig:20260618000179",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P2",
+   "target": "mig:20260618000181",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P3",
+   "target": "flag:salvage_market_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P4",
+   "target": "mig:20260618000175",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P5",
+   "target": "mig:20260618000203",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P5",
+   "target": "flag:captain_growth_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P5",
+   "target": "flag:captain_assignment_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P6",
+   "target": "mig:20260618000185",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P6",
+   "target": "flag:shipyard_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P7",
+   "target": "mig:20260618000183",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P7",
+   "target": "flag:module_crafting_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P7",
+   "target": "flag:module_fitting_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P8",
+   "target": "mig:20260618000182",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P8",
+   "target": "flag:world_balance_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P8",
+   "target": "flag:phase20_polish_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P9",
+   "target": "flag:repair_economy_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P12",
+   "target": "mig:20260618000186",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P12",
+   "target": "mig:20260618000193",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "mig:20260618000191",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "mig:20260618000195",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "mig:20260618000197",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "mig:20260618000171",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "mig:20260618000173",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "mig:20260618000185",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "mig:20260618000188",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "mig:20260618000194",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:P13",
+   "target": "flag:ranking_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P13",
+   "target": "flag:module_crafting_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P13",
+   "target": "flag:module_fitting_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P13",
+   "target": "flag:trade_market_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P13",
+   "target": "flag:captain_growth_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P13",
+   "target": "flag:mainship_coordinate_travel_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P13",
+   "target": "flag:world_balance_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:P13",
+   "target": "flag:phase20_polish_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "rung:Rung 0",
+   "target": "flag:captain_assignment_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 0",
+   "target": "flag:captain_progression_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 0",
+   "target": "mig:20260618000171",
+   "type": "delivered-by"
+  },
+  {
+   "source": "rung:Rung 0.5",
+   "target": "flag:mainship_coordinate_travel_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 0.5",
+   "target": "mig:20260618000178",
+   "type": "delivered-by"
+  },
+  {
+   "source": "rung:Rung 1",
+   "target": "flag:exploration_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 1",
+   "target": "mig:20260618000172",
+   "type": "delivered-by"
+  },
+  {
+   "source": "rung:Rung 2",
+   "target": "flag:mining_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 3",
+   "target": "flag:trade_market_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 3",
+   "target": "flag:trade_relief_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 3",
+   "target": "mig:20260618000173",
+   "type": "delivered-by"
+  },
+  {
+   "source": "rung:Rung 4",
+   "target": "flag:station_storage_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 5",
+   "target": "flag:ranking_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 7",
+   "target": "flag:world_balance_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 7",
+   "target": "flag:phase20_polish_enabled",
+   "type": "flips"
+  },
+  {
+   "source": "rung:Rung 0.5",
+   "target": "rung:Rung 0",
+   "type": "waits-on"
+  },
+  {
+   "source": "rung:Rung 1",
+   "target": "rung:Rung 0.5",
+   "type": "waits-on"
+  },
+  {
+   "source": "rung:Rung 2",
+   "target": "rung:Rung 1",
+   "type": "waits-on"
+  },
+  {
+   "source": "rung:Rung 3",
+   "target": "rung:Rung 2",
+   "type": "waits-on"
+  },
+  {
+   "source": "rung:Rung 4",
+   "target": "rung:Rung 3",
+   "type": "waits-on"
+  },
+  {
+   "source": "rung:Rung 5",
+   "target": "rung:Rung 4",
+   "type": "waits-on"
+  },
+  {
+   "source": "rung:Rung 6",
+   "target": "rung:Rung 5",
+   "type": "waits-on"
+  },
+  {
+   "source": "rung:Rung 7",
+   "target": "rung:Rung 6",
+   "type": "waits-on"
   }
  ]
 }
