@@ -5,6 +5,7 @@ import type { MainShipLite } from './useGalaxyMapData'
 import type { FleetPosition, MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
+import { isMovementInFlight } from './movementInterpolation'
 import { shipLayer } from './SpaceRouteLine'
 import { fleetShipsLayer } from './fleetShipsLayer'
 import { teamMarkersLayer } from './teamMarkers'
@@ -80,6 +81,17 @@ export function GalaxyMap({
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
+
+  // 1s clock for the in-flight path filter below. Same idiom as SpaceRouteLine/MainShipMarker: Date.now()
+  // stays OUT of render (it is impure and would re-read unpredictably on any re-render), and the interval
+  // runs ONLY while there is a movement to time — with none, no timer exists and the map is idle as before.
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  const anyMovement = movements.length > 0
+  useEffect(() => {
+    if (!anyMovement) return
+    const iv = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(iv)
+  }, [anyMovement])
   // S6B-PRES camera policy: content-fit is applied for the initial view + explicit reset only; once the
   // player pans/zooms (`userMovedRef`) the camera is frozen. `lastFitSig` makes the fit fire once per
   // meaningful focus change rather than per animation frame.
@@ -339,8 +351,14 @@ export function GalaxyMap({
         <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-grid-major)" pointerEvents="none" />
         <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-vignette)" pointerEvents="none" />
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.k})`}>
-          {/* movement paths (under markers) */}
-          {movements.map((m) => {
+          {/* Movement paths (under markers) — IN-FLIGHT ONLY.
+              The rows arrive already filtered to status='moving', but that status is settled by the 30s
+              `process_fleet_movements` cron, so a finished trip keeps its row for up to ~30s and used to
+              leave a stale path hanging on the map from a journey already over (with no ETA, since the
+              countdown expires at arrive_at). The filter is display-only — it settles nothing and claims
+              no arrival; it just stops drawing a path whose time is up. The 1s clock above retires the
+              path within a second of arrival rather than waiting on the next poll. */}
+          {movements.filter((m) => isMovementInFlight(m, nowMs)).map((m) => {
             const a = norm({ x: m.origin_x, y: m.origin_y })
             const b = norm({ x: m.target_x, y: m.target_y })
             return (
