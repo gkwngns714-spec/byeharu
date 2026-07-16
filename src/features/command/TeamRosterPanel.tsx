@@ -8,9 +8,6 @@ import {
   upsertShipGroup,
   assignShipToGroup,
   deleteShipGroup,
-  sendShipGroup,
-  stopShipGroup,
-  sendShipGroupHunt,
   setFleetCommandShip,
   type PresentShipFleetLite,
   type ShipGroupMapEntry,
@@ -21,16 +18,12 @@ import {
   buildTeamRoster,
   nextTeamSlot,
   fleetPositionLocationLabel,
-  teamGatherState,
   fleetCommandState,
   fleetCapacityState,
   type GroupRow,
   type RosterShip,
 } from './teamRoster'
 import { groupUpsertAvailability } from './teamMutations'
-import { sendableDestinations, groupSendAvailability } from './teamSend'
-import { groupStopAvailability } from './teamStop'
-import { huntableDestinations, groupHuntAvailability } from './teamCombat'
 import { captainsByShip } from './teamCaptains'
 import { TeamMemberCaptains } from './TeamMemberCaptains'
 import { TeamPreviewSection } from './TeamPreviewSection'
@@ -38,11 +31,10 @@ import { TeamDossier } from './TeamDossier'
 import { getMyCaptainInstances } from '../captains/captainsApi'
 import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { isServerLit } from '../../lib/useActivityPanelGuards'
-import { withPowerGate } from '../map/locationDisplay'
 import { fetchMyExpeditionPreview, fetchMyFleetPositions, type FleetPosition } from '../map/mainshipApi'
 import { mainShipInstanceStatusLabel, mainShipInstanceStatusTone } from '../map/mainshipStatusLabel'
 import { shipPowerFromPreview } from '../ship/shipDossierView'
-import { fetchLaunchFromDockEnabled, fetchFleetControlEnabled } from '../../lib/catalog'
+import { fetchFleetControlEnabled } from '../../lib/catalog'
 
 // TEAM-COMMAND Slice B1 — INTERACTIVE team roster (backend "group" == UI "team").
 //
@@ -100,23 +92,18 @@ export function TeamRosterPanel() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null) // group_id pending delete confirm
   const [addShipFor, setAddShipFor] = useState<string | null>(null) // group_id whose "+ Add ship" picker is open (TEAM-UX)
   const [drafts, setDrafts] = useState<Record<string, string>>({}) // per-team rename input, keyed by group_id
-  const [destChoice, setDestChoice] = useState<Record<string, string>>({}) // per-team send destination id
-  const [huntChoice, setHuntChoice] = useState<Record<string, string>>({}) // per-team hunt destination id
-  const [confirmHunt, setConfirmHunt] = useState<string | null>(null) // group_id pending hunt confirm (D4)
-  const [launchFromDock, setLaunchFromDock] = useState(false) // NO-HOME (0199) runtime gate; dark → home-only readiness
   const [fleetControl, setFleetControl] = useState(false) // FLEET-CONTROL (0204) gate; dark → no command-ship/cap surface
 
   const reload = useCallback(async () => {
-    const [g, m, cr, pf, fp, lfd, fc] = await Promise.all([
+    const [g, m, cr, pf, fp, fc] = await Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-      fetchMyFleetPositions(), fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(),
+      fetchMyFleetPositions(), fetchFleetControlEnabled(),
     ])
     setGroups(g)
     setGroupMap(m)
     setCaptainRoster(cr)
     setPresentFleets(pf)
     setFleetPositions(fp)
-    setLaunchFromDock(lfd)
     setFleetControl(fc)
     setRosterVersion((v) => v + 1) // membership may have changed — any cached preview is stale
     setLoading(false)
@@ -128,15 +115,14 @@ export function TeamRosterPanel() {
     let active = true
     void Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-      fetchMyFleetPositions(), fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(),
-    ]).then(([g, m, cr, pf, fp, lfd, fc]) => {
+      fetchMyFleetPositions(), fetchFleetControlEnabled(),
+    ]).then(([g, m, cr, pf, fp, fc]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
       setCaptainRoster(cr)
       setPresentFleets(pf)
       setFleetPositions(fp)
-      setLaunchFromDock(lfd)
       setFleetControl(fc)
       setLoading(false)
     })
@@ -235,8 +221,6 @@ export function TeamRosterPanel() {
     const locName = game.locations.find((l) => l.id === r.locationId)?.name
     return locName ? `Docked at ${locName} — ${r.dockedCount}/${r.memberCount}` : null
   }
-  const destinations = sendableDestinations(game.locations) // active, non-combat targets (server re-validates)
-  const huntZones = huntableDestinations(game.locations) // active hunt_pirates targets — may be EMPTY today
 
   // FAIL CLOSED (Slice C1): the captain sub-surface exists ONLY when the server affirmatively lit
   // get_my_captain_instances — captain_assignment_disabled (and any transport error) → null → the
@@ -446,42 +430,8 @@ export function TeamRosterPanel() {
             const commandCount = ships.filter((s) => s.is_command_ship).length
             const cmd = fleetCommandState({ commandCount, fleetControlEnabled: fleetControl })
             const cap = fleetCapacityState({ memberCount: ships.length, fleetControlEnabled: fleetControl })
-            const destId = destChoice[group.group_id] ?? ''
-            const destName = destinations.find((d) => d.id === destId)?.name ?? ''
-            const sendOk = groupSendAvailability({ gateEnabled: true, groupResolved: true, memberCount: ships.length }).canSend
-            const stopOk = groupStopAvailability({ gateEnabled: true, groupResolved: true, memberCount: ships.length }).canStop
-            const huntId = huntChoice[group.group_id] ?? ''
-            const huntName = huntZones.find((d) => d.id === huntId)?.name ?? ''
-            // The D4 mirror (client-mirrorable prefix of 0168; fleet cap/power/stats are server-only —
-            // see teamCombat.ts). Readiness folds what the roster knows: every member status 'home'
-            // (hp isn't carried here; the server's under-lock hp>0 check is the truth).
-            const huntOk = groupHuntAvailability({
-              gateEnabled: true,
-              groupResolved: true,
-              memberCount: ships.length,
-              // RESOLVED destination, the send-gate convention: a chosen id that later drops out of
-              // game.locations (poll marks it inactive/non-combat) must disarm Hunt too.
-              locationValid: huntZones.some((d) => d.id === huntId),
-              // NO-HOME (0199): dark → every ship home (byte-identical). Lit → a team fully docked at ONE
-              // port (rollup.locationId non-null) is ALSO ready; it launches from and docks back at that
-              // port. The server (widened send_ship_group_hunt) defaults the return port to the dock, so
-              // the roster passes no extra arg. hp isn't carried here — the server's under-lock check is truth.
-              allMembersReady:
-                ships.every((s) => s.status === 'home') ||
-                (launchFromDock && (dockRollups.find((x) => x.groupId === group.group_id)?.locationId ?? null) !== null),
-            }).canHunt
-            // TEAM-FRIENDLY: the same-location NOTICE + Send/Hunt-disabled reason. Co-location comes
-            // straight from the REUSED dock rollup (never a second fold); teamGatherState folds it with
-            // the same all-home check the hunt gate uses. This is a WARN — it never blocks grouping.
-            const rollup = dockRollups.find((x) => x.groupId === group.group_id) ?? null
-            const gather = teamGatherState({
-              memberCount: ships.length,
-              allHome: ships.length > 0 && ships.every((s) => s.status === 'home'),
-              dockedLocationId: rollup?.locationId ?? null,
-            })
-            const gatherPort = rollup?.locationId
-              ? (game.locations.find((l) => l.id === rollup.locationId)?.name ?? null)
-              : null
+            // MOVEMENT-ON-MAP (2026-07-16): all send/hunt/stop readiness + destination folds moved to the
+            // map surface (TeamMapSend). The roster computes NO movement state — see §2a of the charter.
             return (
               <div key={group.group_id} className="space-y-2 rounded-lg border border-edge/60 p-3">
                 <div className="flex items-center justify-between gap-2">
@@ -545,29 +495,10 @@ export function TeamRosterPanel() {
                   dockRollup={dockLineFor(group.group_id)}
                 />
 
-                {/* TEAM-FRIENDLY: same-location notice + the reason Send/Hunt is disabled. Gathered
-                    (all home, or docked together with launch-from-dock lit) reads affirmatively; a
-                    scattered or docked-but-can't-launch team gets the gather hint (a WARN, never a block). */}
-                {gather === 'scattered' && (
-                  <Notice tone="warning" data-testid={`team-gather-${group.group_id}`}>
-                    Ships are at different ports — gather them at one port, or bring them all home, to send or hunt.
-                  </Notice>
-                )}
-                {gather === 'co_located' &&
-                  (launchFromDock ? (
-                    <p className="text-xs text-ink-muted" data-testid={`team-gather-${group.group_id}`}>
-                      All ships together at {gatherPort ?? 'one port'} — ready to send or hunt from here.
-                    </p>
-                  ) : (
-                    <Notice tone="warning" data-testid={`team-gather-${group.group_id}`}>
-                      All ships docked at {gatherPort ?? 'one port'} — bring them home to send or hunt.
-                    </Notice>
-                  ))}
-                {gather === 'all_home' && (
-                  <p className="text-xs text-ink-muted" data-testid={`team-gather-${group.group_id}`}>
-                    All ships home — ready to send or hunt.
-                  </p>
-                )}
+                {/* MOVEMENT-ON-MAP (2026-07-16): fleet movement (send / hunt / stop / move) has moved
+                    ENTIRELY to the map surface (TeamMapSend + the map's stop controls). The Command
+                    screen owns roster / composition / command-ship / captains ONLY — no movement
+                    controls and no move-readiness hints. See docs/MOVEMENT_UNIFICATION_CHARTER.md §2a. */}
 
                 {confirmDelete === group.group_id && (
                   <Notice tone="danger">
@@ -687,131 +618,6 @@ export function TeamRosterPanel() {
                     </span>
                   )}
                 </div>
-
-                {/* Team send/stop (dark). Send needs an active, non-combat destination; Stop needs none. The
-                    server re-validates + owns atomicity; this is a convenience surface. */}
-                <div className="flex flex-wrap items-center gap-1.5 border-t border-edge/60 pt-2">
-                  <select
-                    value={destId}
-                    onChange={(e) => setDestChoice((d) => ({ ...d, [group.group_id]: e.target.value }))}
-                    disabled={busy !== null}
-                    aria-label={`Send destination for fleet ${group.group_index}`}
-                    className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
-                  >
-                    <option value="">Destination…</option>
-                    {destinations.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    busy={busy === `send:${group.group_id}`}
-                    // gate on a RESOLVED destination: a chosen id that later drops out of game.locations
-                    // (poll marks it inactive/combat) must disable Send, not just the empty placeholder.
-                    disabled={busy !== null || !sendOk || !destinations.some((d) => d.id === destId)}
-                    onClick={() =>
-                      void run(
-                        `send:${group.group_id}`,
-                        () => sendShipGroup(group.group_id, destId),
-                        (res) => {
-                          const n = (res.sent as unknown[] | undefined)?.length ?? 0
-                          return `Sent ${n} ship${n === 1 ? '' : 's'} to ${destName}.`
-                        },
-                      )
-                    }
-                  >
-                    Send
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    busy={busy === `stop:${group.group_id}`}
-                    disabled={busy !== null || !stopOk}
-                    onClick={() =>
-                      void run(
-                        `stop:${group.group_id}`,
-                        () => stopShipGroup(group.group_id),
-                        (res) =>
-                          `Stopped ${(res.stopped as number | undefined) ?? 0}, skipped ${(res.skipped as number | undefined) ?? 0}, failed ${(res.failed as number | undefined) ?? 0}.`,
-                      )
-                    }
-                  >
-                    Stop
-                  </Button>
-                </div>
-
-                {/* Slice D4 — team hunt (dark): the COMBAT send. Two-click by design (combat commits
-                    ships): Hunt arms an inline confirm below (the confirmDelete idiom); Confirm hunt
-                    submits via run() (await → refetch, busy-guarded, never optimistic). An empty hunt
-                    list (no hunt_pirates location revealed yet) degrades: disabled select + hint. */}
-                <div className="flex flex-wrap items-center gap-1.5 border-t border-edge/60 pt-2">
-                  <select
-                    value={huntId}
-                    onChange={(e) => {
-                      setHuntChoice((d) => ({ ...d, [group.group_id]: e.target.value }))
-                      // retargeting disarms a pending confirm — it must never commit to a stale zone
-                      setConfirmHunt((c) => (c === group.group_id ? null : c))
-                    }}
-                    disabled={busy !== null || huntZones.length === 0}
-                    aria-label={`Hunt zone for fleet ${group.group_index}`}
-                    className="rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
-                  >
-                    <option value="">Hunt zone…</option>
-                    {/* DIFFICULTY-DISPLAY — surface the min_power gate in the option label (e.g.
-                        'Ember Gate — power 150+'; gate-free zones render the bare name, byte-
-                        identical to before). Read from game.locations, the SAME shell poll
-                        huntZones derives from — no new fetch; the server (power_below_required)
-                        remains the only real gate. huntName (confirm + summary) stays d.name. */}
-                    {huntZones.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {withPowerGate(d.name, game.locations.find((l) => l.id === d.id)?.min_power_required ?? 0)}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={busy !== null || !huntOk || confirmHunt === group.group_id}
-                    onClick={() => setConfirmHunt(group.group_id)}
-                  >
-                    Hunt
-                  </Button>
-                  {huntZones.length === 0 && (
-                    <span className="text-[10px] text-ink-faint">No hunt zones revealed yet.</span>
-                  )}
-                </div>
-
-                {confirmHunt === group.group_id && (
-                  <Notice tone="danger">
-                    Confirm hunt? The whole fleet commits to combat at {huntName || 'the selected zone'}.
-                    <span className="ml-2 inline-flex gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        busy={busy === `hunt:${group.group_id}`}
-                        disabled={busy !== null || !huntOk}
-                        onClick={() =>
-                          void run(
-                            `hunt:${group.group_id}`,
-                            () => sendShipGroupHunt(group.group_id, huntId),
-                            (res) => {
-                              const n = (res.member_count as number | undefined) ?? ships.length
-                              return `Sent ${n} ship${n === 1 ? '' : 's'} hunting at ${huntName}.`
-                            },
-                          ).then(() => setConfirmHunt(null))
-                        }
-                      >
-                        Confirm hunt
-                      </Button>
-                      <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setConfirmHunt(null)}>
-                        Cancel
-                      </Button>
-                    </span>
-                  </Notice>
-                )}
 
                 {/* Slice C1 — per-team expedition preview (display-only estimate; Slice D owns truth).
                     rosterVersion invalidates a cached preview on every reload (membership ⇒ stale). */}
