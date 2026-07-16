@@ -75,6 +75,18 @@
          the fleet to idle (composing the primitive, §4) rather than hand-rolling around it — and that
          path was also **leaking an active dock presence**, so a departing fleet was docked and moving
          at once.
+  - **⚠ THE `osn3-*` PROOF FLEET IS MOSTLY RED — AND WAS BEFORE ANY OF THIS WORK.** 8 of 9 osn3
+    real-chain proofs FAIL on this branch (anchor1a, s2, s3, s4, s5, s6a, dock0, osn4; only anchor1b
+    is green). **Not caused by 0207**: each fails identically at `d8ed494`, the frontend-only step-2
+    commit that contains no migration at all. The cause is fixture rot — e.g. anchor1a dies on
+    `null value in column "cargo_capacity_m3"`, an old fixture that INSERTs a ship row directly and
+    predates that column's NOT NULL constraint. These workflows only trigger on `osn3-**` branches, so
+    they never run on `main` and have been rotting unnoticed.
+    **Consequence for this charter:** "CI-proven on the osn3-* real chain" is NOT a gate you can lean
+    on today — most of that fleet is red for unrelated reasons, so a red X there means nothing until
+    someone repairs the fixtures. `osn3-fleetgo-realchain-proof` is green and is the only one that
+    speaks to this work. Do NOT read the PR's red checks as "step 3a is broken", and do NOT "fix" them
+    by weakening a proof. Repairing the fixture rot is its own task, out of this charter's scope.
   - **Step 3b-3d NOT built** (coordinate target / group settle+reconciler / retire). Movement is NOT
     fixed until step 4: the four overlapping paths are all still live and untouched.
 
