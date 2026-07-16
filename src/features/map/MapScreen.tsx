@@ -10,6 +10,7 @@ import type { MapLocation } from './mapTypes'
 import { TYPE_LABEL, dangerLabel, rewardLabel } from './locationDisplay'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
 import { TeamMapSend } from '../command/TeamMapSend'
+import { TeamMapStop } from '../command/TeamMapStop'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 import { MiningPanel } from '../mining/MiningPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
@@ -123,6 +124,15 @@ export function MapScreen() {
                 never intercepts map gestures). GalaxyMap owns top-right (zoom + coordinate move),
                 bottom-left (legend) and bottom-right (coordinate stop); WorldEvents takes top-center. */}
             <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
+              {/* MOVEMENT-ON-MAP step 2 — the fleet STOP (charter §2a). Mounted FIRST in the rail on
+                  purpose: a stop is a safety CTA (NO-SOFTLOCK) and must not sit below scrollable
+                  feature panels. It rides this rail rather than bottom-right because the two per-SHIP
+                  stops there are mutually exclusive only BY STATE — a fleet stop is a different
+                  movement owner and can be live alongside either, so it would collide; a rail stacks.
+                  Renders nothing unless an owned fleet is actually in flight. */}
+              {TEAM_COMMAND_ENABLED && (
+                <TeamMapStop movements={movements} groups={teamGroups} onStopped={refresh} />
+              )}
               {/* PORT-LAUNCH-1B — dark port-to-port navigation. Server-gated (osn_available +
                   anchored): renders nothing while dark. */}
               <PortNavPanel

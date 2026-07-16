@@ -1,10 +1,16 @@
 // TEAM-COMMAND Slice B (sub-slice 2) — pure client mirror of stop_ship_group_transit's PRE-READ reject order.
 //
+// MOVEMENT-ON-MAP step 2 extended this file rather than adding a teamMapStop.ts beside it: this is the ONE
+// home for group-stop purity, and the map's Stop needs the same server contract this module already mirrors.
+//
 // Mirrors only the reject order that gates whether a group-stop is dispatchable at all (gate → group resolved
 // → non-empty), the same convention as teamSend.ts. It does NOT mirror per-member outcomes: unlike send,
 // group-stop is BEST-EFFORT and always returns ok:true past the pre-read checks, with a server-side
 // {stopped, skipped, failed} breakdown that only the server can compute (which members are actually in
 // flight). Display-only; the server stays authoritative. No I/O — unit-tested in tests/teamStop.spec.ts.
+
+import type { FleetMovement } from '../fleets/fleetTypes'
+import type { GroupRow } from './teamRoster'
 
 export type GroupStopReason = 'ok' | 'gate_dark' | 'group_not_found' | 'empty_group'
 
@@ -19,4 +25,97 @@ export function groupStopAvailability(input: {
   if (!input.groupResolved) return { canStop: false, reason: 'group_not_found' }
   if (input.memberCount <= 0) return { canStop: false, reason: 'empty_group' }
   return { canStop: true, reason: 'ok' }
+}
+
+// ── MOVEMENT-ON-MAP step 2 — which owned fleets are in flight (the map Stop's derivation) ─────────
+//
+// Charter §2a: ALL movement interaction lives on the map. Step 1 stripped Send/Hunt/Stop out of the
+// Command roster; Send/Hunt/Move already had a map home (TeamMapSend) but Stop did NOT — stopShipGroup
+// and groupStopAvailability above were fully built and ORPHANED with no caller. This is the missing
+// input to that caller. It is a SELECTOR over rows the shell already polls (map.movements +
+// map.teamGroups) — no new server surface, no second fold.
+//
+// WHY THIS IS NOT teamMarkers.resolveTeamMarkers (the one real design call — deliberate NON-reuse):
+// that function looks like the same derivation and is unsafe here. It DROPS any group whose lead
+// segment fails interpolateMovementPoint ("no guessed position" — correct when drawing a badge), and
+// takes a nowMs it needs only for that position math. A Stop must inherit neither:
+//   • An un-drawable fleet is precisely the fleet a player most needs to stop. Gating the brake on
+//     "can we draw it?" hides the control exactly when the data is already broken — the same wreckage
+//     posture that produced the orphaned `traveling` ships in prod.
+//   • Stoppability is time-INDEPENDENT (a row is 'moving' or it is not), so taking nowMs would imply
+//     a staleness the server doesn't have and invite a re-render-per-tick control.
+// Same INPUTS, different question. Fail-closed on unknown groups is kept (a tag pointing outside the
+// owner's read yields no row — never a guessed name), matching the roster's dangling-membership posture.
+
+export interface StoppableFleetDescriptor {
+  groupId: string
+  /** The team's name from the owner's groups read — never derived from the movement row. */
+  name: string
+  /** How many member fleets of this group are in flight (an expedition fans out; a hunt is one). */
+  fleetCount: number
+  /** Lead (earliest) arrive_at across the group's moving fleets — display only; the server owns ETA. */
+  arriveAt: string
+}
+
+/**
+ * Owned groups with at least one in-flight ('moving') fleet → one stoppable descriptor each.
+ * Pure, time-independent, no interpolation. Deterministic order (by groupId).
+ */
+export function resolveStoppableFleets(
+  movements: readonly FleetMovement[],
+  groups: readonly GroupRow[],
+): StoppableFleetDescriptor[] {
+  if (groups.length === 0) return []
+  const nameById = new Map(groups.map((g) => [g.group_id, g.name]))
+
+  const byGroup = new Map<string, FleetMovement[]>()
+  for (const m of movements) {
+    const gid = m.group_id
+    if (!gid || m.status !== 'moving') continue
+    if (!nameById.has(gid)) continue // fail closed: unknown/foreign tag → no row, never a guessed name
+    const list = byGroup.get(gid) ?? []
+    list.push(m)
+    byGroup.set(gid, list)
+  }
+
+  const out: StoppableFleetDescriptor[] = []
+  for (const [gid, list] of byGroup) {
+    // Lead = earliest ETA; deterministic tie-break on movement id (stable across re-renders). Mirrors
+    // the teamMarkers lead rule so the badge and the Stop row always speak about the SAME fleet.
+    const lead = list.reduce((a, b) => {
+      const ta = Date.parse(a.arrive_at)
+      const tb = Date.parse(b.arrive_at)
+      if (ta !== tb) return ta <= tb ? a : b
+      return a.id <= b.id ? a : b
+    })
+    out.push({ groupId: gid, name: nameById.get(gid) as string, fleetCount: list.length, arriveAt: lead.arrive_at })
+  }
+  return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
+}
+
+// ── Stop outcome copy ────────────────────────────────────────────────────────────────────────────
+// stop_ship_group_transit (0164) is BEST-EFFORT: past the pre-read checks it always returns ok:true with
+// a {stopped, skipped, failed} aggregate only the server can compute (see the header). This builds the
+// summary from the server's OWN numbers rather than assuming every member halted.
+
+// The RPC result is an opaque bag (TeamRpcResult's `{ ok: true; [k: string]: unknown }`); the index
+// signature keeps this assignable from it while still naming the three keys 0164 actually returns.
+export interface GroupStopOutcome {
+  stopped?: unknown
+  skipped?: unknown
+  failed?: unknown
+  [k: string]: unknown
+}
+
+/** Player-facing summary of a best-effort group stop, from the SERVER's aggregate. */
+export function stopOutcomeMessage(fleetName: string, res: GroupStopOutcome): string {
+  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
+  const stopped = n(res.stopped)
+  const failed = n(res.failed)
+  const ships = (c: number) => `${c} ship${c === 1 ? '' : 's'}`
+  if (stopped === 0 && failed === 0) return `${fleetName} was already stopped — nothing was in flight.`
+  const parts = [`Stopped ${fleetName}`]
+  if (stopped > 0) parts.push(`— ${ships(stopped)} holding position`)
+  if (failed > 0) parts.push(`· ${ships(failed)} couldn't stop`)
+  return `${parts.join(' ')}.`
 }
