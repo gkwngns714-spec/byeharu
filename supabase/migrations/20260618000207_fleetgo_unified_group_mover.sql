@@ -194,38 +194,12 @@ begin
   end if;
 
   -- 9) ORIGIN — "the fleet moves from wherever it is" (§2). No home/docked precondition.
-  if v_fleet is not null and v_fleet_row.status = 'moving' and v_fleet_row.active_movement_id is not null then
-    -- ── REDIRECT: cancel the live leg at its INTERPOLATED point, then depart from there. ─────────
-    select * into v_mv
-      from public.fleet_movements
-     where id = v_fleet_row.active_movement_id
-     for update;
-    if v_mv.id is null or v_mv.status <> 'moving' then
-      -- The settle cron took it between our reads; the fleet is no longer where we thought.
-      -- Fail closed and let the caller re-issue against fresh state rather than guess.
-      return jsonb_build_object('ok', false, 'reason', 'movement_settled_retry');
-    end if;
-    v_t := extract(epoch from (v_now - v_mv.depart_at))
-           / nullif(extract(epoch from (v_mv.arrive_at - v_mv.depart_at)), 0);
-    v_t := greatest(0::double precision, least(1::double precision, coalesce(v_t, 0)));
-    v_o_x := v_mv.origin_x + (v_mv.target_x - v_mv.origin_x) * v_t;
-    v_o_y := v_mv.origin_y + (v_mv.target_y - v_mv.origin_y) * v_t;
-    v_o_type := 'space';   -- allowed by fleet_movements_origin_type_check since 0156
-    v_o_base := null; v_o_zone := null; v_o_loc := null;
-    v_old_mv := v_mv.id;
-    v_redirected := true;
-
-  elsif v_fleet is not null and v_fleet_row.status = 'present' and v_fleet_row.current_location_id is not null then
-    -- Parked at a port: depart from that port.
-    select l.id, l.x, l.y, l.zone_id into v_dock
-      from public.locations l where l.id = v_fleet_row.current_location_id;
-    if v_dock.id is null then
-      return jsonb_build_object('ok', false, 'reason', 'invalid_origin');
-    end if;
-    v_o_type := 'location'; v_o_base := null; v_o_zone := v_dock.zone_id; v_o_loc := v_dock.id;
-    v_o_x := v_dock.x; v_o_y := v_dock.y;
-
-  else
+  --    STRUCTURE NOTE: the `v_fleet is null` bootstrap MUST be the first branch, so the later branches
+  --    only ever touch v_fleet_row once it is assigned. Do NOT rewrite this as
+  --    `if v_fleet is not null and v_fleet_row.status = ...` — SQL's AND does not guarantee
+  --    left-to-right short-circuit, and reading a field of an unassigned RECORD raises
+  --    "record is not assigned yet" regardless of the guard. (The CI proof caught exactly that.)
+  if v_fleet is null then
     -- ── BOOTSTRAP (transition-only): the group has no fleet yet, so its position must be derived
     --    ONCE from its members' per-ship state — the only place this function reads ship state as a
     --    position, and only to create the group's first fleet. After step 4 ships have no position
@@ -262,6 +236,53 @@ begin
       -- the fleet — once the fleet exists it always has exactly one position.
       return jsonb_build_object('ok', false, 'reason', 'group_scattered');
     end if;
+
+  elsif v_fleet_row.active_movement_id is not null then
+    -- ── REDIRECT: cancel the live leg at its INTERPOLATED point, then depart from there. ─────────
+    select * into v_mv
+      from public.fleet_movements
+     where id = v_fleet_row.active_movement_id
+     for update;
+    if v_mv.id is null or v_mv.status <> 'moving' then
+      -- The settle cron took it between our reads; the fleet is no longer where we thought.
+      -- Fail closed and let the caller re-issue against fresh state rather than guess.
+      return jsonb_build_object('ok', false, 'reason', 'movement_settled_retry');
+    end if;
+    v_t := extract(epoch from (v_now - v_mv.depart_at))
+           / nullif(extract(epoch from (v_mv.arrive_at - v_mv.depart_at)), 0);
+    v_t := greatest(0::double precision, least(1::double precision, coalesce(v_t, 0)));
+    v_o_x := v_mv.origin_x + (v_mv.target_x - v_mv.origin_x) * v_t;
+    v_o_y := v_mv.origin_y + (v_mv.target_y - v_mv.origin_y) * v_t;
+    v_o_type := 'space';   -- allowed by fleet_movements_origin_type_check since 0156
+    v_o_base := null; v_o_zone := null; v_o_loc := null;
+    v_old_mv := v_mv.id;
+    v_redirected := true;
+
+  elsif v_fleet_row.status = 'present' and v_fleet_row.current_location_id is not null then
+    -- Parked at a port: depart from that port.
+    select l.id, l.x, l.y, l.zone_id into v_dock
+      from public.locations l where l.id = v_fleet_row.current_location_id;
+    if v_dock.id is null then
+      return jsonb_build_object('ok', false, 'reason', 'invalid_origin');
+    end if;
+    v_o_type := 'location'; v_o_base := null; v_o_zone := v_dock.zone_id; v_o_loc := v_dock.id;
+    v_o_x := v_dock.x; v_o_y := v_dock.y;
+
+  else
+    -- The group's fleet exists but is neither in flight nor docked (idle / returning-with-no-leg /
+    -- a completed leg the settle has retired). Its anchor is its origin base — the same anchor the
+    -- hunt uses for the return mechanics. Not a rejection: §2 says the fleet moves from wherever it
+    -- is, and "at its anchor" is a place.
+    select b.id, b.x, b.y, b.sector_id into v_base
+      from public.bases b
+     where b.player_id = v_player and b.status = 'active'
+       and (v_fleet_row.origin_base_id is null or b.id = v_fleet_row.origin_base_id)
+     order by b.created_at limit 1;
+    if v_base.id is null then
+      return jsonb_build_object('ok', false, 'reason', 'no_origin');
+    end if;
+    v_o_type := 'base'; v_o_base := v_base.id; v_o_zone := null; v_o_loc := null;
+    v_o_x := v_base.x; v_o_y := v_base.y;
   end if;
 
   -- 10) SPEED — D0's authoritative group stats (0166): delegates per-member to 0122, sums additive
