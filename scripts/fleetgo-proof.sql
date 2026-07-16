@@ -302,6 +302,7 @@ declare r jsonb; n int;
   uA uuid := (select v from fg where k='uA'); uB uuid := (select v from fg where k='uB');
   g uuid := (select v from fg where k='g'); slag uuid := (select v from fg where k='slag');
   g2 uuid;
+  v_members_uA uuid[] := array[(select v from fg where k='a1'), (select v from fg where k='a2')];
 begin
   perform pg_temp.snap_ships('before_guards');
 
@@ -336,6 +337,17 @@ begin
   r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, slag));
   if (r->>'reason') is distinct from 'member_busy' then
     raise exception 'GUARD FAIL member_busy (a member on its own per-ship fleet must block the group): %', r; end if;
+
+  -- ── RESTORE the simulated per-ship fleet. A fixture that mutates state MUST undo it: without this
+  --    every LATER block inherits member_busy and fails for a reason that has nothing to do with what
+  --    it is testing. (The CI matrix caught exactly that — the 3b coordinate block died on member_busy.)
+  update public.fleets
+     set status = 'completed', location_mode = 'movement', active_movement_id = null
+   where player_id = uA and main_ship_id = any(v_members_uA) and status in ('moving', 'returning');
+  -- prove the restore actually worked, rather than trusting it.
+  select count(*) into n from public.fleets
+   where player_id = uA and main_ship_id = any(v_members_uA) and status in ('moving', 'returning');
+  if n <> 0 then raise exception 'GUARD FAIL: the member_busy fixture did not restore (% live per-ship fleet(s))', n; end if;
 
   perform pg_temp.snap_ships('after_guards');
   -- ★ §2 again: every REJECTED path must also leave ships untouched ★
