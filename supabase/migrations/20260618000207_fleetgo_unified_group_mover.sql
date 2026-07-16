@@ -319,24 +319,38 @@ begin
   -- That absence is the charter's §2. If you are here to add one, re-read §2 and §0 first.
 
   if v_redirected then
-    -- Retire the cancelled leg BEFORE clearing the pointer (fleets_movement_pointers_exclusive).
+    -- Retire the cancelled leg BEFORE the fleet is re-pointed (fleets_movement_pointers_exclusive).
     update public.fleet_movements
        set status = 'cancelled', resolved_at = v_now
      where id = v_old_mv and status = 'moving';
-    update public.fleets
-       set active_movement_id = null, updated_at = v_now
-     where id = v_fleet;
   end if;
 
   if v_fleet is null then
     -- The group's ONE fleet: the hunt's proven shape (main_ship_id NULL + group_id set).
     -- origin_base_id anchors the existing return-to-base mechanics, exactly as the hunt does.
+    -- Born 'idle' — which is precisely what fleet_set_moving demands below.
     select b.id into v_base
       from public.bases b where b.player_id = v_player and b.status = 'active'
       order by b.created_at limit 1;
     insert into public.fleets (player_id, origin_base_id, status, location_mode, current_base_id, group_id)
       values (v_player, v_base.id, 'idle', 'base', v_base.id, v_group)
       returning id into v_fleet;
+  else
+    -- Return the group's EXISTING fleet to 'idle' so fleet_set_moving's frozen precondition holds.
+    -- fleet_set_moving only accepts an idle fleet and raises otherwise; §4 says compose the frozen
+    -- primitives rather than gate around them, so the fleet is released into idle here instead of
+    -- the helper being bypassed with a hand-rolled UPDATE. (The CI proof caught this: a redirect and
+    -- a port departure both hand it a non-idle fleet.)
+    -- Closing the dock presence is part of leaving: a fleet that is departing must not stay 'active'
+    -- at the port it is leaving (the same dissolve the hunt performs for its members' fleets).
+    perform public.presence_complete(lp.id)
+      from public.location_presence lp
+     where lp.fleet_id = v_fleet and lp.status = 'active';
+    update public.fleets
+       set status = 'idle', location_mode = 'movement', active_movement_id = null,
+           current_location_id = null, current_zone_id = null, current_sector_id = null,
+           updated_at = v_now
+     where id = v_fleet;
   end if;
 
   -- ONE movement for the ONE fleet. mission 'rally' = the spine's generic reposition
