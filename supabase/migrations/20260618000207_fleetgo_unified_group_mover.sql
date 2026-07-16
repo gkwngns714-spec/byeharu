@@ -290,9 +290,13 @@ begin
   begin
     v_stats := public.calculate_group_expedition_stats(v_player, v_group, 'none');
   exception when others then
+    -- 0166 is STRICT by design (refuse-don't-clamp): a member's bad stats raise and refuse the whole
+    -- team context. Caught here and returned as an envelope — this RPC never raises at its boundary.
     return jsonb_build_object('ok', false, 'reason', 'stats_invalid');
   end;
-  v_speed := (v_stats->>'speed')::double precision;
+  -- NOTE: 0166 nests the folds under 'totals' — `v_stats->>'speed'` is NULL at the top level and
+  -- silently degrades to stats_invalid. (The CI proof caught exactly that.)
+  v_speed := (v_stats->'totals'->>'speed')::double precision;
   if v_speed is null or not (v_speed > 0) then
     -- fleet_movements_speed_used_check demands > 0; reject rather than feed the spine a bad row.
     return jsonb_build_object('ok', false, 'reason', 'stats_invalid');
