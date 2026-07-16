@@ -58,6 +58,33 @@ create temp table ship_snap(
   space_x double precision, space_y double precision, updated_at timestamptz
 ) on commit preserve rows;
 
+-- ★ THE GHOST-DOCK ASSERTION ★ — the property NOSHIPWRITE is structurally blind to.
+-- A fleet in flight must leave NO member docked behind it. 3a copied the hunt's fleet shape but not its
+-- dissolve, so every go left each member with a live 'present' fleet + active presence at the origin —
+-- the fleet flying while its ships kept trading at the port they left. NOSHIPWRITE cannot see it: that
+-- diffs main_ship_instances, and the leak is in fleets/location_presence. Two different tables, two
+-- different assertions. This is why "the proof passed" is never the same as "the code is right".
+create or replace function pg_temp.assert_no_ghost_dock(p_player uuid, p_group uuid, p_ctx text)
+returns void language plpgsql as $$
+declare n int; m int;
+begin
+  select count(*) into n
+    from public.fleets f
+    join public.main_ship_instances s on s.main_ship_id = f.main_ship_id
+   where f.player_id = p_player and s.group_id = p_group and f.status = 'present';
+  if n <> 0 then
+    raise exception 'GHOST-DOCK FAIL (%): % member(s) still hold a ''present'' per-ship fleet while the group flies', p_ctx, n;
+  end if;
+  select count(*) into m
+    from public.location_presence lp
+    join public.fleets f on f.id = lp.fleet_id
+    join public.main_ship_instances s on s.main_ship_id = f.main_ship_id
+   where lp.status = 'active' and f.player_id = p_player and s.group_id = p_group;
+  if m <> 0 then
+    raise exception 'GHOST-DOCK FAIL (%): % member(s) still ACTIVE at a port the fleet has left', p_ctx, m;
+  end if;
+end $$;
+
 -- Asserts two snapshots are byte-identical in BOTH directions (EXCEPT is asymmetric alone).
 create or replace function pg_temp.assert_ships_untouched(p_before text, p_after text, p_ctx text)
 returns void language plpgsql as $$
@@ -186,6 +213,10 @@ begin
   perform pg_temp.snap_ships('after_go');
   -- ★ THE CHARTER §2 ASSERTION ★
   perform pg_temp.assert_ships_untouched('before_go', 'after_go', 'first go');
+  -- ★ AND the one it is blind to: the members must not still be docked where they departed ★
+  -- The bootstrap case is the worst: it RESOLVES the origin from the members' own present fleets, so
+  -- those fleets provably exist at this moment and must be dissolved by the go itself.
+  perform pg_temp.assert_no_ghost_dock(uA, g, 'first go (bootstrap from the dock)');
 
   -- exactly ONE unified fleet for the group (main_ship_id NULL — the hunt's proven shape).
   select count(*) into n from public.fleets
@@ -220,6 +251,31 @@ begin
   insert into fg values ('fleet', v_fleet), ('mv1', v_mv);
   raise notice 'FLEETGO_PASS_ONEFLEET: 1 fleet, 1 movement, 0 per-member fleets, origin = the dock';
   raise notice 'FLEETGO_PASS_NOSHIPWRITE: ship rows byte-identical across the go (charter §2)';
+  raise notice 'FLEETGO_PASS_NOGHOSTDOCK: the go dissolved every member''s own dock — no ship left trading at a port the fleet has left';
+end $$;
+
+-- ════════ BLOCK COMBATDEST: a MOVE is not a HUNT — a combat destination is refused ════════
+-- Found by the step-3c/4 recon, not by the 3a/3b proofs (which never flew to a hunt site).
+-- The settle creates a presence carrying the target's activity_type, and an activity='hunt_pirates'
+-- presence is what combat_create_encounter routes on. A unified fleet has NO combat_units and no
+-- group_sortie_members manifest, so it would snapshot zero units and the tick's defeat branch would
+-- DESTROY the whole fleet on arrival. Hunts go through send_ship_group_hunt, which builds the manifest.
+do $$
+declare r jsonb; n int; uA uuid := (select v from fg where k='uA'); g uuid := (select v from fg where k='g');
+  v_hunt uuid;
+begin
+  select id into v_hunt from public.locations
+   where status = 'active' and activity_type = 'hunt_pirates' limit 1;
+  if v_hunt is null then
+    raise exception 'COMBATDEST FAIL: no active hunt_pirates location in the fixture — the assertion would be vacuous';
+  end if;
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, v_hunt));
+  if (r->>'reason') is distinct from 'combat_destination' then
+    raise exception 'COMBATDEST FAIL: the mover accepted a hunt site (the fleet would be destroyed on arrival): %', r; end if;
+  -- and it refused BEFORE writing anything: no leg was created for it.
+  select count(*) into n from public.fleet_movements where target_location_id = v_hunt;
+  if n <> 0 then raise exception 'COMBATDEST FAIL: % leg(s) created toward a combat destination', n; end if;
+  raise notice 'FLEETGO_PASS_COMBATDEST: a move refuses a combat destination (a move is not a hunt)';
 end $$;
 
 -- ════════ BLOCK SPEEDMIN: movement speed == an INDEPENDENT min over the members ════════
@@ -268,6 +324,7 @@ begin
   perform pg_temp.snap_ships('after_redirect');
   -- ★ THE CHARTER §2 ASSERTION, again — a redirect must not touch a ship either ★
   perform pg_temp.assert_ships_untouched('before_redirect', 'after_redirect', 'redirect');
+  perform pg_temp.assert_no_ghost_dock(uA, g, 'redirect');
 
   -- the SAME fleet — a redirect must never create a second mover.
   if (r->>'fleet_id')::uuid is distinct from v_fleet then
@@ -399,6 +456,7 @@ begin
   v_mv := (r->>'movement_id')::uuid;
   perform pg_temp.snap_ships('after_coord');
   perform pg_temp.assert_ships_untouched('before_coord', 'after_coord', 'coordinate go');
+  perform pg_temp.assert_no_ghost_dock(uA, g, 'coordinate go');
 
   if (r->>'fleet_id')::uuid is distinct from v_fleet then
     raise exception 'COORD FAIL: a coordinate go created a different fleet'; end if;
@@ -456,6 +514,7 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'FROMSPACE FAIL: %', r; end if;
   perform pg_temp.snap_ships('after_fromspace');
   perform pg_temp.assert_ships_untouched('before_fromspace', 'after_fromspace', 'go from space');
+  perform pg_temp.assert_no_ghost_dock(uA, g, 'go from space');
 
   -- it departed the PARKED COORDINATE, with no port involved — "the fleet moves from wherever it is".
   if (r->>'origin_type') is distinct from 'space' then

@@ -286,15 +286,28 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'empty_group');
   end if;
 
-  -- 6) destination: a port must exist and be active. (A coordinate was fully validated in step 3.)
+  -- 6) destination: a port must exist, be active, and be NON-COMBAT.
+  --    The activity_type check is the SAME rule the legacy per-ship move enforces (0156: active +
+  --    non-combat) — composed, not invented. It is a TARGET-legality check, not a readiness branch (§4):
+  --    it asks what the destination IS, never where the fleet is.
+  --    WHY IT IS LOAD-BEARING: the settle creates a presence carrying the target's activity_type
+  --    (0153/this file's location branch), and an activity='hunt_pirates' presence is what
+  --    combat_create_encounter routes on. A unified fleet has NO combat_units — it is not a sortie, it
+  --    has no group_sortie_members manifest — so it would snapshot zero units and the tick's defeat
+  --    branch would DESTROY it on arrival. A move is not a hunt: hunts go through
+  --    send_ship_group_hunt (0168/0204), which builds the manifest. Found by the step-3c/4 recon; the
+  --    3a/3b proofs never flew to a hunt site so they never saw it.
   if v_t_type = 'location' then
-    select l.id, l.x, l.y, l.status, l.zone_id, z.sector_id
+    select l.id, l.x, l.y, l.status, l.zone_id, l.activity_type, z.sector_id
       into v_loc
       from public.locations l
       join public.zones z on z.id = l.zone_id
      where l.id = p_location_id;
     if v_loc.id is null or v_loc.status <> 'active' then
       return jsonb_build_object('ok', false, 'reason', 'invalid_location');
+    end if;
+    if v_loc.activity_type is distinct from 'none' then
+      return jsonb_build_object('ok', false, 'reason', 'combat_destination');
     end if;
     v_t_loc := v_loc.id; v_t_x := v_loc.x; v_t_y := v_loc.y;
   end if;
@@ -479,6 +492,32 @@ begin
   -- ── WRITES ─────────────────────────────────────────────────────────────────────────────────────
   -- NOTE FOR EVERY FUTURE READER: there is deliberately NO `update main_ship_instances` below.
   -- That absence is the charter's §2. If you are here to add one, re-read §2 and §0 first.
+
+  -- ★ DISSOLVE THE MEMBERS' OWN DOCKS — the ships leave the port to fly with the fleet. ★
+  -- This is send_ship_group_hunt's block (0204:664-676), composed verbatim rather than re-invented.
+  --
+  -- WHY THIS EXISTS (a real bug in 3a, found by the step-3c/4 recon): 3a copied the hunt's fleet SHAPE
+  -- (one fleets row, main_ship_id NULL, group_id set) but NOT its dissolve. Its only presence write was
+  -- scoped to the unified fleet, and the transition guard rejects only 'moving'/'returning' members —
+  -- 'present' waved through. So every go left each member with a live 'present' fleet + active presence
+  -- at the port it departed: the fleet in flight while its ships stayed docked, trading and storing at
+  -- the origin. That is the EXACT duality §2 kills, re-introduced by the migration meant to kill it.
+  --
+  -- The NOSHIPWRITE proof could never have caught it: it diffs main_ship_instances, and this leak lives
+  -- in fleets/location_presence. A proof pins the property you thought of. FLEETGO_PASS_NOGHOSTDOCK now
+  -- pins this one — asserted after EVERY go, not just the first.
+  --
+  -- fleet_complete requires 'returning', so (like the hunt) this is a direct completed-write: the dock
+  -- had no movement to settle.
+  perform public.presence_complete(lp.id)
+    from public.fleets f
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+   where f.player_id = v_player and f.main_ship_id = any(v_members) and f.status = 'present';
+  update public.fleets
+     set status = 'completed', location_mode = 'movement', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = v_now
+   where player_id = v_player and main_ship_id = any(v_members) and status = 'present';
 
   if v_redirected then
     -- Retire the cancelled leg BEFORE the fleet is re-pointed (fleets_movement_pointers_exclusive).

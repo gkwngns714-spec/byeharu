@@ -21,7 +21,7 @@ MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000209_fleetgo_unified_st
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ISOLATION"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ISOLATION"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -148,6 +148,27 @@ if [ "$MODE" = "selftest" ]; then
     || fail "no runtime pin that the brake and the redirect compute the SAME interpolated point"
   grep -q "double-stop did not report not_moving" "$SQL" \
     || fail "the brake's idempotence is not pinned (a brake that raises on a second press is a hazard)"
+
+  # ── THE GHOST-DOCK BAN: a fleet in flight must leave NO member docked behind it. ─────────────────
+  # NOSHIPWRITE is structurally BLIND to this — it diffs main_ship_instances, and the leak lives in
+  # fleets/location_presence. 3a shipped exactly this bug (it copied the hunt's fleet SHAPE but not its
+  # DISSOLVE) and every proof went green. Two tables, two assertions. "The proof passed" is not "the
+  # code is right"; a proof only pins the property you thought of.
+  grep -q "assert_no_ghost_dock" "$SQL" \
+    || fail "no ghost-dock assertion — a flying fleet could leave its ships docked and trading at the origin"
+  for ctx in "'first go (bootstrap from the dock)'" "'redirect'" "'coordinate go'" "'go from space'"; do
+    grep -q "assert_no_ghost_dock(uA, g, $ctx)" "$SQL" \
+      || fail "the ghost-dock assertion is not applied to: $ctx"
+  done
+  # ...and the mover must actually dissolve them, composing the hunt's proven block (0204:664-676).
+  printf '%s' "$MIG3B_CODE" | grep -q "main_ship_id = any(v_members) and status = 'present'" \
+    || fail "0208 does not dissolve the members' own present fleets on departure (the ghost-dock bug)"
+
+  # ── A MOVE IS NOT A HUNT: a combat destination settles into an encounter with no units and dies. ─
+  printf '%s' "$MIG3B_CODE" | grep -q "combat_destination" \
+    || fail "0208 does not refuse a combat destination (the fleet would be destroyed on arrival)"
+  grep -q "the assertion would be vacuous" "$SQL" \
+    || fail "COMBATDEST does not guard against a fixture with no hunt site (would pass vacuously)"
 
   tp_assert_out_of_scope "$SQL"
 
