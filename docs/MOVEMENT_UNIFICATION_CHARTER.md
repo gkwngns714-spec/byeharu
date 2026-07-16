@@ -112,6 +112,34 @@
       the `member_busy` fixture didn't restore itself and poisoned every later block; backdating only
       `arrive_at` violates `fleet_movements_check (arrive_at > depart_at)` because `now()` is
       txn-constant (both ends must move); and the vacuity guard above.
+  - **FLEET-STOP BUILT + CI-GREEN (migration `0209`, `command_ship_group_stop`).** The live
+    `stop_ship_group_transit` (0164) LOOPS the per-ship stop — the composed model. Under §2 one mover
+    means one brake: interpolate → cancel the leg → `fleet_set_in_space`. **3b made it trivial, which is
+    the tell that the model is right**: until the fleet had a position there was nowhere to hold, so the
+    legacy stop had to park the SHIP (0155). STOP=HOLD kept; idempotent; composes 0208's leaf. Pinned by
+    an **agreement assertion**: a redirect is "stop here, then go there", so the brake and the redirect
+    must compute the same "here" — if they ever diverge, one is lying about position.
+  - **⚠ TWO REAL BUGS IN 3a/3b, FOUND BY THE 5-AGENT RECON — FIXED, and the lesson matters more than
+    the bugs.** Both were invisible to 13 green markers. Fixed in 0208 in place (never deployed).
+    1. **THE GHOST-DOCK BUG.** 3a copied the hunt's fleet SHAPE but not its DISSOLVE: the presence write
+       was scoped to the unified fleet, and the transition guard rejects only `moving`/`returning` —
+       **`present` waved through**. So every go left each member holding a live `present` fleet + active
+       presence at the port it departed: **the fleet flying while its ships stayed docked, trading and
+       storing at the origin** — the exact duality §2 kills, re-introduced by the migration meant to
+       kill it. The bootstrap resolves its origin from those very fleets, so the FIRST go of every group
+       provably left ghosts. Fixed by composing the hunt's block (0204:664-676) verbatim.
+    2. **A MOVE IS NOT A HUNT.** The mover accepted any active location including
+       `activity_type='hunt_pirates'`. The settle creates a presence carrying that activity, which is
+       what `combat_create_encounter` routes on — and a unified fleet has NO `combat_units` and no
+       manifest, so it would snapshot zero units and **the tick's defeat branch would destroy the whole
+       fleet on arrival**. Now refused (`combat_destination`) using the legacy move's own predicate.
+    > **THE LESSON — write this on the wall:** `NOSHIPWRITE` diffs `main_ship_instances`; the ghost leak
+    > lives in `fleets`/`location_presence`. **A proof pins the property you thought of; it says nothing
+    > about the one you didn't.** 13 green markers and two real bugs coexisted comfortably. "The proof
+    > passed" is not "the code is right". New assertion class `FLEETGO_PASS_NOGHOSTDOCK` (applied after
+    > EVERY go path) + `FLEETGO_PASS_COMBATDEST`. **15/15 markers green** (run `29506040104`).
+    > Corollary: verifying that a guard FAILS is not optional — an edit here silently added ZERO guard
+    > lines while the selftest stayed green, and only the mutation tests exposed it.
   - **⚠ THE `osn3-*` PROOF FLEET IS MOSTLY RED — AND WAS BEFORE ANY OF THIS WORK.** 8 of 9 osn3
     real-chain proofs FAIL on this branch (anchor1a, s2, s3, s4, s5, s6a, dock0, osn4; only anchor1b
     is green). **Not caused by 0207**: each fails identically at `d8ed494`, the frontend-only step-2
@@ -344,15 +372,66 @@ that is how the ground truth below was established; it does not change the proof
    `location_mode='space'`), `target_type` accepts `'space'`, `movement_settle_arrival` gained ONE
    parity-pinned branch, and the mover is `(group, {location | x,y})`. §2's "port OR world
    coordinate" is complete and the model closes (a parked fleet departs again with no port involved).
-3. **GROUP-SETTLE (NEXT)** — the group fleet's arrival docks **the group** (presence keyed to the
-   group fleet), and `process_mainship_expeditions` (the zombie reconciler) is taught that a member of
-   a flying group is not a zombie. Guards the 0199 wedge below.
-   *Grounding from 3b:* a coordinate arrival already settles cleanly (the fleet parks itself, no
-   presence, no ship write). A **port** arrival already reuses the legacy `fleet_set_present` +
-   `presence_create` and — because a unified fleet has `main_ship_id NULL` — skips the 0153 ship-dock
-   hunk for free, so §2 holds through the settle today. What 3c actually owes: the members are
-   currently invisible at the port the group docked at (nothing keys a member to the group's presence),
-   and the reconciler has not been told that a `home`-status member of a flying group is not a zombie.
+3. **GROUP-SETTLE — REWRITTEN 2026-07-16 after a 5-agent recon. The step as first written was half
+   wrong, and the wrong half was its headline.**
+   > It said: teach the zombie reconciler that a `home`-status member of a flying group is not a zombie.
+   > **VERIFIED FALSE (0199:566-590):** `process_mainship_expeditions` selects ONLY
+   > `status in ('traveling','returning')` and `status='hunting'`, in BOTH the lit and dark paths. The
+   > unified mover writes no ship status, so a flying group's members stay `'home'` — never candidates.
+   > Writing that branch would add a **per-command readiness branch guarding a state that cannot occur**
+   > — a §4 violation. The reconciler needs **deleting** (step 4d), not teaching, and 3c must not touch
+   > it. Two sweeps found this independently.
+
+   What 3c actually owes, in order (each its own dark, parity-pinned migration):
+   - **3c-0 FOUNDATION — commission must put every ship in a group.** `commission_*_main_ship` never
+     sets `group_id` (0160:53). An ungrouped ship has no group → no group fleet → **under §2, no
+     position at all**. Nothing downstream can be repointed off the ship until every ship is grouped.
+   - **3c-1 VALIDATE-CONTEXT — the read choke point (widest blast radius in the charter; §3 never
+     mentioned it).** `mainship_space_validate_context` (0056:114-116) resolves the fleet by
+     `fleets.main_ship_id = <ship>` — **NULL on a unified fleet** — so every member falls through to
+     `contradictory_state`/`legacy_home`. It is the transitive authority behind `get_my_docked_store`,
+     `get_my_current_dock_services`, `mainship_resolve_docked_location` (→ the three trade RPCs),
+     `get_my_fleet_positions`, `get_osn_movement_readiness`, and the settled-safe rules for
+     mining/exploration. Widen it to resolve the group's fleet; dark-branched for byte-parity.
+   - **3c-2 DOCK-DEDUP — finish 0092's job.** The same "read the ship's present fleet's location" block
+     is copy-pasted in FOUR places (0092:44, 0082:64, 0159:71, 0200:76). Migration 0138 exists *solely*
+     because 0136 silently re-inlined it. Collapse onto ONE group-aware resolver, or a fifth copy is
+     the default outcome.
+   - **3c-3 MAP-READ — `get_my_fleet_positions` (0200) must project the GROUP's fleet.** This is the
+     deliverable §3 was reaching for ("members invisible at the port the group docked at"): the settle
+     already creates the unified fleet's presence, but nothing keys a MEMBER to it, so every member maps
+     to `place='hidden'` (0200:120) — the whole group vanishes on arrival and the Port tab empties.
+
+4. **RETIRE — four ordered units, and the order is load-bearing: retire the RPCs → drop the columns →
+   delete the reconciler.** (§3 originally called this "a plain status write". That is true only of the
+   4 orphaned ships and false of everything else.)
+   - **4a CLIENT REPOINT** (frontend, no migration). Author the missing `commandShipGroupGo` /
+     `commandShipGroupStop` wrappers — **zero client code references them today**. TeamMapSend's three
+     arms collapse to ONE go (the unified mover launches from anywhere, so `teamMove.ts`'s classifier,
+     the docked-unready hint and `teamRollup`'s n/n fold all DIE — that fold *is* the retired model
+     encoded as a derivation). TeamMapStop → `command_ship_group_stop` — **today its brake reports
+     success and does nothing on a unified fleet** (0164 returns `ok:true, stopped:0`). Delete
+     MainShipCommand/PortNavPanel/`resolveMainShipMarker` (a second position pipeline IS the spaghetti).
+     Staging lever: `fleet_control_enabled` (OFF) already hides the per-ship Send with zero code change.
+   - **4b SERVER DROP.** Beyond §3's list, also drop `send_main_ship_expedition` (still reachable from
+     `MainShipCommand.tsx:76`, still minting per-ship movements = the exact duality), `0155`, `0164`,
+     `command_main_ship_settle_arrival` (0150). Unschedule `process_mainship_space_arrivals` (safe: both
+     writers of its input table die here). Fold the ±10000 bounds into ONE authority — **discharging the
+     knowing-duplicate debt this charter records**. Delete 0208's transition guard + bootstrap branch
+     (both already marked for deletion in-file). Flip `fleet_movement_unified_enabled` ON as the LAST act.
+   - **4c SIGNAL RETIREMENT — surgical.** The `status` COLUMN **survives**, narrowed to
+     `{'home','destroyed'}`. `'destroyed'` is pure lifecycle (repair gate 0199:770, combat-destroy
+     0167:168, shield-regen exclusion 0199:634 — none read movement). Drop as movement:
+     `traveling/returning/hunting/stationary`. Drop as **dead**: `repairing/trading/exploring/mining/
+     retreating` — **ZERO writers anywhere across all 209 migrations**. Drop all three spatial columns +
+     ten CHECKs — **no views, no triggers, no indexes touch them**. MUST repoint in the same migration:
+     exploration/mining securing (0100:231, 0105:69) and scan/extract (0146:131, 0143:127), or four
+     features pend forever with no log and no red test. Opens with a reject-before-read assertion that
+     RAISES until the owner's orphan reset has landed.
+   - **4d RECONCILER DELETE.** Rehome the shield-regen hunk (0199:630-641) FIRST — it reads no movement
+     state and must not die with its host — then delete `process_mainship_expeditions` and the 0199
+     wedge outright. Safety-critical ordering: never delete it while movement statuses are still
+     writable.
 4. **RETIRE** (this absorbs the old step 4 and §2's "retired, not composed") — repoint the client to
    `command_ship_group_go`; drop `move_ship_group_to_location`, `send_ship_group_expedition`'s
    per-member loop, `move_main_ship_to_location`, `command_main_ship_space_move`,
@@ -360,6 +439,15 @@ that is how the ground truth below was established; it does not change the proof
    `main_ship_instances.space_x/space_y/spatial_state` as movement signals and retire the
    `process_mainship_space_arrivals` cron. Reset the 4 orphaned `traveling` ships here (a plain
    status write — the diagnostic proved there is nothing to settle). No dead path, no leftover flag.
+
+### ⚠ STEP 4 IS A PLAYER-VISIBLE CAPABILITY REMOVAL — OWNER DECISION, NOT A DARK CLEANUP
+
+`mainship_send_enabled`, `mainship_space_movement_enabled` and `mainship_coordinate_travel_enabled` are
+all **ON in prod**, and **no compile-time gate suppresses any per-ship mover**. So dropping them takes
+capabilities away from live players, and the unified replacement — **including the coordinate arm, which
+no client code addresses yet** — must be lit in the SAME deploy. There is no safe half-way: ship 4a+4b
+together or players lose movement. This is the owner's call on timing and staging, not an implementation
+detail. The `fleet_control_enabled` lever (OFF today) can dark the per-ship UI reversibly first.
 
 ### Known landmines (found 2026-07-16 — do not rediscover these the hard way)
 
