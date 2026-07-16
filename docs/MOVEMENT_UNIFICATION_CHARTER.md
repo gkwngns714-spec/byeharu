@@ -12,8 +12,14 @@
   movement; a ship never moves on its own; all movement interaction is on the MAP; the per-ship
   movement layer is DELETED, not wrapped.** Build to §2/§3. Do NOT re-propose "group composes
   single-ship movement" — that was the recorded mistake (§0).
-- **This branch (`osn3-fleetmove-fromspace`) contains ONLY this charter.** No code yet — deliberately,
-  to avoid shipping a blind, untested movement refactor. The build (§3) had not started.
+- **Branch `osn3-fleetmove-fromspace` — progress so far:**
+  - The charter (this doc).
+  - **Step 1 DONE + VERIFIED (commit `a4ba96b`, WIP, NOT merged):** movement controls removed from
+    the Command screen (`TeamRosterPanel`) — no Send/Hunt/Stop/gather-hints; it is roster-only now.
+    Verified: `tsc -b` exit 0, `vite build` exit 0, 66 team specs pass.
+  - **OPEN GAP (blocks merge):** the map has fleet Send/Hunt/Move (`TeamMapSend`) but **no fleet Stop**.
+    Removing Stop from Command left NO group-stop UI anywhere. Step 2 must add a map fleet-Stop before
+    this branch can merge (or the game loses stop). Do not admin-merge this branch until then.
 
 **Production state changed TODAY (verified from prod game_config):**
 - Deploy backlog cleared: prod resynced to main; migrations through 0206 deployed.
@@ -36,11 +42,20 @@ the `osn3-*` real-chain CI on a disposable Postgres, then deployed through the o
 
 **Next actions on resume (in order):**
 1. Re-read §2 (the model) + §0 (the mistake) before touching anything movement-related.
-2. Free the 4 stuck ships (owner runs the reset, or provides db.env so the assistant does it).
-3. Build §3 step by step (each its own migration, CI-proven, owner-approved deploy):
-   retire per-ship movement → fleet is the atomic mover → map-only UI (strip movement from the
-   Command screen `TeamRosterPanel`/`TeamMapSend`; all move/redirect/stop become MAP taps).
-4. Never touch the protected dirty checkout `C:\Users\디폴리스\byeharu`; work in a fresh clone off main.
+2. **Step 2 (frontend, next):** add a fleet **Stop** to the map, closing the gap above. Then the map
+   has Send/Hunt/Move/Stop — all movement on one surface. Verifiable locally (tsc/build/specs).
+3. **Awaiting real data:** the owner was asked to run (SQL editor, read-only) a diagnostic joining
+   `main_ship_instances` → `fleets` → `fleet_movements` for the ~4 ships stuck at `status='traveling'`
+   — to see whether a dangling `fleet.active_movement_id`/`fleet_movements` row is holding them, and to
+   ground the fleet↔group↔movement model for step 3. If the answer is in the chat history, use it;
+   else re-request it. (`process_fleet_movements()` returned 0 — nothing due — so it is orphaned state.)
+4. **Step 3 (server, big):** the ship_group (the player's "fleet") becomes the ATOMIC mover — one
+   command, port OR coordinate, from any state, redirectable. Per-ship movement DELETED, not wrapped.
+   Each its own migration, CI-proven on the `osn3-*` real-chain, owner-approved deploy.
+5. **Step 4:** clean up the orphaned `traveling` ships + retire dead per-ship movement RPCs.
+6. Never touch the protected dirty checkout `C:\Users\디폴리스\byeharu`; work in a fresh clone off main.
+   DB writes need a credential the owner holds (see the "Hard constraint" note above); `db.env` is
+   machine-local and will NOT be on the new computer — ask again there if direct DB work is needed.
 
 ## 0. The mistake this exists to stop repeating
 
