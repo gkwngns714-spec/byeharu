@@ -38,8 +38,29 @@
       (15 new). `tests/galaxy.spec.ts` fails on this machine — PRE-EXISTING and unrelated (it builds a
       Supabase client at module load and the runner has no `VITE_SUPABASE_URL`); confirmed identical on
       clean HEAD via `git stash`. Do not chase it as a regression.
-  - **Merge status:** the step-1 blocker is gone (the game no longer loses stop). Still branch-only —
-    admin-merge and any deploy remain the owner's call.
+  - **Merge status (steps 1-2):** the step-1 blocker is gone (the game no longer loses stop). Open as
+    **PR #165**. Admin-merge and any deploy remain the owner's call.
+  - **Step 3a BUILT 2026-07-16 (migration `0207`, `command_ship_group_go`) — awaiting CI.** The owner
+    decided "§2 wins, rewrite §3"; §3 above is the rewrite and this is its first step. **The ONE
+    fleet-level mover**: one fleet per group (`main_ship_id NULL` — the hunt's proven shape), ONE
+    movement, launches from wherever the group is, redirect = re-issue (cancels the live leg at its
+    interpolated point). **It writes NOTHING to `main_ship_instances` — that omission IS §2**, and it
+    composes no per-ship mover. DARK behind `fleet_movement_unified_enabled` (seeded false); purely
+    additive — no existing function re-created, no table altered, so it cannot change prod behavior.
+    - Proof: `scripts/fleetgo-proof.{sql,sh}` + `.github/workflows/osn3-fleetgo-realchain-proof.yml`
+      (the `osn3-**` disposable-Postgres pattern; sources the shared `lib/trade-proof-lib.sh`).
+      Markers: DARK / ONEFLEET / **NOSHIPWRITE** / SPEEDMIN / REDIRECT / GUARDS / ISOLATION.
+    - **NOSHIPWRITE is the crown jewel**: every ship row is snapshotted and diffed BOTH ways across the
+      go, the redirect, AND the rejected guards — if anyone ever adds an `update main_ship_instances`
+      to the mover, it fails loudly. The selftest ALSO greps the migration statically for a ship
+      UPDATE and for any composed per-ship mover; both greps were **mutation-tested** (inject the
+      violation → the guard fires → restore → green), so they are not vacuous.
+    - Verified locally: selftest exit 0 (+ the two mutation tests). **The SQL matrix has NOT run yet** —
+      no psql/Docker here, and running it against prod was refused (it provisions users/ships and flips
+      flags; a rolled-back txn is still a prod write). CI on the `osn3-**` push is its first real
+      execution — expect to iterate on it.
+  - **Step 3b-3d NOT built** (coordinate target / group settle+reconciler / retire). Movement is NOT
+    fixed until step 4: the four overlapping paths are all still live and untouched.
 
 **Production state changed TODAY (verified from prod game_config):**
 - Deploy backlog cleared: prod resynced to main; migrations through 0206 deployed.
@@ -130,13 +151,26 @@ Movement is **four overlapping paths pretending to be one**:
 - **Readiness rules diverged:** NO-HOME (0199) taught **Send** and **Hunt** to launch from a
   docked port, but **Move** never learned it — so Move still demands docked-at-home-port.
 
-### The foundational blocker (found 2026-07-16)
+### ~~The foundational blocker (found 2026-07-16)~~ — **RETRACTED: this was FALSE**
 
-The OSN single-ship commands resolve the ship with
-`select main_ship_id ... where player_id = v_player` — **no ship id, no LIMIT**. They were
-built in the one-ship era and are **not ship-addressable**. A group cannot compose them
-today because it cannot tell them *which* member to move. This is why group movement is
-stuck on the legacy port-only mover.
+> This section claimed the OSN single-ship commands resolve the ship with
+> `select main_ship_id ... where player_id = v_player` — no ship id, no LIMIT — and were therefore
+> not ship-addressable. **Checked against live prod 2026-07-16: they already are.**
+> `command_main_ship_space_move(p_target_x, p_target_y, p_request_id, p_main_ship_id)`,
+> `command_main_ship_space_move_to_location(p_location, p_request_id, p_main_ship_id)` and
+> `command_main_ship_space_stop(p_request_id, p_main_ship_id)` all take a trailing `p_main_ship_id`
+> and resolve through `mainship_resolve_owned_ship` (0083 for stop/move-to-location, 0178 for the
+> coordinate move). The old §3's step 1 ("OSN-SHIP-ADDR — **Foundation**") was already done before
+> it was written down.
+>
+> It is retracted rather than deleted because the *conclusion drawn from it* was the damage: it made
+> "compose the per-ship movers" look like the natural next move, which is the §0 mistake. Under §2
+> ship-addressability is **irrelevant** — the per-ship movers are being retired, so it does not
+> matter whether a group *could* address them. It must not.
+
+Group movement is stuck on the legacy port-only mover because `move_ship_group_to_location` **loops
+`move_main_ship_to_location` per member** (0204:446) and inherits its docked-at-port gate — not
+because of any addressability limit.
 
 ## 2. The ONE model (target — owner directive 2026-07-16, CORRECTED)
 
@@ -179,21 +213,101 @@ layer, mirroring the one-command / one-resolver rule in the server.
 
 ## 3. Build steps (each its own migration; each CI-proven on real Postgres before deploy)
 
-SQL cannot run locally (no psql/Docker) — every step is proven by the `osn3-*` real-chain CI
-on a disposable Postgres, then deployed through the owner's production approval. Nothing here
-flips a flag or deploys as a side effect.
+> **REWRITTEN 2026-07-16 (owner decision: "§2 wins, rewrite §3").** The previous §3 was written
+> under the pre-correction draft and told the builder to make GROUP-GO "loop members and **compose**
+> the ship-addressable OSN mover from each member's own state" — i.e. exactly the duality §2's
+> CORRECTION repudiates. Composing N per-member movers yields N movements and N positions; §2 says
+> **one** moving thing with **one** position. Building the old §3 would have built the §0 mistake
+> while calling it progress. It also opened with OSN-SHIP-ADDR as "the foundation" — **already done**
+> (see the stale-claims note below). These steps replace it. **Compose the frozen fleet-level
+> primitives; never compose the per-ship movers — they are being retired, not wrapped.**
 
-1. **OSN-SHIP-ADDR** — make the OSN movers ship-addressable: trailing `p_main_ship_id`
-   resolved via `mainship_resolve_owned_ship` (the A0 §2.5 pattern already used by 7 RPCs).
-   Backward-compatible default so single-ship callers are byte-identical. **Foundation.**
-2. **GROUP-GO** — one `command_ship_group_go(group, {location | x,y})` that loops members and
-   composes the ship-addressable OSN mover from each member's own state. All-or-nothing (the
-   0163 subtransaction posture). No docked-together gate.
-3. **CHANGE-COURSE** — a member with an active movement is stopped (compose
-   `command_main_ship_space_stop`) then relaunched, inside GROUP-GO. Redirect = re-issue.
-4. **RETIRE-LEGACY** — repoint the client to `command_ship_group_go`; retire
-   `move_ship_group_to_location` + the legacy group gate (§11: transition, not hybrid-forever).
-   No dead path, no leftover flag.
+SQL cannot run locally (**verified 2026-07-16: no `psql`, no Docker**; the Supabase CLI is present
+but `supabase start` needs Docker) — every step is proven by the `osn3-*` real-chain CI on a
+disposable Postgres, then deployed through the owner's production approval. Nothing here flips a
+flag or deploys as a side effect. **Prod DB access exists for READS** (see the DB-access note) —
+that is how the ground truth below was established; it does not change the proof-before-prod rule.
+
+### Ground truth this plan is built on (all verified against live prod, 2026-07-16)
+
+- **The DB's `fleets` is NOT the owner's "fleet".** `fleets` is a per-ship, per-trip movement
+  envelope (61 rows; 24 carry `main_ship_id`; a single ship accumulates ~10 historical rows). The
+  owner's "fleet" is **`ship_groups`** (UI "team" → "fleet"). Never conflate them in code or prose.
+- **`ship_groups` carries no position** (`group_id, player_id, group_index, name, created_at,
+  updated_at`) — the mover has nowhere to stand yet.
+- **The seam already exists and is proven.** `send_ship_group_hunt` (0168 → 0204) already builds
+  **ONE fleet for the whole group** (`main_ship_id NULL`, `group_id` set), dissolving members' own
+  fleets. That is §2's shape, already shipped and CI-proven. **GROUP-GO copies this, minus the ship
+  writes.**
+- **Retiring the per-ship coordinate layer is nearly free.** ZERO ships have a position
+  (`space_x/space_y` null on all 76; `spatial_state` null×73 / `at_location`×3 — none `in_space`),
+  `main_ship_space_movements` holds **3 rows** total (2 arrived, 1 stopped), `group_sortie_members`
+  is **empty**. There is no data to migrate. The layer is dead weight carrying nothing.
+- **`fleet_movements.target_type` allows only `base|location|zone` — NO coordinate target.**
+  (`origin_type` DOES allow `'space'`, widened by 0156.) So §2's "port **OR** coordinate" target is
+  **not** a single step: the port target rides the existing spine; the coordinate target needs the
+  CHECK widened plus a settle branch. This is why 3a/3b split.
+- **`fleets.group_id` is NOT a reliable "the group's fleet" key.** The legacy expedition send tags
+  it onto **per-member** fleets (0204:316, display-only, "routing never reads it"). The unified
+  mover's fleet is identified by `group_id = <g> AND main_ship_id IS NULL` — the hunt's shape.
+- **Live flags (via the server's own `cfg_bool`, NOT the migration seeds — seeds are all `false`
+  with `on conflict do nothing` and are NOT the truth):** ON = `mainship_send_enabled`,
+  `mainship_space_movement_enabled`, `mainship_coordinate_travel_enabled`, `team_command_enabled`,
+  `launch_from_dock_enabled`. OFF = `fleet_control_enabled`.
+- **Stale claims removed from this doc:** §1's "foundational blocker — the OSN commands are not
+  ship-addressable" is **FALSE**. `command_main_ship_space_move` / `_move_to_location` / `_space_stop`
+  all already take a trailing `p_main_ship_id` and resolve via `mainship_resolve_owned_ship`
+  (0083, 0178). The old §3 step 1 was already done before it was written.
+
+### The steps
+
+1. **GROUP-GO (port target)** — `command_ship_group_go(group, location)`. **The ONE fleet-level
+   mover.** Resolves/creates the group's single fleet (`main_ship_id NULL`, `group_id` set — the
+   hunt's proven shape), creates **ONE** `fleet_movements` row for it, and **writes NOTHING to
+   `main_ship_instances`** — that omission *is* §2. Launches from wherever the group already is (its
+   fleet's own state), with no home/docked precondition. **Redirect is the same call**: an active
+   movement is cancelled at its interpolated point and a new leg departs from there — change-course
+   is not a separate step, it is a property of having one mover. DARK behind a new
+   `fleet_movement_unified_enabled`. Composes only fleet-level primitives (`movement_create`,
+   `fleet_set_moving`) and D0's `calculate_group_expedition_stats` for speed (= min over members).
+   **Locks: `ship_groups` FOR UPDATE → the group's fleet FOR UPDATE. NO member-ship locks** — the
+   mover writes no ship rows, so 0164's lock-order-inversion deadlock class *disappears by
+   construction* rather than being dodged.
+2. **GROUP-GO (coordinate target)** — widen `fleet_movements.target_type` to accept `'space'`, add
+   the settle branch that parks the group's fleet at a coordinate, and extend the RPC to
+   `(group, {location | x,y})`. Completes §2's "port OR world coordinate" in one place.
+3. **GROUP-SETTLE** — the group fleet's arrival docks **the group** (presence keyed to the group
+   fleet), and `process_mainship_expeditions` (the zombie reconciler) is taught that a member of a
+   flying group is not a zombie. Guards the 0199 wedge below.
+4. **RETIRE** (this absorbs the old step 4 and §2's "retired, not composed") — repoint the client to
+   `command_ship_group_go`; drop `move_ship_group_to_location`, `send_ship_group_expedition`'s
+   per-member loop, `move_main_ship_to_location`, `command_main_ship_space_move`,
+   `command_main_ship_space_move_to_location`, `command_main_ship_space_stop`; then drop
+   `main_ship_instances.space_x/space_y/spatial_state` as movement signals and retire the
+   `process_mainship_space_arrivals` cron. Reset the 4 orphaned `traveling` ships here (a plain
+   status write — the diagnostic proved there is nothing to settle). No dead path, no leftover flag.
+
+### Known landmines (found 2026-07-16 — do not rediscover these the hard way)
+
+- **The 0199 wedge (the real work of step 3).** `send_ship_group_hunt` makes one team fleet, but
+  every *re-launch* path keys on a per-ship `main_ship_id`-tagged **present** fleet — so the 0199
+  reconciler must **split** the team fleet back into per-member fleets. That per-ship assumption is
+  baked into the re-launch surface and is what step 3c/4 must dismantle.
+- **Lock-order asymmetry is load-bearing and unenforced.** `stop_ship_group_transit` deliberately
+  takes NO ship lock (0164) to match the settle's movement→ship order, while
+  `send_ship_group_expedition` and `move_ship_group_to_location` lock ships FIRST. They escape
+  deadlock only because `movement_create` INSERTS a new movement rather than locking one. Nothing
+  enforces this. GROUP-GO sidesteps it entirely by taking no ship locks at all.
+- **`process_mainship_space_arrivals` lacks 0206's per-row subtransaction guard.** Its failure
+  branches are `continue`-based so it is mostly safe, but an unexpected raise inside
+  `mainship_space_dock_at_location` / `mainship_space_settle_space_arrival` would abort the whole
+  100-row batch — exactly the failure 0206 was written to eliminate. Step 4 retires this cron; until
+  then it is a latent batch-abort.
+- **Two parallel movement domains that never share a row:** legacy (`fleet_movements` +
+  `fleets.active_movement_id`, cron `process_fleet_movements` → `movement_settle_arrival`) and OSN
+  (`main_ship_space_movements` + `fleets.active_space_movement_id`, cron
+  `process_mainship_space_arrivals`). `main_ship_instances` is the shared ship-level state both
+  write — which is precisely the duality §2 kills. **GROUP-GO lives in the legacy/fleet domain only.**
 
 ## 4. Standing rule
 

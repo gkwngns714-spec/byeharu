@@ -1,0 +1,369 @@
+-- FLEET-GO PROOF (charter §3 step 3a, migration 0207) — the ONE fleet-level mover.
+--
+-- Proves command_ship_group_go against a REAL disposable Postgres running the full migration chain.
+-- Runs inside ONE transaction that ROLLBACKs — it persists NO player, ship, group, fleet, movement,
+-- or flag flip. The dark flags are enabled ONLY inside this txn; the ROLLBACK reverts them, so every
+-- committed flag is still false afterwards (the workflow re-checks).
+--
+-- THE CROWN-JEWEL PROPERTY IS FLEETGO_PASS_NOSHIPWRITE.
+-- Charter §2 says "THE FLEET IS THE ONLY UNIT OF MOVEMENT. A SHIP DOES NOT MOVE." Every OTHER mover
+-- in this codebase writes ship-level movement state (move_main_ship_to_location → 'traveling';
+-- mainship_space_begin_move_core → 'in_transit'; send_ship_group_hunt → 'hunting'). The unified
+-- mover must write NONE. That is not a nice-to-have — it IS the model. So this proof snapshots every
+-- ship column that could carry movement (status, spatial_state, space_x, space_y, updated_at) into a
+-- temp table BEFORE the command and diffs it AFTER, asserting byte-equality via a full EXCEPT both
+-- ways. If a future edit adds an `update main_ship_instances` to the mover, this fails loudly.
+-- It is asserted after the FIRST go, after a REDIRECT, and after the guards — a ship must never be
+-- touched by any path through this function.
+--
+-- Fixture honesty:
+--   • Provisioning is real-RPC (commission_first_main_ship / commission_additional_main_ship).
+--     Commissioning docks ships canonically at Haven (stationary/at_location + a 'present' fleet),
+--     which IS the bootstrap origin case — so no home-normalization surgery is needed for the main path.
+--   • The ONE piece of fixture surgery is BACKDATING a movement's depart_at/arrive_at to test redirect
+--     interpolation. now() is transaction-constant, so without it every in-txn redirect would compute
+--     t=0 and the interpolated point would trivially equal the origin — proving nothing. Backdating to
+--     (now()-30s, now()+30s) pins t=0.5 exactly, so the assertion is an exact midpoint, not an epsilon.
+--     It is marked SURGERY below and touches no ship row.
+
+\set ON_ERROR_STOP on
+
+begin;   -- everything below is transient; the trailing ROLLBACK leaves ZERO persisted state.
+
+create temp table fg(k text primary key, v uuid) on commit preserve rows;
+insert into fg values
+  ('haven', 'b1a00001-0066-4a00-8a00-000000000001'),   -- starter port (commission dock)
+  ('slag',  'b1a00002-0066-4a00-8a00-000000000002'),   -- active non-combat destination
+  ('drift', 'b1a00003-0066-4a00-8a00-000000000003');   -- the redirect's second destination
+
+-- caller helper: set the authenticated subject then run an RPC, returning its jsonb.
+create or replace function pg_temp.call_as(p_sub uuid, p_fn text) returns jsonb language plpgsql as $$
+declare v jsonb;
+begin
+  perform set_config('request.jwt.claims', json_build_object('sub', p_sub::text, 'role','authenticated')::text, true);
+  execute 'select ' || p_fn into v;
+  return v;
+end $$;
+
+-- the ship-state snapshot/diff helpers — the §2 assertion machinery.
+create or replace function pg_temp.snap_ships(p_tag text) returns void language plpgsql as $$
+begin
+  insert into pg_temp.ship_snap
+    select p_tag, main_ship_id, status, spatial_state, space_x, space_y, updated_at
+      from public.main_ship_instances;
+end $$;
+
+create temp table ship_snap(
+  tag text, main_ship_id uuid, status text, spatial_state text,
+  space_x double precision, space_y double precision, updated_at timestamptz
+) on commit preserve rows;
+
+-- Asserts two snapshots are byte-identical in BOTH directions (EXCEPT is asymmetric alone).
+create or replace function pg_temp.assert_ships_untouched(p_before text, p_after text, p_ctx text)
+returns void language plpgsql as $$
+declare n int;
+begin
+  select count(*) into n from (
+    (select main_ship_id,status,spatial_state,space_x,space_y,updated_at from pg_temp.ship_snap where tag=p_before
+     except
+     select main_ship_id,status,spatial_state,space_x,space_y,updated_at from pg_temp.ship_snap where tag=p_after)
+    union all
+    (select main_ship_id,status,spatial_state,space_x,space_y,updated_at from pg_temp.ship_snap where tag=p_after
+     except
+     select main_ship_id,status,spatial_state,space_x,space_y,updated_at from pg_temp.ship_snap where tag=p_before)
+  ) d;
+  if n <> 0 then
+    raise exception 'SHIP-WRITE FAIL (%): the unified mover touched % ship row(s) — charter §2 says a ship does not move', p_ctx, n;
+  end if;
+  -- guard the guard: the snapshots must be non-empty, or "identical" is vacuous.
+  select count(*) into n from pg_temp.ship_snap where tag = p_before;
+  if n = 0 then raise exception 'SHIP-WRITE FAIL (%): before-snapshot is EMPTY — the assertion would be vacuous', p_ctx; end if;
+end $$;
+
+-- ════════ SETUP: mirror production config a fresh disposable chain lacks (reverted by ROLLBACK) ════════
+do $$
+declare r jsonb; n int;
+begin
+  r := public.reveal_starter_ports();
+  if (r->>'ok')::boolean is not true then raise exception 'SETUP FAIL: reveal_starter_ports %', r; end if;
+  select count(*) into n from public.locations
+    where id in ((select v from fg where k='slag'), (select v from fg where k='drift'))
+      and status = 'active';
+  if n <> 2 then raise exception 'SETUP FAIL: expected Slagworks+Driftmarch active, got %', n; end if;
+  raise notice 'setup ok: starter ports revealed + active (transient)';
+end $$;
+
+-- two fresh players: uA (the group under test), uB (the foreign-owner probe).
+do $$
+declare u uuid; k text;
+begin
+  foreach k in array array['uA','uB'] loop
+    insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+      values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+              'fg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+      returning id into u;
+    insert into fg values (k, u);
+  end loop;
+end $$;
+
+-- ════════ BLOCK DARK: the mover rejects BEFORE any read while fleet_movement_unified_enabled=false ════
+-- Run BEFORE any flag flip, as a REAL authenticated sub, with a RANDOM NONEXISTENT group id AND a
+-- random nonexistent location. If the gate read group/location state first, these would surface
+-- group_not_found / invalid_location instead — so this proves reject-before-read with no existence oracle.
+do $$
+declare r jsonb; uA uuid := (select v from fg where k='uA'); slag uuid := (select v from fg where k='slag');
+begin
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(gen_random_uuid(), %L::uuid)', slag));
+  if (r->>'reason') is distinct from 'unified_movement_disabled' then
+    raise exception 'DARK FAIL (nonexistent group): %', r; end if;
+  r := pg_temp.call_as(uA, 'public.command_ship_group_go(gen_random_uuid(), gen_random_uuid())');
+  if (r->>'reason') is distinct from 'unified_movement_disabled' then
+    raise exception 'DARK FAIL (nonexistent group+location): %', r; end if;
+  -- and it wrote nothing while dark.
+  if exists (select 1 from public.fleets where group_id is not null and main_ship_id is null) then
+    raise exception 'DARK FAIL: a unified fleet exists after a dark call';
+  end if;
+  raise notice 'FLEETGO_PASS_DARK: reject-before-read, no write, while dark';
+end $$;
+
+-- ════════ Enable the dark capabilities ONLY inside this txn (reverted by ROLLBACK) ════════
+update public.game_config set value='true'::jsonb where key='team_command_enabled';
+update public.game_config set value='true'::jsonb where key='mainship_additional_commission_enabled';
+update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+-- Fund the fixture wallets BEFORE any additional commission. commission_first_main_ship is free, but
+-- every ADDITIONAL commission DEBITS a price from player_wallet (0091) and fresh fixtures have zero
+-- balance. Kept AFTER the DARK block (which must stay unfunded/unprovisioned) and inside the txn.
+-- player_wallet is lazy, so on_conflict covers a row a signup/ensure path may already have created.
+-- (The trade-market-1 / team-command proofs use this same direct-owner insert.)
+insert into public.player_wallet (player_id, balance)
+select v, 1000000 from fg where k in ('uA','uB')
+on conflict (player_id) do update set balance = excluded.balance;
+
+-- ════════ PROVISION via the REAL commission RPCs ════════
+do $$
+declare r jsonb;
+  uA uuid := (select v from fg where k='uA'); uB uuid := (select v from fg where k='uB');
+  a1 uuid; a2 uuid; b1 uuid; g uuid;
+begin
+  r := pg_temp.call_as(uA, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL uA first: %', r; end if;
+  select main_ship_id into a1 from public.main_ship_instances where player_id = uA;
+  r := pg_temp.call_as(uA, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL uA 2nd: %', r; end if;
+  a2 := (r->>'main_ship_id')::uuid;
+
+  r := pg_temp.call_as(uB, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL uB first: %', r; end if;
+  select main_ship_id into b1 from public.main_ship_instances where player_id = uB;
+
+  -- uA's group with BOTH ships (real RPCs).
+  r := pg_temp.call_as(uA, 'public.upsert_ship_group(1, ''Vanguard'')');
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL group: %', r; end if;
+  g := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a1, g));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL assign a1: %', r; end if;
+  r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a2, g));
+  if (r->>'ok')::boolean is not true then raise exception 'PROVISION FAIL assign a2: %', r; end if;
+
+  insert into fg values ('a1',a1),('a2',a2),('b1',b1),('g',g);
+  raise notice 'provisioned: uA 2 ships in group Vanguard, uB 1 ship';
+end $$;
+
+-- ════════ BLOCK ONEFLEET + NOSHIPWRITE: one go → ONE fleet, ONE movement, ZERO ship writes ════════
+do $$
+declare r jsonb; n int; uA uuid := (select v from fg where k='uA');
+  g uuid := (select v from fg where k='g'); slag uuid := (select v from fg where k='slag');
+  haven uuid := (select v from fg where k='haven'); v_fleet uuid; v_mv uuid;
+begin
+  perform pg_temp.snap_ships('before_go');
+
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'GO FAIL: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid;
+  v_mv    := (r->>'movement_id')::uuid;
+
+  perform pg_temp.snap_ships('after_go');
+  -- ★ THE CHARTER §2 ASSERTION ★
+  perform pg_temp.assert_ships_untouched('before_go', 'after_go', 'first go');
+
+  -- exactly ONE unified fleet for the group (main_ship_id NULL — the hunt's proven shape).
+  select count(*) into n from public.fleets
+   where group_id = g and player_id = uA and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'ONEFLEET FAIL: expected 1 unified fleet, got %', n; end if;
+
+  -- ONE movement, and it belongs to that fleet.
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet and status = 'moving';
+  if n <> 1 then raise exception 'ONEFLEET FAIL: expected 1 moving movement, got %', n; end if;
+
+  -- the fleet is moving and points at it.
+  select count(*) into n from public.fleets
+   where id = v_fleet and status = 'moving' and active_movement_id = v_mv;
+  if n <> 1 then raise exception 'ONEFLEET FAIL: fleet not moving/pointing at the movement'; end if;
+
+  -- N members did NOT each get a fleet — the whole point vs the legacy per-member loop.
+  select count(*) into n from public.fleets
+   where player_id = uA and main_ship_id in ((select v from fg where k='a1'), (select v from fg where k='a2'))
+     and status = 'moving';
+  if n <> 0 then raise exception 'ONEFLEET FAIL: % per-member moving fleet(s) exist — that is the composed model §2 forbids', n; end if;
+
+  -- bootstrap origin = the commission dock (Haven), NOT the base: "the fleet moves from wherever it is".
+  if (r->>'origin_type') is distinct from 'location' then
+    raise exception 'ONEFLEET FAIL: expected bootstrap origin_type=location (the dock), got %', r->>'origin_type'; end if;
+  select count(*) into n from public.fleet_movements
+   where id = v_mv and origin_type = 'location' and origin_location_id = haven and target_location_id = slag;
+  if n <> 1 then raise exception 'ONEFLEET FAIL: movement did not depart Haven → Slagworks'; end if;
+
+  if (r->>'redirected')::boolean is not false then raise exception 'ONEFLEET FAIL: first go reported redirected'; end if;
+
+  insert into fg values ('fleet', v_fleet), ('mv1', v_mv);
+  raise notice 'FLEETGO_PASS_ONEFLEET: 1 fleet, 1 movement, 0 per-member fleets, origin = the dock';
+  raise notice 'FLEETGO_PASS_NOSHIPWRITE: ship rows byte-identical across the go (charter §2)';
+end $$;
+
+-- ════════ BLOCK SPEEDMIN: movement speed == an INDEPENDENT min over the members ════════
+-- Recomputed here from the per-member adapter directly — not read back from the same helper the RPC
+-- used — so a wrong fold (sum/max/first) cannot pass by agreeing with itself.
+do $$
+declare v_speed double precision; v_expect double precision := null; v_ms double precision;
+  s uuid; uA uuid := (select v from fg where k='uA'); v_mv uuid := (select v from fg where k='mv1');
+  v_stats jsonb;
+begin
+  select speed_used into v_speed from public.fleet_movements where id = v_mv;
+  foreach s in array array[(select v from fg where k='a1'), (select v from fg where k='a2')] loop
+    v_stats := public.calculate_expedition_stats(uA, s, '[]'::jsonb, 'none');
+    v_ms := (v_stats->>'speed')::double precision;
+    v_expect := least(coalesce(v_expect, v_ms), v_ms);
+  end loop;
+  if v_expect is null then raise exception 'SPEEDMIN FAIL: independent expectation is null'; end if;
+  if v_speed is distinct from v_expect then
+    raise exception 'SPEEDMIN FAIL: movement speed % <> independent member-min %', v_speed, v_expect; end if;
+  raise notice 'FLEETGO_PASS_SPEEDMIN: fleet speed = min(members) = % (independently recomputed)', v_expect;
+end $$;
+
+-- ════════ BLOCK REDIRECT: re-issuing mid-flight is the SAME call — cancel at the interpolated point ════
+do $$
+declare r jsonb; n int; uA uuid := (select v from fg where k='uA');
+  g uuid := (select v from fg where k='g'); drift uuid := (select v from fg where k='drift');
+  v_fleet uuid := (select v from fg where k='fleet'); v_mv1 uuid := (select v from fg where k='mv1');
+  v_mv2 uuid; v_ox double precision; v_oy double precision; v_mid_x double precision; v_mid_y double precision;
+begin
+  -- ── SURGERY (the only one; touches NO ship row): now() is txn-constant, so an in-txn redirect would
+  --    compute t=0 and the "interpolated" point would trivially equal the origin. Backdate the leg to
+  --    (now()-30s, now()+30s) → t is EXACTLY 0.5 → the assertion below is an exact midpoint.
+  update public.fleet_movements
+     set depart_at = now() - interval '30 seconds', arrive_at = now() + interval '30 seconds'
+   where id = v_mv1;
+  select (origin_x + target_x) / 2, (origin_y + target_y) / 2 into v_mid_x, v_mid_y
+    from public.fleet_movements where id = v_mv1;
+
+  perform pg_temp.snap_ships('before_redirect');
+
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, drift));
+  if (r->>'ok')::boolean is not true then raise exception 'REDIRECT FAIL: %', r; end if;
+  if (r->>'redirected')::boolean is not true then raise exception 'REDIRECT FAIL: not reported as a redirect: %', r; end if;
+  v_mv2 := (r->>'movement_id')::uuid;
+
+  perform pg_temp.snap_ships('after_redirect');
+  -- ★ THE CHARTER §2 ASSERTION, again — a redirect must not touch a ship either ★
+  perform pg_temp.assert_ships_untouched('before_redirect', 'after_redirect', 'redirect');
+
+  -- the SAME fleet — a redirect must never create a second mover.
+  if (r->>'fleet_id')::uuid is distinct from v_fleet then
+    raise exception 'REDIRECT FAIL: redirect created a different fleet (% vs %)', r->>'fleet_id', v_fleet; end if;
+  select count(*) into n from public.fleets
+   where group_id = g and player_id = uA and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'REDIRECT FAIL: % unified fleets after redirect', n; end if;
+
+  -- the old leg is cancelled and resolved; exactly ONE live leg remains.
+  select count(*) into n from public.fleet_movements
+   where id = v_mv1 and status = 'cancelled' and resolved_at is not null;
+  if n <> 1 then raise exception 'REDIRECT FAIL: the old leg was not cancelled+resolved'; end if;
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet and status = 'moving';
+  if n <> 1 then raise exception 'REDIRECT FAIL: expected exactly 1 live leg, got %', n; end if;
+
+  -- the new leg departs from the INTERPOLATED point, as open space, to the new port.
+  select origin_x, origin_y into v_ox, v_oy from public.fleet_movements where id = v_mv2;
+  if (select origin_type from public.fleet_movements where id = v_mv2) is distinct from 'space' then
+    raise exception 'REDIRECT FAIL: new leg origin_type is not space'; end if;
+  if v_ox is distinct from v_mid_x or v_oy is distinct from v_mid_y then
+    raise exception 'REDIRECT FAIL: new leg origin (%,%) is not the exact midpoint (%,%)', v_ox, v_oy, v_mid_x, v_mid_y; end if;
+  if (select target_location_id from public.fleet_movements where id = v_mv2) is distinct from drift then
+    raise exception 'REDIRECT FAIL: new leg does not target Driftmarch'; end if;
+
+  raise notice 'FLEETGO_PASS_REDIRECT: same fleet, old leg cancelled, new leg departs the exact interpolated point';
+end $$;
+
+-- ════════ BLOCK GUARDS: ownership, empty, scattered, sortie, and the transition member_busy ════════
+do $$
+declare r jsonb; n int;
+  uA uuid := (select v from fg where k='uA'); uB uuid := (select v from fg where k='uB');
+  g uuid := (select v from fg where k='g'); slag uuid := (select v from fg where k='slag');
+  g2 uuid;
+begin
+  perform pg_temp.snap_ships('before_guards');
+
+  -- foreign owner: uB cannot move uA's group (resolves via auth.uid(), never the passed id).
+  r := pg_temp.call_as(uB, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, slag));
+  if (r->>'reason') is distinct from 'group_not_found' then
+    raise exception 'GUARD FAIL foreign owner: %', r; end if;
+
+  -- empty group.
+  r := pg_temp.call_as(uA, 'public.upsert_ship_group(2, ''Empty'')');
+  g2 := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g2, slag));
+  if (r->>'reason') is distinct from 'empty_group' then
+    raise exception 'GUARD FAIL empty group: %', r; end if;
+
+  -- invalid destination.
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, gen_random_uuid())', g));
+  if (r->>'reason') is distinct from 'invalid_location' then
+    raise exception 'GUARD FAIL invalid location: %', r; end if;
+
+  -- ★ TRANSITION GUARD (member_busy): a member flying its OWN per-ship fleet blocks the group move —
+  --   otherwise that ship would be in two places at once, the exact duality §2 kills. Simulated by
+  --   the member's own fleet being 'moving' (the state the live per-ship send produces).
+  --   This guard MUST be deleted at step 4 when the per-ship movers are retired.
+  update public.fleets set status = 'moving'
+   where player_id = uA and main_ship_id = (select v from fg where k='a1') and status = 'present';
+  if not found then
+    -- a1's commission fleet was already dissolved; make the state explicitly.
+    insert into public.fleets (player_id, status, location_mode, main_ship_id)
+      values (uA, 'moving', 'movement', (select v from fg where k='a1'));
+  end if;
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, slag));
+  if (r->>'reason') is distinct from 'member_busy' then
+    raise exception 'GUARD FAIL member_busy (a member on its own per-ship fleet must block the group): %', r; end if;
+
+  perform pg_temp.snap_ships('after_guards');
+  -- ★ §2 again: every REJECTED path must also leave ships untouched ★
+  perform pg_temp.assert_ships_untouched('before_guards', 'after_guards', 'guards');
+
+  raise notice 'FLEETGO_PASS_GUARDS: foreign-owner, empty, invalid-location, member_busy all fail closed; ships untouched';
+end $$;
+
+-- ════════ BLOCK ISOLATION: the mover created no second combat/sortie surface and no ship movement ════
+do $$
+declare n int;
+begin
+  -- No sortie manifest rows: this is a MOVE, not a hunt. (Guards against copying hunt too literally.)
+  select count(*) into n from public.group_sortie_members;
+  if n <> 0 then raise exception 'ISOLATION FAIL: the mover wrote % sortie manifest row(s)', n; end if;
+
+  -- No OSN coordinate movements: the unified mover lives in the fleet domain ONLY.
+  select count(*) into n from public.main_ship_space_movements;
+  if n <> 0 then raise exception 'ISOLATION FAIL: the mover created % OSN space movement(s) — wrong domain', n; end if;
+
+  -- NOT ONE ship in the whole DB carries a coordinate or an in-transit spatial state.
+  select count(*) into n from public.main_ship_instances
+   where space_x is not null or space_y is not null or spatial_state in ('in_space','in_transit');
+  if n <> 0 then raise exception 'ISOLATION FAIL: % ship(s) carry a position/transit state — §2 says ships have neither', n; end if;
+
+  raise notice 'FLEETGO_PASS_ISOLATION: no sortie rows, no OSN movements, no ship positions anywhere';
+end $$;
+
+select 'FLEET-GO PROOF PASSED' as result;
+
+rollback;
