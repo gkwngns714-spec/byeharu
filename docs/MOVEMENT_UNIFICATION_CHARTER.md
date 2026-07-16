@@ -40,7 +40,7 @@
       clean HEAD via `git stash`. Do not chase it as a regression.
   - **Merge status (steps 1-2):** the step-1 blocker is gone (the game no longer loses stop). Open as
     **PR #165**. Admin-merge and any deploy remain the owner's call.
-  - **Step 3a BUILT 2026-07-16 (migration `0207`, `command_ship_group_go`) — awaiting CI.** The owner
+  - **Step 3a BUILT + CI-PROVEN GREEN 2026-07-16 (migration `0207`, `command_ship_group_go`).** The owner
     decided "§2 wins, rewrite §3"; §3 above is the rewrite and this is its first step. **The ONE
     fleet-level mover**: one fleet per group (`main_ship_id NULL` — the hunt's proven shape), ONE
     movement, launches from wherever the group is, redirect = re-issue (cancels the live leg at its
@@ -55,10 +55,26 @@
       to the mover, it fails loudly. The selftest ALSO greps the migration statically for a ship
       UPDATE and for any composed per-ship mover; both greps were **mutation-tested** (inject the
       violation → the guard fires → restore → green), so they are not vacuous.
-    - Verified locally: selftest exit 0 (+ the two mutation tests). **The SQL matrix has NOT run yet** —
-      no psql/Docker here, and running it against prod was refused (it provisions users/ships and flips
-      flags; a rolled-back txn is still a prod write). CI on the `osn3-**` push is its first real
-      execution — expect to iterate on it.
+    - **CI: BOTH jobs green — all 7 markers pass on a real Postgres** (run `29500020505`). The §2
+      crown jewel is CONFIRMED on the real chain: ship rows byte-identical across the go, the
+      redirect, and the rejected guards. Speed independently = min(members). The redirect departs the
+      exact interpolated midpoint on the SAME fleet, old leg cancelled.
+    - **The proof earned its keep — it found 3 real bugs the local selftest could not.** Recorded so
+      nobody reintroduces them:
+      1. `record "v_fleet_row" is not assigned yet` — the origin branch was
+         `if v_fleet is not null and v_fleet_row.status = ...`, relying on `AND` to short-circuit.
+         **SQL's `AND` does not guarantee left-to-right evaluation**, and reading a field of an
+         unassigned RECORD raises regardless. The `v_fleet is null` bootstrap must stay the FIRST
+         branch. (A structure note in the file says so.)
+      2. `stats_invalid` — 0166 nests its folds under **`totals`**; `v_stats->>'speed'` is NULL at the
+         top level. Worse, the (correct) null-speed guard turned a plumbing mistake into a
+         plausible-looking domain rejection. A proof that only checked rejections would have passed
+         happily; it was caught only because the proof asserts the go SUCCEEDS on a healthy fixture.
+      3. `fleet_set_moving: fleet not in idle state` — its frozen contract is `and status = 'idle'`.
+         A redirect hands it a `moving` fleet, a port departure a `present` one. Fixed by RELEASING
+         the fleet to idle (composing the primitive, §4) rather than hand-rolling around it — and that
+         path was also **leaking an active dock presence**, so a departing fleet was docked and moving
+         at once.
   - **Step 3b-3d NOT built** (coordinate target / group settle+reconciler / retire). Movement is NOT
     fixed until step 4: the four overlapping paths are all still live and untouched.
 
