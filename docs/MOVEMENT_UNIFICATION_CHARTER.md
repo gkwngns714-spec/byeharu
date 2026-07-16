@@ -75,6 +75,43 @@
          the fleet to idle (composing the primitive, §4) rather than hand-rolling around it — and that
          path was also **leaking an active dock presence**, so a departing fleet was docked and moving
          at once.
+  - **Step 3b BUILT + CI-PROVEN GREEN 2026-07-16 (migration `0208`) — the fleet has a POSITION.**
+    All **12** markers pass on the real chain (run `29503899715`).
+    - **§3 undersold this step.** It framed 3b as "widen `target_type` + a settle branch". The real
+      blocker, found against live prod: **`fleets` had NO position column at all.** A fleet's position
+      was always IMPLIED (at a base / at a location / interpolated along a live leg). "Park the fleet
+      at a coordinate" had nowhere to be written down — the OSN domain kept that on
+      `main_ship_instances.space_x`, i.e. on the SHIP, which is exactly what §2 abolishes. So: new
+      `fleets.space_x/space_y` + `location_mode='space'` + `target_type='space'` + the
+      `fleet_set_in_space` leaf (the `fleet_set_present` sibling; `idle`, never `present` — open space
+      has no presence row).
+    - **The model now CLOSES:** a fleet flies to a raw coordinate, parks there, and sets off again
+      from it with no port involved (marker FROMSPACE). Departing clears the parked coords, so a
+      fleet is never both parked and under way.
+    - **The live-cron delta:** `movement_settle_arrival` is re-created with exactly ONE inserted
+      `elsif target_type='space'` before the final else; `location`/`base`/the `failed` fall-through
+      are byte-identical to the 0153 head. Pinned at RUNTIME (SETTLEPARITY), not promised — and the
+      0153 dock hunk is asserted as an **IFF against `mainship_space_location_target_legal`**, so it
+      pins the RULE rather than a guess about which seed port qualifies (it resolved `legal=t`).
+      No unsafe window existed: an unknown `target_type` settles as `failed`, but a `'space'` row
+      could not exist before the CHECK widening, and the widening ships with the branch.
+    - **The coherence CHECK is an IMPLICATION, not a biconditional — deliberately.**
+      "`location_mode='space'` IFF coords present" is the natural constraint and would be WRONG:
+      `fleet_complete` (frozen, shared) sets `location_mode='base'` **without** clearing coords, so a
+      group fleet that parked in space and later completed would violate it and make that frozen
+      helper start raising **for everyone**. §4 in practice: compose the frozen primitives; don't
+      force them to change.
+    - Bounds (±10000) are **copied** from `mainship_space_begin_move_core` (0067:133-134) so a fleet
+      and a ship agree on the world's edges — **not a second authority**. Step 4 retires 0067; fold
+      them into ONE bound then rather than leaving two copies. ⚠ Until then this is a knowing duplicate.
+    - **ISOLATION now states §2 in one assertion:** after a fleet has flown to a coordinate, parked,
+      and departed again, **ZERO ships carry a position** — with a vacuity guard proving a fleet
+      really did (that guard fired on its own author first: the original asserted live coords, which
+      the departure had correctly cleared).
+    - Three more proof-harness bugs the matrix caught, all mine, all recorded so they don't recur:
+      the `member_busy` fixture didn't restore itself and poisoned every later block; backdating only
+      `arrive_at` violates `fleet_movements_check (arrive_at > depart_at)` because `now()` is
+      txn-constant (both ends must move); and the vacuity guard above.
   - **⚠ THE `osn3-*` PROOF FLEET IS MOSTLY RED — AND WAS BEFORE ANY OF THIS WORK.** 8 of 9 osn3
     real-chain proofs FAIL on this branch (anchor1a, s2, s3, s4, s5, s6a, dock0, osn4; only anchor1b
     is green). **Not caused by 0207**: each fails identically at `d8ed494`, the frontend-only step-2
@@ -301,12 +338,21 @@ that is how the ground truth below was established; it does not change the proof
    **Locks: `ship_groups` FOR UPDATE → the group's fleet FOR UPDATE. NO member-ship locks** — the
    mover writes no ship rows, so 0164's lock-order-inversion deadlock class *disappears by
    construction* rather than being dodged.
-2. **GROUP-GO (coordinate target)** — widen `fleet_movements.target_type` to accept `'space'`, add
-   the settle branch that parks the group's fleet at a coordinate, and extend the RPC to
-   `(group, {location | x,y})`. Completes §2's "port OR world coordinate" in one place.
-3. **GROUP-SETTLE** — the group fleet's arrival docks **the group** (presence keyed to the group
-   fleet), and `process_mainship_expeditions` (the zombie reconciler) is taught that a member of a
-   flying group is not a zombie. Guards the 0199 wedge below.
+2. ~~**GROUP-GO (coordinate target)**~~ — **DONE 2026-07-16, migration `0208`, CI-green.** Note the
+   step as written UNDERSOLD the work: the blocker was not the CHECK, it was that **`fleets` had no
+   position column at all**. The fleet now owns its position (`space_x/space_y` +
+   `location_mode='space'`), `target_type` accepts `'space'`, `movement_settle_arrival` gained ONE
+   parity-pinned branch, and the mover is `(group, {location | x,y})`. §2's "port OR world
+   coordinate" is complete and the model closes (a parked fleet departs again with no port involved).
+3. **GROUP-SETTLE (NEXT)** — the group fleet's arrival docks **the group** (presence keyed to the
+   group fleet), and `process_mainship_expeditions` (the zombie reconciler) is taught that a member of
+   a flying group is not a zombie. Guards the 0199 wedge below.
+   *Grounding from 3b:* a coordinate arrival already settles cleanly (the fleet parks itself, no
+   presence, no ship write). A **port** arrival already reuses the legacy `fleet_set_present` +
+   `presence_create` and — because a unified fleet has `main_ship_id NULL` — skips the 0153 ship-dock
+   hunk for free, so §2 holds through the settle today. What 3c actually owes: the members are
+   currently invisible at the port the group docked at (nothing keys a member to the group's presence),
+   and the reconciler has not been told that a `home`-status member of a flying group is not a zombie.
 4. **RETIRE** (this absorbs the old step 4 and §2's "retired, not composed") — repoint the client to
    `command_ship_group_go`; drop `move_ship_group_to_location`, `send_ship_group_expedition`'s
    per-member loop, `move_main_ship_to_location`, `command_main_ship_space_move`,
