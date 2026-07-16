@@ -27,6 +27,13 @@ export function deriveFrontier(graph, live) {
   const flagsKnown = live?.sources?.gameConfig?.ok === true
   const prod = live?.flags ?? {}
 
+  // Without a live read we know NOTHING about prod. Bail before computing a
+  // frontier: an empty `prod` makes every flag look absent, which would let us
+  // announce "prod is behind main from <the very first flag>" on zero evidence.
+  if (!flagsKnown) {
+    return { flagsKnown: false, deployedThrough: null, missingFrom: null, confirmedDeployed: [], confirmedMissing: [] }
+  }
+
   const confirmedDeployed = []
   const confirmedMissing = []
 

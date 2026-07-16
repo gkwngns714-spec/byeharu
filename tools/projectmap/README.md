@@ -117,6 +117,18 @@ those are different things, and the map is built to show exactly that gap.
 ## Refreshing
 
 `npm run scan` is offline and instant. `npm run live` needs `.env.local` and an
-authenticated `gh`. `npm run refresh` does both. `public/graph.json` and
-`public/live.json` are committed so the map opens without credentials — but
-`live.json` is a **point-in-time** read, and the HUD shows its timestamp.
+authenticated `gh`. `npm run refresh` does both.
+
+`public/graph.json` **is** committed (it is pure repo derivation), so the map
+opens with no credentials.
+
+`public/live.json` is **not** committed, and is git-ignored on purpose. This
+repo is public, and that file is a point-in-time read of production posture —
+which flags are on, which migrations have landed, the deploy run state. Nothing
+in it is secret (`game_config` is anon-readable and the Supabase URL already
+ships in the public Pages bundle), but a public repo should not accumulate a
+running log of production state as a side effect of refreshing a picture.
+
+So a fresh clone shows the graph with every node *Needs checking* and a HUD that
+says the live read is missing. Run `npm run live` to colour it in. The HUD
+always shows the read's timestamp — treat it as a snapshot, not a live feed.
