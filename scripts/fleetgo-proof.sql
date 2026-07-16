@@ -668,6 +668,112 @@ begin
   raise notice 'FLEETGO_PASS_STOP: the FLEET holds at the interpolated point (agrees with redirect), re-commandable, idempotent, no ship touched';
 end $$;
 
+-- ════════ BLOCK ORACLEPARITY (3c-1): with the flag OFF, the oracle is the 0056 head, verbatim ════════
+-- validate_context is the transitive authority behind ten surfaces (the hangar, dock services, the three
+-- trade RPCs, the map projection, OSN readiness, mining/exploration settled-safe). Its group branch is
+-- dark; while dark it must be indistinguishable from the head it replaced — even for a ship that HAS a
+-- group and whose group HAS a unified fleet. Flipped OFF and back inside this same rolled-back txn.
+do $$
+declare r jsonb; a1 uuid := (select v from fg where k='a1'); b1 uuid := (select v from fg where k='b1');
+  n int;
+begin
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- a1 is in a group WITH a live unified fleet — and while dark the oracle must not see any of that.
+  select count(*) into n from public.fleets f
+    join public.main_ship_instances s on s.main_ship_id = a1
+   where f.group_id = s.group_id and f.main_ship_id is null and f.status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'ORACLEPARITY FAIL: fixture has no live unified fleet — the assertion would be vacuous'; end if;
+
+  -- 0208 dissolved a1's own per-ship fleet, so the 0056 head sees v_count=0 + status='home' → legacy_home.
+  -- That IS the bug 3c-1 exists to fix, and it is what the DARK path must still report (parity, not a fix).
+  r := public.mainship_space_validate_context(a1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_home' then
+    raise exception 'ORACLEPARITY FAIL: dark oracle drifted from the 0056 head for a grouped ship: %', r; end if;
+  -- the dock resolver is NULL for it while dark (not at_location) — the legacy answer, unchanged.
+  if public.mainship_resolve_docked_location(a1) is not null then
+    raise exception 'ORACLEPARITY FAIL: dark dock resolver returned a port for a legacy_home ship'; end if;
+
+  -- b1 is UNGROUPED with its own present fleet + presence → the head's legacy_present, both flag states.
+  r := public.mainship_space_validate_context(b1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_present' then
+    raise exception 'ORACLEPARITY FAIL: dark oracle for an ungrouped docked ship: %', r; end if;
+
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- LIT, but b1 is ungrouped → the group branch cannot apply → the transition fallback keeps it identical.
+  r := public.mainship_space_validate_context(b1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_present' then
+    raise exception 'ORACLEPARITY FAIL: an UNGROUPED ship changed answer when the flag lit: %', r; end if;
+
+  raise notice 'FLEETGO_PASS_ORACLEPARITY: dark = the 0056 head verbatim; an ungrouped ship is unaffected when lit';
+end $$;
+
+-- ════════ BLOCK GROUPREAD (3c-1): THE 3c DELIVERABLE — a ship's place IS its fleet's place ════════
+-- This is the assertion the charter's step 3c is actually asking for: "the members are invisible at the
+-- port the group docked at". Before 3c-1 every member resolved 'legacy_home' → place='hidden' → the whole
+-- group vanished from the map on arrival and the Port tab emptied. The mover worked; the game could not
+-- SEE it. Note WHY this is only provable now: 0208's ghost-dock fix dissolved the members' own per-ship
+-- fleets, so there is NO per-ship row left to read — the ONLY way a member can report a place is through
+-- its group's fleet. The two fixes prove each other.
+do $$
+declare r jsonb; n int; s uuid;
+  uA uuid := (select v from fg where k='uA'); g uuid := (select v from fg where k='g');
+  a1 uuid := (select v from fg where k='a1'); a2 uuid := (select v from fg where k='a2');
+  slag uuid := (select v from fg where k='slag'); v_fleet uuid := (select v from fg where k='fleet');
+  v_mv uuid; v_loc uuid; v_fx double precision; v_fy double precision;
+begin
+  -- (1) HELD IN SPACE — the STOP block left the fleet holding at its turn point. Each member's place is
+  --     the FLEET's coordinate, read from fleets.space_x/space_y. No ship carries a position.
+  select space_x, space_y into v_fx, v_fy from public.fleets where id = v_fleet;
+  if v_fx is null then raise exception 'GROUPREAD FAIL: fixture fleet is not parked — assertion vacuous'; end if;
+  foreach s in array array[a1, a2] loop
+    r := public.mainship_space_validate_context(s);
+    if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'in_space' then
+      raise exception 'GROUPREAD FAIL: member % of a fleet parked in space reads % (expected in_space)', s, r; end if;
+  end loop;
+
+  -- (2) FLY TO A PORT AND SETTLE — then the members must be VISIBLE there.
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'GROUPREAD FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+
+  -- in transit, every member reports the ONE fleet's transit — not N transits.
+  foreach s in array array[a1, a2] loop
+    r := public.mainship_space_validate_context(s);
+    if (r->>'state') is distinct from 'legacy_transit' then
+      raise exception 'GROUPREAD FAIL: member % in flight reads % (expected legacy_transit)', s, r; end if;
+  end loop;
+
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  perform pg_temp.snap_ships('before_groupsettle');
+  perform public.movement_settle_arrival(v_mv);
+  perform pg_temp.snap_ships('after_groupsettle');
+  -- ★ §2 holds through the group's ARRIVAL too — the cron docks the fleet, never a ship ★
+  perform pg_temp.assert_ships_untouched('before_groupsettle', 'after_groupsettle', 'group settle at a port');
+
+  -- ★★ THE DELIVERABLE ★★ — the group no longer vanishes on arrival.
+  foreach s in array array[a1, a2] loop
+    r := public.mainship_space_validate_context(s);
+    if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+      raise exception 'GROUPREAD FAIL: member % is INVISIBLE at the port its fleet docked at — reads %', s, r; end if;
+    v_loc := public.mainship_resolve_docked_location(s);
+    if v_loc is distinct from slag then
+      raise exception 'GROUPREAD FAIL: the dock resolver returned % for member % (expected the group''s port %)', v_loc, s, slag; end if;
+  end loop;
+
+  -- ...and it is true WITHOUT any member holding a per-ship fleet of its own. There is no other row that
+  -- could have answered: the place came from the group's fleet or from nowhere.
+  select count(*) into n from public.fleets
+   where player_id = uA and main_ship_id in (a1, a2) and status in ('idle','moving','present','returning');
+  if n <> 0 then
+    raise exception 'GROUPREAD FAIL: % per-ship fleet(s) exist — the read could be answered by the retired layer', n; end if;
+
+  raise notice 'FLEETGO_PASS_GROUPREAD: every member reads its FLEET''s place (in_space -> transit -> docked at the group''s port), with no per-ship fleet in existence';
+end $$;
+
 -- ════════ BLOCK ISOLATION: the mover created no second combat/sortie surface and no ship movement ════
 do $$
 declare n int;

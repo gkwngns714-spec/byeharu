@@ -13,6 +13,7 @@ SQL="$REPO_ROOT/scripts/fleetgo-proof.sql"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260618000207_fleetgo_unified_group_mover.sql"
 MIGRATION_3B="$REPO_ROOT/supabase/migrations/20260618000208_fleetgo_coordinate_targets.sql"
 MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000209_fleetgo_unified_stop.sql"
+MIGRATION_3C="$REPO_ROOT/supabase/migrations/20260618000210_fleetgo_group_read_oracle.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -21,7 +22,7 @@ MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000209_fleetgo_unified_st
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ISOLATION"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_ISOLATION"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -169,6 +170,36 @@ if [ "$MODE" = "selftest" ]; then
     || fail "0208 does not refuse a combat destination (the fleet would be destroyed on arrival)"
   grep -q "the assertion would be vacuous" "$SQL" \
     || fail "COMBATDEST does not guard against a fixture with no hunt site (would pass vacuously)"
+
+  # ── step 3c-1 (0210): the READ oracle. Widest blast radius in the charter — ten surfaces route
+  #    through validate_context. The group branch must be DARK and the 0056 head must survive verbatim.
+  [ -f "$MIGRATION_3C" ] || fail "migration 0210 not found"
+  MIG3C_CODE="$(sql_code "$MIGRATION_3C")"
+  printf '%s' "$MIG3C_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
+    && fail "0210 UPDATEs main_ship_instances — the read oracle must never write a ship" || true
+  # the group branch must be gated; an ungated widening would change ten live surfaces at once.
+  printf '%s' "$MIG3C_CODE" | grep -q "cfg_bool('fleet_movement_unified_enabled') and v_ship.group_id is not null" \
+    || fail "0210's group branch is not dark-gated (it would change ten live read surfaces immediately)"
+  # the 0056 head must still be present in full — these are its load-bearing states.
+  for keep in multiple_active_fleets unknown_spatial_state legacy_present legacy_transit legacy_home contradictory_state; do
+    printf '%s' "$MIG3C_CODE" | grep -q "$keep" \
+      || fail "0210's re-created validate_context dropped the 0056 state '$keep' — ten surfaces regress"
+  done
+  # the ONE resolver must exist and must be the thing the dock resolver uses.
+  printf '%s' "$MIG3C_CODE" | grep -q "create or replace function public.mainship_resolve_fleet" \
+    || fail "0210 does not add the ONE ship->fleet resolver"
+  printf '%s' "$MIG3C_CODE" | grep -q "f.id = public.mainship_resolve_fleet(p_main_ship_id)" \
+    || fail "0210's dock resolver still keys on main_ship_id (NULL on a unified fleet)"
+  # the transition fallback must be marked for deletion, or step 4 will ship a lie.
+  grep -q "DELETE THIS BRANCH AT STEP 4" "$MIGRATION_3C" \
+    || fail "0210's per-ship transition fallback is not marked for deletion at step 4"
+  # and the runtime must pin BOTH halves: dark parity, and the group actually becoming visible.
+  grep -q "FLEETGO_PASS_ORACLEPARITY" "$SQL" || fail "no dark-parity pin for the re-created read oracle"
+  grep -q "FLEETGO_PASS_GROUPREAD"    "$SQL" || fail "no pin that a member reads its FLEET's place (the 3c deliverable)"
+  grep -q "the read could be answered by the retired layer" "$SQL" \
+    || fail "GROUPREAD does not prove the answer came from the group (a stray per-ship fleet would fake it)"
+  grep -q "assert_ships_untouched('before_groupsettle', 'after_groupsettle', 'group settle at a port')" "$SQL" \
+    || fail "§2 is not asserted through the group's ARRIVAL (the cron must dock the fleet, never a ship)"
 
   tp_assert_out_of_scope "$SQL"
 
