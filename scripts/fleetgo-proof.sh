@@ -14,6 +14,7 @@ MIGRATION="$REPO_ROOT/supabase/migrations/20260618000207_fleetgo_unified_group_m
 MIGRATION_3B="$REPO_ROOT/supabase/migrations/20260618000208_fleetgo_coordinate_targets.sql"
 MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000209_fleetgo_unified_stop.sql"
 MIGRATION_3C="$REPO_ROOT/supabase/migrations/20260618000210_fleetgo_group_read_oracle.sql"
+MIGRATION_3C2="$REPO_ROOT/supabase/migrations/20260618000211_fleetgo_dock_dedup.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -22,14 +23,14 @@ MIGRATION_3C="$REPO_ROOT/supabase/migrations/20260618000210_fleetgo_group_read_o
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_ISOLATION"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
   tp_assert_self_rolling_back "$SQL"
-  tp_assert_flags_inside_txn "$SQL" fleet_movement_unified_enabled team_command_enabled mainship_additional_commission_enabled
+  tp_assert_flags_inside_txn "$SQL" fleet_movement_unified_enabled team_command_enabled mainship_additional_commission_enabled station_storage_enabled launch_from_dock_enabled
 
   # ── provisions via the REAL RPCs (no direct ship/group inserts as the primary path). ─────────────
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
@@ -200,6 +201,116 @@ if [ "$MODE" = "selftest" ]; then
     || fail "GROUPREAD does not prove the answer came from the group (a stray per-ship fleet would fake it)"
   grep -q "assert_ships_untouched('before_groupsettle', 'after_groupsettle', 'group settle at a port')" "$SQL" \
     || fail "§2 is not asserted through the group's ARRIVAL (the cron must dock the fleet, never a ship)"
+
+  # ── step 3c-2 (0211): the dock dedup — FOUR host re-creates onto the ONE resolver pair, plus the
+  #    0210 in-place fix (LESSON THREE): the resolver's group branch must be GATED, because the LIVE
+  #    hunt already mints the exact fleet shape it matches (group_id set + main_ship_id NULL) and
+  #    assign_ship_to_group can put a docked ship into a hunting group mid-flight.
+  [ -f "$MIGRATION_3C2" ] || fail "migration 0211 not found"
+  MIG3C2_CODE="$(sql_code "$MIGRATION_3C2")"
+  # the resolver gate (judged on CODE — the header names the ungated form on purpose, to explain it).
+  printf '%s' "$MIG3C_CODE" | grep -q "cfg_bool('fleet_movement_unified_enabled') and v_group is not null" \
+    || fail "0210's mainship_resolve_fleet group branch is not dark-gated — the live hunt's fleet would hijack every dock read for a mid-flight-assigned ship"
+  grep -q "DELETE THE GATE AT STEP 4" "$MIGRATION_3C" \
+    || fail "0210's resolver gate is not marked for deletion at step 4"
+  # THE ANTI-FIFTH-COPY GUARD (0138 exists solely because 0136 re-inlined the dock block): no 0211 host
+  # may carry a main_ship_id-keyed DOCK read. The legacy_transit read is exempt BY PATTERN (fm.status).
+  printf '%s' "$MIG3C2_CODE" | grep -q "f.main_ship_id = v_ship" \
+    && fail "0211 re-inlines a main_ship_id-keyed dock read — the fifth copy, the exact 0136 mistake" || true
+  printf '%s' "$MIG3C2_CODE" | grep -q "f.main_ship_id = s.main_ship_id and f.status = 'present'" \
+    && fail "0211's map dock read is still keyed on main_ship_id (NULL on a unified fleet — the group vanishes)" || true
+  # the three at_location hosts compose the ONE dock helper (exactly thrice in code: A, B, and D)…
+  [ "$(printf '%s' "$MIG3C2_CODE" | grep -c "public.mainship_resolve_docked_location(v_ship)")" = "3" ] \
+    || fail "0211's three dock hosts do not all compose mainship_resolve_docked_location"
+  # host D (commission_first_main_ship — the fifth copy the first cut missed) must be re-created here.
+  # The "()" is load-bearing: a bare-name grep is prefix-satisfied by any renamed sibling (caught by
+  # mutation testing — the rename survived the first version of this grep).
+  printf '%s' "$MIG3C2_CODE" | grep -q "create or replace function public.commission_first_main_ship()" \
+    || fail "0211 does not re-create commission_first_main_ship (the missed fifth copy stays live)"
+  # …and the map read composes the ship→fleet resolver, KEEPING its own status='present' filter.
+  printf '%s' "$MIG3C2_CODE" | grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and f.status = 'present'" \
+    || fail "0211's map read does not compose mainship_resolve_fleet (or dropped its own status='present' read)"
+  # FINDING-1 GUARD: the map read must NOT be collapsed onto the at_location-only dock helper —
+  # 'legacy_present' reaches it and prod's live ships are legacy-shaped; that collapse hides them all.
+  printf '%s' "$MIG3C2_CODE" | grep -q "mainship_resolve_docked_location(s.main_ship_id)" \
+    && fail "0211's map read collapsed onto the at_location-only dock helper — every legacy_present prod ship goes hidden" || true
+  # posture: three re-creates and NOTHING else — no table change, no drop, no ship write, no flag.
+  printf '%s' "$MIG3C2_CODE" | grep -qE "^[[:space:]]*(alter table|drop function|drop table)" \
+    && fail "0211 alters/drops an existing object (3c-2 is three function re-creates ONLY)" || true
+  printf '%s' "$MIG3C2_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
+    && fail "0211 UPDATEs main_ship_instances — a read host must never write a ship" || true
+  printf '%s' "$MIG3C2_CODE" | grep -qiE "(insert into|update)[[:space:]]+(public\.)?game_config" \
+    && fail "0211 seeds or flips a flag (3c-2 changes no behavior on its own)" || true
+  # the legacy_transit branch is 3c-3's problem and must survive UNTOUCHED (still main_ship_id-keyed).
+  printf '%s' "$MIG3C2_CODE" | grep -q "f.main_ship_id = s.main_ship_id and fm.status = 'moving'" \
+    || fail "0211 touched the legacy_transit branch — that is 3c-3's problem, not 3c-2's"
+  # the true-head declaration: 3c-3 must copy get_my_fleet_positions from 0211, never from 0200.
+  grep -q "TRUE-HEAD DECLARATION" "$MIGRATION_3C2" \
+    || fail "0211 does not declare itself the true head — the 0136→0138 stale-head mistake repeats by default"
+  # the runtime fixtures must be non-vacuous: each guard string below is a RAISE that fires when the
+  # fixture failed to reach the state the marker claims to pin.
+  grep -q "the frozen-vs-live split is gone" "$SQL" \
+    || fail "HUNTOVERLAP does not guard that c2 is OFF the hunt manifest (a manifest member would pass vacuously)"
+  grep -q "right/wrong answers indistinguishable" "$SQL" \
+    || fail "HUNTOVERLAP does not guard that c2's port differs from the hunt site"
+  grep -q "hunt fleet did not settle present at the hunt site" "$SQL" \
+    || fail "HUNTOVERLAP does not guard the settled phase (phase 2 would be vacuous)"
+  grep -q "fixture is not prod''s shape" "$SQL" \
+    || fail "LEGACYPRESENT does not guard the one-active-fleet prod shape"
+  grep -q "the grouped case would be vacuous" "$SQL" \
+    || fail "DOCKDEDUP dark parity does not guard that the grouped ship is actually grouped"
+  grep -q "DOCKDEDUP-GROUPDOCKED FAIL: % per-ship fleet" "$SQL" \
+    || fail "GROUPDOCKED does not re-assert the zero-per-ship-fleet vacuity guard"
+  grep -q "commission replay (grouped uA) drifted while dark" "$SQL" \
+    || fail "DARKPARITY does not pin host D (the port-entry replay) while dark"
+  grep -q "the replay could be answered by the retired layer" "$SQL" \
+    || fail "COMMISSION does not guard the zero-per-ship-fleet vacuity"
+
+  # ── THE TREE-WIDE DOCK-COPY BAN. 0072 proved an alias-free copy evades exact-substring greps, and
+  # the recorded 0136 failure mode is a NEW file re-inlining the block — a file a 0211-only grep never
+  # sees. So the ban is a comment-stripped, whitespace-collapsed, STATEMENT-level scan of EVERY
+  # migration for the copy's shape: a SELECT of current_location_id FROM fleets keyed main_ship_id = …
+  # with status = 'present'. The allowlist names every superseded body that legitimately still carries
+  # the shape (shipped history — frozen files can never be edited); anything else, in ANY migration,
+  # reds this selftest. Reasons: 0069/0082 = dock-services ancestor+head and 0158/0159 = docked-store
+  # ancestor+head and 0200 = fleet-positions head (all superseded by 0211); 0072 = commission head,
+  # superseded by 0211 host D (the missed fifth copy); 0087/0089/0090 = pre-0092 trade bodies and
+  # 0136 = the recorded re-inline (superseded by 0092→0136→0138); 0092 = the helper's own original
+  # body (superseded by 0210).
+  DOCKCOPY_ALLOW="20260618000069_phase9_dock_services_read.sql
+20260618000072_port_entry_commission_normalize.sql
+20260618000082_trade_fleet_0c_cmd_p_main_ship_id_reads.sql
+20260618000087_trade_market_1_get_offers.sql
+20260618000089_trade_market_1_buy.sql
+20260618000090_trade_market_1_sell.sql
+20260618000092_trade_market_1_resolve_docked_location.sql
+20260618000136_world_balance_p19_price_drift.sql
+20260618000158_station_storage_p2_docked_store_read.sql
+20260618000159_a0_owned_ship_resolve_docked_store_and_preview.sql
+20260618000200_fleetmap_fleet_positions_read.sql"
+  DOCKCOPY_HITS="$(perl -e '
+    for my $f (@ARGV) {
+      open my $h, "<", $f or next; local $/; my $s = <$h>;
+      $s =~ s/--[^\n]*//g; $s =~ s/comment\s+on\s+\w+\s+.*?;//gsi;
+      $s =~ s/\s+/ /g;
+      for my $stmt (split /;/, $s) {
+        # the copy PROJECTS the dock: select ... current_location_id ... from fleets (in that order).
+        # A statement that merely FILTERS on current_location_id (e.g. 0199 resolving the fleet id at a
+        # known port: `select id ... where ... current_location_id = v_loc.id`) is not the copy.
+        next unless $stmt =~ /\bselect\b.*\bcurrent_location_id\b.*\bfrom\s+(public\.)?fleets\b/i;
+        next unless $stmt =~ /\bmain_ship_id\s*=/i;
+        next unless $stmt =~ /\bstatus\s*=\s*\x27present\x27/i;
+        my $b = $f; $b =~ s|.*[\/\\]||; print "$b\n"; last;
+      }
+    }' "$REPO_ROOT"/supabase/migrations/*.sql)"
+  for hit in $DOCKCOPY_HITS; do
+    printf '%s\n' "$DOCKCOPY_ALLOW" | grep -qx "$hit" \
+      || fail "NEW main_ship_id-keyed dock-read copy in supabase/migrations/$hit — compose mainship_resolve_docked_location / mainship_resolve_fleet instead (0211 header; 0138 is the cautionary tale)"
+  done
+  # guard the guard: the scanner must still detect the known alias-free copy (0072). If this fires, the
+  # SCANNER went blind (regex rot), not the tree clean — a ban that detects nothing passes everything.
+  printf '%s\n' "$DOCKCOPY_HITS" | grep -qx "20260618000072_port_entry_commission_normalize.sql" \
+    || fail "the dock-copy scanner no longer detects 0072's known copy — the ban has gone blind"
 
   tp_assert_out_of_scope "$SQL"
 

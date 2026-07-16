@@ -158,11 +158,32 @@
       state cannot arise in a dark world. **Parity must be asserted on states the dark world can
       actually reach.** Moved before the first go; it now pins the real claim: lighting the flag changes
       NOTHING for an ungrouped ship or a group with no fleet yet.
-  - **Step 3c-2 / 3c-3 NOT built:** the dock-dedup (three inlined copies of the dock block at 0082:64,
-    0159:71, 0200:76 → collapse onto `mainship_resolve_docked_location`; **0138 exists solely because a
-    migration silently re-inlined it, so a fifth copy is the default outcome**) and
-    `get_my_fleet_positions` (0200) projecting the group's fleet. 3c-0 (commission setting `group_id`) is
-    deferred — `mainship_resolve_fleet`'s transition fallback covers ungrouped ships until step 4.
+  - **Step 3c-2 BUILT (migration `0211`) — the dock read has ONE author.** All four remaining inlined
+    copies (0082:64 `get_my_current_dock_services`, 0159:71 `get_my_docked_store`, 0200:76
+    `get_my_fleet_positions`, **0072:141 `commission_first_main_ship`** — the fifth copy this charter's
+    own inventory missed, see §3's 3c-2 entry) now compose the resolver pair. Each host is a byte-copy of
+    its true head with exactly ONE marked hunk — verified by independent mechanical diff, not by claim.
+    - **0200 does NOT collapse onto the dock helper, and that is the whole point.** Its copy had DRIFTED:
+      it runs under a wider guard (`at_location` **OR `legacy_present`**, 0200:74) and the helper returns
+      NULL for anything not strictly `at_location`. Prod ships are legacy-shaped (73/76), so the "obvious"
+      dedup would have sent every legacy-present ship to `place='hidden'` — **blanking the live map for
+      real players.** It composes `mainship_resolve_fleet` instead, keeping its own presence read;
+      `FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT` makes that mistake red on the diagnosed prod shape.
+      **A dedup is only a cleanup if the copies are identical. Diff them; do not assume.**
+    - **A reachable dark-parity hole in my own 3c-1, fixed in-place in 0210** (unmerged + undeployed, so
+      fixing the source beats layering a patch — layering is how 0136→0138 happened).
+      `mainship_resolve_fleet`'s group branch was UNGATED while `validate_context`'s twin was gated. The
+      live hunt (`team_command_enabled` = true in prod) mints exactly the shape it matches
+      (`main_ship_id NULL` + `group_id`, 0168), and the hunt's manifest is frozen at send while the
+      resolver reads live membership → a mid-flight-assigned ship resolved to the HUNT fleet while dark.
+      **The gate only DEFERS this; the lit-world half is now a PRE-FLIP OBLIGATION on step 4b.**
+    - The ban that enforces all of the above is tree-wide and shape-based now, not substring-based —
+      mutation-proven to catch a whitespace-mangled, differently-aliased re-inline in a NEW migration
+      (the actual 0136 failure mode). 4 new runtime markers + a guard-the-guard self-check.
+  - **Step 3c-3 NOT built:** `get_my_fleet_positions` projecting the group's fleet for the
+    `legacy_transit` branch (0200:102-118, deliberately untouched by 0211). 3c-0 (commission setting
+    `group_id`) is deferred — `mainship_resolve_fleet`'s transition fallback covers ungrouped ships
+    until step 4. **3c-3 copies `get_my_fleet_positions` from 0211. Not from 0200.**
   - **⚠ THE `osn3-*` PROOF FLEET IS MOSTLY RED — AND WAS BEFORE ANY OF THIS WORK.** 8 of 9 osn3
     real-chain proofs FAIL on this branch (anchor1a, s2, s3, s4, s5, s6a, dock0, osn4; only anchor1b
     is green). **Not caused by 0207**: each fails identically at `d8ed494`, the frontend-only step-2
@@ -416,10 +437,30 @@ that is how the ground truth below was established; it does not change the proof
      `get_my_current_dock_services`, `mainship_resolve_docked_location` (→ the three trade RPCs),
      `get_my_fleet_positions`, `get_osn_movement_readiness`, and the settled-safe rules for
      mining/exploration. Widen it to resolve the group's fleet; dark-branched for byte-parity.
-   - **3c-2 DOCK-DEDUP — finish 0092's job.** The same "read the ship's present fleet's location" block
-     is copy-pasted in FOUR places (0092:44, 0082:64, 0159:71, 0200:76). Migration 0138 exists *solely*
-     because 0136 silently re-inlined it. Collapse onto ONE group-aware resolver, or a fifth copy is
-     the default outcome.
+   - **3c-2 DOCK-DEDUP — finish 0092's job. DONE 2026-07-17 (migration 0211).** The same "read the ship's
+     present fleet's location" block was copy-pasted in **FIVE** places — 0092:44 (collapsed by 0210),
+     0082:64, 0159:71, 0200:76, **and 0072:141**. Migration 0138 exists *solely* because 0136 silently
+     re-inlined it. Collapsed onto ONE group-aware resolver, or a fifth copy is the default outcome.
+     > **⚠ THIS LINE USED TO SAY "FOUR", AND THE SLICE INHERITED THE LIE.** The inventory above was
+     > authored here and taken as ground truth by an architect, an implementer, and every green proof
+     > marker in between; only the adversarial reviewer went and counted. The fifth copy —
+     > `commission_first_main_ship` (0072:141, the ONLY definition of itself, live and ungated on the
+     > port-entry path) — was missed because it is **alias-free** (`main_ship_id = v_ship`, no `f.`),
+     > which also made it invisible to 3c-2's own first-draft ban greps. Lit, it would have returned
+     > `{docked:true, location_id:null}` to every docked group member's entry replay: the oracle says
+     > `at_location` (0208 dissolved the per-ship fleet) while the inline read finds nothing.
+     > **Two rules follow.** (1) A charter inventory is a CLAIM, not evidence — re-derive it by grep at
+     > the head of any slice that consumes it; a number in this file is exactly as trustworthy as the
+     > last person who counted. (2) A ban expressed as a literal substring bans one spelling, not one
+     > shape: 3c-2's ban is now a comment-stripped, whitespace-collapsed, alias-insensitive,
+     > **tree-wide** per-statement scan of every `supabase/migrations/*.sql` with a reasoned allowlist
+     > and a guard-the-guard self-check (a ban that stops matching its own known copy passes
+     > everything). That is what makes "a fifth copy is the default outcome" false going forward —
+     > the old greps only guarded 0211, a file that was already correct.
+     >
+     > **True heads after 0211 (3c-3 MUST copy from 0211, not 0200 — that IS the 0136 mistake):**
+     > `get_my_current_dock_services`, `get_my_docked_store`, `get_my_fleet_positions`,
+     > `commission_first_main_ship` all live in **0211** now.
    - **3c-3 MAP-READ — `get_my_fleet_positions` (0200) must project the GROUP's fleet.** This is the
      deliverable §3 was reaching for ("members invisible at the port the group docked at"): the settle
      already creates the unified fleet's presence, but nothing keys a MEMBER to it, so every member maps
@@ -442,6 +483,18 @@ that is how the ground truth below was established; it does not change the proof
      writers of its input table die here). Fold the ±10000 bounds into ONE authority — **discharging the
      knowing-duplicate debt this charter records**. Delete 0208's transition guard + bootstrap branch
      (both already marked for deletion in-file). Flip `fleet_movement_unified_enabled` ON as the LAST act.
+     **⚠ PRE-FLIP OBLIGATION (recorded 2026-07-17 by the 3c-2 review — this charter previously never
+     mentioned `assign_ship_to_group` at all): discharge the assign-into-flying-group defect that the
+     3c-2 resolver gate merely DEFERS (0210 LESSON THREE).** `assign_ship_to_group` (0161→0204) has no
+     movement-state guard, and the moment the flag lights, `mainship_resolve_fleet`'s group branch
+     answers for LIVE membership while a hunt's manifest stays frozen at send — so a ship assigned into
+     a group whose fleet is in flight reads as moving with the hunt, then docked at the HUNT SITE,
+     while its own present fleet + active `location_presence` sit at its real port
+     (`get_my_docked_store` would even `get_or_create_store` at the wrong port). That is the ghost-dock
+     duality (§0's recorded bug class) re-entering in READ form. Either guard assignment into a group
+     whose fleet is in an active movement, or dissolve/reconcile the assignee's per-ship fleet +
+     presence at assignment time. **The flag may not flip while both the ungated branch and the
+     unguarded assign exist.**
    - **4c SIGNAL RETIREMENT — surgical.** The `status` COLUMN **survives**, narrowed to
      `{'home','destroyed'}`. `'destroyed'` is pure lifecycle (repair gate 0199:770, combat-destroy
      0167:168, shield-regen exclusion 0199:634 — none read movement). Drop as movement:

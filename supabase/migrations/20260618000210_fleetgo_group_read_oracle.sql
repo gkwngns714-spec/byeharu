@@ -22,7 +22,23 @@
 --     what a freshly-commissioned fixture has) → the at_location branch demands v_count=1, the fleet is
 --     gone, so it falls through → **'contradictory_state'** (ok:false).
 -- Hidden vs incoherent; same root cause, same fix. Do not "simplify" this to one answer.
-
+--
+-- LESSON THREE (3c-2 — the code AND its author were wrong, again). mainship_resolve_fleet's group
+-- branch below originally read `if v_group is not null then` — UNGATED — while the oracle's equivalent
+-- branch was gated on cfg_bool('fleet_movement_unified_enabled'). I told myself the resolver was safe
+-- ungated because no UNIFIED fleet can exist while the mover is dark. That is FALSE: the branch keys on
+-- a SHAPE (group_id set + main_ship_id NULL), not on who made it, and the live hunt already makes that
+-- shape — send_ship_group_hunt (0168→0204) inserts the team fleet as main_ship_id NULL + group_id set
+-- ("ONE fleet for MANY ships"), and team_command_enabled is ON in prod. The reachable dark state: the
+-- hunt's member list is FROZEN in group_sortie_members at send, but this resolver reads LIVE
+-- membership; assign_ship_to_group (0161→0204) has no movement-state guard, so a player can assign a
+-- docked ship into a group whose hunt fleet is in flight. The ungated branch then hands that
+-- non-manifest ship the HUNT fleet instead of its own present fleet — dock reads answer NULL while the
+-- hunt flies, and answer the HUNT SITE once it settles 'present' there — wrong port, flag OFF, today.
+-- This is the 3c-1 lesson relearned one migration later: dark parity must hold on states the dark
+-- world can actually REACH, and the hunt+assign overlap is one. The fix is the SAME gate the oracle
+-- already carries, applied in place (0210 is unmerged+undeployed, so no gate-then-delete churn).
+-- Pinned at runtime by FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP; the gate itself is grep-enforced.
 --
 -- WHAT THIS DOES. Adds mainship_resolve_fleet — the ONE ship→fleet resolver — and teaches the oracle to
 -- use it. Under §2 the answer is simply: the ship's fleet is its GROUP's fleet.
@@ -53,7 +69,20 @@ begin
   -- (1) §2: the ship's fleet IS its group's fleet. Keyed group_id + main_ship_id IS NULL — NOT group_id
   --     alone: the legacy expedition send tags group_id onto PER-MEMBER fleets (0204:316, display-only,
   --     "routing never reads it"), so group_id alone would match N member envelopes.
-  if v_group is not null then
+  --     GATED like the oracle's group branch, and for the same reason (see LESSON THREE in the header):
+  --     the live HUNT already builds this exact fleet shape, and a ship assigned into a hunting group
+  --     mid-flight is NOT on the hunt's frozen manifest — ungated, it would resolve to the hunt fleet
+  --     instead of its own dock while the unification flag is OFF. DELETE THE GATE AT STEP 4 (the flag
+  --     flips on as 4b's last act; the branch itself stays as the ONE answer).
+  --     ⚠ THE GATE DEFERS THAT MIS-RESOLUTION TO THE LIT WORLD; IT DOES NOT FIX IT. The moment the flag
+  --     lights, this branch answers for LIVE membership — a ship assigned into a group whose hunt fleet
+  --     is in flight reads as moving with the hunt, then docked at the HUNT SITE, while its own present
+  --     fleet + active location_presence sit at its real port (get_my_docked_store would even
+  --     get_or_create_store at the wrong port): the ghost-dock duality (§0's recorded bug class) in
+  --     READ form. Before the flip, step 4 MUST discharge the obligation now recorded in the charter's
+  --     4b checklist: guard assign_ship_to_group against in-flight groups, or dissolve/reconcile the
+  --     assignee's per-ship fleet + presence at assignment time.
+  if public.cfg_bool('fleet_movement_unified_enabled') and v_group is not null then
     select count(*) into v_n
       from public.fleets
      where group_id = v_group and player_id = v_player and main_ship_id is null
@@ -90,8 +119,10 @@ $function$;
 
 comment on function public.mainship_resolve_fleet(uuid) is
   'FLEET-GO 3c (charter §2): the ONE ship->fleet resolver. A ship''s fleet IS its group''s unified fleet '
-  '(group_id + main_ship_id IS NULL); falls back to the ship''s own per-ship fleet ONLY during the '
-  'transition — that fallback is deleted at step 4. Fails closed (NULL) on any ambiguity.';
+  '(group_id + main_ship_id IS NULL) — that branch is gated on fleet_movement_unified_enabled because '
+  'the live hunt already builds the same fleet shape (gate deleted at step 4); falls back to the ship''s '
+  'own per-ship fleet ONLY during the transition — that fallback is deleted at step 4. Fails closed '
+  '(NULL) on any ambiguity.';
 
 revoke all on function public.mainship_resolve_fleet(uuid) from public;
 
@@ -128,6 +159,12 @@ begin
   -- the retired layer, and the mover never writes them (0208). 'destroyed' is checked first because it
   -- is LIFECYCLE, not movement: it stays the ship's own truth under §2 and survives step 4c.
   if public.cfg_bool('fleet_movement_unified_enabled') and v_ship.group_id is not null then
+    -- KNOWN PAIR-DISAGREEMENT (recorded, not fixed — pre-existing, lit-only, needs a broken invariant):
+    -- this is a NON-STRICT select — if TWO+ live unified fleets ever existed for one group it answers
+    -- from an arbitrary row, while mainship_resolve_fleet fails CLOSED (NULL) on the same state. The
+    -- oracle could then say 'at_location' while every resolver-based host says incoherent/hidden.
+    -- Tolerated because the mover + hunt maintain at-most-one by construction; fold the two answers
+    -- into one (fail closed here too) if that invariant ever gains a writer that can break it.
     select * into v_ufleet
       from public.fleets
      where group_id = v_ship.group_id and player_id = v_ship.player_id and main_ship_id is null

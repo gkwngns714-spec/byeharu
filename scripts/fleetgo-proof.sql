@@ -120,11 +120,12 @@ begin
   raise notice 'setup ok: starter ports revealed + active (transient)';
 end $$;
 
--- two fresh players: uA (the group under test), uB (the foreign-owner probe).
+-- three fresh players: uA (the group under test), uB (the foreign-owner probe), uC (the 3c-2
+-- hunt-overlap world — kept separate so the REAL hunt it launches cannot poison uA's fixtures).
 do $$
 declare u uuid; k text;
 begin
-  foreach k in array array['uA','uB'] loop
+  foreach k in array array['uA','uB','uC'] loop
     insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
       values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
               'fg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -157,6 +158,11 @@ end $$;
 update public.game_config set value='true'::jsonb where key='team_command_enabled';
 update public.game_config set value='true'::jsonb where key='mainship_additional_commission_enabled';
 update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+-- 3c-2 (0211): the docked-store host is gated on station_storage_enabled (ON in prod, seeded false on a
+-- fresh chain) — without this its dark-parity assertion would see 'disabled' and prove nothing. And the
+-- HUNTOVERLAP block launches a REAL docked hunt, which needs launch_from_dock_enabled (also ON in prod).
+update public.game_config set value='true'::jsonb where key='station_storage_enabled';
+update public.game_config set value='true'::jsonb where key='launch_from_dock_enabled';
 
 -- Fund the fixture wallets BEFORE any additional commission. commission_first_main_ship is free, but
 -- every ADDITIONAL commission DEBITS a price from player_wallet (0091) and fresh fixtures have zero
@@ -164,7 +170,7 @@ update public.game_config set value='true'::jsonb where key='fleet_movement_unif
 -- player_wallet is lazy, so on_conflict covers a row a signup/ensure path may already have created.
 -- (The trade-market-1 / team-command proofs use this same direct-owner insert.)
 insert into public.player_wallet (player_id, balance)
-select v, 1000000 from fg where k in ('uA','uB')
+select v, 1000000 from fg where k in ('uA','uB','uC')
 on conflict (player_id) do update set balance = excluded.balance;
 
 -- ════════ PROVISION via the REAL commission RPCs ════════
@@ -240,6 +246,80 @@ begin
     raise exception 'ORACLEPARITY FAIL (lit, ungrouped): %', r; end if;
 
   raise notice 'FLEETGO_PASS_ORACLEPARITY: dark = the 0056 head; lighting the flag changes NOTHING for an ungrouped ship or a group with no fleet yet';
+end $$;
+
+-- ════════ BLOCK DOCKDEDUP-DARKPARITY (3c-2): dark, before ANY go — the three rewired hosts answer the dock ════
+-- 0211 re-creates get_my_current_dock_services / get_my_docked_store / get_my_fleet_positions onto the
+-- ONE resolver pair (0210). While dark, the resolver's per-ship fallback must hand each host the exact
+-- row the old inline `f.main_ship_id = <ship>` read selected, so every envelope is bit-equal.
+-- HOW THIS FAILS IF THE CODE WERE WRONG: if the rewire resolved through a guard the dark world cannot
+-- satisfy — the resolver's group branch left UNGATED (grabbing a group-shaped fleet), or the map read
+-- collapsed onto the at_location-only dock helper, or the fallback keyed on the wrong column — the
+-- grouped ship a1 (or the ungrouped b1) answers incoherent / hidden / NULL below instead of haven.
+do $$
+declare r jsonb; e jsonb; n int; v_eligible boolean;
+  uA uuid := (select v from fg where k='uA'); uB uuid := (select v from fg where k='uB');
+  a1 uuid := (select v from fg where k='a1'); b1 uuid := (select v from fg where k='b1');
+  haven uuid := (select v from fg where k='haven');
+begin
+  -- vacuity guards: a1 must really be GROUPED (the shape 0210's group branch matches) and b1 ungrouped;
+  -- without these the "grouped ship still answers its dock" claim is asserted on nothing.
+  select count(*) into n from public.main_ship_instances where main_ship_id = a1 and group_id is not null;
+  if n <> 1 then raise exception 'DOCKDEDUP-DARKPARITY FAIL: a1 is not grouped — the grouped case would be vacuous'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id = b1 and group_id is null;
+  if n <> 1 then raise exception 'DOCKDEDUP-DARKPARITY FAIL: b1 is grouped — the ungrouped case would be vacuous'; end if;
+
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- (1) dock services — docked=true at the commission dock, grouped and ungrouped alike.
+  r := pg_temp.call_as(uA, format('public.get_my_current_dock_services(%L::uuid)', a1));
+  if (r->>'state') is distinct from 'at_location' or (r->>'docked')::boolean is not true
+     or (r->>'location_id')::uuid is distinct from haven then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: dock_services(grouped a1) drifted while dark: %', r; end if;
+  r := pg_temp.call_as(uB, format('public.get_my_current_dock_services(%L::uuid)', b1));
+  if (r->>'state') is distinct from 'at_location' or (r->>'docked')::boolean is not true
+     or (r->>'location_id')::uuid is distinct from haven then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: dock_services(ungrouped b1) drifted while dark: %', r; end if;
+
+  -- (2) docked store — the haven hangar. store_id presence is pinned as an IFF against the function's
+  --     OWN eligibility rule (the SETTLEPARITY idiom: pin the rule, not a guess about the seed port).
+  v_eligible := public.is_home_port_eligible(haven);
+  r := pg_temp.call_as(uA, format('public.get_my_docked_store(%L::uuid)', a1));
+  if (r->>'state') is distinct from 'at_location' or (r->>'docked')::boolean is not true
+     or (r->>'location_id')::uuid is distinct from haven then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: docked_store(grouped a1) drifted while dark: %', r; end if;
+  if v_eligible and (r->>'store_id') is null then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: haven is store-eligible but docked_store returned no store'; end if;
+  if not v_eligible and (r->>'store_id') is not null then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: haven is NOT store-eligible but docked_store invented a store'; end if;
+
+  -- (3) the map read — place='docked' at haven for BOTH ships (grouped a1 via uA, ungrouped b1 via uB).
+  r := pg_temp.call_as(uA, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = a1::text;
+  if e is null or (e->>'place') is distinct from 'docked' or (e->>'location_id')::uuid is distinct from haven then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: fleet_positions(grouped a1) drifted while dark: %', e; end if;
+  r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
+  if e is null or (e->>'place') is distinct from 'docked' or (e->>'location_id')::uuid is distinct from haven then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: fleet_positions(ungrouped b1) drifted while dark: %', e; end if;
+
+  -- (4) the port-entry replay (host D — the fifth copy the first cut missed): already provisioned,
+  --     docked at haven, grouped and ungrouped alike. FAIL MODE: host D's envelope has no null guard,
+  --     so a drifted read answers {docked:true, location_id:null} — caught by the location_id pin.
+  --     (0072's classify resolves the player's ship with an unqualified select — a pre-existing
+  --     single-ship wart, untouched — so with uA's two ships it picks one arbitrarily; both are docked
+  --     at haven, so the assertion holds for either pick.)
+  r := pg_temp.call_as(uA, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true or (r->>'already_provisioned')::boolean is not true
+     or (r->>'docked')::boolean is not true or (r->>'location_id')::uuid is distinct from haven then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: commission replay (grouped uA) drifted while dark: %', r; end if;
+  r := pg_temp.call_as(uB, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true or (r->>'already_provisioned')::boolean is not true
+     or (r->>'docked')::boolean is not true or (r->>'location_id')::uuid is distinct from haven then
+    raise exception 'DOCKDEDUP-DARKPARITY FAIL: commission replay (ungrouped uB) drifted while dark: %', r; end if;
+
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_DOCKDEDUP_DARKPARITY: all four rewired hosts (dock services, hangar, map, port-entry replay) answer the dock while dark, grouped and ungrouped alike';
 end $$;
 
 -- ════════ BLOCK ONEFLEET + NOSHIPWRITE: one go → ONE fleet, ONE movement, ZERO ship writes ════════
@@ -778,6 +858,94 @@ begin
   raise notice 'FLEETGO_PASS_GROUPREAD: every member reads its FLEET''s place (in_space -> transit -> docked at the group''s port), with no per-ship fleet in existence';
 end $$;
 
+-- ════════ BLOCK DOCKDEDUP-GROUPDOCKED (3c-2, lit): the rewired hosts see the GROUP's dock ════════
+-- GROUPREAD just docked the unified fleet at Slagworks and proved the ORACLE sees it. This block proves
+-- the rewired dock/store/map hosts see it too (host D — the port-entry replay — has its own lit block
+-- right after) — before 0211 each still keyed its own read on
+-- `f.main_ship_id = <ship>` (NULL on a unified fleet), so dock services answered 'incoherent', the
+-- hangar vanished, and the map drew nothing, even with the oracle fixed.
+-- HOW THIS FAILS IF THE CODE WERE WRONG: revert any host to its inline read (or key the map read back
+-- on main_ship_id) and every assertion below reads incoherent/hidden — there is no per-ship row left
+-- to answer from, which is also why the vacuity guard below re-asserts that fact: with zero per-ship
+-- fleets in existence, ONLY the group's fleet could have produced these answers.
+do $$
+declare r jsonb; e jsonb; n int; s uuid; v_eligible boolean;
+  uA uuid := (select v from fg where k='uA');
+  a1 uuid := (select v from fg where k='a1'); a2 uuid := (select v from fg where k='a2');
+  slag uuid := (select v from fg where k='slag');
+begin
+  -- vacuity guard (0210's, re-asserted at this exact moment): no member holds a per-ship fleet, so no
+  -- retired-layer row could fake the answers below.
+  select count(*) into n from public.fleets
+   where player_id = uA and main_ship_id in (a1, a2) and status in ('idle','moving','present','returning');
+  if n <> 0 then
+    raise exception 'DOCKDEDUP-GROUPDOCKED FAIL: % per-ship fleet(s) exist — the read could be answered by the retired layer', n; end if;
+
+  v_eligible := public.is_home_port_eligible(slag);
+  foreach s in array array[a1, a2] loop
+    r := pg_temp.call_as(uA, format('public.get_my_current_dock_services(%L::uuid)', s));
+    if (r->>'state') is distinct from 'at_location' or (r->>'docked')::boolean is not true
+       or (r->>'location_id')::uuid is distinct from slag then
+      raise exception 'DOCKDEDUP-GROUPDOCKED FAIL: dock_services(member %) cannot see the group''s port: %', s, r; end if;
+
+    r := pg_temp.call_as(uA, format('public.get_my_docked_store(%L::uuid)', s));
+    if (r->>'state') is distinct from 'at_location' or (r->>'docked')::boolean is not true
+       or (r->>'location_id')::uuid is distinct from slag then
+      raise exception 'DOCKDEDUP-GROUPDOCKED FAIL: docked_store(member %) cannot see the group''s port: %', s, r; end if;
+    -- store presence pinned as an IFF against the function's OWN eligibility rule (never a seed guess).
+    if v_eligible and (r->>'store_id') is null then
+      raise exception 'DOCKDEDUP-GROUPDOCKED FAIL: the group''s port is store-eligible but member % got no store', s; end if;
+    if not v_eligible and (r->>'store_id') is not null then
+      raise exception 'DOCKDEDUP-GROUPDOCKED FAIL: the group''s port is NOT store-eligible but member % got a store', s; end if;
+  end loop;
+
+  -- the map: BOTH members drawn docked at the group's port (before 3c the whole group vanished here).
+  r := pg_temp.call_as(uA, 'public.get_my_fleet_positions()');
+  foreach s in array array[a1, a2] loop
+    e := null;
+    select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = s::text;
+    if e is null or (e->>'place') is distinct from 'docked' or (e->>'location_id')::uuid is distinct from slag then
+      raise exception 'DOCKDEDUP-GROUPDOCKED FAIL: fleet_positions hides member % of the docked group: %', s, e; end if;
+  end loop;
+
+  raise notice 'FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED: dock services + hangar + map all answer the GROUP''s port for every member, with zero per-ship fleets in existence';
+end $$;
+
+-- ════════ BLOCK DOCKDEDUP-COMMISSION (3c-2, lit): the port-entry replay sees the GROUP's dock ════════
+-- Host D (commission_first_main_ship) is the RPC every player's entry path replays; an existing docked
+-- ship takes its 'at_location' classify branch. Before 0211 that branch read the dock with the
+-- alias-free inline copy (0072:141-142) — NULL for a unified-group member whose per-ship fleet 0208
+-- dissolved — and, uniquely among the four hosts, its envelope has NO null guard: the entry path would
+-- report {docked:true, location_id:null}. The envelope is pre-existing and parity governs; only the
+-- read was rekeyed, so the location_id pin below is the whole proof.
+-- HOW THIS FAILS IF THE CODE WERE WRONG: revert host D to the 0072 inline read and — with zero
+-- per-ship fleets in existence (asserted below) — v_dock resolves NULL → location_id null → the pin
+-- reds. If someone instead "fixes" the null envelope away from 0072's shape, the ok/docked shape
+-- assertions red.
+do $$
+declare r jsonb; n int;
+  uA uuid := (select v from fg where k='uA');
+  a1 uuid := (select v from fg where k='a1'); a2 uuid := (select v from fg where k='a2');
+  slag uuid := (select v from fg where k='slag');
+begin
+  -- vacuity: zero per-ship fleets — only the group's fleet can answer (0210's guard, re-asserted).
+  select count(*) into n from public.fleets
+   where player_id = uA and main_ship_id in (a1, a2) and status in ('idle','moving','present','returning');
+  if n <> 0 then
+    raise exception 'DOCKDEDUP-COMMISSION FAIL: % per-ship fleet(s) exist — the replay could be answered by the retired layer', n; end if;
+  -- 0072's classify resolves the player's ship with an unqualified select (pre-existing single-ship
+  -- wart, untouched by 0211): with uA's TWO ships it picks one arbitrarily — but both are members
+  -- docked with the same group fleet, so the assertion holds for either pick (and reds for both on
+  -- the old inline body).
+  r := pg_temp.call_as(uA, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true or (r->>'already_provisioned')::boolean is not true
+     or (r->>'docked')::boolean is not true then
+    raise exception 'DOCKDEDUP-COMMISSION FAIL: replay envelope drifted: %', r; end if;
+  if (r->>'location_id')::uuid is distinct from slag then
+    raise exception 'DOCKDEDUP-COMMISSION FAIL: replay reports location_id % — not the group''s port (the 0072 inline read leaves it NULL here)', r->>'location_id'; end if;
+  raise notice 'FLEETGO_PASS_DOCKDEDUP_COMMISSION: the port-entry replay answers the GROUP''s real port for a docked member (no per-ship fleet in existence)';
+end $$;
+
 -- ════════ BLOCK ISOLATION: the mover created no second combat/sortie surface and no ship movement ════
 do $$
 declare n int;
@@ -811,6 +979,182 @@ begin
     raise exception 'ISOLATION FAIL: no fleet ever departed FROM its parked coordinate — 3b is unproven'; end if;
 
   raise notice 'FLEETGO_PASS_ISOLATION: no sortie rows, no OSN movements, ZERO ship positions — yet the FLEET holds one (§2)';
+end $$;
+
+-- ════════ BLOCK DOCKDEDUP-HUNTOVERLAP (3c-2, dark — THE CROWN JEWEL: pins 0210's LESSON THREE) ════════
+-- The reachable dark hole: send_ship_group_hunt builds ONE fleet with group_id set + main_ship_id NULL —
+-- EXACTLY the shape mainship_resolve_fleet's group branch matches — and the hunt's member list is FROZEN
+-- in group_sortie_members at send, while the resolver reads LIVE membership. assign_ship_to_group has no
+-- movement-state guard, so a player can assign a freshly-docked ship into a group whose hunt fleet is in
+-- flight. This block builds that state with LIVE RPCs ONLY (real hunt, real commission, real assign) in
+-- uC's separate world, and asserts every dock read still answers the ship's OWN port — twice: while the
+-- hunt fleet is 'moving', and again after it settles 'present' AT the hunt site.
+-- HOW THIS FAILS IF THE CODE WERE WRONG (traced line-by-line against the unpatched 0210 body; the
+-- red run itself needs the CI's disposable Postgres — this machine has none): without the
+-- cfg_bool gate on the resolver's group branch, resolve_fleet(c2) returns the HUNT fleet — while it is
+-- 'moving' the status='present' dock reads come back NULL (dock_services/store → 'incoherent', map →
+-- 'hidden': red at phase 1), and once it settles 'present' at the hunt site every read answers the HUNT
+-- SITE instead of c2's port (red at phase 2). It runs DARK because that is the whole point: this wrong
+-- answer would ship with the unification flag OFF.
+-- PLACEMENT IS LOAD-BEARING: this MUST stay AFTER the ISOLATION block — a REAL hunt writes
+-- group_sortie_members manifest rows (and its settle creates a live encounter), which ISOLATION
+-- rightly asserts the unified MOVER never does. Moving this block above ISOLATION reds ISOLATION.
+do $$
+declare r jsonb; e jsonb; n int;
+  uC uuid := (select v from fg where k='uC');
+  c1 uuid; c2 uuid; gC uuid; v_hunt uuid; v_huntfleet uuid; v_huntmv uuid; v_port uuid;
+begin
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- ── live-RPC provisioning: c1 docked → group → REAL hunt (launch-from-dock, ON in prod). ─────────
+  r := pg_temp.call_as(uC, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: commission c1: %', r; end if;
+  select main_ship_id into c1 from public.main_ship_instances where player_id = uC;
+  r := pg_temp.call_as(uC, 'public.upsert_ship_group(1, ''Corsairs'')');
+  if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: group: %', r; end if;
+  gC := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', c1, gC));
+  if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: assign c1: %', r; end if;
+
+  select id into v_hunt from public.locations
+   where status = 'active' and activity_type = 'hunt_pirates'
+   order by coalesce(min_power_required, 0) asc limit 1;
+  if v_hunt is null then
+    raise exception 'HUNTOVERLAP FAIL: no active hunt site in the fixture — the overlap cannot be built'; end if;
+
+  r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gC, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: real hunt send rejected: %', r; end if;
+  v_huntfleet := (r->>'fleet_id')::uuid;
+  v_huntmv    := (r->>'movement_id')::uuid;
+
+  -- ── the overlap: commission a FRESH ship and assign it into the HUNTING group (live RPCs only). ──
+  r := pg_temp.call_as(uC, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: commission c2: %', r; end if;
+  c2 := (r->>'main_ship_id')::uuid;
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', c2, gC));
+  if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: assign c2 into the hunting group: %', r; end if;
+
+  -- ── vacuity guards: the overlap must REALLY exist, or every assertion below proves nothing. ──────
+  select count(*) into n from public.fleets
+   where id = v_huntfleet and group_id = gC and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'HUNTOVERLAP FAIL: the hunt fleet is not live — overlap not built'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and group_id = gC;
+  if n <> 1 then raise exception 'HUNTOVERLAP FAIL: c2 is not a member of the hunting group — overlap not built'; end if;
+  select count(*) into n from public.group_sortie_members where fleet_id = v_huntfleet and main_ship_id = c2;
+  if n <> 0 then raise exception 'HUNTOVERLAP FAIL: c2 is ON the hunt manifest — the frozen-vs-live split is gone'; end if;
+  select f.current_location_id into v_port from public.fleets f
+   where f.main_ship_id = c2 and f.status = 'present';
+  if v_port is null then raise exception 'HUNTOVERLAP FAIL: c2 has no present per-ship fleet — its own port is undefined'; end if;
+  if v_port = v_hunt then raise exception 'HUNTOVERLAP FAIL: c2''s port IS the hunt site — right/wrong answers indistinguishable'; end if;
+
+  -- ── phase 1: hunt fleet MOVING. Every dock read answers c2's OWN port. ───────────────────────────
+  if (select status from public.fleets where id = v_huntfleet) is distinct from 'moving' then
+    raise exception 'HUNTOVERLAP FAIL: hunt fleet is not moving at phase 1'; end if;
+  r := public.mainship_space_validate_context(c2);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'HUNTOVERLAP FAIL (moving): validate_context(c2) = %', r; end if;
+  if public.mainship_resolve_docked_location(c2) is distinct from v_port then
+    raise exception 'HUNTOVERLAP FAIL (moving): resolve_docked_location(c2) is not c2''s own port'; end if;
+  r := pg_temp.call_as(uC, format('public.get_my_current_dock_services(%L::uuid)', c2));
+  if (r->>'docked')::boolean is not true or (r->>'location_id')::uuid is distinct from v_port then
+    raise exception 'HUNTOVERLAP FAIL (moving): dock_services(c2) = %', r; end if;
+  r := pg_temp.call_as(uC, format('public.get_my_docked_store(%L::uuid)', c2));
+  if (r->>'docked')::boolean is not true or (r->>'location_id')::uuid is distinct from v_port then
+    raise exception 'HUNTOVERLAP FAIL (moving): docked_store(c2) = %', r; end if;
+  r := pg_temp.call_as(uC, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = c2::text;
+  if e is null or (e->>'place') is distinct from 'docked' or (e->>'location_id')::uuid is distinct from v_port then
+    raise exception 'HUNTOVERLAP FAIL (moving): fleet_positions(c2) = %', e; end if;
+
+  -- ── phase 2: the hunt SETTLES 'present' at the hunt site — the wrong answer becomes a concrete
+  --    wrong PORT, not just a NULL. Backdate both ends (now() is txn-constant; arrive_at > depart_at
+  --    must survive) and settle through the real cron entry point.
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_huntmv;
+  perform public.movement_settle_arrival(v_huntmv);
+  select count(*) into n from public.fleets
+   where id = v_huntfleet and status = 'present' and current_location_id = v_hunt;
+  if n <> 1 then raise exception 'HUNTOVERLAP FAIL: hunt fleet did not settle present at the hunt site — phase 2 vacuous'; end if;
+
+  r := public.mainship_space_validate_context(c2);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'HUNTOVERLAP FAIL (settled): validate_context(c2) = %', r; end if;
+  if public.mainship_resolve_docked_location(c2) is distinct from v_port then
+    raise exception 'HUNTOVERLAP FAIL (settled): resolve_docked_location(c2) answers the HUNT SITE, not c2''s own port'; end if;
+  r := pg_temp.call_as(uC, format('public.get_my_current_dock_services(%L::uuid)', c2));
+  if (r->>'docked')::boolean is not true or (r->>'location_id')::uuid is distinct from v_port then
+    raise exception 'HUNTOVERLAP FAIL (settled): dock_services(c2) = %', r; end if;
+  r := pg_temp.call_as(uC, format('public.get_my_docked_store(%L::uuid)', c2));
+  if (r->>'docked')::boolean is not true or (r->>'location_id')::uuid is distinct from v_port then
+    raise exception 'HUNTOVERLAP FAIL (settled): docked_store(c2) = %', r; end if;
+  r := pg_temp.call_as(uC, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = c2::text;
+  if e is null or (e->>'place') is distinct from 'docked' or (e->>'location_id')::uuid is distinct from v_port then
+    raise exception 'HUNTOVERLAP FAIL (settled): fleet_positions(c2) = %', e; end if;
+
+  insert into fg values ('c2', c2);
+  -- restore the flag IN-BLOCK: a block that flips shared state must undo it (the member_busy lesson) —
+  -- no later block may silently inherit this one's dark world.
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP: a ship assigned into a hunting group mid-flight keeps answering its OWN port while dark — hunt moving AND settled (the frozen-manifest-vs-live-membership hole is closed)';
+end $$;
+
+-- ════════ BLOCK DOCKDEDUP-LEGACYPRESENT (3c-2, dark): prod's stuck-ship shape still draws docked ════════
+-- The guard against Finding 1's regression. 0200's dock read is reached under 'at_location' OR
+-- 'legacy_present', and prod's live ships are legacy-shaped (spatial_state NULL; four sit at a lying
+-- status='traveling' with their fleet honestly 'present' at a port — the diagnosed orphan shape).
+-- 0211 therefore rekeys that read onto mainship_resolve_fleet, KEEPING its own status='present' filter —
+-- NOT onto the at_location-only dock helper.
+-- HOW THIS FAILS IF THE CODE WERE WRONG: collapse the 0200 site onto mainship_resolve_docked_location
+-- (which returns NULL for anything not strictly 'at_location') and this ship maps place='hidden' — every
+-- legacy-present prod ship would vanish from the map the day 0211 deploys, flag OFF.
+do $$
+declare r jsonb; e jsonb; n int;
+  uB uuid := (select v from fg where k='uB'); b1 uuid := (select v from fg where k='b1');
+  v_port uuid; v_old_status text; v_old_ss text;
+begin
+  -- self-contained DARK: this block flips the flag itself and restores it at the end — no implicit
+  -- coupling to whichever block ran before it.
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- SURGERY (marked): manufacture the diagnosed prod shape on b1 — spatial_state NULL + status
+  -- 'traveling' with NOTHING behind it, while its own fleet sits honestly 'present' at a port.
+  -- This is fixture shaping for a state prod already contains; the live RPCs cannot mint it on demand.
+  select status, spatial_state into v_old_status, v_old_ss
+    from public.main_ship_instances where main_ship_id = b1;
+  update public.main_ship_instances
+     set status = 'traveling', spatial_state = null where main_ship_id = b1;
+
+  -- vacuity guards: exactly ONE active per-ship fleet, 'present' at a real port, with a matching ACTIVE
+  -- presence — otherwise the oracle answers for some other reason and the block proves nothing.
+  select count(*) into n from public.fleets
+   where main_ship_id = b1 and status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'LEGACYPRESENT FAIL: b1 has % active fleet(s) — fixture is not prod''s shape', n; end if;
+  select f.current_location_id into v_port from public.fleets f
+   where f.main_ship_id = b1 and f.status = 'present';
+  if v_port is null then raise exception 'LEGACYPRESENT FAIL: b1''s fleet is not present at a port — fixture vacuous'; end if;
+  select count(*) into n from public.location_presence lp
+    join public.fleets f on f.id = lp.fleet_id
+   where f.main_ship_id = b1 and lp.status = 'active' and lp.location_id = v_port;
+  if n <> 1 then raise exception 'LEGACYPRESENT FAIL: no active presence at the port — fixture vacuous'; end if;
+
+  r := public.mainship_space_validate_context(b1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_present' then
+    raise exception 'LEGACYPRESENT FAIL: validate_context = % (expected legacy_present)', r; end if;
+
+  r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
+  if e is null or (e->>'place') is distinct from 'docked' or (e->>'location_id')::uuid is distinct from v_port then
+    raise exception 'LEGACYPRESENT FAIL: the map hides prod''s legacy-present shape (0200''s wider guard regressed): %', e; end if;
+
+  -- restore the fixture shape (surgery must undo itself — the member_busy lesson), then the flag.
+  update public.main_ship_instances
+     set status = v_old_status, spatial_state = v_old_ss where main_ship_id = b1;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  raise notice 'FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT: a legacy-present ship (prod''s stuck shape) still draws place=docked at its fleet''s port';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;
