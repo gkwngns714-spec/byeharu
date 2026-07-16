@@ -11,8 +11,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO_ROOT="$(cd "$SC
 tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/fleetgo-proof.sql"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260618000207_fleetgo_unified_group_mover.sql"
+MIGRATION_3B="$REPO_ROOT/supabase/migrations/20260618000208_fleetgo_coordinate_targets.sql"
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_ISOLATION"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_ISOLATION"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -85,6 +86,40 @@ if [ "$MODE" = "selftest" ]; then
   # AND the file must keep the marker that tells the next reader why (so the ban survives edits).
   grep -q "there is deliberately NO" "$MIGRATION" \
     || fail "migration lost the no-ship-write marker that explains the §2 omission to the next reader"
+
+  # ── step 3b (0208): the same §2 bans, PLUS the live-cron parity discipline. ──────────────────────
+  # 3b is NOT purely additive — it alters fleets/fleet_movements and re-creates a LIVE, cron-driven
+  # function (movement_settle_arrival). That is allowed here and is exactly why the runtime parity pin
+  # exists; what is NOT allowed is touching a ship or composing a per-ship mover.
+  [ -f "$MIGRATION_3B" ] || fail "migration 0208 not found"
+  MIG3B_CODE="$(sed -E "s/--.*//" "$MIGRATION_3B")"
+  printf '%s' "$MIG3B_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
+    && fail "0208 UPDATEs main_ship_instances — charter §2 says a ship does not move" || true
+  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+    printf '%s' "$MIG3B_CODE" | grep -q "$banned" \
+      && fail "0208 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
+  done
+  # the fleet — not the ship — must be where the position lands.
+  printf '%s' "$MIG3B_CODE" | grep -q "alter table public.fleets add column if not exists space_x" \
+    || fail "0208 does not give the FLEET its own position (the whole point of 3b)"
+  # the re-created settle must KEEP every legacy branch it inherited from the 0153 head.
+  for keep in fleet_set_present presence_create mainship_mark_docked_at_location base_merge_units fleet_complete reward_grant; do
+    printf '%s' "$MIG3B_CODE" | grep -q "$keep" \
+      || fail "0208's re-created movement_settle_arrival dropped the legacy call '$keep' — live-cron regression"
+  done
+  # the 2-arg mover must be DROPPED, not left as an overload (one command, one signature).
+  printf '%s' "$MIG3B_CODE" | grep -q "drop function if exists public.command_ship_group_go(uuid, uuid)" \
+    || fail "0208 does not drop the 2-arg mover — a stale overload would survive"
+  # and the runtime must actually pin that parity + the coordinate round-trip.
+  grep -q "FLEETGO_PASS_SETTLEPARITY" "$SQL" || fail "no runtime parity pin for the re-created live settle"
+  grep -q "mainship_space_location_target_legal" "$SQL" \
+    || fail "the parity pin does not assert the 0153 dock rule against the function's OWN legality rule"
+  grep -q "the ship-free assertion above is vacuous" "$SQL" \
+    || fail "ISOLATION does not guard against the vacuous case (nothing moved at all)"
+  for ctx in "'coordinate go'" "'space settle'" "'go from space'"; do
+    grep -q "assert_ships_untouched('before_.*', 'after_.*', $ctx)" "$SQL" \
+      || fail "the §2 ship-untouched assertion is not applied to: $ctx"
+  done
 
   tp_assert_out_of_scope "$SQL"
 

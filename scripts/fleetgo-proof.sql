@@ -344,6 +344,173 @@ begin
   raise notice 'FLEETGO_PASS_GUARDS: foreign-owner, empty, invalid-location, member_busy all fail closed; ships untouched';
 end $$;
 
+-- ════════ BLOCK TARGETSHAPE (3b): exactly one of {port} | {coordinate}, validated before any read ════
+do $$
+declare r jsonb; uA uuid := (select v from fg where k='uA'); g uuid := (select v from fg where k='g');
+  slag uuid := (select v from fg where k='slag');
+begin
+  -- both a port AND coordinates: the server owns a port's position; a caller may not assert it (0067's rule).
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid, 5, 5)', g, slag));
+  if (r->>'reason') is distinct from 'invalid_target_shape' then raise exception 'SHAPE FAIL both: %', r; end if;
+  -- neither.
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid)', g));
+  if (r->>'reason') is distinct from 'invalid_target_shape' then raise exception 'SHAPE FAIL neither: %', r; end if;
+  -- half a coordinate.
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, null, 5, null)', g));
+  if (r->>'reason') is distinct from 'invalid_target_shape' then raise exception 'SHAPE FAIL half: %', r; end if;
+  -- non-finite.
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, null, ''NaN''::double precision, 5)', g));
+  if (r->>'reason') is distinct from 'invalid_coordinate' then raise exception 'SHAPE FAIL NaN: %', r; end if;
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, null, ''Infinity''::double precision, 5)', g));
+  if (r->>'reason') is distinct from 'invalid_coordinate' then raise exception 'SHAPE FAIL Inf: %', r; end if;
+  -- outside the navigable square (the 0067 bound, reused).
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, null, 10001, 0)', g));
+  if (r->>'reason') is distinct from 'target_out_of_bounds' then raise exception 'SHAPE FAIL bounds+: %', r; end if;
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, null, 0, -10001)', g));
+  if (r->>'reason') is distinct from 'target_out_of_bounds' then raise exception 'SHAPE FAIL bounds-: %', r; end if;
+  -- the 2-arg form must NOT survive as an overload (drop+create, not a second signature).
+  if (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+       where n.nspname='public' and p.proname='command_ship_group_go') <> 1 then
+    raise exception 'SHAPE FAIL: command_ship_group_go has more than one signature (overload leak)'; end if;
+  raise notice 'FLEETGO_PASS_TARGETSHAPE: both/neither/half/NaN/Inf/out-of-bounds all fail closed; one signature only';
+end $$;
+
+-- ════════ BLOCK COORD (3b): the fleet flies to a raw coordinate ════════
+do $$
+declare r jsonb; n int; uA uuid := (select v from fg where k='uA'); g uuid := (select v from fg where k='g');
+  v_fleet uuid := (select v from fg where k='fleet'); v_mv uuid;
+begin
+  perform pg_temp.snap_ships('before_coord');
+  -- 123.4/-77.6 → the integer world grid (the 0178 canonicalization rule).
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, null, 123.4, -77.6)', g));
+  if (r->>'ok')::boolean is not true then raise exception 'COORD FAIL: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  perform pg_temp.snap_ships('after_coord');
+  perform pg_temp.assert_ships_untouched('before_coord', 'after_coord', 'coordinate go');
+
+  if (r->>'fleet_id')::uuid is distinct from v_fleet then
+    raise exception 'COORD FAIL: a coordinate go created a different fleet'; end if;
+  if (r->>'target_type') is distinct from 'space' then raise exception 'COORD FAIL: target_type %', r->>'target_type'; end if;
+
+  select count(*) into n from public.fleet_movements
+   where id = v_mv and target_type = 'space' and target_location_id is null
+     and target_x = 123 and target_y = -78;   -- rounded to the grid
+  if n <> 1 then raise exception 'COORD FAIL: movement is not a grid-canonical space target'; end if;
+
+  insert into fg values ('mv_coord', v_mv);
+  raise notice 'FLEETGO_PASS_COORD: fleet targets a raw coordinate, canonicalized to the integer grid, no ship touched';
+end $$;
+
+-- ════════ BLOCK SPACESETTLE (3b): a coordinate arrival PARKS the fleet in open space ════════
+do $$
+declare r jsonb; n int; v_fleet uuid := (select v from fg where k='fleet'); v_mv uuid := (select v from fg where k='mv_coord');
+begin
+  -- make it due (now() is txn-constant, so the leg must be backdated to settle at all).
+  update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_mv;
+  perform pg_temp.snap_ships('before_settle');
+  r := public.movement_settle_arrival(v_mv);
+  perform pg_temp.snap_ships('after_settle');
+  -- ★ §2 through the SETTLE too — the cron must not touch a ship either ★
+  perform pg_temp.assert_ships_untouched('before_settle', 'after_settle', 'space settle');
+
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'in_space' then
+    raise exception 'SPACESETTLE FAIL: %', r; end if;
+  -- the FLEET now carries the position — the thing that did not exist before 3b.
+  select count(*) into n from public.fleets
+   where id = v_fleet and location_mode = 'space' and status = 'idle'
+     and space_x = 123 and space_y = -78
+     and active_movement_id is null and current_location_id is null;
+  if n <> 1 then raise exception 'SPACESETTLE FAIL: the fleet is not parked at its coordinate'; end if;
+  -- open space has no port, so no presence may be invented for it.
+  select count(*) into n from public.location_presence where fleet_id = v_fleet and status = 'active';
+  if n <> 0 then raise exception 'SPACESETTLE FAIL: % active presence row(s) for a fleet in open space', n; end if;
+  select count(*) into n from public.fleet_movements where id = v_mv and status = 'arrived' and resolved_at is not null;
+  if n <> 1 then raise exception 'SPACESETTLE FAIL: leg not arrived+resolved'; end if;
+
+  raise notice 'FLEETGO_PASS_SPACESETTLE: the FLEET holds the position (location_mode=space), no presence, no ship write';
+end $$;
+
+-- ════════ BLOCK FROMSPACE (3b): the model closes — set off again FROM open space ════════
+do $$
+declare r jsonb; uA uuid := (select v from fg where k='uA'); g uuid := (select v from fg where k='g');
+  drift uuid := (select v from fg where k='drift'); v_fleet uuid := (select v from fg where k='fleet'); v_mv uuid; n int;
+begin
+  perform pg_temp.snap_ships('before_fromspace');
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, drift));
+  if (r->>'ok')::boolean is not true then raise exception 'FROMSPACE FAIL: %', r; end if;
+  perform pg_temp.snap_ships('after_fromspace');
+  perform pg_temp.assert_ships_untouched('before_fromspace', 'after_fromspace', 'go from space');
+
+  -- it departed the PARKED COORDINATE, with no port involved — "the fleet moves from wherever it is".
+  if (r->>'origin_type') is distinct from 'space' then
+    raise exception 'FROMSPACE FAIL: origin_type % (expected space)', r->>'origin_type'; end if;
+  if (r->>'redirected')::boolean is not false then
+    raise exception 'FROMSPACE FAIL: a parked fleet is not a redirect'; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select count(*) into n from public.fleet_movements
+   where id = v_mv and origin_type = 'space' and origin_x = 123 and origin_y = -78 and target_location_id = drift;
+  if n <> 1 then raise exception 'FROMSPACE FAIL: new leg did not depart the parked point'; end if;
+  -- departing clears the parked position: the fleet is under way, not in two states.
+  select count(*) into n from public.fleets
+   where id = v_fleet and location_mode = 'movement' and space_x is null and space_y is null;
+  if n <> 1 then raise exception 'FROMSPACE FAIL: the fleet is still parked while moving'; end if;
+
+  raise notice 'FLEETGO_PASS_FROMSPACE: a fleet parked in open space sets off again with no port involved';
+end $$;
+
+-- ════════ BLOCK SETTLEPARITY (3b): the RE-CREATED settle left every LEGACY branch intact ════════
+-- movement_settle_arrival is driven by the live 30s cron (process_fleet_movements) and by the legacy
+-- on-demand RPC. 0208 re-creates it to add the 'space' branch. This proves the branches that were
+-- already there still behave — asserted against the function's OWN legality rule, not a hard-coded
+-- guess about which port happens to qualify.
+do $$
+declare r jsonb; n int; uB uuid := (select v from fg where k='uB'); b1 uuid := (select v from fg where k='b1');
+  slag uuid := (select v from fg where k='slag'); v_f uuid; v_mv uuid; v_legal boolean; v_loc record; v_base record;
+begin
+  -- ── legacy branch 1: an ORDINARY fleet (main_ship_id NULL) arriving at a location → present + presence.
+  select l.id, l.x, l.y, l.zone_id, z.sector_id into v_loc
+    from public.locations l join public.zones z on z.id = l.zone_id where l.id = slag;
+  select b.id, b.x, b.y into v_base from public.bases b where b.player_id = uB and b.status='active' order by b.created_at limit 1;
+  insert into public.fleets (player_id, origin_base_id, status, location_mode, current_base_id)
+    values (uB, v_base.id, 'idle', 'base', v_base.id) returning id into v_f;
+  v_mv := public.movement_create(uB, v_f, 'base', v_base.id, null, null, v_base.x, v_base.y,
+                                 'location', null, null, v_loc.id, v_loc.x, v_loc.y, 'rally', 1);
+  perform public.fleet_set_moving(v_f, v_mv);
+  update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'present' then raise exception 'PARITY FAIL location outcome: %', r; end if;
+  select count(*) into n from public.fleets where id = v_f and status='present' and current_location_id = slag;
+  if n <> 1 then raise exception 'PARITY FAIL: fleet not present at the target'; end if;
+  select count(*) into n from public.location_presence where fleet_id = v_f and status='active' and location_id = slag;
+  if n <> 1 then raise exception 'PARITY FAIL: presence not created (the legacy location branch changed)'; end if;
+
+  -- ── legacy branch 2: the 0153 MAIN-SHIP dock hunk still fires exactly per its own legality rule.
+  --    Asserted as an IFF against mainship_space_location_target_legal — so this pins the RULE, not a
+  --    guess about Slagworks, and stays true if the seed ports change.
+  v_legal := (public.mainship_space_location_target_legal(slag)->>'ok')::boolean;
+  update public.fleets set status='completed', location_mode='movement', active_movement_id=null
+   where player_id = uB and main_ship_id = b1 and status='present';
+  perform public.presence_complete(lp.id) from public.location_presence lp
+    join public.fleets f on f.id = lp.fleet_id
+   where f.player_id = uB and f.main_ship_id = b1 and lp.status='active';
+  insert into public.fleets (player_id, origin_base_id, status, location_mode, current_base_id, main_ship_id)
+    values (uB, v_base.id, 'idle', 'base', v_base.id, b1) returning id into v_f;
+  v_mv := public.movement_create(uB, v_f, 'base', v_base.id, null, null, v_base.x, v_base.y,
+                                 'location', null, null, v_loc.id, v_loc.x, v_loc.y, 'rally', 1);
+  perform public.fleet_set_moving(v_f, v_mv);
+  update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'present' then raise exception 'PARITY FAIL mainship outcome: %', r; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = b1 and status='stationary' and spatial_state='at_location';
+  if v_legal and n <> 1 then
+    raise exception 'PARITY FAIL: dockable target did NOT dock the ship — the 0153 hunk regressed'; end if;
+  if not v_legal and n <> 0 then
+    raise exception 'PARITY FAIL: non-dockable target docked the ship anyway'; end if;
+
+  raise notice 'FLEETGO_PASS_SETTLEPARITY: the re-created settle keeps the location branch + the 0153 dock rule (legal=%)', v_legal;
+end $$;
+
 -- ════════ BLOCK ISOLATION: the mover created no second combat/sortie surface and no ship movement ════
 do $$
 declare n int;
@@ -356,12 +523,20 @@ begin
   select count(*) into n from public.main_ship_space_movements;
   if n <> 0 then raise exception 'ISOLATION FAIL: the mover created % OSN space movement(s) — wrong domain', n; end if;
 
-  -- NOT ONE ship in the whole DB carries a coordinate or an in-transit spatial state.
+  -- ★ THE 3b PAYOFF, stated as one assertion ★
+  -- NOT ONE ship in the whole DB carries a coordinate or an in-transit spatial state — even though a
+  -- fleet has now flown to a raw coordinate, parked there, and set off again from it. The position
+  -- exists; it just lives on the FLEET. That is §2 in a single query.
   select count(*) into n from public.main_ship_instances
    where space_x is not null or space_y is not null or spatial_state in ('in_space','in_transit');
   if n <> 0 then raise exception 'ISOLATION FAIL: % ship(s) carry a position/transit state — §2 says ships have neither', n; end if;
+  -- ...and the converse: the fleet layer DID carry one. Without this the assertion above is satisfied
+  -- by a system where nothing moved at all.
+  select count(*) into n from public.fleets where space_x is not null or space_y is not null;
+  if n = 0 then
+    raise exception 'ISOLATION FAIL: no fleet ever held a position — the ship-free assertion above is vacuous'; end if;
 
-  raise notice 'FLEETGO_PASS_ISOLATION: no sortie rows, no OSN movements, no ship positions anywhere';
+  raise notice 'FLEETGO_PASS_ISOLATION: no sortie rows, no OSN movements, ZERO ship positions — yet the FLEET holds one (§2)';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;
