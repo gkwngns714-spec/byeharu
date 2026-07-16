@@ -418,7 +418,11 @@ do $$
 declare r jsonb; n int; v_fleet uuid := (select v from fg where k='fleet'); v_mv uuid := (select v from fg where k='mv_coord');
 begin
   -- make it due (now() is txn-constant, so the leg must be backdated to settle at all).
-  update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_mv;
+  -- Make the leg DUE. Both ends must move: now() is txn-constant, so backdating only arrive_at would
+  -- push it before depart_at and violate fleet_movements_check (arrive_at > depart_at).
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
   perform pg_temp.snap_ships('before_settle');
   r := public.movement_settle_arrival(v_mv);
   perform pg_temp.snap_ships('after_settle');
@@ -488,7 +492,11 @@ begin
   v_mv := public.movement_create(uB, v_f, 'base', v_base.id, null, null, v_base.x, v_base.y,
                                  'location', null, null, v_loc.id, v_loc.x, v_loc.y, 'rally', 1);
   perform public.fleet_set_moving(v_f, v_mv);
-  update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_mv;
+  -- Make the leg DUE. Both ends must move: now() is txn-constant, so backdating only arrive_at would
+  -- push it before depart_at and violate fleet_movements_check (arrive_at > depart_at).
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
   r := public.movement_settle_arrival(v_mv);
   if (r->>'outcome') is distinct from 'present' then raise exception 'PARITY FAIL location outcome: %', r; end if;
   select count(*) into n from public.fleets where id = v_f and status='present' and current_location_id = slag;
@@ -510,7 +518,11 @@ begin
   v_mv := public.movement_create(uB, v_f, 'base', v_base.id, null, null, v_base.x, v_base.y,
                                  'location', null, null, v_loc.id, v_loc.x, v_loc.y, 'rally', 1);
   perform public.fleet_set_moving(v_f, v_mv);
-  update public.fleet_movements set arrive_at = now() - interval '1 second' where id = v_mv;
+  -- Make the leg DUE. Both ends must move: now() is txn-constant, so backdating only arrive_at would
+  -- push it before depart_at and violate fleet_movements_check (arrive_at > depart_at).
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
   r := public.movement_settle_arrival(v_mv);
   if (r->>'outcome') is distinct from 'present' then raise exception 'PARITY FAIL mainship outcome: %', r; end if;
   select count(*) into n from public.main_ship_instances
