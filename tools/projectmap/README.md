@@ -114,6 +114,30 @@ those are different things, and the map is built to show exactly that gap.
 - filter by status / node type / connection type; search matches labels + detail
 - the HUD shows the prod host, live-flag count, deploy state, and the frontier
 
+## Sharing it with someone
+
+```powershell
+powershell.exe -File tools\projectmap\share.ps1
+```
+
+Scans, reads production, builds, serves, and opens a temporary Cloudflare tunnel
+— printing a public `https://…trycloudflare.com` URL that anyone can open. No
+deploy, nothing published. **The URL dies when you close the window.**
+
+`-NoLive` shares structure only (every node reads *Needs checking*).
+`-EnvPath <path>` points at a `.env.local` living somewhere else.
+
+Read this before you send the link: with live data included, whoever opens it
+can see your production posture — which flags are on, which migrations have not
+deployed, the state of the deploy gate. None of it is secret (`game_config` is
+anon-readable and the Supabase URL already ships in the public Pages bundle) but
+the link is public to anyone holding it, so treat it as a link you hand to
+specific people rather than one you post.
+
+Cloudflare rather than ngrok because Norton on this machine intercepts TLS and
+re-signs ngrok's endpoints with a root it never trusts. `--http-host-header`
+stops the preview server rejecting the tunnel's `Host`.
+
 ## Refreshing
 
 `npm run scan` is offline and instant. `npm run live` needs `.env.local` and an
