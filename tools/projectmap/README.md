@@ -138,6 +138,46 @@ Cloudflare rather than ngrok because Norton on this machine intercepts TLS and
 re-signs ngrok's endpoints with a root it never trusts. `--http-host-header`
 stops the preview server rejecting the tunnel's `Host`.
 
+## Keeping it true
+
+**Refresh it whenever the game changes** — a stale map is worse than none,
+because its colours still look authoritative while lying.
+
+```bash
+cd tools/projectmap && npm run refresh
+```
+
+That one command updates **both tabs**. The 3D map and the 조직도 are not two
+artifacts: `tree.js` has no data source of its own, it receives the same `graph`
+and `status` objects the map uses. The only files the app reads at runtime are
+`graph.json` and `live.json`. There is nothing to maintain separately.
+
+### The drift guard
+
+Everything here is parsed out of prose nobody promised to keep stable. Rename a
+heading in `FULL_CAPACITY_PLAN.md` or reshape the `SYSTEM_BOUNDARIES` table and
+rows silently vanish — the tree quietly shrinks while still looking complete.
+That has already happened once: nested parens in a plan heading swallowed P13
+(SHIELD) whole, and only a human eye caught it.
+
+So `scan.mjs` refuses to write a map that lost things. It compares against the
+committed `graph.json` and **exits 1** (stopping `refresh` before it touches
+production) if a category collapses to zero or drops by more than 10%, or if a
+doc parser comes back empty.
+
+Changing `### P3 — SALVAGE` to `### P3: SALVAGE` — one character — drops 14 of
+16 phases. The guard catches exactly that:
+
+```
+SCAN REFUSED — this scan found less than the committed map:
+  ✗ phases: 16 -> 2 (lost 14)
+Either a doc format changed and a parser needs fixing, or things were
+genuinely deleted. If the loss is real, re-run with --allow-shrink.
+```
+
+If the loss is real (you deleted a system), `npm run scan -- --allow-shrink`.
+Smaller dips and unlinked rungs are reported as warnings, not failures.
+
 ## Refreshing
 
 `npm run scan` is offline and instant. `npm run live` needs `.env.local` and an

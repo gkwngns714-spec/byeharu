@@ -408,6 +408,51 @@ const graph = {
   edges: cleanEdges,
 }
 
+// ── drift guard ───────────────────────────────────────────────────────────────
+// Everything here is parsed out of prose whose format nobody promised to keep.
+// Rename a heading in FULL_CAPACITY_PLAN.md, reshape the SYSTEM_BOUNDARIES
+// table, and rows silently vanish — the 조직도 quietly shrinks while still
+// looking authoritative. That already happened once: nested parens in a plan
+// heading swallowed P13 (SHIELD) whole, and only a human eye caught it.
+//
+// So: refuse to write a map that lost things. A scan that finds LESS than the
+// committed one is treated as breakage until a human says otherwise.
+const problems = []
+const warnings = []
+
+if (!boundariesFound) problems.push('SYSTEM_BOUNDARIES.md: parsed no table-owner rows — the 조직도 ownership view would be empty')
+if (!plans.phases.length) problems.push('FULL_CAPACITY_PLAN.md: parsed no §C phase headings — the roadmap view would lose the development queue')
+if (!plans.rungs.length) problems.push('FULL_CAPACITY_PLAN.md: parsed no §B rungs — the roadmap view would lose the activation ladder')
+if (!addDates.size) warnings.push('git: no migration add-dates — the build-order view degrades to file order')
+
+const rungsNoFlag = plans.rungs.filter((r) => !r.flags.length).map((r) => r.key)
+if (rungsNoFlag.length) warnings.push(`rungs with no flag or activation script (shown unlinked): ${rungsNoFlag.join(', ')}`)
+
+// compare against the committed map, if there is one
+let prev = null
+try { prev = JSON.parse(readFileSync(OUT, 'utf8')) } catch { /* first run */ }
+if (prev?.counts) {
+  for (const [k, now] of Object.entries(graph.counts)) {
+    const before = prev.counts[k]
+    if (typeof before !== 'number' || now >= before) continue
+    const lost = before - now
+    const msg = `${k}: ${before} -> ${now} (lost ${lost})`
+    // a big or total collapse is breakage; a small dip may be a real deletion
+    if (now === 0 || lost / before > 0.1) problems.push(msg)
+    else warnings.push(msg)
+  }
+}
+
+for (const w of warnings) console.error(`  ! ${w}`)
+if (problems.length && !process.argv.includes('--allow-shrink')) {
+  console.error('\nSCAN REFUSED — this scan found less than the committed map:\n')
+  for (const p of problems) console.error(`  ✗ ${p}`)
+  console.error('\nEither a doc format changed and a parser needs fixing, or things were'
+    + '\ngenuinely deleted. If the loss is real, re-run with --allow-shrink.'
+    + `\n${OUT} left untouched.\n`)
+  process.exit(1)
+}
+
 mkdirSync(dirname(OUT), { recursive: true })
 writeFileSync(OUT, JSON.stringify(graph, null, 1))
 
