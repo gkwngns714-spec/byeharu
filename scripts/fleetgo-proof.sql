@@ -197,6 +197,51 @@ begin
   raise notice 'provisioned: uA 2 ships in group Vanguard, uB 1 ship';
 end $$;
 
+-- ════════ BLOCK ORACLEPARITY (3c-1): with the flag OFF, the oracle is the 0056 head, verbatim ════════
+-- validate_context is the transitive authority behind ten surfaces (the hangar, dock services, the three
+-- trade RPCs, the map projection, OSN readiness, mining/exploration settled-safe). Its group branch is
+-- dark; while dark it must be indistinguishable from the head it replaced.
+--
+-- PLACEMENT IS DELIBERATE — this runs BEFORE any unified go, and an earlier version did not. Asserting
+-- dark parity AFTER a go tests an IMPOSSIBLE state: while the gate is false no unified go can happen, so
+-- no member fleet is ever dissolved, so the "grouped ship with a dissolved fleet" case cannot arise in a
+-- dark world. The CI matrix caught that (it reported contradictory_state, which is the CORRECT answer for
+-- a commissioned ship whose fleet has been dissolved — see 0210's header; both recon sweeps were right
+-- about different ship shapes). Parity must be asserted on states the dark world can actually reach.
+do $$
+declare r jsonb; a1 uuid := (select v from fg where k='a1'); b1 uuid := (select v from fg where k='b1');
+  haven uuid := (select v from fg where k='haven'); n int;
+begin
+  -- a1 IS grouped; its group has no unified fleet yet (nothing has moved). b1 is ungrouped. Both are
+  -- freshly commissioned: stationary + at_location + their own present fleet + presence.
+  select count(*) into n from public.main_ship_instances where main_ship_id = a1 and group_id is not null;
+  if n <> 1 then raise exception 'ORACLEPARITY FAIL: a1 is not grouped — the assertion would be vacuous'; end if;
+
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+  r := public.mainship_space_validate_context(a1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'ORACLEPARITY FAIL (dark, grouped): %', r; end if;
+  if public.mainship_resolve_docked_location(a1) is distinct from haven then
+    raise exception 'ORACLEPARITY FAIL (dark): dock resolver did not return the commission dock'; end if;
+  r := public.mainship_space_validate_context(b1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'ORACLEPARITY FAIL (dark, ungrouped): %', r; end if;
+
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  -- LIT: a1 is grouped but its group has NO unified fleet yet -> the branch cannot apply -> the
+  -- transition fallback resolves its own fleet -> byte-identical. b1 is ungrouped -> likewise.
+  r := public.mainship_space_validate_context(a1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'ORACLEPARITY FAIL (lit, grouped, no unified fleet yet): %', r; end if;
+  if public.mainship_resolve_docked_location(a1) is distinct from haven then
+    raise exception 'ORACLEPARITY FAIL (lit): dock resolver drifted for a group with no unified fleet'; end if;
+  r := public.mainship_space_validate_context(b1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'ORACLEPARITY FAIL (lit, ungrouped): %', r; end if;
+
+  raise notice 'FLEETGO_PASS_ORACLEPARITY: dark = the 0056 head; lighting the flag changes NOTHING for an ungrouped ship or a group with no fleet yet';
+end $$;
+
 -- ════════ BLOCK ONEFLEET + NOSHIPWRITE: one go → ONE fleet, ONE movement, ZERO ship writes ════════
 do $$
 declare r jsonb; n int; uA uuid := (select v from fg where k='uA');
@@ -666,47 +711,6 @@ begin
   if (r->>'reason') is distinct from 'group_not_found' then raise exception 'STOP FAIL foreign owner: %', r; end if;
 
   raise notice 'FLEETGO_PASS_STOP: the FLEET holds at the interpolated point (agrees with redirect), re-commandable, idempotent, no ship touched';
-end $$;
-
--- ════════ BLOCK ORACLEPARITY (3c-1): with the flag OFF, the oracle is the 0056 head, verbatim ════════
--- validate_context is the transitive authority behind ten surfaces (the hangar, dock services, the three
--- trade RPCs, the map projection, OSN readiness, mining/exploration settled-safe). Its group branch is
--- dark; while dark it must be indistinguishable from the head it replaced — even for a ship that HAS a
--- group and whose group HAS a unified fleet. Flipped OFF and back inside this same rolled-back txn.
-do $$
-declare r jsonb; a1 uuid := (select v from fg where k='a1'); b1 uuid := (select v from fg where k='b1');
-  n int;
-begin
-  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
-
-  -- a1 is in a group WITH a live unified fleet — and while dark the oracle must not see any of that.
-  select count(*) into n from public.fleets f
-    join public.main_ship_instances s on s.main_ship_id = a1
-   where f.group_id = s.group_id and f.main_ship_id is null and f.status in ('idle','moving','present','returning');
-  if n <> 1 then raise exception 'ORACLEPARITY FAIL: fixture has no live unified fleet — the assertion would be vacuous'; end if;
-
-  -- 0208 dissolved a1's own per-ship fleet, so the 0056 head sees v_count=0 + status='home' → legacy_home.
-  -- That IS the bug 3c-1 exists to fix, and it is what the DARK path must still report (parity, not a fix).
-  r := public.mainship_space_validate_context(a1);
-  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_home' then
-    raise exception 'ORACLEPARITY FAIL: dark oracle drifted from the 0056 head for a grouped ship: %', r; end if;
-  -- the dock resolver is NULL for it while dark (not at_location) — the legacy answer, unchanged.
-  if public.mainship_resolve_docked_location(a1) is not null then
-    raise exception 'ORACLEPARITY FAIL: dark dock resolver returned a port for a legacy_home ship'; end if;
-
-  -- b1 is UNGROUPED with its own present fleet + presence → the head's legacy_present, both flag states.
-  r := public.mainship_space_validate_context(b1);
-  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_present' then
-    raise exception 'ORACLEPARITY FAIL: dark oracle for an ungrouped docked ship: %', r; end if;
-
-  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
-
-  -- LIT, but b1 is ungrouped → the group branch cannot apply → the transition fallback keeps it identical.
-  r := public.mainship_space_validate_context(b1);
-  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_present' then
-    raise exception 'ORACLEPARITY FAIL: an UNGROUPED ship changed answer when the flag lit: %', r; end if;
-
-  raise notice 'FLEETGO_PASS_ORACLEPARITY: dark = the 0056 head verbatim; an ungrouped ship is unaffected when lit';
 end $$;
 
 -- ════════ BLOCK GROUPREAD (3c-1): THE 3c DELIVERABLE — a ship's place IS its fleet's place ════════

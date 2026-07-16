@@ -5,20 +5,24 @@
 --
 -- THE GAP THIS CLOSES. §2 says a ship's location IS its fleet's location. But every read that answers
 -- "where is my ship / is it docked" resolves the fleet with `fleets.main_ship_id = <ship>` — which is
--- NULL on a unified fleet by construction. So today a member of a unified group has NO per-ship fleet
--- (0208 dissolves them on departure) and mainship_space_validate_context falls to
--- `v_count = 0 and v_st = 'home'` → **'legacy_home'**, which get_my_fleet_positions maps to
--- place='hidden' (0200:120-121). THE WHOLE GROUP VANISHES FROM THE MAP ON ARRIVAL, and PortScreen's
--- port list empties. The mover works; the game just cannot SEE it. §3 never mentioned this function —
--- the 5-agent recon found it, and it is the widest blast radius in the charter: validate_context is the
--- transitive authority behind get_my_docked_store, get_my_current_dock_services,
--- mainship_resolve_docked_location (→ the three trade RPCs), get_my_fleet_positions,
--- get_osn_movement_readiness, and the settled-safe rules for mining/exploration.
+-- NULL on a unified fleet by construction. A member of a unified group therefore has NO per-ship fleet
+-- at all (0208 correctly dissolves them on departure), and mainship_space_validate_context cannot see
+-- the group. THE WHOLE GROUP VANISHES FROM THE MAP ON ARRIVAL, and PortScreen's port list empties. The
+-- mover works; the game simply cannot SEE it. §3 never mentioned this function — the 5-agent recon
+-- found it, and it is the widest blast radius in the charter: validate_context is the transitive
+-- authority behind get_my_docked_store, get_my_current_dock_services, mainship_resolve_docked_location
+-- (→ the three trade RPCs), get_my_fleet_positions, get_osn_movement_readiness, and the settled-safe
+-- rules for mining/exploration.
 --
--- (Recon note, corrected here: one sweep reported members resolving to 'contradictory_state'. Read the
--- code: `if v_count = 0 and v_st = 'home'` fires FIRST, so it is 'legacy_home' — ok:true, but hidden.
--- Same bug, different symptom; the fix is the same. Recorded so the next reader is not confused by a
--- stale claim.)
+-- THE SYMPTOM DEPENDS ON THE SHIP'S SHAPE — both recon sweeps were right, about different ships, and
+-- the CI proof settled it (I had "corrected" one of them and was wrong):
+--   • spatial_state NULL + status 'home' (73 of 76 LIVE prod ships) → `v_count=0 and v_st='home'` fires
+--     first → **'legacy_home'** → get_my_fleet_positions maps it to place='hidden' (0200:120-121).
+--   • spatial_state 'at_location' + status 'stationary' (the shape commission_*_main_ship births, and
+--     what a freshly-commissioned fixture has) → the at_location branch demands v_count=1, the fleet is
+--     gone, so it falls through → **'contradictory_state'** (ok:false).
+-- Hidden vs incoherent; same root cause, same fix. Do not "simplify" this to one answer.
+
 --
 -- WHAT THIS DOES. Adds mainship_resolve_fleet — the ONE ship→fleet resolver — and teaches the oracle to
 -- use it. Under §2 the answer is simply: the ship's fleet is its GROUP's fleet.
