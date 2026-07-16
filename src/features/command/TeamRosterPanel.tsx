@@ -40,7 +40,7 @@ import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { isServerLit } from '../../lib/useActivityPanelGuards'
 import { withPowerGate } from '../map/locationDisplay'
 import { fetchMyExpeditionPreview, fetchMyFleetPositions, type FleetPosition } from '../map/mainshipApi'
-import { mainShipInstanceStatusLabel } from '../map/mainshipStatusLabel'
+import { mainShipInstanceStatusLabel, mainShipInstanceStatusTone } from '../map/mainshipStatusLabel'
 import { shipPowerFromPreview } from '../ship/shipDossierView'
 import { fetchLaunchFromDockEnabled, fetchFleetControlEnabled } from '../../lib/catalog'
 
@@ -249,19 +249,35 @@ export function TeamRosterPanel() {
     // the leak-safe per-ship location from the ONE resolver. Location is OMITTED (never a wrong port)
     // when the ship isn't in the FLEETMAP projection.
     const locLabel = fleetPositionLocationLabel(posByShip.get(s.main_ship_id), game.locations)
+    // FLEET-READ (UI): the WHOLE row is the select target, not just the name. The row is a <div>, not a
+    // <button>, because it already contains buttons (Remove / command-ship) and nesting them is invalid
+    // HTML — so it carries the button ROLE plus keyboard activation instead, and the action strip below
+    // stops propagation so pressing "Remove" never also selects.
+    const pick = () => selection.selectShip(s.main_ship_id)
     return (
       <div
         key={s.main_ship_id}
-        className={`rounded-lg border px-3 py-2 ${
-          selected ? 'border-accent/40 bg-accent/5' : 'border-edge bg-surface'
+        role="button"
+        tabIndex={0}
+        aria-pressed={selected}
+        onClick={pick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick() }
+        }}
+        className={`cursor-pointer rounded-lg border px-3 py-2 transition-colors ${
+          selected
+            ? 'border-accent bg-accent-soft'
+            : 'border-edge bg-surface hover:border-accent/40 hover:bg-accent-soft'
         }`}
       >
         <div className="flex items-center justify-between">
-          <button onClick={() => selection.selectShip(s.main_ship_id)} className="truncate text-left text-sm text-ink">
-            {s.name}
-          </button>
+          {/* The name is plain text now — the row owns the click, so a nested button would be a second
+              (smaller) target for the same action. */}
+          <span className={`truncate text-sm ${selected ? 'text-ink' : 'text-ink-muted'}`}>{s.name}</span>
           <span className="ml-3 flex shrink-0 items-center gap-2">
-            <span className="text-xs text-ink-faint">{mainShipInstanceStatusLabel(s.status)}</span>
+            {/* Status is the row's main signal, so it reads as a semantic pill rather than faint grey
+                text — same colour language as the map (travelling = amber, returning = accent, …). */}
+            <Badge tone={mainShipInstanceStatusTone(s.status)}>{mainShipInstanceStatusLabel(s.status)}</Badge>
             {selected && <Badge tone="accent">Selected</Badge>}
           </span>
         </div>
@@ -271,7 +287,10 @@ export function TeamRosterPanel() {
         {/* Remove is the only per-ship membership control that remains on a member row — the ONE add
             surface is each team's "+ Add ship" picker (below). Same assign RPC + run key; await → refetch. */}
         {s.group_id != null && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div
+            className="mt-2 flex flex-wrap items-center gap-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
             <Button
               size="sm"
               variant="ghost"
@@ -333,14 +352,18 @@ export function TeamRosterPanel() {
             ungrouped rows). Slot count is the SERVER-reported captain_slots (owner-RLS read) — never
             a hardcoded 2/6; null skips the client precheck and lets the server answer. */}
         {captainSplit && (
-          <TeamMemberCaptains
-            mainShipId={s.main_ship_id}
-            shipStatus={s.status}
-            assigned={captainSplit.byShip.get(s.main_ship_id) ?? []}
-            unassigned={captainSplit.unassigned}
-            captainSlots={groupMap[s.main_ship_id]?.captain_slots ?? null}
-            refresh={refreshCaptains}
-          />
+          // Its own interactive sub-surface — swallow clicks so assigning a captain never doubles as a
+          // row selection (same reason as the action strip above).
+          <div onClick={(e) => e.stopPropagation()}>
+            <TeamMemberCaptains
+              mainShipId={s.main_ship_id}
+              shipStatus={s.status}
+              assigned={captainSplit.byShip.get(s.main_ship_id) ?? []}
+              unassigned={captainSplit.unassigned}
+              captainSlots={groupMap[s.main_ship_id]?.captain_slots ?? null}
+              refresh={refreshCaptains}
+            />
+          </div>
         )}
       </div>
     )
