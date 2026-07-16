@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Byeharu — Project Map</title>
+<style>
+  :root {
+    --bg: #07090f;
+    --panel: rgba(14, 18, 30, 0.86);
+    --line: rgba(255, 255, 255, 0.11);
+    --text: #e8ecf5;
+    --dim: #8792ab;
+    --accent: #35c1e0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  #scene { position: fixed; inset: 0; }
+  .panel { position: fixed; background: var(--panel); backdrop-filter: blur(14px);
+    border: 1px solid var(--line); border-radius: 12px; }
+
+  /* left rail */
+  #controls { top: 14px; left: 14px; width: 252px; max-height: calc(100vh - 28px);
+    overflow-y: auto; padding: 14px; }
+  #controls h1 { margin: 0 0 2px; font-size: 15px; letter-spacing: .2px; }
+  #controls .sub { color: var(--dim); font-size: 11px; margin-bottom: 12px; }
+  .grp { margin-bottom: 14px; }
+  .grp > h2 { font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--dim); margin: 0 0 7px; font-weight: 600; }
+  label.row { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; user-select: none; }
+  label.row:hover { color: #fff; }
+  label.row input { accent-color: var(--accent); margin: 0; }
+  .swatch { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .count { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; font-size: 11px; }
+  #search { width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgba(0,0,0,.35); color: var(--text); font: inherit; }
+  #search:focus { outline: 1px solid var(--accent); }
+  button.act { width: 100%; padding: 7px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgba(255,255,255,.05); color: var(--text); font: inherit; cursor: pointer; }
+  button.act:hover { background: rgba(255,255,255,.11); }
+
+  /* right inspector */
+  #inspect { top: 14px; right: 14px; width: 320px; max-height: calc(100vh - 28px);
+    overflow-y: auto; padding: 14px; display: none; }
+  #inspect.on { display: block; }
+  #inspect h3 { margin: 0 0 3px; font-size: 14px; word-break: break-word; }
+  #inspect .kind { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; margin: 9px 0; }
+  .why { color: var(--dim); font-size: 11.5px; border-left: 2px solid var(--line); padding-left: 8px; margin: 9px 0; }
+  .file { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10.5px;
+    color: var(--accent); word-break: break-all; }
+  .det { font-size: 11.5px; color: #b9c2d6; max-height: 110px; overflow-y: auto; margin: 8px 0; }
+  .rel h4 { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--dim);
+    margin: 12px 0 5px; font-weight: 600; }
+  .rel div { padding: 2px 0; cursor: pointer; font-size: 11.5px; display: flex; gap: 6px; align-items: center; }
+  .rel div:hover { color: #fff; }
+  .rel .t { color: var(--dim); font-size: 10px; flex: none; }
+
+  /* bottom status */
+  #hud { bottom: 14px; left: 14px; padding: 9px 13px; font-size: 11.5px; color: var(--dim); }
+  #hud b { color: var(--text); font-weight: 600; }
+  #hud .warn { color: #ffb03a; }
+  #tip { position: fixed; pointer-events: none; padding: 5px 9px; border-radius: 7px;
+    background: rgba(0,0,0,.9); border: 1px solid var(--line); font-size: 11.5px;
+    display: none; z-index: 10; white-space: nowrap; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--dim); }
+</style>
+</head>
+<body>
+  <div id="loading">building the map…</div>
+  <canvas id="scene"></canvas>
+
+  <aside class="panel" id="controls">
+    <h1>Byeharu — Project Map</h1>
+    <div class="sub" id="subtitle">—</div>
+
+    <div class="grp">
+      <input id="search" placeholder="Search nodes…" autocomplete="off" />
+    </div>
+
+    <div class="grp">
+      <h2>Status</h2>
+      <div id="statusFilters"></div>
+    </div>
+
+    <div class="grp">
+      <h2>Node type</h2>
+      <div id="kindFilters"></div>
+    </div>
+
+    <div class="grp">
+      <h2>Connections</h2>
+      <div id="edgeFilters"></div>
+    </div>
+
+    <div class="grp">
+      <button class="act" id="reset">Reset view &amp; filters</button>
+    </div>
+  </aside>
+
+  <aside class="panel" id="inspect"></aside>
+  <div class="panel" id="hud">—</div>
+  <div id="tip"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
