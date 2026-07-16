@@ -140,6 +140,29 @@
     > EVERY go path) + `FLEETGO_PASS_COMBATDEST`. **15/15 markers green** (run `29506040104`).
     > Corollary: verifying that a guard FAILS is not optional — an edit here silently added ZERO guard
     > lines while the selftest stayed green, and only the mutation tests exposed it.
+  - **Step 3c-1 BUILT + CI-GREEN (migration `0210`) — the read oracle sees the fleet. 17/17 markers**
+    (run `29517083707`). `mainship_resolve_fleet` (the ONE ship→fleet resolver; its per-ship fallback is
+    marked **DELETE AT STEP 4** and grep-enforced) + a **dark** group branch in
+    `mainship_space_validate_context` + `mainship_resolve_docked_location` reading the resolved fleet.
+    - **The two fixes prove each other:** GROUPREAD is only meaningful *because* 0208 dissolved the
+      members' per-ship fleets — there is no per-ship row left that could answer, so a member reporting
+      "docked at Slagworks" can only have learned it from its group's fleet. The proof asserts zero
+      per-ship fleets exist at that moment, or a stray row could fake the result.
+    - **I was wrong and the proof said so.** I "corrected" a sweep that said members resolve to
+      `contradictory_state` and asserted `legacy_home`. **Both sweeps were right, about different ship
+      shapes** — `spatial_state` NULL + `home` (73 of 76 live ships) → `legacy_home` → *hidden*;
+      `at_location` + `stationary` (what commission births) with its fleet dissolved →
+      `contradictory_state` → *incoherent*. Recorded in 0210's header. Do not collapse it to one answer.
+    - **And the parity assertion tested an impossible state:** it ran after a unified go, then flipped
+      the flag off — but while the gate is false no go can happen, so no fleet is dissolved, so that
+      state cannot arise in a dark world. **Parity must be asserted on states the dark world can
+      actually reach.** Moved before the first go; it now pins the real claim: lighting the flag changes
+      NOTHING for an ungrouped ship or a group with no fleet yet.
+  - **Step 3c-2 / 3c-3 NOT built:** the dock-dedup (three inlined copies of the dock block at 0082:64,
+    0159:71, 0200:76 → collapse onto `mainship_resolve_docked_location`; **0138 exists solely because a
+    migration silently re-inlined it, so a fifth copy is the default outcome**) and
+    `get_my_fleet_positions` (0200) projecting the group's fleet. 3c-0 (commission setting `group_id`) is
+    deferred — `mainship_resolve_fleet`'s transition fallback covers ungrouped ships until step 4.
   - **⚠ THE `osn3-*` PROOF FLEET IS MOSTLY RED — AND WAS BEFORE ANY OF THIS WORK.** 8 of 9 osn3
     real-chain proofs FAIL on this branch (anchor1a, s2, s3, s4, s5, s6a, dock0, osn4; only anchor1b
     is green). **Not caused by 0207**: each fails identically at `d8ed494`, the frontend-only step-2
