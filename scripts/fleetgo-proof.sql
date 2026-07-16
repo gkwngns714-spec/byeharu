@@ -554,11 +554,18 @@ begin
   select count(*) into n from public.main_ship_instances
    where space_x is not null or space_y is not null or spatial_state in ('in_space','in_transit');
   if n <> 0 then raise exception 'ISOLATION FAIL: % ship(s) carry a position/transit state — §2 says ships have neither', n; end if;
-  -- ...and the converse: the fleet layer DID carry one. Without this the assertion above is satisfied
-  -- by a system where nothing moved at all.
-  select count(*) into n from public.fleets where space_x is not null or space_y is not null;
+  -- ...and the converse: the FLEET layer really did carry the position. Without this, the ship-free
+  -- assertion above is satisfied by a system where nothing ever moved at all.
+  -- NOT asserted on fleets.space_x: by now the fleet has departed again and CORRECTLY cleared its
+  -- parked coords (FROMSPACE proves that), so current state shows nothing. The evidence that survives
+  -- is the movement rows — one leg TARGETED a coordinate, and a later leg DEPARTED from one.
+  -- (This guard fired on its own author: the first version asserted live coords and failed here.)
+  select count(*) into n from public.fleet_movements where target_type = 'space';
   if n = 0 then
-    raise exception 'ISOLATION FAIL: no fleet ever held a position — the ship-free assertion above is vacuous'; end if;
+    raise exception 'ISOLATION FAIL: no fleet ever targeted a coordinate — the ship-free assertion is vacuous'; end if;
+  select count(*) into n from public.fleet_movements where origin_type = 'space' and origin_x = 123 and origin_y = -78;
+  if n = 0 then
+    raise exception 'ISOLATION FAIL: no fleet ever departed FROM its parked coordinate — 3b is unproven'; end if;
 
   raise notice 'FLEETGO_PASS_ISOLATION: no sortie rows, no OSN movements, ZERO ship positions — yet the FLEET holds one (§2)';
 end $$;

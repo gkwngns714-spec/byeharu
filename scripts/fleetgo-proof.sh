@@ -114,8 +114,10 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "FLEETGO_PASS_SETTLEPARITY" "$SQL" || fail "no runtime parity pin for the re-created live settle"
   grep -q "mainship_space_location_target_legal" "$SQL" \
     || fail "the parity pin does not assert the 0153 dock rule against the function's OWN legality rule"
-  grep -q "the ship-free assertion above is vacuous" "$SQL" \
+  grep -q "the ship-free assertion is vacuous" "$SQL" \
     || fail "ISOLATION does not guard against the vacuous case (nothing moved at all)"
+  grep -q "no fleet ever departed FROM its parked coordinate" "$SQL" \
+    || fail "ISOLATION does not pin the coordinate round-trip (3b would be unproven)"
   for ctx in "'coordinate go'" "'space settle'" "'go from space'"; do
     grep -q "assert_ships_untouched('before_.*', 'after_.*', $ctx)" "$SQL" \
       || fail "the §2 ship-untouched assertion is not applied to: $ctx"
