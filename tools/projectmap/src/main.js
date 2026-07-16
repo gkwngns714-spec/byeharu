@@ -1,6 +1,7 @@
 // Byeharu Project Map — 3D viewer.
 import * as THREE from 'three'
 import { layout } from './layout.js'
+import { createTree } from './tree.js'
 import { deriveStatuses, STATUS, STATUS_ORDER } from './status.js'
 
 const KIND_SIZE = { system: 5.2, flag: 3.4, table: 2.4, migration: 1.7, function: 1.3 }
@@ -180,7 +181,9 @@ for (const t of EDGE_TYPES) {
 }
 
 document.getElementById('search').addEventListener('input', (e) => {
-  state.query = e.target.value.trim().toLowerCase(); apply()
+  const v = e.target.value
+  if (tab === 'tree') { tree?.setQuery(v); return }
+  state.query = v.trim().toLowerCase(); apply()
 })
 document.getElementById('reset').addEventListener('click', () => {
   state.status = new Set(STATUS_ORDER)
@@ -314,7 +317,60 @@ function hover(e) {
 }
 function pick(e) { const n = hit(e); select(n ? n.id : null) }
 
+// ── tabs: the 3D web, and the 조직도 hierarchy ─────────────────────────────────
+const TREE_HINT = {
+  system: 'Who owns what. Systems come from the sole-writer matrix in SYSTEM_BOUNDARIES. Tables sit under their owner; a function sits under the system whose tables it touches, or — failing that — under the system whose functions it calls. Anything that fits neither is left unclassified rather than forced.',
+  build: 'Every migration in the order it landed, grouped by the day git first recorded it — the filename stamps are synthetic and would pile all 205 into one bucket. Each migration lists what it created.',
+  feature: 'Every feature gate, and the migrations that seed or read it. Sorted live first, unproven last.',
+}
+
+let tab = 'map'
+let tree = null
+
+function setTab(next) {
+  tab = next
+  document.body.className = next
+  document.getElementById('treeWrap').classList.toggle('on', next === 'tree')
+  document.getElementById('scene').style.display = next === 'map' ? 'block' : 'none'
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === next))
+  const search = document.getElementById('search')
+  search.value = ''
+  search.placeholder = next === 'tree' ? 'Search the tree…' : 'Search nodes…'
+  if (next === 'tree') {
+    tree ??= createTree({
+      graph, status, svg: document.getElementById('tree'),
+      onSelect: (nodeId, treeNode) => {
+        if (nodeId) return select(nodeId)
+        // a grouping node — no graph node behind it, so explain the grouping
+        const el = document.getElementById('inspect')
+        el.classList.add('on')
+        el.innerHTML = `<div class="kind">${treeNode?.kind ?? 'group'}</div>
+          <h3>${treeNode?.label ?? ''}</h3>
+          ${treeNode?.status ? `<div class="pill" style="background:${treeNode.status.hex}22;color:${treeNode.status.hex}">
+            <span class="swatch" style="background:${treeNode.status.hex}"></span>${treeNode.status.label}</div>` : ''}
+          <div class="why">${treeNode?.note ?? 'A grouping, not a thing in the codebase. Its colour is rolled up from what is underneath it.'}</div>
+          <div class="det">${treeNode?.total ?? 0} item(s) beneath this.</div>`
+      },
+    })
+    tree.setQuery('')
+  } else {
+    state.query = ''; apply()
+  }
+  document.getElementById('treeHint').textContent = TREE_HINT[document.getElementById('treeMode').value]
+}
+
+document.querySelectorAll('#tabs button').forEach((b) => {
+  b.addEventListener('click', () => setTab(b.dataset.tab))
+})
+document.getElementById('treeMode').addEventListener('change', (e) => {
+  tree?.setMode(e.target.value)
+  document.getElementById('treeHint').textContent = TREE_HINT[e.target.value]
+})
+document.getElementById('expandAll').addEventListener('click', () => tree?.expandAll())
+document.getElementById('collapseAll').addEventListener('click', () => tree?.collapseAll())
+
 document.getElementById('loading').remove()
+setTab('map')
 apply()
 ;(function tick() {
   requestAnimationFrame(tick)

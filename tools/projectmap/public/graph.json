@@ -17,6 +17,7 @@
    "label": "init_profiles",
    "stamp": "20260616000001",
    "seq": null,
+   "addedAt": "2026-06-16T20:45:01+09:00",
    "file": "supabase/migrations/20260616000001_init_profiles.sql",
    "detail": "Byeharu — Milestone 1: player profiles + auth structure. Server-authoritative: clients never insert profiles directly; a trigger on auth.users creates one on signup. RLS restricts each player to their own row. A player can read and update only their own profile. Auto-provision a profile whenever a new auth user is created. SECURITY DEFINER so it runs with the privileges needed to write the row,",
    "seedsFlag": []
@@ -27,6 +28,7 @@
    "label": "world_map",
    "stamp": "20260616000002",
    "seq": null,
+   "addedAt": "2026-06-16T21:09:21+09:00",
    "file": "supabase/migrations/20260616000002_world_map.sql",
    "detail": "Byeharu — M2: World Map (Map system). OWNERSHIP (see docs/SYSTEM_BOUNDARIES.md): the Map system is the sole writer of sectors / zones / locations. These are STATIC world structure, seeded here. Map must NOT move fleets, create presence, start combat, give rewards, or touch units/resources. Dynamic state (zone_state/location_state) belongs to the World",
    "seedsFlag": []
@@ -37,6 +39,7 @@
    "label": "game_config",
    "stamp": "20260616000003",
    "seq": null,
+   "addedAt": "2026-06-16T21:55:45+09:00",
    "file": "supabase/migrations/20260616000003_game_config.sql",
    "detail": "Byeharu — M3a: game_config (Reference/Config system). OWNERSHIP (docs/SYSTEM_BOUNDARIES.md): tunable balance values. Writes are admin/migration only; clients get public read for previews. No game-logic here. Numeric accessor used by server systems (e.g. movement travel time).",
    "seedsFlag": []
@@ -47,6 +50,7 @@
    "label": "unit_catalog",
    "stamp": "20260616000004",
    "seq": null,
+   "addedAt": "2026-06-16T21:55:45+09:00",
    "file": "supabase/migrations/20260616000004_unit_catalog.sql",
    "detail": "Byeharu — M3a: unit_types catalog (Reference system). OWNERSHIP: static unit definitions. The SERVER is the authority for unit stats; the client may mirror these for previews only. Public read, no client writes. id is the unit code (stable, human-readable) used as the FK target elsewhere. Seed the starter roster. Slowest unit's speed governs fleet travel time, so",
    "seedsFlag": []
@@ -57,6 +61,7 @@
    "label": "base_system",
    "stamp": "20260616000005",
    "seq": null,
+   "addedAt": "2026-06-16T21:55:45+09:00",
    "file": "supabase/migrations/20260616000005_base_system.sql",
    "detail": "Byeharu — M3a: Base system. OWNERSHIP (docs/SYSTEM_BOUNDARIES.md): the Base system is the SOLE writer of bases / base_units / base_resources. Other systems mutate them only through the functions exposed here (reserve / merge / [add_resources in M4]). Clients never write these tables — RLS grants owner SELECT only; all writes go through",
    "seedsFlag": []
@@ -67,6 +72,7 @@
    "label": "fleet_system",
    "stamp": "20260616000006",
    "seq": null,
+   "addedAt": "2026-06-16T22:03:06+09:00",
    "file": "supabase/migrations/20260616000006_fleet_system.sql",
    "detail": "Byeharu — M3b: Fleet system. OWNERSHIP (docs/SYSTEM_BOUNDARIES.md): sole writer of fleets / fleet_units. Movement, Presence, and (later) Combat change a fleet ONLY through the state-machine functions here — they never write these tables directly. Clients get owner SELECT only; all writes go through SECURITY DEFINER functions.",
    "seedsFlag": []
@@ -77,6 +83,7 @@
    "label": "movement_system",
    "stamp": "20260616000007",
    "seq": null,
+   "addedAt": "2026-06-16T22:03:06+09:00",
    "file": "supabase/migrations/20260616000007_movement_system.sql",
    "detail": "Byeharu — M3b: Movement system. OWNERSHIP (docs/SYSTEM_BOUNDARIES.md): sole writer of fleet_movements. Movement ONLY decides when a fleet departs and arrives. It does NOT compute combat, spawn pirates, give rewards, or apply losses. It is reusable by any system (combat return, trading, captain assignment) because it depends on none of them — callers",
    "seedsFlag": []
@@ -87,6 +94,7 @@
    "label": "presence_system",
    "stamp": "20260616000008",
    "seq": null,
+   "addedAt": "2026-06-16T22:03:06+09:00",
    "file": "supabase/migrations/20260616000008_presence_system.sql",
    "detail": "Byeharu — M3b: Presence system. OWNERSHIP (docs/SYSTEM_BOUNDARIES.md): sole writer of location_presence. Presence only describes \"this fleet is currently at this location and exposed to its rules.\" It does NOT calculate combat damage or grant resources. It routes the location's activity via activity_start(); for M3 the only activity is 'none'.",
    "seedsFlag": []
@@ -97,6 +105,7 @@
    "label": "movement_processor",
    "stamp": "20260616000009",
    "seq": null,
+   "addedAt": "2026-06-16T22:03:06+09:00",
    "file": "supabase/migrations/20260616000009_movement_processor.sql",
    "detail": "Byeharu — M3b: Movement processor. OWNERSHIP: part of the Movement system (writes only fleet_movements). On arrival it hands off via other systems' functions — it never writes their tables: outbound (→ location): Fleet.set_present + Presence.create (which starts activity) return  (→ base):      Base.merge_units + Fleet.complete",
    "seedsFlag": []
@@ -107,6 +116,7 @@
    "label": "player_rpcs",
    "stamp": "20260616000010",
    "seq": null,
+   "addedAt": "2026-06-16T22:03:06+09:00",
    "file": "supabase/migrations/20260616000010_player_rpcs.sql",
    "detail": "Byeharu — M3b: player action RPCs (orchestrators). These are the ONLY write entry points for the client. They validate ownership / state / limits, then call each system's functions in order. They never write another system's tables directly. Server is authoritative — the client supplies only intent (which base, which location, which units); the server decides",
    "seedsFlag": []
@@ -117,6 +127,7 @@
    "label": "cron_movement",
    "stamp": "20260616000011",
    "seq": null,
+   "addedAt": "2026-06-16T22:03:06+09:00",
    "file": "supabase/migrations/20260616000011_cron_movement.sql",
    "detail": "Byeharu — M3b: schedule the movement processor. pg_cron with sub-minute (seconds) scheduling (Supabase Postgres 15.1.1.61+). Only the cron job calls the processor; clients never do. The processor itself is idempotent + FOR UPDATE SKIP LOCKED, so overlapping ticks are safe. Idempotent (re-runnable): drop any existing job of this name first.",
    "seedsFlag": []
@@ -127,6 +138,7 @@
    "label": "base_add_resources",
    "stamp": "20260616000012",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000012_base_add_resources.sql",
    "detail": "Byeharu — M4: Base extension. base_add_resources() is the ONLY way resources are added to a base; it is called solely by the Reward system (reward_grant). Base remains the sole writer of base_resources.",
    "seedsFlag": []
@@ -137,6 +149,7 @@
    "label": "fleet_combat_fns",
    "stamp": "20260616000013",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000013_fleet_combat_fns.sql",
    "detail": "Byeharu — M4: Fleet extensions for combat. Combat reads fleet stats and applies losses ONLY through these functions (Fleet stays the sole writer of fleet_units). Aggregate combat stats for a fleet (read-only). Combat uses this instead of touching fleet_units directly. Apply proportional losses to every unit type in the fleet. Returns the losses as jsonb { unit_type_id: lost_qty, ... } for logging.",
    "seedsFlag": []
@@ -147,6 +160,7 @@
    "label": "combat_tables",
    "stamp": "20260616000014",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000014_combat_tables.sql",
    "detail": "Byeharu — M4: Combat tables (Combat system, sole writer). combat_encounters = the whole battle (attached to location_presence) combat_ticks      = one 2s server-authoritative simulation step (the truth/log) combat_events     = cosmetic visual stream generated from each tick (NOT truth)",
    "seedsFlag": []
@@ -157,6 +171,7 @@
    "label": "reward_system",
    "stamp": "20260616000015",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000015_reward_system.sql",
    "detail": "Byeharu — M4: Reward system (sole writer of reward_grants). reward_grant() is the ONLY path that applies rewards to a base. It is idempotent via a unique (source_type, source_id): a given combat encounter can grant exactly once, preventing duplicate-reward bugs even if a processor runs twice. Grant rewards once for a source (e.g. a combat encounter). On first call it logs",
    "seedsFlag": []
@@ -167,6 +182,7 @@
    "label": "report_system",
    "stamp": "20260616000016",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000016_report_system.sql",
    "detail": "Byeharu — M4: Report system (sole writer of combat_reports). Reports are HISTORY ONLY and never drive game logic. report_create() is idempotent (one report per encounter). get_combat_reports() is a client read RPC. Build the final report from the encounter + its ticks. Idempotent. Client read: a player's combat history (most recent first).",
    "seedsFlag": []
@@ -177,6 +193,7 @@
    "label": "combat_logic",
    "stamp": "20260616000017",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000017_combat_logic.sql",
    "detail": "Byeharu — M4: Combat logic (Combat system). combat_create_encounter() is invoked by Presence.activity_start (hunt_pirates). process_combat_ticks() is the 2s server-authoritative step. It hands off ONLY via approved functions: Fleet (stats/losses/state), Reward (grant→Base), Report, Presence (complete), Movement (return). It never writes Map/Movement/Fleet/Base",
    "seedsFlag": []
@@ -187,6 +204,7 @@
    "label": "presence_combat_hook",
    "stamp": "20260616000018",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000018_presence_combat_hook.sql",
    "detail": "Byeharu — M4: wire combat into Presence (Presence stays the owner of these fns). activity_start now routes hunt_pirates → Combat. presence_request_leave gains the combat retreat branch (start the retreat timer; the combat tick creates the return after retreat_delay, preserving the risk window).",
    "seedsFlag": []
@@ -197,6 +215,7 @@
    "label": "player_rpcs_combat",
    "stamp": "20260616000019",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000019_player_rpcs_combat.sql",
    "detail": "Byeharu — M4: extend player RPCs for combat. send_fleet_to_location now allows hunt_pirates locations (with a server-side min_power check) and tags the mission. request_retreat() is the combat-facing leave; it delegates to Presence. Combat-facing retreat (delegates to Presence's leave/retreat logic).",
    "seedsFlag": []
@@ -207,6 +226,7 @@
    "label": "combat_config_cron",
    "stamp": "20260616000020",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000020_combat_config_cron.sql",
    "detail": "Byeharu — M4: combat timing config + cron schedule. Active-feeling combat: 2s tick, 20s retreat, 30-min forced auto-extract safety. Schedule the combat processor every 2 seconds (idempotent).",
    "seedsFlag": []
@@ -217,6 +237,7 @@
    "label": "lock_function_execute",
    "stamp": "20260616000021",
    "seq": null,
+   "addedAt": "2026-06-16T23:07:56+09:00",
    "file": "supabase/migrations/20260616000021_lock_function_execute.sql",
    "detail": "Byeharu — M4: anti-cheat lockdown of RPC surface (SYSTEM_BOUNDARIES: client has ZERO authority). Postgres grants EXECUTE to PUBLIC by default and PostgREST exposes the whole `public` schema, so without this every internal SECURITY DEFINER function (base_reserve_units, fleet_set_*, process_*, …) is callable by any authenticated client. We revoke that and grant EXECUTE only on the explicit client-fa",
    "seedsFlag": []
@@ -227,6 +248,7 @@
    "label": "combat_integrity_and_fixes",
    "stamp": "20260616000022",
    "seq": null,
+   "addedAt": "2026-06-16T23:45:51+09:00",
    "file": "supabase/migrations/20260616000022_combat_integrity_and_fixes.sql",
    "detail": "Byeharu — M4 fixes (backend): server-authoritative integrity model + correctness. Fixes from browser testing: 1. Defeat must grant NO rewards: clear total_rewards_json on defeat (the report and pending then show 0); reward_grant() is only ever called on escaped/completed. 3. Retreat must not farm: while status='retreating' the fleet still takes damage",
    "seedsFlag": []
@@ -237,6 +259,7 @@
    "label": "combat_per_unit_and_pacing",
    "stamp": "20260617000023",
    "seq": null,
+   "addedAt": "2026-06-17T00:11:43+09:00",
    "file": "supabase/migrations/20260617000023_combat_per_unit_and_pacing.sql",
    "detail": "Byeharu — M4 combat overhaul: readable pacing, decoupled wave HP vs damage, per-unit-type combat HP with server-side damage distribution, carryover, and a richer event feed. Server stays authoritative; client only renders. Root cause of \"instant waves\": wave HP and wave damage were the same value, so a 385-attack fleet one-shot a 195-HP wave. Now:",
    "seedsFlag": []
@@ -247,6 +270,7 @@
    "label": "0021 relock_function_execute",
    "stamp": "20260617000024",
    "seq": "0021",
+   "addedAt": "2026-06-17T00:15:40+09:00",
    "file": "supabase/migrations/20260617000024_relock_function_execute.sql",
    "detail": "Byeharu — re-lock RPC surface after M4 added new functions. Migration 0021 revoked execute on then-existing functions, but Supabase grants EXECUTE to anon/authenticated on NEW public functions by default, so functions created later (e.g. fleet_sync_quantities in 0023) became client-callable again. This re-locks everything and revokes the anon/authenticated default too.",
    "seedsFlag": []
@@ -257,6 +281,7 @@
    "label": "fleet_sync_invoker",
    "stamp": "20260617000025",
    "seq": null,
+   "addedAt": "2026-06-17T00:22:34+09:00",
    "file": "supabase/migrations/20260617000025_fleet_sync_invoker.sql",
    "detail": "Byeharu — make fleet_sync_quantities internal-only via SECURITY INVOKER. Supabase re-grants EXECUTE to anon/authenticated on newly-created public functions, and that grant resists REVOKE by the migration role — so a function added after the lockdown (fleet_sync_quantities, from 0023) stayed client-callable. Defense that does NOT depend on the grant: SECURITY INVOKER. A direct client call",
    "seedsFlag": []
@@ -267,6 +292,7 @@
    "label": "combat_tick3_and_report_survivors",
    "stamp": "20260617000026",
    "seq": null,
+   "addedAt": "2026-06-17T00:34:48+09:00",
    "file": "supabase/migrations/20260617000026_combat_tick3_and_report_survivors.sql",
    "detail": "Byeharu — M4 clarity pass (backend bits): fixed 3s combat tick + per-unit survivors in the report so the post-retreat summary is server-authoritative. (Damage keeps a small ±10% variance; the TICK INTERVAL is fixed, not random.) Rebuild the report from per-unit combat state: exact survivors + losses.",
    "seedsFlag": []
@@ -277,6 +303,7 @@
    "label": "wave_hp_pacing",
    "stamp": "20260617000027",
    "seq": null,
+   "addedAt": "2026-06-17T00:43:09+09:00",
    "file": "supabase/migrations/20260617000027_wave_hp_pacing.sql",
    "detail": "Byeharu — M4 pacing tune: raise wave HP so early waves last ~3+ ticks (the \"easy = 3-6 ticks\" target) instead of ~2. HP scales with danger from here, so later waves naturally reach the normal (6-12) and strong (12+) bands. Pure config change; process_combat_ticks reads cfg_num('enemy_hp_base').",
    "seedsFlag": []
@@ -287,6 +314,7 @@
    "label": "retreat_delay_8s",
    "stamp": "20260617000028",
    "seq": null,
+   "addedAt": "2026-06-17T00:53:23+09:00",
    "file": "supabase/migrations/20260617000028_retreat_delay_8s.sql",
    "detail": "Byeharu — M4: shorten retreat to ~8s (was 20s). Already a config value, so this is a pure tuning change; the UI countdown reads retreat_delay_seconds. Later this can scale by danger/ship/captain.",
    "seedsFlag": []
@@ -297,6 +325,7 @@
    "label": "dev_reset_player",
    "stamp": "20260617000029",
    "seq": null,
+   "addedAt": "2026-06-17T00:53:23+09:00",
    "file": "supabase/migrations/20260617000029_dev_reset_player.sql",
    "detail": "Byeharu — DEV-ONLY reset helper. NOT granted to clients (the re-lock below leaves it callable only via the SQL editor / service role). Clears a test player's stuck combat / movement / presence and frees their fleets. Does NOT touch base_units or base_resources (avoids surprise data loss). Usage (SQL editor): select public.dev_reset_player('<player-uuid>'); Re-lock (a new function was added): revok",
    "seedsFlag": []
@@ -307,6 +336,7 @@
    "label": "m4_cleanup_reward_on_arrival",
    "stamp": "20260617000030",
    "seq": null,
+   "addedAt": "2026-06-17T01:13:38+09:00",
    "file": "supabase/migrations/20260617000030_m4_cleanup_reward_on_arrival.sql",
    "detail": "Byeharu — M4 cleanup: 1) Extract remaining hard-coded combat constants into game_config. 2) Shift combat reward deposit from escape → return-home arrival (rewards stay pending/locked while the fleet travels; deposited once on arrival; idempotent; none on defeat). Implemented via a payload carried on the return movement and deposited by the Movement processor's return branch.",
    "seedsFlag": []
@@ -317,6 +347,7 @@
    "label": "worldstate_tables",
    "stamp": "20260617000031",
    "seq": null,
+   "addedAt": "2026-06-17T07:15:40+09:00",
    "file": "supabase/migrations/20260617000031_worldstate_tables.sql",
    "detail": "Byeharu — M5: World State tables (location_state, zone_state). OWNERSHIP (docs/SYSTEM_BOUNDARIES.md): the World State system is the SOLE writer of location_state + zone_state. These are the dynamic counterpart to the static Map tables (sectors/zones/locations), deliberately deferred until M5 (see 0002_world_map.sql header). Other systems may READ these (Combat reads",
    "seedsFlag": []
@@ -327,6 +358,7 @@
    "label": "worldstate_fns",
    "stamp": "20260617000032",
    "seq": null,
+   "addedAt": "2026-06-17T07:15:40+09:00",
    "file": "supabase/migrations/20260617000032_worldstate_fns.sql",
    "detail": "Byeharu — M5: World State functions + integration edges. Adds the three World State writers (register/unregister/tick), a service-role-only dev helper for the integration test, and wires the two presence lifecycle edges (presence_create → register, presence_complete → unregister). Finally it gives Combat a READ-ONLY danger_modifier multiplier — Combat never writes World State.",
    "seedsFlag": []
@@ -337,6 +369,7 @@
    "label": "cron_location_state",
    "stamp": "20260617000033",
    "seq": null,
+   "addedAt": "2026-06-17T07:15:40+09:00",
    "file": "supabase/migrations/20260617000033_cron_location_state.sql",
    "detail": "Byeharu — M5: World State cron (60s living-world heartbeat). ACYCLIC: process_location_state_ticks() orchestrates World State ONLY. It never calls combat / fleet / reward / report / movement processors (Absolute Law §5). Cron cadence summary across the game: movement   : 30s  (process_fleet_movements)",
    "seedsFlag": []
@@ -347,6 +380,7 @@
    "label": "worldstate_pressure_decay",
    "stamp": "20260617000034",
    "seq": null,
+   "addedAt": "2026-06-17T19:12:11+09:00",
    "file": "supabase/migrations/20260617000034_worldstate_pressure_decay.sql",
    "detail": "Byeharu — M5 balance correction (follow-up #3, Option A): pressure DECAY toward baseline. Problem: the original worldstate_tick drifted pressure UP +drift/tick unconditionally, so with no players every pirate_hunt location climbed to 100 / Severe and punished new players. Fix: passive pressure now DECAYS toward baseline (unattended → returns",
    "seedsFlag": []
@@ -357,6 +391,7 @@
    "label": "unit_costs",
    "stamp": "20260617000035",
    "seq": null,
+   "addedAt": "2026-06-17T20:27:10+09:00",
    "file": "supabase/migrations/20260617000035_unit_costs.sql",
    "detail": "Byeharu — M7: ship metal costs + training-queue config (Reference/Config). Adds a per-unit metal cost to the catalog (co-located with build_time_seconds) and the global training tunables. unit_types is Reference data (public read, admin/ migration write only) — adding a column keeps cost where the unit is defined. Starter costs (∝ unit power; a hunt yields ~30–100 metal, so a frigate ≈ several hun",
    "seedsFlag": []
@@ -367,6 +402,7 @@
    "label": "production_system",
    "stamp": "20260617000036",
    "seq": null,
+   "addedAt": "2026-06-17T20:27:10+09:00",
    "file": "supabase/migrations/20260617000036_production_system.sql",
    "detail": "Byeharu — M7: Training / Production system (server-authoritative ship training). OWNERSHIP (docs/SYSTEM_BOUNDARIES.md): the Production system is the SOLE writer of build_orders. It NEVER writes base_units/base_resources directly — it spends metal via Base.base_spend_resources and deposits finished ships via Base.base_merge_units. Base stays the sole writer of base_units/base_resources. Acyclic: Pr",
    "seedsFlag": []
@@ -377,6 +413,7 @@
    "label": "cron_build_queue",
    "stamp": "20260617000037",
    "seq": null,
+   "addedAt": "2026-06-17T20:27:10+09:00",
    "file": "supabase/migrations/20260617000037_cron_build_queue.sql",
    "detail": "Byeharu — M7: schedule the training-queue processor. ACYCLIC: process_build_queue completes training orders via Base functions only; it never calls Combat / World State / Movement. Cron cadence summary: movement   : 30s combat     :  2s",
    "seedsFlag": []
@@ -387,6 +424,7 @@
    "label": "production_serial_cancel",
    "stamp": "20260617000038",
    "seq": null,
+   "addedAt": "2026-06-17T22:12:02+09:00",
    "file": "supabase/migrations/20260617000038_production_serial_cancel.sql",
    "detail": "Byeharu — M4.5: production queue law fix (serial training + cancellation). BUG: M7's train_units gave EVERY order a complete_at immediately, so all orders \"ticked down\" in parallel. New law: ONE active slot. Only the active item has started_at + completes_at; waiting items have NULL complete_at and do not progress. When the active item completes, the next waiting item starts. Players can cancel.",
    "seedsFlag": []
@@ -397,6 +435,7 @@
    "label": "inventory",
    "stamp": "20260617000039",
    "seq": null,
+   "addedAt": "2026-06-17T23:33:13+09:00",
    "file": "supabase/migrations/20260617000039_inventory.sql",
    "detail": "Byeharu — Phase 3: generic item inventory foundation. A clean, server-authoritative inventory for future item rewards / progression materials. METAL IS UNTOUCHED — it stays in base_resources. A future PendingRewardBundle deposits metal → base_resources (existing path) and items[] → player_inventory (this path). No trading/mining/crafting/etc. here — just the store.",
    "seedsFlag": []
@@ -407,6 +446,7 @@
    "label": "pending_loot_bundle",
    "stamp": "20260617000040",
    "seq": null,
+   "addedAt": "2026-06-17T23:49:21+09:00",
    "file": "supabase/migrations/20260617000040_pending_loot_bundle.sql",
    "detail": "Byeharu — Phase 4: Pending Loot Bundle. Generalize the metal-only pending reward into a future-proof PendingRewardBundle: { \"metal\": 123, \"items\": [ { \"item_id\": \"scrap\", \"quantity\": 3 }, ... ] } The bundle already rides the EXISTING jsonb columns end-to-end — no schema change,",
    "seedsFlag": []
@@ -417,6 +457,7 @@
    "label": "pirate_loot",
    "stamp": "20260617000041",
    "seq": null,
+   "addedAt": "2026-06-18T00:03:58+09:00",
    "file": "supabase/migrations/20260617000041_pirate_loot.sql",
    "detail": "Byeharu — Phase 5: Multi-Item Pirate Loot. Pirate combat now accrues ITEM drops alongside metal. This is a controlled combat reward DATA change, not an engine rewrite: the bundle, carry-home, secured-deposit, idempotency, and forfeit-on-defeat are all unchanged (Phase 4). We only: 1) add two isolated, server-only helpers (the loot table + an items merger), and",
    "seedsFlag": []
@@ -427,6 +468,7 @@
    "label": "support_craft_types",
    "stamp": "20260617000042",
    "seq": null,
+   "addedAt": "2026-06-18T00:28:47+09:00",
    "file": "supabase/migrations/20260617000042_support_craft_types.sql",
    "detail": "Byeharu — Phase 6: Support Craft Reframe (metadata foundation ONLY). Reframes \"build ships\" toward the future \"build support craft / expedition equipment\" model WITHOUT touching the proven Expedition Engine. This migration is pure Reference/Config metadata — like item_types (Phase 3). It adds NOTHING to combat, production, fleets, or movement.",
    "seedsFlag": []
@@ -437,6 +479,7 @@
    "label": "main_ship_instance",
    "stamp": "20260617000043",
    "seq": null,
+   "addedAt": "2026-06-18T00:47:58+09:00",
    "file": "supabase/migrations/20260617000043_main_ship_instance.sql",
    "detail": "Byeharu — Phase 7: Main Ship Instance (additive foundation ONLY). Creates the player's ONE main ship — the player identity, not stackable. This is the emotional center of the future expedition: Main Ship + Captains + Modules + Support Craft → Expedition. Phase 7 only CREATES it; the ship sits 'home' and is consumed by NOTHING yet (no combat hook, no support-craft attachment, no calculate_expeditio",
    "seedsFlag": []
@@ -447,6 +490,7 @@
    "label": "calculate_expedition_stats",
    "stamp": "20260617000044",
    "seq": null,
+   "addedAt": "2026-06-18T08:01:22+09:00",
    "file": "supabase/migrations/20260617000044_calculate_expedition_stats.sql",
    "detail": "Byeharu — Phase 8: calculate_expedition_stats() — the deterministic stat ADAPTER. This is the bridge between the new main-ship model (Phase 7) + support craft metadata (Phase 6) and the proven Expedition Engine. It will EVENTUALLY be the single source of expedition stats (main ship + support craft + later captains + modules + activity).",
    "seedsFlag": []
@@ -457,6 +501,7 @@
    "label": "dev_cleanup_churn",
    "stamp": "20260618000045",
    "seq": null,
+   "addedAt": "2026-06-18T08:50:54+09:00",
    "file": "supabase/migrations/20260618000045_dev_cleanup_churn.sql",
    "detail": "Byeharu — DEV/OPS one-time cleanup (NOT a schema change). The free-tier project went UNHEALTHY (disk full): the REST/PostgREST layer began returning \"upstream request timeout\" on every request while the DIRECT Postgres connection (this migration path) still worked. Root cause: accumulated throwaway test data from dozens of verify runs — above all the combat LOG tables",
    "seedsFlag": []
@@ -467,6 +512,7 @@
    "label": "combat_logging_controls",
    "stamp": "20260618000046",
    "seq": null,
+   "addedAt": "2026-06-18T09:36:13+09:00",
    "file": "supabase/migrations/20260618000046_combat_logging_controls.sql",
    "detail": "Byeharu — Prevention Phase A: combat logging controls + DB visibility. The free-tier disk filled because combat wrote high-volume debug rows on EVERY 2–3s tick: one combat_ticks row + several combat_events rows (worst: one hull_damage event PER unit-group per tick). This makes that logging OPT-IN and adds size/count visibility. NO data is deleted here (retention cleanup is Phase B). No combat outc",
    "seedsFlag": [
@@ -479,6 +525,7 @@
    "label": "runtime_retention_cleanup",
    "stamp": "20260618000047",
    "seq": null,
+   "addedAt": "2026-06-18T09:54:20+09:00",
    "file": "supabase/migrations/20260618000047_runtime_retention_cleanup.sql",
    "detail": "Byeharu — Prevention Phase B: safe retention cleanup (batched, dry-run-first). Deletes ONLY expired, terminal runtime rows in small batches. NEVER TRUNCATE. NEVER touches active gameplay, seeded config/world, or permanent player-owned data (bases, base_resources, base_units, player_inventory, inventory_ledger, main_ship_instances, *_types, game_config, sectors/zones/locations). It is gated by `run",
    "seedsFlag": []
@@ -489,6 +536,7 @@
    "label": "cleanup_test_runtime",
    "stamp": "20260618000048",
    "seq": null,
+   "addedAt": "2026-06-18T10:13:07+09:00",
    "file": "supabase/migrations/20260618000048_cleanup_test_runtime.sql",
    "detail": "Byeharu — Prevention Phase C: self-cleaning verify runs. Verify scripts create throwaway auth users whose emails all match '%test%@example.com' (m4test/m5test/m45test/invtest/p4test…p8test). Every runtime table carries player_id, so verify-created RUNTIME rows are precisely \"rows owned by a test-email player\". This function deletes ONLY those runtime rows. No test_run_id column is needed (the exis",
    "seedsFlag": []
@@ -499,6 +547,7 @@
    "label": "mainship_preview",
    "stamp": "20260618000049",
    "seq": null,
+   "addedAt": "2026-06-18T23:03:11+09:00",
    "file": "supabase/migrations/20260618000049_mainship_preview.sql",
    "detail": "Byeharu — Phase 10B: read-only main-ship expedition stats PREVIEW. A client-callable, auth.uid()-scoped wrapper over calculate_expedition_stats (Phase 8 — the SINGLE stat source). It is **read/compute only**: it never writes, never sends, never touches combat/fleets/rewards, and never commissions a ship. It simply lets a player see what their main ship + a support-craft loadout WOULD bring on an e",
    "seedsFlag": []
@@ -509,6 +558,7 @@
    "label": "mainship_send",
    "stamp": "20260618000050",
    "seq": null,
+   "addedAt": "2026-06-19T00:31:55+09:00",
    "file": "supabase/migrations/20260618000050_mainship_send.sql",
    "detail": "Byeharu — Phase 10C: the FIRST main-ship write path (narrow, additive, flag-gated). GOAL: let a persistent main ship go on a NON-COMBAT expedition and come home, WITHOUT pretending to be a disposable old-style unit fleet. This is the first brick of the Main Ship transition (docs/MAINSHIP_TRANSITION.md). It is deliberately small: • NON-COMBAT ONLY  — destination location.activity_type must be 'none",
    "seedsFlag": [
@@ -521,6 +571,7 @@
    "label": "resolve_fleet_movement_speed",
    "stamp": "20260618000051",
    "seq": null,
+   "addedAt": "2026-06-19T08:31:35+09:00",
    "file": "supabase/migrations/20260618000051_resolve_fleet_movement_speed.sql",
    "detail": "Byeharu — Phase 10C/10D hardening: ONE canonical movement-speed resolver. Before this, send_main_ship_expedition and request_main_ship_return each carried their OWN copy of \"speed = the ship's hull base_speed\" SQL (duplication), and the legacy path used fleet_speed(). This migration introduces a single resolver that both kinds of fleet go through:",
    "seedsFlag": []
@@ -531,6 +582,7 @@
    "label": "mainship_repair_safelock",
    "stamp": "20260618000052",
    "seq": null,
+   "addedAt": "2026-06-19T14:20:50+09:00",
    "file": "supabase/migrations/20260618000052_mainship_repair_safelock.sql",
    "detail": "Byeharu — Phase 10F: main-ship destroyed/repair SAFELOCK foundation. A persistent main ship must be able to LOSE (later, in 10G combat) without ever deleting the player's core ship or soft-locking the account. This migration adds the safe landing + recovery path. It does NOT add combat, a damage formula, a cost, a cooldown, a timer, or any trigger.",
    "seedsFlag": []
@@ -541,6 +593,7 @@
    "label": "mainship_move",
    "stamp": "20260618000053",
    "seq": null,
+   "addedAt": "2026-06-20T18:25:42+09:00",
    "file": "supabase/migrations/20260618000053_mainship_move.sql",
    "detail": "Byeharu — Main-ship direct location→location move (depart-after-arrival). New rule: a main ship that is PRESENT at location A can be sent directly to a valid location B WITHOUT first returning home. Return Home stays an optional action, never a prerequisite. This is a NEW, focused RPC that mirrors request_main_ship_return (present → base) but targets",
    "seedsFlag": []
@@ -551,6 +604,7 @@
    "label": "mainship_spatial_state",
    "stamp": "20260618000054",
    "seq": null,
+   "addedAt": "2026-06-21T01:30:55+09:00",
    "file": "supabase/migrations/20260618000054_mainship_spatial_state.sql",
    "detail": "Byeharu — OSN-2a: durable open-space position model (SCHEMA ONLY — no behavior). Adds the storage + invariants for a future \"stopped in open space\" main-ship position onto main_ship_instances (the persistent, per-ship, owner-read row chosen as the single authoritative owner of a durable open-space coordinate). This pass adds NO reader, resolver, RPC, UI, flag, or gameplay behavior. The OSN-1 marke",
    "seedsFlag": []
@@ -561,6 +615,7 @@
    "label": "osn3_s1_space_schema",
    "stamp": "20260618000055",
    "seq": null,
+   "addedAt": "2026-06-21T09:33:20+09:00",
    "file": "supabase/migrations/20260618000055_osn3_s1_space_schema.sql",
    "detail": "Byeharu — OSN-3 S1: coordinate-domain SCHEMA, invariants, flag (NO writers, flag OFF). First OSN-3 implementation slice. Adds the durable schema the future coordinate-movement system needs, legacy-safe lifecycle constraints, a dedicated OFF flag, and the write-once association trigger for fleets.main_ship_id. It adds NO coordinate writer, processor, cron, RPC, UI, or any change to legacy movement/",
    "seedsFlag": [
@@ -573,6 +628,7 @@
    "label": "osn3_s2_transition_core",
    "stamp": "20260618000056",
    "seq": null,
+   "addedAt": "2026-06-21T10:14:27+09:00",
    "file": "supabase/migrations/20260618000056_osn3_s2_transition_core.sql",
    "detail": "Byeharu — OSN-3 S2: internal transition boundary (lock / validate / resolve-origin) — NO writers. Adds the trusted, SERVER-ONLY locking + validation + origin-resolution helpers that FUTURE OSN-3 writers (S3+) will compose. S2 mutates NOTHING: it never creates/settles/cancels a coordinate movement, never changes ship/fleet/presence/spatial state, never touches a flag, and exposes NO player RPC. All",
    "seedsFlag": []
@@ -583,6 +639,7 @@
    "label": "osn3_s3_begin_move",
    "stamp": "20260618000057",
    "seq": null,
+   "addedAt": "2026-06-21T17:04:03+09:00",
    "file": "supabase/migrations/20260618000057_osn3_s3_begin_move.sql",
    "detail": "Byeharu — OSN-3 S3: first internal coordinate-movement WRITER (flag-dark, server-only). Adds ONE private writer, public.mainship_space_begin_move(...), that begins a coordinate move by composing the deployed S2 boundary (lock → validate → cross-domain exclusion → resolve-origin) and then atomically creating exactly one main_ship_space_movements 'moving' row with a coherent fleet pointer, ship in-t",
    "seedsFlag": []
@@ -593,6 +650,7 @@
    "label": "osn3_s4_arrival_processor",
    "stamp": "20260618000058",
    "seq": null,
+   "addedAt": "2026-06-21T18:44:33+09:00",
    "file": "supabase/migrations/20260618000058_osn3_s4_arrival_processor.sql",
    "detail": "Byeharu — OSN-3 S4: private coordinate-ARRIVAL processor (settles due coordinate moves). flag-dark. Adds ONE internal, service_role-only, SECURITY DEFINER processor that settles a due, still-coherent S3 coordinate movement exactly once, plus a pg_cron job to drive it on the established cadence. It composes the deployed S2 boundary (lock → validate → cross-domain exclusion) and NEVER: • gates on ma",
    "seedsFlag": []
@@ -603,6 +661,7 @@
    "label": "osn3_s5_destruction_coordinate_complete",
    "stamp": "20260618000059",
    "seq": null,
+   "addedAt": "2026-06-21T21:13:02+09:00",
    "file": "supabase/migrations/20260618000059_osn3_s5_destruction_coordinate_complete.sql",
    "detail": "Byeharu — OSN-3 S5: make the trusted main-ship destruction primitive COORDINATE-COMPLETE. Narrow, final coordinate-state compatibility hardening for ONE demonstrated defect: the trusted destruction writer public.dev_set_main_ship_destroyed(p_player) predates the coordinate domain (0055) and therefore cannot destroy a main ship that is in a valid coordinate state without violating a coordinate cons",
    "seedsFlag": []
@@ -613,6 +672,7 @@
    "label": "osn3_s6a_public_space_move_command",
    "stamp": "20260618000060",
    "seq": null,
+   "addedAt": "2026-06-21T23:19:00+09:00",
    "file": "supabase/migrations/20260618000060_osn3_s6a_public_space_move_command.sql",
    "detail": "Byeharu — OSN-3 S6A: the FIRST public, player-facing coordinate-movement command boundary. flag-dark. Adds ONE narrow, authenticated, SECURITY DEFINER wrapper, public.command_main_ship_space_move(...), that lets a signed-in player command their OWN main ship to an open-space coordinate WITHOUT ever touching the internal writer directly. It composes the deployed engine but adds NO movement math and",
    "seedsFlag": []
@@ -623,6 +683,7 @@
    "label": "osn3_dock0_location_arrival",
    "stamp": "20260618000061",
    "seq": null,
+   "addedAt": "2026-06-22T09:48:40+09:00",
    "file": "supabase/migrations/20260618000061_osn3_dock0_location_arrival.sql",
    "detail": "Byeharu — OSN-DOCK-0: explicit named-location ARRIVAL (docking) for the coordinate domain. flag-dark. The smallest missing replacement capability identified by PRES-0: when a main ship completes an OSN coordinate movement that EXPLICITLY targets a named location (target_kind='location' + target_location_id), the arrival processor performs location docking (presence + at_location) instead of settli",
    "seedsFlag": []
@@ -633,6 +694,7 @@
    "label": "osn3_anchor1a_truthful_origin",
    "stamp": "20260618000062",
    "seq": null,
+   "addedAt": "2026-06-23T07:22:07+09:00",
    "file": "supabase/migrations/20260618000062_osn3_anchor1a_truthful_origin.sql",
    "detail": "Byeharu — OSN-ANCHOR-1A: truthful-origin guard. Replaces ONLY the private origin resolver's legacy-origin success branches. flag-dark. PROVEN DEFECT (OSN-ANCHOR-0): public.mainship_space_resolve_origin copied LEGACY map coordinates into OSN movement origins — bases.x/y for home/legacy_home, locations.x/y for at_location/legacy_present — which then drove movement distance, travel time, and the clie",
    "seedsFlag": []
@@ -643,6 +705,7 @@
    "label": "osn3_anchor1b_space_anchors",
    "stamp": "20260618000063",
    "seq": null,
+   "addedAt": "2026-06-23T21:01:56+09:00",
    "file": "supabase/migrations/20260618000063_osn3_anchor1b_space_anchors.sql",
    "detail": "OSN-ANCHOR-1B — additive, EMPTY, server-only canonical anchor schema. Creates public.space_anchors: the single canonical home for non-ship world coordinates in the shared OSN galaxy frame [-10000,10000]^2. This phase is a SCHEMA FOUNDATION ONLY. It: • seeds NO rows; • copies/backfills NOTHING from bases.x/y or locations.x/y (those remain legacy display-only);",
    "seedsFlag": []
@@ -653,6 +716,7 @@
    "label": "osn3_osn4_space_stop",
    "stamp": "20260618000064",
    "seq": null,
+   "addedAt": "2026-06-24T17:37:39+09:00",
    "file": "supabase/migrations/20260618000064_osn3_osn4_space_stop.sql",
    "detail": "Byeharu — OSN-4: player Stop-mid-travel for an active open-space coordinate movement. flag-dark, additive. Adds the first capability to terminate an in-flight target_kind='space' coordinate movement at the ship's CURRENT interpolated point, plus an authenticated public wrapper. It composes the deployed S2 boundary (lock → validate) and reuses the existing receipts/idempotency and the proven in_spa",
    "seedsFlag": []
@@ -663,6 +727,7 @@
    "label": "worldhub1a_location_role_services_homeport",
    "stamp": "20260618000065",
    "seq": null,
+   "addedAt": "2026-06-25T17:33:45+09:00",
    "file": "supabase/migrations/20260618000065_worldhub1a_location_role_services_homeport.sql",
    "detail": "Byeharu — WORLD-HUB-1A: additive, dark, DISCONNECTED city/port + home-port domain foundation. Creates the domain boundaries for future real cities/ports WITHOUT wiring them to anything. This phase is additive schema only. It: • seeds NO rows and reclassifies NO existing location (every existing location becomes 'unclassified'); • creates / consumes NO space_anchors (coordinate truth stays solely w",
    "seedsFlag": []
@@ -673,6 +738,7 @@
    "label": "worldhub1b_a_hidden_ports_eligibility",
    "stamp": "20260618000066",
    "seq": null,
+   "addedAt": "2026-06-25T23:11:03+09:00",
    "file": "supabase/migrations/20260618000066_worldhub1b_a_hidden_ports_eligibility.sql",
    "detail": "Byeharu — WORLD-HUB-1B-A: dark world-catalog + home-port eligibility foundation. Authorized scope ONLY: (1) three fresh HIDDEN starter-port locations; (2) their aligned canonical location anchors; (3) their active docking-service rows; (4) the six-part is_home_port_eligible(location) predicate; (5) the narrow privileged assign_home_port writer; (6) the player_home_port validity trigger.",
    "seedsFlag": []
@@ -683,6 +749,7 @@
    "label": "osn_hub1a_canonical_location_targets",
    "stamp": "20260618000067",
    "seq": null,
+   "addedAt": "2026-06-26T10:18:42+09:00",
    "file": "supabase/migrations/20260618000067_osn_hub1a_canonical_location_targets.sql",
    "detail": "Byeharu — OSN-HUB-1A: Dark Canonical Location-Target Navigation Foundation. flag-dark, additive. Makes the OSN coordinate domain resolve a docked ORIGIN and a named-location TARGET through canonical public.space_anchors (kind='location') instead of legacy locations.x/y or bases.x/y, and lets the owner read-model identify a movement's named destination. NO port reveal, NO home-port assignment, NO b",
    "seedsFlag": []
@@ -693,6 +760,7 @@
    "label": "portlaunch1a_reveal_readiness",
    "stamp": "20260618000068",
    "seq": null,
+   "addedAt": "2026-06-27T03:06:44+09:00",
    "file": "supabase/migrations/20260618000068_portlaunch1a_reveal_readiness.sql",
    "detail": "Byeharu — PORT-LAUNCH-1A: dark port-launch backend/readiness boundaries. Additive, dark, no data change. Adds exactly two new server functions and re-locks the execute surface. Seeds NOTHING, reveals NOTHING, assigns NO home port, changes NO flag, alters NO migration/resolver/Dock-0/Stop/movement/arrival behavior. Production stays dark on deploy: reveal_starter_ports() is service_role-only and NOT",
    "seedsFlag": []
@@ -703,6 +771,7 @@
    "label": "phase9_dock_services_read",
    "stamp": "20260618000069",
    "seq": null,
+   "addedAt": "2026-06-28T22:24:41+09:00",
    "file": "supabase/migrations/20260618000069_phase9_dock_services_read.sql",
    "detail": "PHASE 9 — read-only docked-port surface for the authenticated player. get_my_current_dock_services() exposes the ALREADY-AUTHORITATIVE current-dock truth to the player's own UI. It accepts NO arguments: it derives player = auth.uid(), the player's one main ship, the validated ship context (public.mainship_space_validate_context), and — ONLY when that context is 'at_location' — the validated fleet.",
    "seedsFlag": []
@@ -713,6 +782,7 @@
    "label": "osn_coord_gate_server_authoritative",
    "stamp": "20260618000070",
    "seq": null,
+   "addedAt": "2026-06-29T00:44:59+09:00",
    "file": "supabase/migrations/20260618000070_osn_coord_gate_server_authoritative.sql",
    "detail": "OSN-COORD-GATE-1 — server-authoritative coordinate-travel gate. Closes a pre-existing mismatch: the public raw coordinate command public.command_main_ship_space_move() was guarded only by mainship_space_movement_enabled (which is TRUE for the ENABLED port-to-port path), while the \"free coordinate travel OFF\" control (OSN_COORDINATE_TRAVEL_ENABLED) lived ONLY in the frontend as a compile-time const",
    "seedsFlag": [
@@ -725,6 +795,7 @@
    "label": "0068 osn_coord_enable_1b_readiness_capability",
    "stamp": "20260618000071",
    "seq": "0068",
+   "addedAt": "2026-06-29T21:49:29+09:00",
    "file": "supabase/migrations/20260618000071_osn_coord_enable_1b_readiness_capability.sql",
    "detail": "OSN-COORD-ENABLE-1B — server-derived runtime coordinate-travel READINESS capability (additive, dark, read-only). Extends the existing authenticated read-model RPC public.get_osn_movement_readiness() (migration 0068) with ONE additive boolean field, `coordinate_travel_available`, derived from the existing OSN readiness decision AND the server-owned coordinate gate seeded by migration 0070. This doe",
    "seedsFlag": []
@@ -735,6 +806,7 @@
    "label": "port_entry_commission_normalize",
    "stamp": "20260618000072",
    "seq": null,
+   "addedAt": "2026-06-30T15:33:00+09:00",
    "file": "supabase/migrations/20260618000072_port_entry_commission_normalize.sql",
    "detail": "PORT-ENTRY-1 — First-ship commissioning + same-location dock normalization (additive; Trading prerequisite). Implements the PORT-ENTRY-1A corrected contract: • port_entry_commission_writer(player)  — PRIVATE / service_role-only. Atomically creates a player's FIRST main ship DIRECTLY into canonical at_location docked state at Haven Reach (the server-fixed spawn port). NEVER calls ensure_main_ship_f",
    "seedsFlag": []
@@ -745,6 +817,7 @@
    "label": "trade_fleet_0c_trade_goods_catalog",
    "stamp": "20260618000073",
    "seq": null,
+   "addedAt": "2026-07-03T02:54:36+09:00",
    "file": "supabase/migrations/20260618000073_trade_fleet_0c_trade_goods_catalog.sql",
    "detail": "Byeharu — TRADE-FLEET-0C: trade_goods commodity catalog (metadata foundation ONLY). The smallest self-contained foundation of Trading V1: a pure Reference/Config catalog of tradable commodities — like support_craft_types (Phase 6) and item_types (Phase 3). It adds NOTHING to combat, production, fleets, movement, or the main-ship instance/hull schema. This table is DARK: nothing reads or writes it ",
    "seedsFlag": []
@@ -755,6 +828,7 @@
    "label": "trade_fleet_0c_ship_cargo_lots",
    "stamp": "20260618000074",
    "seq": null,
+   "addedAt": "2026-07-03T02:58:22+09:00",
    "file": "supabase/migrations/20260618000074_trade_fleet_0c_ship_cargo_lots.sql",
    "detail": "Byeharu — TRADE-FLEET-0C: ship_cargo_lots (per-ship locality anchor; additive ONLY). Second additive step of Trading V1: the per-ship cargo table. Purely additive — a new table with FKs to the now-existing `trade_goods` (good catalog, 0073) and to `main_ship_instances` (the Main Ship system). It adds NOTHING to combat, production, fleets, movement, and does NOT touch the instance/hull capacity col",
    "seedsFlag": []
@@ -765,6 +839,7 @@
    "label": "trade_fleet_0c_hull_cargo_capacity_m3",
    "stamp": "20260618000075",
    "seq": null,
+   "addedAt": "2026-07-03T03:02:50+09:00",
    "file": "supabase/migrations/20260618000075_trade_fleet_0c_hull_cargo_capacity_m3.sql",
    "detail": "Byeharu — TRADE-FLEET-0C: hull volume-capacity column (additive; abstract column KEPT). Third additive step of Trading V1: add the per-hull VOLUME capacity to the static Reference/Config catalog `main_ship_hull_types`. Purely additive — a new nullable column, backfilled, then constrained NOT NULL + (> 0). It touches NO RPC and NO reader.",
    "seedsFlag": []
@@ -775,6 +850,7 @@
    "label": "trade_fleet_0c_instance_cargo_capacity_m3",
    "stamp": "20260618000076",
    "seq": null,
+   "addedAt": "2026-07-03T03:06:42+09:00",
    "file": "supabase/migrations/20260618000076_trade_fleet_0c_instance_cargo_capacity_m3.sql",
    "detail": "Byeharu — TRADE-FLEET-0C: instance volume-capacity column (additive, nullable, backfilled). Fourth additive step of Trading V1: add the per-instance VOLUME capacity to `main_ship_instances`, copied (conceptually) from the hull's `base_cargo_capacity_m3` (added in 0075) so larger/specialized hulls can diverge later (§2.3). Purely additive and DELIBERATELY TRANSITIONAL: the column is added NULLABLE ",
    "seedsFlag": []
@@ -785,6 +861,7 @@
    "label": "trade_fleet_0c_commission_populate_cargo_m3",
    "stamp": "20260618000077",
    "seq": null,
+   "addedAt": "2026-07-03T03:14:40+09:00",
    "file": "supabase/migrations/20260618000077_trade_fleet_0c_commission_populate_cargo_m3.sql",
    "detail": "Byeharu — TRADE-FLEET-0C: populate instance cargo_capacity_m3 at commission + enforce NOT NULL. Fifth §2.3 step: both commission insert paths now supply the volume capacity `cargo_capacity_m3` (copied from the hull's `base_cargo_capacity_m3`, added in 0075), and the instance column is promoted to NOT NULL. This completes §2.3 for the instance: every new ship is born with a volume capacity, and no ",
    "seedsFlag": []
@@ -795,6 +872,7 @@
    "label": "trade_fleet_0c_commission_zero_ship_anchor",
    "stamp": "20260618000078",
    "seq": null,
+   "addedAt": "2026-07-03T03:19:36+09:00",
    "file": "supabase/migrations/20260618000078_trade_fleet_0c_commission_zero_ship_anchor.sql",
    "detail": "Byeharu — TRADE-FLEET-0C: re-anchor first-ship idempotency on \"zero ships\" (UNIQUE still retained). Step 6a of the multi-ship structural core (§1a). Both commission writers stop relying on the row-level `on conflict (player_id) do nothing` serialization and instead serialize on \"player currently has zero ships\". `player_id UNIQUE` is DELIBERATELY RETAINED this commit and dropped in the very next t",
    "seedsFlag": []
@@ -805,6 +883,7 @@
    "label": "trade_fleet_0c_drop_player_id_unique",
    "stamp": "20260618000079",
    "seq": null,
+   "addedAt": "2026-07-03T03:22:17+09:00",
    "file": "supabase/migrations/20260618000079_trade_fleet_0c_drop_player_id_unique.sql",
    "detail": "Byeharu — TRADE-FLEET-0C: drop main_ship_instances.player_id UNIQUE (the multi-ship blocker). Step 6b — the tiny, isolated removal of the single load-bearing multi-ship blocker (0A §8.1): the column-level UNIQUE on main_ship_instances.player_id, auto-named `main_ship_instances_player_id_key` (Postgres `<table>_<column>_key` convention for an inline column UNIQUE, seeded at `…0043…:47`).",
    "seedsFlag": []
@@ -815,6 +894,7 @@
    "label": "trade_fleet_0c_commission_additional_ship",
    "stamp": "20260618000080",
    "seq": null,
+   "addedAt": "2026-07-03T03:29:38+09:00",
    "file": "supabase/migrations/20260618000080_trade_fleet_0c_commission_additional_ship.sql",
    "detail": "Byeharu — TRADE-FLEET-0C: explicit, DARK, cap-guarded ADDITIONAL-ship commissioning (§1a–b, §2.5). Adds the sole surface through which a player obtains a 2nd+ main ship — a deliberate, explicit, authenticated action, structurally distinct from the first-ship path. The first-ship dock-build logic is EXTRACTED into a shared private core (port_entry_commission_build) so there is no duplicated dock lo",
    "seedsFlag": [
@@ -827,6 +907,7 @@
    "label": "trade_fleet_0c_cmd_p_main_ship_id_repair",
    "stamp": "20260618000081",
    "seq": null,
+   "addedAt": "2026-07-03T03:39:22+09:00",
    "file": "supabase/migrations/20260618000081_trade_fleet_0c_cmd_p_main_ship_id_repair.sql",
    "detail": "Byeharu — TRADE-FLEET-0C §2.5: per-ship command conversion — shared resolver + FIRST site (repair). Begins the \"every §2.5 site, one coherent slice\" conversion, staged across small BACKWARD-COMPATIBLE commits. Each converted command gains a TRAILING `p_main_ship_id uuid default null`, so existing zero-arg callers (the frontend, until TRADE-UI-1) keep working unchanged — no commit is broken.",
    "seedsFlag": []
@@ -837,6 +918,7 @@
    "label": "trade_fleet_0c_cmd_p_main_ship_id_reads",
    "stamp": "20260618000082",
    "seq": null,
+   "addedAt": "2026-07-03T03:48:00+09:00",
    "file": "supabase/migrations/20260618000082_trade_fleet_0c_cmd_p_main_ship_id_reads.sql",
    "detail": "Byeharu — TRADE-FLEET-0C §2.5: per-ship command conversion — the two READ projections (#4, #5). Second §2.5 commit: convert the two READ-ONLY projections get_my_current_dock_services (#4) and get_osn_movement_readiness (#5). They have no locks/idempotency, share the identical mechanic, and reuse the shared mainship_resolve_owned_ship helper (created in 0081). Each gains a TRAILING `p_main_ship_id ",
    "seedsFlag": []
@@ -847,6 +929,7 @@
    "label": "trade_fleet_0c_cmd_p_main_ship_id_space_active",
    "stamp": "20260618000083",
    "seq": null,
+   "addedAt": "2026-07-03T03:55:23+09:00",
    "file": "supabase/migrations/20260618000083_trade_fleet_0c_cmd_p_main_ship_id_space_active.sql",
    "detail": "Byeharu — TRADE-FLEET-0C §2.5: per-ship command conversion — the two ACTIVE space commands (#2, #3). Third §2.5 commit: convert the two ACTIVE space commands command_main_ship_space_stop (#2) and command_main_ship_space_move_to_location (#3) — both governed by `mainship_space_movement_enabled` (true; the ENABLED port-to-port path). Each gains a TRAILING `p_main_ship_id uuid default null`, so exist",
    "seedsFlag": []
@@ -857,6 +940,7 @@
    "label": "trade_fleet_0c_cmd_p_main_ship_id_normalize",
    "stamp": "20260618000084",
    "seq": null,
+   "addedAt": "2026-07-03T03:59:41+09:00",
    "file": "supabase/migrations/20260618000084_trade_fleet_0c_cmd_p_main_ship_id_normalize.sql",
    "detail": "Byeharu — TRADE-FLEET-0C §2.5: per-ship command conversion — normalize_main_ship_dock (#7, LAST active site). Final §2.5 active-path conversion: normalize_main_ship_dock (#7) gains a TRAILING `p_main_ship_id uuid default null`, resolving its ship via the shared mainship_resolve_owned_ship helper (created in 0081). Backward compatible (zero-arg call → default null → sole-ship shim) — no commit is b",
    "seedsFlag": []
@@ -867,6 +951,7 @@
    "label": "trade_market_1_market_offers",
    "stamp": "20260618000085",
    "seq": null,
+   "addedAt": "2026-07-03T04:27:49+09:00",
    "file": "supabase/migrations/20260618000085_trade_market_1_market_offers.sql",
    "detail": "Byeharu — TRADE-MARKET-1: market_offers price catalog (Reference/Config; additive, DARK). First step of TRADE-MARKET-1, mirroring how TRADE-FLEET-0C began with trade_goods (0073): a pure Reference/Config catalog of per-station buy/sell prices. It adds NOTHING to combat, movement, fleets, or the main-ship/cargo schema. This table is DARK: nothing reads or writes it yet.",
    "seedsFlag": []
@@ -877,6 +962,7 @@
    "label": "trade_market_1_wallet_receipts",
    "stamp": "20260618000086",
    "seq": null,
+   "addedAt": "2026-07-03T04:31:20+09:00",
    "file": "supabase/migrations/20260618000086_trade_market_1_wallet_receipts.sql",
    "detail": "Byeharu — TRADE-MARKET-1: player_wallet + trade_receipts (Trade-Market transactional tables; additive, DARK). Second TRADE-MARKET-1 step: the two Trade-Market-OWNED transactional tables, in one coherent additive commit. Both are owner-read and written ONLY by the forthcoming flag-gated buy/sell RPCs (none this step). They add NOTHING to combat/movement/fleets/cargo; nothing reads or writes them ye",
    "seedsFlag": []
@@ -887,6 +973,7 @@
    "label": "trade_market_1_get_offers",
    "stamp": "20260618000087",
    "seq": null,
+   "addedAt": "2026-07-03T04:35:37+09:00",
    "file": "supabase/migrations/20260618000087_trade_market_1_get_offers.sql",
    "detail": "Byeharu — TRADE-MARKET-1: DARK gate flag + get_market_offers read RPC (additive; DARK, server-rejected). Establishes the flag-gated RPC surface, starting with the READ path so the pattern + dark gate are proven before the atomic writers. Introduces the DARK gate `trade_market_enabled` (default false) — its FIRST consumer — plus the read-only `get_market_offers` RPC. NO wallet/lot/receipt writes he",
    "seedsFlag": [
@@ -899,6 +986,7 @@
    "label": "trade_market_1_child_fk_on_delete_cascade",
    "stamp": "20260618000088",
    "seq": null,
+   "addedAt": "2026-07-03T04:39:23+09:00",
    "file": "supabase/migrations/20260618000088_trade_market_1_child_fk_on_delete_cascade.sql",
    "detail": "Byeharu — TRADE-MARKET-1: per-ship child FKs → ON DELETE CASCADE (integrity; empty/dark tables). Small, isolated integrity fix, made BEFORE the atomic buy/sell writers land. The two per-ship child tables ship_cargo_lots (0074) and trade_receipts (0086) each reference main_ship_instances(main_ship_id) with a plain (NO ACTION / restrict) FK. Once those tables hold rows, that restrict FK would BLOCK ",
    "seedsFlag": []
@@ -909,6 +997,7 @@
    "label": "trade_market_1_buy",
    "stamp": "20260618000089",
    "seq": null,
+   "addedAt": "2026-07-03T04:47:08+09:00",
    "file": "supabase/migrations/20260618000089_trade_market_1_buy.sql",
    "detail": "Byeharu — TRADE-MARKET-1: atomic BUY path (Trade-Cargo lot writer + Wallet debit + market_buy orchestrator). The heart of TRADE-MARKET-1: one commit adds the three cooperating functions. The two helpers are justified by their market_buy caller (no speculative helpers). Everything is DARK + server-rejected via trade_market_enabled (rejected before any ship read). No flag is set true.",
    "seedsFlag": []
@@ -919,6 +1008,7 @@
    "label": "trade_market_1_sell",
    "stamp": "20260618000090",
    "seq": null,
+   "addedAt": "2026-07-03T04:52:11+09:00",
    "file": "supabase/migrations/20260618000090_trade_market_1_sell.sql",
    "detail": "Byeharu — TRADE-MARKET-1: atomic SELL path (Trade-Cargo FIFO consume + Wallet credit + market_sell). Symmetric to the BUY path (0089): one commit adds the FIFO consume writer, the lazy Wallet credit writer, and the market_sell orchestrator — same structure, sole-writer boundaries, per-ship lock, and (main_ship_id, request_id) idempotency. DARK + server-rejected via trade_market_enabled. No flag se",
    "seedsFlag": []
@@ -929,6 +1019,7 @@
    "label": "trade_market_1_add_ship_price",
    "stamp": "20260618000091",
    "seq": null,
+   "addedAt": "2026-07-03T04:58:27+09:00",
    "file": "supabase/migrations/20260618000091_trade_market_1_add_ship_price.sql",
    "detail": "Byeharu — TRADE-MARKET-1 §1b: credit-priced additional-ship debit (ships = the first credit sink). Now that the Wallet writer exists (0089), commission_additional_main_ship becomes the \"first credit sink\": it debits a flat, tunable price from player_wallet (via the existing wallet_debit) under the commission advisory lock, before building the ship. This is a small, focused change to the 0C add-shi",
    "seedsFlag": []
@@ -939,6 +1030,7 @@
    "label": "trade_market_1_resolve_docked_location",
    "stamp": "20260618000092",
    "seq": null,
+   "addedAt": "2026-07-03T13:23:26+09:00",
    "file": "supabase/migrations/20260618000092_trade_market_1_resolve_docked_location.sql",
    "detail": "Byeharu — TRADE-MARKET-1 cleanup: extract the copy-pasted \"resolve docked location\" block into ONE helper. The identical ~10-line docked-location resolve (validate_context → require at_location → read the present/ location fleet's current_location_id) was copy-pasted verbatim into get_market_offers (0087), market_buy (0089), and market_sell (0090). This forward-only migration adds ONE shared read-",
    "seedsFlag": []
@@ -949,6 +1041,7 @@
    "label": "trade_market_1_wallet_seed_capital",
    "stamp": "20260618000093",
    "seq": null,
+   "addedAt": "2026-07-03T23:23:49+09:00",
    "file": "supabase/migrations/20260618000093_trade_market_1_wallet_seed_capital.sql",
    "detail": "Byeharu — TRADE-MARKET-1: seed capital + single shared Wallet lazy-ensure (de-duplication). One commit adds the `starting_credits` tunable and extracts the ONE shared `wallet_ensure(player)` Wallet-leaf helper, then repoints both wallet writers at it — killing the two copies of the \"lazy ensure\" block that lived inline in wallet_debit (0089) and wallet_credit (0090). Behavior is preserved on both ",
    "seedsFlag": []
@@ -959,6 +1052,7 @@
    "label": "trade_market_1_relief_claims",
    "stamp": "20260618000094",
    "seq": null,
+   "addedAt": "2026-07-03T23:28:30+09:00",
    "file": "supabase/migrations/20260618000094_trade_market_1_relief_claims.sql",
    "detail": "Byeharu — TRADE-MARKET-1: no-softlock relief floor — ledger table + config + dark flag (additive, DARK). Schema/config/flag slice of the relief floor: the Trade-Market-OWNED `trade_relief_claims` ledger plus the relief tunables and the dark `trade_relief_enabled` gate. NO RPC and NO writer land here — the table starts dark with no writer, exactly as `player_wallet`/`trade_receipts` did in 0086. No",
    "seedsFlag": [
@@ -971,6 +1065,7 @@
    "label": "trade_market_1_claim_relief",
    "stamp": "20260618000095",
    "seq": null,
+   "addedAt": "2026-07-03T23:33:30+09:00",
    "file": "supabase/migrations/20260618000095_trade_market_1_claim_relief.sql",
    "detail": "Byeharu — TRADE-MARKET-1: no-softlock relief claim orchestrator (Trade Market; DARK; server-rejected). The relief floor's writer: one Trade-Market orchestrator that grants `relief_credits` to a GENUINELY softlocked player and records the claim. Same structure/idiom as market_buy (0089): DARK server-reject before any read, per-account lock, (player_id, request_id) idempotency, one SECURITY DEFINER ",
    "seedsFlag": []
@@ -981,6 +1076,7 @@
    "label": "engine_reward_source_type",
    "stamp": "20260618000096",
    "seq": null,
+   "addedAt": "2026-07-04T00:20:17+09:00",
    "file": "supabase/migrations/20260618000096_engine_reward_source_type.sql",
    "detail": "Byeharu — EXPLORATION-P11 SLICE A: activity-agnostic deposit-on-arrival carrier (prerequisite refactor; NO new feature, NO behavior change; nothing activated). reward_grant(source_type, …) has been generic since 0015/0040 — the ONLY combat coupling in the pending-bundle → attach → deposit-on-arrival path (docs/ACTIVITIES.md §2) is at the CARRIER layer: • fleet_movements has no source-type column, ",
    "seedsFlag": []
@@ -991,6 +1087,7 @@
    "label": "exploration_p11_catalog_and_flag",
    "stamp": "20260618000097",
    "seq": null,
+   "addedAt": "2026-07-04T00:26:10+09:00",
    "file": "supabase/migrations/20260618000097_exploration_p11_catalog_and_flag.sql",
    "detail": "Byeharu — EXPLORATION-P11 SLICE B: exploration reward-item catalog entries + the dark capability flag (foundations only — NO gameplay logic, NO RPC, NO table, NOTHING client-reachable). (1) Exploration rewards reuse the EXISTING item catalog + player_inventory path pirate loot uses (0039/0040/0041): no new inventory table, no new depositor. reward_grant stays the sole depositor — its item validati",
    "seedsFlag": [
@@ -1003,6 +1100,7 @@
    "label": "exploration_p11_sites_schema",
    "stamp": "20260618000098",
    "seq": null,
+   "addedAt": "2026-07-04T00:31:31+09:00",
    "file": "supabase/migrations/20260618000098_exploration_p11_sites_schema.sql",
    "detail": "Byeharu — EXPLORATION-P11 SLICE C: exploration domain schema — hidden exploration_sites + per-player exploration_discoveries (tables + seed + RLS ONLY; no RPC, no processor, no client path; the feature stays fully DARK behind exploration_enabled=false from 0097). (1) SITES ARE HIDDEN — server-only read, fail-closed by construction. exploration_sites is migration-seeded static world data with NO ru",
    "seedsFlag": []
@@ -1013,6 +1111,7 @@
    "label": "exploration_p11_scan_command",
    "stamp": "20260618000099",
    "seq": null,
+   "addedAt": "2026-07-04T00:42:17+09:00",
    "file": "supabase/migrations/20260618000099_exploration_p11_scan_command.sql",
    "detail": "Byeharu — EXPLORATION-P11 SLICE D: the dark command_exploration_scan write path — OSN-proximity scan → per-player discovery with a PENDING (not yet deposited) reward bundle. THE ENTIRE SURFACE IS DARK TODAY: exploration_enabled = 'false' (0097), and the private writer rejects 'feature_disabled' BEFORE any other read, lock, or write (the 0097 reject-before-any-read law; 0070 idiom), with a defense-",
    "seedsFlag": []
@@ -1023,6 +1122,7 @@
    "label": "exploration_p11_securing_processor",
    "stamp": "20260618000100",
    "seq": null,
+   "addedAt": "2026-07-04T00:51:07+09:00",
    "file": "supabase/migrations/20260618000100_exploration_p11_securing_processor.sql",
    "detail": "Byeharu — EXPLORATION-P11 SLICE E: the dark securing/deposit path — pending discoveries → reward_grant('exploration', …) when the scanning ship next settles SAFE, via Exploration's OWN cron processor (the docs/ACTIVITIES.md \"own cron per activity\" template). DESIGN RE-DECISION (corrects the Slice-C carrier law; SYSTEM_BOUNDARIES + DEV_LOG synced this same step): Slice C said exploration deposits r",
    "seedsFlag": []
@@ -1033,6 +1133,7 @@
    "label": "exploration_p11_read_surface",
    "stamp": "20260618000101",
    "seq": null,
+   "addedAt": "2026-07-04T00:55:11+09:00",
    "file": "supabase/migrations/20260618000101_exploration_p11_read_surface.sql",
    "detail": "Byeharu — EXPLORATION-P11 SLICE F: the dark read surface — get_my_exploration_discoveries() (reveal-after-discovery). Read-only; no write anywhere; dark-gated like every exploration surface. (1) THE CLIENT NEVER READS exploration_sites DIRECTLY. Reveal-after-discovery goes through this ONE server read RPC: it joins the caller's OWN exploration_discoveries rows to the hidden site rows and returns O",
    "seedsFlag": []
@@ -1043,6 +1144,7 @@
    "label": "mining_p12_config_and_flag",
    "stamp": "20260618000102",
    "seq": null,
+   "addedAt": "2026-07-04T04:44:06+09:00",
    "file": "supabase/migrations/20260618000102_mining_p12_config_and_flag.sql",
    "detail": "Byeharu — MINING-P12 SLICE A: the dark capability flag + mining tunables (foundations only — NO gameplay logic, NO RPC, NO table, NO catalog rows, NOTHING client-reachable). Phase 12 Mining mirrors the exploration 0097–0101 five-slice template (see MINING_P12_RECON.local.md §8–§9, decisions self-approved 2026-07-04): slice B adds the hidden mining_fields + per-extraction mining_extractions schema,",
    "seedsFlag": [
@@ -1055,6 +1157,7 @@
    "label": "mining_p12_fields_schema",
    "stamp": "20260618000103",
    "seq": null,
+   "addedAt": "2026-07-04T04:49:47+09:00",
    "file": "supabase/migrations/20260618000103_mining_p12_fields_schema.sql",
    "detail": "Byeharu — MINING-P12 SLICE B: mining domain schema — hidden mining_fields + per-extraction mining_extractions (tables + seed + RLS ONLY; no RPC, no processor, no client path; the feature stays fully DARK behind mining_enabled=false from 0102 — NOTHING can write these tables until the slice-C command exists). Mirrors the exploration schema slice 0098 (structure, idioms, coordinate convention, RLS",
    "seedsFlag": []
@@ -1065,6 +1168,7 @@
    "label": "mining_p12_extract_command",
    "stamp": "20260618000104",
    "seq": null,
+   "addedAt": "2026-07-04T04:55:29+09:00",
    "file": "supabase/migrations/20260618000104_mining_p12_extract_command.sql",
    "detail": "Byeharu — MINING-P12 SLICE C: the dark command_mining_extract write path — OSN-proximity extraction → a pending mining_extractions row (bundle NOT yet deposited). THE ENTIRE SURFACE IS DARK TODAY: mining_enabled = 'false' (0102), and the private writer rejects 'feature_disabled' BEFORE any other read, lock, or write (the 0097 reject-before-any-read law; 0070 idiom), with a defense-in-depth + anti-",
    "seedsFlag": []
@@ -1075,6 +1179,7 @@
    "label": "mining_p12_securing_processor",
    "stamp": "20260618000105",
    "seq": null,
+   "addedAt": "2026-07-04T04:59:38+09:00",
    "file": "supabase/migrations/20260618000105_mining_p12_securing_processor.sql",
    "detail": "Byeharu — MINING-P12 SLICE D: the dark securing/deposit path — pending extractions → reward_grant('mining', …) when the extracting ship next settles SAFE, via Mining's OWN cron processor (the docs/ACTIVITIES.md \"own cron per activity\" template; mirrors the exploration securing processor 0100 exactly — mining's as-built extraction rows already model the lifecycle the same way (secured_at NULL = pen",
    "seedsFlag": []
@@ -1085,6 +1190,7 @@
    "label": "mining_p12_read_surface",
    "stamp": "20260618000106",
    "seq": null,
+   "addedAt": "2026-07-04T05:02:37+09:00",
    "file": "supabase/migrations/20260618000106_mining_p12_read_surface.sql",
    "detail": "Byeharu — MINING-P12 SLICE E: the dark read surface — get_my_mining_extractions() (reveal-after-extraction). Read-only; no write anywhere; dark-gated like every mining surface. Mirrors the exploration read surface 0101 exactly. (1) THE CLIENT NEVER READS mining_fields DIRECTLY. Reveal-after-extraction goes through this ONE server read RPC: it joins the caller's OWN mining_extractions rows to the h",
    "seedsFlag": []
@@ -1095,6 +1201,7 @@
    "label": "modules_p13_catalog_and_flag",
    "stamp": "20260618000107",
    "seq": null,
+   "addedAt": "2026-07-04T05:51:29+09:00",
    "file": "supabase/migrations/20260618000107_modules_p13_catalog_and_flag.sql",
    "detail": "Byeharu — MODULES-P13 SLICE A: the dark capability flag + the module catalog/recipe config tables + starter seeds (foundations only — NO gameplay logic, NO RPC, NO instances table, NO frontend, NOTHING client-writable). Phase 13 \"Module instances + crafting\" (ROADMAP :88 — \"instances, not stack-only\") follows the exploration/mining slice template (0097–0101 / 0102–0106). LOCKED DESIGN DECISIONS",
    "seedsFlag": [
@@ -1107,6 +1214,7 @@
    "label": "modules_p13_instances_schema",
    "stamp": "20260618000108",
    "seq": null,
+   "addedAt": "2026-07-04T05:56:21+09:00",
    "file": "supabase/migrations/20260618000108_modules_p13_instances_schema.sql",
    "detail": "Byeharu — MODULES-P13 SLICE B: the module_instances schema + the single Modules mint writer (table + RLS + ONE internal function ONLY; no craft command, no receipts table, no read surface, no frontend; the feature stays fully DARK behind module_crafting_enabled=false from 0107 — NOTHING client-reachable can write this table, and no caller of the mint writer exists yet). Mirrors the P11/P12 player-",
    "seedsFlag": []
@@ -1117,6 +1225,7 @@
    "label": "modules_p13_craft_command",
    "stamp": "20260618000109",
    "seq": null,
+   "addedAt": "2026-07-04T08:57:33+09:00",
    "file": "supabase/migrations/20260618000109_modules_p13_craft_command.sql",
    "detail": "Byeharu — MODULES-P13 SLICE C: the dark craft command — module_craft_receipts (player-scoped idempotency ledger, Production-owned) + the two-layer craft_module wrapper → private production_craft_module writer. NO read surface, NO frontend this slice. THE ENTIRE SURFACE IS DARK TODAY: module_crafting_enabled = 'false' (0107), and the private writer rejects 'feature_disabled' BEFORE any other read (",
    "seedsFlag": []
@@ -1127,6 +1236,7 @@
    "label": "modules_p13_read_surface",
    "stamp": "20260618000110",
    "seq": null,
+   "addedAt": "2026-07-04T09:01:07+09:00",
    "file": "supabase/migrations/20260618000110_modules_p13_read_surface.sql",
    "detail": "Byeharu — MODULES-P13 SLICE D: the dark read surface — get_my_module_instances(). Read-only; no write anywhere; dark-gated like every module-crafting surface. Mirrors the exploration/mining read surfaces 0101/0106 exactly. (1) ONE gated RPC for the PLAYER-STATE data only. get_my_module_instances() returns the caller's OWN module_instances rows joined to their module_types catalog identity, newest ",
    "seedsFlag": []
@@ -1137,6 +1247,7 @@
    "label": "fitting_p14_config_and_stats",
    "stamp": "20260618000111",
    "seq": null,
+   "addedAt": "2026-07-04T09:41:42+09:00",
    "file": "supabase/migrations/20260618000111_fitting_p14_config_and_stats.sql",
    "detail": "Byeharu — FITTING-P14 SLICE A: the dark capability flag + the module stats/slot-cost catalog wiring (foundations only — NO gameplay logic, NO RPC, NO fittings table, NO adapter change, NO frontend, NOTHING client-writable). Phase 14 \"Module fitting\" (ROADMAP :89 — \"`fit_module_to_ship` | server-validated; feeds stats\") follows the Phase-13 slice template (0107–0110). LOCKED DESIGN DECISIONS (plann",
    "seedsFlag": [
@@ -1149,6 +1260,7 @@
    "label": "fitting_p14_fittings_schema",
    "stamp": "20260618000112",
    "seq": null,
+   "addedAt": "2026-07-04T09:47:40+09:00",
    "file": "supabase/migrations/20260618000112_fitting_p14_fittings_schema.sql",
    "detail": "Byeharu — FITTING-P14 SLICE B: the fitting-state table + THE ONE writer (table + RLS + ONE internal function ONLY; no RPC wrapper, no receipts table, no adapter change, no frontend; the feature stays fully DARK behind module_fitting_enabled=false from 0111 — NOTHING client-reachable can write this table, and no caller of the writer exists yet). Mirrors the Phase-13 instances slice (0108 module_ins",
    "seedsFlag": []
@@ -1159,6 +1271,7 @@
    "label": "fitting_p14_fit_command",
    "stamp": "20260618000113",
    "seq": null,
+   "addedAt": "2026-07-04T09:56:35+09:00",
    "file": "supabase/migrations/20260618000113_fitting_p14_fit_command.sql",
    "detail": "Byeharu — FITTING-P14 SLICE C: the dark two-layer fit/unfit command — module_fitting_receipts (player-scoped idempotency ledger, Fitting-owned) + ONE private command (fitting_execute_command) behind TWO thin authenticated wrappers (fit_module_to_ship / unfit_module_from_ship). NO frontend, NO adapter change, NO verify script this slice. THE ENTIRE SURFACE IS DARK TODAY: module_fitting_enabled = 'f",
    "seedsFlag": []
@@ -1169,6 +1282,7 @@
    "label": "fitting_p14_settled_safe_rule",
    "stamp": "20260618000114",
    "seq": null,
+   "addedAt": "2026-07-04T10:05:44+09:00",
    "file": "supabase/migrations/20260618000114_fitting_p14_settled_safe_rule.sql",
    "detail": "Byeharu — FITTING-P14 SLICE C2: settled-SAFE ship-state rule (forward-only correction of the 0113 game rule; a single-rule surgical re-create — the 0044-style `create or replace` forward-only idiom. 0001–0113 unedited; 0113 stays as history). WHY: the slice-C review confirmed the strict `spatial_state = 'home'` rule is dead-on-arrival — NO shipped writer ever produces 'home' (commissions land 'at_",
    "seedsFlag": []
@@ -1179,6 +1293,7 @@
    "label": "fitting_p14_stats_adapter",
    "stamp": "20260618000115",
    "seq": null,
+   "addedAt": "2026-07-04T10:12:06+09:00",
    "file": "supabase/migrations/20260618000115_fitting_p14_stats_adapter.sql",
    "detail": "Byeharu — FITTING-P14 SLICE D: the stats integration — fitted modules feed calculate_expedition_stats via capacity/tradeoff (a `create or replace` re-create of the 0044 adapter; the 0044-style forward-only idiom. 0001–0114 unedited). ROADMAP law 4 fulfilled for modules: \"replace the SOURCE of expedition stats\", and the source \"enforces capacity + tradeoffs (never a plain sum)\". The support-craft l",
    "seedsFlag": []
@@ -1189,6 +1304,7 @@
    "label": "fitting_p14_read_surface",
    "stamp": "20260618000116",
    "seq": null,
+   "addedAt": "2026-07-04T10:15:36+09:00",
    "file": "supabase/migrations/20260618000116_fitting_p14_read_surface.sql",
    "detail": "Byeharu — FITTING-P14 SLICE E: the dark read surface — get_my_ship_fittings(). Read-only; no write anywhere; dark-gated like every module-fitting surface. Mirrors the modules read surface 0110 (the 0101/0106 family) exactly, except where stated. (1) ONE gated RPC for the PLAYER-STATE data only. get_my_ship_fittings() returns the caller's OWN ship_module_fittings rows joined DOWNWARD (via module_in",
    "seedsFlag": []
@@ -1199,6 +1315,7 @@
    "label": "captain_p15_catalog_and_flag",
    "stamp": "20260618000117",
    "seq": null,
+   "addedAt": "2026-07-04T15:33:57+09:00",
    "file": "supabase/migrations/20260618000117_captain_p15_catalog_and_flag.sql",
    "detail": "Byeharu — CAPTAIN-P15 SLICE A: the dark capability flag + the captain catalog table + starter seeds (foundations only — NO gameplay logic, NO RPC, NO instances/assignment/receipt tables, NO adapter change, NO frontend, NOTHING client-writable). Phase 15 \"Captain instances + assignment\" (ROADMAP :90 — \"effects via `calculate_expedition_stats`\") follows the P13/P14 slice template (0107–0110 / 0111–0",
    "seedsFlag": [
@@ -1211,6 +1328,7 @@
    "label": "captain_p15_instances_schema",
    "stamp": "20260618000118",
    "seq": null,
+   "addedAt": "2026-07-04T15:38:40+09:00",
    "file": "supabase/migrations/20260618000118_captain_p15_instances_schema.sql",
    "detail": "Byeharu — CAPTAIN-P15 SLICE B: the captain_instances schema + the single Captain mint writer (table + RLS + ONE internal function ONLY; no assignment table, no receipts, no commands, no read surface, no frontend; the feature stays fully DARK behind captain_assignment_enabled=false from 0117 — NOTHING client-reachable can write this table, and no caller of the mint writer exists yet).",
    "seedsFlag": []
@@ -1221,6 +1339,7 @@
    "label": "captain_p15_assignments_schema",
    "stamp": "20260618000119",
    "seq": null,
+   "addedAt": "2026-07-04T15:44:53+09:00",
    "file": "supabase/migrations/20260618000119_captain_p15_assignments_schema.sql",
    "detail": "Byeharu — CAPTAIN-P15 SLICE C: the assignment-state table + THE ONE writer (table + RLS + ONE internal function ONLY; no RPC wrapper, no receipts table, no settled-SAFE rule, no read surface, no adapter change, no frontend; the feature stays fully DARK behind captain_assignment_enabled=false from 0117 — NOTHING client-reachable can write this table, and no caller of the writer exists yet).",
    "seedsFlag": []
@@ -1231,6 +1350,7 @@
    "label": "captain_p15_assign_command",
    "stamp": "20260618000120",
    "seq": null,
+   "addedAt": "2026-07-04T15:52:59+09:00",
    "file": "supabase/migrations/20260618000120_captain_p15_assign_command.sql",
    "detail": "Byeharu — CAPTAIN-P15 SLICE D: the dark two-layer assign/unassign command — captain_assignment_receipts (player-scoped idempotency ledger, Captain-owned) + ONE private command (captain_execute_command) behind TWO thin authenticated wrappers (assign_captain_to_ship / unassign_captain_from_ship). NO adapter change, NO read surface, NO frontend, NO verify script this slice.",
    "seedsFlag": []
@@ -1241,6 +1361,7 @@
    "label": "captain_p15_settled_safe_rule",
    "stamp": "20260618000121",
    "seq": null,
+   "addedAt": "2026-07-04T16:02:53+09:00",
    "file": "supabase/migrations/20260618000121_captain_p15_settled_safe_rule.sql",
    "detail": "Byeharu — CAPTAIN-P15 SLICE E: the settled-SAFE game rule for captain assignment (the 0114 analogue) + the shared-leaf extraction the no-duplication HARD RULE now requires (forward-only `create or replace` re-creates — the 0044/0114/0115 idiom. 0001–0120 unedited; 0114/0120 stay as history). WHAT 0114 WAS READ TO CONTAIN (the slice spec's first step): the settled-SAFE check is INLINE",
    "seedsFlag": []
@@ -1251,6 +1372,7 @@
    "label": "captain_p15_stats_adapter",
    "stamp": "20260618000122",
    "seq": null,
+   "addedAt": "2026-07-04T16:10:01+09:00",
    "file": "supabase/migrations/20260618000122_captain_p15_stats_adapter.sql",
    "detail": "Byeharu — CAPTAIN-P15 SLICE F: the stats integration — assigned captains feed calculate_expedition_stats via headcount-capacity/tradeoff (a `create or replace` re-create of the 0115 adapter; the 0044/0115-style forward-only idiom. 0001–0121 unedited). ROADMAP law 4 fulfilled for captains — the Phase-15 target itself (ROADMAP :90 \"Captain instances + assignment | effects via `calculate_expedition_s",
    "seedsFlag": []
@@ -1261,6 +1383,7 @@
    "label": "captain_p15_read_surface",
    "stamp": "20260618000123",
    "seq": null,
+   "addedAt": "2026-07-04T19:55:10+09:00",
    "file": "supabase/migrations/20260618000123_captain_p15_read_surface.sql",
    "detail": "Byeharu — CAPTAIN-P15 SLICE G: the dark read surface — get_my_captain_instances() + get_my_ship_captains(ship). Read-only; no write anywhere; dark-gated like every captain-assignment surface. Each RPC mirrors its own analogue's idiom precisely: get_my_captain_instances ↔ 0110 (get_my_module_instances), get_my_ship_captains ↔ 0116 (get_my_ship_fittings) — both read first, per the slice spec.",
    "seedsFlag": []
@@ -1271,6 +1394,7 @@
    "label": "captain_p16_progression_flag",
    "stamp": "20260618000124",
    "seq": null,
+   "addedAt": "2026-07-04T20:22:28+09:00",
    "file": "supabase/migrations/20260618000124_captain_p16_progression_flag.sql",
    "detail": "Byeharu — CAPTAIN-P16 SLICE 1: the dark capability flag for Phase-16 captain progression (flag-only — NO recipe table, NO command, NO writer, NO adapter change, NO frontend, NOTHING client-writable, NO flag flipped true). This is the 0107/0117 flag-seed idiom verbatim: the capability exists dark, inert, with no reader/writer referencing it yet. Phase 16 \"Captain progression (consumes inventory)\" (",
    "seedsFlag": [
@@ -1283,6 +1407,7 @@
    "label": "captain_p16_recruit_recipes",
    "stamp": "20260618000125",
    "seq": null,
+   "addedAt": "2026-07-04T20:28:22+09:00",
    "file": "supabase/migrations/20260618000125_captain_p16_recruit_recipes.sql",
    "detail": "Byeharu — CAPTAIN-P16 SLICE 2: the recruitment recipe catalog `captain_recipe_ingredients` + seeds (the 0107 `module_recipe_ingredients` analogue, captain domain). Catalog/config ONLY — NO command, NO writer, NO RPC, NO adapter change, NO frontend, NO flag flipped. The table is INERT this slice (nothing reads it yet). Phase 16 \"Captain progression (consumes inventory)\" — captain RECRUITMENT that c",
    "seedsFlag": []
@@ -1293,6 +1418,7 @@
    "label": "captain_p16_recruit_command",
    "stamp": "20260618000126",
    "seq": null,
+   "addedAt": "2026-07-04T20:35:43+09:00",
    "file": "supabase/migrations/20260618000126_captain_p16_recruit_command.sql",
    "detail": "Byeharu — CAPTAIN-P16 SLICE 3: the dark recruit command — captain_recruit_receipts (player-scoped idempotency ledger, Production-owned) + the two-layer recruit_captain wrapper → private production_recruit_captain writer. NO read surface, NO adapter change, NO frontend this slice. This is the 0109 module-craft command mirrored POINT-FOR-POINT with the captain domain substituted: crafting a module →",
    "seedsFlag": []
@@ -1303,6 +1429,7 @@
    "label": "ranking_p17_seasons_and_flag",
    "stamp": "20260618000127",
    "seq": null,
+   "addedAt": "2026-07-04T21:13:55+09:00",
    "file": "supabase/migrations/20260618000127_ranking_p17_seasons_and_flag.sql",
    "detail": "Byeharu — RANKING-P17 SLICE 0: the dark capability flag + the Ranking-owned root table `ranking_seasons` (foundations only — NO scoring function, NO standings table, NO read RPC, NO season-management writer, NO frontend, NOTHING client-writable, NO flag flipped true). Phase 17 \"Ranking / competition (weekly/monthly seasons; combat/trade/explore/mine)\" (ROADMAP :92 — \"reads finalized events; reset ",
    "seedsFlag": [
@@ -1315,6 +1442,7 @@
    "label": "ranking_p17_standings_schema",
    "stamp": "20260618000128",
    "seq": null,
+   "addedAt": "2026-07-04T21:18:23+09:00",
    "file": "supabase/migrations/20260618000128_ranking_p17_standings_schema.sql",
    "detail": "Byeharu — RANKING-P17 SLICE 1: the standings (leaderboard) schema (table + RLS + leaderboard index + comments ONLY; NO scoring function, NO season-management writer, NO read RPC, NO frontend; the feature stays fully DARK behind `ranking_enabled=false` from 0127 — NOTHING can write this table yet, and no reader references it). Mirrors the prior schema-only slices (0118 captain_instances / 0108 modu",
    "seedsFlag": []
@@ -1325,6 +1453,7 @@
    "label": "ranking_p17_season_open",
    "stamp": "20260618000129",
    "seq": null,
+   "addedAt": "2026-07-04T21:23:40+09:00",
    "file": "supabase/migrations/20260618000129_ranking_p17_season_open.sql",
    "detail": "Byeharu — RANKING-P17 SLICE 2: the season-management writer — `ranking_season_open`, the SOLE writer of `ranking_seasons` (0127). PRIVATE, SECURITY DEFINER, service-role-only, DARK behind `ranking_enabled=false` (0127). NO standings scoring, NO read RPC, NO player wrapper, NO frontend this slice. Phase 17 \"Ranking / competition … reset by season, not deletion\" (ROADMAP :92). This is the",
    "seedsFlag": []
@@ -1335,6 +1464,7 @@
    "label": "ranking_p17_accrue_standings",
    "stamp": "20260618000130",
    "seq": null,
+   "addedAt": "2026-07-04T21:31:21+09:00",
    "file": "supabase/migrations/20260618000130_ranking_p17_accrue_standings.sql",
    "detail": "Byeharu — RANKING-P17 SLICE 3: the core standings-scoring accrual — `ranking_accrue_standings`, THE SOLE writer of `ranking_standings` (0128), reading `reward_grants` (0015) DOWNWARD. PRIVATE, SECURITY DEFINER, service-role-only, DARK behind `ranking_enabled=false` (0127). NO read RPC, NO player wrapper, NO cron schedule, NO frontend this slice. Phase 17 \"Ranking / competition … reads finalized ev",
    "seedsFlag": []
@@ -1345,6 +1475,7 @@
    "label": "ranking_p17_read_surface",
    "stamp": "20260618000131",
    "seq": null,
+   "addedAt": "2026-07-04T21:36:29+09:00",
    "file": "supabase/migrations/20260618000131_ranking_p17_read_surface.sql",
    "detail": "Byeharu — RANKING-P17 SLICE 4: the dark read surface — get_ranking_seasons() + get_ranking_leaderboard(season, dimension, limit). Read-only; no write anywhere; dark-gated like every Ranking surface. Mirrors the 0123/0116 read-surface idiom: jsonb envelope · stable · security definer · dark gate on `ranking_enabled` BEFORE any row read (the identical {ok:false, code:'feature_disabled'} for every ca",
    "seedsFlag": []
@@ -1355,6 +1486,7 @@
    "label": "location_invest_p18_flag_and_ledger",
    "stamp": "20260618000132",
    "seq": null,
+   "addedAt": "2026-07-04T22:09:22+09:00",
    "file": "supabase/migrations/20260618000132_location_invest_p18_flag_and_ledger.sql",
    "detail": "Byeharu — LOCATION-INVEST-P18 SLICE 0: the dark capability flag + the Location-Investment-owned persistent root table `location_investments` (foundations only — NO writer function, NO invest command, NO read RPC, NO aggregate read surface, NO frontend, NO cron, NOTHING client-writable, NO tunables beyond the flag, NO flag flipped true). Phase 18 \"Location investment (seasonal investment score vs p",
    "seedsFlag": [
@@ -1367,6 +1499,7 @@
    "label": "location_invest_p18_invest_command",
    "stamp": "20260618000133",
    "seq": null,
+   "addedAt": "2026-07-04T22:18:35+09:00",
    "file": "supabase/migrations/20260618000133_location_invest_p18_invest_command.sql",
    "detail": "Byeharu — LOCATION-INVEST-P18 SLICE 1: the SOLE-writer invest command — the ONLY path that writes `location_investments` — plus its one consumed tunable. Two-layer (public wrapper → private writer), server-authoritative, DARK, a strict ONE-WAY SINK. NO read surface, NO frontend, NO cron, NO flag flipped true. THE ENTIRE SURFACE IS DARK TODAY: location_investment_enabled = 'false' (0132), and the p",
    "seedsFlag": []
@@ -1377,6 +1510,7 @@
    "label": "location_invest_p18_read_surface",
    "stamp": "20260618000134",
    "seq": null,
+   "addedAt": "2026-07-04T22:24:57+09:00",
    "file": "supabase/migrations/20260618000134_location_invest_p18_read_surface.sql",
    "detail": "Byeharu — LOCATION-INVEST-P18 SLICE 2: the dark, PUBLIC read surface — persistent state vs seasonal score, plus the caller's own history, plus the ONE shared season-window helper. Read-only; NO write anywhere; dark-gated like every Investment surface. NO new table, NO writer, NO frontend, NO cron, NO flag flip this slice. IDIOM SOURCES (reused, never reinvented):",
    "seedsFlag": []
@@ -1387,6 +1521,7 @@
    "label": "world_balance_p19_pirate_pressure",
    "stamp": "20260618000135",
    "seq": null,
+   "addedAt": "2026-07-04T22:53:12+09:00",
    "file": "supabase/migrations/20260618000135_world_balance_p19_pirate_pressure.sql",
    "detail": "Byeharu — WORLD-BALANCE-P19 SLICE 1: PIRATE PRESSURE (dark-gated; wires the defeat_pressure seam). Phase 19 \"World balance / living economy (pirate pressure, price drift, field depletion) — world-state owns world-state\" (ROADMAP :94). First mechanic: PIRATE PRESSURE. It is NOT a new system and NOT a new pressure column — it is a LIVING reaction on the EXISTING `location_state` pressure field, deli",
    "seedsFlag": [
@@ -1399,6 +1534,7 @@
    "label": "world_balance_p19_price_drift",
    "stamp": "20260618000136",
    "seq": null,
+   "addedAt": "2026-07-04T23:03:40+09:00",
    "file": "supabase/migrations/20260618000136_world_balance_p19_price_drift.sql",
    "detail": "Byeharu — WORLD-BALANCE-P19 SLICE 2: PRICE DRIFT (dark-gated; one coherent producer+consumer slice). Phase 19 second mechanic. Prices at a station now BREATHE with local danger — but `market_offers` stays STATIC Reference/Config (NO runtime writer). Drift is NEW World-State-owned state, FOLDED into the existing World-State-owned `location_state` (the tick already iterates it — no parallel table), ",
    "seedsFlag": []
@@ -1409,6 +1545,7 @@
    "label": "world_balance_p19_field_depletion",
    "stamp": "20260618000137",
    "seq": null,
+   "addedAt": "2026-07-04T23:13:19+09:00",
    "file": "supabase/migrations/20260618000137_world_balance_p19_field_depletion.sql",
    "detail": "Byeharu — WORLD-BALANCE-P19 SLICE 3: RESOURCE-FIELD DEPLETION (dark-gated; producer+consumer slice). Phase 19 third (final) mechanic. Worked mining fields visibly THIN OUT and slowly RECOVER — but `mining_fields` stays static server-only Reference/Config (NO runtime writer). Depletion is NEW World-State-owned state, composed with the field's yield at extraction time and REGENERATED over time by th",
    "seedsFlag": []
@@ -1419,6 +1556,7 @@
    "label": "0092 world_balance_p19_trade_docked_helper_reuse",
    "stamp": "20260618000138",
    "seq": "0092",
+   "addedAt": "2026-07-04T23:40:39+09:00",
    "file": "supabase/migrations/20260618000138_world_balance_p19_trade_docked_helper_reuse.sql",
    "detail": "Byeharu — WORLD-BALANCE-P19 cleanup: restore the 0092 docked-resolve dedup that 0136 regressed. ROOT CAUSE. Migration 0092 (trade_market_1) extracted the copy-pasted ~10-line \"resolve docked location\" block (validate_context → require at_location → read the present/location fleet's current_location_id) into ONE shared read-only helper `public.mainship_resolve_docked_location(ship)` and repointed a",
    "seedsFlag": []
@@ -1429,6 +1567,7 @@
    "label": "phase20_world_events_flag_and_schema",
    "stamp": "20260618000139",
    "seq": null,
+   "addedAt": "2026-07-05T00:00:33+09:00",
    "file": "supabase/migrations/20260618000139_phase20_world_events_flag_and_schema.sql",
    "detail": "Byeharu — PHASE20-POLISH SLICE 1: the Phase-20 dark master flag + the World Events schema (config seed + table + RLS + indexes + comments ONLY; NO writer function, NO read RPC, NO processor, NO cron, NO frontend; the feature stays fully DARK behind `phase20_polish_enabled=false` from THIS migration — NOTHING can write or read this table yet). Phase 20 = ROADMAP :95 \"Polish / expansion (map UI, por",
    "seedsFlag": [
@@ -1441,6 +1580,7 @@
    "label": "phase20_world_events_writer",
    "stamp": "20260618000140",
    "seq": null,
+   "addedAt": "2026-07-05T00:07:00+09:00",
    "file": "supabase/migrations/20260618000140_phase20_world_events_writer.sql",
    "detail": "Byeharu — PHASE20-POLISH SLICE 2: the World Events SOLE-writer functions — the ONLY path that writes `world_events` — plus the idempotency column. Service-role-only, idempotent, DARK. This fulfills the 0139 SYSTEM_BOUNDARIES promise that `world_events`' sole writer is \"its own future service-role writer function\". NO read surface, NO client path, NO cron, NO flag flipped true. Ships BEFORE the rea",
    "seedsFlag": []
@@ -1451,6 +1591,7 @@
    "label": "phase20_world_events_read_surface",
    "stamp": "20260618000141",
    "seq": null,
+   "addedAt": "2026-07-05T00:10:38+09:00",
    "file": "supabase/migrations/20260618000141_phase20_world_events_read_surface.sql",
    "detail": "Byeharu — PHASE20-POLISH SLICE 3: the World Events READ surface — get_world_events(...) — the ONLY client path to world_events (the RLS-locked, client-revoked table from 0139). Read-only; no write anywhere; flag-gated fail-closed like every dark read surface. This is the CONSUMER; the producer (world_events_publish / world_events_set_active, 0140) shipped first (the 0133→0134, 0099→0101 order). Mi",
    "seedsFlag": []
@@ -1461,6 +1602,7 @@
    "label": "phase20_ui_asset_catalog",
    "stamp": "20260618000142",
    "seq": null,
+   "addedAt": "2026-07-05T00:15:48+09:00",
    "file": "supabase/migrations/20260618000142_phase20_ui_asset_catalog.sql",
    "detail": "Byeharu — PHASE20-POLISH SLICE 4: the UI asset-key vocabulary — ui_asset_catalog (static reference table + seed) + its flag-gated fail-closed read surface get_ui_asset_catalog(...). The server-authoritative asset-key vocabulary the Phase-20 frontend polish renders. NO runtime writer; read-only client path; uniformly DARK behind phase20_polish_enabled. NO flag flipped true. Mirrors the static seede",
    "seedsFlag": []
@@ -1471,6 +1613,7 @@
    "label": "mining_p12_extract_double_extract_guard",
    "stamp": "20260618000143",
    "seq": null,
+   "addedAt": "2026-07-05T01:36:48+09:00",
    "file": "supabase/migrations/20260618000143_mining_p12_extract_double_extract_guard.sql",
    "detail": "Byeharu — MINING-P12 POST-AUDIT FIX: close the double-extract race in the mining_extract writer. THE RACE (item 1 of the post-audit punch list). The per-(player, field) cooldown at 0104 step 11 is a read-then-insert: the writer reads the latest mining_extractions.created_at for (player, field) and, if older than the cooldown, inserts a new extraction. The S2 canonical ship lock (mainship_space_loc",
    "seedsFlag": []
@@ -1481,6 +1624,7 @@
    "label": "ranking_p17_counted_grants_schema",
    "stamp": "20260618000144",
    "seq": null,
+   "addedAt": "2026-07-05T01:59:12+09:00",
    "file": "supabase/migrations/20260618000144_ranking_p17_counted_grants_schema.sql",
    "detail": "Byeharu — RANKING-P17 POST-AUDIT FIX, SLICE A: the commit-safe consumption ledger schema (table + RLS + index + comments ONLY; NO writer, NO reader, NO frontend — the accrual rewrite that makes this table its sole writer lands in SLICE B. The feature stays fully DARK behind `ranking_enabled=false` (0127); NOTHING writes or reads this table yet). THE BUG THIS TABLE FIXES (post-audit item 2). `ranki",
    "seedsFlag": []
@@ -1491,6 +1635,7 @@
    "label": "ranking_p17_accrue_commit_safe",
    "stamp": "20260618000145",
    "seq": null,
+   "addedAt": "2026-07-05T02:09:57+09:00",
    "file": "supabase/migrations/20260618000145_ranking_p17_accrue_commit_safe.sql",
    "detail": "Byeharu — RANKING-P17 POST-AUDIT FIX, SLICE B: make `ranking_accrue_standings` COMMIT-SAFE by folding through the `ranking_counted_grants` ledger (0144) instead of the `granted_at` timestamp high-water cursor. CREATE OR REPLACE of the accrual writer ONLY; the fold is the ONLY thing that changes. `ranking_score_delta` is UNCHANGED and deliberately NOT redefined here (0130 owns it). THE BUG (post-au",
    "seedsFlag": []
@@ -1501,6 +1646,7 @@
    "label": "exploration_p11_scan_duplicate_guard",
    "stamp": "20260618000146",
    "seq": null,
+   "addedAt": "2026-07-05T02:24:59+09:00",
    "file": "supabase/migrations/20260618000146_exploration_p11_scan_duplicate_guard.sql",
    "detail": "Byeharu — EXPLORATION-P11 POST-AUDIT FIX: convert the racing duplicate-discovery insert into a clean `already_discovered` result. CREATE OR REPLACE of the exploration_scan writer ONLY; the step-11 insert is the ONLY thing that changes (wrapped in a sub-block catching unique_violation). THE GAP (post-audit item 3). exploration_scan (0099) picks the nearest UNDISCOVERED site via a `not exists` pre-c",
    "seedsFlag": []
@@ -1511,6 +1657,7 @@
    "label": "ranking_p17_accrue_cron",
    "stamp": "20260618000147",
    "seq": null,
+   "addedAt": "2026-07-05T03:07:53+09:00",
    "file": "supabase/migrations/20260618000147_ranking_p17_accrue_cron.sql",
    "detail": "Byeharu — RANKING-P17 POST-AUDIT FIX (item 5): schedule the ranking-accrual background job. WHAT THIS ADDS: a pg_cron schedule for public.ranking_accrue_standings() (0130, made commit-safe by the 0144/0145 ledger fold), which until now had NO scheduler (0130/0145 shipped it as a safe dark no-op, cron \"deferred\"). Mirrors the existing cron idiom in 20260617000033_cron_location_state.sql EXACTLY: `c",
    "seedsFlag": []
@@ -1521,6 +1668,7 @@
    "label": "location_names_single_word",
    "stamp": "20260618000148",
    "seq": null,
+   "addedAt": "2026-07-05T21:36:57+09:00",
    "file": "supabase/migrations/20260618000148_location_names_single_word.sql",
    "detail": "Byeharu — UX CLEANUP (item 4): ONE-WORD LOCATION NAMES — player-facing display rename, data-only. Renames all 8 seeded locations to single evocative unique words (thematically preserving the safe vs. pirate/danger character). FORWARD-ONLY: the historical seeds (0002 waypoints, 0066 starter ports) are NOT edited. Identity is untouched — the starter ports keep their fixed 0066 literal UUIDs (0066 ex",
    "seedsFlag": []
@@ -1531,6 +1679,7 @@
    "label": "mainship_stop_transit",
    "stamp": "20260618000149",
    "seq": null,
+   "addedAt": "2026-07-05T22:32:25+09:00",
    "file": "supabase/migrations/20260618000149_mainship_stop_transit.sql",
    "detail": "Byeharu — MOVEMENT UX (item 3): halt an in-transit LEGACY main-ship move → symmetric return home. Gap being closed: the visible send surfaces (send_main_ship_expedition 0050 / move_main_ship_to_location 0053) create legacy fleet_movements, and NOTHING can halt one mid-flight today — request_main_ship_return (0050) requires status='present', and the OSN Stop (0064/0067) only sees main_ship_space_mo",
    "seedsFlag": []
@@ -1541,6 +1690,7 @@
    "label": "osn_settle_arrival_on_demand",
    "stamp": "20260618000150",
    "seq": null,
+   "addedAt": "2026-07-05T22:51:28+09:00",
    "file": "supabase/migrations/20260618000150_osn_settle_arrival_on_demand.sql",
    "detail": "Byeharu — PERFORMANCE (UX-CLEANUP item 6, part A): on-demand OSN arrival settlement. Problem: a due OSN movement (main_ship_space_movements) waits up to ~30s for the process-mainship-space-arrivals cron (0058:129, cadence unchanged since) plus a 3–4s client poll before the player sees the ship settle — the ship visibly floats \"arrived but not settled\".",
    "seedsFlag": []
@@ -1551,6 +1701,7 @@
    "label": "legacy_settle_arrival_on_demand",
    "stamp": "20260618000151",
    "seq": null,
+   "addedAt": "2026-07-06T00:06:01+09:00",
    "file": "supabase/migrations/20260618000151_legacy_settle_arrival_on_demand.sql",
    "detail": "Byeharu — PERFORMANCE (UX-CLEANUP item 6, part B): on-demand LEGACY main-ship arrival settlement. Problem: a legacy fleet_movements arrival (the MainShipCommand first-trip path — home→port / home→waypoint, and every return leg) waits up to ~30s for the process-fleet-movements cron (0011) plus a 3–4s client poll. For a brand-new player the very FIRST arrival in the game feels slow.",
    "seedsFlag": []
@@ -1561,6 +1712,7 @@
    "label": "mainship_legacy_in_flight_spatial_state",
    "stamp": "20260618000152",
    "seq": null,
+   "addedAt": "2026-07-06T11:05:52+09:00",
    "file": "supabase/migrations/20260618000152_mainship_legacy_in_flight_spatial_state.sql",
    "detail": "Byeharu — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 1 of 2: DEPARTURE/HALT pair-writes. (docs/MAINSHIP_LEGACY_SPATIAL_STATE_FIX.md — recon/decision; this migration implements §5's DEPARTURE + HALT/RETURN half. The ARRIVAL half — movement_settle_arrival's location branch + the shared docking helper extracted from the OSN dock writer — is the NEXT migration, not this one.) BUG BEING FIXED (live): eve",
    "seedsFlag": []
@@ -1571,6 +1723,7 @@
    "label": "mainship_legacy_arrival_docks_ship",
    "stamp": "20260618000153",
    "seq": null,
+   "addedAt": "2026-07-06T11:17:56+09:00",
    "file": "supabase/migrations/20260618000153_mainship_legacy_arrival_docks_ship.sql",
    "detail": "Byeharu — MAINSHIP LEGACY SPATIAL-STATE FIX, slice 2 of 2: ARRIVAL docks the ship. (docs/MAINSHIP_LEGACY_SPATIAL_STATE_FIX.md §5/§6 — 0152 shipped the DEPARTURE/HALT half; this migration ships the ARRIVAL half. The docked→send→travel→arrive→docked round-trip verifier is the NEXT step.) GAP BEING CLOSED: movement_settle_arrival's location branch (0151) settles the FLEET (fleet_set_present + presenc",
    "seedsFlag": []
@@ -1581,6 +1734,7 @@
    "label": "map_declutter_waypoints",
    "stamp": "20260618000154",
    "seq": null,
+   "addedAt": "2026-07-06T17:59:34+09:00",
    "file": "supabase/migrations/20260618000154_map_declutter_waypoints.sql",
    "detail": "Byeharu — MAP DECLUTTER: relocate the FIVE waypoint locations — display/legacy-pacing data only. Root cause being fixed (recon MAP_DECLUTTER_RECON.local.md §1): the 0002 waypoints were seeded 1–3.6 world units apart on the tiny legacy map scale, while the 0066 starter ports sit on the OSN scale (−50…80). The content-fit camera frames the 120-unit port spread, compressing the two waypoint clusters ",
    "seedsFlag": []
@@ -1591,6 +1745,7 @@
    "label": "mainship_legacy_stop_holds_in_space",
    "stamp": "20260618000155",
    "seq": null,
+   "addedAt": "2026-07-06T23:24:17+09:00",
    "file": "supabase/migrations/20260618000155_mainship_legacy_stop_holds_in_space.sql",
    "detail": "Byeharu — LEGACY STOP = HOLD-IN-OPEN-SPACE (replaces the 0149/0152 return-home settlement). BEFORE (0149, re-created body-verbatim in 0152): the visible Stop button (command_main_ship_stop_transit) HALTED an outbound legacy main-ship transit and then flew the ship all the way back to its ORIGIN BASE — it transformed the SAME fleet_movements row in place into the return_home shape (symmetric turnar",
    "seedsFlag": []
@@ -1601,6 +1756,7 @@
    "label": "mainship_legacy_depart_from_hold",
    "stamp": "20260618000156",
    "seq": null,
+   "addedAt": "2026-07-06T23:38:16+09:00",
    "file": "supabase/migrations/20260618000156_mainship_legacy_depart_from_hold.sql",
    "detail": "Byeharu — LEGACY RESUME: send a HELD-in-open-space main ship on a new leg (Slice B of the Stop=hold fix). CONTEXT. Slice A (0155) made Stop HALT AND HOLD: a stopped legacy main-ship transit now parks the ship in open space (main_ship_instances status='stationary', spatial_state='in_space', space_x/y = halt point) with its fleet settled to the movement-less terminal (status='completed', active_move",
    "seedsFlag": []
@@ -1611,6 +1767,7 @@
    "label": "station_storage_p1_foundation",
    "stamp": "20260618000157",
    "seq": null,
+   "addedAt": "2026-07-08T09:05:02+09:00",
    "file": "supabase/migrations/20260618000157_station_storage_p1_foundation.sql",
    "detail": "Byeharu — STATION-STORAGE P1: per-port storage foundation (additive, DARK, disconnected). GOAL (EVE-style): every dockable port/station gets its OWN independent, per-player storage (resources + units). Anti-spaghetti decision: DO NOT create a second storage system. The `bases` table + its primitives (base_reserve_units / base_merge_units / base_add_resources / base_spend_resources) + rewards + pro",
    "seedsFlag": [
@@ -1623,6 +1780,7 @@
    "label": "station_storage_p2_docked_store_read",
    "stamp": "20260618000158",
    "seq": null,
+   "addedAt": "2026-07-08T09:05:02+09:00",
    "file": "supabase/migrations/20260618000158_station_storage_p2_docked_store_read.sql",
    "detail": "Byeharu — STATION-STORAGE P2: docked-port storage READ surface (dark, read-only for the player's own UI). get_my_docked_store() exposes the per-port hangar for the authenticated player's own UI, following the EVE model chosen for this feature: \"the store is whichever port you are CURRENTLY docked at\" — resolved live from the ship's validated dock, NOT from a fixed origin/home. It mirrors get_my_cu",
    "seedsFlag": []
@@ -1633,6 +1791,7 @@
    "label": "a0_owned_ship_resolve_docked_store_and_preview",
    "stamp": "20260618000159",
    "seq": null,
+   "addedAt": "2026-07-09T09:52:29+09:00",
    "file": "supabase/migrations/20260618000159_a0_owned_ship_resolve_docked_store_and_preview.sql",
    "detail": "Byeharu — A0 FOUNDATION FIXUP: owned-ship resolution for two unguarded reads (multi-ship safety). Pre-team-command audit blocker. Two SECURITY DEFINER reads still derive the ship with the sole-ship shortcut `... from main_ship_instances where player_id = auth.uid()` and NO uniqueness guard. That is a REAL latent bug: the moment a player owns more than one main ship (Slice A flips the add-ship gate",
    "seedsFlag": []
@@ -1643,6 +1802,7 @@
    "label": "slice_a_ship_groups",
    "stamp": "20260618000160",
    "seq": null,
+   "addedAt": "2026-07-09T22:07:04+09:00",
    "file": "supabase/migrations/20260618000160_slice_a_ship_groups.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice A: team/group DATA MODEL + multi-ship enablement FOUNDATION (DARK). First slice of the team-command system (docs/TEAM_COMMAND.md, docs/HANDOFF.md §4). The player will eventually command up to 3 teams of ~6–8 ships each. This migration lays ONLY the durable foundation: the group table, the ship→group link, and the config that unblocks the multi-ship path. It ships NO be",
    "seedsFlag": [
@@ -1655,6 +1815,7 @@
    "label": "slice_b0_group_write_path",
    "stamp": "20260618000161",
    "seq": null,
+   "addedAt": "2026-07-10T13:43:51+09:00",
    "file": "supabase/migrations/20260618000161_slice_b0_group_write_path.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice B0: DARK group create/assign WRITE PATH (the writer Slice A omitted). Slice A (0160) created ship_groups + main_ship_instances.group_id with NO client write path — the table is empty and the roster shows every ship as unassigned. B0 adds the controlled, owner-scoped, DARK server write path: create/rename a team slot, and assign/unassign a ship to a team. It does NOTHIN",
    "seedsFlag": []
@@ -1665,6 +1826,7 @@
    "label": "slice_b1_group_delete",
    "stamp": "20260618000162",
    "seq": null,
+   "addedAt": "2026-07-10T22:46:02+09:00",
    "file": "supabase/migrations/20260618000162_slice_b1_group_delete.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice B1: DARK group DELETE RPC (the deleter B0 omitted). B0 (0161) added create/rename (upsert_ship_group) + assign/unassign (assign_ship_to_group). B1 adds the owner-scoped, DARK delete: remove a team slot. Its member ships are un-grouped by the ON DELETE SET NULL FK on main_ship_instances.group_id (0160 §B) — NOT by any manual member update here.",
    "seedsFlag": []
@@ -1675,6 +1837,7 @@
    "label": "slice_b_group_send",
    "stamp": "20260618000163",
    "seq": null,
+   "addedAt": "2026-07-10T23:28:31+09:00",
    "file": "supabase/migrations/20260618000163_slice_b_group_send.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice B (sub-slice 1): DARK group-send RPC (send a whole team on one expedition). First movement-touching team slice. It makes a team DO something (rally-send its ships to a location) WITHOUT widening or editing any live function. `send_main_ship_expedition` (the live, mainship_send_enabled=true single-ship send) is REUSED VERBATIM — this RPC resolves a team into repeated pe",
    "seedsFlag": []
@@ -1685,6 +1848,7 @@
    "label": "slice_b_group_stop",
    "stamp": "20260618000164",
    "seq": null,
+   "addedAt": "2026-07-11T00:01:10+09:00",
    "file": "supabase/migrations/20260618000164_slice_b_group_stop.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice B (sub-slice 2): DARK group-STOP RPC (stop a whole team mid-transit). Twin of B-send (0163), but for STOP. Reuses the live, fleet-addressed `command_main_ship_stop_transit` (STOP=HOLD, 0155; gated mainship_send_enabled=true) VERBATIM — this RPC resolves a team into its members' in-flight fleets and calls the unmodified live stop once per fleet. No second movement engin",
    "seedsFlag": []
@@ -1695,6 +1859,7 @@
    "label": "slice_c0_captain_slots_and_group_preview",
    "stamp": "20260618000165",
    "seq": null,
+   "addedAt": "2026-07-11T22:21:00+09:00",
    "file": "supabase/migrations/20260618000165_slice_c0_captain_slots_and_group_preview.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice C0: DARK group expedition preview RPC (RPC-ONLY; ZERO data change). First captain sub-slice of Slice C (docs/TEAM_COMMAND.md). ONE thing: a new DARK, read-only RPC get_my_group_expedition_preview(group, activity) — the GROUP-shaped twin of get_my_expedition_preview (0159), delegating every member's stats to the ONE stat adapter calculate_expedition_stats (0122) and COL",
    "seedsFlag": []
@@ -1705,6 +1870,7 @@
    "label": "slice_d0_group_stats_authority",
    "stamp": "20260618000166",
    "seq": null,
+   "addedAt": "2026-07-12T01:17:48+09:00",
    "file": "supabase/migrations/20260618000166_slice_d0_group_stats_authority.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice D0: AUTHORITATIVE group expedition stats (DARK; RPC-ONLY; ZERO data change). First combat-facing team sub-slice of Slice D (docs/TEAM_COMMAND.md). ONE thing: the server-side source of truth for a TEAM's expedition stats — the context 0165 explicitly deferred (\"AUTHORITATIVE team stats arrive in Slice D beside the combat consumer, never here\"). Two functions: (1) calcul",
    "seedsFlag": []
@@ -1715,6 +1881,7 @@
    "label": "slice_d1_combat_member_units",
    "stamp": "20260618000167",
    "seq": null,
+   "addedAt": "2026-07-12T01:57:43+09:00",
    "file": "supabase/migrations/20260618000167_slice_d1_combat_member_units.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice D1: combat_units member widening + tick/report parity re-create (DARK). ── WHAT THIS IS ──────────────────────────────────────────────────────────────────────────────────── The riskiest team-command phase: the LIVE combat cron body (process_combat_ticks, head 0046) and the LIVE report writer (report_create, head 0026) are re-created here so combat_units can later carry",
    "seedsFlag": []
@@ -1725,6 +1892,7 @@
    "label": "slice_d2_group_hunt_send",
    "stamp": "20260618000168",
    "seq": null,
+   "addedAt": "2026-07-12T02:49:05+09:00",
    "file": "supabase/migrations/20260618000168_slice_d2_group_hunt_send.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice D2: the team enters the combat engine — hunt send + sortie manifest + encounter routing (DARK). ── WHAT THIS IS ──────────────────────────────────────────────────────────────────────────────────── The FIRST writer of member combat_units rows (the writer D1 explicitly deferred). Three pieces: (1) group_sortie_members — the team's fleet_units analogue: the membership SNA",
    "seedsFlag": []
@@ -1735,6 +1903,7 @@
    "label": "slice_d3_group_settle",
    "stamp": "20260618000169",
    "seq": null,
+   "addedAt": "2026-07-12T03:25:15+09:00",
    "file": "supabase/migrations/20260618000169_slice_d3_group_settle.sql",
    "detail": "Byeharu — TEAM-COMMAND Slice D3: team sortie SETTLE semantics — members come home (DARK). ── WHAT THIS IS ──────────────────────────────────────────────────────────────────────────────────── D2's sortie can fight and its FLEET already returns/dies correctly (D1's member branches), but the member SHIPS never leave 'hunting' after an escape and nothing ever re-homes them. D3 closes the loop with thr",
    "seedsFlag": []
@@ -1745,6 +1914,7 @@
    "label": "team_activation_prep",
    "stamp": "20260618000170",
    "seq": null,
+   "addedAt": "2026-07-12T09:55:24+09:00",
    "file": "supabase/migrations/20260618000170_team_activation_prep.sql",
    "detail": "Byeharu — TEAM-ACTIVATION PREP: hull base combat stats (the ONE data+adapter change the activation packet's approved recommendations require BEFORE the flip). docs/TEAM_ACTIVATION_PACKET.md §1.4 (Decision 1, APPROVED 2026-07-12) / §6 Stage 1 item 1: \"Seed hull base combat stats via one parity-shaped adapter delta: calculate_expedition_stats re-created with a_combat/a_survival += coalesce((hull.bas",
    "seedsFlag": []
@@ -1755,6 +1925,7 @@
    "label": "captains_launch_prep",
    "stamp": "20260618000171",
    "seq": null,
+   "addedAt": "2026-07-12T11:48:34+09:00",
    "file": "supabase/migrations/20260618000171_captains_launch_prep.sql",
    "detail": "Byeharu — CAPTAINS-LAUNCH PREP: the deferred captain-slot bump (2 → 6, hull + instance backfill) + the config-gated captain_memory_shard drop source. The DDL/data half of the captains fast-follow window (docs/TEAM_COMMAND.md → ACTIVATION CHECKLIST item 2 / packet docs/TEAM_ACTIVATION_PACKET.md §3, Decision 3 APPROVED 2026-07-12: \"fast-follow = bump SQL + captain_assignment_enabled (+ progression +",
    "seedsFlag": []
@@ -1765,6 +1936,7 @@
    "label": "exploration_mining_writer_reconcile",
    "stamp": "20260618000172",
    "seq": null,
+   "addedAt": "2026-07-12T12:27:43+09:00",
    "file": "supabase/migrations/20260618000172_exploration_mining_writer_reconcile.sql",
    "detail": "Byeharu — EXPLORATION/MINING WRITER RECONCILE: repair two stale-body re-creates found by the activation-slice adversarial review. BOTH writers are re-created from their TRUE current heads with the dropped features merged back. No flag flipped (exploration_enabled / mining_enabled / world_balance_enabled all stay 'false' — both writers reject at their first line today, so these re-creates are not l",
    "seedsFlag": []
@@ -1775,6 +1947,7 @@
    "label": "econ_seed_multiport_offers",
    "stamp": "20260618000173",
    "seq": null,
+   "addedAt": "2026-07-12T12:47:06+09:00",
    "file": "supabase/migrations/20260618000173_econ_seed_multiport_offers.sql",
    "detail": "Byeharu — ECON-SEED-1: differentiated three-port economy seed (Reference/Config; additive, DARK). Queue slice #4 of the full-capacity plan: seeds the owner-approved multiport price table (master plan §C P1) into `market_offers` (0085) for ALL THREE starter ports (0066) × the six 0073 goods, so that trade activation (ACT-TRADE, queue #5) lights up a real buy-low/travel/sell-high economy instead of ",
    "seedsFlag": []
@@ -1785,6 +1958,7 @@
    "label": "salvage_market",
    "stamp": "20260618000174",
    "seq": null,
+   "addedAt": "2026-07-12T14:24:05+09:00",
    "file": "supabase/migrations/20260618000174_salvage_market.sql",
    "detail": "Byeharu — SALVAGE-0/1: the combat-loot → port-economy feed (schema + seed + flag + sell RPC; DARK). Queue slice #6 of the full-capacity plan (master plan §C P3): ports gain ITEM buy-lists (`port_item_demand`) and ONE flag-gated sell RPC (`sell_item_at_port`) — the first item→credits path (closes gap G3: \"combat loot has no economy exit\"). Everything DARK behind the NEW `salvage_market_enabled` fla",
    "seedsFlag": [
@@ -1797,6 +1971,7 @@
    "label": "zones2_ember_reach",
    "stamp": "20260618000175",
    "seq": null,
+   "addedAt": "2026-07-12T15:03:53+09:00",
    "file": "supabase/migrations/20260618000175_zones2_ember_reach.sql",
    "detail": "Byeharu — ZONES2-1: \"Ember Reach\" content expansion seed (additive, HIDDEN — the C-seeds). Queue slice #7 of the full-capacity plan (§C P4; its twin #8, the reveal operation script scripts/reveal-ember-reach.{sql,sh}, ships in the same PR). PURE DATA: no schema change, no RPC change, no flag change, no client change, ZERO engine edits. Every new location seeds status='hidden' — absent from get_wor",
    "seedsFlag": []
@@ -1807,6 +1982,7 @@
    "label": "haul_contracts_foundation",
    "stamp": "20260618000176",
    "seq": null,
+   "addedAt": "2026-07-12T16:25:06+09:00",
    "file": "supabase/migrations/20260618000176_haul_contracts_foundation.sql",
    "detail": "Byeharu — HAUL-0/1: delivery-contracts foundation (templates + contracts schema + flag + the deterministic offer generator + cron; everything DARK). Queue slice #12 of the full-capacity plan (master plan §C P2): NPC delivery contracts — a per-port bulletin offering \"deliver N×good to port B by T for C credits\" (the retention loop; closes part of gap G9). THIS slice is HAUL-0 (schema + migration-se",
    "seedsFlag": [
@@ -1819,6 +1995,7 @@
    "label": "captain_xp_foundation",
    "stamp": "20260618000177",
    "seq": null,
+   "addedAt": "2026-07-12T17:14:39+09:00",
    "file": "supabase/migrations/20260618000177_captain_xp_foundation.sql",
    "detail": "Byeharu — CAPXP-0/1: the captain-XP foundation (additive xp/level columns + flag + the commit-safe accrual ledger + the cron accrual writer; everything DARK). Queue slice #13 of the full-capacity plan (master plan §C P5): captain progression. THIS slice is C2-0 (additive `captain_instances.xp/level` + `captain_growth_enabled` seeded 'false') + C2-1 (XP accrual as a downward reader of FINALIZED `re",
    "seedsFlag": [
@@ -1831,6 +2008,7 @@
    "label": "coord_guard_a0fix",
    "stamp": "20260618000178",
    "seq": null,
+   "addedAt": "2026-07-12T18:49:01+09:00",
    "file": "supabase/migrations/20260618000178_coord_guard_a0fix.sql",
    "detail": "Byeharu — COORD-GUARD (the A0-fix): resolver-guard the raw coordinate command BEFORE the flip. Closes the last unguarded single-ship read on the OSN MOVEMENT surface (one separate, read-only pre-multi-ship read remains outside movement: commission_first_main_ship, 0072:117,129 — arbitrary-row CLASSIFICATION at N>1, no write path, not exploitable; tracked as its own tiny follow-up in docs/TEAM_COMM",
    "seedsFlag": []
@@ -1841,6 +2019,7 @@
    "label": "haul_accept_deliver",
    "stamp": "20260618000179",
    "seq": null,
+   "addedAt": "2026-07-12T19:29:13+09:00",
    "file": "supabase/migrations/20260618000179_haul_accept_deliver.sql",
    "detail": "Byeharu — HAUL-2: the contract accept/deliver RPCs (+ receipts + the delivery deadline; DARK). Queue continuation of the full-capacity plan §C P2 (HAUL-0/1 shipped as 0176): the two player-facing state-transition writers for `haul_contracts` — `haul_accept_contract` (offered→accepted) and `haul_deliver_contract` (accepted→delivered: Trade-Cargo consume + Wallet credit) — plus the `haul_receipts` i",
    "seedsFlag": []
@@ -1851,6 +2030,7 @@
    "label": "0170 c2_2_captain_level_fold",
    "stamp": "20260618000180",
    "seq": "0170",
+   "addedAt": "2026-07-12T20:02:38+09:00",
    "file": "supabase/migrations/20260618000180_c2_2_captain_level_fold.sql",
    "detail": "Byeharu — C2-2: the captain level → stats adapter parity delta (master plan §C P5: \"level curve → adapter parity delta in calculate_expedition_stats (stats × (1 + level_bonus), byte-inert at level 1)\"). Everything stays DARK behind captain_growth_enabled (0177, 'false'). ── THE PARITY DISCIPLINE (the D1/D3/0170 re-create law) ───────────────────────────────────────── calculate_expedition_stats is ",
    "seedsFlag": []
@@ -1861,6 +2041,7 @@
    "label": "haul_read_surface",
    "stamp": "20260618000181",
    "seq": null,
+   "addedAt": "2026-07-12T20:42:37+09:00",
    "file": "supabase/migrations/20260618000181_haul_read_surface.sql",
    "detail": "Byeharu — HAUL-3 read surface + C2-3 projection delta (one UI-slice migration; everything DARK). Two read-side deltas for the combined HAUL-3 + C2-3 UI slice — no writer, no new table, no flag write; both features stay dark behind their 0176/0177 gates: ── 1) get_port_contracts(p_location) — the HAUL-3 bulletin read RPC (NEW) ───────────────────────",
    "seedsFlag": []
@@ -1871,6 +2052,7 @@
    "label": "ev1_worldstate_events",
    "stamp": "20260618000182",
    "seq": null,
+   "addedAt": "2026-07-12T21:33:58+09:00",
    "file": "supabase/migrations/20260618000182_ev1_worldstate_events.sql",
    "detail": "Byeharu — EV-1 (FULL_CAPACITY_PLAN §C P8, first slice): the WORLD-EVENTS PRODUCER — `worldstate_tick` NARRATES threshold happenings through the EXISTING sole writer `world_events_publish` (0140): pressure crossings, field-depletion warnings, price-drift extremes — all dedup-keyed per UTC day. EV-2 (event sites) and EV-3 (feed UI) are LATER slices; this migration flips NO flag and adds NO cron. GRO",
    "seedsFlag": []
@@ -1881,6 +2063,7 @@
    "label": "mod2_shield_line",
    "stamp": "20260618000183",
    "seq": null,
+   "addedAt": "2026-07-12T22:12:09+09:00",
    "file": "supabase/migrations/20260618000183_mod2_shield_line.sql",
    "detail": "Byeharu — MOD2-1 (FULL_CAPACITY_PLAN §C P7, queue #11): the shield line + mining rig module seeds — a PURE CATALOG SEED slice. Two new module_types + their recipes; ZERO engine edits (no RPC, no adapter re-create, no schema change, no flag flip, no frontend). All stats flow through the EXISTING pipeline: module_types.stats_json → the fitting adapter's module loop (calculate_expedition_stats, TRUE ",
    "seedsFlag": []
@@ -1891,6 +2074,7 @@
    "label": "ship_identity_sparrow_rename",
    "stamp": "20260618000184",
    "seq": null,
+   "addedAt": "2026-07-12T22:31:28+09:00",
    "file": "supabase/migrations/20260618000184_ship_identity_sparrow_rename.sql",
    "detail": "Byeharu — SHIP-IDENTITY: ships stop being named after the game (\"what is byeharu? is that a ship name?? WTF\" — owner). Every commissioned ship was literally named 'Byeharu' (the 0043 column default, and the explicit literal in the commission build core since 0072). ── DESIGN DECISIONS (owner-directed: EVE-style class names, personalizable) ───────────────────── 1) HULL CLASSES get evocative names ",
    "seedsFlag": []
@@ -1901,6 +2085,7 @@
    "label": "shipyard0_foundation",
    "stamp": "20260618000185",
    "seq": null,
+   "addedAt": "2026-07-12T23:22:56+09:00",
    "file": "supabase/migrations/20260618000185_shipyard0_foundation.sql",
    "detail": "Byeharu — SHIPYARD-0 (the SHIPYARD charter, slice 0 of SHIPYARD-0..3 + ACT-SHIPYARD): the ship-production FOUNDATION — hull build recipes (catalog) + the two T1 hulls (seeded DARK) + the blueprint_fragment combat faucet (config-gated inert). The owner's directive: \"ships must be made through mining, production, level requirement and more\" — ships stop being credits-only commissions; T1+ hulls are ",
    "seedsFlag": [
@@ -1913,6 +2098,7 @@
    "label": "soul0_traits_foundation",
    "stamp": "20260618000186",
    "seq": null,
+   "addedAt": "2026-07-13T00:28:02+09:00",
    "file": "supabase/migrations/20260618000186_soul0_traits_foundation.sql",
    "detail": "Byeharu — SOUL-0 (SHIP-SOUL packet, slice 0): the per-ship traits FOUNDATION — every ship gets its own ORIGINAL stats/quirks, the Uncharted-Waters \"this ship is MINE\" identity (owner directive). This slice ships the catalog + the instance table + the deterministic roll writer ONLY — NO commission hook (SOUL-1 owns the parity re-creates of the commission path + the adapter fold), NO adapter change,",
    "seedsFlag": [
@@ -1925,6 +2111,7 @@
    "label": "teammap_group_tag",
    "stamp": "20260618000187",
    "seq": null,
+   "addedAt": "2026-07-13T00:43:06+09:00",
    "file": "supabase/migrations/20260618000187_teammap_group_tag.sql",
    "detail": "Byeharu — TEAMMAP-1: tag team-expedition member fleets with their group id (the map's team-marker read). OWNER DIRECTIVE (TEAMMAP): \"The team should have a marker of its own and be shown on map.\" The engine already sends a team as N parallel member fleets through the UNCHANGED live single send (0163 → 0169), but those fleets carry NO team tag — the map cannot label them. Slice D2 (0168) already ad",
    "seedsFlag": []
@@ -1935,6 +2122,7 @@
    "label": "shipyard1_order_rpc",
    "stamp": "20260618000188",
    "seq": null,
+   "addedAt": "2026-07-13T00:58:31+09:00",
    "file": "supabase/migrations/20260618000188_shipyard1_order_rpc.sql",
    "detail": "Byeharu — SHIPYARD-1 (the SHIPYARD charter, slice 1 of SHIPYARD-0..3 + ACT-SHIPYARD): the hull BUILD COMMAND — `start_hull_build` enqueues a T1+ hull build on the REUSED M4.5 `build_orders` serial queue (never a second timer system), spending ingredients via Inventory's `inventory_spend` + credits via Wallet's `wallet_debit`, enforcing the 0185 recipe gates (required hull / required captain level,",
    "seedsFlag": []
@@ -1945,6 +2133,7 @@
    "label": "decks_stations",
    "stamp": "20260618000189",
    "seq": null,
+   "addedAt": "2026-07-13T01:04:06+09:00",
    "file": "supabase/migrations/20260618000189_decks_stations.sql",
    "detail": "Byeharu — DECKS-0+1: ship decks — six named captain stations (owner directive: \"In ship i should be able to see decks - like control room, weapon system room, etc, with empty slots that will be later assigned captains\"). WHAT SHIPS HERE (structure + the station axis on the ONE writer path; the board UI is the client half of this slice):",
    "seedsFlag": []
@@ -1955,6 +2144,7 @@
    "label": "teammove_group_move",
    "stamp": "20260618000190",
    "seq": null,
+   "addedAt": "2026-07-13T08:11:03+09:00",
    "file": "supabase/migrations/20260618000190_teammove_group_move.sql",
    "detail": "Byeharu — TEAMMOVE-1: a DOCKED team moves onward as one (the other half of the owner directive). OWNER DIRECTIVE: \"the team should also be able to be docked or move as a whole.\" The dock half already works (team send → members arrive docked at the port, 0153) and is visible (TEAMMAP rollup + badges, 0187). This migration closes gap G-B: BOTH existing team sends (send_ship_group_expedition 0163, se",
    "seedsFlag": []
@@ -1965,6 +2155,7 @@
    "label": "shield0_foundation",
    "stamp": "20260618000191",
    "seq": null,
+   "addedAt": "2026-07-13T01:44:34+09:00",
    "file": "supabase/migrations/20260618000191_shield0_foundation.sql",
    "detail": "Byeharu — SHIELD-0 (the SHIELD charter, slice 0 of SHIELD-0..2 + ACT-SHIELD): the shield system's SCHEMA FOUNDATION — columns + the one sync leaf + the two regen knobs, DEPLOY-INERT. OWNER DIRECTIVE: ships get a SHIELD that regenerates during and outside combat. This slice is schema + the leaf + knobs ONLY — NO engine change of any kind (SHIELD-1 owns the tick/creator parity re-creates that make c",
    "seedsFlag": []
@@ -1975,6 +2166,7 @@
    "label": "soul1_fold",
    "stamp": "20260618000193",
    "seq": null,
+   "addedAt": "2026-07-13T08:47:32+09:00",
    "file": "supabase/migrations/20260618000193_soul1_fold.sql",
    "detail": "Byeharu — SOUL-1 (SHIP-SOUL packet, slice 1): ship traits go FUNCTIONAL — the commission ROLL HOOK (every new ship is born with its soul WHEN LIT — the P12 charter) + the adapter TRAIT FOLD (calculate_expedition_stats folds each rolled trait's stats_json into the ONE accumulator set, the 0122/0180 hunk discipline). Everything stays DARK behind `ship_traits_enabled='false'` (0186): dark = ZERO roll",
    "seedsFlag": []
@@ -1985,6 +2177,7 @@
    "label": "shipyard2_delivery",
    "stamp": "20260618000194",
    "seq": null,
+   "addedAt": "2026-07-13T09:33:24+09:00",
    "file": "supabase/migrations/20260618000194_shipyard2_delivery.sql",
    "detail": "Byeharu — SHIPYARD-2 (the SHIPYARD charter, slice 2 of SHIPYARD-0..3 + ACT-SHIPYARD): hull-build DELIVERY — the 0038 queue engine learns the HULL arm (promotion with recipe `build_seconds` + completion → commission delivery) and `cancel_build_order` learns hull-aware refunds. This closes ALL THREE recorded pre-flip requirements from the 0188 seam list (FULL_CAPACITY_PLAN §C P6): 1. the engine's hu",
    "seedsFlag": []
@@ -1995,6 +2188,7 @@
    "label": "shield1_tick",
    "stamp": "20260618000195",
    "seq": null,
+   "addedAt": "2026-07-13T09:23:10+09:00",
    "file": "supabase/migrations/20260618000195_shield1_tick.sql",
    "detail": "Byeharu — SHIELD-1 (the SHIELD charter, slice 1 of SHIELD-0..2 + ACT-SHIELD): the shield enters the LIVE combat engine — encounter-creator + tick PARITY RE-CREATES, provably INERT while every shield pool is 0/NULL and the regen knob is '0' (the 0191 dark seeds, both still committed). OWNER DIRECTIVE: ships get a SHIELD that regenerates during and outside combat. This slice wires the IN-COMBAT half",
    "seedsFlag": []
@@ -2005,6 +2199,7 @@
    "label": "decks3_affinity",
    "stamp": "20260618000196",
    "seq": null,
+   "addedAt": "2026-07-13T09:57:43+09:00",
    "file": "supabase/migrations/20260618000196_decks3_affinity.sql",
    "detail": "Byeharu — DECKS-3 (DECKS packet, slice 3): STATION AFFINITY BONUSES — a captain whose specialization matches their held station's affinity_specialization (ship_stations, 0189: Gunnery=combat, Engineering=mining, Logistics=trade, Sensors=exploration, Medbay=support, Bridge=NULL) has THAT captain's stats_json contribution scaled by (1 + cfg_num( 'station_affinity_bonus')) inside calculate_expedition",
    "seedsFlag": []
@@ -2015,6 +2210,7 @@
    "label": "shield2_regen",
    "stamp": "20260618000197",
    "seq": null,
+   "addedAt": "2026-07-13T10:49:55+09:00",
    "file": "supabase/migrations/20260618000197_shield2_regen.sql",
    "detail": "Byeharu — SHIELD-2 (the SHIELD charter, slice 2 of SHIELD-0..2 + ACT-SHIELD): the shield system's FINAL slice — the OUT-OF-COMBAT regen home + the deferred commission base_shield → shield/max_shield copy. (The UI meter pair ships in the same PR, client-side.) Everything is provably INERT while every pool is 0/0 and `shield_regen_idle_pct` is the committed '0' (the 0191 dark seeds — both re-asserte",
    "seedsFlag": []
@@ -2025,6 +2221,7 @@
    "label": "nanguard_fix",
    "stamp": "20260618000198",
    "seq": null,
+   "addedAt": "2026-07-13T11:59:09+09:00",
    "file": "supabase/migrations/20260618000198_nanguard_fix.sql",
    "detail": "Byeharu — NANGUARD (FULL_CAPACITY_PLAN queue row 20): fix the inherited NO-OP NaN guards at all three knob-read sites. The house idiom `case when v_raw <> v_raw then 0 else v_raw end` is meant to floor a mis-set \"NaN\" knob to 0, but it is a NO-OP in PostgreSQL: PG deviates from IEEE-754 and makes `'NaN'::float8 = 'NaN'::float8` TRUE (so `x <> x` is FALSE for NaN) — the guard arm is UNREACHABLE and",
    "seedsFlag": []
@@ -2035,6 +2232,7 @@
    "label": "0199 nohome_launch_from_dock",
    "stamp": "20260618000199",
    "seq": "0199",
+   "addedAt": "2026-07-13T19:18:47+09:00",
    "file": "supabase/migrations/20260618000199_nohome_launch_from_dock.sql",
    "detail": "Byeharu — NO-HOME (launch-from-dock), DARK behind a new flag. Migration 0199. ── THE OWNER'S ABSOLUTE LAW ───────────────────────────────────────────────────────────────────────── There is NO home base; ports are the only base; a ship acts from WHEREVER it is docked. Today SEND (send_main_ship_expedition, 0169) and HUNT (send_ship_group_hunt, 0168) require ship status='home' and launch the outboun",
    "seedsFlag": [
@@ -2047,6 +2245,7 @@
    "label": "fleetmap_fleet_positions_read",
    "stamp": "20260618000200",
    "seq": null,
+   "addedAt": "2026-07-13T18:43:50+09:00",
    "file": "supabase/migrations/20260618000200_fleetmap_fleet_positions_read.sql",
    "detail": "Byeharu — FLEETMAP: whole-fleet map positions READ surface (additive, owner-read, no live function changed). THE HONEST FIX for the \"I can't see any ship I own on the map\" bug. The map's single-ship resolver returns NULL the moment a player owns 2+ ships (client resolveOwnedShip: `ships.length === 1 ? ships[0] : null`), so the whole fleet goes invisible once a second ship is commissioned — and mul",
    "seedsFlag": []
@@ -2057,6 +2256,7 @@
    "label": "repairecon_hull_repair",
    "stamp": "20260618000201",
    "seq": null,
+   "addedAt": "2026-07-14T21:17:35+09:00",
    "file": "supabase/migrations/20260618000201_repairecon_hull_repair.sql",
    "detail": "Byeharu — REPAIR-ECON (P9 / gap G8): the paid hull-repair economy, DARK behind repair_economy_enabled. Queue slice P9 of the full-capacity plan (FULL_CAPACITY_PLAN.md §C P9 \"REPAIR-ECON\"; §A gap G8 \"No repair economy: repair_main_ship is the free/instant safelock, 0052, flagged as temporary\"). The game's design law (ROADMAP §\"Main Ship Repair & Recovery\"): ships come home DAMAGED (not deleted); re",
    "seedsFlag": [
@@ -2069,6 +2269,7 @@
    "label": "mod22_mk2_tier",
    "stamp": "20260618000202",
    "seq": null,
+   "addedAt": "2026-07-14T21:25:23+09:00",
    "file": "supabase/migrations/20260618000202_mod22_mk2_tier.sql",
    "detail": "Byeharu — MOD2-2 (FULL_CAPACITY_PLAN §C P7): the Mk-II module tier — a PURE CATALOG SEED slice, the exact shape of MOD2-1 (mig 0183). Two new module_types + their recipes; ZERO engine edits (no RPC, no adapter re-create, no schema change, NO flag flip, no frontend). All stats flow through the EXISTING pipeline: module_types.stats_json → the fitting adapter's module loop (calculate_expedition_stats",
    "seedsFlag": []
@@ -2079,6 +2280,7 @@
    "label": "rooms8_configurable_deck",
    "stamp": "20260618000203",
    "seq": null,
+   "addedAt": "2026-07-14T23:45:46+09:00",
    "file": "supabase/migrations/20260618000203_rooms8_configurable_deck.sql",
    "detail": "Byeharu — ROOMS-8: CONFIGURABLE SHIP ROOMS (owner order: \"each ship will have 8 captain slots, and the captains will be inserted accordingly\"; \"create many rooms as possible\"; \"we can also change room by modifying the ships … able to choose\"). This EXTENDS the 0189 decks system — it does NOT fork a parallel one. Three deltas, all additive/monotonic, all DEPLOY-INERT behind the SAME dark captain ga",
    "seedsFlag": []
@@ -2089,6 +2291,7 @@
    "label": "0204 fleetctrl_command_ship",
    "stamp": "20260618000204",
    "seq": "0204",
+   "addedAt": "2026-07-15T00:11:42+09:00",
    "file": "supabase/migrations/20260618000204_fleetctrl_command_ship.sql",
    "detail": "Byeharu — FLEET-CONTROL: the owner's fleet control-model, DARK behind `fleet_control_enabled`. Migration 0204. ── THE OWNER'S DESIGN (build exactly this; every behavior change gated on the new flag) ─────────────── 1. CAPS: max 3 fleets (already — ship_groups (player, group_index 1..3) unique, 0160), up to 8 ships per fleet, minimum 1. This adds the 8-ship-per-fleet cap to the assign path (reject ",
    "seedsFlag": [
@@ -2101,6 +2304,7 @@
    "label": "0205 cmdbuff_command_buffs",
    "stamp": "20260618000205",
    "seq": "0205",
+   "addedAt": "2026-07-15T00:58:59+09:00",
    "file": "supabase/migrations/20260618000205_cmdbuff_command_buffs.sql",
    "detail": "Byeharu — COMMAND-BUFFS: the FINALE of the owner's fleet reshape. Migration 0205. DARK behind the new flag `command_buffs_enabled` (seeded false). ── THE OWNER'S DESIGN (build exactly this) ────────────────────────────────────────────────────── \"Each tier will have ~10 buffs, assigned RANDOMLY when bought or manufactured. More buffs added later — keep in mind for spaghetti.\" → a command-buff CATAL",
    "seedsFlag": [
@@ -2113,6 +2317,7 @@
    "label": "cronguard_perrow_isolation",
    "stamp": "20260618000206",
    "seq": null,
+   "addedAt": "2026-07-15T01:50:01+09:00",
    "file": "supabase/migrations/20260618000206_cronguard_perrow_isolation.sql",
    "detail": "Byeharu — CRON-GUARD (0206): per-row exception isolation for the two hottest legacy crons. THE LANDMINE (7-agent audit, verified below): the two hottest legacy crons process their rows in ONE transaction with NO per-row exception isolation, so a single failing row aborts the WHOLE cron run and re-raises every tick forever, for EVERY player: • process_fleet_movements (30s; TRUE head 0151) — loops d",
    "seedsFlag": []

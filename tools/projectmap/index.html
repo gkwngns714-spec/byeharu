@@ -20,6 +20,25 @@
   .panel { position: fixed; background: var(--panel); backdrop-filter: blur(14px);
     border: 1px solid var(--line); border-radius: 12px; }
 
+  /* tabs */
+  #tabs { top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 3px; padding: 3px; z-index: 5; }
+  #tabs button { padding: 6px 15px; border: 0; border-radius: 9px; background: transparent;
+    color: var(--dim); font: inherit; font-weight: 600; cursor: pointer; }
+  #tabs button:hover { color: var(--text); }
+  #tabs button.on { background: rgba(255,255,255,.1); color: var(--text); }
+
+  /* tree view */
+  #treeWrap { position: fixed; inset: 0; overflow: auto; display: none; padding: 66px 340px 70px 282px; }
+  #treeWrap.on { display: block; }
+  #tree { display: block; }
+  #tree text { font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif; pointer-events: none; }
+  #tree .tn:hover rect { stroke-opacity: 1; }
+  .treeOnly, .mapOnly { display: block; }
+  body.tree .mapOnly, body.map .treeOnly { display: none; }
+  select.act { width: 100%; padding: 7px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgba(0,0,0,.35); color: var(--text); font: inherit; cursor: pointer; }
+  .hint { color: var(--dim); font-size: 10.5px; margin-top: 7px; line-height: 1.45; }
+
   /* left rail */
   #controls { top: 14px; left: 14px; width: 252px; max-height: calc(100vh - 28px);
     overflow-y: auto; padding: 14px; }
@@ -71,6 +90,12 @@
 <body>
   <div id="loading">building the map…</div>
   <canvas id="scene"></canvas>
+  <div id="treeWrap"><svg id="tree"></svg></div>
+
+  <nav class="panel" id="tabs">
+    <button data-tab="map" class="on">3D Map</button>
+    <button data-tab="tree">조직도 Tree</button>
+  </nav>
 
   <aside class="panel" id="controls">
     <h1>Byeharu — Project Map</h1>
@@ -80,22 +105,38 @@
       <input id="search" placeholder="Search nodes…" autocomplete="off" />
     </div>
 
+    <div class="grp treeOnly">
+      <h2>Arrange by</h2>
+      <select class="act" id="treeMode">
+        <option value="system">Ownership (조직도)</option>
+        <option value="build">The order we built it</option>
+        <option value="feature">Feature gate</option>
+      </select>
+      <div class="hint" id="treeHint"></div>
+    </div>
+
+    <div class="grp treeOnly">
+      <h2>Tree</h2>
+      <label class="row"><button class="act" id="expandAll">Expand all</button></label>
+      <label class="row"><button class="act" id="collapseAll">Collapse all</button></label>
+    </div>
+
     <div class="grp">
       <h2>Status</h2>
       <div id="statusFilters"></div>
     </div>
 
-    <div class="grp">
+    <div class="grp mapOnly">
       <h2>Node type</h2>
       <div id="kindFilters"></div>
     </div>
 
-    <div class="grp">
+    <div class="grp mapOnly">
       <h2>Connections</h2>
       <div id="edgeFilters"></div>
     </div>
 
-    <div class="grp">
+    <div class="grp mapOnly">
       <button class="act" id="reset">Reset view &amp; filters</button>
     </div>
   </aside>

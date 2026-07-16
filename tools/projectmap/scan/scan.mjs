@@ -10,8 +10,9 @@
 //   -> tools/projectmap/public/graph.json
 
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
-import { join, dirname, basename } from 'node:path'
+import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { execFileSync } from 'node:child_process'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..', '..', '..')
@@ -43,6 +44,33 @@ function matchAll(re, s, group = 1) {
   for (const m of s.matchAll(re)) if (m[group]) out.push(strip(m[group]))
   return out
 }
+
+// ── real build chronology ─────────────────────────────────────────────────────
+// The filename stamps are synthetic — all 205 sit inside two fabricated days, so
+// they order the chain but say nothing about when we actually built anything.
+// Git knows the truth: the commit that first added each file.
+// execFileSync, not execSync: on Windows execSync goes through cmd.exe, where `^`
+// is the escape character and would silently eat a format marker.
+function gitAddDates() {
+  const dates = new Map()
+  try {
+    const out = execFileSync('git', [
+      'log', '--diff-filter=A', '--format=@@%aI', '--name-only', '--reverse', '--', 'supabase/migrations',
+    ], { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 })
+    let when = null
+    for (const line of out.split('\n')) {
+      const t = line.trim()
+      if (t.startsWith('@@')) { when = t.slice(2); continue }
+      const m = t.match(/supabase\/migrations\/(.+\.sql)$/)
+      if (m && when && !dates.has(m[1])) dates.set(m[1], when)
+    }
+  } catch (err) {
+    console.error(`! git history unavailable (${err.message?.split('\n')[0]}) — build-order view degrades to file order`)
+  }
+  return dates
+}
+const addDates = gitAddDates()
+if (!addDates.size) console.error('! no git add-dates resolved — the build-order tree will bucket everything as uncommitted')
 
 // ── read migrations ───────────────────────────────────────────────────────────
 const files = readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()
@@ -132,6 +160,8 @@ for (const m of migrations) {
     label: m.seq ? `${m.seq} ${m.slug.replace(/^\d+_/, '')}` : m.slug,
     stamp: m.stamp,
     seq: m.seq,
+    // when it was really written, per git — null if never committed
+    addedAt: addDates.get(m.file) ?? null,
     file: `supabase/migrations/${m.file}`,
     detail: m.header,
     seedsFlag: m.seedsFlag.filter((f) => /_enabled$/.test(f)),
