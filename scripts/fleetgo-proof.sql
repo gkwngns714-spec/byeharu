@@ -535,6 +535,80 @@ begin
   raise notice 'FLEETGO_PASS_SETTLEPARITY: the re-created settle keeps the location branch + the 0153 dock rule (legal=%)', v_legal;
 end $$;
 
+-- ════════ BLOCK STOP (0209): the fleet-level BRAKE — halt and HOLD at the interpolated point ════════
+-- The live stop_ship_group_transit (0164) LOOPS the per-ship stop and parks the SHIP (0155 writes
+-- main_ship_instances.spatial_state='in_space' + space_x/space_y). This one parks the FLEET. Same verb,
+-- opposite model — that difference is §2, so it is asserted, not asserted-about.
+do $$
+declare r jsonb; n int; uA uuid := (select v from fg where k='uA'); g uuid := (select v from fg where k='g');
+  slag uuid := (select v from fg where k='slag'); v_fleet uuid := (select v from fg where k='fleet');
+  v_mv uuid; v_mid_x double precision; v_mid_y double precision;
+begin
+  -- park the fleet somewhere known, then launch a fresh leg we can brake mid-flight.
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'STOP SETUP FAIL: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  -- SURGERY (no ship row touched): now() is txn-constant, so backdate to pin t = EXACTLY 0.5.
+  update public.fleet_movements
+     set depart_at = now() - interval '30 seconds', arrive_at = now() + interval '30 seconds'
+   where id = v_mv;
+  select (origin_x + target_x) / 2, (origin_y + target_y) / 2 into v_mid_x, v_mid_y
+    from public.fleet_movements where id = v_mv;
+
+  perform pg_temp.snap_ships('before_stop');
+  r := pg_temp.call_as(uA, format('public.command_ship_group_stop(%L::uuid)', g));
+  perform pg_temp.snap_ships('after_stop');
+  -- ★ §2: the BRAKE must not touch a ship either — this is the exact write 0155 makes and 0209 must not ★
+  perform pg_temp.assert_ships_untouched('before_stop', 'after_stop', 'fleet stop');
+
+  if (r->>'ok')::boolean is not true or (r->>'stopped')::boolean is not true then
+    raise exception 'STOP FAIL: %', r; end if;
+
+  -- the leg is cancelled and the FLEET holds position at the exact turn point.
+  select count(*) into n from public.fleet_movements where id = v_mv and status='cancelled' and resolved_at is not null;
+  if n <> 1 then raise exception 'STOP FAIL: leg not cancelled+resolved'; end if;
+  select count(*) into n from public.fleets
+   where id = v_fleet and location_mode = 'space' and status = 'idle'
+     and space_x = v_mid_x and space_y = v_mid_y and active_movement_id is null;
+  if n <> 1 then raise exception 'STOP FAIL: the FLEET is not holding at the interpolated midpoint'; end if;
+
+  -- STOP = HOLD, not return-home: the fleet is immediately re-commandable FROM the point it stopped at.
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL: a held fleet is not re-commandable: %', r; end if;
+  if (r->>'origin_type') is distinct from 'space' then
+    raise exception 'STOP FAIL: re-departure origin % (expected the held point)', r->>'origin_type'; end if;
+  select count(*) into n from public.fleet_movements
+   where id = (r->>'movement_id')::uuid and origin_x = v_mid_x and origin_y = v_mid_y;
+  if n <> 1 then raise exception 'STOP FAIL: re-departure did not leave from the held point'; end if;
+
+  -- ── THE AGREEMENT PIN: a redirect is "stop here, then go there", so the brake and the redirect MUST
+  --    compute the same "here". Braking the fresh leg at the same t must yield the same point a redirect
+  --    of that leg would have departed from. If these ever diverge, one of them is lying about position.
+  v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '30 seconds', arrive_at = now() + interval '30 seconds'
+   where id = v_mv;
+  select (origin_x + target_x) / 2, (origin_y + target_y) / 2 into v_mid_x, v_mid_y
+    from public.fleet_movements where id = v_mv;
+  r := pg_temp.call_as(uA, format('public.command_ship_group_stop(%L::uuid)', g));
+  if (r->>'space_x')::double precision is distinct from v_mid_x
+     or (r->>'space_y')::double precision is distinct from v_mid_y then
+    raise exception 'STOP FAIL: brake point (%,%) disagrees with the redirect interpolation (%,%)',
+      r->>'space_x', r->>'space_y', v_mid_x, v_mid_y; end if;
+
+  -- idempotent: pressing the brake on a held fleet reports itself, never raises.
+  r := pg_temp.call_as(uA, format('public.command_ship_group_stop(%L::uuid)', g));
+  if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL: double-stop raised: %', r; end if;
+  if (r->>'stopped')::boolean is not false or (r->>'reason_code') is distinct from 'not_moving' then
+    raise exception 'STOP FAIL: double-stop did not report not_moving: %', r; end if;
+
+  -- foreign owner cannot brake someone else's fleet.
+  r := pg_temp.call_as((select v from fg where k='uB'), format('public.command_ship_group_stop(%L::uuid)', g));
+  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'STOP FAIL foreign owner: %', r; end if;
+
+  raise notice 'FLEETGO_PASS_STOP: the FLEET holds at the interpolated point (agrees with redirect), re-commandable, idempotent, no ship touched';
+end $$;
+
 -- ════════ BLOCK ISOLATION: the mover created no second combat/sortie surface and no ship movement ════
 do $$
 declare n int;

@@ -12,8 +12,16 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/fleetgo-proof.sql"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260618000207_fleetgo_unified_group_mover.sql"
 MIGRATION_3B="$REPO_ROOT/supabase/migrations/20260618000208_fleetgo_coordinate_targets.sql"
+MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000209_fleetgo_unified_stop.sql"
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_ISOLATION"
+# Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
+# name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
+# banned) and the `comment on function ... is '...'` string literal (which is shipped documentation, not
+# an executable reference). A naive grep matches both and fails the honest file; the fix is not to stop
+# documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
+sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
+
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ISOLATION"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -65,12 +73,9 @@ if [ "$MODE" = "selftest" ]; then
     && fail "SPEEDMIN must NOT reuse the same group helper the RPC used (self-agreeing)" || true
 
   # ── the migration itself must stay dark + additive: it may not re-create or alter a live path. ───
-  # NOTE: these checks run against the migration with SQL comments STRIPPED. The migration's header
-  # deliberately NAMES the banned constructs in prose (to tell the next reader why they are banned),
-  # and its body carries a "there is deliberately NO `update main_ship_instances` below" marker — a
-  # naive grep matches that prose and fails the honest file. Strip comments, then judge the CODE.
+  # These checks judge CODE, not prose — see sql_code() above for why that distinction is load-bearing.
   [ -f "$MIGRATION" ] || fail "migration 0207 not found"
-  MIG_CODE="$(sed -E "s/--.*//" "$MIGRATION")"
+  MIG_CODE="$(sql_code "$MIGRATION")"
   grep -q "fleet_movement_unified_enabled" "$MIGRATION" || fail "migration does not seed its dark flag"
   printf '%s' "$MIG_CODE" | grep -qE "^[[:space:]]*(alter table|drop function|drop table)" \
     && fail "migration alters/drops an existing object (step 3a must be purely additive)" || true
@@ -92,7 +97,7 @@ if [ "$MODE" = "selftest" ]; then
   # function (movement_settle_arrival). That is allowed here and is exactly why the runtime parity pin
   # exists; what is NOT allowed is touching a ship or composing a per-ship mover.
   [ -f "$MIGRATION_3B" ] || fail "migration 0208 not found"
-  MIG3B_CODE="$(sed -E "s/--.*//" "$MIGRATION_3B")"
+  MIG3B_CODE="$(sql_code "$MIGRATION_3B")"
   printf '%s' "$MIG3B_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
     && fail "0208 UPDATEs main_ship_instances — charter §2 says a ship does not move" || true
   for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
@@ -118,10 +123,31 @@ if [ "$MODE" = "selftest" ]; then
     || fail "ISOLATION does not guard against the vacuous case (nothing moved at all)"
   grep -q "no fleet ever departed FROM its parked coordinate" "$SQL" \
     || fail "ISOLATION does not pin the coordinate round-trip (3b would be unproven)"
-  for ctx in "'coordinate go'" "'space settle'" "'go from space'"; do
+  for ctx in "'coordinate go'" "'space settle'" "'go from space'" "'fleet stop'"; do
     grep -q "assert_ships_untouched('before_.*', 'after_.*', $ctx)" "$SQL" \
       || fail "the §2 ship-untouched assertion is not applied to: $ctx"
   done
+
+  # ── the fleet-level BRAKE (0209): same §2 bans, and it must not be the composed model. ──────────
+  [ -f "$MIGRATION_STOP" ] || fail "migration 0209 not found"
+  MIGSTOP_CODE="$(sql_code "$MIGRATION_STOP")"
+  printf '%s' "$MIGSTOP_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
+    && fail "0209 UPDATEs main_ship_instances — the legacy stop parks the SHIP; this must park the FLEET" || true
+  # it must NOT loop the per-ship stop — that is exactly what 0164 does and what §2 replaces.
+  for banned in command_main_ship_stop_transit command_main_ship_space_stop stop_ship_group_transit; do
+    printf '%s' "$MIGSTOP_CODE" | grep -q "$banned" \
+      && fail "0209 composes the per-ship brake '$banned' — that is the composed model §2 retires" || true
+  done
+  # it must REUSE 3b's parking leaf, not invent a second parking mechanism.
+  printf '%s' "$MIGSTOP_CODE" | grep -q "fleet_set_in_space" \
+    || fail "0209 does not compose 0208's fleet_set_in_space leaf (second parking mechanism?)"
+  printf '%s' "$MIGSTOP_CODE" | grep -qE "^[[:space:]]*(alter table|drop function)" \
+    && fail "0209 alters/drops an existing object (the brake must be purely additive)" || true
+  # the runtime must pin that the brake and the redirect agree on where "here" is.
+  grep -q "disagrees with the redirect interpolation" "$SQL" \
+    || fail "no runtime pin that the brake and the redirect compute the SAME interpolated point"
+  grep -q "double-stop did not report not_moving" "$SQL" \
+    || fail "the brake's idempotence is not pinned (a brake that raises on a second press is a hazard)"
 
   tp_assert_out_of_scope "$SQL"
 
