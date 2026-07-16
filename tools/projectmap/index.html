@@ -16,7 +16,9 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
-  #scene { position: fixed; inset: 0; }
+  /* touch-action:none — the canvas handles its own drag/pinch, so the browser
+     must not steal the gesture to scroll or page-zoom. */
+  #scene { position: fixed; inset: 0; touch-action: none; }
   .panel { position: fixed; background: var(--panel); backdrop-filter: blur(14px);
     border: 1px solid var(--line); border-radius: 12px; }
 
@@ -85,12 +87,59 @@
     background: rgba(0,0,0,.9); border: 1px solid var(--line); font-size: 11.5px;
     display: none; z-index: 10; white-space: nowrap; }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--dim); }
+
+  /* the drawer toggle + scrim exist only on small screens */
+  #menuBtn, #scrim { display: none; }
+
+  /* ── small screens ─────────────────────────────────────────────────────────
+     The desktop layout parks a 252px rail, centred tabs and a full-width HUD on
+     top of each other once the viewport is a phone. Below 860px the rail
+     becomes a drawer, the inspector becomes a bottom sheet, and the top row is
+     laid out so nothing overlaps anything. */
+  @media (max-width: 860px) {
+    #menuBtn { display: block; position: fixed; top: 10px; left: 10px; z-index: 30;
+      padding: 9px 13px; font: inherit; font-size: 15px; line-height: 1; color: var(--text);
+      background: var(--panel); border: 1px solid var(--line); border-radius: 11px; cursor: pointer; }
+    #menuBtn[aria-expanded="true"] { color: var(--accent); }
+
+    #tabs { top: 10px; right: 10px; left: auto; transform: none; z-index: 20; }
+    #tabs button { padding: 7px 11px; font-size: 12px; }
+
+    #controls { top: 0; left: 0; bottom: 0; width: min(86vw, 310px); max-height: 100vh;
+      border-radius: 0 14px 14px 0; border-left: 0; padding-top: 56px; z-index: 40;
+      transform: translateX(-102%); transition: transform .22s ease;
+      -webkit-overflow-scrolling: touch; }
+    #controls.open { transform: none; }
+
+    #scrim { display: block; position: fixed; inset: 0; z-index: 35;
+      background: rgba(0,0,0,.55); opacity: 0; pointer-events: none; transition: opacity .22s ease; }
+    #scrim.on { opacity: 1; pointer-events: auto; }
+
+    /* inspector as a bottom sheet, so it never fights the map for width */
+    #inspect { top: auto; right: 0; left: 0; bottom: 0; width: auto;
+      max-height: 54vh; border-radius: 14px 14px 0 0; z-index: 25; padding-bottom: 20px; }
+
+    #hud { left: 8px; right: 8px; bottom: 8px; font-size: 10px; line-height: 1.45;
+      padding: 7px 10px; max-height: 4.4em; overflow: hidden; }
+
+    #treeWrap { padding: 58px 14px 86px 14px; }
+    #tip { display: none !important; }  /* no hover on touch — the sheet does this job */
+  }
+
+  @media (max-width: 860px) and (orientation: landscape) {
+    #inspect { max-height: 78vh; width: min(56vw, 340px); left: auto; right: 0; top: 0; bottom: 0;
+      border-radius: 14px 0 0 14px; }
+    #hud { right: auto; max-width: 60vw; }
+  }
 </style>
 </head>
 <body>
   <div id="loading">building the map…</div>
   <canvas id="scene"></canvas>
   <div id="treeWrap"><svg id="tree"></svg></div>
+
+  <button id="menuBtn" aria-label="Filters and options" aria-expanded="false" aria-controls="controls">☰</button>
+  <div id="scrim"></div>
 
   <nav class="panel" id="tabs">
     <button data-tab="map" class="on">3D Map</button>

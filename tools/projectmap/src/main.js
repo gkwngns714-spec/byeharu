@@ -264,9 +264,28 @@ function inspect(id) {
 function select(id) {
   state.selected = id
   inspect(id)
-  if (id) { const n = byId.get(id); target.set(n.x, n.y, n.z) }
+  if (id) {
+    const n = byId.get(id)
+    target.set(n.x, n.y, n.z)
+    // Also frame it. Re-centring alone is not enough: from far out the node is
+    // a couple of pixels and its neighbours are dimmed, so selecting something
+    // looks like nothing happened — especially after a pinch-out on a phone.
+    dist = Math.min(dist, 340)
+  }
   apply()
 }
+
+// ── the drawer (small screens only) ───────────────────────────────────────────
+const menuBtn = document.getElementById('menuBtn')
+const scrim = document.getElementById('scrim')
+function drawer(open) {
+  document.getElementById('controls').classList.toggle('open', open)
+  scrim.classList.toggle('on', open)
+  menuBtn.setAttribute('aria-expanded', String(open))
+}
+menuBtn.addEventListener('click', () => drawer(!document.getElementById('controls').classList.contains('open')))
+scrim.addEventListener('click', () => drawer(false))
+addEventListener('keydown', (e) => { if (e.key === 'Escape') drawer(false) })
 
 // ── camera: orbit + zoom ──────────────────────────────────────────────────────
 const target = new THREE.Vector3(0, 0, 0)
@@ -278,18 +297,54 @@ function resize() {
 }
 addEventListener('resize', resize); resize()
 
-canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, moved: false } })
-addEventListener('pointerup', (e) => {
-  if (drag && !drag.moved) pick(e)
-  drag = null
+// Pointer bookkeeping, so one finger orbits and two fingers pinch-zoom. Without
+// this, touch had no way to zoom at all — wheel is mouse-only.
+const pointers = new Map()
+let pinchFrom = null
+
+const spread = () => {
+  const [a, b] = [...pointers.values()]
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  canvas.setPointerCapture?.(e.pointerId)
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  if (pointers.size === 2) { pinchFrom = { d: spread(), dist }; drag = null }
+  else if (pointers.size === 1) drag = { x: e.clientX, y: e.clientY, moved: false }
 })
+
+function endPointer(e) {
+  const was = pointers.size
+  pointers.delete(e.pointerId)
+  if (was === 1 && drag && !drag.moved) pick(e)   // a tap, not a drag
+  if (pointers.size < 2) pinchFrom = null
+  if (pointers.size === 0) drag = null
+  // lifting one of two fingers: keep orbiting from the remaining one
+  else if (pointers.size === 1) {
+    const [p] = [...pointers.values()]
+    drag = { x: p.x, y: p.y, moved: true }
+  }
+}
+addEventListener('pointerup', endPointer)
+addEventListener('pointercancel', endPointer)
+
 addEventListener('pointermove', (e) => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+  if (pointers.size === 2 && pinchFrom) {
+    const now = spread()
+    if (now > 0 && pinchFrom.d > 0) {
+      dist = Math.max(40, Math.min(2200, pinchFrom.dist * (pinchFrom.d / now)))
+    }
+    return
+  }
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y
     if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true
     yaw -= dx * 0.005; pitch = Math.max(-1.5, Math.min(1.5, pitch - dy * 0.005))
     drag.x = e.clientX; drag.y = e.clientY
-  } else hover(e)
+  } else if (e.pointerType === 'mouse') hover(e)
 })
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault(); dist = Math.max(40, Math.min(2200, dist * (1 + Math.sign(e.deltaY) * 0.11)))
@@ -377,6 +432,10 @@ document.getElementById('treeMode').addEventListener('change', (e) => {
 })
 document.getElementById('expandAll').addEventListener('click', () => tree?.expandAll())
 document.getElementById('collapseAll').addEventListener('click', () => tree?.collapseAll())
+
+// Debug hook: read the camera from the console, and let tests assert that a
+// pinch actually zoomed rather than merely not throwing.
+window.__cam = () => ({ dist, yaw, pitch })
 
 document.getElementById('loading').remove()
 setTab('map')
