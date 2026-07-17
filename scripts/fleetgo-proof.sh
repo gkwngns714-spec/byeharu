@@ -17,6 +17,7 @@ MIGRATION_3C="$REPO_ROOT/supabase/migrations/20260618000210_fleetgo_group_read_o
 MIGRATION_3C2="$REPO_ROOT/supabase/migrations/20260618000211_fleetgo_dock_dedup.sql"
 MIGRATION_3C3="$REPO_ROOT/supabase/migrations/20260618000212_fleetgo_map_read.sql"
 MIGRATION_4B0="$REPO_ROOT/supabase/migrations/20260618000213_fleetgo_assign_guard.sql"
+MIGRATION_4B1="$REPO_ROOT/supabase/migrations/20260618000214_fleetgo_hunt_unified.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -25,7 +26,7 @@ MIGRATION_4B0="$REPO_ROOT/supabase/migrations/20260618000213_fleetgo_assign_guar
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -416,6 +417,145 @@ if [ "$MODE" = "selftest" ]; then
     || fail "ASSIGNGUARD-ONSORTIE does not guard that an OPEN sortie exists (the sortie arm would be untested)"
   grep -q "the two-fleet broken invariant was not built" "$SQL" \
     || fail "ASSIGNGUARD-AMBIGUOUS does not guard that exactly two group-shaped fleets exist (the >1 arm would be untested)"
+
+  # ── step 4b-1 (0214): the hunt learns the fleet. ONE re-create ONLY (the 0204 hunt head + hunks
+  #    A/B/C), the 0213 leaf COMPOSED (never a fifth inline copy of the group-fleet shape), the lit
+  #    lock hardened to FOR UPDATE with the dark FOR SHARE preserved byte-identically, the guard
+  #    arms in leaf → ambiguous → in-flight → consume → mint order strictly BETWEEN the member lock
+  #    and the head's readiness, and the head's arms surviving verbatim for the =0 fall-through.
+  #    RUNTIME MUTATIONS (traced; the red runs need CI's disposable Postgres — none exists here):
+  #      • force `v_unified := true`      → HUNTUNI_DARKPARITY's second probe answers
+  #                                         group_fleet_in_flight, not member_not_ready → red.
+  #      • delete the in-flight arm       → HUNTUNI_REJECT_INFLIGHT gets ok:true (the moving fleet
+  #                                         is "consumed" from its anchor) → red; the order chain
+  #                                         below also reds statically.
+  #      • skip Hunk C's fleet-complete   → two live group-shaped fleets → HUNTUNI_PASS_NOSECONDFLEET
+  #                                         red; the order chain below also reds statically.
+  #      • delete the >1 arm              → the two-fleet fixture falls through to consume/in-flight
+  #                                         → HUNTUNI_PASS_AMBIGUOUS red; the order chain reds.
+  #      • drop the member-dock dissolve  → the co-located assignee (f3, the 0213 ALLOW shape) stays
+  #                                         'present' with an active presence while hunting →
+  #                                         HUNTUNI_PASS_NOGHOSTDOCK red; the count check below
+  #                                         also reds statically.
+  #      • drop the gsm manifest read (F1)→ the 'present' MID-COMBAT sortie fleet is treated as
+  #                                         settled-consumable: the live encounter's presence is
+  #                                         closed + the fleet completed + a second sortie minted
+  #                                         (or the zero-distance leg raises) → HUNTUNI_REJECT_ONSORTIE
+  #                                         red; the order chain below also reds statically.
+  #      • drop the member-busy guard (F2)→ a member flying its own per-ship fleet is minted
+  #                                         'hunting' → HUNTUNI_REJECT_MEMBERBUSY red; the order
+  #                                         chain below also reds statically.
+  [ -f "$MIGRATION_4B1" ] || fail "migration 0214 not found"
+  MIG4B1_CODE="$(sql_code "$MIGRATION_4B1")"
+  [ "$(printf '%s' "$MIG4B1_CODE" | grep -c "create or replace function")" = "1" ] \
+    || fail "0214 must contain exactly ONE re-create (the send_ship_group_hunt head — the leaf lives in 0213)"
+  printf '%s' "$MIG4B1_CODE" | grep -q "create or replace function public.send_ship_group_hunt(p_group_id uuid, p_location uuid, p_return_location_id uuid default null)" \
+    || fail "0214 does not re-create send_ship_group_hunt with the head's exact 3-arg signature"
+  printf '%s' "$MIG4B1_CODE" | grep -qE "^[[:space:]]*(alter table|drop function|drop table)" \
+    && fail "0214 alters/drops an existing object (4b-1 is one function re-create ONLY)" || true
+  printf '%s' "$MIG4B1_CODE" | grep -qiE "(insert into|update)[[:space:]]+(public\.)?game_config" \
+    && fail "0214 seeds or flips a flag (the flip is 4b's LAST act, never a side effect)" || true
+  # the leaf is COMPOSED (the 0213 authority), not re-inlined.
+  printf '%s' "$MIG4B1_CODE" | grep -q "ship_group_resolve_fleet(v_player, v_group)" \
+    || fail "0214 does not compose the 0213 leaf (a fifth inline copy of the group-fleet shape is the default outcome)"
+  # per-ship movers stay uncomposed (§2 retires them; the §0 mistake).
+  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+    printf '%s' "$MIG4B1_CODE" | grep -q "$banned" \
+      && fail "0214 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
+  done
+  # the ONLY ship writes are the hunt's own status='hunting' signal, in exactly THREE mint paths
+  # (Hunk C + the NOHOME launch branch + the 0168 dark head). The hunt is NOT the unified mover —
+  # this write retires at 4c, not here — but a fourth write (or a dropped one) is a defect.
+  [ "$(printf '%s' "$MIG4B1_CODE" | grep -cE "update[[:space:]]+(public\.)?main_ship_instances")" = "3" ] \
+    || fail "0214's ship-write count drifted (expected the head's hunting write in exactly 3 mint paths)"
+  [ "$(printf '%s' "$MIG4B1_CODE" | grep -c "set status = 'hunting'")" = "3" ] \
+    || fail "0214's status='hunting' write is not in exactly 3 mint paths (a mint path lost the sortie signal)"
+  grep -q "IT RETIRES AT STEP 4c" "$MIGRATION_4B1" \
+    || fail "0214 lost the 4c-retirement marker on the kept ship write (the dependency note for the column narrowing)"
+  # the consuming path must dissolve the members' OWN present fleets (the head's 0204:664-676 block,
+  # composed — the mover composes the same block at every go). 0213's co-located ALLOW arm leaves an
+  # assignee holding its dock pair; a sortie that keeps it active is §0 through the hunt's front
+  # door. EXACTLY TWO occurrences: Hunk C's copy + the head's launch branch (one = the head only =
+  # the consuming path lost its dissolve).
+  [ "$(printf '%s' "$MIG4B1_CODE" | grep -c "main_ship_id = any(v_members) and status = 'present'")" = "2" ] \
+    || fail "0214's consuming path lost the member-dock dissolve (the 0213 co-located assignee would be hunting and docked at once)"
+  # the GATED lock branch: lit FOR UPDATE (serializes hunt-vs-go/stop/assign), dark FOR SHARE
+  # byte-identical (the lock footprint is part of parity). Judged on the BODY's gated structure —
+  # a file-wide substring is satisfied by the self-assert's own literals (the 0213 lesson).
+  printf '%s' "$MIG4B1_CODE" | perl -0777 -ne '
+    my $i = index($_, "create or replace function public.send_ship_group_hunt");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$\$;", $i);
+    exit 1 if $j < 0;
+    my $body = substr($_, $i, $j - $i);
+    exit 1 unless $body =~ /if v_unified then\s*perform 1 from public\.ship_groups where group_id = v_group and player_id = v_player for update;\s*else\s*perform 1 from public\.ship_groups where group_id = v_group and player_id = v_player for share;\s*end if;/;
+    exit 0;' \
+    || fail "0214's hunt body lost the GATED lock branch (lit FOR UPDATE serializes hunt-vs-go; dark FOR SHARE is lock-footprint parity)"
+  # ORDER (mutation-tested): member-lock → leaf → ambiguous → in-flight → the gsm MANIFEST read →
+  # on-sortie → hp-only check → member-busy → consume → mint → the head's readiness → the head's
+  # launch branch, on comment-stripped CODE, FIRST occurrences. The manifest read must sit between
+  # the status arm and anything settled-consumable (the F1 rule: a 'present' MID-COMBAT sortie is
+  # never consumable — the status arm alone is NOT guard 8's twin, the manifest read is what makes
+  # it one); Hunk C after the head's readiness would re-open the defect (stale per-ship signals
+  # rejecting a settled fleet before the fleet is ever read); the consume must precede the mint
+  # (terminal-before-new IS the at-most-one construction); and the head's readiness + launch arms
+  # must survive AFTER the hunk (the =0 fall-through). This chain is also the body-presence check
+  # for every arm: a deleted arm relocates its first occurrence into the self-assert literals past
+  # the launch offset (or vanishes) and the chain reds.
+  printf '%s' "$MIG4B1_CODE" | perl -0777 -ne '
+    my $decl   = index($_, "v_unified boolean := public.cfg_bool(\x27fleet_movement_unified_enabled\x27)");
+    my $mlock  = index($_, ") locked;");
+    my $leaf   = index($_, "ship_group_resolve_fleet");
+    my $amb    = index($_, "fleet_ambiguous");
+    my $infl   = index($_, "group_fleet_in_flight");
+    my $gsm    = index($_, "group_sortie_members");
+    my $sort   = index($_, "group_on_sortie");
+    my $hponly = index($_, "main_ship_id = any(v_members) and hp <= 0");
+    my $busy   = index($_, "member_busy");
+    my $cons   = index($_, "set status = \x27completed\x27");
+    my $mint   = index($_, "current_base_id, group_id, return_location_id)");
+    my $ready  = index($_, "if v_launch_from_dock then");
+    my $launch = index($_, "if v_launch_from_dock and v_docked > 0 then");
+    my $darkro = index($_, "status <> \x27home\x27 or hp <= 0");
+    exit 1 unless $decl >= 0 && $mlock >= 0 && $leaf >= 0 && $amb >= 0 && $infl >= 0
+               && $gsm >= 0 && $sort >= 0 && $busy >= 0
+               && $hponly >= 0 && $cons >= 0 && $mint >= 0 && $ready >= 0 && $launch >= 0 && $darkro >= 0;
+    exit 1 unless $decl < $mlock && $mlock < $leaf && $leaf < $amb && $amb < $infl
+               && $infl < $gsm && $gsm < $sort && $sort < $hponly && $hponly < $busy
+               && $busy < $cons && $cons < $mint && $mint < $ready
+               && $ready < $launch && $ready < $darkro;
+    exit 0;' \
+    || fail "0214's hunk order broke: member-lock -> leaf -> ambiguous -> in-flight -> manifest-read -> on-sortie -> hp-only -> member-busy -> consume -> mint must sit BEFORE the head's readiness/launch arms (an arm is missing, misplaced, or the head's arms did not survive)"
+  # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
+  # failed to reach the state its marker claims to pin).
+  grep -q "the docked-launch head path would be vacuous" "$SQL" \
+    || fail "HUNTUNI_DARKPARITY does not guard that the member is really docked (the 0199 arm untested otherwise)"
+  grep -q "this is not the head''s reachable dark state" "$SQL" \
+    || fail "HUNTUNI_DARKPARITY does not guard that no group-shaped fleet pre-exists (parity asserted off the reachable state otherwise)"
+  grep -q "the second probe would be vacuous" "$SQL" \
+    || fail "HUNTUNI_DARKPARITY lacks the second probe's vacuity guard (the ONLY probe the v_unified mutation can redden)"
+  grep -q "the mid-combat sortie state was not built" "$SQL" \
+    || fail "HUNTUNI_REJECT_ONSORTIE does not guard that the sortie fleet is really present-at-site with an open manifest"
+  grep -q "no live encounter on the sortie fleet" "$SQL" \
+    || fail "HUNTUNI_REJECT_ONSORTIE does not guard that a LIVE encounter exists (the consume would be untested where it hurts)"
+  grep -q "the busy-member state was not built" "$SQL" \
+    || fail "HUNTUNI_REJECT_MEMBERBUSY does not guard that the member's per-ship fleet is really moving (the F2 guard untested otherwise)"
+  grep -q "the consume phase is vacuous" "$SQL" \
+    || fail "HUNTUNI_PASS_NOSECONDFLEET does not guard that the unified fleet really settled present (consume untested otherwise)"
+  grep -q "the ghost-dock assertion would be vacuous" "$SQL" \
+    || fail "HUNTUNI_PASS_NOGHOSTDOCK does not guard that an active presence existed to be closed"
+  grep -q "the co-located shape was not built" "$SQL" \
+    || fail "HUNTUNI_PASS_NOGHOSTDOCK does not guard the co-located assignee's dock pair (the member-dissolve untested otherwise)"
+  grep -q "the catastrophe shape was not built" "$SQL" \
+    || fail "HUNTUNI_PASS_NOSECONDFLEET does not guard the legacy-home zero-per-ship-fleet shape (the double-mint shape untested otherwise)"
+  grep -q "the resolution could come from the retired layer" "$SQL" \
+    || fail "HUNTUNI_PASS_RESOLVER does not guard that zero per-ship fleets exist"
+  grep -q "this would not exercise the =0 arm" "$SQL" \
+    || fail "HUNTUNI_PASS_BOOTSTRAP does not guard that the leaf really returns zero rows"
+  grep -q "the from-space state was not built" "$SQL" \
+    || fail "HUNTUNI_PASS_FROMSPACE does not guard that the fleet is really parked idle in space"
+  grep -q "the origin could come from the retired layer" "$SQL" \
+    || fail "HUNTUNI_PASS_FROMSPACE does not guard that zero ships carry a position"
 
   # ── THE TREE-WIDE DOCK-COPY BAN. 0072 proved an alias-free copy evades exact-substring greps, and
   # the recorded 0136 failure mode is a NEW file re-inlining the block — a file a 0211-only grep never
