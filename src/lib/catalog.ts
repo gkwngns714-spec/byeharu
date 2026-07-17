@@ -76,6 +76,20 @@ export async function fetchFleetControlEnabled(): Promise<boolean> {
   return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'fleet_control_enabled')
 }
 
+// FLEET-GO 4a-1 (charter §2 / movement unification) — the runtime gate for the UNIFIED fleet mover
+// arms (command_ship_group_go / command_ship_group_stop, 0207-0209). Same strict jsonb-true fold as
+// fetchLaunchFromDockEnabled / fetchFleetControlEnabled (the server gates the unified RPCs on the
+// SAME flag via cfg_bool FIRST; the row exists in prod, seeded false by 0207). This MUST stay a
+// RUNTIME read, never a compile constant: Pages deploys AHEAD of the approval-gated migrations
+// (the teamApi.ts deploy-order law), so only a runtime read lets 4b's flag flip switch the already-
+// deployed client atomically with the server. Absent / unreadable / any non-true shape → OFF
+// (fail-closed): every unified arm stays dormant and the game is byte-identical to today.
+export async function fetchFleetMovementUnifiedEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('game_config').select('key, value')
+  if (error) return false
+  return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'fleet_movement_unified_enabled')
+}
+
 // OSN-3 S6A feature gate for the coordinate-movement (open-space) command surface. Same safe public
 // read path + boolean semantics as fetchMainshipSendEnabled above. Absent or unreadable → OFF. Read
 // only. NOTE (S6A): nothing renders coordinate-command UI yet — this is a typed seed for S6B's gating;

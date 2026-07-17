@@ -2,15 +2,19 @@ import { test, expect } from '@playwright/test'
 import {
   resolveTeamMarkers,
   resolveTeamDockBadges,
+  resolveFleetSpaceBadges,
   teamMarkersLayer,
   deriveTeamRepresentedShipIds,
   TeamMovingMarkers,
+  TeamMarkerBadge,
   TeamDockBadge,
 } from '../src/features/map/teamMarkers'
 import { interpolateMovementPoint } from '../src/features/map/movementInterpolation'
 import type { FleetMovement } from '../src/features/fleets/fleetTypes'
 import type { GroupRow } from '../src/features/command/teamRoster'
 import type { DockedTeamRollup } from '../src/features/command/teamRollup'
+// type-only import — erased at compile, so the spec never loads teamApi's supabase client.
+import type { UnifiedGroupFleetLite } from '../src/features/command/teamApi'
 
 // TEAMMAP-2 — pure specs for the team-marker cluster function + the shared movement interpolation,
 // and the GalaxyMap wiring proof via the SAME pure `teamMarkersLayer` element-descriptor helper the
@@ -211,6 +215,93 @@ test('layer: one TeamDockBadge per complete rollup, positioned at the port throu
   expect(props.label).toBe('Fleet Alpha 2/2')
   expect({ x: props.x, y: props.y }).toEqual({ x: 100, y: 200 })
   expect(props.stack).toBe(0)
+})
+
+// ── FLEET-GO 4a-1 — resolveFleetSpaceBadges: the parked-in-space fleet badge (charter §2/0208). ──
+const spaceFleet = (o: Partial<UnifiedGroupFleetLite> = {}): UnifiedGroupFleetLite => ({
+  group_id: 'g1',
+  status: 'idle',
+  location_mode: 'space',
+  current_location_id: null,
+  space_x: 40,
+  space_y: 60,
+  ...o,
+})
+
+test('space badge: a parked unified fleet → one badge at its OWN coordinates, member count from the rollup', () => {
+  const out = resolveFleetSpaceBadges([spaceFleet()], groups, [rollup({ locationId: null, dockedCount: 0 })])
+  expect(out).toEqual([{ groupId: 'g1', label: 'Fleet Alpha · 2 ships', x: 40, y: 60 }])
+})
+
+test('space badge: single-member (or unknown-count) fleets take the bare label', () => {
+  const out = resolveFleetSpaceBadges([spaceFleet()], groups, [rollup({ memberCount: 1, dockedCount: 0, locationId: null })])
+  expect(out[0].label).toBe('Fleet Alpha')
+  // no rollup row for the group at all → still a badge, bare label (fail soft on the count only)
+  expect(resolveFleetSpaceBadges([spaceFleet()], groups, [])[0].label).toBe('Fleet Alpha')
+})
+
+test('space badge: fail closed — non-space modes, missing coords, unknown groups, zero groups → nothing', () => {
+  expect(resolveFleetSpaceBadges([spaceFleet({ location_mode: 'location' })], groups, [])).toEqual([])
+  expect(resolveFleetSpaceBadges([spaceFleet({ space_x: null })], groups, [])).toEqual([])
+  expect(resolveFleetSpaceBadges([spaceFleet({ space_y: null })], groups, [])).toEqual([])
+  expect(resolveFleetSpaceBadges([spaceFleet({ group_id: 'ghost' })], groups, [])).toEqual([])
+  expect(resolveFleetSpaceBadges([spaceFleet()], [], [])).toEqual([])
+})
+
+test('space badge: one badge per group (first wins on a duplicate); deterministic order by groupId', () => {
+  const out = resolveFleetSpaceBadges(
+    [spaceFleet({ group_id: 'g2', space_x: 1, space_y: 2 }), spaceFleet(), spaceFleet({ space_x: 99, space_y: 99 })],
+    groups,
+    [],
+  )
+  expect(out.map((b) => b.groupId)).toEqual(['g1', 'g2'])
+  expect(out[0]).toMatchObject({ x: 40, y: 60 }) // the duplicate's coords never overwrite the first
+})
+
+test('de-dup: members of an IN-SPACE parked fleet are represented (chevrons suppressed under the badge)', () => {
+  const ids = deriveTeamRepresentedShipIds({
+    membership: { s1: { group_id: 'g1' }, s2: { group_id: 'g1' }, solo: { group_id: null } },
+    rollups: [],
+    movements: [],
+    groups,
+    nowMs: midMs,
+    unifiedFleets: [spaceFleet()],
+  })
+  expect([...ids].sort()).toEqual(['s1', 's2'])
+})
+
+test('de-dup: omitting unifiedFleets is byte-identical to the pre-slice call (dark parity)', () => {
+  const args = {
+    membership: { s1: { group_id: 'g1' } },
+    rollups: [rollup()],
+    movements: [] as FleetMovement[],
+    groups,
+    nowMs: midMs,
+  }
+  expect([...deriveTeamRepresentedShipIds(args)]).toEqual([...deriveTeamRepresentedShipIds({ ...args, unifiedFleets: [] })])
+})
+
+test('layer: a parked unified fleet renders a TeamMarkerBadge under the fleet-space testid, through the map norm', () => {
+  const layer = teamMarkersLayer({
+    movements: [],
+    groups,
+    rollups: [],
+    locations,
+    norm: (p) => ({ x: p.x + 1, y: p.y + 1 }), // non-identity: proves projection happens
+    k: 1,
+    unifiedFleets: [spaceFleet()],
+  })
+  const badge = layer.find((e) => e.type === TeamMarkerBadge)
+  expect(badge).toBeTruthy()
+  const props = badge!.props as { groupId: string; label: string; x: number; y: number; testIdPrefix?: string }
+  expect(props.groupId).toBe('g1')
+  expect(props.testIdPrefix).toBe('fleet-space-badge')
+  expect({ x: props.x, y: props.y }).toEqual({ x: 41, y: 61 })
+})
+
+test('layer: omitting unifiedFleets leaves the tree byte-identical (dark parity for the map)', () => {
+  const base = { movements: [], groups, rollups: [rollup()], locations, norm, k: 1 }
+  expect(teamMarkersLayer({ ...base, unifiedFleets: [] })).toEqual(teamMarkersLayer(base))
 })
 
 test('layer: co-docked teams stack; a rollup at an unrevealed location renders no badge (fail closed)', () => {

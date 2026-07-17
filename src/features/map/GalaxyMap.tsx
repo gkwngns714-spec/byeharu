@@ -11,6 +11,7 @@ import { fleetShipsLayer } from './fleetShipsLayer'
 import { teamMarkersLayer } from './teamMarkers'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
+import type { UnifiedGroupFleetLite } from '../command/teamApi'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { useSpaceMoveCommand } from './useSpaceMoveCommand'
 import { useSpaceStopCommand } from './useSpaceStopCommand'
@@ -47,6 +48,7 @@ export function GalaxyMap({
   dockedTeamRollups,
   teamRepresentedShipIds,
   fleetPositions,
+  unifiedGroupFleets,
   selectedId,
   onSelect,
   deps,
@@ -70,6 +72,9 @@ export function GalaxyMap({
   // `mainShip`) is drawn by the single shipLayer below. No separate selected-ship id prop is needed — the
   // exclusion is keyed to `mainShip` so it can never disagree with what the single marker renders.
   fleetPositions: FleetPosition[]
+  // FLEET-GO 4a-1: the group's own unified fleets (charter §2). Feeds the in-space fleet badge in the
+  // team layer. [] while the unified flag is dark (useGalaxyMapData gates the read) → byte-identical.
+  unifiedGroupFleets: UnifiedGroupFleetLite[]
   selectedId: string | null
   onSelect: (id: string | null) => void
   // Test/integration injection seam; defaults to the real server readiness + movement-flag reads.
@@ -408,6 +413,8 @@ export function GalaxyMap({
             locations,
             norm,
             k: view.k,
+            // FLEET-GO 4a-1: parked unified fleets → the in-space fleet badge ([] while dark).
+            unifiedFleets: unifiedGroupFleets,
           })}
 
           {/* FLEETMAP — the whole-fleet layer: a subdued marker for every owned ship EXCEPT the selected one

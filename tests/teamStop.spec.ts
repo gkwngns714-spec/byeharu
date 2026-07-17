@@ -3,6 +3,8 @@ import {
   groupStopAvailability,
   resolveStoppableFleets,
   stopOutcomeMessage,
+  parseUnifiedStopResult,
+  unifiedStopOutcomeMessage,
 } from '../src/features/command/teamStop'
 import { resolveTeamMarkers } from '../src/features/map/teamMarkers'
 import type { FleetMovement } from '../src/features/fleets/fleetTypes'
@@ -175,4 +177,51 @@ test('stopOutcomeMessage: partial failure is reported, never swallowed', () => {
 test('stopOutcomeMessage: an opaque/missing aggregate degrades to the no-op line, never NaN', () => {
   expect(stopOutcomeMessage('Vanguard', {})).toBe('Vanguard was already stopped — nothing was in flight.')
   expect(stopOutcomeMessage('Vanguard', { stopped: 'x', failed: null })).not.toContain('NaN')
+})
+
+// ── FLEET-GO 4a-1 — the UNIFIED stop's parser (0209) + THE ENVELOPE TRAP, pinned. ────────────────
+// `stopped` is a COUNT in 0164 but a BOOLEAN in 0209. These specs are the reason two parsers exist;
+// if anyone "deduplicates" them, the trap spec below goes red.
+
+test('THE TRAP, pinned: a 0209 SUCCESS fed to the 0164 parser reads as "nothing was in flight" — the new parser disagrees', () => {
+  // A real 0209 success envelope: the fleet's leg was cancelled, it now holds in space.
+  const success = { ok: true, group_id: 'g1', fleet_id: 'f1', stopped: true, cancelled_movement_id: 'm1', space_x: 10, space_y: 20 }
+  // The OLD parser coerces the boolean to 0 (its filter is `typeof v === 'number'`) and mis-reports
+  // a successful stop as a no-op. This is exactly why the unified arm must never route through it.
+  const oldMsg = stopOutcomeMessage('Vanguard', success)
+  expect(oldMsg).toBe('Vanguard was already stopped — nothing was in flight.')
+  // The NEW parser reads the boolean and reports the halt.
+  const newMsg = unifiedStopOutcomeMessage('Vanguard', success)
+  expect(newMsg).toBe('Stopped Vanguard — holding position in open space.')
+  expect(newMsg).not.toBe(oldMsg) // the two parsers MUST disagree on a 0209 success
+})
+
+test('parseUnifiedStopResult: strict boolean — only `stopped: true` is a halt (counts never leak in)', () => {
+  expect(parseUnifiedStopResult({ stopped: true })).toEqual({ stopped: true, reasonCode: null })
+  expect(parseUnifiedStopResult({ stopped: false, reason_code: 'not_moving' })).toEqual({ stopped: false, reasonCode: 'not_moving' })
+  // A 0164-shaped COUNT (or any non-boolean) is NOT a unified success — fail closed.
+  expect(parseUnifiedStopResult({ stopped: 3 }).stopped).toBe(false)
+  expect(parseUnifiedStopResult({ stopped: 'true' }).stopped).toBe(false)
+  expect(parseUnifiedStopResult({}).stopped).toBe(false)
+})
+
+test('parseUnifiedStopResult: reason codes are the 0209 vocabulary only; unknown codes → null', () => {
+  expect(parseUnifiedStopResult({ stopped: false, reason_code: 'no_fleet' }).reasonCode).toBe('no_fleet')
+  expect(parseUnifiedStopResult({ stopped: false, reason_code: 'already_settled' }).reasonCode).toBe('already_settled')
+  expect(parseUnifiedStopResult({ stopped: false, reason_code: 'surprise' }).reasonCode).toBeNull()
+  expect(parseUnifiedStopResult({ stopped: true }).reasonCode).toBeNull()
+})
+
+test('unifiedStopOutcomeMessage: the idempotent no-op arms read calm, never as errors', () => {
+  expect(unifiedStopOutcomeMessage('Vanguard', { ok: true, stopped: false, reason_code: 'no_fleet' })).toBe(
+    'Vanguard was already stopped — nothing was in flight.',
+  )
+  expect(unifiedStopOutcomeMessage('Vanguard', { ok: true, stopped: false, reason_code: 'not_moving' })).toBe(
+    'Vanguard was already stopped — nothing was in flight.',
+  )
+  expect(unifiedStopOutcomeMessage('Vanguard', { ok: true, stopped: false, reason_code: 'already_settled' })).toBe(
+    'Vanguard already arrived — nothing to stop.',
+  )
+  // Opaque envelope → the calm no-op line, never NaN/undefined leakage.
+  expect(unifiedStopOutcomeMessage('Vanguard', {})).toBe('Vanguard was already stopped — nothing was in flight.')
 })

@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test'
-import { groupMoveAvailability, teamMapSendAction } from '../src/features/command/teamMove'
+import {
+  groupMoveAvailability,
+  teamMapSendAction,
+  unifiedMapSendAction,
+  buildCommandShipGroupGoArgs,
+  type GroupGoTarget,
+} from '../src/features/command/teamMove'
 
 // TEAMMOVE-1 — pure specs for the docked-team move availability mirror + the map sheet's ONE
 // expedition-arm action classifier. No I/O, no clock; fixtures are the TEAMMAP rollup shapes.
@@ -118,4 +124,48 @@ test('NO-HOME: launchFromDock lit never changes a no-docked-member team (still s
   expect(
     teamMapSendAction({ memberCount: 2, dockedCount: 0, dockedLocationId: null, destinationId: 'port-2', launchFromDock: true }),
   ).toBe('send')
+})
+
+// ── FLEET-GO 4a-1 — unifiedMapSendAction: the LIT world's ONE-arm classifier. Coexists with the
+//    three-arm classifier above (the dark default) — every spec above stays untouched, which is
+//    itself the proof the old world is intact. ──
+
+test('UNIFIED: docked at the destination → docked_here (the sole client-side suppression)', () => {
+  expect(unifiedMapSendAction({ dockedLocationId: 'port-2', destinationId: 'port-2' })).toBe('docked_here')
+})
+
+test('UNIFIED: everything else is GO — the mover launches from anywhere', () => {
+  // docked elsewhere (the dark world's 'move') → go
+  expect(unifiedMapSendAction({ dockedLocationId: 'port-1', destinationId: 'port-2' })).toBe('go')
+  // no dock at all (home / split / parked in space / mid-flight — no rollup location) → go
+  expect(unifiedMapSendAction({ dockedLocationId: null, destinationId: 'port-2' })).toBe('go')
+})
+
+test('UNIFIED: the classifier never yields the dark-world arms (no move/send/docked_unready)', () => {
+  for (const dockedLocationId of [null, 'port-1', 'port-2']) {
+    const arm = unifiedMapSendAction({ dockedLocationId, destinationId: 'port-2' })
+    expect(['go', 'docked_here']).toContain(arm)
+  }
+})
+
+// ── FLEET-GO 4a-1 — buildCommandShipGroupGoArgs: the exclusive target shape (0208's rule). ──
+
+test('GO ARGS: a location target carries ONLY p_group_id + p_location_id — never coordinates', () => {
+  const args = buildCommandShipGroupGoArgs('g1', { locationId: 'loc-A' })
+  expect(args).toEqual({ p_group_id: 'g1', p_location_id: 'loc-A' })
+  expect('p_target_x' in args).toBe(false)
+  expect('p_target_y' in args).toBe(false)
+})
+
+test('GO ARGS: XOR is enforced by construction — a malformed target carrying BOTH shapes still emits only the location', () => {
+  // 0208 rejects invalid_target_shape when coords ride alongside a location; the builder makes that
+  // reject unreachable from this client by dropping everything but the location id.
+  const malformed = { locationId: 'loc-A', x: 5, y: 9 } as unknown as GroupGoTarget
+  expect(buildCommandShipGroupGoArgs('g1', malformed)).toEqual({ p_group_id: 'g1', p_location_id: 'loc-A' })
+})
+
+test('GO ARGS: a coordinate target goes RAW — no client-side rounding (0208 rounds server-side)', () => {
+  const args = buildCommandShipGroupGoArgs('g1', { x: 3.7, y: -2.2 })
+  expect(args).toEqual({ p_group_id: 'g1', p_target_x: 3.7, p_target_y: -2.2 })
+  expect('p_location_id' in args).toBe(false)
 })

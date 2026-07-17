@@ -2,6 +2,7 @@ import { createElement, useEffect, useState, type ReactElement } from 'react'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
+import type { UnifiedGroupFleetLite } from '../command/teamApi'
 import type { MapLocation } from './mapTypes'
 import { interpolateMovementPoint } from './movementInterpolation'
 
@@ -98,6 +99,51 @@ export function resolveTeamDockBadges(rollups: readonly DockedTeamRollup[]): Tea
     }))
 }
 
+// ── FLEET-GO 4a-1 — the IN-SPACE fleet badge (charter §2: the fleet has its OWN position, 0208). ──
+// A unified fleet parked in open space (location_mode='space' + its own space_x/space_y — written
+// only by fleet_set_in_space: a coordinate arrival or the 0209 brake) is at a place no existing
+// layer can draw: it is not a movement (no segment to interpolate) and not a dock (no location).
+// This badge is that place. GENUINELY dark-inert by construction — unlike the dock branch, NO live
+// path writes location_mode='space' while the unified gate is false (the hunt never parks in space),
+// so an empty input is guaranteed in today's prod and the layer renders nothing.
+// The label takes the member count from the group's rollup (rollups exist for every group, docked or
+// not) — the fleet's ships are WITH it in space, mirroring the in-flight badge's phrasing.
+export interface FleetSpaceBadgeDescriptor {
+  groupId: string
+  label: string
+  /** WORLD coordinates in the legacy movement domain (project through the map's `norm`). */
+  x: number
+  y: number
+}
+
+export function resolveFleetSpaceBadges(
+  unifiedFleets: readonly UnifiedGroupFleetLite[],
+  groups: readonly GroupRow[],
+  rollups: readonly DockedTeamRollup[],
+): FleetSpaceBadgeDescriptor[] {
+  if (groups.length === 0) return []
+  const nameById = new Map(groups.map((g) => [g.group_id, g.name]))
+  const countByGroup = new Map(rollups.map((r) => [r.groupId, r.memberCount]))
+  const out: FleetSpaceBadgeDescriptor[] = []
+  const seen = new Set<string>()
+  for (const f of unifiedFleets) {
+    if (!f.group_id || f.location_mode !== 'space') continue
+    if (f.space_x == null || f.space_y == null || !Number.isFinite(f.space_x) || !Number.isFinite(f.space_y)) continue
+    if (!nameById.has(f.group_id)) continue // fail closed: unknown/foreign tag → no badge, never a guessed name
+    if (seen.has(f.group_id)) continue // one fleet per group; duplicates are a broken invariant — first wins
+    seen.add(f.group_id)
+    const name = nameById.get(f.group_id) as string
+    const n = countByGroup.get(f.group_id) ?? 0
+    out.push({
+      groupId: f.group_id,
+      label: n > 1 ? `Fleet ${name} · ${n} ships` : `Fleet ${name}`,
+      x: f.space_x,
+      y: f.space_y,
+    })
+  }
+  return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
+}
+
 // ── FLEETMAP de-dup — the set of owned ship ids ALREADY represented by a TEAM marker ─────────────────
 // A docked-together team draws a dock badge ("Fleet X n/n") and an in-flight team draws a moving badge;
 // the whole-fleet chevron layer (fleetShipsLayer) would otherwise ALSO draw each member as an individual
@@ -116,10 +162,14 @@ export function deriveTeamRepresentedShipIds(args: {
   movements: readonly FleetMovement[]
   groups: readonly GroupRow[]
   nowMs: number
+  /** FLEET-GO 4a-1: unified group fleets — an IN-SPACE fleet badge also represents its members.
+   *  Optional, default [] → every existing caller/spec byte-identical (dark-inert; see the badge). */
+  unifiedFleets?: readonly UnifiedGroupFleetLite[]
 }): Set<string> {
   const markedGroups = new Set<string>()
   for (const b of resolveTeamDockBadges(args.rollups)) markedGroups.add(b.groupId)
   for (const m of resolveTeamMarkers(args.movements, args.groups, args.nowMs)) markedGroups.add(m.groupId)
+  for (const s of resolveFleetSpaceBadges(args.unifiedFleets ?? [], args.groups, args.rollups)) markedGroups.add(s.groupId)
   const ids = new Set<string>()
   if (markedGroups.size === 0) return ids
   for (const shipId of Object.keys(args.membership)) {
@@ -131,24 +181,28 @@ export function deriveTeamRepresentedShipIds(args: {
 
 // ── Presentation ────────────────────────────────────────────────────────────────────────────────────
 
-/** One in-flight team badge: accent diamond + haloed label. Pointer-transparent, tokens only. */
+/** One in-flight team badge: accent diamond + haloed label. Pointer-transparent, tokens only.
+ *  FLEET-GO 4a-1: `testIdPrefix` lets the in-space fleet badge reuse this EXACT presentation under
+ *  its own testid (`fleet-space-badge-<groupId>`) — default unchanged for every existing caller. */
 export function TeamMarkerBadge({
   groupId,
   label,
   x,
   y,
   k,
+  testIdPrefix = 'team-marker',
 }: {
   groupId: string
   label: string
   x: number
   y: number
   k: number
+  testIdPrefix?: string
 }) {
   const r = 5 / k
   return createElement(
     'g',
-    { 'data-testid': `team-marker-${groupId}`, style: { pointerEvents: 'none' as const } },
+    { 'data-testid': `${testIdPrefix}-${groupId}`, style: { pointerEvents: 'none' as const } },
     createElement('circle', { cx: x, cy: y, r: r * 1.8, fill: 'var(--color-accent)', opacity: 0.15 }),
     createElement('polygon', {
       points: `${x},${y - r} ${x + r},${y} ${x},${y + r} ${x - r},${y}`,
@@ -258,6 +312,10 @@ export function teamMarkersLayer(args: {
   locations: Pick<MapLocation, 'id' | 'x' | 'y'>[]
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
+  /** FLEET-GO 4a-1: unified group fleets for the in-space badge. Optional, default [] →
+   *  byte-identical layer (dark-inert by construction — nothing writes location_mode='space'
+   *  while the unified gate is false). */
+  unifiedFleets?: UnifiedGroupFleetLite[]
 }): ReactElement[] {
   if (args.groups.length === 0) return []
   const out: ReactElement[] = [
@@ -285,6 +343,22 @@ export function teamMarkersLayer(args: {
         y: p.y,
         k: args.k,
         stack,
+      }),
+    )
+  }
+  // FLEET-GO 4a-1 — in-space fleet badges (parked unified fleets). Static (no interpolation tick —
+  // a parked fleet does not move), reusing the moving badge's presentation under its own testid.
+  for (const b of resolveFleetSpaceBadges(args.unifiedFleets ?? [], args.groups, args.rollups)) {
+    const p = args.norm({ x: b.x, y: b.y })
+    out.push(
+      createElement(TeamMarkerBadge, {
+        key: `fleet-space-${b.groupId}`,
+        groupId: b.groupId,
+        label: b.label,
+        x: p.x,
+        y: p.y,
+        k: args.k,
+        testIdPrefix: 'fleet-space-badge',
       }),
     )
   }

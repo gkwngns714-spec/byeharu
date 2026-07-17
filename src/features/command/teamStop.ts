@@ -119,3 +119,45 @@ export function stopOutcomeMessage(fleetName: string, res: GroupStopOutcome): st
   if (failed > 0) parts.push(`· ${ships(failed)} couldn't stop`)
   return `${parts.join(' ')}.`
 }
+
+// ── FLEET-GO 4a-1 — the UNIFIED stop's envelope parser + outcome copy (0209). ────────────────────
+//
+// A NEW parser, not a widening of stopOutcomeMessage — because the two envelopes DISAGREE on the
+// same key: `stopped` is a per-member COUNT in 0164 ({stopped: 3, skipped: 1, failed: 0}) but a
+// BOOLEAN in 0209 ({stopped: true} — ONE fleet, ONE brake, nothing to count). stopOutcomeMessage's
+// numeric filter (`typeof v === 'number' && v > 0`) coerces a 0209 success's `stopped: true` to 0
+// and reports "was already stopped — nothing was in flight" ON A SUCCESSFUL STOP. The spec battery
+// pins that divergence explicitly (feed a 0209 success to BOTH; assert they disagree), so nobody
+// "simplifies" the two parsers back into one.
+//
+// 0209's ok:true shape: { stopped: boolean, reason_code?: 'no_fleet' | 'not_moving' |
+// 'already_settled', cancelled_movement_id?, space_x?, space_y?, … }. reason_code only accompanies
+// stopped:false (the idempotent no-op arms). Rejects (ok:false + reason) never reach this parser —
+// TeamMapStop routes those through teamReasonMessage like every other RPC.
+
+export type UnifiedStopReasonCode = 'no_fleet' | 'not_moving' | 'already_settled'
+
+export interface UnifiedStopOutcome {
+  /** BOOLEAN (0209): the fleet's live leg was cancelled and it now holds in open space. */
+  stopped: boolean
+  /** Why a stopped:false call was a no-op; null on success or on an unrecognized code. */
+  reasonCode: UnifiedStopReasonCode | null
+}
+
+/** Parse a 0209 ok:true envelope. Strict boolean read: only `stopped === true` counts as a halt. */
+export function parseUnifiedStopResult(res: Record<string, unknown>): UnifiedStopOutcome {
+  const rc = res.reason_code
+  return {
+    stopped: res.stopped === true,
+    reasonCode: rc === 'no_fleet' || rc === 'not_moving' || rc === 'already_settled' ? rc : null,
+  }
+}
+
+/** Player-facing summary of a unified fleet stop (ONE fleet — no per-ship breakdown exists). */
+export function unifiedStopOutcomeMessage(fleetName: string, res: Record<string, unknown>): string {
+  const o = parseUnifiedStopResult(res)
+  if (o.stopped) return `Stopped ${fleetName} — holding position in open space.`
+  if (o.reasonCode === 'already_settled') return `${fleetName} already arrived — nothing to stop.`
+  // no_fleet / not_moving / unrecognized: the fleet simply is not in flight. Idempotent, calm copy.
+  return `${fleetName} was already stopped — nothing was in flight.`
+}
