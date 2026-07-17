@@ -7,7 +7,30 @@
 
 ## RESUME — read this first (the owner switched computers; assistant memory does NOT travel, this doc does)
 
-## ⭐ PRE-FLIP COMPLETE (2026-07-18) — EVERYTHING IS MERGED + DARK ON MAIN; THE FLIP IS THE OWNER'S TO RUN ⭐
+## ⭐⭐ FLIPPED LIVE 2026-07-18 — THE UNIFIED FLEET MOVER IS ON IN PRODUCTION ⭐⭐
+
+**Done.** Migrations 0207-0215 deployed (prod head 0215), then the flip ran (via `node
+scripts/run-activation.mjs scripts/activate-unified-movement.sql` — jq absent on this machine, so the
+Management-API node runner, NOT the .sh). Preconditions + poison-sweep passed; VERIFIED against the live DB:
+`fleet_movement_unified_enabled=TRUE`, and `mainship_send_enabled` / `mainship_space_movement_enabled` /
+`mainship_coordinate_travel_enabled` all **FALSE**. Players now move FLEETS (port or open space, from
+anywhere, redirectable); per-ship movement is dark. The canary (`scripts/canary-mgmt-api.mjs`) confirmed the
+Mgmt-API endpoint is one-transaction + surfaces RAISE before the flip.
+
+**ROLLBACK (one command, reversible):** run the 4 inverse `set_game_config` writes in the commented section
+at the bottom of `scripts/activate-unified-movement.sql` via the node runner (unified→false, the 3 legacy
+movers→true). Residual after a rollback: members of any group that already ran a unified go read
+`contradictory_state`/hidden until re-flip (the go dissolved their per-ship fleets) — flag-exact always,
+world-exact only if no go ran. See M2 in the flip-ACT review.
+
+**POST-FLIP CLEANUP (planned, NOT built — do AFTER a soak):** 4a-post (delete dead per-ship client, #11) →
+0216-drop (drop legacy movers, drain-asserted, #9) → 4c (signal retirement, 2 migs, #5 — the audit found 5
+live breaks incl. a client PostgREST select that would blank the map; ALL captured in the task) → 4d
+(reconciler delete, BUILT + banked on `slice-4d-reconciler-delete`, held for 4c, #6) → 4e (bootstrap
+deletion, #12). WATCH post-flip: the map, the Port tab, hunts, trade dock reads — all now resolve through
+the unified fleet. The pipeline + lessons that built this are recorded below and in [[byeharu-autopilot-loop]].
+
+## (historical) PRE-FLIP COMPLETE (2026-07-18) — everything merged + dark; the flip was the owner's to run
 
 The whole unified-movement engine + client + the reversible flip script are on `main`, all DARK behind
 `fleet_movement_unified_enabled` (false in prod). Nothing player-visible has changed. Every pre-flip
