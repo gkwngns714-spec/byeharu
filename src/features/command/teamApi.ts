@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase'
 import { buildShipGroupMap, type GroupRow, type ShipGroupMapEntry, type ShipMembershipRow } from './teamRoster'
+import { buildCommandShipGroupGoArgs, type GroupGoTarget } from './teamMove'
 import type { PreviewMember } from './teamSkillset'
 
 // TEAM-COMMAND Slice A — owner-scoped reads for team/group data (DARK).
@@ -71,6 +72,42 @@ export async function fetchMyPresentShipFleets(): Promise<PresentShipFleetLite[]
     .not('main_ship_id', 'is', null)
   if (error || !data) return []
   return data as PresentShipFleetLite[]
+}
+
+// ── FLEET-GO 4a-1 — the UNIFIED-fleet read (the fetchMyPresentShipFleets SIBLING, deliberately not a
+// widening of it): the live rollup input above is untouched (its `.not('main_ship_id','is',null)`
+// filter is exactly why a unified fleet is invisible to it), and this read answers the question the
+// old one cannot: the group's ONE fleet — main_ship_id IS NULL + group_id set, the hunt's proven
+// shape that 0207 reuses — with its own position (status/location_mode/current_location_id/space_x/y,
+// the 0208 columns; live in prod since the 0211 deploy). Owner-select RLS on `fleets` is the same
+// grant the present-fleet read already exercises. Live rows only (0207's own live-set predicate).
+//
+// ⚠ THE SHAPE IS NOT UNIQUELY THE UNIFIED MOVER'S: the live team hunt (send_ship_group_hunt, 0168 —
+// team_command_enabled is ON in prod) mints EXACTLY this shape for its sortie fleet, TODAY, while
+// fleet_movement_unified_enabled is false. So "no unified fleet row can exist while the server gate
+// is false" is FALSE and this read is NOT dark-inert by construction. Callers therefore (a) gate the
+// FETCH on the runtime unified flag (dark → zero reads, zero behavior change — the hard invariant),
+// and (b) when lit, exclude rows 'present' at a COMBAT location before folding them as docks: the
+// unified mover refuses combat destinations (0208 combat_destination), so a group-shaped fleet
+// present at a hunt site can only be a sortie, never a dock.
+export interface UnifiedGroupFleetLite {
+  group_id: string
+  status: string
+  location_mode: string
+  current_location_id: string | null
+  space_x: number | null
+  space_y: number | null
+}
+
+export async function fetchMyUnifiedGroupFleets(): Promise<UnifiedGroupFleetLite[]> {
+  const { data, error } = await supabase
+    .from('fleets')
+    .select('group_id, status, location_mode, current_location_id, space_x, space_y')
+    .is('main_ship_id', null)
+    .not('group_id', 'is', null)
+    .in('status', ['idle', 'moving', 'present', 'returning'])
+  if (error || !data) return []
+  return data as UnifiedGroupFleetLite[]
 }
 
 // ── Slice B1 — owner-scoped group WRITE wrappers over the B0/B1 SECURITY DEFINER RPCs (DARK). ──
@@ -156,6 +193,37 @@ export async function moveShipGroup(groupId: string, locationId: string): Promis
 // { stopped, skipped, failed }.
 export async function stopShipGroup(groupId: string): Promise<TeamRpcResult> {
   const { data, error } = await supabase.rpc('stop_ship_group_transit', { p_group_id: groupId })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
+// ── FLEET-GO 4a-1 — the UNIFIED mover/brake wrappers (charter §2: the fleet is the ONLY mover). ──
+// Thin, normalize-don't-throw (the file's write style, verbatim). Both RPCs are DARK behind
+// fleet_movement_unified_enabled (false in prod) and reject-before-read while dark, so wiring these
+// wrappers changes nothing until 4b flips the flag. NEITHER goes through the fleet-control
+// (cmd.active) gate: fleet_control_enabled imposes a command-ship requirement (0204
+// fleet_inactive_no_command) that the unified mover deliberately does NOT have — gating these on it
+// would make the client forbid what the server accepts.
+
+// command_ship_group_go (0207/0208) — the ONE fleet-level mover: the whole group moves as ONE fleet
+// to a port XOR a world coordinate, from wherever it is (docked, split-docked, parked in space, or
+// mid-flight — a re-issue is a redirect from the interpolated point). The exclusive target shape is
+// enforced by the pure builder (teamMove.ts): a location target NEVER carries coords, and coordinate
+// targets go RAW (0208 rounds to the integer grid server-side; the client must not pre-round).
+// Success carries { fleet_id, movement_id, arrive_at, member_count, redirected, … }.
+export async function commandShipGroupGo(groupId: string, target: GroupGoTarget): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('command_ship_group_go', buildCommandShipGroupGoArgs(groupId, target))
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
+// command_ship_group_stop (0209) — the ONE fleet-level brake: cancels the group fleet's live leg and
+// HOLDS it in open space at the interpolated point (immediately re-commandable). Idempotent —
+// pressing it on a parked fleet returns ok:true with stopped:false + a reason_code, never an error.
+// ⚠ ENVELOPE TRAP: `stopped` here is a BOOLEAN; the legacy 0164 stop returns a COUNT under the same
+// key. Outcome copy MUST go through teamStop.ts's unifiedStopOutcomeMessage, never the 0164 parser.
+export async function commandShipGroupStop(groupId: string): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('command_ship_group_stop', { p_group_id: groupId })
   if (error) return { ok: false, reason: 'unavailable' }
   return data as TeamRpcResult
 }

@@ -6,11 +6,14 @@ import {
   fetchMyShipGroups,
   fetchMyShipGroupMap,
   fetchMyPresentShipFleets,
+  fetchMyUnifiedGroupFleets,
   fetchGroupExpeditionTotals,
   sendShipGroup,
   sendShipGroupHunt,
   moveShipGroup,
+  commandShipGroupGo,
   type PresentShipFleetLite,
+  type UnifiedGroupFleetLite,
   type ShipGroupMapEntry,
   type TeamRpcResult,
 } from './teamApi'
@@ -18,10 +21,10 @@ import { fleetCommandState, type GroupRow } from './teamRoster'
 import { teamDestinationKind, returnPortOptions } from './teamDestination'
 import { groupSendAvailability } from './teamSend'
 import { groupHuntAvailability } from './teamCombat'
-import { deriveDockedTeamRollups } from './teamRollup'
-import { teamMapSendAction } from './teamMove'
+import { deriveDockedTeamRollups, excludeCombatSortieFleets } from './teamRollup'
+import { teamMapSendAction, unifiedMapSendAction } from './teamMove'
 import { teamReasonMessage } from './teamReasonMessage'
-import { fetchLaunchFromDockEnabled, fetchFleetControlEnabled } from '../../lib/catalog'
+import { fetchLaunchFromDockEnabled, fetchFleetControlEnabled, fetchFleetMovementUnifiedEnabled } from '../../lib/catalog'
 
 // TEAM-MAP-SEND — "Send a team here" on MapScreen's location detail sheet (owner order: send
 // teams FROM THE MAP by clicking locations). Mounted by MapScreen behind the compile-time
@@ -56,6 +59,22 @@ import { fetchLaunchFromDockEnabled, fetchFleetControlEnabled } from '../../lib/
 // never gets an enabled Send), or 'send' (the original arm). Same run() discipline, same reason
 // map, existing testids untouched; the server re-checks everything under its locks and stays
 // authoritative.
+//
+// FLEET-GO 4a-1 — BOTH-WORLDS EXPEDITION ARM, branched at RUNTIME on fleet_movement_unified_enabled
+// (the same house pattern as launchFromDock: a runtime game_config read, dark default false, so the
+// already-deployed client switches arms the moment 4b flips the flag — no client deploy in between).
+//   DARK (prod today) → everything above, verbatim: three-arm classifier, docked-unready hint,
+//     sendShipGroup/moveShipGroup. Byte-identical.
+//   LIT → ONE arm: "Send fleet here" → commandShipGroupGo (0207/0208, the §2 unified mover). It
+//     launches from ANYWHERE — home, docked, split-docked, parked in space, or mid-flight (redirect)
+//     — so the three-arm taxonomy, the gather hint and the n/n readiness fold are all UNNECESSARY in
+//     this arm; the sole client-side suppression is 'docked_here' (unifiedMapSendAction — a fleet
+//     already docked at the destination has nothing to do, and a zero-distance leg would trip
+//     fleet_movements_check server-side). Deliberately NOT gated on cmd.active: the unified mover
+//     has NO command-ship requirement (nothing in 0207/0208 checks one) — wiring it through
+//     fleet_control_enabled would make the client forbid what the server accepts.
+//   The HUNT arm is UNTOUCHED in both worlds — hunts are not the unified mover's verb (0208 refuses
+//   combat destinations; sorties stay send_ship_group_hunt's).
 
 export function TeamMapSend({ location, onSent }: { location: MapLocation; onSent: () => void }) {
   const { selection, map } = useShellState()
@@ -64,6 +83,10 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   const [presentFleets, setPresentFleets] = useState<PresentShipFleetLite[]>([]) // docked-team rollup input
   const [launchFromDock, setLaunchFromDock] = useState(false) // NO-HOME (0199) runtime gate; dark → today's behavior
   const [fleetControl, setFleetControl] = useState(false) // FLEET-CONTROL (0204) gate; dark → no inactive-fleet blocking
+  // FLEET-GO 4a-1: the unified-movement runtime gate + the group's own fleets (fetched ONLY when the
+  // gate is lit — the same fetch never runs dark, so today's sheet does zero extra reads).
+  const [unified, setUnified] = useState(false)
+  const [unifiedFleets, setUnifiedFleets] = useState<UnifiedGroupFleetLite[]>([])
   const [powers, setPowers] = useState<Record<string, number>>({}) // group_id → authoritative combat power
   const [busy, setBusy] = useState<string | null>(null) // key of the command in flight
   const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
@@ -83,13 +106,21 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
       fetchMyPresentShipFleets(),
       fetchLaunchFromDockEnabled(),
       fetchFleetControlEnabled(),
-    ]).then(([g, m, pf, lfd, fc]) => {
+      // FLEET-GO 4a-1: the unified gate, then (ONLY if lit) the group fleets it makes meaningful —
+      // dark keeps the wire byte-identical (no unified-fleet read ever fires).
+      fetchFleetMovementUnifiedEnabled().then(async (u) => ({
+        enabled: u,
+        fleets: u ? await fetchMyUnifiedGroupFleets() : [],
+      })),
+    ]).then(([g, m, pf, lfd, fc, uni]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
       setPresentFleets(pf)
       setLaunchFromDock(lfd)
       setFleetControl(fc)
+      setUnified(uni.enabled)
+      setUnifiedFleets(uni.fleets)
     })
     return () => {
       active = false
@@ -121,7 +152,15 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
   // member is docked at the SAME location gets a non-null locationId, and — for an expedition
   // destination that isn't that port — the row below offers "Move team here" (the 0190 onward move)
   // instead of the home-team send.
-  const dockRollups = deriveDockedTeamRollups(groups, groupMap, presentFleets)
+  // FLEET-GO 4a-1: the unified fleets ride the SAME fold as an optional 4th input ([] while dark →
+  // byte-identical). Lit, a group's 'present' unified fleet IS the whole group's dock (its members'
+  // per-ship fleets were dissolved at launch), which is what makes 'docked_here' suppression work.
+  // Exclude a group's sortie fleet (present at a COMBAT location) before the dock fold — else a
+  // mid-hunt group would show "docked n/n at the hunt site" and re-arm Send/Hunt on a committed
+  // group. The SAME one-authority filter useGalaxyMapData applies (map.locations = the combat set).
+  const dockRollups = deriveDockedTeamRollups(
+    groups, groupMap, presentFleets, excludeCombatSortieFleets(unifiedFleets, map.locations),
+  )
 
   // The TeamRosterPanel run() discipline: block re-entry, await the server, map any reject through
   // the ONE copy map, THEN refresh the shell reads (never optimistic).
@@ -137,6 +176,7 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
         onSent() // map data (movements/fleets)
         await selection.refresh() // ship statuses (members just left home / their dock)
         setPresentFleets(await fetchMyPresentShipFleets()) // docked rollups (a moved team left its port)
+        if (unified) setUnifiedFleets(await fetchMyUnifiedGroupFleets()) // lit: the group fleet moved too
       }
     } finally {
       setBusy(null) // never wedge the sheet, even if a wrapper unexpectedly rejects
@@ -193,15 +233,23 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
             launchFromDock && dockedTogetherId !== null
               ? (returnChoice[g.group_id] ?? dockedTogetherId)
               : null
+          // FLEET-GO 4a-1: the expedition arm is picked by ONE classifier per WORLD. Lit → the
+          // unified pair ('go' | 'docked_here'): the mover launches from anywhere, so only the
+          // trivial already-docked-here case is suppressed. Dark → the three-arm classifier verbatim.
           const arm =
             kind === 'expedition'
-              ? teamMapSendAction({
-                  memberCount: rollup?.memberCount ?? members.length,
-                  dockedCount: rollup?.dockedCount ?? 0,
-                  dockedLocationId: rollup?.locationId ?? null,
-                  destinationId: location.id,
-                  launchFromDock,
-                })
+              ? unified
+                ? unifiedMapSendAction({
+                    dockedLocationId: rollup?.locationId ?? null,
+                    destinationId: location.id,
+                  })
+                : teamMapSendAction({
+                    memberCount: rollup?.memberCount ?? members.length,
+                    dockedCount: rollup?.dockedCount ?? 0,
+                    dockedLocationId: rollup?.locationId ?? null,
+                    destinationId: location.id,
+                    launchFromDock,
+                  })
               : null
           // kind==='hunt' already proved the destination active + hunt_pirates → locationValid true.
           const huntOk = groupHuntAvailability({
@@ -227,7 +275,34 @@ export function TeamMapSend({ location, onSent }: { location: MapLocation; onSen
                     )}
                   </span>
                 </span>
-                {arm === 'move' ? (
+                {arm === 'go' ? (
+                  /* FLEET-GO 4a-1 (lit only) — the ONE unified arm: the whole group moves as ONE
+                     fleet from wherever it is (0207/0208; a re-issue mid-flight is a redirect).
+                     No cmd.active gate (the unified mover has no command-ship requirement) and no
+                     readiness gate (there is no readiness — that is the point of §2). */
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    data-testid={`team-go-${g.group_id}`}
+                    busy={busy === `go:${g.group_id}`}
+                    busyLabel="Sending…"
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void run(
+                        `go:${g.group_id}`,
+                        () => commandShipGroupGo(g.group_id, { locationId: location.id }),
+                        (res) => {
+                          const n = (res.member_count as number | undefined) ?? members.length
+                          return res.redirected === true
+                            ? `Redirected ${g.name} — ${n} ship${n === 1 ? '' : 's'} — to ${location.name}.`
+                            : `Sent ${g.name} — ${n} ship${n === 1 ? '' : 's'} — to ${location.name}.`
+                        },
+                      )
+                    }
+                  >
+                    Send fleet here
+                  </Button>
+                ) : arm === 'move' ? (
                   /* TEAMMOVE-1 — a fully-docked team moves ONWARD as one (0190): same run()
                      discipline as the send; the server re-checks docked-together under its locks. */
                   <Button

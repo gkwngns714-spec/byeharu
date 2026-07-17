@@ -29,6 +29,21 @@ const REASON_MESSAGES: Record<string, string> = {
   fleet_inactive_no_command: 'This fleet has no command ship — designate one to move, send, or hunt with it.',
   fleet_full: 'This fleet is full (8 ships max) — remove a ship or use another fleet.',
   ship_not_in_fleet: 'Add this ship to a fleet before making it a command ship.',
+  // FLEET-GO 4a-1 — the UNIFIED mover/brake reject vocabulary (command_ship_group_go 0207/0208 +
+  // command_ship_group_stop 0209). Dark in prod until 4b flips fleet_movement_unified_enabled;
+  // mapping the copy now costs nothing dark and makes the lit world speak player, not code.
+  unified_movement_disabled: 'Fleet movement isn’t available right now.',
+  member_busy: 'A ship in this fleet is still flying its own course — wait for it to arrive.',
+  group_on_sortie: 'This fleet is committed to a hunt — it can’t take a new course until combat resolves.',
+  fleet_ambiguous: 'This fleet’s position is unclear — try again in a moment.',
+  group_scattered: 'The fleet’s ships are split across ports — dock them together once to gather the fleet.',
+  no_origin: 'The fleet has nowhere to depart from yet.',
+  invalid_origin: 'The fleet’s current port couldn’t be found — try again.',
+  movement_settled_retry: 'The fleet just arrived — give the order again from where it is now.',
+  combat_destination: 'Fleets can’t be sent into a combat zone — use Hunt for that.',
+  target_out_of_bounds: 'That point lies outside charted space.',
+  invalid_target_shape: 'Pick one destination — a port or a point in space, not both.',
+  invalid_coordinate: 'That isn’t a usable point in space.',
 }
 
 /** A short player-facing message for a server/transport team reason; unknown → generic "Fleet order unavailable." */

@@ -48,7 +48,8 @@ export function MapScreen() {
     map: {
       loading, error, locations, meta, mainShip, movements,
       mainshipSendEnabled, mainShipFleet, mainShipHeldFleet, mainShipPresence, mainShipSpaceMovement,
-      teamGroups, dockedTeamRollups, teamRepresentedShipIds, fleetPositions, fleetControlEnabled, mainShipInFleet, refresh,
+      teamGroups, dockedTeamRollups, teamRepresentedShipIds, fleetPositions, fleetControlEnabled, mainShipInFleet,
+      fleetMovementUnifiedEnabled, unifiedGroupFleets, refresh,
     },
   } = useShellState()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -114,6 +115,7 @@ export function MapScreen() {
               dockedTeamRollups={dockedTeamRollups}
               teamRepresentedShipIds={teamRepresentedShipIds}
               fleetPositions={fleetPositions}
+              unifiedGroupFleets={unifiedGroupFleets}
               selectedId={selectedId}
               onSelect={setSelectedId}
             />
@@ -131,7 +133,12 @@ export function MapScreen() {
                   movement owner and can be live alongside either, so it would collide; a rail stacks.
                   Renders nothing unless an owned fleet is actually in flight. */}
               {TEAM_COMMAND_ENABLED && (
-                <TeamMapStop movements={movements} groups={teamGroups} onStopped={refresh} />
+                <TeamMapStop
+                  movements={movements}
+                  groups={teamGroups}
+                  unifiedEnabled={fleetMovementUnifiedEnabled}
+                  onStopped={refresh}
+                />
               )}
               {/* PORT-LAUNCH-1B — dark port-to-port navigation. Server-gated (osn_available +
                   anchored): renders nothing while dark. */}
@@ -223,6 +230,7 @@ export function MapScreen() {
               onSent={refresh}
               fleetControlEnabled={fleetControlEnabled}
               shipInFleet={mainShipInFleet}
+              unifiedEnabled={fleetMovementUnifiedEnabled}
             />
           )}
 

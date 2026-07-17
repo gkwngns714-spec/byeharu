@@ -30,6 +30,20 @@ test('every known team-RPC reject reason maps to specific player text (not the f
     'no_home_base',
     // preview/totals reads (0165/0166)
     'invalid_activity',
+    // FLEET-GO 4a-1 — the unified mover/brake vocabulary (command_ship_group_go 0207/0208 +
+    // command_ship_group_stop 0209), verified against the migrations' actual reject envelopes.
+    'unified_movement_disabled',
+    'member_busy',
+    'group_on_sortie',
+    'fleet_ambiguous',
+    'group_scattered',
+    'no_origin',
+    'invalid_origin',
+    'movement_settled_retry',
+    'combat_destination',
+    'target_out_of_bounds',
+    'invalid_target_shape',
+    'invalid_coordinate',
   ]
   for (const reason of known) {
     const msg = teamReasonMessage(reason)
