@@ -1972,31 +1972,121 @@ begin
   if (r->>'reason') is distinct from 'member_not_ready' then
     raise exception 'HUNTUNI-DARKPARITY FAIL: second dark hunt answered % (the head says member_not_ready; group_fleet_in_flight here means Hunk C ran while dark)', r; end if;
 
+  -- hand the uE world to the ONSORTIE block (the live sortie persists deliberately).
+  insert into fg values ('e1', e1), ('gE', gE), ('huntE', v_hunt),
+                        ('huntfleetE', v_huntfleet), ('huntmvE', v_huntmv);
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
   raise notice 'HUNTUNI_DARKPARITY: dark hunt = the 0204 head (envelope keys+values, docked-port origin, hunting write, frozen manifest, dissolve) and the second probe answers the HEAD''s member_not_ready';
+end $$;
+
+-- ════════ BLOCK HUNTUNI-ONSORTIE (4b-1, 0214, lit): AN OPEN SORTIE IS NEVER CONSUMABLE ════════
+-- The 0214 review's F1 (HIGH) made red. A hunt's sortie fleet sits 'present' AT ITS HUNT SITE for
+-- the whole encounter (0169's race pin: 'present' = MID-COMBAT), with a LIVE combat_encounters row
+-- and an active presence. A status-only in-flight arm waves that fleet through as "settled" — and
+-- consuming it would presence_complete the live encounter's presence and complete the fleet under
+-- it; the escape/extract tick (0169:210-230) then runs fleet_set_returning on a completed fleet:
+-- wedged encounter or resurrected fleet → v_n=2 → the blackout 0214 exists to kill, re-minted by
+-- its own consume. 0214's manifest read (the mover's guard-8 read, 0213's token) must reject this
+-- with group_on_sortie and ZERO writes: no second fleet, no second manifest, the encounter and its
+-- presence untouched.
+-- HOW THIS FAILS IF THE CODE WERE WRONG / MUTATION (documented in the sh): drop the gsm read and
+-- the 'present' sortie fleet enters the consume path — the live encounter's presence is closed,
+-- the fleet completed, a second sortie minted (or the zero-distance leg raises) → red here.
+do $$
+declare r jsonb; n int; n2 int; v_flag jsonb;
+  uE uuid := (select v from fg where k='uE'); e1 uuid := (select v from fg where k='e1');
+  gE uuid := (select v from fg where k='gE'); v_hunt uuid := (select v from fg where k='huntE');
+  v_huntfleet uuid := (select v from fg where k='huntfleetE');
+  v_huntmv uuid := (select v from fg where k='huntmvE');
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+
+  -- settle the sortie leg through the real cron entry point: the fleet docks 'present' AT the hunt
+  -- site, presence_create fires activity_start('hunt_pirates') → a LIVE group encounter.
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_huntmv;
+  perform public.movement_settle_arrival(v_huntmv);
+
+  -- vacuity guards: the mid-combat state must REALLY exist, or the rejection below proves nothing.
+  select count(*) into n from public.fleets
+   where id = v_huntfleet and status = 'present' and current_location_id = v_hunt;
+  if n <> 1 then raise exception 'HUNTUNI-ONSORTIE FAIL: the sortie fleet is not present at the hunt site — the mid-combat sortie state was not built'; end if;
+  select count(*) into n from public.group_sortie_members where fleet_id = v_huntfleet;
+  if n = 0 then raise exception 'HUNTUNI-ONSORTIE FAIL: no open manifest on the sortie fleet — the mid-combat sortie state was not built'; end if;
+  select count(*) into n from public.combat_encounters
+   where fleet_id = v_huntfleet and status = 'active';
+  if n <> 1 then raise exception 'HUNTUNI-ONSORTIE FAIL: no live encounter on the sortie fleet — consuming it would be untested where it hurts'; end if;
+  select count(*) into n from public.location_presence
+   where fleet_id = v_huntfleet and status = 'active' and location_id = v_hunt;
+  if n <> 1 then raise exception 'HUNTUNI-ONSORTIE FAIL: no active presence under the encounter — the consume would have nothing to wrongly close'; end if;
+
+  -- ── ★ ONSORTIE ★ lit, second hunt against the mid-combat group: rejected, ZERO writes. ─────────
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  create temp table os_ships_before as select * from public.main_ship_instances;
+  create temp table os_fleets_before as select * from public.fleets;
+  create temp table os_pres_before  as select * from public.location_presence;
+  select count(*) into n from public.group_sortie_members;
+  select count(*) into n2 from public.combat_encounters;
+  r := pg_temp.call_as(uE, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gE, v_hunt));
+  if (r->>'reason') is distinct from 'group_on_sortie' then
+    raise exception 'HUNTUNI-ONSORTIE FAIL: a second hunt against a mid-combat sortie answered % — the consume just ate a live encounter''s fleet', r; end if;
+  if (select count(*) from public.group_sortie_members) <> n then
+    raise exception 'HUNTUNI-ONSORTIE FAIL: the rejected hunt changed the manifest row count'; end if;
+  if (select count(*) from public.combat_encounters) <> n2 then
+    raise exception 'HUNTUNI-ONSORTIE FAIL: the rejected hunt changed the encounter row count'; end if;
+  select count(*) into n from (
+    (table os_ships_before except select * from public.main_ship_instances)
+    union all (select * from public.main_ship_instances except table os_ships_before)) d;
+  if n <> 0 then raise exception 'HUNTUNI-ONSORTIE FAIL: the rejected hunt wrote % main_ship_instances row(s)', n; end if;
+  select count(*) into n from (
+    (table os_fleets_before except select * from public.fleets)
+    union all (select * from public.fleets except table os_fleets_before)) d;
+  if n <> 0 then raise exception 'HUNTUNI-ONSORTIE FAIL: the rejected hunt wrote % fleets row(s)', n; end if;
+  select count(*) into n from (
+    (table os_pres_before except select * from public.location_presence)
+    union all (select * from public.location_presence except table os_pres_before)) d;
+  if n <> 0 then raise exception 'HUNTUNI-ONSORTIE FAIL: the rejected hunt wrote % location_presence row(s)', n; end if;
+  drop table os_ships_before; drop table os_fleets_before; drop table os_pres_before;
+  -- exactly ONE live group-shaped fleet (the sortie), still present, encounter still active.
+  select count(*) into n from public.fleets
+   where group_id = gE and player_id = uE and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'HUNTUNI-ONSORTIE FAIL: % live group-shaped fleets after the rejected hunt', n; end if;
+  select count(*) into n from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
+  if n <> 1 then raise exception 'HUNTUNI-ONSORTIE FAIL: the live encounter did not survive the rejected hunt'; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'HUNTUNI_REJECT_ONSORTIE: lit + sortie fleet present MID-COMBAT at its hunt site -> group_on_sortie, zero writes, one live fleet, the encounter untouched (an open sortie is never consumable)';
 end $$;
 
 -- ════════ BLOCK HUNTUNI-CONSUME (4b-1, 0214, lit): go → present → hunt CONSUMES the fleet ════════
 -- The obligation itself. uF's world: a lit go docks the unified fleet at slag; then a hunt must
 -- not double-mint (the v_n=2 map-blackout catastrophe) — it consumes the settled fleet and mints
--- the sortie from ITS position. Four markers on one chain:
+-- the sortie from ITS position. Six markers on one chain:
 --   HUNTUNI_REJECT_INFLIGHT — fleet moving → hunt rejected group_fleet_in_flight, zero writes.
 --   HUNTUNI_PASS_NOSECONDFLEET — after the consuming hunt, EXACTLY ONE live group-shaped fleet.
 --   HUNTUNI_PASS_NOGHOSTDOCK — the consumed fleet is terminal and its presence CLOSED (§0's class).
 --   HUNTUNI_PASS_RESOLVER — members resolve to the ONE hunt fleet and the map draws them NOT hidden.
+--   HUNTUNI_REJECT_MEMBERBUSY — a member flying its OWN per-ship fleet → member_busy (the F2
+--   transition guard, the mover's guard-7 twin), self-restoring fixture.
 --   HUNTUNI_PASS_AMBIGUOUS — a manufactured two-fleet broken invariant → fleet_ambiguous, and the
 --   arm fires BEFORE the in-flight arm (runtime order pin).
--- FIXTURE SHAPE IS LOAD-BEARING: before the consuming hunt, f1/f2 are rewritten to the LEGACY
--- 'home' shape (spatial_state NULL — prod's 73/76 majority shape). Commission-born members
--- (stationary/at_location) make the OLD head fail CLOSED here (member_not_ready via the dissolved
--- dock join) — annoying but survivable; 'home' members make it fail OPEN: readiness passes, the
--- 0168 arm MINTS A SECOND FLEET, and mainship_resolve_fleet(v_n=2) → NULL → every member
--- place='hidden' for the whole sortie. Asserting on the home shape makes NOSECONDFLEET the
--- catastrophe made red, not a lesser cousin. (The write is CHECK-safe — 0055 constrains only
--- 'stationary' — and is consumed by the hunt's own status='hunting' write; nothing to restore.)
+-- FIXTURE SHAPE: before the consuming hunt, f1/f2 are rewritten to the LEGACY 'home' shape
+-- (spatial_state NULL — prod's 73/76 majority shape); f3 keeps its co-located dock. ⚠ HONEST
+-- RED-AXIS NOTE (the 0214 review's F4 — the earlier version of this comment overclaimed): with f3
+-- docked in the group, UNPATCHED code fails CLOSED on this exact fixture (mixed home+docked →
+-- v_docked=1≠3 → member_not_ready), not open. The fail-OPEN double-mint (readiness passes → the
+-- 0168 arm mints a SECOND fleet → v_n=2 → every member hidden) is driven by the ALL-home,
+-- no-co-located shape — the prod-majority group with no fresh assignee. This block's red axis is
+-- therefore the MUTATION (skip Hunk C's fleet-complete → two live fleets → NOSECONDFLEET red),
+-- plus unpatched-red-by-rejection; do not read this fixture as a demo of the open blackout.
+-- (The home write is CHECK-safe — 0055 constrains only 'stationary' — and is consumed by the
+-- hunt's own status='hunting' write; nothing to restore.)
 -- MUTATIONS (documented in the sh): skip Hunk C's fleet-complete → two live fleets → NOSECONDFLEET
 -- red. Delete the in-flight arm → the moving fleet is "consumed" from its anchor → INFLIGHT red.
 -- Delete the >1 arm → the two-fleet fixture falls into the consume/mint path → AMBIGUOUS red.
+-- Delete the member-busy guard → the manufactured busy fleet is waved through → MEMBERBUSY red.
 do $$
 declare r jsonb; e jsonb; n int; v_flag jsonb; s uuid;
   uF uuid := (select v from fg where k='uF'); slag uuid := (select v from fg where k='slag');
@@ -2115,6 +2205,27 @@ begin
   select count(*) into n from public.fleets
    where player_id = uF and main_ship_id in (f1, f2) and status in ('idle','moving','present','returning');
   if n <> 0 then raise exception 'HUNTUNI-CONSUME FAIL: % per-ship fleet(s) exist — the catastrophe shape was not built', n; end if;
+
+  -- ── ★ MEMBERBUSY ★ (F2, the mover's guard-7 twin) SURGERY (self-restoring, proven): a moving
+  --    per-ship fleet for f1 — the state the live per-ship send produces (the GUARDS block's own
+  --    fixture idiom). hp-only readiness would mint f1 'hunting' while its own leg flies; when
+  --    that leg settles present+active the ship is hunting AND docked (§0 through a third door).
+  --    The consume path must reject member_busy BEFORE any write.
+  insert into public.fleets (player_id, status, location_mode, main_ship_id)
+    values (uF, 'moving', 'movement', f1);
+  select count(*) into n from public.fleets
+   where player_id = uF and main_ship_id = f1 and status in ('moving','returning');
+  if n <> 1 then raise exception 'HUNTUNI-MEMBERBUSY FAIL: the busy-member state was not built'; end if;
+  r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gF, v_hunt));
+  if (r->>'reason') is distinct from 'member_busy' then
+    raise exception 'HUNTUNI-MEMBERBUSY FAIL: hunt with a member flying its own per-ship fleet answered % (ok here = that member ends hunting AND docked when its leg settles)', r; end if;
+  -- restore: delete the manufactured fleet and PROVE it (the member_busy lesson).
+  delete from public.fleets
+   where player_id = uF and main_ship_id = f1 and status = 'moving' and active_movement_id is null;
+  select count(*) into n from public.fleets
+   where player_id = uF and main_ship_id = f1 and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'HUNTUNI-MEMBERBUSY FAIL: the busy fixture did not restore (% left)', n; end if;
+  raise notice 'HUNTUNI_REJECT_MEMBERBUSY: lit + a member flying its OWN per-ship fleet -> member_busy (the guard-7 transition twin), fixture restored and proven';
 
   -- ── ★ NOSECONDFLEET ★ the hunt CONSUMES the settled fleet and mints the sortie from ITS port. ──
   r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gF, v_hunt));

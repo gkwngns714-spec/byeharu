@@ -26,7 +26,7 @@ MIGRATION_4B1="$REPO_ROOT/supabase/migrations/20260618000214_fleetgo_hunt_unifie
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -437,6 +437,14 @@ if [ "$MODE" = "selftest" ]; then
   #                                         'present' with an active presence while hunting →
   #                                         HUNTUNI_PASS_NOGHOSTDOCK red; the count check below
   #                                         also reds statically.
+  #      • drop the gsm manifest read (F1)→ the 'present' MID-COMBAT sortie fleet is treated as
+  #                                         settled-consumable: the live encounter's presence is
+  #                                         closed + the fleet completed + a second sortie minted
+  #                                         (or the zero-distance leg raises) → HUNTUNI_REJECT_ONSORTIE
+  #                                         red; the order chain below also reds statically.
+  #      • drop the member-busy guard (F2)→ a member flying its own per-ship fleet is minted
+  #                                         'hunting' → HUNTUNI_REJECT_MEMBERBUSY red; the order
+  #                                         chain below also reds statically.
   [ -f "$MIGRATION_4B1" ] || fail "migration 0214 not found"
   MIG4B1_CODE="$(sql_code "$MIGRATION_4B1")"
   [ "$(printf '%s' "$MIG4B1_CODE" | grep -c "create or replace function")" = "1" ] \
@@ -483,9 +491,12 @@ if [ "$MODE" = "selftest" ]; then
     exit 1 unless $body =~ /if v_unified then\s*perform 1 from public\.ship_groups where group_id = v_group and player_id = v_player for update;\s*else\s*perform 1 from public\.ship_groups where group_id = v_group and player_id = v_player for share;\s*end if;/;
     exit 0;' \
     || fail "0214's hunt body lost the GATED lock branch (lit FOR UPDATE serializes hunt-vs-go; dark FOR SHARE is lock-footprint parity)"
-  # ORDER (mutation-tested): member-lock → leaf → ambiguous → in-flight → hp-only check → consume →
-  # mint → the head's readiness → the head's launch branch, on comment-stripped CODE, FIRST
-  # occurrences. Hunk C after the head's readiness would re-open the defect (stale per-ship signals
+  # ORDER (mutation-tested): member-lock → leaf → ambiguous → in-flight → the gsm MANIFEST read →
+  # on-sortie → hp-only check → member-busy → consume → mint → the head's readiness → the head's
+  # launch branch, on comment-stripped CODE, FIRST occurrences. The manifest read must sit between
+  # the status arm and anything settled-consumable (the F1 rule: a 'present' MID-COMBAT sortie is
+  # never consumable — the status arm alone is NOT guard 8's twin, the manifest read is what makes
+  # it one); Hunk C after the head's readiness would re-open the defect (stale per-ship signals
   # rejecting a settled fleet before the fleet is ever read); the consume must precede the mint
   # (terminal-before-new IS the at-most-one construction); and the head's readiness + launch arms
   # must survive AFTER the hunk (the =0 fall-through). This chain is also the body-presence check
@@ -497,19 +508,24 @@ if [ "$MODE" = "selftest" ]; then
     my $leaf   = index($_, "ship_group_resolve_fleet");
     my $amb    = index($_, "fleet_ambiguous");
     my $infl   = index($_, "group_fleet_in_flight");
+    my $gsm    = index($_, "group_sortie_members");
+    my $sort   = index($_, "group_on_sortie");
     my $hponly = index($_, "main_ship_id = any(v_members) and hp <= 0");
+    my $busy   = index($_, "member_busy");
     my $cons   = index($_, "set status = \x27completed\x27");
     my $mint   = index($_, "current_base_id, group_id, return_location_id)");
     my $ready  = index($_, "if v_launch_from_dock then");
     my $launch = index($_, "if v_launch_from_dock and v_docked > 0 then");
     my $darkro = index($_, "status <> \x27home\x27 or hp <= 0");
     exit 1 unless $decl >= 0 && $mlock >= 0 && $leaf >= 0 && $amb >= 0 && $infl >= 0
+               && $gsm >= 0 && $sort >= 0 && $busy >= 0
                && $hponly >= 0 && $cons >= 0 && $mint >= 0 && $ready >= 0 && $launch >= 0 && $darkro >= 0;
     exit 1 unless $decl < $mlock && $mlock < $leaf && $leaf < $amb && $amb < $infl
-               && $infl < $hponly && $hponly < $cons && $cons < $mint && $mint < $ready
+               && $infl < $gsm && $gsm < $sort && $sort < $hponly && $hponly < $busy
+               && $busy < $cons && $cons < $mint && $mint < $ready
                && $ready < $launch && $ready < $darkro;
     exit 0;' \
-    || fail "0214's hunk order broke: member-lock -> leaf -> ambiguous -> in-flight -> hp-only -> consume -> mint must sit BEFORE the head's readiness/launch arms (an arm is missing, misplaced, or the head's arms did not survive)"
+    || fail "0214's hunk order broke: member-lock -> leaf -> ambiguous -> in-flight -> manifest-read -> on-sortie -> hp-only -> member-busy -> consume -> mint must sit BEFORE the head's readiness/launch arms (an arm is missing, misplaced, or the head's arms did not survive)"
   # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
   # failed to reach the state its marker claims to pin).
   grep -q "the docked-launch head path would be vacuous" "$SQL" \
@@ -518,6 +534,12 @@ if [ "$MODE" = "selftest" ]; then
     || fail "HUNTUNI_DARKPARITY does not guard that no group-shaped fleet pre-exists (parity asserted off the reachable state otherwise)"
   grep -q "the second probe would be vacuous" "$SQL" \
     || fail "HUNTUNI_DARKPARITY lacks the second probe's vacuity guard (the ONLY probe the v_unified mutation can redden)"
+  grep -q "the mid-combat sortie state was not built" "$SQL" \
+    || fail "HUNTUNI_REJECT_ONSORTIE does not guard that the sortie fleet is really present-at-site with an open manifest"
+  grep -q "no live encounter on the sortie fleet" "$SQL" \
+    || fail "HUNTUNI_REJECT_ONSORTIE does not guard that a LIVE encounter exists (the consume would be untested where it hurts)"
+  grep -q "the busy-member state was not built" "$SQL" \
+    || fail "HUNTUNI_REJECT_MEMBERBUSY does not guard that the member's per-ship fleet is really moving (the F2 guard untested otherwise)"
   grep -q "the consume phase is vacuous" "$SQL" \
     || fail "HUNTUNI_PASS_NOSECONDFLEET does not guard that the unified fleet really settled present (consume untested otherwise)"
   grep -q "the ghost-dock assertion would be vacuous" "$SQL" \

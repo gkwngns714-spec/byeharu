@@ -26,20 +26,32 @@
 -- fifth inline copy of the shape):
 --   >1 fleets → reject 'fleet_ambiguous' (fail closed; the mover/brake/0213 token for this exact
 --               broken invariant — one broken state, one token).
---   =1, status moving/returning → reject 'group_fleet_in_flight' (the exact symmetric twin of the
---               mover's guard 8, 0208:332-343, which rejects a go during a sortie with
---               'group_on_sortie'; this rejects a hunt during a go, same posture, 0213's token).
+--   =1, status moving/returning → reject 'group_fleet_in_flight' (a hunt is a commitment from a
+--               settled position, never a redirect of a live leg; 0213's token).
+--   =1, OPEN SORTIE MANIFEST → reject 'group_on_sortie' (the 0214 review's F1: a sortie fleet sits
+--               'present' AT ITS HUNT SITE for the whole encounter — 0169's race pin — so a status
+--               read alone would let a second hunt CONSUME a mid-combat fleet, wedging the escape
+--               tick or resurrecting the fleet into v_n=2. The status arm + this manifest read
+--               TOGETHER are the mover's guard-8 twin, 0208:332-343; the manifest read is what
+--               makes it one. 0213's token and posture: nothing joins a sortie, nothing consumes
+--               one).
 --   =1 SETTLED (present at a port / location_mode='space' parked / idle at its anchor) → the sortie
 --               ORIGIN is captured FROM THE FLEET (present@port → origin_type='location' at the
 --               port's coordinates; parked → origin_type='space' at fleets.space_x/space_y; else
---               the fleet's own anchor base — the mover's three origin arms, 0208:430-461, read the
---               same way), the per-ship home/stationary readiness is SKIPPED (those signals are the
---               retired layer and read stale under §2 — the settled fleet IS readiness; the hp > 0
---               member check is KEPT: lifecycle, not movement), the fleet is CONSUMED
---               (presence_complete + a terminal completed-write — the mover's own release idiom,
---               0208:549-557, made terminal because the hunt mints a NEW fleet), and THEN the
---               existing mint runs. At-most-one is restored BY CONSTRUCTION: the old fleet is
---               terminal before the new one exists, in the same transaction.
+--               the head's first-active-base anchor — the mover's three origin arms, 0208:430-461,
+--               read the same way), the per-ship home/stationary readiness is SKIPPED (those
+--               signals are the retired layer and read stale under §2 — the settled fleet IS
+--               readiness; the hp > 0 member check is KEPT: lifecycle, not movement; and the
+--               mover's guard-7 member-busy read is carried as a TRANSITION guard — the review's
+--               F2: hp-only readiness would mint a member 'hunting' while its own per-ship leg
+--               flies, which later settles present+active = hunting AND docked, §0 through a third
+--               door; delete with the mover's guard 7 at step 4), the members' own present fleets
+--               are DISSOLVED (the head's 0204:664-676 block — 0213's co-located ALLOW arm leaves
+--               an assignee holding its dock pair), the fleet is CONSUMED (presence_complete + a
+--               terminal completed-write — the mover's own release idiom, 0208:549-557, made
+--               terminal because the hunt mints a NEW fleet), and THEN the existing mint runs.
+--               At-most-one is restored BY CONSTRUCTION: the old fleet is terminal before the new
+--               one exists, in the same transaction.
 --   =0 → fall through to the head's arms VERBATIM — the bootstrap-parity case: a pre-first-go group
 --               still carries per-ship dock shapes and the 0199 lit arm (common docked port) handles
 --               them; the per-ship readiness is CORRECT there because the per-ship shapes are still
@@ -139,6 +151,7 @@ declare
   v_unified boolean := public.cfg_bool('fleet_movement_unified_enabled');
   v_gf_n    integer;              -- live group-shaped fleets found by the 0213 leaf
   v_gf      public.fleets%rowtype; -- the ONE such fleet, when v_gf_n = 1
+  v_busy    integer;              -- members flying their OWN per-ship fleet (the guard-7 read, F2)
   v_gfl     record;               -- the consumed fleet's port row (coords for the origin)
   v_o_type  text;                 -- sortie origin, captured FROM THE FLEET (the 0208 arm naming)
   v_o_base  uuid;
@@ -236,10 +249,28 @@ begin
     end if;
     if v_gf_n = 1 then
       if v_gf.status in ('moving', 'returning') then
-        -- The group's ONE fleet is under way (a go in flight, or a sortie returning). A hunt is a
-        -- commitment from a settled position, not a redirect of a live leg — fail closed, the exact
-        -- symmetric twin of the mover's guard 8 (0208:332-343: no go during a sortie).
+        -- The group's ONE fleet is under way (a go in flight, or a sortie leg flying). A hunt is a
+        -- commitment from a settled position, not a redirect of a live leg — fail closed. NOTE this
+        -- status read alone is NOT the mover's guard-8 twin — guard 8 (0208:332-343) reads the
+        -- MANIFEST; the manifest read is the NEXT arm, and the two arms together are the twin.
         return jsonb_build_object('ok', false, 'reason', 'group_fleet_in_flight');
+      end if;
+
+      -- AN OPEN SORTIE IS NEVER CONSUMABLE (the 0214 review's F1 — HIGH). A hunt's sortie fleet
+      -- sits 'present' AT ITS HUNT SITE for the whole encounter (0169's race pin says it in words:
+      -- 'present' = MID-COMBAT), so the status arm above waves it through — and "consuming" it
+      -- would presence_complete the LIVE encounter's presence and complete the fleet under it,
+      -- then the escape/extract tick (0169:210-230) runs fleet_set_returning on a completed
+      -- fleet: a wedged encounter raising every tick, or a resurrected 'returning' fleet → v_n=2
+      -- → the map blackout this migration exists to kill, re-minted by its own consume. The dark
+      -- head rejected this for free (members read 'hunting' → member_not_ready); the lit hp-only
+      -- readiness removed that guard, and THIS is its replacement — the mover's guard-8 manifest
+      -- read, with 0213's token and posture (0213:250-268: a sortie is a frozen-roster
+      -- commitment; nothing joins it, nothing consumes it). v_gf is live by the leaf's
+      -- definition, so ANY manifest row on it IS an open sortie (finished fleets are outside the
+      -- leaf's status set).
+      if exists (select 1 from public.group_sortie_members where fleet_id = v_gf.id) then
+        return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
       end if;
 
       -- SETTLED. The per-ship home/stationary readiness is deliberately NOT read here: the unified
@@ -251,6 +282,22 @@ begin
         where main_ship_id = any(v_members) and hp <= 0;
       if v_not_home > 0 then
         return jsonb_build_object('ok', false, 'reason', 'member_not_ready');
+      end if;
+
+      -- TRANSITION GUARD (the 0214 review's F2 — delete me at step 4 alongside the mover's guard 7,
+      -- 0208:315-330, whose read this composes verbatim). While the per-ship movers are still live,
+      -- a member could be flying its OWN per-ship fleet; the hp-only readiness above would mint it
+      -- 'hunting' and its per-ship leg would later settle present + active presence — a ship
+      -- hunting AND docked at once (§0 through a third door). The dark head rejects this via its
+      -- status readiness ('traveling'/'returning' are neither home nor docked); the lit consume
+      -- path must therefore carry the mover's own guard. One bounded count over fleets.
+      select count(*) into v_busy
+        from public.fleets f
+       where f.player_id = v_player
+         and f.main_ship_id = any(v_members)
+         and f.status in ('moving', 'returning');
+      if v_busy > 0 then
+        return jsonb_build_object('ok', false, 'reason', 'member_busy');
       end if;
 
       -- Active-fleet limit EXCLUDING the fleet being consumed below AND the members' own present
@@ -283,14 +330,16 @@ begin
         return jsonb_build_object('ok', false, 'reason', 'power_below_required');
       end if;
 
-      -- origin_base anchors the return-to-base mechanics (the escape tick reads origin_base_id) —
-      -- preferring the consumed fleet's OWN anchor (the mover's anchor idiom, 0208:451-455) so the
-      -- sortie inherits the continuity of the fleet it replaces.
-      select b.id, b.x, b.y, b.sector_id into v_base
-        from bases b
-        where b.player_id = v_player and b.status = 'active'
-          and (v_gf.origin_base_id is null or b.id = v_gf.origin_base_id)
-        order by b.created_at limit 1;
+      -- origin_base anchors the return-to-base mechanics — the escape/extract tick reads
+      -- origin_base_id off the sortie fleet (0169:217-228) on EVERY sortie, which is why the head
+      -- rejects no_home_base on every mint path and why this select cannot move into the anchor
+      -- arm alone (a present/space sortie with a NULL anchor would strand the escape tick).
+      -- The HEAD's OWN select, verbatim (0204:657-659): plain first-active-base, NO preference for
+      -- the consumed fleet's origin_base_id — the 0214 review's F3: a preference on a STALE anchor
+      -- (base no longer active) dead-ends every consuming hunt even when other active bases exist.
+      select id, x, y, sector_id into v_base
+        from bases where player_id = v_player and status = 'active'
+        order by created_at limit 1;
       if v_base.id is null then
         return jsonb_build_object('ok', false, 'reason', 'no_home_base');
       end if;
@@ -588,6 +637,7 @@ declare
   v_src   text;
   v_hunts int;
   v_decl int; v_lupd int; v_lshr int; v_leaf int; v_amb int; v_infl int;
+  v_sort int; v_busy int;
   v_mlock int; v_cons int; v_mint int; v_ready int; v_launch int;
 begin
   -- (a) send_ship_group_hunt: single definition, 3-arg, authenticated-executable.
@@ -617,15 +667,21 @@ begin
      or position('ship_group_resolve_fleet' in v_src) = 0
      or position('fleet_ambiguous' in v_src) = 0
      or position('group_fleet_in_flight' in v_src) = 0
+     or position('group_on_sortie' in v_src) = 0
+     or position('group_sortie_members where fleet_id = v_gf.id' in v_src) = 0
+     or position('member_busy' in v_src) = 0
      or position('main_ship_id = any(v_members) and hp <= 0' in v_src) = 0
      or position('IT RETIRES AT STEP 4c' in v_src) = 0 then
-    raise exception 'HUNT-UNI self-assert FAIL: a 0214 hunk is missing (gate read / gated lock arms / leaf compose / reject tokens / hp-only check / 4c note)'; end if;
+    raise exception 'HUNT-UNI self-assert FAIL: a 0214 hunk is missing (gate read / gated lock arms / leaf compose / reject tokens incl. sortie+busy / the manifest read / hp-only check / 4c note)'; end if;
 
   -- (d) ORDER: declare → lit lock → dark lock → member lock → leaf → ambiguous → in-flight →
-  --     consume → mint → the head's readiness → the head's launch branch. Hunk C must sit BETWEEN
-  --     the member lock and the head's readiness (a consume after the head's per-ship readiness
-  --     would re-open the defect: stale signals rejecting a settled fleet), and the consume must
-  --     precede the mint (terminal-before-new is the at-most-one construction).
+  --     on-sortie (the manifest read BETWEEN the status arm and the consume — an open sortie must
+  --     be rejected before anything is treated as settled-consumable, the review's F1) →
+  --     member-busy (F2, after the hp gate's territory, before any write) → consume → mint → the
+  --     head's readiness → the head's launch branch. Hunk C must sit BETWEEN the member lock and
+  --     the head's readiness (a consume after the head's per-ship readiness would re-open the
+  --     defect: stale signals rejecting a settled fleet), and the consume must precede the mint
+  --     (terminal-before-new is the at-most-one construction).
   v_decl   := position('v_unified boolean := public.cfg_bool(''fleet_movement_unified_enabled'')' in v_src);
   v_lupd   := position('player_id = v_player for update' in v_src);
   v_lshr   := position('player_id = v_player for share' in v_src);
@@ -633,15 +689,18 @@ begin
   v_leaf   := position('ship_group_resolve_fleet' in v_src);
   v_amb    := position('fleet_ambiguous' in v_src);
   v_infl   := position('group_fleet_in_flight' in v_src);
+  v_sort   := position('group_on_sortie' in v_src);
+  v_busy   := position('member_busy' in v_src);
   v_cons   := position('set status = ''completed''' in v_src);
   v_mint   := position('current_base_id, group_id, return_location_id)' in v_src);
   v_ready  := position('if v_launch_from_dock then' in v_src);
   v_launch := position('if v_launch_from_dock and v_docked > 0 then' in v_src);
   if not (v_decl > 0 and v_decl < v_lupd and v_lupd < v_lshr and v_lshr < v_mlock
-          and v_mlock < v_leaf and v_leaf < v_amb and v_amb < v_infl and v_infl < v_cons
+          and v_mlock < v_leaf and v_leaf < v_amb and v_amb < v_infl and v_infl < v_sort
+          and v_sort < v_busy and v_busy < v_cons
           and v_cons < v_mint and v_mint < v_ready and v_ready < v_launch) then
-    raise exception 'HUNT-UNI self-assert FAIL: hunk order broken (decl=%, for-update=%, for-share=%, member-lock=%, leaf=%, ambiguous=%, in-flight=%, consume=%, mint=%, readiness=%, launch=%)',
-      v_decl, v_lupd, v_lshr, v_mlock, v_leaf, v_amb, v_infl, v_cons, v_mint, v_ready, v_launch; end if;
+    raise exception 'HUNT-UNI self-assert FAIL: hunk order broken (decl=%, for-update=%, for-share=%, member-lock=%, leaf=%, ambiguous=%, in-flight=%, on-sortie=%, member-busy=%, consume=%, mint=%, readiness=%, launch=%)',
+      v_decl, v_lupd, v_lshr, v_mlock, v_leaf, v_amb, v_infl, v_sort, v_busy, v_cons, v_mint, v_ready, v_launch; end if;
 
   -- (e) the hunt's ship write survives in ALL THREE mint paths (Hunk C + the NOHOME launch branch +
   --     the 0168 dark head) — 'hunting' is the sortie layer's signal until 4c retires it; a path
@@ -669,5 +728,5 @@ begin
   if position('return null;  -- fail closed' in v_src) = 0 then
     raise exception 'HUNT-UNI self-assert FAIL: mainship_resolve_fleet lost its fail-closed NULL — the resolver may not be loosened'; end if;
 
-  raise notice 'HUNT-UNI self-assert ok: 0204 head intact + hunks A/B/C in decl->lock->leaf->ambiguous->in-flight->consume->mint->readiness->launch order; hunting write in all 3 mint paths; leaf shape-keyed internal-only; resolver fail-closed NULL untouched';
+  raise notice 'HUNT-UNI self-assert ok: 0204 head intact + hunks A/B/C in decl->lock->leaf->ambiguous->in-flight->on-sortie->member-busy->consume->mint->readiness->launch order; hunting write in all 3 mint paths; leaf shape-keyed internal-only; resolver fail-closed NULL untouched';
 end $huntuni$;
