@@ -203,6 +203,12 @@ if [ "$MODE" = "selftest" ]; then
     || fail "STOP_SORTIE_LIVESCOPE does not guard the completed-fleet + retained-manifest shape (the anti-overreach half unproven)"
   grep -q "a live group-shaped fleet survived the completed sortie" "$SQL" \
     || fail "STOP_SORTIE_LIVESCOPE does not guard that ONLY the retained dead manifest could block (ambiguous otherwise)"
+  # request_retreat has NO 'ok' key: it RAISES on failure and succeeds with the bare
+  # {return_movement_id: null} arm envelope (0019 → 0018's combat branch; the return leg is minted
+  # LATER by the tick). The fixture must therefore pin the ARMED STATE, never an envelope key the
+  # RPC never had — CI reddened exactly that mistake once (the recurring RPC-shape class).
+  grep -q "request_retreat did not arm the encounter" "$SQL" \
+    || fail "STOP_SORTIE_LIVESCOPE does not assert the armed-retreat STATE after request_retreat (its envelope has no ok key — asserting one reds a SUCCESSFUL call)"
 
   # ── THE GHOST-DOCK BAN: a fleet in flight must leave NO member docked behind it. ─────────────────
   # NOSHIPWRITE is structurally BLIND to this — it diffs main_ship_instances, and the leak lives in

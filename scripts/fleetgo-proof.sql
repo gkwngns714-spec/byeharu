@@ -2657,14 +2657,38 @@ begin
   select id into v_enc  from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
   if v_pres is null or v_enc is null then
     raise exception 'STOP-LIVESCOPE FAIL: no live sortie handed over — nothing to finish'; end if;
+  -- ENVELOPE (verified at the true head — 0019:80, delegating to presence_request_leave, 0018):
+  -- request_retreat RAISES on every failure and, for a COMBAT presence, succeeds with the BARE
+  -- envelope {"return_movement_id": null} — NO 'ok' key, and the null is CORRECT: the combat
+  -- branch only ARMS the retreat (presence 'retreating' + combat_set_retreating); the return
+  -- movement is created LATER by process_combat_ticks once the delay elapses. Asserting {ok} here
+  -- is the RPC-shape mistake the fixture-discipline note warns about — the first cut of this block
+  -- did exactly that and CI reddened it on a SUCCESSFUL call. So: pin the key (and that its value
+  -- is null — a non-null id here would mean the instant-leave 'none' branch ran, the WRONG branch),
+  -- then assert the STATE the call must produce (the team-command-proof idiom).
   r := pg_temp.call_as(uI, format('public.request_retreat(%L::uuid)', v_pres));
-  if (r->>'ok')::boolean is not true then raise exception 'STOP-LIVESCOPE FAIL: request_retreat: %', r; end if;
+  if not (r ? 'return_movement_id') then
+    raise exception 'STOP-LIVESCOPE FAIL: request_retreat envelope drifted (no return_movement_id key): %', r; end if;
+  if (r->>'return_movement_id') is not null then
+    raise exception 'STOP-LIVESCOPE FAIL: request_retreat returned a movement id % mid-combat — the instant-leave branch ran instead of the retreat arm', r->>'return_movement_id'; end if;
+  select count(*) into n from public.combat_encounters
+   where id = v_enc and status = 'retreating' and retreat_started_at is not null;
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: request_retreat did not arm the encounter (retreating + retreat_started_at)'; end if;
+  select count(*) into n from public.location_presence where id = v_pres and status = 'retreating';
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: request_retreat did not set the presence retreating'; end if;
   -- SURGERY (retreat-clock rewind, the COMBATPARITY idiom): now() is txn-constant, so no real
   -- retreat delay can elapse in this txn; rewind the clock instead of faking the end state.
   update public.combat_encounters
      set retreat_started_at = retreat_started_at - interval '1 minute',
          last_resolved_at   = last_resolved_at   - interval '1 minute'
    where id = v_enc;
+  -- GLOBAL-TICK NOTE: process_combat_ticks (and process_mainship_expeditions below) sweep EVERY
+  -- live row, so they also advance uC's and uE's deliberately-persisted encounters by one combat
+  -- step. That is safe HERE and only here: this is the LAST proof block (nothing downstream reads
+  -- uC/uE state), both encounters sit on fresh full-hp commission ships at danger≈1 (one step
+  -- cannot defeat them, so no destructive branch can fire), and the team-command proof runs the
+  -- same global ticks over concurrent worlds. If a block is ever added AFTER this one that asserts
+  -- uC/uE encounter state, it must re-snapshot — do not inherit those worlds across this tick.
   perform public.process_combat_ticks();
   select count(*) into n from public.combat_encounters where id = v_enc and status = 'escaped';
   if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: the encounter did not settle escaped'; end if;
