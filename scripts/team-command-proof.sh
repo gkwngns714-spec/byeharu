@@ -107,6 +107,15 @@
 # moves from the never-touch posture to the raised-and-restored-in-txn set_game_config idiom —
 # exactly what SHIELD-1 did for the combat knob — and the hull-table negative grep is tightened
 # (not dropped): only the `set base_shield` fixture form is permitted, with the restore required).
+# plus the 4d RECONDELETE block (placeholder migration 0299, FLEET-GO step 4d: the reconciler
+# process_mainship_expeditions + its dock leaf nohome_dock_returning_ship are DROPPED behind a
+# reject-before-delete gate that requires the 4c world; the idle shield-regen hunk is rehomed
+# VERBATIM into process_shield_idle_regen on the same 30s cadence. Every idle-regen witness in
+# this proof (SHIELD2/NANGUARD) is repointed to the leaf; the reconciler-behavior arms
+# (TEAMSETTLE race/re-home/self-heal, NOHOME dock-at-return/H1) are TOMBSTONED — post-4c their
+# candidate sets are empty by CHECK. ⚠ The proof chain only applies with 4c in the tree: until
+# the 4c migration exists, `supabase start` fails AT the 4d gate BY DESIGN — the selftest stays
+# green; the disposable-matrix run is blocked on 4c.)
 # Modes:
 #   selftest — DB-free static checks: the harness is well-formed, self-rolling-back (no COMMIT; ends in
 #              ROLLBACK), toggles the dark flags ONLY inside the txn, provisions via the real commission
@@ -131,7 +140,7 @@ SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 # the FINALE of the fleet reshape; then CRON-GUARD (0206) appended as the 30th tail — the poison-row
 # proof that the two hottest legacy crons no longer wedge on a single failing row. SHIPYARD-2 (#138,
 # merged) has its own proof file and never touched this pair.)
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_MOD22 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_FLEETCTRL TEAMCMD_PASS_NOHOME TEAMCMD_PASS_CMDBUFF TEAMCMD_PASS_CRONGUARD"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_MOD22 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_FLEETCTRL TEAMCMD_PASS_NOHOME TEAMCMD_PASS_CMDBUFF TEAMCMD_PASS_CRONGUARD TEAMCMD_PASS_REGENHOME TEAMCMD_PASS_REGENFIRES TEAMCMD_PASS_REGENSCHED TEAMCMD_PASS_RECONGONE TEAMCMD_PASS_NOSTRAND"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -293,12 +302,16 @@ if [ "$MODE" = "selftest" ]; then
   #    retention decision, the M1 hunting-reject WITHOUT a lost update, and the repair revival. ──────
   grep -qF "and status = 'returning' and spatial_state is null" "$SQL" \
     || fail "harness does not ASSERT the D3 returning-status delta (pair-shape form)"
-  grep -qF "(want 2 home/legacy-shape after the reconciler)" "$SQL" \
-    || fail "harness does not ASSERT the reconciler re-home (legacy write shape)"
-  grep -qF "reconciler touched a mid-combat member (race guard)" "$SQL" \
-    || fail "harness does not ASSERT the mid-combat reconciler race guard"
-  grep -qF "reconciler yanked a returning member home mid-flight (guard breach)" "$SQL" \
-    || fail "harness does not ASSERT the in-transit reconciler race guard"
+  # 4d (RECONCILER DELETE): the reconciler re-home + both race-guard pins are retired WITH the
+  # reconciler (the arms are tombstoned in the .sql). The return normalization is now fixture
+  # surgery — pinned in assert form so a gutted tombstone cannot false-green — and each tombstone
+  # must keep its fixture-shape check.
+  grep -qF "(want 2 home/legacy-shape after the 4d return-normalization surgery)" "$SQL" \
+    || fail "harness does not ASSERT the 4d return-normalization surgery (legacy write shape)"
+  grep -qF "mid-combat member shape broken (4d tombstone fixture check)" "$SQL" \
+    || fail "harness does not keep the mid-combat fixture-shape check behind the 4d tombstone"
+  grep -qF "in-transit member shape broken (4d tombstone fixture check)" "$SQL" \
+    || fail "harness does not keep the in-transit fixture-shape check behind the 4d tombstone"
   grep -qF "(want 2 retained)" "$SQL" \
     || fail "harness does not ASSERT the manifest retention decision"
   grep -qF "live single send ACCEPTED a hunting ship (M1)" "$SQL" \
@@ -745,8 +758,8 @@ if [ "$MODE" = "selftest" ]; then
   #    in-encounter exclusion on a REAL active encounter + the destroyed exclusion; and the
   #    commission copy born FULL through BOTH real creators (the hull surgery + restore are
   #    required by the tightened hull-table greps above). ────────────────────────────────────────
-  grep -qF "every reconciler pass above must have run dark" "$SQL" \
-    || fail "harness does not PIN the committed idle knob '0' at SHIELD2 entry (the byte-parity witness condition)"
+  grep -qF "every earlier pass must have run with the idle knob dark" "$SQL" \
+    || fail "harness does not PIN the committed idle knob '0' at SHIELD2 entry (the honesty condition for the leaf witnesses)"
   grep -qF "shield moved to % under the committed knob ''0''" "$SQL" \
     || fail "harness does not ASSERT the knob-0 pass leaves the damaged shield untouched"
   grep -qF "a same-value UPDATE still writes rows; the v_idle > 0 guard must skip it entirely" "$SQL" \
@@ -835,12 +848,12 @@ if [ "$MODE" = "selftest" ]; then
     || fail "NOHOME: harness does not ASSERT the docked launch departs from the port LOCATION (not the base)"
   grep -qF "(r->>'return_location_id')::uuid is distinct from slag" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the chosen/origin return port is recorded on the launch envelope"
-  grep -qF "the returning member was re-homed under the lit flag" "$SQL" \
-    || fail "NOHOME: harness does not ASSERT the reconciler DOCKS (never re-homes) the returner under the flag"
-  grep -qF "a returned docked team could not launch again" "$SQL" \
-    || fail "NOHOME: harness does not ASSERT the H1 second-launch witness (a returned team hunts AGAIN)"
-  grep -qF "has no per-ship tagged present fleet at the return port (H1 wedge)" "$SQL" \
-    || fail "NOHOME: harness does not ASSERT the H1 per-ship fleet split (each returned member owns a tagged fleet)"
+  # 4d (RECONCILER DELETE): the dock-at-return + H1 second-launch pins are retired WITH the
+  # reconciler (process_mainship_expeditions and nohome_dock_returning_ship are dropped; post-4c
+  # the 'returning' candidate set is empty by CHECK). The tombstone itself is pinned so a silent
+  # deletion of the note (or a resurrected call) cannot pass unnoticed.
+  grep -qF "TOMBSTONED BY 4d (RECONCILER DELETE): the dock-at-return + H1 second-launch arms" "$SQL" \
+    || fail "NOHOME: harness lost the 4d dock-at-return tombstone note"
 
   # ── COMMAND-BUFFS (0205) witness pins, in assert form (a gutted .sql that only mentions them in prose
   #    cannot false-green): the committed-dark flag; the commission-trigger roll = the deterministic hash
@@ -896,14 +909,115 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "did not advance the once-poisoned encounter (self-heal)" "$SQL" \
     || fail "CRONGUARD: harness does not ASSERT the combat self-heal after un-poisoning"
 
-  # ── all thirty block PASS markers present. ───────────────────────────────────────────────────────────
+  # ── RECONDELETE (FLEET-GO 4d) pins, in assert form (a gutted .sql that only mentions them in
+  #    prose cannot false-green): the leaf token-pins (REGENHOME), the fires/zero-writes/cap/
+  #    destroyed exacts (REGENFIRES) with the knob raise-and-restore via the real set_game_config,
+  #    the one-job/right-cadence/zero-old-jobs/ACL pins (REGENSCHED), the both-functions-NULL pins
+  #    (RECONGONE), and the no-CHECK-admits + zero-stranded sweep (NOSTRAND). Plus: the proof may
+  #    no longer CALL either dropped function anywhere (comment lines stripped first), the 4d
+  #    migration itself must carry the reject-before-delete gate + the drops + the verbatim hunk
+  #    tokens, and NO migration sorting AFTER the 4d file may re-create either dropped name (the
+  #    0136 failure mode), with a guard-the-guard self-check on the ban pattern. ──────────────────
+  grep -qF "REGENHOME FAIL: the 4d leaf lost the exact idle-regen UPDATE" "$SQL" \
+    || fail "RECONDELETE: harness does not token-pin the leaf's exact idle-regen UPDATE (REGENHOME)"
+  grep -qF "the 4d leaf lost the greatest(0," "$SQL" \
+    || fail "RECONDELETE: harness does not token-pin the leaf's drain-floor (REGENHOME)"
+  grep -qF "the 4d leaf lost the v_idle > 0 fire-guard" "$SQL" \
+    || fail "RECONDELETE: harness does not token-pin the leaf's fire-guard (REGENHOME)"
+  grep -qF "the 4d leaf lost the live-encounter exclusion" "$SQL" \
+    || fail "RECONDELETE: harness does not token-pin the leaf's encounter exclusion (REGENHOME)"
+  grep -qF "the 4d leaf lost the NANGUARD = ''NaN''::double precision idiom" "$SQL" \
+    || fail "RECONDELETE: harness does not token-pin the leaf's NaN floor (REGENHOME)"
+  grep -qF "(want 7 = 3 + ceil(40 × 0.10) exactly)" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the leaf's exact ceil climb (REGENFIRES)"
+  grep -qF "knob-0 leaf pass moved shield to % / stamped updated_at" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the leaf's knob-0 zero-writes sentinel (REGENFIRES)"
+  grep -qF "least(max_shield, 38 + 4) must bind, uncapped would be 42" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the leaf's least() cap (REGENFIRES)"
+  grep -qF "the lit leaf regenerated a DESTROYED ship" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the leaf's destroyed exclusion (REGENFIRES)"
+  grep -qF "set_game_config('shield_regen_idle_pct', '0.10'::jsonb)" "$SQL" \
+    || fail "RECONDELETE: harness does not raise the idle knob to 0.10 via the real set_game_config (REGENFIRES)"
+  grep -qF "% cron job(s) named process-shield-idle-regen (want exactly 1)" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT exactly one new-name cron job (REGENSCHED)"
+  grep -qF "process-shield-idle-regen is not at the 0050 cadence ''30 seconds''" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the 30-seconds cadence (REGENSCHED)"
+  grep -qF "old reconciler cron job(s) still scheduled" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT zero old-name cron jobs (REGENSCHED)"
+  grep -qF "the 4d leaf is client-executable" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the leaf's service_role-only ACL (REGENSCHED)"
+  grep -qF "RECONGONE FAIL: process_mainship_expeditions still deployed" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the reconciler is dropped (RECONGONE)"
+  grep -qF "RECONGONE FAIL: nohome_dock_returning_ship still deployed" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the dock leaf is dropped (RECONGONE)"
+  grep -qF "still admit a movement status (the 4d reject-before-delete gate would have refused this world)" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT no CHECK admits a movement status (NOSTRAND)"
+  grep -qF "stranded in a movement status with the reconciler deleted" "$SQL" \
+    || fail "RECONDELETE: harness does not ASSERT the zero-stranded sweep (NOSTRAND)"
+  # the proof must not CALL either dropped function anywhere (a resurrected call would abort the
+  # whole run). Comment lines stripped first.
+  grep -viE '^[[:space:]]*--' "$SQL" \
+    | grep -qE '(perform|select)[[:space:]]+public\.(process_mainship_expeditions|nohome_dock_returning_ship)[[:space:]]*\(' \
+    && fail "RECONDELETE: the proof still CALLS a 4d-dropped reconciler function" || true
+
+  # ── the 4d migration static pins: the reject-before-delete gate, the drops, the verbatim hunk
+  #    tokens, the cron rewire, and the named 4c precondition message. Keyed by basename pattern
+  #    because the number 0299 is a PLACEHOLDER renumbered at integration. ──────────────────────
+  RECON_MIG="$(ls "$REPO_ROOT"/supabase/migrations/*_fleetgo_reconciler_delete.sql 2>/dev/null | head -1)"
+  [ -n "$RECON_MIG" ] || fail "RECONDELETE: the 4d reconciler-delete migration (*_fleetgo_reconciler_delete.sql) is missing"
+  grep -qF "4d REJECT-BEFORE-DELETE" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration lost its reject-before-delete gate"
+  grep -qF "4c did not retire repair_main_ship''s stationary write" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration lost the named repair_main_ship 4c precondition"
+  grep -qF "drop function public.process_mainship_expeditions();" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration does not drop the reconciler"
+  grep -qF "drop function public.nohome_dock_returning_ship(uuid);" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration does not drop the reconciler's sole callee"
+  grep -qF "'process-shield-idle-regen'" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration does not schedule the new leaf cron"
+  grep -qF "'30 seconds'" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration does not use the 0050 '30 seconds' cadence"
+  grep -qF "jobname = 'process-mainship-expeditions'" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration does not unschedule the reconciler cron by name"
+  # the verbatim hunk tokens (the declarations MUST travel with the hunk — they carry the NaN
+  # guard and the drain-floor; losing either is the silent shield-regen kill/drain):
+  grep -qF "set shield = least(s.max_shield, s.shield + ceil(s.max_shield * v_idle)::integer)" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration's leaf lost the exact idle-regen UPDATE"
+  grep -qF "v_idle     double precision := greatest(0, case when v_idle_raw = 'NaN'::double precision then 0 else v_idle_raw end);" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration's leaf lost the exact NaN-guard + drain-floor declaration"
+  grep -qF "v_idle_raw double precision := coalesce(cfg_num('shield_regen_idle_pct'), 0);" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration's leaf lost the exact knob-read declaration"
+  grep -qF "if v_idle > 0 then" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration's leaf lost the fire-guard"
+  grep -qF "revoke execute on function public.process_shield_idle_regen() from public, anon, authenticated;" "$RECON_MIG" \
+    || fail "RECONDELETE: the 4d migration does not lock the leaf's client ACL"
+
+  # ── RECONGONE tree-wide ban: no migration sorting AFTER the 4d file may re-create (or even
+  #    re-touch by name) either dropped function — the 0136 silent-re-create failure mode. ────────
+  recon_base="$(basename "$RECON_MIG")"
+  RECON_BAN_RE='function[[:space:]]+(public\.)?(process_mainship_expeditions|nohome_dock_returning_ship)[[:space:]]*\('
+  for f in "$REPO_ROOT"/supabase/migrations/*.sql; do
+    fb="$(basename "$f")"
+    if [ "$fb" \> "$recon_base" ]; then
+      grep -qiE "$RECON_BAN_RE" "$f" \
+        && fail "RECONGONE ban: migration $fb re-touches a 4d-dropped reconciler name (re-creating either is the 0136 failure mode)" || true
+    fi
+  done
+  # guard-the-guard: the SAME ban pattern (one variable, no drift) must still MATCH the known 0199
+  # creation sites of BOTH names — a pattern that stops matching its own known copies passes
+  # everything. 0199 creates the reconciler head AND the dock leaf, so one file witnesses both.
+  n_hits="$(grep -ciE "$RECON_BAN_RE" "$REPO_ROOT"/supabase/migrations/20260618000199_nohome_launch_from_dock.sql || true)"
+  [ "${n_hits:-0}" -ge 2 ] \
+    || fail "RECONGONE guard-the-guard: the ban pattern matches only $n_hits line(s) of the known 0199 create sites (want >= 2 — the ban is blind)"
+
+  # ── all thirty-five block PASS markers present. ──────────────────────────────────────────────────────
   for m in $MARKERS; do
     grep -q "$m" "$SQL" || fail "missing block PASS marker: $m"
   done
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; dark flags (incl. command_buffs_enabled) toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0202-mod22/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard/0199-nohome/0205-cmdbuff/0206-cronguard specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored)"
+  echo "TEAM-COMMAND B-VERIFY SELFTEST: ALL PASSED (self-rolling-back; dark flags (incl. command_buffs_enabled) toggled only in-txn; real-RPC provisioning + sole-writer captains + sole-writer manifest + sole-writer XP ledger + sole-writer modules/inventory + migration-only hull recipes + sole-writer ship-soul traits; 9 RPCs + all reject tokens; 0170-hull-stats/all-or-nothing/stop-aggregate/held/SET-NULL/captain-fold/D0-delegation/D1-combat-parity/D2-team-hunt/0171-shard-drop/D3-team-settle/0177-capxp/0180-caplevel/0183-mod2/0202-mod22/0185-shipyard0/0186-soul0/0187-teammap/0191-shield0/0190-teammove/0193-soul1/0195-shield1/0196-decks3/0197-shield2/0198-nanguard/0199-nohome/0205-cmdbuff/0206-cronguard/4d-recondelete specifics; 0171 bump asserted-not-fixtured; hull-table writes fenced to the sanctioned base_shield fixture WITH its restore; shipyard_enabled never flipped; BOTH shield knobs raised-and-restored in-txn only via set_game_config; NANGUARD poisons the affinity + idle knobs with the jsonb \"NaN\" string in-txn and proves the fixed guard floors it to 0, both restored; 4d RECONDELETE: the reconciler + its dock leaf dropped by the *_fleetgo_reconciler_delete migration behind its reject-before-delete gate, the idle-regen hunk rehomed verbatim into process_shield_idle_regen with the proof repointed to it, the reconciler-behavior arms tombstoned, no proof call to either dropped name survives, and no later migration may re-create them)"
   exit 0
 fi
 

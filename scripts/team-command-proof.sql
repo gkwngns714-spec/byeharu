@@ -1472,10 +1472,16 @@ begin
 end $$;
 
 -- ════════ BLOCK TEAMSETTLE (Slice D3, 0169): sortie settle — members return, reconcile home, M1 ════════
+-- ⚠ 4d (RECONCILER DELETE) TOMBSTONE: process_mainship_expeditions is DROPPED by the 4d migration —
+-- post-4c its candidate sets are empty by CHECK (status ∈ {home,destroyed} only), so the D3
+-- reconciler behaviors this block pinned (mid-combat/in-transit race guards, the re-home, both
+-- self-heal arms) no longer exist to test. Those arms are tombstoned below; the members' return
+-- normalization is now plain fixture surgery (the sanctioned provisioning idiom). Everything else
+-- (retreat, escape settle, deposit, defeat, repair, M1) is untouched here — its post-4c fate
+-- belongs to the 4b/4c proof rewrites, not to 4d.
 -- Closes the member lifecycle loop over TEAMHUNT's still-LIVE sortie (uC's active encounter: c1,c2
 -- 'hunting', fleet 'present') plus a fresh loss sortie. Pins:
---   RACE (mid-combat)  — process_mainship_expeditions must NOT touch a member while the manifest
---                        fleet is 'present' (the exact-complement predicate);
+--   RACE (mid-combat)  — TOMBSTONED BY 4d (no reconciler exists to race);
 --   ESCAPE             — request_retreat works VERBATIM on the team encounter (presence-addressed,
 --                        owner-checked — nothing team-shaped on the retreat path); the escape tick
 --                        writes a member-keyed report, a return_home movement whose speed_used ==
@@ -1484,17 +1490,16 @@ end $$;
 --                        the accrued reward bundle, and — THE D3 DELTA — marks the surviving members
 --                        'returning' (spatial_state NULL pair-shape) with their combat damage
 --                        persisted on the ship rows;
---   RACE (in transit)  — the reconciler must NOT yank a 'returning' member home while the fleet is
---                        still 'returning' (the D3 legacy-branch guard);
+--   RACE (in transit)  — TOMBSTONED BY 4d (no reconciler exists to yank);
 --   RETURN SETTLE      — movement_settle_arrival's base branch completes the fleet and deposits the
 --                        carried bundle (reward_grants row keyed by the encounter; base_resources
 --                        metal grows by exactly the carried metal; the 0171 wave-2 shard lands in
 --                        player_inventory — the SHARDDROP end-to-end carry), touching NO member ship;
---   RECONCILE          — the next reconciler run re-homes both members in the head branch's exact
---                        write shape (status='home', spatial_state stays NULL — the clean
---                        legacy_home) with damage persisted; the manifest rows are RETAINED (the D3
---                        retention decision — they die with their fleet via 0047's retention cascade,
---                        never via the reconciler);
+--   RECONCILE          — REPOINTED BY 4d: the reconciler is dropped, so the members' return
+--                        normalization is fixture surgery (status='home', spatial_state stays
+--                        NULL); the damage-persist + manifest-retention pins still bite (the
+--                        surgery touches status only; manifest rows still die only with their
+--                        fleet via 0047's retention cascade);
 --   LOSS + RECOVERY    — a fresh sortie under a one-step-wipe enemy (enemy_attack_base surgery,
 --                        restored after) defeats with REAL alive members (TEAMHUNT's defeat covered
 --                        only the degraded shape): fleet destroyed, members 'destroyed' hp=0 by the
@@ -1504,8 +1509,8 @@ end $$;
 --                        contract: a 'hunting' ship rejects through the single send's own
 --                        not-available raise and is NOT moved (no lost update), and a legal single
 --                        send afterwards is intact (parity for non-racing callers);
---   SELF-HEAL          — a manufactured 'returning' and a manufactured 'hunting' ship whose manifest
---                        fleets are all finished are re-homed by the reconciler (never destroyed).
+--   SELF-HEAL          — TOMBSTONED BY 4d (the reconciler is dropped; post-4c a 'returning'/'hunting'
+--                        orphan cannot exist by CHECK — there is nothing left to heal).
 -- Fixture surgery stays inside the quarantined kinds: clock rewinds, config via the real
 -- set_game_config, and main_ship_instances status surgery (the provisioning idiom). The manifest is
 -- never touched directly (sole-writer law, grep-enforced).
@@ -1537,11 +1542,12 @@ begin
   select count(*) into n from public.fleets where id = v_fleet and status = 'present';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL precondition: sortie fleet not present'; end if;
 
-  -- ── RACE PIN (mid-combat): the reconciler must not touch members of a 'present' manifest fleet.
-  perform public.process_mainship_expeditions();
+  -- ── RACE PIN (mid-combat) — TOMBSTONED BY 4d (RECONCILER DELETE): process_mainship_expeditions
+  --    is DROPPED; no reconciler exists to race a mid-combat member. The fixture-shape assert stays
+  --    (both members must still be 'hunting' mid-encounter — nothing may have touched them).
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'hunting';
-  if n <> 2 then raise exception 'TEAMSETTLE FAIL: reconciler touched a mid-combat member (race guard): % hunting (want 2)', n; end if;
+  if n <> 2 then raise exception 'TEAMSETTLE FAIL: mid-combat member shape broken (4d tombstone fixture check): % hunting (want 2)', n; end if;
 
   -- ── accrue a reward: tick until TWO waves clear (variance 0; bounded). Two, not one, since the
   -- SHARDDROP block left captain_shard_drop_rate at 1 and the 0171 drop starts at wave 2 — the won
@@ -1618,12 +1624,11 @@ begin
     where cu.encounter_id = v_enc and msi.hp = round(greatest(0, cu.hp_current))::integer and msi.hp < msi.max_hp;
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: member damage not persisted onto the ship rows'; end if;
 
-  -- ── RACE PIN (in transit home): fleet 'returning' is a LIVE manifest state — the reconciler must
-  -- leave the members alone (the D3 legacy-branch guard; the head branch would yank them home).
-  perform public.process_mainship_expeditions();
+  -- ── RACE PIN (in transit home) — TOMBSTONED BY 4d (RECONCILER DELETE): no reconciler exists to
+  --    yank a returning member. The fixture-shape assert stays (both members still 'returning').
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'returning';
-  if n <> 2 then raise exception 'TEAMSETTLE FAIL: reconciler yanked a returning member home mid-flight (guard breach): % returning (want 2)', n; end if;
+  if n <> 2 then raise exception 'TEAMSETTLE FAIL: in-transit member shape broken (4d tombstone fixture check): % returning (want 2)', n; end if;
 
   -- ── settle the return (the SAME per-movement settle the cron loop calls; base branch).
   select id into v_cbase from public.bases where player_id = uC and status = 'active' order by created_at limit 1;
@@ -1656,17 +1661,20 @@ begin
     where main_ship_id in (c1, c2) and status = 'returning';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: return settle unexpectedly touched member ships'; end if;
 
-  -- ── RECONCILE HOME: manifest fleet finished → both members home in the head write shape
-  -- (status='home', spatial_state stays NULL — the clean legacy_home), damage persisted.
+  -- ── RECONCILE HOME — REPOINTED BY 4d (RECONCILER DELETE): process_mainship_expeditions is
+  -- DROPPED (post-4c its candidate set is empty by CHECK), so the members' return normalization is
+  -- now plain fixture surgery (the sanctioned provisioning idiom — status only). The damage-persist
+  -- and manifest-retention pins below still bite.
   select hp into v_hp1 from public.main_ship_instances where main_ship_id = c1;
   select hp into v_hp2 from public.main_ship_instances where main_ship_id = c2;
-  perform public.process_mainship_expeditions();
+  update public.main_ship_instances set status = 'home', updated_at = now()
+    where main_ship_id in (c1, c2) and status = 'returning';
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'home' and spatial_state is null;
-  if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members re-homed (want 2 home/legacy-shape after the reconciler)', n; end if;
+  if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members re-homed (want 2 home/legacy-shape after the 4d return-normalization surgery)', n; end if;
   select count(*) into n from public.main_ship_instances
     where (main_ship_id = c1 and hp = v_hp1) or (main_ship_id = c2 and hp = v_hp2);
-  if n <> 2 then raise exception 'TEAMSETTLE FAIL: reconcile changed member hp (damage must persist)'; end if;
+  if n <> 2 then raise exception 'TEAMSETTLE FAIL: return normalization changed member hp (damage must persist)'; end if;
   -- manifest RETAINED (the D3 retention decision): rows die with their fleet via 0047's retention
   -- cascade, never via the reconciler (sole-writer law) — still 2 rows for the completed sortie.
   select count(*) into n from public.group_sortie_members where fleet_id = v_fleet;
@@ -1728,25 +1736,15 @@ begin
     where main_ship_id = c1 and status = 'traveling' and spatial_state is null;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: legal single send did not put the ship in flight'; end if;
 
-  -- ── SELF-HEAL PIN: manufactured partial states (fixture surgery) whose manifest fleets are ALL
-  -- finished (v_fleet completed / v_fleet3 destroyed) → the reconciler re-homes; never destroys.
+  -- ── SELF-HEAL PIN — TOMBSTONED BY 4d (RECONCILER DELETE): the two manufactured-orphan re-home
+  -- arms exercised process_mainship_expeditions, which is DROPPED. Post-4c an orphaned
+  -- 'returning'/'hunting' row cannot exist by CHECK ({home,destroyed} only) — the self-heal has
+  -- nothing left to heal. c2's repair revival stays (the recovery safelock is not a 4d concern).
   r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c2));
-  update public.main_ship_instances
-     set status = 'returning', spatial_state = null, space_x = null, space_y = null, updated_at = now()
-   where main_ship_id = c2;
-  perform public.process_mainship_expeditions();
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id = c2 and status = 'home' and spatial_state is null;
-  if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned returning member'; end if;
-  update public.main_ship_instances
-     set status = 'hunting', spatial_state = null, space_x = null, space_y = null, updated_at = now()
-   where main_ship_id = c2;
-  perform public.process_mainship_expeditions();
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id = c2 and status = 'home' and spatial_state is null;
-  if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned hunting member'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and hp = max_hp;
+  if n <> 1 then raise exception 'TEAMSETTLE FAIL: repair did not restore c2 to max_hp (4d tombstone fixture check)'; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, M1 hunting-reject without a lost update + legal single-send parity, and both self-heal re-homes';
+  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), 4d return-normalization surgery lands the legacy home shape with damage persisted and the manifest retained, real-member defeat + repair revival, M1 hunting-reject without a lost update + legal single-send parity; the D3 reconciler race-guard/re-home/self-heal arms are TOMBSTONED by 4d (reconciler deleted; post-4c candidate set empty by CHECK)';
 end $$;
 
 -- ════════ BLOCK CAPXP (CAPXP-0/1, 0177): captain-XP foundation — dark no-op, exact accrual, ledger ════════
@@ -3589,13 +3587,13 @@ end $$;
 -- encounter-membership EXCLUSION predicate — inside a live encounter the 3s tick is the SOLE
 -- shield writer), and both commission creators (build ← the 0194-body choreography, PR #138;
 -- ensure ← 0193) with the born-full base_shield → shield/max_shield copy.
---   BYTE-PARITY ARM (stated, not re-run — the blocks above ARE the witness): every
---          reconciler-exercising pin in this file — TEAMSETTLE's re-home, BOTH its race guards,
---          and both self-heal arms ran process_mainship_expeditions() five times — executed THIS
---          0197 body with the idle knob at its committed '0', where the regen statement is
---          guarded out entirely. Their green IS the knob-0 byte-parity proof for the reconciler's
---          pre-existing writes; this block adds the shield-specific arms and the committed-seed
---          entry pin that makes that witness honest.
+--   ⚠ 4d (RECONCILER DELETE) REPOINT: the reconciler is DROPPED and the idle-regen hunk moved
+--          VERBATIM (declarations included) into the 4d leaf process_shield_idle_regen() — every
+--          regen witness below now drives THE LEAF. The old byte-parity-arm claim (TEAMSETTLE's
+--          reconciler passes as the knob-0 witness) is retired with the reconciler itself; the
+--          committed-seed entry pin below keeps the remaining witnesses honest (every earlier
+--          block ran with the idle knob at its committed '0', so no shield moved before this
+--          block's own surgery).
 --   ZERO-WRITES (knob 0) — a damaged-shield fixture (max 40 / shield 3 by the sanctioned
 --          surgery — the SHIELD1 posture: shields have no writer besides the tick-called leaf
 --          and now the lit reconciler statement) with updated_at pinned to a 1-hour-old
@@ -3632,7 +3630,7 @@ begin
   -- ── the committed-seed entry pin (the byte-parity witness's honesty condition) ────────────────
   select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_idle_pct';
   if v_val is distinct from '0' then
-    raise exception 'SHIELD2 FAIL: shield_regen_idle_pct is % entering the block (want the committed ''0'' — every reconciler pass above must have run dark)', coalesce(v_val, '<missing>'); end if;
+    raise exception 'SHIELD2 FAIL: shield_regen_idle_pct is % entering the block (want the committed ''0'' — every earlier pass must have run with the idle knob dark)', coalesce(v_val, '<missing>'); end if;
 
   -- ── fixture A: fresh REAL commission + the sanctioned damaged-shield surgery ──────────────────
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
@@ -3649,7 +3647,7 @@ begin
   select updated_at into v_ts from public.main_ship_instances where main_ship_id = sA;
 
   -- ── ZERO-WRITES: the knob-0 pass must not FIRE the statement (updated_at pin) ─────────────────
-  perform public.process_mainship_expeditions();
+  perform public.process_shield_idle_regen();
   select shield, updated_at into v_sh, v_ts from public.main_ship_instances where main_ship_id = sA;
   if v_sh is distinct from 3 then
     raise exception 'SHIELD2 FAIL zero-writes: shield moved to % under the committed knob ''0'' (want 3 untouched)', v_sh; end if;
@@ -3658,22 +3656,22 @@ begin
 
   -- ── LIT: ceil exactness, exact climb, the least() cap, and full-pool zero-cost ────────────────
   perform public.set_game_config('shield_regen_idle_pct', '0.03'::jsonb);
-  perform public.process_mainship_expeditions();
+  perform public.process_shield_idle_regen();
   select shield into v_sh from public.main_ship_instances where main_ship_id = sA;
   if v_sh is distinct from 5 then
     raise exception 'SHIELD2 FAIL ceil: shield % (want 5 = 3 + ceil(40 × 0.03) — the climb must be CEIL, floor/trunc would land 4)', v_sh; end if;
   perform public.set_game_config('shield_regen_idle_pct', '0.25'::jsonb);
-  perform public.process_mainship_expeditions();
+  perform public.process_shield_idle_regen();
   select shield into v_sh from public.main_ship_instances where main_ship_id = sA;
   if v_sh is distinct from 15 then
     raise exception 'SHIELD2 FAIL climb: shield % (want 15 = 5 + ceil(40 × 0.25) exactly)', v_sh; end if;
   update public.main_ship_instances set shield = 35 where main_ship_id = sA;
-  perform public.process_mainship_expeditions();
+  perform public.process_shield_idle_regen();
   select shield into v_sh from public.main_ship_instances where main_ship_id = sA;
   if v_sh is distinct from 40 then
     raise exception 'SHIELD2 FAIL cap: shield % (want 40 — least(max_shield, 35 + 10) must bind, uncapped would be 45)', v_sh; end if;
   update public.main_ship_instances set updated_at = now() - interval '1 hour' where main_ship_id = sA;
-  perform public.process_mainship_expeditions();
+  perform public.process_shield_idle_regen();
   select shield, updated_at into v_sh, v_ts from public.main_ship_instances where main_ship_id = sA;
   if v_sh is distinct from 40 or v_ts is distinct from (now() - interval '1 hour') then
     raise exception 'SHIELD2 FAIL full-pool: a FULL shield was rewritten by the lit pass (want 40 + the sentinel — shield < max_shield must exclude it)'; end if;
@@ -3722,7 +3720,7 @@ begin
 
   -- IN-ENCOUNTER EXCLUDED: the lit reconciler must not move a live-encounter member's shield
   -- (non-vacuous: fixture A above proved the same statement fires on an encounter-free ship).
-  perform public.process_mainship_expeditions();
+  perform public.process_shield_idle_regen();
   select shield into v_sh from public.main_ship_instances where main_ship_id = sB;
   if v_sh is distinct from 3 then
     raise exception 'SHIELD2 FAIL exclusion: the lit reconciler moved an in-encounter shield to % (want 3 — while an encounter is active/retreating the tick is the SOLE shield writer)', v_sh; end if;
@@ -3735,7 +3733,7 @@ begin
   select count(*) into n from public.main_ship_instances where main_ship_id = sB and status = 'destroyed';
   if n <> 1 then raise exception 'SHIELD2 FAIL: the wipe tick did not destroy the exclusion fixture (fixture drift)'; end if;
   update public.main_ship_instances set shield = 3 where main_ship_id = sB;   -- re-arm the dead hull (sanctioned surgery)
-  perform public.process_mainship_expeditions();
+  perform public.process_shield_idle_regen();
   select shield into v_sh from public.main_ship_instances where main_ship_id = sB;
   if v_sh is distinct from 3 then
     raise exception 'SHIELD2 FAIL destroyed: the lit reconciler regenerated a DESTROYED ship to % (want 3 — dead ships do not regenerate; repair is the revival path)', v_sh; end if;
@@ -3766,7 +3764,7 @@ begin
   update public.main_ship_hull_types set base_shield = 0 where hull_type_id = 'starter_frigate';   -- the required restore
   perform public.set_game_config('shield_regen_idle_pct', '0'::jsonb);   -- restore the dark seed in-txn
 
-  raise notice 'TEAMCMD_PASS_SHIELD2 ok: committed idle knob ''0'' at entry (every reconciler pass above ran THIS 0197 body dark — TEAMSETTLE''s re-home/race-guard/self-heal pins ARE the knob-0 byte-parity witness); zero-writes pinned by the updated_at sentinel (knob 0 never fires the statement); lit climb exact (ceil pinned at 0.03: 3→5; 0.25: 5→15; least caps 35→40; a full pool is never rewritten); in-encounter exclusion holds on a REAL active encounter (non-vacuous vs fixture A) and a destroyed hull stays dead at 3; the commission copy births 25/25 through BOTH real creators (build via commission_first_main_ship + the legacy ensure) with base_shield surgically raised then restored; idle knob restored in-txn';
+  raise notice 'TEAMCMD_PASS_SHIELD2 ok: committed idle knob ''0'' at entry; every regen witness repointed by 4d to process_shield_idle_regen (the reconciler''s verbatim hunk at its new home): zero-writes pinned by the updated_at sentinel (knob 0 never fires the statement); lit climb exact (ceil pinned at 0.03: 3→5; 0.25: 5→15; least caps 35→40; a full pool is never rewritten); in-encounter exclusion holds on a REAL active encounter (non-vacuous vs fixture A) and a destroyed hull stays dead at 3; the commission copy births 25/25 through BOTH real creators (build via commission_first_main_ship + the legacy ensure) with base_shield surgically raised then restored; idle knob restored in-txn';
 end $$;
 
 -- ══ BLOCK NANGUARD — migration 0198: the dead NaN guards fixed at all three knob-read sites ═══════
@@ -3827,17 +3825,19 @@ begin
   if s_nan is distinct from s_base then
     raise exception 'NANGUARD FAIL: a "NaN" affinity knob changed the adapter output (want byte-identical to the knob-0 baseline — the fixed guard floors NaN to 0): "NaN" % vs 0 %', s_nan, s_base; end if;
 
-  -- ══ IDLE-REGEN WITNESS (process_mainship_expeditions) ══════════════════════════════════════════
+  -- ══ IDLE-REGEN WITNESS (process_shield_idle_regen — repointed by 4d: the hunk moved VERBATIM
+  --    out of the dropped reconciler into the 4d leaf, declarations included, so the NANGUARD
+  --    idiom under test is the SAME text at its new home) ═════════════════════════════════════════
   -- reuse sA (out of combat, not destroyed) surgically damaged so it is a real regen candidate.
   update public.main_ship_instances set max_shield = 40, shield = 3 where main_ship_id = sA;
   perform public.set_game_config('shield_regen_idle_pct', '"NaN"'::jsonb);    -- the poison a bad flip would write
-  perform public.process_mainship_expeditions();   -- FIXED guard floors v_idle -> 0 -> statement skipped (no ceil(NaN)::int abort)
+  perform public.process_shield_idle_regen();   -- FIXED guard floors v_idle -> 0 -> statement skipped (no ceil(NaN)::int abort)
   perform public.set_game_config('shield_regen_idle_pct', '0'::jsonb);        -- restore the dark seed in-txn
   select shield into v_sh from public.main_ship_instances where main_ship_id = sA;
   if v_sh is distinct from 3 then
     raise exception 'NANGUARD FAIL: a "NaN" idle-regen knob moved the shield to % (want 3 untouched — the floor sends v_idle to 0 so the statement is skipped, never a NaN write)', v_sh; end if;
 
-  raise notice 'TEAMCMD_PASS_NANGUARD ok: all three knob guards fixed to the working = ''NaN''::double precision idiom and PROVEN non-vacuous — a jsonb "NaN" affinity knob (with a REAL gunnery-matched captain aboard) leaves calculate_expedition_stats byte-identical to the knob-0 baseline with a finite combat_power (never NaN), and a jsonb "NaN" idle-regen knob leaves process_mainship_expeditions a clean no-op (shield stays 3, no ceil(NaN)::integer abort) exactly as knob 0; both knobs restored to ''0'' in-txn (this block would have FAILED before 0198 — NaN would propagate/abort)';
+  raise notice 'TEAMCMD_PASS_NANGUARD ok: the knob guards fixed to the working = ''NaN''::double precision idiom and PROVEN non-vacuous — a jsonb "NaN" affinity knob (with a REAL gunnery-matched captain aboard) leaves calculate_expedition_stats byte-identical to the knob-0 baseline with a finite combat_power (never NaN), and a jsonb "NaN" idle-regen knob leaves process_shield_idle_regen (the 4d leaf carrying the reconciler''s verbatim hunk) a clean no-op (shield stays 3, no ceil(NaN)::integer abort) exactly as knob 0; both knobs restored to ''0'' in-txn (this witness would have FAILED before 0198 — NaN would propagate/abort)';
 end $$;
 
 -- ════════ BLOCK FLEETCTRL (FLEET-CONTROL, 0204): command-ship model + 8-ship cap, DARK then in-txn LIT ══
@@ -3993,7 +3993,8 @@ end $$;
 -- LIT arm (flag flipped in-txn via set_game_config, restored + rolled back): a docked ship launches
 -- from its port (its OWN present fleet re-departs, origin_type='location'=the dock, NOT the base),
 -- records the return port, arrives + docks at the destination; and a docked team hunt launches from
--- the port + the reconciler docks the returning member at the recorded return port (never home).
+-- the port. ⚠ 4d (RECONCILER DELETE): the reconciler dock-at-return + H1 arms are TOMBSTONED — the
+-- reconciler and nohome_dock_returning_ship are dropped (post-4c the candidate set is empty by CHECK).
 do $$
 declare
   r jsonb; n int; v_ok boolean;
@@ -4007,9 +4008,10 @@ begin
   if coalesce((select value #>> '{}' from public.game_config where key='launch_from_dock_enabled'),'false') <> 'false' then
     raise exception 'NOHOME FAIL: launch_from_dock_enabled is not committed false (dark)'; end if;
   if to_regprocedure('public.send_main_ship_expedition(jsonb, uuid, uuid)') is null
-     or to_regprocedure('public.send_ship_group_hunt(uuid, uuid, uuid)') is null
-     or to_regprocedure('public.nohome_dock_returning_ship(uuid)') is null then
-    raise exception 'NOHOME FAIL: the 0199 widened send/hunt or dock-at-return leaf is missing'; end if;
+     or to_regprocedure('public.send_ship_group_hunt(uuid, uuid, uuid)') is null then
+    raise exception 'NOHOME FAIL: the 0199 widened send/hunt is missing'; end if;
+  -- 4d (RECONCILER DELETE): the 0199 dock-at-return leaf nohome_dock_returning_ship is DROPPED with
+  -- its sole caller (the reconciler); its existence pin is retired — RECONGONE asserts the drop.
   if not exists (select 1 from information_schema.columns
       where table_schema='public' and table_name='fleets' and column_name='return_location_id') then
     raise exception 'NOHOME FAIL: fleets.return_location_id missing'; end if;
@@ -4124,26 +4126,12 @@ begin
   select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
   if n <> 0 then raise exception 'NOHOME FAIL: the member''s docked present fleet was not dissolved'; end if;
 
-  -- simulate post-combat return: the team fleet completes back home + the member goes 'returning',
-  -- then the LIT reconciler DOCKS the member at the recorded return port (Slagworks), never home —
-  -- SPLITTING the shared team fleet back into the member's OWN tagged present fleet (review H1).
-  update public.fleets set status='completed', location_mode='base', active_movement_id=null, updated_at=now() where id=v_team_fleet;
-  update public.main_ship_instances set status='returning', spatial_state=null, space_x=null, space_y=null, updated_at=now() where main_ship_id=sNT;
-  perform public.process_mainship_expeditions();
-  select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='stationary' and spatial_state='at_location';
-  if n <> 1 then raise exception 'NOHOME FAIL: the reconciler did not dock the returning member (want stationary/at_location at the return port)'; end if;
-  -- H1: the returned member owns its OWN main_ship_id-tagged present fleet at the port (NOT a shared
-  -- untagged team fleet) — the per-ship handle every re-launch path (send/move/re-hunt) keys on.
-  select count(*) into n from public.fleets where main_ship_id=sNT and status='present' and current_location_id=slag;
-  if n <> 1 then raise exception 'NOHOME FAIL: the returned member has no per-ship tagged present fleet at the return port (H1 wedge)'; end if;
-  if exists (select 1 from public.main_ship_instances where main_ship_id=sNT and status='home') then
-    raise exception 'NOHOME FAIL: the returning member was re-homed under the lit flag (the NO-HOME law is violated)'; end if;
-  -- H1 REGRESSION WITNESS (the fix's teeth): the returned docked team can LAUNCH AGAIN — a SECOND hunt
-  -- from the port SUCCEEDS. Before the per-ship split fix this dead-ended (member_not_ready / no present
-  -- fleet), the exact wedge the current-before-fix dock left behind.
-  r := pg_temp.call_as(uNT, format('public.send_ship_group_hunt(%L::uuid, %L::uuid, %L::uuid)', gNT, v_hunt, slag));
-  if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: a returned docked team could not launch again (H1 second-launch wedge): %', r; end if;
-  if (r->>'fleet_id')::uuid = v_team_fleet then raise exception 'NOHOME FAIL: the second hunt reused the OLD team fleet (want a fresh sortie)'; end if;
+  -- ── (5) TOMBSTONED BY 4d (RECONCILER DELETE): the dock-at-return + H1 second-launch arms drove
+  -- process_mainship_expeditions → nohome_dock_returning_ship, BOTH dropped by the 4d migration.
+  -- Post-4c a 'returning' member cannot exist by CHECK ({home,destroyed} only), so the reconciler's
+  -- dock-at-return candidate set is empty — there is no behavior left to witness. The 0199 lit
+  -- launch arms above (docked send + docked team hunt from the port) remain the live witnesses;
+  -- their own post-4c fate ('hunting'/'traveling' writes) belongs to the 4b/4c proof rewrites.
 
   -- restore the flipped gates in-txn via the raw update (ROLLBACK reverts regardless — the .sh honesty
   -- check re-confirms each committed flag is still false post-run).
@@ -4151,7 +4139,7 @@ begin
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
   update public.game_config set value='false'::jsonb where key='mainship_send_enabled';
 
-  raise notice 'TEAMCMD_PASS_NOHOME ok: flag committed dark; DARK a docked ship''s send RAISES home-only (byte-identical witness); LIT a docked ship re-departs its OWN present fleet FROM the port (origin_type=location=Slagworks, not the base), records the return port, and docks at the destination; a docked TEAM hunt launches ONE fleet from the port (member hunting, its docked fleet dissolved, return port recorded); the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home, SPLITTING the shared team fleet back into the member''s OWN tagged present fleet (H1) so the team LAUNCHES AGAIN — a second hunt from the port SUCCEEDS with a fresh sortie (the H1 regression witness); flags restored in-txn';
+  raise notice 'TEAMCMD_PASS_NOHOME ok: flag committed dark; DARK a docked ship''s send RAISES home-only (byte-identical witness); LIT a docked ship re-departs its OWN present fleet FROM the port (origin_type=location=Slagworks, not the base), records the return port, and docks at the destination; a docked TEAM hunt launches ONE fleet from the port (member hunting, its docked fleet dissolved, return port recorded); the reconciler dock-at-return + H1 second-launch arms are TOMBSTONED by 4d (reconciler + dock leaf deleted; post-4c the returning candidate set is empty by CHECK); flags restored in-txn';
 end $$;
 
 -- ════════ BLOCK CMDBUFF (COMMAND-BUFFS, 0205): fleet-wide command-buff fold, DARK then in-txn LIT ══
@@ -4480,6 +4468,155 @@ begin
   raise notice 'TEAMCMD_PASS_CRONGUARD ok: both hot legacy crons per-row-isolated (the 0194 per-order guard, mirrored). MOVEMENTS — a poison movement (repointed at a mine_resource location so settle raises via activity_start ''unknown activity'') did NOT wedge the run: a second HEALTHY movement in the SAME run settled (arrived), the poison stayed ''moving'' (logged+skipped, NEVER silently completed) and was UNCOUNTED (exactly 1 settled), and un-poisoning self-healed it next run. COMBAT — a poison encounter (a ship_hp-0 unit forcing the tick''s ceil(hp/ship_hp) to divide by zero) did NOT wedge the tick: a second HEALTHY encounter ticked in the SAME run, the poison rolled back to its pre-tick state (tick_number unchanged, still active) and was UNCOUNTED, and un-poisoning self-healed it next tick. The success path is byte-identical — the whole proof above ran its exacts against these re-created bodies and stayed green';
 end $$;
 
-select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members, reconciler re-home + race guards, M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed; 0198 NANGUARD: the dead x<>x NaN guards fixed to the working = ''NaN''::double precision idiom at all THREE knob sites (adapter level + affinity, reconciler idle-regen) — a jsonb "NaN" knob floors to 0 so calculate_expedition_stats stays byte-identical to the knob-0 baseline with a finite combat_power and process_mainship_expeditions is a clean no-op (no ceil(NaN)::integer abort), behaviorally inert at seed 0; 0199 NO-HOME: launch-from-dock is committed DARK — a docked ship''s send RAISES home-only while the flag is false (the byte-identical witness); flipped in-txn, a docked ship re-departs its OWN present fleet FROM the docked port (origin_type=location, not the base) recording the return port and docks at the destination, a docked team hunt launches ONE fleet from the port with the return port recorded and its members'' docked fleets dissolved, and the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home; all NO-HOME flags restored in-txn; 0206 CRON-GUARD: the two hottest legacy crons (process_fleet_movements 30s / process_combat_ticks 3s) are per-row-isolated (the 0194 per-order begin/exception guard, mirrored) — a poisoned row (a mine_resource-repointed movement whose settle raises via activity_start, or a ship_hp-0 unit forcing the tick to divide by zero) is logged+skipped and UNCOUNTED while a SECOND HEALTHY row in the SAME run still processes, and un-poisoning self-heals it next run; the success path is byte-identical (the settle/tick proofs above ran their exacts against these re-created bodies)' as result;
+-- ════════ BLOCK RECONDELETE (FLEET-GO 4d, placeholder migration 0299): reconciler deleted, ════════
+-- the idle shield-regen hunk rehomed. Five markers, each with its own fail mode:
+--   REGENHOME  — static token-pin of the deployed leaf prosrc (the exact UPDATE, the NANGUARD
+--                `= 'NaN'::double precision` idiom, the `greatest(0` drain-floor, the
+--                `if v_idle > 0` fire-guard, the live-encounter exclusion). A leaf that lost any
+--                of these would regress silently — the client only RENDERS the meter and combat
+--                only SNAPSHOTS msi.shield at send, so no other test goes red.
+--   REGENFIRES — the leaf actually fires: knob 0 → zero writes (updated_at sentinel); knob 0.10 →
+--                the shield climbs ceil(max × 0.10) exactly and caps at max; a 'destroyed' hull is
+--                untouched. The live-'active'-encounter exclusion arm rides the repointed SHIELD2
+--                exclusion pin (this same run, a REAL encounter — asserted there, credited here).
+--   REGENSCHED — exactly ONE cron job for the new name at exactly '30 seconds'; ZERO jobs for the
+--                old name (net heartbeat count unchanged: one died, one was born); the leaf is NOT
+--                client-executable (service_role only — the reconciler's posture carried over).
+--   RECONGONE  — both dropped functions resolve to NULL (the .sh selftest adds the tree-wide ban:
+--                no migration AFTER the 4d file may re-create either name — the 0136 failure mode).
+--   NOSTRAND   — no CHECK on main_ship_instances admits a movement status AND zero ships sit in
+--                one (the 4d migration's reject-before-delete gate + post-cycle sweep, re-run at
+--                proof time: with no reconciler a stranded row would be invisible forever).
+do $$
+declare v_src text;
+begin
+  select p.prosrc into v_src
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'process_shield_idle_regen';
+  if v_src is null then
+    raise exception 'REGENHOME FAIL: process_shield_idle_regen not deployed (the 4d leaf is missing)'; end if;
+  if position('set shield = least(s.max_shield, s.shield + ceil(s.max_shield * v_idle)::integer)' in v_src) = 0 then
+    raise exception 'REGENHOME FAIL: the 4d leaf lost the exact idle-regen UPDATE'; end if;
+  if position('= ''NaN''::double precision' in v_src) = 0 then
+    raise exception 'REGENHOME FAIL: the 4d leaf lost the NANGUARD = ''NaN''::double precision idiom'; end if;
+  if position('greatest(0,' in v_src) = 0 then
+    raise exception 'REGENHOME FAIL: the 4d leaf lost the greatest(0, …) drain-floor (a negative knob would DRAIN shields every 30s)'; end if;
+  if position('if v_idle > 0 then' in v_src) = 0 then
+    raise exception 'REGENHOME FAIL: the 4d leaf lost the v_idle > 0 fire-guard (knob 0 would fire same-value row writes every 30s)'; end if;
+  if position('and ce.status in (''active'',''retreating'')' in v_src) = 0 then
+    raise exception 'REGENHOME FAIL: the 4d leaf lost the live-encounter exclusion (it would fight the 3s tick for mid-combat shields)'; end if;
+  raise notice 'TEAMCMD_PASS_REGENHOME ok: the 4d leaf carries the verbatim hunk tokens — the exact UPDATE, the NANGUARD NaN floor, the greatest(0) drain-floor, the v_idle>0 fire-guard, and the active/retreating exclusion';
+end $$;
+
+do $$
+declare r jsonb; v_sh int; v_ts timestamptz; v_prev_status text;
+  uRG uuid; sRG uuid; v_val text;
+begin
+  -- entry: the idle knob is the committed '0' (SHIELD2/NANGUARD restored it in-txn above).
+  select value #>> '{}' into v_val from public.game_config where key = 'shield_regen_idle_pct';
+  if v_val is distinct from '0' then
+    raise exception 'REGENFIRES FAIL: shield_regen_idle_pct is % at entry (want the committed ''0'')', coalesce(v_val, '<missing>'); end if;
+
+  -- fresh REAL commission (the SHIELD2 fixture-A idiom) + sanctioned damaged-shield surgery.
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uRG;
+  r := pg_temp.call_as(uRG, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'REGENFIRES FAIL provision: %', r; end if;
+  select main_ship_id into sRG from public.main_ship_instances where player_id = uRG;
+  update public.main_ship_instances
+     set max_shield = 40, shield = 3, updated_at = now() - interval '1 hour'
+   where main_ship_id = sRG;
+
+  -- knob 0 → ZERO WRITES (the updated_at sentinel: the guarded statement never fires).
+  perform public.process_shield_idle_regen();
+  select shield, updated_at into v_sh, v_ts from public.main_ship_instances where main_ship_id = sRG;
+  if v_sh is distinct from 3 or v_ts is distinct from (now() - interval '1 hour') then
+    raise exception 'REGENFIRES FAIL zero-writes: knob-0 leaf pass moved shield to % / stamped updated_at (want 3 + the sentinel — the statement must never FIRE at knob 0)', v_sh; end if;
+
+  -- knob 0.10 → the climb is exactly ceil(40 × 0.10) = 4: 3 → 7 (the real set_game_config knob idiom).
+  perform public.set_game_config('shield_regen_idle_pct', '0.10'::jsonb);
+  perform public.process_shield_idle_regen();
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sRG;
+  if v_sh is distinct from 7 then
+    raise exception 'REGENFIRES FAIL climb: shield % (want 7 = 3 + ceil(40 × 0.10) exactly)', v_sh; end if;
+
+  -- the cap binds: 38 + 4 = 42 → least(max_shield, …) lands 40 exactly.
+  update public.main_ship_instances set shield = 38 where main_ship_id = sRG;
+  perform public.process_shield_idle_regen();
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sRG;
+  if v_sh is distinct from 40 then
+    raise exception 'REGENFIRES FAIL cap: shield % (want 40 — least(max_shield, 38 + 4) must bind, uncapped would be 42)', v_sh; end if;
+
+  -- a 'destroyed' hull is untouched (dead ships do not regenerate; repair is the revival path).
+  -- Save/restore the ship's ACTUAL prior status (the fixture-discipline law).
+  select status into v_prev_status from public.main_ship_instances where main_ship_id = sRG;
+  update public.main_ship_instances set status = 'destroyed', shield = 3 where main_ship_id = sRG;
+  perform public.process_shield_idle_regen();
+  select shield into v_sh from public.main_ship_instances where main_ship_id = sRG;
+  if v_sh is distinct from 3 then
+    raise exception 'REGENFIRES FAIL destroyed: the lit leaf regenerated a DESTROYED ship to % (want 3 untouched)', v_sh; end if;
+  update public.main_ship_instances set status = v_prev_status where main_ship_id = sRG;
+
+  perform public.set_game_config('shield_regen_idle_pct', '0'::jsonb);   -- restore the dark seed in-txn
+
+  raise notice 'TEAMCMD_PASS_REGENFIRES ok: the 4d leaf fires — knob 0 never writes (updated_at sentinel), knob 0.10 climbs exactly ceil(40 × 0.10) = 4 (3→7) and least-caps 38→40, a destroyed hull stays at 3; the live-active-encounter exclusion arm rode the repointed SHIELD2 exclusion pin this same run; knob restored ''0'' in-txn';
+end $$;
+
+do $$
+declare v_n int;
+begin
+  select count(*) into v_n from cron.job where jobname = 'process-shield-idle-regen';
+  if v_n <> 1 then
+    raise exception 'REGENSCHED FAIL: % cron job(s) named process-shield-idle-regen (want exactly 1)', v_n; end if;
+  select count(*) into v_n from cron.job where jobname = 'process-shield-idle-regen' and schedule = '30 seconds';
+  if v_n <> 1 then
+    raise exception 'REGENSCHED FAIL: process-shield-idle-regen is not at the 0050 cadence ''30 seconds'''; end if;
+  select count(*) into v_n from cron.job where jobname = 'process-mainship-expeditions';
+  if v_n <> 0 then
+    raise exception 'REGENSCHED FAIL: % old reconciler cron job(s) still scheduled (want 0 — the 4d migration must unschedule process-mainship-expeditions)', v_n; end if;
+  if has_function_privilege('authenticated', 'public.process_shield_idle_regen()', 'execute')
+     or has_function_privilege('anon', 'public.process_shield_idle_regen()', 'execute') then
+    raise exception 'REGENSCHED FAIL: the 4d leaf is client-executable (must be service_role only — the reconciler''s posture)'; end if;
+  if not has_function_privilege('service_role', 'public.process_shield_idle_regen()', 'execute') then
+    raise exception 'REGENSCHED FAIL: service_role cannot execute the 4d leaf (the cron would silently die)'; end if;
+  raise notice 'TEAMCMD_PASS_REGENSCHED ok: exactly one process-shield-idle-regen job at ''30 seconds'', zero process-mainship-expeditions jobs (net heartbeat unchanged), and the leaf is service_role-only';
+end $$;
+
+do $$
+begin
+  if to_regprocedure('public.process_mainship_expeditions()') is not null then
+    raise exception 'RECONGONE FAIL: process_mainship_expeditions still deployed (the 4d migration must drop it)'; end if;
+  if to_regprocedure('public.nohome_dock_returning_ship(uuid)') is not null then
+    raise exception 'RECONGONE FAIL: nohome_dock_returning_ship still deployed (the 4d migration must drop the reconciler''s sole callee)'; end if;
+  raise notice 'TEAMCMD_PASS_RECONGONE ok: both reconciler functions resolve NULL (the tree-wide no-re-create ban lives in the .sh selftest)';
+end $$;
+
+do $$
+declare v_n int;
+begin
+  -- no CHECK on main_ship_instances admits a movement status (the 4c narrowing held through 4d) …
+  select count(*) into v_n
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    where n.nspname = 'public' and t.relname = 'main_ship_instances' and c.contype = 'c'
+      and (   pg_get_constraintdef(c.oid) like '%''traveling''%'
+           or pg_get_constraintdef(c.oid) like '%''returning''%'
+           or pg_get_constraintdef(c.oid) like '%''hunting''%'
+           or pg_get_constraintdef(c.oid) like '%''stationary''%');
+  if v_n <> 0 then
+    raise exception 'NOSTRAND FAIL: % check constraint(s) on main_ship_instances still admit a movement status (the 4d reject-before-delete gate would have refused this world)', v_n; end if;
+  -- … so zero ships can sit in one (asserted anyway — the strand sweep: with no reconciler a
+  -- stranded movement-status row would be invisible forever, with no red test).
+  select count(*) into v_n from public.main_ship_instances
+    where status in ('traveling','returning','hunting','stationary');
+  if v_n <> 0 then
+    raise exception 'NOSTRAND FAIL: % ship(s) stranded in a movement status with the reconciler deleted', v_n; end if;
+  raise notice 'TEAMCMD_PASS_NOSTRAND ok: no CHECK admits a movement status and zero ships sit in one — nothing is stranded behind the deleted reconciler';
+end $$;
+
+select 'TEAM-COMMAND B-VERIFY PROOF PASSED (dark reject-before-read; write/assign integrity; C0 captain-fold group preview; D0 authoritative totals = delegated sums, strict-vs-preview; all-or-nothing send; best-effort stop; SET-NULL delete; D1 legacy combat parity; D2 team hunt send + manifest + member encounter; 0171 shard drop: rate-0 parity + rate-1 wave-2 drop + end-to-end deposit; D3 sortie settle: returning members + 4d return-normalization surgery (reconciler race/re-home/self-heal arms tombstoned by 4d), M1 race closure; 0177 captain XP: dark no-op, current-assignment accrual with per-(grant, captain) ledger + sentinel, boundary curve, re-run exactly-once; 0180 C2-2 level fold: exact lit bonus on the captain-contributed portion + double inertness both arms; 0183 MOD2-1: exact-price craft + fit + adapter survival/mining deltas end-to-end; 0185 SHIPYARD-0: T1 hull + recipe catalog exact, blueprint faucet rate-0 parity + rate-1 w>=8 drop with the w<8 threshold, shipyard flag dark; 0186 SOUL-0: deterministic trait rolls = the inline re-derivation, exact hp_mult, idempotent immutability; 0187 TEAMMAP-1: team send tags member fleets = the sent[] envelope, arrival docks the team with the tag surviving; 0191 SHIELD-0: schema/knobs/index deploy-inert (all 0/0, knobs ''0'' untouched) + the shield sync leaf clamps with hp byte-untouched; 0190 TEAMMOVE-1: a docked team moves onward as one — member_not_ready on mid-flight/split members, all-or-nothing rollback, per-member delegation to the live 0156 move with the tag riding, and the onward dock; 0193 SOUL-1: dark commission zero-roll + knob-gated fold parity, lit fold = stored trait sums exactly, lit commission births the derivation, hp_mult once at roll with no adapter re-scale, ensure hooks with the create-branch replay law; 0195 SHIELD-1: the shield enters the live combat engine — zero state pinned (no snapshot on any pre-lit member row, no fought ship''s shield ever written) with the earlier exact-damage blocks as the running parity proof, and the lit arm exact (snapshot carries the CURRENT pool, absorb-first min(pool,damage) with hull-only overflow, knob regen climbs then CAPS at max, the 0191 leaf mirrors each tick, integrity + defeat stay hull-only — a fully-shielded ship still dies at hull 0); 0196 DECKS-3: station affinity — knob-0 byte-parity with a stationed matching captain, lit bonus = knob × the matched share exactly composed with the level fold, mismatch/bridge boards byte-identical lit or dark, the unstationed arm pinned structurally; 0197 SHIELD-2: the out-of-combat regen home + the commission copy — knob-0 zero-writes (the updated_at sentinel: the guarded statement never fires), lit idle regen exact (ceil-pinned climb, least-capped, full pools never rewritten), the disjoint-writers exclusion (a live active/retreating encounter membership pins the tick as sole shield writer; destroyed hulls stay dead), and both real creators birth ships BORN FULL (shield = max_shield = base_shield) under the surgically-raised-then-restored hull seed; 0198 NANGUARD: the dead x<>x NaN guards fixed to the working = ''NaN''::double precision idiom — a jsonb "NaN" knob floors to 0 so calculate_expedition_stats stays byte-identical to the knob-0 baseline with a finite combat_power and the 4d idle-regen leaf is a clean no-op (no ceil(NaN)::integer abort), behaviorally inert at seed 0; 0199 NO-HOME: launch-from-dock is committed DARK — a docked ship''s send RAISES home-only while the flag is false (the byte-identical witness); flipped in-txn, a docked ship re-departs its OWN present fleet FROM the docked port (origin_type=location, not the base) recording the return port and docks at the destination, a docked team hunt launches ONE fleet from the port with the return port recorded and its members'' docked fleets dissolved (the reconciler dock-at-return + H1 arms tombstoned by 4d); all NO-HOME flags restored in-txn; 0206 CRON-GUARD: the two hottest legacy crons (process_fleet_movements 30s / process_combat_ticks 3s) are per-row-isolated (the 0194 per-order begin/exception guard, mirrored) — a poisoned row (a mine_resource-repointed movement whose settle raises via activity_start, or a ship_hp-0 unit forcing the tick to divide by zero) is logged+skipped and UNCOUNTED while a SECOND HEALTHY row in the SAME run still processes, and un-poisoning self-heals it next run; the success path is byte-identical (the settle/tick proofs above ran their exacts against these re-created bodies); 4d RECONCILER DELETE: the idle shield-regen hunk rehomed VERBATIM into process_shield_idle_regen (token-pinned: exact UPDATE + NaN floor + drain-floor + fire-guard + encounter exclusion), the leaf FIRES (knob-0 zero-writes sentinel, ceil-exact climb, least cap, destroyed untouched) on the 0050 cadence exactly once with zero old-name jobs and service_role-only ACL, both reconciler functions resolve NULL, and nothing is stranded in a movement status)' as result;
 
 rollback;   -- leave ZERO persisted state: no ship, no group, no fleet, no flag flip, no fixture user.
