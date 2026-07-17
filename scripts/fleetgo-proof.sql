@@ -125,11 +125,13 @@ end $$;
 -- uD (the 4b-0 assign-guard world — its OWN hunt-in-flight fixture, same isolation reasoning),
 -- uE/uF/uG/uH (the 4b-1 hunt-unification worlds: dark parity / the lit consume chain / the lit
 -- =0 bootstrap pin / the from-space consume — each its own world because every one of them
--- launches a REAL hunt, and a hunt's manifest + 'hunting' ship writes poison any shared fixture).
+-- launches a REAL hunt, and a hunt's manifest + 'hunting' ship writes poison any shared fixture),
+-- uI (the 0215 brake-sortie world — its own REAL hunt, driven all the way to a RETAINED completed
+-- manifest, so it must not share fixtures for the same reason as uE..uH).
 do $$
 declare u uuid; k text;
 begin
-  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH'] loop
+  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI'] loop
     insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
       values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
               'fg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -178,7 +180,7 @@ update public.game_config set value='true'::jsonb where key='mainship_send_enabl
 -- player_wallet is lazy, so on_conflict covers a row a signup/ensure path may already have created.
 -- (The trade-market-1 / team-command proofs use this same direct-owner insert.)
 insert into public.player_wallet (player_id, balance)
-select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH')
+select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI')
 on conflict (player_id) do update set balance = excluded.balance;
 
 -- ════════ PROVISION via the REAL commission RPCs ════════
@@ -2469,6 +2471,283 @@ begin
 
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
   raise notice 'HUNTUNI_PASS_FROMSPACE: a fleet parked in open space (via the real 0209 brake) hunts FROM its own coordinate — origin captured from the fleet, consumed fleet terminal, one live fleet';
+end $$;
+
+-- ════════ BLOCK STOP-SORTIE (0215, lit): THE BRAKE REFUSES AN OPEN SORTIE — BOTH PHASES ════════
+-- The bricking class 0215 exists to kill: the brake resolves the group fleet by the exact shape a
+-- hunt's sortie fleet has, so unguarded it cancels the encounter's leg and parks the fleet IDLE
+-- with its manifest attached — idle is immortal (0047 collects only terminal fleets), the manifest
+-- never clears, and every later guard answers the sortie reject forever. Two phases, because the
+-- two failure shapes differ:
+--   • IN FLIGHT (fleet 'moving'): unguarded, the brake CANCELS the sortie leg — the catastrophic
+--     write. Pinned by reason + the leg still moving/unresolved + byte-diffs on fleets AND
+--     group_sortie_members (the charter's lesson: diff the table the bug hides in).
+--   • MID-COMBAT (fleet 'present' at its site, live encounter): unguarded, the brake answers the
+--     idempotent not_moving skip (ok:true) — wrong POSTURE. A sortie is "refuse", never "nothing
+--     to do" (0213's token+posture arm). Pinned by demanding the reject token itself.
+-- HOW THIS FAILS IF THE CODE WERE WRONG / MUTATION (executed statically here; runtime needs CI's
+-- disposable Postgres): strip the 0215 hunk → phase 1 cancels the leg (reason/diff pins red) and
+-- phase 2 answers ok:true not_moving → red; the sh's body-scoped hunk grep and 0215's own
+-- self-assert also red.
+do $$
+declare r jsonb; n int; v_flag jsonb; v_manifest_n int;
+  uI uuid := (select v from fg where k='uI'); haven uuid := (select v from fg where k='haven');
+  i1 uuid; gI uuid; v_hunt uuid; v_huntfleet uuid; v_huntmv uuid;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- live-RPC provisioning: i1 docked at haven → group → REAL lit hunt (the proven =0 docked arm).
+  r := pg_temp.call_as(uI, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'STOP-SORTIE FAIL: commission i1: %', r; end if;
+  select main_ship_id into i1 from public.main_ship_instances where player_id = uI;
+  r := pg_temp.call_as(uI, 'public.upsert_ship_group(1, ''Brakemen'')');
+  if (r->>'ok')::boolean is not true then raise exception 'STOP-SORTIE FAIL: group: %', r; end if;
+  gI := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uI, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', i1, gI));
+  if (r->>'ok')::boolean is not true then raise exception 'STOP-SORTIE FAIL: assign i1: %', r; end if;
+  select id into v_hunt from public.locations
+   where status = 'active' and activity_type = 'hunt_pirates'
+   order by coalesce(min_power_required, 0) asc limit 1;
+  if v_hunt is null then raise exception 'STOP-SORTIE FAIL: no active hunt site — the fixture cannot be built'; end if;
+  r := pg_temp.call_as(uI, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gI, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'STOP-SORTIE FAIL: lit hunt rejected: %', r; end if;
+  v_huntfleet := (r->>'fleet_id')::uuid;
+  v_huntmv    := (r->>'movement_id')::uuid;
+
+  -- ── PHASE 1: IN FLIGHT. Vacuity: the sortie really is moving with a live manifest. ─────────────
+  select count(*) into n from public.fleets where id = v_huntfleet and status = 'moving';
+  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the in-flight sortie state was not built (fleet not moving)'; end if;
+  select count(*) into v_manifest_n from public.group_sortie_members where fleet_id = v_huntfleet;
+  if v_manifest_n = 0 then raise exception 'STOP-SORTIE FAIL: the in-flight sortie state was not built (no manifest rows)'; end if;
+
+  create temp table bs1_ships  as select * from public.main_ship_instances;
+  create temp table bs1_fleets as select * from public.fleets;
+  create temp table bs1_gsm    as select * from public.group_sortie_members;
+  if (select count(*) from bs1_fleets) = 0 then
+    raise exception 'STOP-SORTIE FAIL: the sortie snapshot is empty — the zero-write diff would be vacuous'; end if;
+
+  r := pg_temp.call_as(uI, format('public.command_ship_group_stop(%L::uuid)', gI));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'group_on_sortie' then
+    raise exception 'STOP-SORTIE FAIL: braking an IN-FLIGHT sortie answered % — the brake just cancelled a hunt leg and parked an immortal manifest-attached idle fleet', r; end if;
+  -- the sortie leg is STILL moving and unresolved; nothing was cancelled.
+  select count(*) into n from public.fleet_movements
+   where id = v_huntmv and status = 'moving' and resolved_at is null;
+  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the sortie leg is no longer moving/unresolved after the rejected brake'; end if;
+  select count(*) into n from public.fleet_movements where fleet_id = v_huntfleet and status = 'cancelled';
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: % cancelled leg(s) on the sortie fleet after the rejected brake', n; end if;
+  -- byte-diffs, both ways, on the tables the bug hides in — plus §2's own table.
+  select count(*) into n from (
+    (table bs1_ships except select * from public.main_ship_instances)
+    union all (select * from public.main_ship_instances except table bs1_ships)) d;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the rejected brake wrote % main_ship_instances row(s)', n; end if;
+  select count(*) into n from (
+    (table bs1_fleets except select * from public.fleets)
+    union all (select * from public.fleets except table bs1_fleets)) d;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the rejected brake wrote % fleets row(s)', n; end if;
+  select count(*) into n from (
+    (table bs1_gsm except select * from public.group_sortie_members)
+    union all (select * from public.group_sortie_members except table bs1_gsm)) d;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the rejected brake wrote % group_sortie_members row(s)', n; end if;
+  if (select count(*) from public.group_sortie_members where fleet_id = v_huntfleet) <> v_manifest_n then
+    raise exception 'STOP-SORTIE FAIL: the rejected brake changed the manifest row count'; end if;
+  drop table bs1_ships; drop table bs1_fleets; drop table bs1_gsm;
+
+  -- ── PHASE 2: MID-COMBAT. Settle the sortie at its site through the real cron entry point. ──────
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_huntmv;
+  perform public.movement_settle_arrival(v_huntmv);
+  -- vacuity: present AT the hunt site, live encounter, active presence, manifest still open.
+  select count(*) into n from public.fleets
+   where id = v_huntfleet and status = 'present' and current_location_id = v_hunt;
+  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the mid-combat brake state was not built (fleet not present at the hunt site)'; end if;
+  select count(*) into n from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
+  if n <> 1 then raise exception 'STOP-SORTIE FAIL: no live encounter under the brake probe — the mid-combat phase would be vacuous'; end if;
+  select count(*) into n from public.location_presence
+   where fleet_id = v_huntfleet and status = 'active' and location_id = v_hunt;
+  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the mid-combat brake state was not built (no active presence)'; end if;
+
+  create temp table bs2_fleets as select * from public.fleets;
+  create temp table bs2_gsm    as select * from public.group_sortie_members;
+  r := pg_temp.call_as(uI, format('public.command_ship_group_stop(%L::uuid)', gI));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'group_on_sortie' then
+    raise exception 'STOP-SORTIE FAIL: braking a MID-COMBAT sortie answered % — a sortie must be REFUSED, never idempotent-skipped (0213 posture)', r; end if;
+  select count(*) into n from (
+    (table bs2_fleets except select * from public.fleets)
+    union all (select * from public.fleets except table bs2_fleets)) d;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the mid-combat rejected brake wrote % fleets row(s)', n; end if;
+  select count(*) into n from (
+    (table bs2_gsm except select * from public.group_sortie_members)
+    union all (select * from public.group_sortie_members except table bs2_gsm)) d;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the mid-combat rejected brake wrote % group_sortie_members row(s)', n; end if;
+  select count(*) into n from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
+  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the live encounter did not survive the rejected brake'; end if;
+  drop table bs2_fleets; drop table bs2_gsm;
+
+  -- hand the mid-combat world to DARKINERT + LIVESCOPE (the sortie persists deliberately).
+  insert into fg values ('i1', i1), ('gI', gI), ('huntI', v_hunt), ('huntfleetI', v_huntfleet);
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_STOP_REJECTS_SORTIE: lit brake vs an open sortie -> group_on_sortie in BOTH phases (moving: leg untouched; mid-combat: refused, not skipped); fleets + manifest byte-unchanged, encounter alive';
+end $$;
+
+-- ════════ BLOCK STOP-DARKINERT (0215, dark): THE HUNK SITS BEHIND THE 0209 GATE ════════
+-- 0215 adds NO flag of its own: the 0209 head is in-body gated on fleet_movement_unified_enabled
+-- BEFORE any read (0209:56), and the hunk sits strictly after that gate. A live sortie is REACHABLE
+-- while dark (the legacy hunt, team_command_enabled, mints the same shape — the 0211 lesson), so
+-- this pins that the dark brake answers the GATE, never the sortie read: dark = the head,
+-- byte-identical by construction.
+-- MUTATION (traced): move the guard above the gate → this answers group_on_sortie while dark → red
+-- (0215's self-assert order chain also reds statically).
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uI uuid := (select v from fg where k='uI'); gI uuid := (select v from fg where k='gI');
+  v_huntfleet uuid := (select v from fg where k='huntfleetI');
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- vacuity: the LIVE sortie really exists while dark (the guard's own join shape).
+  select count(*) into n
+    from public.group_sortie_members gsm
+    join public.fleets f on f.id = gsm.fleet_id
+   where gsm.player_id = uI and f.group_id = gI
+     and f.status in ('moving', 'present', 'returning');
+  if n = 0 then raise exception 'STOP-DARKINERT FAIL: the dark sortie state was not built — the gate probe would be vacuous'; end if;
+
+  create temp table bd_fleets as select * from public.fleets;
+  r := pg_temp.call_as(uI, format('public.command_ship_group_stop(%L::uuid)', gI));
+  if (r->>'reason') is distinct from 'unified_movement_disabled' then
+    raise exception 'STOP-DARKINERT FAIL: dark brake over a live sortie answered % (group_on_sortie here means the hunk ran BEFORE the gate — the sortie read leaked into the dark world)', r; end if;
+  select count(*) into n from (
+    (table bd_fleets except select * from public.fleets)
+    union all (select * from public.fleets except table bd_fleets)) d;
+  if n <> 0 then raise exception 'STOP-DARKINERT FAIL: the dark brake wrote % fleets row(s)', n; end if;
+  select count(*) into n from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
+  if n <> 1 then raise exception 'STOP-DARKINERT FAIL: the live encounter did not survive the dark brake'; end if;
+  drop table bd_fleets;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_STOP_DARKINERT: dark + live sortie -> unified_movement_disabled (the gate answers; the sortie read is never reached; zero writes)';
+end $$;
+
+-- ════════ BLOCK STOP-LIVESCOPE (0215, lit): A RETAINED DEAD MANIFEST MUST NOT BLOCK THE BRAKE ════
+-- THE ANTI-OVERREACH HALF. A finished sortie's manifest is RETAINED up to 14d (0169's retention
+-- decision; 0047 collects it only with its terminal fleet). A bare-EXISTS "fix" of the brake would
+-- green REJECTS_SORTIE and then brick every post-hunt stop the group ever makes. So: finish the
+-- sortie through the REAL chain (Retreat → escape tick → return settle → reconciler), prove the
+-- manifest is retained on the completed fleet, then launch a NEW unified go and STOP it — the
+-- brake MUST succeed, and the retained manifest must survive it untouched.
+-- MUTATION (traced): widen the guard to a bare EXISTS (drop the live-status join) → the go's brake
+-- below answers group_on_sortie → red (the sh's body-scoped live-status grep and 0215's
+-- self-assert (c) also red statically).
+do $$
+declare r jsonb; n int; v_flag jsonb; v_manifest_n int;
+  uI uuid := (select v from fg where k='uI'); gI uuid := (select v from fg where k='gI');
+  i1 uuid := (select v from fg where k='i1'); v_huntfleet uuid := (select v from fg where k='huntfleetI');
+  slag uuid := (select v from fg where k='slag');
+  v_pres uuid; v_enc uuid; v_rmv uuid; v_gofleet uuid; v_gomv uuid;
+  v_mid_x double precision; v_mid_y double precision;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- ── finish the sortie the way the PLAYER does: Retreat → escape → return → settle → reconcile.
+  select id into v_pres from public.location_presence where fleet_id = v_huntfleet and status = 'active';
+  select id into v_enc  from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
+  if v_pres is null or v_enc is null then
+    raise exception 'STOP-LIVESCOPE FAIL: no live sortie handed over — nothing to finish'; end if;
+  -- ENVELOPE (verified at the true head — 0019:80, delegating to presence_request_leave, 0018):
+  -- request_retreat RAISES on every failure and, for a COMBAT presence, succeeds with the BARE
+  -- envelope {"return_movement_id": null} — NO 'ok' key, and the null is CORRECT: the combat
+  -- branch only ARMS the retreat (presence 'retreating' + combat_set_retreating); the return
+  -- movement is created LATER by process_combat_ticks once the delay elapses. Asserting {ok} here
+  -- is the RPC-shape mistake the fixture-discipline note warns about — the first cut of this block
+  -- did exactly that and CI reddened it on a SUCCESSFUL call. So: pin the key (and that its value
+  -- is null — a non-null id here would mean the instant-leave 'none' branch ran, the WRONG branch),
+  -- then assert the STATE the call must produce (the team-command-proof idiom).
+  r := pg_temp.call_as(uI, format('public.request_retreat(%L::uuid)', v_pres));
+  if not (r ? 'return_movement_id') then
+    raise exception 'STOP-LIVESCOPE FAIL: request_retreat envelope drifted (no return_movement_id key): %', r; end if;
+  if (r->>'return_movement_id') is not null then
+    raise exception 'STOP-LIVESCOPE FAIL: request_retreat returned a movement id % mid-combat — the instant-leave branch ran instead of the retreat arm', r->>'return_movement_id'; end if;
+  select count(*) into n from public.combat_encounters
+   where id = v_enc and status = 'retreating' and retreat_started_at is not null;
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: request_retreat did not arm the encounter (retreating + retreat_started_at)'; end if;
+  select count(*) into n from public.location_presence where id = v_pres and status = 'retreating';
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: request_retreat did not set the presence retreating'; end if;
+  -- SURGERY (retreat-clock rewind, the COMBATPARITY idiom): now() is txn-constant, so no real
+  -- retreat delay can elapse in this txn; rewind the clock instead of faking the end state.
+  update public.combat_encounters
+     set retreat_started_at = retreat_started_at - interval '1 minute',
+         last_resolved_at   = last_resolved_at   - interval '1 minute'
+   where id = v_enc;
+  -- GLOBAL-TICK NOTE: process_combat_ticks (and process_mainship_expeditions below) sweep EVERY
+  -- live row, so they also advance uC's and uE's deliberately-persisted encounters by one combat
+  -- step. That is safe HERE and only here: this is the LAST proof block (nothing downstream reads
+  -- uC/uE state), both encounters sit on fresh full-hp commission ships at danger≈1 (one step
+  -- cannot defeat them, so no destructive branch can fire), and the team-command proof runs the
+  -- same global ticks over concurrent worlds. If a block is ever added AFTER this one that asserts
+  -- uC/uE encounter state, it must re-snapshot — do not inherit those worlds across this tick.
+  perform public.process_combat_ticks();
+  select count(*) into n from public.combat_encounters where id = v_enc and status = 'escaped';
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: the encounter did not settle escaped'; end if;
+  select id into v_rmv from public.fleet_movements
+   where fleet_id = v_huntfleet and mission_type = 'return_home' and status = 'moving';
+  if v_rmv is null then raise exception 'STOP-LIVESCOPE FAIL: the escape did not mint a return leg'; end if;
+  -- make the return DUE (both ends move — arrive_at > depart_at is CHECK-enforced) and settle it.
+  update public.fleet_movements
+     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
+   where id = v_rmv;
+  r := public.movement_settle_arrival(v_rmv);
+  if (r->>'outcome') is distinct from 'completed' then
+    raise exception 'STOP-LIVESCOPE FAIL: return settle answered %', r; end if;
+
+  -- vacuity: the EXACT overreach shape — fleet completed, manifest RETAINED, zero live group fleets.
+  select count(*) into n from public.fleets where id = v_huntfleet and status = 'completed';
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: the retained-manifest state was not built (sortie fleet not completed)'; end if;
+  select count(*) into v_manifest_n from public.group_sortie_members where fleet_id = v_huntfleet;
+  if v_manifest_n = 0 then raise exception 'STOP-LIVESCOPE FAIL: the retained-manifest state was not built (manifest gone — retention law drifted?)'; end if;
+  select count(*) into n from public.fleets
+   where group_id = gI and player_id = uI and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'STOP-LIVESCOPE FAIL: a live group-shaped fleet survived the completed sortie — the anti-overreach probe would be ambiguous'; end if;
+  -- reconcile the member home (the real post-sortie world; the retained manifest must survive it).
+  perform public.process_mainship_expeditions();
+  if (select count(*) from public.group_sortie_members where fleet_id = v_huntfleet) <> v_manifest_n then
+    raise exception 'STOP-LIVESCOPE FAIL: the reconciler deleted manifest rows (sole-writer law drifted)'; end if;
+
+  -- ── ★ LIVESCOPE ★ a NEW unified go, then the brake — BOTH must clear the retained manifest. ────
+  r := pg_temp.call_as(uI, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gI, slag));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'STOP-LIVESCOPE FAIL: a post-hunt unified go answered % — a RETAINED completed-sortie manifest is blocking the MOVER (its guard 8 lost its live scope?)', r; end if;
+  v_gofleet := (r->>'fleet_id')::uuid;
+  v_gomv    := (r->>'movement_id')::uuid;
+  -- SURGERY (no ship row touched): backdate to pin t = exactly 0.5.
+  update public.fleet_movements
+     set depart_at = now() - interval '30 seconds', arrive_at = now() + interval '30 seconds'
+   where id = v_gomv;
+  select (origin_x + target_x) / 2, (origin_y + target_y) / 2 into v_mid_x, v_mid_y
+    from public.fleet_movements where id = v_gomv;
+  r := pg_temp.call_as(uI, format('public.command_ship_group_stop(%L::uuid)', gI));
+  if (r->>'reason') is not distinct from 'group_on_sortie' then
+    raise exception 'STOP-LIVESCOPE FAIL: a RETAINED completed-sortie manifest blocked the brake — the guard is not live-scoped (bare EXISTS bricks every post-hunt stop)'; end if;
+  if (r->>'ok')::boolean is not true or (r->>'stopped')::boolean is not true then
+    raise exception 'STOP-LIVESCOPE FAIL: the post-hunt brake answered %', r; end if;
+  -- the brake really braked: leg cancelled, fleet holding at the exact midpoint.
+  select count(*) into n from public.fleet_movements
+   where id = v_gomv and status = 'cancelled' and resolved_at is not null;
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: the go leg was not cancelled+resolved'; end if;
+  select count(*) into n from public.fleets
+   where id = v_gofleet and status = 'idle' and location_mode = 'space'
+     and space_x = v_mid_x and space_y = v_mid_y and active_movement_id is null;
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: the fleet is not holding at the interpolated midpoint'; end if;
+  -- and the retained manifest survived the successful brake byte-for-byte (zero rows deleted).
+  if (select count(*) from public.group_sortie_members where fleet_id = v_huntfleet) <> v_manifest_n then
+    raise exception 'STOP-LIVESCOPE FAIL: the successful brake changed the retained manifest row count'; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_STOP_SORTIE_LIVESCOPE: sortie finished through the real chain, manifest RETAINED on the completed fleet -> a NEW go and its brake BOTH succeed; the manifest survives untouched';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;
