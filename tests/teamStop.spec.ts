@@ -149,7 +149,83 @@ test('an UN-DRAWABLE in-flight fleet is STILL stoppable (the Stop must not inher
 })
 
 test('stoppability is time-independent — the signature takes no clock at all', () => {
+  // The BRAKE CLIENT COMPANION added a third parameter, but it is a DEFAULTED flag bag (dark by
+  // default), not a clock — defaulted params don't count toward Function.length, so this holds.
   expect(resolveStoppableFleets.length).toBe(2)
+})
+
+// ── BRAKE CLIENT COMPANION — sortie classification: don't OFFER a Stop the server refuses. ───────
+// The server brake rejects a stop on a sortie fleet (group_on_sortie). The selector classifies a
+// group's LEAD movement by mission_type — 'hunt_pirates' (outbound) / 'return_home' (returning) —
+// LIT ONLY, so the rail can swap the button for a hint. DARK must stay byte-identical to today.
+
+const LIT = { unifiedEnabled: true }
+const DARK = { unifiedEnabled: false }
+
+test('LIT: a hunt_pirates group movement classifies as a sortie (outbound) — a hint row, NOT an actionable stop', () => {
+  const out = resolveStoppableFleets([mv({ group_id: 'g1', mission_type: 'hunt_pirates' })], [G1], LIT)
+  expect(out).toHaveLength(1) // still IN FLIGHT — the row exists (name/count/ETA render)...
+  expect(out[0].sortie).toBe('outbound') // ...but it is marked non-actionable
+  expect(out.filter((r) => r.sortie === null)).toEqual([]) // the actionable-stoppable set is empty
+})
+
+test('LIT: a return_home group movement classifies as a sortie (returning)', () => {
+  const out = resolveStoppableFleets([mv({ group_id: 'g1', mission_type: 'return_home' })], [G1], LIT)
+  expect(out).toHaveLength(1)
+  expect(out[0].sortie).toBe('returning')
+})
+
+test('LIT: a plain unified go stays actionable-stoppable — mission neither hunt leg', () => {
+  // A port-target go and a coordinate go (0207/0208 shapes) — neither mission is a sortie leg.
+  const portGo = resolveStoppableFleets([mv({ group_id: 'g1', mission_type: 'rally' })], [G1], LIT)
+  expect(portGo).toHaveLength(1)
+  expect(portGo[0].sortie).toBeNull()
+  const coordGo = resolveStoppableFleets(
+    [mv({ group_id: 'g1', mission_type: 'transit', target_type: 'space', target_location_id: null })],
+    [G1],
+    LIT,
+  )
+  expect(coordGo).toHaveLength(1)
+  expect(coordGo[0].sortie).toBeNull()
+})
+
+test('LIT: classification keys on the LEAD movement (the same fleet the row’s ETA speaks about)', () => {
+  // A lit-world group flies ONE movement, so lead == the movement; this pins the tie to the lead
+  // rule for any transitional multi-movement shape rather than leaving it to Map iteration order.
+  const out = resolveStoppableFleets(
+    [
+      mv({ id: 'm-late', group_id: 'g1', mission_type: 'rally', arrive_at: ARR_LATE }),
+      mv({ id: 'm-lead', group_id: 'g1', mission_type: 'hunt_pirates', arrive_at: ARR }),
+    ],
+    [G1],
+    LIT,
+  )
+  expect(out).toHaveLength(1)
+  expect(out[0].arriveAt).toBe(ARR)
+  expect(out[0].sortie).toBe('outbound') // lead carries the hunt → the row is a sortie
+})
+
+test('DARK: the classification is INERT — the stoppable set is byte-identical to today, enumerated', () => {
+  // Every mission shape at once, including both sortie legs. Flag false → every row comes back,
+  // every row actionable (sortie null), same fields, same deterministic order — exactly today's set.
+  const rows = [
+    mv({ id: 'm1', group_id: 'g1', mission_type: 'hunt_pirates' }),
+    mv({ id: 'm2', group_id: 'g2', mission_type: 'return_home' }),
+    mv({ id: 'm3', group_id: 'g3', mission_type: 'rally' }),
+  ]
+  const G3 = grp('g3', 'Lance')
+  const dark = resolveStoppableFleets(rows, [G1, G2, G3], DARK)
+  expect(dark).toEqual([
+    { groupId: 'g1', name: 'Vanguard', fleetCount: 1, arriveAt: ARR, sortie: null },
+    { groupId: 'g2', name: 'Hammer', fleetCount: 1, arriveAt: ARR, sortie: null },
+    { groupId: 'g3', name: 'Lance', fleetCount: 1, arriveAt: ARR, sortie: null },
+  ])
+  expect(dark.every((r) => r.sortie === null)).toBe(true) // no hint rows exist dark — all buttons
+})
+
+test('DARK is the DEFAULT: omitting the flag bag is exactly the dark arm (callers that predate the slice are safe)', () => {
+  const rows = [mv({ group_id: 'g1', mission_type: 'hunt_pirates' })]
+  expect(resolveStoppableFleets(rows, [G1])).toEqual(resolveStoppableFleets(rows, [G1], DARK))
 })
 
 test('stopOutcomeMessage: ships actually halted', () => {

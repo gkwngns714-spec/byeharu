@@ -47,6 +47,35 @@ export function groupStopAvailability(input: {
 // Same INPUTS, different question. Fail-closed on unknown groups is kept (a tag pointing outside the
 // owner's read yields no row — never a guessed name), matching the roster's dangling-membership posture.
 
+// ── BRAKE CLIENT COMPANION — sortie classification (the affordance mirror of 0215's server brake) ─
+//
+// The unified server brake rejects a Stop on a fleet that is flying a SORTIE (a hunt's outbound or
+// return leg) with reason `group_on_sortie` — combat commitment is not interruptible by the brake.
+// TeamMapStop already maps that reject to player copy, so correctness holds; but OFFERING the
+// "Stop — hold here" button for a sortie invites a click the server refuses. This classification
+// lets the rail swap the button for a non-actionable hint instead.
+//
+// THE PROXY: the client cannot see the server's sortie manifest, so it keys on the group movement's
+// `mission_type` — 0214's unified hunt departs the group's ONE fleet with mission 'hunt_pirates',
+// and combat resolution sends it home with mission 'return_home' (0169/0195/0206). That field is a
+// PROXY for the UI affordance only; the SERVER stays authoritative on what a stop may actually do.
+//
+// GATED ON `unifiedEnabled` (the same runtime flag TeamMapStop branches its brake on) so the DARK
+// world is byte-identical: flag false → no classification is applied and the stoppable set is
+// exactly today's. This gate also moots a real ambiguity: mission_type='return_home' ALSO appears
+// on per-ship LEGACY return legs (0169's per-member returns carry the expedition's informational
+// group_id tag), which would mis-classify a legacy expedition's way home as a sortie — but those
+// shapes matter only in the dark arm, and dark applies no classification at all.
+
+export type SortieLeg = 'outbound' | 'returning'
+
+/** 'hunt_pirates' → outbound sortie leg; 'return_home' → the way back; anything else → not a sortie. */
+function classifySortieLeg(missionType: string): SortieLeg | null {
+  if (missionType === 'hunt_pirates') return 'outbound'
+  if (missionType === 'return_home') return 'returning'
+  return null
+}
+
 export interface StoppableFleetDescriptor {
   groupId: string
   /** The team's name from the owner's groups read — never derived from the movement row. */
@@ -55,15 +84,25 @@ export interface StoppableFleetDescriptor {
   fleetCount: number
   /** Lead (earliest) arrive_at across the group's moving fleets — display only; the server owns ETA. */
   arriveAt: string
+  /**
+   * BRAKE CLIENT COMPANION: non-null when the LEAD movement is a sortie leg (see the header above) —
+   * the rail renders a hint, NOT a Stop button, because the server brake rejects `group_on_sortie`.
+   * Always null in the dark world (the classification is gated on unifiedEnabled).
+   */
+  sortie: SortieLeg | null
 }
 
 /**
- * Owned groups with at least one in-flight ('moving') fleet → one stoppable descriptor each.
+ * Owned groups with at least one in-flight ('moving') fleet → one descriptor each.
  * Pure, time-independent, no interpolation. Deterministic order (by groupId).
+ * A descriptor with `sortie !== null` is IN FLIGHT but NOT actionable-stoppable (hint row, no button).
+ * The third parameter is DEFAULTED (dark) so `resolveStoppableFleets.length` stays 2 — the
+ * time-independence spec pins that arity, and a flag is not a clock.
  */
 export function resolveStoppableFleets(
   movements: readonly FleetMovement[],
   groups: readonly GroupRow[],
+  opts: { unifiedEnabled: boolean } = { unifiedEnabled: false },
 ): StoppableFleetDescriptor[] {
   if (groups.length === 0) return []
   const nameById = new Map(groups.map((g) => [g.group_id, g.name]))
@@ -88,7 +127,11 @@ export function resolveStoppableFleets(
       if (ta !== tb) return ta <= tb ? a : b
       return a.id <= b.id ? a : b
     })
-    out.push({ groupId: gid, name: nameById.get(gid) as string, fleetCount: list.length, arriveAt: lead.arrive_at })
+    // Classify on the LEAD movement: in the lit world a unified group flies ONE fleet with ONE
+    // movement, so lead IS the movement — and the row's ETA and its classification always speak
+    // about the same fleet. Dark → null unconditionally (byte-identical set; see the header).
+    const sortie = opts.unifiedEnabled ? classifySortieLeg(lead.mission_type) : null
+    out.push({ groupId: gid, name: nameById.get(gid) as string, fleetCount: list.length, arriveAt: lead.arrive_at, sortie })
   }
   return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
 }

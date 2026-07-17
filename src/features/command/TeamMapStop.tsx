@@ -45,8 +45,16 @@ import { teamReasonMessage } from './teamReasonMessage'
 // fleet; `stopped` is a BOOLEAN) with the unified outcome copy. DARK → stop_ship_group_transit
 // (0164: loops the per-ship stop; `stopped` is a COUNT) with the 0164 copy, verbatim. The two
 // envelopes disagree on the same key, so each arm keeps its own parser — see teamStop.ts.
-// The derivation (resolveStoppableFleets) is shared unchanged: a unified fleet's movement carries
-// group_id like any other, so the lit world needs no second selector.
+// The derivation (resolveStoppableFleets) is shared: a unified fleet's movement carries group_id
+// like any other, so the lit world needs no second selector.
+//
+// BRAKE CLIENT COMPANION — don't OFFER a Stop the server refuses. The server brake rejects a stop
+// on a sortie fleet (`group_on_sortie` — combat commitment holds until arrival), and correctness
+// was already fine here (the reject routes through teamReasonMessage). But the affordance was
+// wrong: the rail showed "Stop — hold here" for a hunt's outbound and return legs. The selector
+// now classifies those (lit only — dark stays byte-identical) and a sortie row renders a
+// NON-ACTIONABLE hint instead of the button. Deliberately NO Retreat button here: retreat is
+// presence-addressed and ActiveCombatPanel owns it — one surface per verb (charter §2a).
 
 export function TeamMapStop({
   movements,
@@ -62,8 +70,10 @@ export function TeamMapStop({
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
 
-  // Pure, time-independent, no interpolation — an un-drawable fleet is still stoppable (see teamMapStop.ts).
-  const stoppable = resolveStoppableFleets(movements, groups)
+  // Pure, time-independent, no interpolation — an un-drawable fleet is still stoppable (see teamStop.ts).
+  // The flag gates ONLY the sortie classification; dark → every row comes back sortie:null, exactly
+  // today's set, and the rail below renders byte-identically to before this slice.
+  const stoppable = resolveStoppableFleets(movements, groups, { unifiedEnabled })
   if (stoppable.length === 0) return null
 
   const run = async (fleetName: string, key: string, op: () => Promise<TeamRpcResult>) => {
@@ -113,22 +123,33 @@ export function TeamMapStop({
                   {f.fleetCount} ship{f.fleetCount === 1 ? '' : 's'} in flight
                 </span>
               </span>
-              <Button
-                size="sm"
-                variant="warning"
-                data-testid={`team-stop-${f.groupId}`}
-                busy={busy === `stop:${f.groupId}`}
-                busyLabel="Stopping…"
-                disabled={busy !== null || !canStop}
-                onClick={() =>
-                  void run(f.name, `stop:${f.groupId}`, () =>
-                    // LIT → the ONE unified brake (0209); DARK → the legacy per-member loop (0164), verbatim.
-                    unifiedEnabled ? commandShipGroupStop(f.groupId) : stopShipGroup(f.groupId),
-                  )
-                }
-              >
-                Stop — hold here
-              </Button>
+              {f.sortie !== null ? (
+                // A sortie is committed — the server brake would reject this stop (group_on_sortie),
+                // so no button is offered at all. Hint only; retreat lives in ActiveCombatPanel (§2a).
+                <span
+                  data-testid={`team-sortie-hint-${f.groupId}`}
+                  className="shrink-0 text-right text-[10px] text-ink-faint"
+                >
+                  {f.sortie === 'outbound' ? 'On a hunt — committed until arrival' : 'Returning from a hunt'}
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="warning"
+                  data-testid={`team-stop-${f.groupId}`}
+                  busy={busy === `stop:${f.groupId}`}
+                  busyLabel="Stopping…"
+                  disabled={busy !== null || !canStop}
+                  onClick={() =>
+                    void run(f.name, `stop:${f.groupId}`, () =>
+                      // LIT → the ONE unified brake (0209); DARK → the legacy per-member loop (0164), verbatim.
+                      unifiedEnabled ? commandShipGroupStop(f.groupId) : stopShipGroup(f.groupId),
+                    )
+                  }
+                >
+                  Stop — hold here
+                </Button>
+              )}
             </div>
           )
         })}
