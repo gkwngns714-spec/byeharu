@@ -1,0 +1,64 @@
+name: FLEET-GO — unified fleet mover disposable proof (dark; no production)
+
+# Runs the FLEET-GO proof (migration 0207, charter §3 step 3a) on a throwaway local Supabase —
+# NEVER production:
+#   1. a DB-free selftest: the harness is well-formed and self-rolling-back (opens a txn, toggles the
+#      dark flags ONLY inside it, provisions via the real commission/group RPCs, ends in ROLLBACK with
+#      NO COMMIT), the charter §2 no-ship-write property is asserted for real (both-way diff, non-vacuous,
+#      applied to the go / the redirect / the rejected guards), the redirect proof is non-vacuous, the
+#      speed fold is recomputed independently, and the migration is additive + composes no per-ship mover;
+#   2. a disposable local Supabase (full chain incl. 0207) running the real-chain matrix: dark
+#      reject-before-read, one-fleet/one-movement, ZERO ship writes, min-speed, mid-flight redirect from
+#      the exact interpolated point, the fail-closed guards, and domain isolation — then a committed-flag
+#      check that fleet_movement_unified_enabled is STILL 'false' after the run.
+# The proof flips NO committed flag: it enables the dark capabilities only inside the rolled-back txn.
+# No `environment:` on any job — none can read production secrets. Disposable local Supabase only.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'osn3-**'
+      - 'slice-**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fleetgo-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/fleetgo-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0207)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: FLEET-GO real-chain matrix
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/fleetgo-proof.sh local
+      - name: Committed flag must STILL be false (the proof persists nothing)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -X -v ON_ERROR_STOP=1 -tAc \
+            "select value from public.game_config where key='fleet_movement_unified_enabled';" | tee /tmp/flag
+          grep -qx 'false' /tmp/flag || { echo "FAIL: fleet_movement_unified_enabled is not committed-false"; exit 1; }
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
