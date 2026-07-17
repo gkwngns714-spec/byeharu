@@ -10,11 +10,18 @@
 # SUPABASE_ACCESS_TOKEN — no psql, no Docker on this machine). Modes:
 #   selftest — DB-free static safety: the act writes game_config ONLY, via the owned set_game_config
 #              writer, on exactly the FOUR approved keys (unified -> true, the three per-ship
-#              movement flags -> false) and no other window's key; the SWEEP (S1 off-manifest +
-#              S2 duplicate-fleet) sits BEFORE the first write so a RAISE means nothing changed;
-#              preconditions on head >= 0214 + the four unified functions + the four keys; one timed
-#              UTC BEGIN..COMMIT; NO psql meta-command (management-API compatible); NO direct table
-#              DML / DDL; ROLLBACK section commented out with the four inverse writes.
+#              movement flags -> false) and no other window's key; the SWEEP (S2 duplicate-fleet
+#              FIRST, then S1 off-manifest scoped to MANIFEST-CARRYING fleets — the unified GO
+#              mints no manifest, so healthy post-flip fleets never flag and the act is genuinely
+#              re-runnable) sits BEFORE the first write so a RAISE means nothing changed;
+#              preconditions on head >= 0214 + BOTH pre-flip obligations PINNED BY PROSRC (the
+#              hunt composes ship_group_resolve_fleet = the real 0214, not just its number; the
+#              brake references group_sortie_members = the 0209 brake-sortie slice — this one
+#              FAILS against prod today BY DESIGN, blocking the flip until that slice deploys)
+#              + the four unified functions + the four keys; one timed UTC BEGIN..COMMIT; NO psql
+#              meta-command (management-API compatible); NO direct table DML / DDL; ROLLBACK
+#              section commented out with the four inverse writes (flag-exact always; world-exact
+#              only if no unified go ever ran — the .sql's rollback note says so honestly).
 #   run      — execute against PROD via the Management API and assert the final PASS row. Requires
 #              the typed confirm token as the 2nd arg. Credentials: SUPABASE_ACCESS_TOKEN +
 #              SUPABASE_PROJECT_ID from .env.local at the repo root (environment variables
@@ -29,10 +36,21 @@
 #   bash scripts/activate-unified-movement.sh selftest
 #   bash scripts/activate-unified-movement.sh run ACTIVATE_UNIFIED_MOVEMENT
 #
+# ██ PRE-FLIGHT CANARY (run FIRST, ~5 minutes) ██ — nothing in the repo yet PROVES that the
+# database/query endpoint (a) treats one POSTed batch as a single all-or-nothing transaction and
+# (b) surfaces a plpgsql RAISE as the error message. This act's safety story leans on both, so
+# retire the assumption before the real run: POST this as the query, against the SAME endpoint —
+#     begin; select 1; do $$ begin raise exception 'canary'; end $$; commit; select 'never';
+# EXPECT: a non-2xx response whose body carries 'canary', and NO 'never' row anywhere. Then
+# confirm no side effect committed (trivially true here — the canary writes nothing). If the
+# response is 2xx, contains 'never', or hides the RAISE text: STOP — do NOT use this runner; run
+# the act via psql or the Supabase Dashboard SQL editor instead, where the semantics are known.
+#
 # AFTER a green run: the unified surfaces are runtime-flag-gated server-side; stale cached clients
 # are closed by the same commit (their per-ship RPCs now reject — the server is the authority).
 # Coordinate travel continues via the fleet coordinate-go surface (0208).
-# Rollback: the commented section at the bottom of the .sql (four inverse config writes, copy-paste).
+# Rollback: the commented section at the bottom of the .sql (four inverse config writes, copy-paste;
+# FLAG-exact always — WORLD-exact only if no unified go ever ran; see the .sql's honest scope note).
 # CI proof (ACTUNI_RAISE_POISON / ACTUNI_FLAGS_ATOMIC / ACTUNI_PASS_CLEAN) is a SEPARATE later pass
 # on scripts/fleetgo-proof.{sql,sh} — owned by that workstream, not this file.
 set -uo pipefail
@@ -69,6 +87,15 @@ if [ "$MODE" = "selftest" ]; then
     printf '%s' "$CLEAN" | grep -qF "'$fn'" || fail "operation must precondition on function $fn"
   done
 
+  # H1 — the 0214 OBLIGATION pinned by prosrc, not just its number: some deployed
+  # send_ship_group_hunt body must compose ship_group_resolve_fleet (the unified consume).
+  printf '%s' "$CLEAN" | grep -qF "p.proname = 'send_ship_group_hunt'" || fail "operation must inspect the deployed send_ship_group_hunt body (H1)"
+  printf '%s' "$CLEAN" | grep -qF "position('ship_group_resolve_fleet' in p.prosrc)" || fail "operation must prosrc-pin the hunt-unified obligation (send_ship_group_hunt composes ship_group_resolve_fleet — the real 0214, not a version number)"
+  # H2 — the lit-brake obligation pinned by prosrc: command_ship_group_stop must reference the
+  # frozen manifest (the 0209 brake-sortie slice). Correctly FAILS against prod today.
+  printf '%s' "$CLEAN" | grep -qF "p.proname = 'command_ship_group_stop'" || fail "operation must inspect the deployed command_ship_group_stop body (H2)"
+  printf '%s' "$CLEAN" | grep -qF "position('group_sortie_members' in p.prosrc)" || fail "operation must prosrc-pin the brake-sortie obligation (command_ship_group_stop references group_sortie_members)"
+
   # THE SWEEP exists and is sequenced BEFORE the first flag write (sweep RAISE => nothing changed).
   printf '%s' "$CLEAN" | grep -qF "group_sortie_members" || fail "S1 must check the frozen manifest (group_sortie_members)"
   printf '%s' "$CLEAN" | grep -qF "main_ship_id is null and group_id is not null" || fail "the sweep must key the group-shaped fleet (main_ship_id IS NULL + group_id set — never group_id alone)"
@@ -76,6 +103,18 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "SWEEP S2 FAIL" "$OP_SQL" || fail "missing the S2 duplicate-fleet RAISE"
   grep -qF "having count(*) > 1" "$OP_SQL" || fail "S2 must detect >1 live group-shaped fleet per (player, group)"
   grep -qF "unassign the listed ship(s) or wait for the sortie to settle, then re-run" "$OP_SQL" || fail "S1 must carry its remediation message"
+  # M1 — S1 must be scoped to MANIFEST-CARRYING fleets (a unified GO fleet mints no manifest; an
+  # unscoped S1 would flag every member of every healthy unified fleet on a post-flip re-run and
+  # tell the owner to unassign them).
+  printf '%s' "$CLEAN" | grep -qF "and exists (select 1 from public.group_sortie_members gsm2" || fail "S1 must be scoped to manifest-carrying fleets (the unified GO mints no manifest — unscoped S1 over-fires post-flip)"
+  # L1 — both sweeps use the resolver's four-status live set; the narrower three-status set is banned.
+  printf '%s' "$CLEAN" | grep -qF "status in ('idle', 'moving', 'present', 'returning')" || fail "the sweep must use the resolver's four-status live set (idle/moving/present/returning)"
+  printf '%s' "$CLEAN" | grep -qF "status in ('moving', 'present', 'returning')" && fail "the sweep uses the narrower three-status set (idle must be included — the sweep guards UNKNOWN history)" || true
+  # L3 — S2 (duplicate fleets) must run BEFORE S1, or a duplicate-fleet world surfaces as S1
+  # offenders with the wrong "unassign" remediation.
+  s2_line="$(grep -n "SWEEP S2 FAIL" "$OP_SQL" | head -1 | cut -d: -f1)"
+  s1_line="$(grep -n "SWEEP S1 FAIL" "$OP_SQL" | head -1 | cut -d: -f1)"
+  [ -n "$s2_line" ] && [ -n "$s1_line" ] && [ "$s2_line" -lt "$s1_line" ] || fail "S2 must be sequenced BEFORE S1 (S2 at line ${s2_line:-?}, S1 at line ${s1_line:-?})"
   # NOTE: the write anchor is the loop's VALUES row (the act's ONE real write path) — NOT the
   # commented ROLLBACK's set_game_config lines at the bottom, which would make this check vacuous.
   sweep_line="$(grep -n "SWEEP S1 FAIL" "$OP_SQL" | head -1 | cut -d: -f1)"
@@ -104,11 +143,12 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "NOT A MIGRATION" "$OP_SQL"                   || fail "operation must document that it is an act, never a migration"
   grep -q "RE-RUN SEMANTICS" "$OP_SQL"                  || fail "operation must document the re-run no-op semantics"
   grep -qi "ROLLBACK (manual" "$OP_SQL"                 || fail "missing the marked manual ROLLBACK section"
+  grep -q "WORLD-EXACT ONLY IF NO UNIFIED GO EVER RAN" "$OP_SQL" || fail "the ROLLBACK section must state its honest scope (flag-exact always; world-exact only if no unified go ever ran)"
   for k in "'fleet_movement_unified_enabled',     'false'" "'mainship_send_enabled',              'true'" "'mainship_space_movement_enabled',    'true'" "'mainship_coordinate_travel_enabled', 'true'"; do
     grep -qF "$k" "$OP_SQL" || fail "the commented ROLLBACK must carry the inverse write for ${k%%,*}"
   done
 
-  echo "UNIFIED-MOVEMENT ACTIVATION SELFTEST: ALL PASSED (set_game_config-only on the 4 approved keys — unified true + three per-ship movement flags false; sweep (S1 off-manifest + S2 duplicate-fleet) sequenced before the writes in one timed UTC BEGIN..COMMIT gated on head >= 0214 + the 4 unified functions + the 4 keys; no meta-commands; no other-window/table/DDL writes; rollback commented with the four inverse writes)"
+  echo "UNIFIED-MOVEMENT ACTIVATION SELFTEST: ALL PASSED (set_game_config-only on the 4 approved keys — unified true + three per-ship movement flags false; sweep S2-then-S1 (S1 manifest-scoped, four-status set) sequenced before the writes in one timed UTC BEGIN..COMMIT gated on head >= 0214 + BOTH prosrc-pinned pre-flip obligations (hunt composes the unified leaf; brake carries the sortie guard) + the 4 unified functions + the 4 keys; no meta-commands; no other-window/table/DDL writes; rollback commented with the four inverse writes + its honest world-exact scope)"
   exit 0
 fi
 
