@@ -74,6 +74,9 @@ function Harness() {
       dockedTeamRollups={[]}
       teamRepresentedShipIds={[]}
       fleetPositions={[]}
+      unifiedGroupFleets={[]}
+      fleetMovementUnifiedEnabled={false}
+      onFleetGo={() => {}}
       selectedId={null}
       onSelect={() => {}}
       deps={{

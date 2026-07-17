@@ -116,6 +116,8 @@ export function MapScreen() {
               teamRepresentedShipIds={teamRepresentedShipIds}
               fleetPositions={fleetPositions}
               unifiedGroupFleets={unifiedGroupFleets}
+              fleetMovementUnifiedEnabled={fleetMovementUnifiedEnabled}
+              onFleetGo={refresh}
               selectedId={selectedId}
               onSelect={setSelectedId}
             />
