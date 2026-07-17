@@ -2083,8 +2083,17 @@ begin
   select id into v_f3fleet from public.fleets
    where player_id = uF and main_ship_id = f3 and status = 'present';
   if v_f3fleet is null then raise exception 'HUNTUNI-CONSUME FAIL: f3 has no present commission fleet — the co-located fixture cannot be built'; end if;
+  -- ⚠ ENVELOPE SHAPE (verified at the 0156 TRUE head — 0053→0152→0156 are its only re-creates,
+  -- loose-grep derived): the per-ship legacy movers do NOT return the group RPCs' {ok:...}
+  -- envelope. move_main_ship_to_location returns a BARE movement envelope — {fleet_id, movement_id,
+  -- main_ship_id, from, from_location_id, to_location_id, arrive_at} — and every failure path
+  -- RAISES (0156:87-187), which call_as propagates, so a genuinely failed move aborts this block
+  -- with the RPC's own error. Success is therefore asserted on what the head actually returns: a
+  -- minted movement_id targeting slag. An `->>'ok'` check here reads NULL and raises on a
+  -- SUCCESSFUL move (the CI caught exactly that — the third fixture-envelope class in this arc).
   r := pg_temp.call_as(uF, format('public.move_main_ship_to_location(%L::uuid, %L::uuid)', v_f3fleet, slag));
-  if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-CONSUME FAIL: legacy move of f3 to slag: %', r; end if;
+  if (r->>'movement_id') is null or (r->>'to_location_id')::uuid is distinct from slag then
+    raise exception 'HUNTUNI-CONSUME FAIL: legacy move of f3 returned no movement toward slag: %', r; end if;
   update public.fleet_movements
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
    where id = (r->>'movement_id')::uuid;
