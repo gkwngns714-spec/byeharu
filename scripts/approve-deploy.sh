@@ -19,9 +19,13 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "Looking for a halted production deploy on $REPO ..."
 
-RUN_ID="$(gh run list --repo "$REPO" --workflow "$WF" --limit 10 \
+# Pick the NEWEST waiting run (sort_by createdAt, take last) — NOT [0]. Migration merges stack
+# multiple halted deploy runs at the gate; the newest commit's run pushes ALL unapplied migrations
+# idempotently (supabase db push), so approving it advances prod the furthest in one go. Grabbing an
+# older run (the original [0] bug) deploys a stale commit and leaves prod behind its own main.
+RUN_ID="$(gh run list --repo "$REPO" --workflow "$WF" --limit 20 \
   --json databaseId,status,headSha,createdAt \
-  -q '[.[] | select(.status=="waiting" or .status=="queued" or .status=="in_progress")][0].databaseId' 2>/dev/null || true)"
+  -q '[.[] | select(.status=="waiting" or .status=="queued" or .status=="in_progress")] | sort_by(.createdAt) | last | .databaseId' 2>/dev/null || true)"
 
 if [ -z "${RUN_ID:-}" ] || [ "$RUN_ID" = "null" ]; then
   echo
@@ -48,8 +52,12 @@ HEAD_SHA="$(gh run view "$RUN_ID" --repo "$REPO" --json headSha -q .headSha)"
 echo
 echo "Commit being deployed: $HEAD_SHA"
 echo
-echo "Migrations this deploy will apply to PRODUCTION (prod is currently at 0206):"
-ls "$REPO_DIR/supabase/migrations" | sed -n '/000207/,$p' | sed 's/^/  /'
+# Show the migrations IN THE COMMIT BEING DEPLOYED (git ls-tree of $HEAD_SHA) — NOT a local `ls`,
+# which lists whatever is checked out and misleads when the deployed commit is older than main.
+# supabase db push is idempotent: it applies every migration in this commit not yet in prod.
+echo "Migrations present in the commit being deployed ($HEAD_SHA) — db push applies any not yet in prod:"
+git -C "$REPO_DIR" ls-tree --name-only "$HEAD_SHA" supabase/migrations/ 2>/dev/null | sed 's#.*/#  #' | tail -12 \
+  || echo "  (could not read the commit's tree; verify prod head after the deploy)"
 echo
 # CONFIRMATION: an explicit --yes flag, NOT an interactive prompt.
 # `read -p` was the first design and it was wrong: this script is invoked from a
@@ -67,10 +75,11 @@ fi
 gh api -X POST "repos/$REPO/actions/runs/$RUN_ID/pending_deployments" \
   -F "environment_ids[]=$ENV_ID" \
   -f state=approved \
-  -f comment="Approved by owner: movement-unification migrations 0207-0211 (FLEET-GO arc, PR #165)." \
+  -f comment="Approved by owner: FLEET-GO movement-unification migrations (deploy of commit ${HEAD_SHA})." \
   >/dev/null
 
 echo
 echo "Approved. Watching the deploy ..."
-gh run watch "$RUN_ID" --repo "$REPO" --exit-status && echo "DEPLOY SUCCEEDED — prod migration head is now 0211." \
+gh run watch "$RUN_ID" --repo "$REPO" --exit-status \
+  && echo "DEPLOY SUCCEEDED. This pushed commit ${HEAD_SHA}. If more migration merges are still queued at the gate, run this again to advance further. VERIFY the real prod migration head before trusting it — do not assume." \
   || { echo "DEPLOY FAILED — logs:"; gh run view "$RUN_ID" --repo "$REPO" --log-failed | tail -30; exit 1; }
