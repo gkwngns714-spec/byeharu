@@ -5,7 +5,7 @@ import type { MainShipLite } from './useGalaxyMapData'
 import type { FleetPosition, MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
-import { isMovementInFlight } from './movementInterpolation'
+import { isMovementInFlight, interpolateMovementPoint } from './movementInterpolation'
 import { shipLayer } from './SpaceRouteLine'
 import { fleetShipsLayer } from './fleetShipsLayer'
 import { teamMarkersLayer } from './teamMarkers'
@@ -399,7 +399,11 @@ export function GalaxyMap({
               no arrival; it just stops drawing a path whose time is up. The 1s clock above retires the
               path within a second of arrival rather than waiting on the next poll. */}
           {movements.filter((m) => isMovementInFlight(m, nowMs)).map((m) => {
-            const a = norm({ x: m.origin_x, y: m.origin_y })
+            // Draw the path from the fleet's CURRENT interpolated position (not the origin), so the
+            // traversed portion disappears in real time as it advances — a shrinking remaining-path,
+            // not a fixed origin→target trail. The 1s clock (nowMs) re-renders it each tick.
+            const cur = interpolateMovementPoint(m, nowMs) ?? { x: m.origin_x, y: m.origin_y }
+            const a = norm(cur)
             const b = norm({ x: m.target_x, y: m.target_y })
             return (
               <FleetMovementLine
