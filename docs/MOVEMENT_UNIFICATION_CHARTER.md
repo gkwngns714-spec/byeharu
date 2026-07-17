@@ -201,6 +201,14 @@
 
 **Production state changed TODAY (verified from prod game_config):**
 - Deploy backlog cleared: prod resynced to main; migrations through 0206 deployed.
+- **PROD IS AT `0211` as of 2026-07-17** (PR #165 merged at `a7fe381`; deploy run `29544060056` succeeded;
+  owner-approved). Steps 1/2/3a/3b/3c-1/3c-2 are LIVE-DEPLOYED but **DARK** — verified directly against
+  prod, not inferred from the green check: `schema_migrations` head = `20260618000211`,
+  `fleet_movement_unified_enabled` = **false**, and all four rewired hosts
+  (`get_my_fleet_positions`, `get_my_current_dock_services`, `get_my_docked_store`,
+  `commission_first_main_ship`) compose the resolver pair in the live DB with no inline dock read left.
+  **The unified mover therefore exists in prod and is unreachable by design.** The four overlapping
+  legacy movement paths are still the live ones until step 4 retires them.
 - Flags flipped ON: `mainship_coordinate_travel_enabled`, `launch_from_dock_enabled`
   (both via the Supabase SQL editor, owner-run). Coordinate travel + launch-from-dock are LIVE.
 - PR #164 **merged** to main: fleet-row status colours + whole-row select + ghost-path fix.
