@@ -503,6 +503,29 @@ that is how the ground truth below was established; it does not change the proof
      whose fleet is in an active movement, or dissolve/reconcile the assignee's per-ship fleet +
      presence at assignment time. **The flag may not flip while both the ungated branch and the
      unguarded assign exist.**
+     > **⚠ AND A ONE-SHOT SWEEP — the gated guard does NOT discharge this "by construction".** (I claimed
+     > it did; the pre-flip architect corrected me.) A gated guard closes the WRITER going forward only.
+     > A ship assigned *before* the flip, into a group whose fleet is in flight *at* the flip, is a
+     > pre-existing state no guard can retro-clean — the resolver mis-answers the instant the flag
+     > lights. **So 4b must OPEN with a reject-before-flip state assertion** (the 4c "RAISES until the
+     > owner's reset has landed" idiom): assert no group-shaped fleet (`group_id` set + `main_ship_id`
+     > IS NULL) sits in `('moving','present','returning')`, OR that every live member of such a group is
+     > on its frozen manifest. Without it the obligation is half-discharged and LOOKS whole.
+     >
+     > **⚠ SECOND PRE-FLIP OBLIGATION — hunt-vs-unified-fleet minting (recorded 2026-07-17 by the 3c-3
+     > review; this charter never mentioned it, and 0210:162-167's "at-most-one unified-shape fleet by
+     > construction" is simply FALSE lit).** The mover's guard 8 (0208:335-343) blocks a *go* during a
+     > sortie, but **nothing blocks a *hunt* while a unified fleet is alive.** `send_ship_group_hunt`'s
+     > readiness (0204:572-584) checks only per-SHIP signals (`home`, or `stationary+at_location`) — and
+     > the mover writes no ship rows (that IS §2), so members of a group whose unified fleet is parked or
+     > docked still read `home` → the hunt PASSES and mints a SECOND `main_ship_id NULL + group_id`
+     > fleet. Then `mainship_resolve_fleet` sees `v_n = 2` → NULL (0210:90-92) → **every member of that
+     > group goes `place='hidden'` on the whole map for the duration of the hunt**, while the oracle's
+     > non-strict select (0210:168-171) may simultaneously claim `at_location` from an arbitrary row.
+     > Fail-closed, but total. 0212 did not author this — it fails closed uniformly with every 0211 host
+     > — but it moves the blast radius from the dock panels to the entire map. **Fix before the flip:**
+     > teach the hunt readiness the fleet (not the ship), or reject a hunt while a live unified fleet
+     > exists. Do NOT "fix" it by loosening the resolver's fail-closed NULL.
    - **4c SIGNAL RETIREMENT — surgical.** The `status` COLUMN **survives**, narrowed to
      `{'home','destroyed'}`. `'destroyed'` is pure lifecycle (repair gate 0199:770, combat-destroy
      0167:168, shield-regen exclusion 0199:634 — none read movement). Drop as movement:
