@@ -1610,7 +1610,98 @@ begin
     raise exception 'ASSIGNGUARD-READRIGHT FAIL: d2''s port is NOT store-eligible but a store was invented'; end if;
   raise notice 'FLEETGO_PASS_ASSIGNGUARD_READRIGHT: after the rejected assign, validate_context + docked_store answer d2''s REAL port (delete the guard and the store lands at the hunt site)';
 
+  -- hand the uD world to the ONSORTIE block (the settled sortie state persists deliberately).
+  insert into fg values ('d2', d2), ('gD', gD), ('huntD', v_hunt), ('huntfleetD', v_huntfleet);
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+end $$;
+
+-- ════════ BLOCK ASSIGNGUARD-ONSORTIE (4b-0, lit): co-location does NOT override an OPEN SORTIE ════════
+-- The 0213 review's Finding 1 — the ghost-dock hole re-entering through the ALLOW arm. Without the
+-- sortie check: group gD's hunt fleet sits 'present' AT hunt site X mid-sortie (manifest FROZEN in
+-- group_sortie_members); a ship whose OWN present fleet + active presence sit at the SAME X is
+-- co-located → ALLOW. Then combat ends, the fleet departs 'returning' on its frozen manifest (the
+-- new member is NOT on it), and mainship_resolve_fleet answers the group fleet for a ship the
+-- reconciler will never dock — §0's exact defect, through the guard's own front door.
+-- HUNTPRESENT structurally CANNOT test this: its vacuity guard REQUIRES the assignee's port to
+-- differ from the hunt site (right/wrong indistinguishable otherwise). This block builds the ONE
+-- state HUNTPRESENT excludes — the assignee docked AT the site itself.
+-- HOW THIS FAILS IF THE CODE WERE WRONG: remove the sortie check and the co-location arm sees the
+-- fleet present at X + the assignee docked at X → ok:true → red below (mutation-tested; the sh's
+-- static token check also reds).
+do $$
+declare r jsonb; n int; v_flag jsonb; r_before jsonb; r_after jsonb;
+  uD uuid := (select v from fg where k='uD'); d2 uuid := (select v from fg where k='d2');
+  gD uuid := (select v from fg where k='gD'); v_hunt uuid := (select v from fg where k='huntD');
+  v_huntfleet uuid := (select v from fg where k='huntfleetD');
+  v_zone uuid; v_sector uuid; v_frow record; v_prow record;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  r_before := public.mainship_space_validate_context(d2);
+
+  -- SURGERY (restored + read-back-verified below; touches NO ship row, no CHECK-coupled column):
+  -- move d2's OWN per-ship fleet + active presence to the hunt site. The live RPCs cannot mint
+  -- this state on demand (a hunt site is not dockable by the dock paths), but nothing forbids the
+  -- rows, and the co-location arm reads exactly this fleet+presence pair.
+  select l.zone_id, z.sector_id into v_zone, v_sector
+    from public.locations l join public.zones z on z.id = l.zone_id where l.id = v_hunt;
+  select f.id, f.current_location_id, f.current_zone_id, f.current_sector_id into v_frow
+    from public.fleets f where f.main_ship_id = d2 and f.status = 'present';
+  if v_frow.id is null then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: d2 has no present per-ship fleet — the fixture cannot be built'; end if;
+  select lp.id, lp.location_id, lp.zone_id, lp.sector_id into v_prow
+    from public.location_presence lp where lp.fleet_id = v_frow.id and lp.status = 'active';
+  if v_prow.id is null then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: d2 has no active presence — the fixture cannot be built'; end if;
+  update public.fleets set current_location_id = v_hunt, current_zone_id = v_zone, current_sector_id = v_sector
+   where id = v_frow.id;
+  update public.location_presence set location_id = v_hunt, zone_id = v_zone, sector_id = v_sector
+   where id = v_prow.id;
+
+  -- vacuity guards: the assignee's own dock IS the hunt site, the group fleet is present there, and
+  -- an OPEN SORTIE exists for gD — the exact state the co-location arm would otherwise ALLOW.
+  select count(*) into n from public.fleets f
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active' and lp.location_id = v_hunt
+   where f.main_ship_id = d2 and f.status = 'present' and f.current_location_id = v_hunt;
+  if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: the co-located-sortie state was not built (assignee not docked AT the site)'; end if;
+  select count(*) into n from public.fleets
+   where id = v_huntfleet and group_id = gD and main_ship_id is null
+     and status = 'present' and current_location_id = v_hunt;
+  if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: the hunt fleet is not present at the site — the co-located-sortie state was not built'; end if;
+  select count(*) into n from public.group_sortie_members gsm
+    join public.fleets f on f.id = gsm.fleet_id
+   where gsm.player_id = uD and f.group_id = gD and f.status in ('moving','present','returning');
+  if n = 0 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: no open sortie for gD — the sortie arm would be untested'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id = d2 and group_id is null;
+  if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: d2 is already grouped — the assign under test would be a no-op'; end if;
+
+  -- ── ★ ONSORTIE ★ co-located AND mid-sortie: the assign MUST be rejected with the mover's token. ──
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', d2, gD));
+  if (r->>'reason') is distinct from 'group_on_sortie' then
+    raise exception 'ASSIGNGUARD-ONSORTIE FAIL: co-located assign into an OPEN SORTIE answered % — the frozen-manifest ghost-dock hole is open', r; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id = d2 and group_id is null;
+  if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: the rejected assign wrote group_id'; end if;
+
+  -- restore the surgery EXACTLY and PROVE it (read-back + oracle envelope compare).
+  update public.fleets
+     set current_location_id = v_frow.current_location_id,
+         current_zone_id = v_frow.current_zone_id, current_sector_id = v_frow.current_sector_id
+   where id = v_frow.id;
+  update public.location_presence
+     set location_id = v_prow.location_id, zone_id = v_prow.zone_id, sector_id = v_prow.sector_id
+   where id = v_prow.id;
+  select count(*) into n from public.fleets
+   where id = v_frow.id and current_location_id is not distinct from v_frow.current_location_id
+     and current_zone_id is not distinct from v_frow.current_zone_id;
+  if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: the fleet restore did not put the row back'; end if;
+  select count(*) into n from public.location_presence
+   where id = v_prow.id and location_id is not distinct from v_prow.location_id;
+  if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: the presence restore did not put the row back'; end if;
+  r_after := public.mainship_space_validate_context(d2);
+  if r_after is distinct from r_before then
+    raise exception 'ASSIGNGUARD-ONSORTIE FAIL: d2 was not restored to what it was (oracle % -> %)', r_before, r_after; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_ASSIGNGUARD_ONSORTIE: co-location does NOT override an open sortie — assign is rejected even AT the site (the frozen-manifest ghost-dock hole through the ALLOW arm is closed)';
 end $$;
 
 -- ════════ BLOCK ASSIGNGUARD-COLOCATION (4b-0, lit): elsewhere / idle-in-space / co-located, on uA's
@@ -1704,7 +1795,7 @@ end $$;
 do $$
 declare r jsonb; n int; v_flag jsonb;
   uB uuid := (select v from fg where k='uB'); b1 uuid := (select v from fg where k='b1');
-  b2 uuid; gB uuid; slag uuid := (select v from fg where k='slag');
+  b2 uuid; gB uuid; drift uuid := (select v from fg where k='drift');
 begin
   select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
@@ -1719,8 +1810,11 @@ begin
     raise exception 'ASSIGNGUARD-PERMEMBER FAIL: lit assign into a group with NO fleet was rejected (the bootstrap arm broke): %', r; end if;
 
   -- the REAL legacy expedition send (docked launch — launch_from_dock is lit): mints b1's OWN
-  -- per-member fleet and tags it with gB.
-  r := pg_temp.call_as(uB, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gB, slag));
+  -- per-member fleet and tags it with gB. Destination DRIFT, not slag: b1 is docked AT slag (the
+  -- SETTLEPARITY block flew it there and the 0153 hunk docked it), and the single send rejects a
+  -- destination equal to the ship's current dock ('already at that location') — the CI run caught
+  -- exactly that on the first cut of this fixture.
+  r := pg_temp.call_as(uB, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gB, drift));
   if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD-PERMEMBER FAIL: legacy expedition send: %', r; end if;
 
   r := pg_temp.call_as(uB, 'public.commission_additional_main_ship()');
@@ -1747,7 +1841,57 @@ begin
   if n <> 1 then raise exception 'ASSIGNGUARD-PERMEMBER FAIL: the allowed assign did not write group_id'; end if;
   raise notice 'FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG: a legacy expedition''s group_id-tagged per-member fleet does not trip the guard (main_ship_id IS NULL key pinned)';
 
+  -- hand the uB world to the AMBIGUOUS block.
+  insert into fg values ('b2', b2), ('gB', gB);
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+end $$;
+
+-- ════════ BLOCK ASSIGNGUARD-AMBIGUOUS (4b-0, lit): the broken-invariant arm fails CLOSED ════════
+-- The 0213 review's Finding 2: the >1-fleets arm had ZERO coverage — delete it and every other
+-- marker (and both self-asserts as first written) stayed green, because a non-strict read would
+-- answer an arbitrary row. The state is REACHABLE lit: the charter's second pre-flip obligation
+-- records that a hunt can mint a SECOND unified-shape fleet while one is alive (0210:162-167's
+-- "at-most-one by construction" is false lit). The resolver fails closed (NULL, 0210:90-92) on this
+-- exact state; the guard must fail closed too, with the mover/brake's own token (0207/0209).
+-- SURGERY (marked, self-restoring): two idle group-shaped fleets are minted DIRECTLY — the live
+-- RPCs are what maintain at-most-one, which is precisely why the arm needs a manufactured fixture.
+-- HOW THIS FAILS IF THE CODE WERE WRONG: delete the v_gf_n > 1 branch and the leaf scan lands
+-- v_gf_n = 2 → the =1 branch is skipped → fall-through ALLOW → ok:true → red below.
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uB uuid := (select v from fg where k='uB'); b2 uuid := (select v from fg where k='b2');
+  gB uuid := (select v from fg where k='gB'); f1 uuid; f2 uuid;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- SURGERY: two live group-shaped fleets for gB (group_id set + main_ship_id NULL + live status).
+  insert into public.fleets (player_id, status, location_mode, group_id)
+    values (uB, 'idle', 'movement', gB) returning id into f1;
+  insert into public.fleets (player_id, status, location_mode, group_id)
+    values (uB, 'idle', 'movement', gB) returning id into f2;
+
+  -- vacuity: EXACTLY two live group-shaped fleets exist for gB (the tagged per-member expedition
+  -- fleet does not count — main_ship_id set), or the >1 arm is not what the assign below exercises.
+  select count(*) into n from public.fleets
+   where group_id = gB and player_id = uB and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 2 then raise exception 'ASSIGNGUARD-AMBIGUOUS FAIL: expected exactly 2 group-shaped fleets, got % — the two-fleet broken invariant was not built', n; end if;
+
+  -- ── ★ AMBIGUOUS ★ the assign fails CLOSED with the mover's token — never picks a row. ──────────
+  r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', b2, gB));
+  if (r->>'reason') is distinct from 'fleet_ambiguous' then
+    raise exception 'ASSIGNGUARD-AMBIGUOUS FAIL: assign under a two-fleet broken invariant answered % (a non-strict read picked an arbitrary row)', r; end if;
+
+  -- restore: the manufactured fleets are deleted outright and the deletion is PROVEN.
+  delete from public.fleets where id in (f1, f2);
+  select count(*) into n from public.fleets
+   where group_id = gB and player_id = uB and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'ASSIGNGUARD-AMBIGUOUS FAIL: the manufactured fleets were not removed (% left)', n; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS: two live group-shaped fleets -> fleet_ambiguous, fail closed (the broken-invariant arm is no longer decoration)';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;

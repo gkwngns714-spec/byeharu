@@ -25,7 +25,7 @@ MIGRATION_4B0="$REPO_ROOT/supabase/migrations/20260618000213_fleetgo_assign_guar
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -363,18 +363,29 @@ if [ "$MODE" = "selftest" ]; then
     || fail "0213's assign body lost the GATED lock branch (lit FOR UPDATE closes the assign-vs-send TOCTOU; dark FOR SHARE is lock-footprint parity)"
   grep -q "deterministic two-session race" "$MIGRATION_4B0" \
     || fail "0213 does not state in-file that the two-session race is untestable here (honesty is part of the proof)"
-  # ORDER (mutation-tested): lock → guard → cap → ship write, on comment-stripped CODE. A guard after
-  # the write guards nothing; one before the lock IS the TOCTOU; one after the cap would let a full
-  # fleet answer before the position law does.
+  # ORDER (mutation-tested): lock → ambiguous → in-flight → elsewhere → on-sortie → cap → ship
+  # write, on comment-stripped CODE, FIRST occurrences. A guard arm after the write guards nothing;
+  # one before the lock IS the TOCTOU; the sortie arm must guard the would-be ALLOW (after the
+  # elsewhere reject — a sortie is never joinable, co-located or not). This chain is ALSO the
+  # body-presence check for every reject token: the self-assert DO block quotes each token as a
+  # literal AFTER the ship write, so an arm deleted from the BODY relocates its first occurrence
+  # past the update offset and the chain reds (the grep-vacuity trap the leaf/lock checks hit,
+  # closed here by construction). The gsm-manifest read must sit inside the guard (before the
+  # sortie token, after the lock) — the mover's guard-7 shape (0207:161-172).
   printf '%s' "$MIG4B0_CODE" | perl -0777 -ne '
     my $lock  = index($_, "from public.ship_groups");
+    my $amb   = index($_, "fleet_ambiguous");
     my $guard = index($_, "group_fleet_in_flight");
+    my $elsw  = index($_, "group_fleet_elsewhere");
+    my $gsm   = index($_, "group_sortie_members");
+    my $sort  = index($_, "group_on_sortie");
     my $cap   = index($_, "fleet_full");
     my $upd   = index($_, "update public.main_ship_instances");
-    exit 1 unless $lock >= 0 && $guard >= 0 && $cap >= 0 && $upd >= 0;
-    exit 1 unless $lock < $guard && $guard < $cap && $cap < $upd;
+    exit 1 unless $lock >= 0 && $amb >= 0 && $guard >= 0 && $elsw >= 0 && $gsm >= 0 && $sort >= 0 && $cap >= 0 && $upd >= 0;
+    exit 1 unless $lock < $amb && $amb < $guard && $guard < $elsw && $elsw < $sort && $sort < $cap && $cap < $upd;
+    exit 1 unless $lock < $gsm && $gsm < $sort;
     exit 0;' \
-    || fail "0213's guard hunk is not BETWEEN the group lock and the ship write (lock -> guard -> cap -> update order broken)"
+    || fail "0213's guard arms are not in lock -> ambiguous -> in-flight -> elsewhere -> on-sortie -> cap -> update order between the group lock and the ship write (an arm is missing or misplaced)"
   # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
   # failed to reach the state its marker claims to pin).
   grep -q "the in-flight state was not built" "$SQL" \
@@ -399,6 +410,12 @@ if [ "$MODE" = "selftest" ]; then
     || fail "ASSIGNGUARD-PERMEMBER does not guard that the tagged per-member fleet really exists and moves"
   grep -q "the key under test is not isolated" "$SQL" \
     || fail "ASSIGNGUARD-PERMEMBER does not guard that NO group-shaped fleet exists (the key would be untested)"
+  grep -q "the co-located-sortie state was not built" "$SQL" \
+    || fail "ASSIGNGUARD-ONSORTIE does not guard that the assignee is docked AT the site with the sortie fleet present there"
+  grep -q "no open sortie for gD" "$SQL" \
+    || fail "ASSIGNGUARD-ONSORTIE does not guard that an OPEN sortie exists (the sortie arm would be untested)"
+  grep -q "the two-fleet broken invariant was not built" "$SQL" \
+    || fail "ASSIGNGUARD-AMBIGUOUS does not guard that exactly two group-shaped fleets exist (the >1 arm would be untested)"
 
   # ── THE TREE-WIDE DOCK-COPY BAN. 0072 proved an alias-free copy evades exact-substring greps, and
   # the recorded 0136 failure mode is a NEW file re-inlining the block — a file a 0211-only grep never

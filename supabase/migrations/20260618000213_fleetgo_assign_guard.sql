@@ -30,9 +30,18 @@
 --               one broken state, one token; the plan proposed no token for this arm).
 --   1, status moving/returning → reject 'group_fleet_in_flight'.
 --   1, present at a port AND the assignee's own present fleet + active presence sit at the SAME
---      port → ALLOW (co-located: the read answer and the ship's real dock coincide).
+--      port AND the group has NO OPEN SORTIE → ALLOW (co-located: the read answer and the ship's
+--      real dock coincide, and no frozen manifest is in play).
+--   1, co-located but the group HAS an open sortie (a live gsm-manifest fleet, the mover's guard-7
+--      read, 0207:161-172) → reject 'group_on_sortie'. Co-location does NOT override a sortie: the
+--      manifest froze at send, the fleet will depart 'returning' on it, and a member added mid-
+--      sortie is a ship the reconciler will never dock — §0's ghost-dock through the ALLOW arm
+--      (the 0213 review's Finding 1).
 --   anything else (idle = parked in open space per 0208/0209 — a docked ship cannot be there;
 --      present at a different port; incoherent rows) → reject 'group_fleet_elsewhere'.
+-- The leaf is read with ONE statement (a single FOR scan that counts and captures) — one READ
+-- COMMITTED snapshot, so the settle cron cannot retire the fleet between a count and a re-select
+-- (the review's Finding 3).
 -- UNASSIGN (p_group_id null) is STRUCTURALLY untouched — the guard lives inside the non-null branch.
 -- Leaving a fleet from anywhere is manifest-law (the hunt's frozen manifest wins; the reconciler
 -- neither gains nor loses a sortie member by live membership).
@@ -144,6 +153,7 @@ declare
   v_unified boolean := public.cfg_bool('fleet_movement_unified_enabled');
   v_gf_n    integer;
   v_gf      public.fleets%rowtype;
+  v_hunting integer;
 begin
   if v_player is null then
     return jsonb_build_object('ok', false, 'reason', 'not_authenticated');
@@ -192,18 +202,27 @@ begin
     -- the head's flow is untouched. Under §2 membership IS position: a ship may only JOIN a fleet
     -- where that fleet actually is. Policy over the leaf's rows (see header for the full argument):
     -- 0 → allow (bootstrap; today's semantics), >1 → fail closed, in flight → reject, present at the
-    -- assignee's own dock → allow, anything else (incl. idle = parked in open space, 0208/0209, and
-    -- present elsewhere — the charter's own docked-at-the-HUNT-SITE branch) → reject.
-    -- Takes NO lock of its own: a plain MVCC read of fleets/location_presence under the group lock.
+    -- assignee's own dock AND no open sortie → allow, anything else (incl. idle = parked in open
+    -- space, 0208/0209; present elsewhere — the charter's own docked-at-the-HUNT-SITE branch; and a
+    -- co-located but MID-SORTIE fleet) → reject.
+    -- Takes NO lock of its own: a plain MVCC read of fleets/location_presence/the sortie manifest
+    -- under the group lock.
     if v_unified then
-      select count(*) into v_gf_n from public.ship_group_resolve_fleet(v_player, v_group);
+      -- ONE statement, ONE snapshot (READ COMMITTED): the leaf is scanned with a single FOR loop
+      -- that both counts the rows and captures the row. The first cut counted with one statement
+      -- and re-selected with a second — TWO snapshots; the settle cron takes no group lock, so it
+      -- could retire/replace the fleet between them and hand the checks an all-NULL row (a
+      -- spurious reject from a phantom read — the 0213 review's Finding 3).
+      v_gf_n := 0;
+      for v_gf in select * from public.ship_group_resolve_fleet(v_player, v_group) loop
+        v_gf_n := v_gf_n + 1;
+      end loop;
       if v_gf_n > 1 then
         -- Two live group-shaped fleets is a broken invariant: fail closed with the token the mover
         -- and brake already use for this exact state (0207/0209) — one broken state, one token.
         return jsonb_build_object('ok', false, 'reason', 'fleet_ambiguous');
       end if;
       if v_gf_n = 1 then
-        select * into v_gf from public.ship_group_resolve_fleet(v_player, v_group);
         if v_gf.status in ('moving', 'returning') then
           return jsonb_build_object('ok', false, 'reason', 'group_fleet_in_flight');
         end if;
@@ -228,7 +247,27 @@ begin
                     )) then
           return jsonb_build_object('ok', false, 'reason', 'group_fleet_elsewhere');
         end if;
-        -- co-located → fall through (ALLOW): the head's cap hunk and write run unchanged.
+        -- OPEN SORTIE — co-location does NOT override it (the 0213 review's Finding 1, the ghost-
+        -- dock hole re-entering through the ALLOW arm): a hunt fleet settled 'present' at its site
+        -- with the assignee's own dock AT that same site is co-located, but the sortie's manifest
+        -- was FROZEN at send — combat ends, the fleet departs 'returning' on that manifest, the new
+        -- member is not on it, and the resolver answers the group fleet for a ship the reconciler
+        -- will never dock. A sortie is a commitment of a frozen roster; nothing joins it. The read
+        -- mirrors the mover's guard 7 (0207:161-172) verbatim, same token. This guards ONLY the
+        -- would-be ALLOW: every other sortie configuration is already rejected above (moving/
+        -- returning → in-flight; present-but-not-co-located → elsewhere), so assignment into an
+        -- open sortie is rejected REGARDLESS of co-location.
+        select count(*) into v_hunting
+          from public.group_sortie_members gsm
+          join public.fleets f on f.id = gsm.fleet_id
+         where gsm.player_id = v_player
+           and f.group_id = v_group
+           and f.status in ('moving', 'present', 'returning');
+        if v_hunting > 0 then
+          return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
+        end if;
+        -- co-located, no open sortie → fall through (ALLOW): the head's cap hunk and write run
+        -- unchanged.
       end if;
       -- v_gf_n = 0 → fall through (ALLOW): no fleet, no position to contradict — the bootstrap case.
     end if;
@@ -276,7 +315,7 @@ grant  execute on function public.assign_ship_to_group(uuid, uuid) to authentica
 do $assignguard$
 declare
   v_src  text;
-  v_lock int; v_guard int; v_cap int; v_upd int;
+  v_lock int; v_amb int; v_guard int; v_elsw int; v_sort int; v_cap int; v_upd int;
 begin
   -- (a) assign_ship_to_group: single definition, authenticated-executable.
   if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -294,34 +333,48 @@ begin
      or position('is_command_ship = case when group_id is distinct from v_group' in v_src) = 0 then
     raise exception 'ASSIGN-GUARD self-assert FAIL: the 0204 head did not survive (flag read / fleet_full / resolver / role reset)'; end if;
 
-  -- (c) the three hunks exist: the gate read, BOTH lock arms, both reject reasons, the leaf compose.
+  -- (c) the three hunks exist: the gate read, BOTH lock arms, ALL FOUR reject reasons (in-flight /
+  --     elsewhere / on-sortie / the broken-invariant ambiguous arm), the sortie-manifest read, and
+  --     the leaf compose.
   if position('v_unified boolean := public.cfg_bool(''fleet_movement_unified_enabled'')' in v_src) = 0
      or position('player_id = v_player for update' in v_src) = 0
      or position('player_id = v_player for share' in v_src) = 0
+     or position('fleet_ambiguous' in v_src) = 0
      or position('group_fleet_in_flight' in v_src) = 0
      or position('group_fleet_elsewhere' in v_src) = 0
+     or position('group_on_sortie' in v_src) = 0
+     or position('group_sortie_members' in v_src) = 0
      or position('ship_group_resolve_fleet' in v_src) = 0 then
-    raise exception 'ASSIGN-GUARD self-assert FAIL: a 0213 hunk is missing (gate read / gated lock arms / reject reasons / leaf compose)'; end if;
+    raise exception 'ASSIGN-GUARD self-assert FAIL: a 0213 hunk is missing (gate read / gated lock arms / reject reasons incl. ambiguous+sortie / leaf compose)'; end if;
 
-  -- (d) ORDER: lock → guard → cap → write. The guard must sit BETWEEN the group lock and the ship
-  --     UPDATE (and before the cap), inside the non-null branch — a guard after the write guards
-  --     nothing, and one before the lock is the TOCTOU it exists to close.
+  -- (d) ORDER: lock → ambiguous → in-flight → elsewhere → on-sortie → cap → write. The guard arms
+  --     must sit BETWEEN the group lock and the ship UPDATE (and before the cap), inside the
+  --     non-null branch — a guard after the write guards nothing, one before the lock is the TOCTOU
+  --     it exists to close, and the sortie arm must guard the would-be ALLOW (after elsewhere).
   v_lock  := position('from public.ship_groups' in v_src);
+  v_amb   := position('fleet_ambiguous' in v_src);
   v_guard := position('group_fleet_in_flight' in v_src);
+  v_elsw  := position('group_fleet_elsewhere' in v_src);
+  v_sort  := position('group_on_sortie' in v_src);
   v_cap   := position('fleet_full' in v_src);
   v_upd   := position('update public.main_ship_instances' in v_src);
-  if not (v_lock > 0 and v_lock < v_guard and v_guard < v_cap and v_cap < v_upd) then
-    raise exception 'ASSIGN-GUARD self-assert FAIL: hunk order broken (lock=%, guard=%, cap=%, update=%)', v_lock, v_guard, v_cap, v_upd; end if;
+  if not (v_lock > 0 and v_lock < v_amb and v_amb < v_guard and v_guard < v_elsw
+          and v_elsw < v_sort and v_sort < v_cap and v_cap < v_upd) then
+    raise exception 'ASSIGN-GUARD self-assert FAIL: hunk order broken (lock=%, ambiguous=%, guard=%, elsewhere=%, sortie=%, cap=%, update=%)', v_lock, v_amb, v_guard, v_elsw, v_sort, v_cap, v_upd; end if;
 
   -- (e) the leaf: deployed, pins the SHAPE (never group_id alone), and NOT client-callable.
+  --     Existence is guarded by NAME FIRST: a bare ::regprocedure cast on a missing function raises
+  --     its own "function does not exist" before any friendly message could fire (the review's
+  --     Finding 7 — the first cut's v_src-is-null branch was dead code).
+  if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname = 'ship_group_resolve_fleet') <> 1 then
+    raise exception 'ASSIGN-GUARD self-assert FAIL: ship_group_resolve_fleet not deployed (or not a single definition)'; end if;
   select prosrc into v_src from pg_proc where oid = 'public.ship_group_resolve_fleet(uuid, uuid)'::regprocedure;
-  if v_src is null then
-    raise exception 'ASSIGN-GUARD self-assert FAIL: ship_group_resolve_fleet(uuid,uuid) not deployed'; end if;
   if position('main_ship_id is null' in v_src) = 0 then
     raise exception 'ASSIGN-GUARD self-assert FAIL: the leaf lost the main_ship_id IS NULL key (group_id alone matches the legacy per-member tag)'; end if;
   if has_function_privilege('anon', 'public.ship_group_resolve_fleet(uuid, uuid)', 'execute')
      or has_function_privilege('authenticated', 'public.ship_group_resolve_fleet(uuid, uuid)', 'execute') then
     raise exception 'ASSIGN-GUARD self-assert FAIL: ship_group_resolve_fleet is client-callable (internal leaf: no grants)'; end if;
 
-  raise notice 'ASSIGN-GUARD self-assert ok: 0204 head intact + hunks A/B/C present in lock->guard->cap->write order; leaf deployed, shape-keyed, internal-only';
+  raise notice 'ASSIGN-GUARD self-assert ok: 0204 head intact + hunks A/B/C present in lock->ambiguous->in-flight->elsewhere->sortie->cap->write order; leaf deployed, shape-keyed, internal-only';
 end $assignguard$;
