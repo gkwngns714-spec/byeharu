@@ -16,6 +16,7 @@ MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000209_fleetgo_unified_st
 MIGRATION_3C="$REPO_ROOT/supabase/migrations/20260618000210_fleetgo_group_read_oracle.sql"
 MIGRATION_3C2="$REPO_ROOT/supabase/migrations/20260618000211_fleetgo_dock_dedup.sql"
 MIGRATION_3C3="$REPO_ROOT/supabase/migrations/20260618000212_fleetgo_map_read.sql"
+MIGRATION_4B0="$REPO_ROOT/supabase/migrations/20260618000213_fleetgo_assign_guard.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -24,14 +25,14 @@ MIGRATION_3C3="$REPO_ROOT/supabase/migrations/20260618000212_fleetgo_map_read.sq
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
   tp_assert_self_rolling_back "$SQL"
-  tp_assert_flags_inside_txn "$SQL" fleet_movement_unified_enabled team_command_enabled mainship_additional_commission_enabled station_storage_enabled launch_from_dock_enabled
+  tp_assert_flags_inside_txn "$SQL" fleet_movement_unified_enabled team_command_enabled mainship_additional_commission_enabled station_storage_enabled launch_from_dock_enabled mainship_send_enabled
 
   # ── provisions via the REAL RPCs (no direct ship/group inserts as the primary path). ─────────────
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
@@ -311,6 +312,93 @@ if [ "$MODE" = "selftest" ]; then
     || fail "MAPSPACE_GROUP does not guard that zero ships carry a position"
   grep -q "did not reach in_space" "$SQL" \
     || fail "MAPSPACE_DARKPARITY does not guard that the oracle answers in_space (vacuous otherwise)"
+
+  # ── step 4b-0 (0213): the PRE-FLIP assign guard. TWO re-creates ONLY (the 0204 assign head + the
+  #    ONE new leaf), the guard hunk strictly BETWEEN the group lock and the ship write, the lit lock
+  #    hardened to FOR UPDATE with the dark FOR SHARE preserved byte-identically, and the leaf keyed
+  #    on the SHAPE (main_ship_id IS NULL — never group_id alone, the 0204:316 display-tag trap).
+  [ -f "$MIGRATION_4B0" ] || fail "migration 0213 not found"
+  MIG4B0_CODE="$(sql_code "$MIGRATION_4B0")"
+  [ "$(printf '%s' "$MIG4B0_CODE" | grep -c "create or replace function")" = "2" ] \
+    || fail "0213 must contain exactly TWO re-creates (the assign head + the ship_group_resolve_fleet leaf)"
+  printf '%s' "$MIG4B0_CODE" | grep -q "create or replace function public.assign_ship_to_group(p_main_ship_id uuid, p_group_id uuid default null)" \
+    || fail "0213 does not re-create assign_ship_to_group with the head's exact signature"
+  printf '%s' "$MIG4B0_CODE" | grep -q "create or replace function public.ship_group_resolve_fleet(p_player uuid, p_group uuid)" \
+    || fail "0213 does not add the ship_group_resolve_fleet leaf (the ONE authority on the group-fleet shape)"
+  printf '%s' "$MIG4B0_CODE" | grep -qE "^[[:space:]]*(alter table|drop function|drop table)" \
+    && fail "0213 alters/drops an existing object (4b-0 is two function re-creates ONLY)" || true
+  printf '%s' "$MIG4B0_CODE" | grep -qiE "(insert into|update)[[:space:]]+(public\.)?game_config" \
+    && fail "0213 seeds or flips a flag (the flip is 4b's LAST act, never a side effect)" || true
+  # the leaf pins the SHAPE, and the guard composes it (no fifth inline copy of the shape). Judged on
+  # the LEAF'S OWN BODY, not the whole file — the self-assert DO block quotes the same string as a
+  # literal, which satisfied a file-wide grep while the leaf itself had lost the key (caught by
+  # mutation testing: the first version of this check was vacuous).
+  printf '%s' "$MIG4B0_CODE" | perl -0777 -ne '
+    my $i = index($_, "create or replace function public.ship_group_resolve_fleet");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$\$;", $i);
+    exit 1 if $j < 0;
+    my $leaf = substr($_, $i, $j - $i);
+    exit 1 unless index($leaf, "main_ship_id is null") >= 0;
+    exit 1 unless $leaf =~ /status in \(.idle., .moving., .present., .returning.\)/;
+    exit 0;' \
+    || fail "0213's leaf body lost the main_ship_id IS NULL key or the live-status set — group_id alone matches the legacy per-member tag"
+  # the GATED lock branch: lit FOR UPDATE (the TOCTOU closure vs the sends' FOR SHARE), dark FOR SHARE
+  # (the lock footprint is part of parity). Both arms must exist; the runtime race itself is NOT
+  # testable here (single psql session — no deterministic two-session interleaving), so the closure is
+  # lock-conflict reasoning + this mutation-tested assert, and 0213 must SAY so in-file rather than
+  # decorate the proof with a marker that cannot fail.
+  # Judged on the ASSIGN BODY'S OWN gated structure, not a file-wide substring — the self-assert DO
+  # block quotes both lock strings as literals, which satisfied a file-wide grep while the body had
+  # been flattened to a single un-gated lock (caught by mutation testing, same failure mode as the
+  # leaf-shape check above).
+  printf '%s' "$MIG4B0_CODE" | perl -0777 -ne '
+    my $i = index($_, "create or replace function public.assign_ship_to_group");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$\$;", $i);
+    exit 1 if $j < 0;
+    my $body = substr($_, $i, $j - $i);
+    exit 1 unless $body =~ /if v_unified then\s*perform 1 from public\.ship_groups where group_id = v_group and player_id = v_player for update;\s*else\s*perform 1 from public\.ship_groups where group_id = v_group and player_id = v_player for share;\s*end if;/;
+    exit 0;' \
+    || fail "0213's assign body lost the GATED lock branch (lit FOR UPDATE closes the assign-vs-send TOCTOU; dark FOR SHARE is lock-footprint parity)"
+  grep -q "deterministic two-session race" "$MIGRATION_4B0" \
+    || fail "0213 does not state in-file that the two-session race is untestable here (honesty is part of the proof)"
+  # ORDER (mutation-tested): lock → guard → cap → ship write, on comment-stripped CODE. A guard after
+  # the write guards nothing; one before the lock IS the TOCTOU; one after the cap would let a full
+  # fleet answer before the position law does.
+  printf '%s' "$MIG4B0_CODE" | perl -0777 -ne '
+    my $lock  = index($_, "from public.ship_groups");
+    my $guard = index($_, "group_fleet_in_flight");
+    my $cap   = index($_, "fleet_full");
+    my $upd   = index($_, "update public.main_ship_instances");
+    exit 1 unless $lock >= 0 && $guard >= 0 && $cap >= 0 && $upd >= 0;
+    exit 1 unless $lock < $guard && $guard < $cap && $cap < $upd;
+    exit 0;' \
+    || fail "0213's guard hunk is not BETWEEN the group lock and the ship write (lock -> guard -> cap -> update order broken)"
+  # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
+  # failed to reach the state its marker claims to pin).
+  grep -q "the in-flight state was not built" "$SQL" \
+    || fail "ASSIGNGUARD does not guard that the hunt fleet is really moving (INFLIGHT/DARKPARITY vacuous otherwise)"
+  grep -q "d2 is ON the hunt manifest" "$SQL" \
+    || fail "ASSIGNGUARD does not guard that the assignee is OFF the frozen manifest (the frozen-vs-live split under test)"
+  grep -q "d2''s port IS the hunt site" "$SQL" \
+    || fail "ASSIGNGUARD does not guard that the assignee's port differs from the hunt site (right/wrong indistinguishable)"
+  grep -q "empty before-snapshot" "$SQL" \
+    || fail "ASSIGNGUARD-INFLIGHT's zero-write diff does not guard against a vacuous empty snapshot"
+  grep -q "the present phase is vacuous" "$SQL" \
+    || fail "ASSIGNGUARD-HUNTPRESENT does not guard the settled-at-hunt-site phase (the charter's own branch)"
+  grep -q "the elsewhere phase is vacuous" "$SQL" \
+    || fail "ASSIGNGUARD-ELSEWHERE does not guard that the fleet is really present at a different port"
+  grep -q "co-location has nothing to compare" "$SQL" \
+    || fail "ASSIGNGUARD does not guard the assignee's own dock shape (fleet+presence at its port)"
+  grep -q "the idle phase is vacuous" "$SQL" \
+    || fail "ASSIGNGUARD-IDLESPACE does not guard that the fleet is really parked idle in space"
+  grep -q "the co-located phase is vacuous" "$SQL" \
+    || fail "ASSIGNGUARD-COLOCATED does not guard that the fleet settled at the assignee's own port"
+  grep -q "the tag fixture is vacuous" "$SQL" \
+    || fail "ASSIGNGUARD-PERMEMBER does not guard that the tagged per-member fleet really exists and moves"
+  grep -q "the key under test is not isolated" "$SQL" \
+    || fail "ASSIGNGUARD-PERMEMBER does not guard that NO group-shaped fleet exists (the key would be untested)"
 
   # ── THE TREE-WIDE DOCK-COPY BAN. 0072 proved an alias-free copy evades exact-substring greps, and
   # the recorded 0136 failure mode is a NEW file re-inlining the block — a file a 0211-only grep never
