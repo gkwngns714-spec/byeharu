@@ -801,11 +801,11 @@ end $$;
 -- fleets, so there is NO per-ship row left to read — the ONLY way a member can report a place is through
 -- its group's fleet. The two fixes prove each other.
 do $$
-declare r jsonb; n int; s uuid;
+declare r jsonb; e jsonb; e2 jsonb; n int; s uuid;
   uA uuid := (select v from fg where k='uA'); g uuid := (select v from fg where k='g');
   a1 uuid := (select v from fg where k='a1'); a2 uuid := (select v from fg where k='a2');
   slag uuid := (select v from fg where k='slag'); v_fleet uuid := (select v from fg where k='fleet');
-  v_mv uuid; v_loc uuid; v_fx double precision; v_fy double precision;
+  v_mv uuid; v_loc uuid; v_fx double precision; v_fy double precision; v_fm record;
 begin
   -- (1) HELD IN SPACE — the STOP block left the fleet holding at its turn point. Each member's place is
   --     the FLEET's coordinate, read from fleets.space_x/space_y. No ship carries a position.
@@ -816,6 +816,28 @@ begin
     if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'in_space' then
       raise exception 'GROUPREAD FAIL: member % of a fleet parked in space reads % (expected in_space)', s, r; end if;
   end loop;
+
+  -- ★ 3c-3 (MAPSPACE_GROUP): the MAP draws every member at the FLEET's parked coordinate. ★
+  -- Before 0212 the in_space arm read s.space_x/s.space_y — SHIP columns the unified world never
+  -- writes (fleet_set_in_space parks the FLEET; NOSHIPWRITE pins the omission) — so a parked/braked
+  -- fleet's members all drew place='hidden': the fleet the brake just held went invisible.
+  -- HOW THIS FAILS IF THE CODE WERE WRONG: against 0211 alone (revert hunks 2/3 to the ship-only
+  -- read), with zero ship coords in existence — asserted below — every member reads 'hidden' here.
+  -- Red-before/green-after by construction.
+  -- vacuity guard: ZERO ships carry any position, so only the FLEET could have answered these coords.
+  select count(*) into n from public.main_ship_instances where space_x is not null or space_y is not null;
+  if n <> 0 then
+    raise exception 'MAPSPACE-GROUP FAIL: % ship(s) carry a position — only the FLEET could have answered is unprovable', n; end if;
+  r := pg_temp.call_as(uA, 'public.get_my_fleet_positions()');
+  foreach s in array array[a1, a2] loop
+    e := null;
+    select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = s::text;
+    if e is null or (e->>'place') is distinct from 'in_space'
+       or (e->>'space_x')::double precision is distinct from v_fx
+       or (e->>'space_y')::double precision is distinct from v_fy then
+      raise exception 'MAPSPACE-GROUP FAIL: member % of a fleet parked at (%,%) draws % — the parked fleet is invisible on the map', s, v_fx, v_fy, e; end if;
+  end loop;
+  raise notice 'FLEETGO_PASS_MAPSPACE_GROUP: every member draws in_space at the FLEET''s parked coordinate (zero ships carry any position)';
 
   -- (2) FLY TO A PORT AND SETTLE — then the members must be VISIBLE there.
   r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, %L::uuid)', g, slag));
@@ -828,6 +850,43 @@ begin
     if (r->>'state') is distinct from 'legacy_transit' then
       raise exception 'GROUPREAD FAIL: member % in flight reads % (expected legacy_transit)', s, r; end if;
   end loop;
+
+  -- ★ 3c-3 (MAPTRANSIT_GROUP): mid-go, the MAP draws every member on the ONE unified leg. ★
+  -- Before 0212 the legacy_transit arm keyed fleet_movements on `f.main_ship_id = s.main_ship_id` —
+  -- NULL on the unified fleet — so a flying group's members drew place='hidden' for the whole flight
+  -- even though the oracle (just asserted above) already said legacy_transit.
+  -- HOW THIS FAILS IF THE CODE WERE WRONG: against 0211 alone this block is RED (segment select finds
+  -- nothing → place='hidden'); against a rekey that resolved the WRONG fleet the segment-equality pin
+  -- reds instead. Red-before/green-after by construction.
+  -- vacuity guard: zero per-ship fleets exist, so no retired-layer row could have supplied a segment.
+  select count(*) into n from public.fleets
+   where player_id = uA and main_ship_id in (a1, a2) and status in ('idle','moving','present','returning');
+  if n <> 0 then
+    raise exception 'MAPTRANSIT-GROUP FAIL: % per-ship fleet(s) exist — the transit could be answered by the retired layer', n; end if;
+  select * into v_fm from public.fleet_movements where id = v_mv;
+  if v_fm.id is null or v_fm.status is distinct from 'moving' then
+    raise exception 'MAPTRANSIT-GROUP FAIL: the unified leg is not moving — fixture vacuous'; end if;
+  r := pg_temp.call_as(uA, 'public.get_my_fleet_positions()');
+  e2 := null;
+  foreach s in array array[a1, a2] loop
+    e := null;
+    select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = s::text;
+    if e is null or (e->>'place') is distinct from 'transit' or (e->'segment') is null
+       or jsonb_typeof(e->'segment') is distinct from 'object' then
+      raise exception 'MAPTRANSIT-GROUP FAIL: member % of a flying group draws % (expected transit + a segment)', s, e; end if;
+    if (e->'segment'->>'origin_x')::double precision is distinct from v_fm.origin_x
+       or (e->'segment'->>'origin_y')::double precision is distinct from v_fm.origin_y
+       or (e->'segment'->>'target_x')::double precision is distinct from v_fm.target_x
+       or (e->'segment'->>'target_y')::double precision is distinct from v_fm.target_y
+       or (e->'segment'->>'target_kind') is distinct from v_fm.target_type
+       or (e->'segment'->>'depart_at')::timestamptz is distinct from v_fm.depart_at
+       or (e->'segment'->>'arrive_at')::timestamptz is distinct from v_fm.arrive_at then
+      raise exception 'MAPTRANSIT-GROUP FAIL: member % segment % is not the ONE unified movement', s, e->'segment'; end if;
+    if e2 is not null and (e->'segment') is distinct from e2 then
+      raise exception 'MAPTRANSIT-GROUP FAIL: members carry DIFFERENT segments — N transits is the composed model §2 forbids'; end if;
+    e2 := e->'segment';
+  end loop;
+  raise notice 'FLEETGO_PASS_MAPTRANSIT_GROUP: every member draws the SAME segment = the ONE unified leg (zero per-ship fleets in existence)';
 
   update public.fleet_movements
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
@@ -1155,6 +1214,161 @@ begin
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
   raise notice 'FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT: a legacy-present ship (prod''s stuck shape) still draws place=docked at its fleet''s port';
+end $$;
+
+-- ════════ BLOCK MAPTRANSIT-DARKPARITY (3c-3, dark): a legacy in-transit ship still draws its OWN leg ════════
+-- 0212's hunk 1 rekeys the map's legacy_transit read from `f.main_ship_id = s.main_ship_id` to the ONE
+-- ship→fleet resolver. Dark, 'legacy_transit' comes only from the 0056 head, whose guard pins EXACTLY
+-- ONE per-ship fleet in an active status carrying a moving fleet_movements row — and the resolver's
+-- gated fallback returns exactly that fleet, so the new key must select the SAME row the old key did.
+-- Asserted for a GROUPED ship (a1 — the resolver's group branch must stay gated off while dark) AND an
+-- UNGROUPED ship (b1 — the pure fallback path).
+-- HOW THIS FAILS IF THE CODE WERE WRONG: if the rekey resolved through a guard the dark world cannot
+-- satisfy (group branch ungated → the group's 'present' fleet answers with NO moving leg → 'hidden';
+-- resolver failing closed on a coherent single-fleet ship → 'hidden'; wrong fleet → the segment pin
+-- reds), the place/segment assertions below go red for the grouped ship, the ungrouped ship, or both.
+do $$
+declare r jsonb; e jsonb; n int;
+  uA uuid := (select v from fg where k='uA'); uB uuid := (select v from fg where k='uB');
+  a1 uuid := (select v from fg where k='a1'); b1 uuid := (select v from fg where k='b1');
+  slag uuid := (select v from fg where k='slag');
+  v_loc record; v_base record; v_f uuid; v_mv uuid; v_fm record; v_old_ss text;
+begin
+  -- self-contained DARK (the LEGACYPRESENT idiom): flip, and restore at the end.
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+  select l.id, l.x, l.y into v_loc from public.locations l where l.id = slag;
+
+  -- ── (A) the GROUPED ship a1. vacuity: really grouped, currently fleetless. ───────────────────────
+  select count(*) into n from public.main_ship_instances where main_ship_id = a1 and group_id is not null;
+  if n <> 1 then raise exception 'MAPTRANSIT-DARKPARITY FAIL: a1 is not grouped — the grouped case would be vacuous'; end if;
+  select count(*) into n from public.fleets
+   where main_ship_id = a1 and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'MAPTRANSIT-DARKPARITY FAIL: a1 already holds % per-ship fleet(s) — fixture unclean', n; end if;
+  -- SURGERY (restored below): the legacy in-transit shape — spatial_state NULL + ONE per-ship 'moving'
+  -- fleet on a moving leg (the shape the live per-ship send mints; composed via the frozen primitives).
+  select spatial_state into v_old_ss from public.main_ship_instances where main_ship_id = a1;
+  update public.main_ship_instances set spatial_state = null where main_ship_id = a1;
+  select b.id, b.x, b.y into v_base from public.bases b where b.player_id = uA and b.status='active' order by b.created_at limit 1;
+  if v_base.id is null then raise exception 'MAPTRANSIT-DARKPARITY FAIL: uA has no base — fixture cannot be built'; end if;
+  insert into public.fleets (player_id, origin_base_id, status, location_mode, current_base_id, main_ship_id)
+    values (uA, v_base.id, 'idle', 'base', v_base.id, a1) returning id into v_f;
+  v_mv := public.movement_create(uA, v_f, 'base', v_base.id, null, null, v_base.x, v_base.y,
+                                 'location', null, null, v_loc.id, v_loc.x, v_loc.y, 'rally', 1);
+  perform public.fleet_set_moving(v_f, v_mv);
+  -- vacuity guard: the oracle must answer legacy_transit, or the marker pins nothing.
+  r := public.mainship_space_validate_context(a1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_transit' then
+    raise exception 'MAPTRANSIT-DARKPARITY FAIL: grouped fixture did not reach legacy_transit — %', r; end if;
+  select * into v_fm from public.fleet_movements where id = v_mv;
+  r := pg_temp.call_as(uA, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = a1::text;
+  if e is null or (e->>'place') is distinct from 'transit' or (e->'segment') is null then
+    raise exception 'MAPTRANSIT-DARKPARITY FAIL (grouped, dark): a legacy in-transit ship draws % (expected transit)', e; end if;
+  if (e->'segment'->>'origin_x')::double precision is distinct from v_fm.origin_x
+     or (e->'segment'->>'origin_y')::double precision is distinct from v_fm.origin_y
+     or (e->'segment'->>'target_x')::double precision is distinct from v_fm.target_x
+     or (e->'segment'->>'target_y')::double precision is distinct from v_fm.target_y
+     or (e->'segment'->>'target_kind') is distinct from v_fm.target_type
+     or (e->'segment'->>'depart_at')::timestamptz is distinct from v_fm.depart_at
+     or (e->'segment'->>'arrive_at')::timestamptz is distinct from v_fm.arrive_at then
+    raise exception 'MAPTRANSIT-DARKPARITY FAIL (grouped, dark): segment % is not the fleet''s own leg', e->'segment'; end if;
+  -- restore a1 (surgery must undo itself — the member_busy lesson).
+  update public.fleet_movements set status='cancelled', resolved_at=now() where id = v_mv;
+  update public.fleets set status='completed', location_mode='movement', active_movement_id=null where id = v_f;
+  update public.main_ship_instances set spatial_state = v_old_ss where main_ship_id = a1;
+
+  -- ── (B) the UNGROUPED ship b1. vacuity: really ungrouped. ────────────────────────────────────────
+  select count(*) into n from public.main_ship_instances where main_ship_id = b1 and group_id is null;
+  if n <> 1 then raise exception 'MAPTRANSIT-DARKPARITY FAIL: b1 is grouped — the ungrouped case would be vacuous'; end if;
+  -- SURGERY: dissolve b1's docked state (the SETTLEPARITY idiom), then the same in-transit shape.
+  -- b1's present fleet + presence are NOT rebuilt afterwards: the next block (MAPSPACE-DARKPARITY)
+  -- REQUIRES b1 fleetless, and nothing after these two blocks reads b1 (the txn rolls back).
+  select spatial_state into v_old_ss from public.main_ship_instances where main_ship_id = b1;
+  update public.main_ship_instances set spatial_state = null where main_ship_id = b1;
+  perform public.presence_complete(lp.id) from public.location_presence lp
+    join public.fleets f on f.id = lp.fleet_id
+   where f.player_id = uB and f.main_ship_id = b1 and lp.status='active';
+  update public.fleets set status='completed', location_mode='movement', active_movement_id=null
+   where player_id = uB and main_ship_id = b1 and status='present';
+  select b.id, b.x, b.y into v_base from public.bases b where b.player_id = uB and b.status='active' order by b.created_at limit 1;
+  if v_base.id is null then raise exception 'MAPTRANSIT-DARKPARITY FAIL: uB has no base — fixture cannot be built'; end if;
+  insert into public.fleets (player_id, origin_base_id, status, location_mode, current_base_id, main_ship_id)
+    values (uB, v_base.id, 'idle', 'base', v_base.id, b1) returning id into v_f;
+  v_mv := public.movement_create(uB, v_f, 'base', v_base.id, null, null, v_base.x, v_base.y,
+                                 'location', null, null, v_loc.id, v_loc.x, v_loc.y, 'rally', 1);
+  perform public.fleet_set_moving(v_f, v_mv);
+  r := public.mainship_space_validate_context(b1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_transit' then
+    raise exception 'MAPTRANSIT-DARKPARITY FAIL: ungrouped fixture did not reach legacy_transit — %', r; end if;
+  select * into v_fm from public.fleet_movements where id = v_mv;
+  r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
+  if e is null or (e->>'place') is distinct from 'transit' or (e->'segment') is null then
+    raise exception 'MAPTRANSIT-DARKPARITY FAIL (ungrouped, dark): a legacy in-transit ship draws % (expected transit)', e; end if;
+  if (e->'segment'->>'origin_x')::double precision is distinct from v_fm.origin_x
+     or (e->'segment'->>'target_x')::double precision is distinct from v_fm.target_x
+     or (e->'segment'->>'target_kind') is distinct from v_fm.target_type
+     or (e->'segment'->>'depart_at')::timestamptz is distinct from v_fm.depart_at
+     or (e->'segment'->>'arrive_at')::timestamptz is distinct from v_fm.arrive_at then
+    raise exception 'MAPTRANSIT-DARKPARITY FAIL (ungrouped, dark): segment % is not the fleet''s own leg', e->'segment'; end if;
+  -- restore the movement/fleet to terminal; ship spatial_state back to what it was.
+  update public.fleet_movements set status='cancelled', resolved_at=now() where id = v_mv;
+  update public.fleets set status='completed', location_mode='movement', active_movement_id=null where id = v_f;
+  update public.main_ship_instances set spatial_state = v_old_ss where main_ship_id = b1;
+
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_MAPTRANSIT_DARKPARITY: a legacy in-transit ship (grouped AND ungrouped) still draws its OWN fleet''s leg while dark';
+end $$;
+
+-- ════════ BLOCK MAPSPACE-DARKPARITY (3c-3, dark): an OSN-held ship still draws its OWN coordinates ════════
+-- 0212's hunks 2-3 make the in_space arm FLEET-FIRST; the ship-coordinate elsif is the preserved dark
+-- parity path. Dark, the 0056 head's in_space demands ZERO active fleets, so the resolver returns NULL,
+-- the fleet read matches nothing, and ONLY the elsif can answer — this block pins that it still does.
+-- PLACEMENT IS LOAD-BEARING: this writes a ship coordinate, which ISOLATION rightly asserts the unified
+-- flow never produces — it must stay AFTER the ISOLATION block (the HUNTOVERLAP placement rule).
+-- HOW THIS FAILS IF THE CODE WERE WRONG: "clean up" the elsif (delete the ship fallback) and this ship —
+-- zero fleets, so the fleet-first read finds nothing — draws place='hidden' with null coords: red here,
+-- and every real OSN-held prod ship would vanish from the map the day 0212 deploys, flag OFF.
+do $$
+declare r jsonb; e jsonb; n int;
+  uB uuid := (select v from fg where k='uB'); b1 uuid := (select v from fg where k='b1');
+  v_old_status text; v_old_ss text; v_old_x double precision; v_old_y double precision;
+begin
+  -- self-contained DARK: flip, and restore at the end.
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- vacuity guard: ZERO active fleets on b1 (the previous block left them terminal) — the resolver MUST
+  -- come back NULL, so the ship fallback is the ONLY thing that can answer below.
+  select count(*) into n from public.fleets
+   where main_ship_id = b1 and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'MAPSPACE-DARKPARITY FAIL: b1 holds % active fleet(s) — the ship-fallback claim would be vacuous', n; end if;
+
+  -- SURGERY (restored below): the OSN-held shape — stationary + spatial_state='in_space' + SHIP coords
+  -- (what the retired per-ship stop/settle writes; the live RPCs cannot mint it on a fixture on demand).
+  select status, spatial_state, space_x, space_y into v_old_status, v_old_ss, v_old_x, v_old_y
+    from public.main_ship_instances where main_ship_id = b1;
+  update public.main_ship_instances
+     set status='stationary', spatial_state='in_space', space_x=555, space_y=-444
+   where main_ship_id = b1;
+
+  -- vacuity guard: the oracle must answer in_space, or the marker pins nothing.
+  r := public.mainship_space_validate_context(b1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'in_space' then
+    raise exception 'MAPSPACE-DARKPARITY FAIL: fixture did not reach in_space — %', r; end if;
+
+  r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
+  if e is null or (e->>'place') is distinct from 'in_space'
+     or (e->>'space_x')::double precision is distinct from 555::double precision
+     or (e->>'space_y')::double precision is distinct from (-444)::double precision then
+    raise exception 'MAPSPACE-DARKPARITY FAIL: an OSN-held ship draws % (expected in_space at its OWN 555,-444) — the ship fallback died', e; end if;
+
+  -- restore the surgery, then the flag.
+  update public.main_ship_instances
+     set status=v_old_status, spatial_state=v_old_ss, space_x=v_old_x, space_y=v_old_y
+   where main_ship_id = b1;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_MAPSPACE_DARKPARITY: an OSN-held ship (zero fleets) still draws in_space at its OWN ship coordinates — the elsif fallback (dark parity path) survives';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;

@@ -15,6 +15,7 @@ MIGRATION_3B="$REPO_ROOT/supabase/migrations/20260618000208_fleetgo_coordinate_t
 MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000209_fleetgo_unified_stop.sql"
 MIGRATION_3C="$REPO_ROOT/supabase/migrations/20260618000210_fleetgo_group_read_oracle.sql"
 MIGRATION_3C2="$REPO_ROOT/supabase/migrations/20260618000211_fleetgo_dock_dedup.sql"
+MIGRATION_3C3="$REPO_ROOT/supabase/migrations/20260618000212_fleetgo_map_read.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -23,7 +24,7 @@ MIGRATION_3C2="$REPO_ROOT/supabase/migrations/20260618000211_fleetgo_dock_dedup.
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -265,6 +266,51 @@ if [ "$MODE" = "selftest" ]; then
     || fail "DARKPARITY does not pin host D (the port-entry replay) while dark"
   grep -q "the replay could be answered by the retired layer" "$SQL" \
     || fail "COMMISSION does not guard the zero-per-ship-fleet vacuity"
+
+  # ── step 3c-3 (0212): the map read — get_my_fleet_positions re-created from the 0211 TRUE HEAD.
+  #    ONE function re-create, THREE hunks: the legacy_transit rekey, the fleet-first in_space read,
+  #    and the emit reading the resolved coordinate. The ship-coordinate fallback must SURVIVE (it is
+  #    the dark parity path), and 0211's docked hunk must survive VERBATIM (the anti-0136 tripwire).
+  [ -f "$MIGRATION_3C3" ] || fail "migration 0212 not found"
+  MIG3C3_CODE="$(sql_code "$MIGRATION_3C3")"
+  # posture: exactly ONE re-create, and it is get_my_fleet_positions(). The "()" is load-bearing — a
+  # bare-name grep is prefix-satisfied by any renamed sibling (the mutation-proven 0211 lesson).
+  [ "$(printf '%s' "$MIG3C3_CODE" | grep -c "create or replace function")" = "1" ] \
+    || fail "0212 must contain exactly ONE create or replace function (3c-3 re-creates the map read ONLY)"
+  printf '%s' "$MIG3C3_CODE" | grep -q "create or replace function public.get_my_fleet_positions()" \
+    || fail "0212's one re-create is not public.get_my_fleet_positions()"
+  printf '%s' "$MIG3C3_CODE" | grep -qE "^[[:space:]]*(alter table|drop function|drop table)" \
+    && fail "0212 alters/drops an existing object (3c-3 is ONE function re-create ONLY)" || true
+  printf '%s' "$MIG3C3_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
+    && fail "0212 UPDATEs main_ship_instances — a read host must never write a ship" || true
+  printf '%s' "$MIG3C3_CODE" | grep -qiE "(insert into|update)[[:space:]]+(public\.)?game_config" \
+    && fail "0212 seeds or flips a flag (3c-3 changes no behavior on its own)" || true
+  # hunk 1: the transit rekey is present, and the OLD per-ship key is BANNED anywhere in 0212.
+  printf '%s' "$MIG3C3_CODE" | grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and fm.status = 'moving'" \
+    || fail "0212's legacy_transit read does not compose mainship_resolve_fleet (the 3c-3 hunk is missing — the flying group stays hidden)"
+  printf '%s' "$MIG3C3_CODE" | grep -q "f.main_ship_id = s.main_ship_id" \
+    && fail "0212 still carries the old per-ship key 'f.main_ship_id = s.main_ship_id' (NULL on a unified fleet)" || true
+  # STALE-HEAD TRIPWIRE (anti-0136): 0211's docked hunk must SURVIVE in 0212 — a rebuild from the 0200
+  # head lacks it and reds here instantly. Plus the true-head declaration itself.
+  printf '%s' "$MIG3C3_CODE" | grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and f.status = 'present'" \
+    || fail "0212 lost 0211's docked hunk — it was rebuilt from a stale head (the exact 0136 mistake)"
+  grep -q "TRUE-HEAD DECLARATION" "$MIGRATION_3C3" \
+    || fail "0212 does not declare itself the true head — the 0136→0138 stale-head mistake repeats by default"
+  # hunk 2: the fleet-first read AND the preserved ship fallback (the dark parity path).
+  printf '%s' "$MIG3C3_CODE" | grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and f.location_mode = 'space'" \
+    || fail "0212's in_space arm does not read the FLEET's parked coordinate (hunk 2 missing — a parked fleet stays invisible)"
+  printf '%s' "$MIG3C3_CODE" | grep -q "s.space_x is not null" \
+    || fail "0212 dropped the ship-coordinate fallback — the dark parity path dies and every OSN-held prod ship goes hidden"
+  # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture failed
+  # to reach the state its marker claims to pin).
+  grep -q "did not reach legacy_transit" "$SQL" \
+    || fail "MAPTRANSIT_DARKPARITY does not guard that the fixture reached legacy_transit (vacuous otherwise)"
+  grep -q "the transit could be answered by the retired layer" "$SQL" \
+    || fail "MAPTRANSIT_GROUP does not re-assert the zero-per-ship-fleet vacuity guard"
+  grep -q "only the FLEET could have answered" "$SQL" \
+    || fail "MAPSPACE_GROUP does not guard that zero ships carry a position"
+  grep -q "did not reach in_space" "$SQL" \
+    || fail "MAPSPACE_DARKPARITY does not guard that the oracle answers in_space (vacuous otherwise)"
 
   # ── THE TREE-WIDE DOCK-COPY BAN. 0072 proved an alias-free copy evades exact-substring greps, and
   # the recorded 0136 failure mode is a NEW file re-inlining the block — a file a 0211-only grep never
