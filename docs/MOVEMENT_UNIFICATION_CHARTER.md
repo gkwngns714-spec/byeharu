@@ -7,6 +7,50 @@
 
 ## RESUME — read this first (the owner switched computers; assistant memory does NOT travel, this doc does)
 
+## ⭐ PRE-FLIP COMPLETE (2026-07-18) — EVERYTHING IS MERGED + DARK ON MAIN; THE FLIP IS THE OWNER'S TO RUN ⭐
+
+The whole unified-movement engine + client + the reversible flip script are on `main`, all DARK behind
+`fleet_movement_unified_enabled` (false in prod). Nothing player-visible has changed. Every pre-flip
+obligation is discharged. **What remains is entirely owner-paced: deploy → canary → run the flip script.**
+
+**On main (dark):** migrations `0207` mover · `0208` coordinate targets + fleet position · `0209` unified
+stop · `0210` read oracle · `0211` dock-dedup · `0212` map read · `0213` assign co-location guard · `0214`
+hunt-consumes-the-fleet · `0215` brake refuses a sortie. Client: 4a-1 (calls the mover), 4a-2 (tap open
+space → go), brake-client (no Stop button on a hunt). Script: `scripts/activate-unified-movement.{sql,sh}`.
+
+**THE FLIP RUNBOOK (owner runs, in order):**
+1. **DEPLOY** migrations 0212-0215 (prod is at 0211). A deploy run is halted at the `production` gate —
+   approve it (`!bash scripts/approve-deploy.sh --yes`, or the browser gate). One approval covers 0212-0215.
+2. **CANARY** (proves the Management-API endpoint honours one transaction + surfaces RAISE messages — the
+   one unverified assumption): the commented one-liner in `scripts/activate-unified-movement.sh`'s header
+   (`begin; select 1; do $$begin raise exception 'canary'; end$$; commit; select 'never';`). Expect a
+   non-2xx carrying 'canary' and NO 'never' row. If it behaves otherwise, STOP and use the psql/Dashboard path.
+3. **FLIP:** `!bash scripts/activate-unified-movement.sh --yes` (or its confirm token). It self-gates
+   (refuses unless 0214+0215 are deployed — checks the live function bodies), sweeps for poison (RAISEs
+   with the offending rows if any), then flips 4 flags: unified ON + the 3 legacy movers OFF. REVERSIBLE:
+   the 4 inverse `update game_config` writes are the commented ROLLBACK at the bottom of the .sql.
+4. **SOAK** (days, owner-paced), then the POST-FLIP cleanup below.
+
+**POST-FLIP work (all planned, NOT yet built — sequenced AFTER the flip + soak):** 4a-post (delete the dead
+per-ship client, task #11) → 4b-DROP/0216 (drop the legacy movers, drain-asserted, task #9) → 4c (signal
+retirement: narrow the status column + drop spatial columns, TWO migrations, task #5 — the 4c audit found
+5 live breaks the charter missed, incl. a client PostgREST select that would blank the map; all captured) →
+4d (reconciler delete, BUILT + banked on `slice-4d-reconciler-delete`, held for 4c, task #6) → 4e
+(bootstrap/fallback deletion, task #12). See the task list + the per-task notes.
+
+**TWO OWNER DECISIONS (defaulted, reversible — override anytime):** (1) new ships are ASSIGN-FIRST (join a
+fleet before they move, the EVE model — 3c-0 as a migration was proven wrong/visible-today; task #10);
+(2) an in-transit hunt is NOT recallable (abort via the existing Retreat button — the shipped behavior;
+a "hunt turnaround" would be new post-flip gameplay).
+
+**THE PIPELINE THAT BUILT THIS (keep using it):** per slice — Fable architect (Explore) → Fable implementer
+(general-purpose, in its own `git worktree` — Agent-tool `isolation:worktree` FAILS from the System32 cwd;
+use manual `git worktree add`) → Fable adversarial reviewer → fix loop → the orchestrator does all git +
+CI. EVERY slice had its bug caught by review or by CI's real-Postgres proof (a live fifth copy, a reopened
+ghost-dock, the hunt re-minting its own blackout, the brake bricking the group, ~4 fixture-envelope bugs
+tracing missed). CI's disposable-DB proof is the gate, never a formality. The charter's own inventory was
+WRONG 8 times — re-derive by grep at each slice head.
+
 **Where we are (2026-07-16):**
 - The owner's movement model is settled and recorded below (§2): **the FLEET is the only unit of
   movement; a ship never moves on its own; all movement interaction is on the MAP; the per-ship
