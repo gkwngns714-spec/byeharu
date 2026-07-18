@@ -1,5 +1,4 @@
 import { supabase } from '../../lib/supabase'
-import { SETTLE_ARRIVAL_RPC, LEGACY_SETTLE_ARRIVAL_RPC, parseSettleArrivalResult, type SettleArrivalResult } from './settleArrival'
 import { parseDockServices, DOCK_NOT_DOCKED, type DockServices } from './dockServices'
 import { parseDockedStore, DOCK_STORE_EMPTY, type DockedStore } from './dockStore'
 
@@ -9,16 +8,16 @@ import { parseDockedStore, DOCK_STORE_EMPTY, type DockedStore } from './dockStor
 // No support craft, no support capacity, no loadout. NOTE: support capacity / support craft is
 // DEPRECATED (see docs/MAINSHIP_TRANSITION.md); the dormant backend stays but the UI never uses it.
 //
-// Phase 10D origin, 4A-POST trimmed — the per-ship movement WRITE wrappers (send/move/space-move/
-// stop/port-nav readiness) were deleted with the per-ship movement client; the unified fleet mover
-// (teamApi) is the only movement writer. What remains here is owner READS (ship/fleet/presence/
-// space-movement/fleet-positions), the repair + rename + settle wrappers, and the dock reads.
-// The client only REQUESTS; the server validates and decides.
+// Phase 10D origin, 4A-POST + 4C-CLIENT trimmed — the per-ship movement WRITE wrappers were
+// deleted with the per-ship movement client (4a-post), and 4c-client deleted the legacy-schema
+// READS with it: the main_ship_space_movements fetch, the fleets.active_space_movement_id column,
+// and the settle-arrival wrappers (both families unfireable — no writer can mint their rows). The
+// unified fleet mover (teamApi) is the only movement writer; ship placement is served exclusively
+// by get_my_fleet_positions. What remains here is owner READS (ship/fleet/presence/fleet-positions),
+// the repair + rename wrappers, and the dock reads. The client only REQUESTS; the server decides.
 
-// OSN-2 spatial-mode selector (migration 0054). NULL on every row today (legacy): no writer sets
-// a non-null value yet. Position for NULL rows still comes from the base/fleet/movement/presence
-// model; only 'in_space' (a future OSN-3/4 writer) carries ship-owned coordinates.
-export type SpatialState = 'home' | 'at_location' | 'in_transit' | 'in_space' | 'destroyed'
+// (4C-CLIENT: the OSN-2 SpatialState type — the 0054 spatial-mode selector — is DELETED with its
+// last reader. No client code reads main_ship_instances.spatial_state anymore; 4c-mig-2 drops it.)
 
 export interface MainShipRow {
   main_ship_id: string
@@ -129,13 +128,14 @@ export async function fetchMyMainShips(): Promise<MainShipRow[]> {
 //
 // The client mirror of the get_my_fleet_positions() projection (migration 0200). ONE owner-read that returns
 // EVERY owned non-destroyed ship's placeable position, replacing the N-fanout of the singular fetchers above.
-// The server (via mainship_space_validate_context) decides each ship's `place`; the pure resolveFleetMarkers
-// resolver turns these into map markers (docked → look up the port coords; transit → interpolate the segment;
-// in_space → space_x/space_y). Coordinates arrive as jsonb numbers (double precision), never numeric strings.
+// The server (via mainship_space_validate_context) decides each ship's `place`; consumers fold it into
+// labels/lists (SHIPLOC, the Port hub, Fitting) — 4C-CLIENT: the per-ship marker resolver is deleted, and the
+// legacy per-ship fields (spatial_state / space_x / space_y) are no longer typed here (zero client readers;
+// the RPC's legacy branches retire in 4c-mig-1 R3). Coordinates arrive as jsonb numbers, never strings.
 
 // S1 BERTH MODEL (migration 0216): 'berthed' — an UNFLEETED ship docked at its berth port.
-// INFO only, never a map marker (resolveFleetMarkers deliberately draws nothing for it); the
-// roster/labels read it as "Docked at <port>" via the ONE shared SHIPLOC resolver.
+// INFO only, never a map marker; the roster/labels read it as "Docked at <port>" via the ONE
+// shared SHIPLOC resolver.
 export type FleetPositionPlace = 'transit' | 'in_space' | 'docked' | 'berthed' | 'hidden'
 
 /** A committed movement segment for client-side interpolation (the shared movementInterpolation contract). */
@@ -154,11 +154,8 @@ export interface FleetPosition {
   name: string
   class: string // hull_type_id
   status: string
-  spatial_state: SpatialState | null
   place: FleetPositionPlace
   location_id: string | null // docked: the present fleet's current location; berthed: the berth port
-  space_x: number | null // in_space only
-  space_y: number | null // in_space only
   segment: FleetPositionSegment | null // transit only
 }
 
@@ -173,25 +170,22 @@ export async function fetchMyFleetPositions(): Promise<FleetPosition[]> {
   return data as FleetPosition[]
 }
 
-// ── Phase 10D: main-ship send/return + live status ────────────────────────────────
+// ── Phase 10D: main-ship linked-fleet read ────────────────────────────────────────
 
-export type MainShipDisplayStatus = 'home' | 'traveling' | 'present' | 'returning'
-
-/** The active fleet linked to a main ship (zero units; status drives the UI). */
+/** The active fleet linked to a main ship (zero units; status drives the UI).
+ *  4C-CLIENT: `active_space_movement_id` is no longer read — 4c-mig-2 drops the column. */
 export interface MainShipFleet {
   id: string
   status: string // 'moving' | 'present' | 'returning'
   current_location_id: string | null // set when present (used to exclude the current location)
-  // OSN-3 S1 read fields (used by the resolver to validate coordinate in_transit / at_location / home).
   location_mode: string | null
   active_movement_id: string | null
-  active_space_movement_id: string | null
 }
 
 const ACTIVE_FLEET_STATUSES = ['moving', 'present', 'returning']
 
 // The ONE MainShipFleet column list — shared by every fleet owner-read below (no second copy).
-const MAIN_SHIP_FLEET_COLS = 'id, status, current_location_id, location_mode, active_movement_id, active_space_movement_id'
+const MAIN_SHIP_FLEET_COLS = 'id, status, current_location_id, location_mode, active_movement_id'
 
 /**
  * Owner-read the caller's active main-ship fleet (the one tagged with this ship), if any.
@@ -210,46 +204,8 @@ export async function fetchActiveMainShipFleet(mainShipId: string): Promise<Main
   return (data as MainShipFleet) ?? null
 }
 
-// OSN-3 S1: the active coordinate-movement row for a main ship (read-model only; no writer in S1).
-// Only the fields the display resolver needs to interpolate a coordinate in_transit marker.
-export interface MainShipSpaceMovement {
-  id: string
-  main_ship_id: string
-  fleet_id: string
-  origin_x: number
-  origin_y: number
-  target_x: number
-  target_y: number
-  target_kind: string // 'space' | 'location' | 'base'
-  // OSN-HUB-1A: the destination identity for a named-location target (target_kind='location'); NULL for a
-  // raw open-space target. Owner-read only (RLS on main_ship_space_movements). The client resolves a NAME for
-  // it solely from the public get_world_map() result; if it is not in that public map (e.g. a hidden port),
-  // presentation FAILS CLOSED — no route, no id/coords/name leak (see spaceRouteModel / mainshipStatusLabel).
-  target_location_id?: string | null
-  status: string // 'moving' (only active rows are fetched)
-  depart_at: string
-  arrive_at: string
-}
-
-/**
- * Owner-read the caller's ACTIVE coordinate movement (status='moving') for a main ship, if any.
- * Scoped by exact main_ship_id; at most one row (enforced by a partial unique index). No writer in S1.
- */
-export async function fetchActiveMainShipSpaceMovement(mainShipId: string): Promise<MainShipSpaceMovement | null> {
-  const { data, error } = await supabase
-    .from('main_ship_space_movements')
-    .select('id, main_ship_id, fleet_id, origin_x, origin_y, target_x, target_y, target_kind, target_location_id, status, depart_at, arrive_at')
-    .eq('main_ship_id', mainShipId)
-    .eq('status', 'moving')
-    .limit(1)
-    .maybeSingle()
-  if (error) return null // non-fatal (e.g. table not yet present pre-deploy): treat as no coordinate movement
-  return (data as MainShipSpaceMovement) ?? null
-}
-
-// The active location-presence row for a main-ship fleet (owner-read). Used ONLY to validate a
-// named-location marker per the OSN-2b deterministic rule (fleet present ∧ current_location_id ∧
-// matching ACTIVE presence). Read-only; no new polling — fetched inside the existing map poll.
+// The active location-presence row for a main-ship fleet (owner-read). Read-only; no new
+// polling — fetched inside the existing map poll (feeds the Port screen's dock refetch key).
 export interface MainShipPresence {
   fleet_id: string
   location_id: string | null
@@ -274,23 +230,9 @@ export async function fetchActiveMainShipPresence(fleetId: string): Promise<Main
   return (data as MainShipPresence) ?? null
 }
 
-/**
- * Display status derived from the active linked fleet (the main ship's own status row stays
- * 'traveling' while the fleet is 'present', so the fleet is the source of truth here):
- *   no fleet → home · moving → traveling · present → present · returning → returning
- *
- * ORPHANED (MAP-INTEGRATION n2, recorded not deleted): its last consumers (ShipStatusCard, then
- * MainShipCommand) are both retired/deleted — S6 rehomed every location read onto fleetPositions and
- * 4a-post deleted the per-ship mover. Only shipLocation.ts's documented internal mirror
- * (fleetDisplayStatus) carries the mapping now. Delete this (and MainShipDisplayStatus) on the next
- * mainshipApi cleanup pass; do NOT wire new consumers to it.
- */
-export function deriveMainShipStatus(fleet: { status: string } | null): MainShipDisplayStatus {
-  if (!fleet) return 'home'
-  if (fleet.status === 'present') return 'present'
-  if (fleet.status === 'returning') return 'returning'
-  return 'traveling' // 'moving'
-}
+// 4C-CLIENT: deriveMainShipStatus (+ MainShipDisplayStatus) DELETED — orphaned since 4a-post
+// (recorded by MAP-INTEGRATION n2). shipLocation.ts's fleetDisplayStatus is the one surviving
+// copy of the fleet-status mapping.
 
 // SHIP-POWER §2.5 — thin read wrapper over the LIVE per-ship stats preview (get_my_expedition_preview,
 // 0049 → resolver-swapped 0159). FIRST client caller: until SHIP-POWER no shipped UI read this RPC at
@@ -358,33 +300,4 @@ export async function renameMainShip(name: string, mainShipId?: string | null): 
   return data as RenameMainShipResult
 }
 
-// UX-CLEANUP item 6 (part A) — thin client wrapper over the on-demand OSN arrival settle
-// (command_main_ship_settle_arrival, 0150). Sends ONLY the explicit selected/sole main-ship id (§2.5;
-// null → server sole-ship shim). The server re-validates flag/ownership/coherence/due-ness under the
-// arrival cron's own locks and settles via the cron's own primitives — an early/duplicate/raced call is a
-// clean {settled:false} no-op, so this wrapper needs no idempotency key.
-export async function commandMainShipSettleArrival(mainShipId?: string | null): Promise<SettleArrivalResult> {
-  try {
-    const { data, error } = await supabase.rpc(SETTLE_ARRIVAL_RPC, { p_main_ship_id: mainShipId ?? null })
-    if (error) return { ok: false, reason: error.message }
-    return parseSettleArrivalResult(data)
-  } catch (e) {
-    return { ok: false, reason: e instanceof Error ? e.message : 'unavailable' }
-  }
-}
-
-// UX-CLEANUP item 6 (part B) — thin client wrapper over the on-demand LEGACY arrival settle
-// (command_main_ship_settle_arrival_legacy, 0151). Sends ONLY the caller's own in-flight main-ship fleet
-// id (null → server sole-in-flight-fleet resolution, the 0081 fail-closed shape). The server re-validates
-// flag/ownership/main-ship predicate/due-ness and settles via the cron's extracted movement_settle_arrival
-// helper — an early/duplicate/raced call is a clean {settled:false} no-op, so no idempotency key needed.
-export async function commandMainShipSettleArrivalLegacy(fleetId?: string | null): Promise<SettleArrivalResult> {
-  try {
-    const { data, error } = await supabase.rpc(LEGACY_SETTLE_ARRIVAL_RPC, { p_fleet: fleetId ?? null })
-    if (error) return { ok: false, reason: error.message }
-    return parseSettleArrivalResult(data)
-  } catch (e) {
-    return { ok: false, reason: e instanceof Error ? e.message : 'unavailable' }
-  }
-}
 

@@ -49,11 +49,16 @@ export function FirstOrdersCard() {
   // Don't flash a not-done checklist while the shell's first reads are still in flight.
   if (game.loading || selection.loading) return null
 
+  // 4C-CLIENT: the docked signal reads the ship's fleet-positions row (the ONE placement read) —
+  // the legacy main_ship_instances.spatial_state column is retired.
+  const shipPlace = map.mainShip
+    ? map.fleetPositions.find((p) => p.main_ship_id === map.mainShip?.main_ship_id)?.place
+    : undefined
   const steps = deriveFirstOrders(
     projectFirstOrders({
       selectionShipCount: selection.ships.length,
       polledShipKnown: map.mainShip !== null,
-      spatialState: map.mainShip?.spatial_state,
+      shipPlace,
       reports: combat.reports,
       expeditionsLit: game.mainshipSendEnabled,
       additionalShipsLit: MAINSHIP_ADDITIONAL_ENABLED,

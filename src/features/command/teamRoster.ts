@@ -107,7 +107,6 @@ export function fleetPositionLocationLabel(
       current_location_id: pos.place === 'docked' ? pos.location_id : null,
       location_mode: null,
       active_movement_id: null,
-      active_space_movement_id: null,
     }
     return resolveShipLocationLabel(fleet, null, locations).label
   }

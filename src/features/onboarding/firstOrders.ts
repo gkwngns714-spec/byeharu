@@ -4,7 +4,9 @@
 // HARD BOUNDARY — zero new server surface, zero new fetches. Every done-condition here is derived
 // ONLY from state the shell already polls/holds (src/app/shellState.ts):
 //   · ship count        → selection.ships (the ONE shell ship list) ∨ map.mainShip (polled sole-ship read)
-//   · docked            → map.mainShip.spatial_state === 'at_location' (the polled OSN spatial mode)
+//   · docked            → the ship's map.fleetPositions row (get_my_fleet_positions `place`) reads
+//                         'docked' (fleeted at a port) or 'berthed' (moored at its berth port) —
+//                         4C-CLIENT repointed this off the retired main_ship_instances.spatial_state
 //   · won a battle      → combat.reports (polled; the SAME won-rule ReportsSection renders)
 //   · expeditions lit   → game.mainshipSendEnabled (the server-lit send flag, already in the shell)
 //   · additional ships  → MAINSHIP_ADDITIONAL_ENABLED (the compile gate mirroring the server flag)
@@ -104,8 +106,9 @@ export function firstOrdersComplete(steps: readonly FirstOrderStep[]): boolean {
 
 // ── projection helpers (still pure; the card composes these over shell state) ───────────────────
 
-/** The canonical docked spatial mode (OSN-2, migration 0054) — the map resolver's docked signal. */
-export const DOCKED_SPATIAL_STATE = 'at_location'
+/** The fleet-position `place` values that read as "docked at a port" (get_my_fleet_positions, 0200/0216):
+ *  'docked' = fleeted at a port; 'berthed' = moored on its own at its berth port. */
+export const DOCKED_PLACES: readonly string[] = ['docked', 'berthed']
 
 /**
  * The ONE player-facing "won" rule, mirrored from ReportsSection (src/features/combat/
@@ -126,8 +129,8 @@ export function projectFirstOrders(args: {
   selectionShipCount: number
   /** map.mainShip presence — the POLLED sole-ship read (covers the pre-selection-refresh window). */
   polledShipKnown: boolean
-  /** map.mainShip?.spatial_state — null/undefined for legacy or unresolved ships. */
-  spatialState: string | null | undefined
+  /** The polled ship's map.fleetPositions `place` — null/undefined when the ship has no projection row. */
+  shipPlace: string | null | undefined
   /** combat.reports — already polled by the shell (only `result` is read). */
   reports: readonly { result: string }[]
   expeditionsLit: boolean
@@ -138,7 +141,7 @@ export function projectFirstOrders(args: {
     // fetch-once+refresh-on-commission, while map.mainShip is polled — max() lets the first
     // claim tick within a poll cycle instead of waiting for a reload.
     shipCount: Math.max(args.selectionShipCount, args.polledShipKnown ? 1 : 0),
-    docked: args.spatialState === DOCKED_SPATIAL_STATE,
+    docked: args.shipPlace != null && DOCKED_PLACES.includes(args.shipPlace),
     wonBattle: args.reports.some((r) => isWonReport(r.result)),
     expeditionsLit: args.expeditionsLit,
     additionalShipsLit: args.additionalShipsLit,
