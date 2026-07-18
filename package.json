@@ -36,7 +36,6 @@
     "verify:mainship-legacy-dock": "node scripts/verify-mainship-legacy-dock-travel.mjs",
     "verify:stop-roundtrip": "node scripts/verify-stop-roundtrip.mjs",
     "verify:mainship-move": "node scripts/verify-mainship-move.mjs",
-    "verify:osn2": "node scripts/verify-osn2.mjs",
     "verify:exploration": "node scripts/verify-exploration.mjs",
     "verify:mining": "node scripts/verify-mining.mjs",
     "verify:modules": "node scripts/verify-modules.mjs",

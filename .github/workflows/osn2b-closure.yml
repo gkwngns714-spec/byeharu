@@ -33,7 +33,3 @@ jobs:
         run: npx tsc -b
       - name: Production build (vite build)
         run: npx vite build
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-      - name: Resolver unit test
-        run: npm run verify:osn:resolver

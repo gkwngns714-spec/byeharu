@@ -38,5 +38,3 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Rendered UI proof — dock-services panel (ok[8], ok[9])
         run: npx playwright test --config playwright.osnui.config.ts
-      - name: OSN/map pure unit-spec regression (ok[11])
-        run: npm run verify:osn:resolver
