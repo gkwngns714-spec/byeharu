@@ -327,8 +327,41 @@ begin
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n <> 0 then raise exception 'TICK1 FAIL precondition: % enemy rows exist before the first tick (want 0)', n; end if;
 
+  -- ── TEMP DIAGNOSTIC (to be removed once the root cause is confirmed): dump every input
+  --    v_is_spatial depends on, read the SAME way the tick reads them, right before calling it. ──────
+  declare
+    v_diag_flag        text;
+    v_diag_pos_count   int;
+    v_diag_status      text;
+    v_diag_loc         uuid;
+  begin
+    select value #>> '{}' into v_diag_flag from public.game_config where key = 'spatial_combat_enabled';
+    select count(*) into v_diag_pos_count from public.combat_units where encounter_id = v_enc and pos_x is not null;
+    select status, location_id into v_diag_status, v_diag_loc from public.combat_encounters where id = v_enc;
+    raise notice 'CSPATIAL DIAG pre-tick: spatial_combat_enabled=% pos_count=% encounter_status=% encounter_location=% v_hunt=%',
+      v_diag_flag, v_diag_pos_count, v_diag_status, v_diag_loc, v_hunt;
+  end;
+
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
+
+  -- ── TEMP DIAGNOSTIC (cont.): what actually happened this tick, and which arm's own wave_spawned
+  --    event shape landed (the spatial arm's payload carries a 'units' key; the dark arm's does not —
+  --    a definitive disambiguator between "spatial branch ran but spawned 0" and "dark arm ran"). ────
+  declare
+    v_diag_tick    int; v_diag_danger int; v_diag_emax double precision; v_diag_ecur double precision;
+    v_diag_wave    int; v_diag_cleared int; v_diag_payload jsonb; v_diag_all_units int; v_diag_player_units int;
+  begin
+    select tick_number, danger_level, enemy_integrity_max, enemy_integrity_current, wave_number, waves_cleared
+      into v_diag_tick, v_diag_danger, v_diag_emax, v_diag_ecur, v_diag_wave, v_diag_cleared
+      from public.combat_encounters where id = v_enc;
+    select payload_json into v_diag_payload from public.combat_events
+      where encounter_id = v_enc and event_type = 'wave_spawned' order by id desc limit 1;
+    select count(*) into v_diag_all_units from public.combat_units where encounter_id = v_enc;
+    select count(*) into v_diag_player_units from public.combat_units where encounter_id = v_enc and side = 'player';
+    raise notice 'CSPATIAL DIAG post-tick: tick=% danger=% emax=% ecur=% wave=% cleared=% wave_spawned_payload=% all_units=% player_units=%',
+      v_diag_tick, v_diag_danger, v_diag_emax, v_diag_ecur, v_diag_wave, v_diag_cleared, v_diag_payload, v_diag_all_units, v_diag_player_units;
+  end;
 
   -- ── ENEMY SPAWN: exactly 1 synthetic pirate, AT the location center, side=enemy, identity anchor. ──
   select count(*) into n from public.combat_units
