@@ -67,6 +67,31 @@
 -- exactly as before. Open-space (target_kind='space' / target_type≠'location') legs carry a raw
 -- coordinate with no location backing at all and are correctly left untouched by both §4 and §5.)
 --
+-- HAZARD C (found via CI: team-command-proof.sql:311 → "reveal_starter_ports: port ... missing
+-- approved active anchor ... at (-50, -30)") — reveal_starter_ports() (0068) hardcodes BOTH the
+-- approved anchor COORDINATE (v_ax/v_ay literals, pre-rebalance values) AND, more subtly, the
+-- approved anchor's own ROW ID (c_a1/c_a2/c_a3 / v_anchors, matched via `a.id = v_anchors[i]`).
+-- The coordinate literal is the obviously stale one — but the id pin is independently broken by
+-- HAZARD A's fix: §4's mandatory retire+insert relocation mints a FRESH anchor id every time (0063's
+-- lifecycle, by design), so pinning a specific historical anchor id can never again match after ANY
+-- legitimate relocation, this one or a future one. §6 below re-creates reveal_starter_ports() with
+-- the ×3 coordinates AND drops the id pin in favor of the invariant it was standing in for (exactly
+-- one ACTIVE location-kind anchor for this port, at the approved coordinate) — resolved dynamically,
+-- so the function survives this relocation and any future one. Full grep sweep for every other
+-- hardcoded starter-port/anchor coordinate or id literal (locations.x/y and space_anchors.space_x/y
+-- old values -50/-30, 70/-10, 10/80, and the b1a0a00{1,2,3} anchor ids) across every migration and
+-- proof script found exactly ONE other class of hit, and neither needs a code change:
+--   • 0066 (the original seed), 0154 (a one-time relocation of the OTHER five waypoints, whose own
+--     read-back guard pins the THREE PORTS unchanged at their 0066 seed) and 0175 (a one-time content
+--     bbox check) are migrations that already RAN — historical record, never re-executed against a
+--     live chain, no live behavior to break.
+--   • 0218's movement_position_at test uses -50/-30/80/-10 as arbitrary literal INPUTS to a pure
+--     interpolation-math unit assertion, not a read of real world data — unaffected by any world edit.
+--   • scripts/osn-hub1a-production-catalog-verify.sql hardcodes the OLD port/anchor coordinates too,
+--     but by its own design (`chk "A1 migration head 0068" ... N_AFTER=0`) it REFUSES to run against
+--     any chain with a migration after 0068 — it can never see 0227's schema and is structurally
+--     inert here, not merely unlikely to run.
+--
 -- OUT OF SCOPE / VERIFIED INERT: bases.x/y stays untouched (every base sits at the player-home origin
 -- (0,0); no space_anchors kind='base' row exists in any migration — grep-verified — so there is no
 -- base-side analogue of Hazard A/B to fix). main_ship_instances.space_x/space_y and fleets in open
@@ -123,6 +148,122 @@ set target_x = target_x * 3,
 where target_kind = 'location'
   and status = 'moving';
 
+-- ── 6) HAZARD C fix — re-create reveal_starter_ports() (0068 TRUE HEAD superseded HERE): the ×3
+--    approved coordinates, AND the id-pin removed in favor of a dynamic "current active anchor"
+--    resolution (§4's retire+insert relocation mints a fresh anchor id — no literal survives it).
+--    Byte-copy of the 0068 body with exactly the two marked HUNKs; every lock order, error message
+--    shape, and the all-or-nothing hidden→active decision are unchanged.
+create or replace function public.reveal_starter_ports()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c_p1 constant uuid := 'b1a00001-0066-4a00-8a00-000000000001';  -- Haven Reach (city)
+  c_p2 constant uuid := 'b1a00002-0066-4a00-8a00-000000000002';  -- Slagworks Anchorage (port)
+  c_p3 constant uuid := 'b1a00003-0066-4a00-8a00-000000000003';  -- Driftmarch Waypost (port)
+  c_s1 constant uuid := 'b1a05001-0066-4a00-8a00-000000000051';
+  c_s2 constant uuid := 'b1a05002-0066-4a00-8a00-000000000052';
+  c_s3 constant uuid := 'b1a05003-0066-4a00-8a00-000000000053';
+  v_ports    uuid[] := array[c_p1, c_p2, c_p3];
+  v_services uuid[] := array[c_s1, c_s2, c_s3];
+  -- 0227 HUNK 1: the approved anchor coordinate is now the 3x-rescaled value (0066's -50/-30,
+  -- 70/-10, 10/80 times 3). The anchor's own row id is INTENTIONALLY no longer a fixed literal here
+  -- (see 0227 HUNK 2 below and the file header's HAZARD C note).
+  v_ax double precision[] := array[-150, 210, 30];
+  v_ay double precision[] := array[-90, -30, 240];
+  r record;
+  i int;
+  v_hidden int;
+  v_active int;
+begin
+  -- Acquire the FULL target hierarchy in the canonical deterministic order BEFORE any read / validation /
+  -- decision / write, so no privileged concurrent mutation can alter a validated hierarchy, anchor, or
+  -- service between validation and the reveal update (TOCTOU-closed). Order = sector → zone → location →
+  -- anchor → docking service (same order as mainship_space_dock_at_location / assign_home_port), and within
+  -- each class the rows are locked in ascending id order (deadlock-free).
+  --   • read-only dependencies (sectors, zones, anchors, services) → FOR SHARE: a SHARE row lock conflicts
+  --     with the FOR NO KEY UPDATE a concurrent status disable/retire takes, so a validated row cannot change
+  --     while this function holds its locks;
+  --   • the three target locations → FOR UPDATE, because their status is what this function mutates.
+  perform 1 from public.sectors se
+    where se.id in (select distinct z.sector_id
+                      from public.locations l join public.zones z on z.id = l.zone_id
+                      where l.id = any(v_ports))
+    order by se.id for share;
+  perform 1 from public.zones z
+    where z.id in (select distinct l.zone_id from public.locations l where l.id = any(v_ports))
+    order by z.id for share;
+  perform 1 from public.locations     where id = any(v_ports)    order by id for update;
+  -- 0227 HUNK 2: lock whichever location-kind anchor is CURRENTLY active for these ports — a fixed
+  -- literal anchor id cannot survive the §4 retire+insert relocation (or any future one), so the set
+  -- to lock is resolved dynamically instead of from a hardcoded array.
+  perform 1 from public.space_anchors
+    where kind = 'location' and status = 'active' and location_id = any(v_ports)
+    order by id for share;
+  perform 1 from public.location_services where id = any(v_services) order by id for share;
+
+  if (select count(*) from public.locations where id = any(v_ports)) <> 3 then
+    raise exception 'reveal_starter_ports: expected exactly the 3 fixed starter-port locations';
+  end if;
+
+  -- Per-port structural invariants (assert EVERYTHING except status, which is what we may flip).
+  for i in 1..3 loop
+    select l.status as lstatus, l.physical_role as role, l.activity_type as activity,
+           z.status as zstatus, se.status as sstatus
+      into r
+      from public.locations l
+      join public.zones   z  on z.id  = l.zone_id
+      join public.sectors se on se.id = z.sector_id
+      where l.id = v_ports[i];
+    if not found then raise exception 'reveal_starter_ports: port % not found', v_ports[i]; end if;
+    if r.lstatus not in ('hidden', 'active') then
+      raise exception 'reveal_starter_ports: port % unexpected status % (abort, no write)', v_ports[i], r.lstatus; end if;
+    if r.zstatus <> 'active' or r.sstatus <> 'active' then
+      raise exception 'reveal_starter_ports: port % parent hierarchy not active', v_ports[i]; end if;
+    if r.role not in ('city', 'port') then
+      raise exception 'reveal_starter_ports: port % physical_role % invalid', v_ports[i], r.role; end if;
+    if r.activity <> 'none' then
+      raise exception 'reveal_starter_ports: port % activity_type % invalid', v_ports[i], r.activity; end if;
+    -- 0227 HUNK 2 (cont.): exactly one active canonical anchor owned by THIS port, kind location, at
+    -- the approved (now 3x) coordinate — no fixed anchor-id literal in the predicate anymore; the
+    -- "exactly one" check right below independently re-proves there is no ambiguity to exploit.
+    if (select count(*) from public.space_anchors a
+          where a.location_id = v_ports[i] and a.kind = 'location' and a.status = 'active'
+            and a.space_x = v_ax[i] and a.space_y = v_ay[i]
+            and a.space_x between -10000 and 10000 and a.space_y between -10000 and 10000) <> 1 then
+      raise exception 'reveal_starter_ports: port % missing approved active anchor at (%, %)', v_ports[i], v_ax[i], v_ay[i]; end if;
+    if (select count(*) from public.space_anchors a
+          where a.location_id = v_ports[i] and a.kind = 'location' and a.status = 'active') <> 1 then
+      raise exception 'reveal_starter_ports: port % must have exactly one active location anchor', v_ports[i]; end if;
+    -- exactly one active docking service: the approved fixed id, owned by THIS port; and no other.
+    if (select count(*) from public.location_services s
+          where s.id = v_services[i] and s.location_id = v_ports[i] and s.service = 'docking' and s.status = 'active') <> 1 then
+      raise exception 'reveal_starter_ports: port % missing approved active docking service %', v_ports[i], v_services[i]; end if;
+    if (select count(*) from public.location_services s
+          where s.location_id = v_ports[i] and s.service = 'docking' and s.status = 'active') <> 1 then
+      raise exception 'reveal_starter_ports: port % must have exactly one active docking service', v_ports[i]; end if;
+  end loop;
+
+  -- All-or-nothing status decision (coherent hidden set → reveal; coherent active set → idempotent no-op).
+  select count(*) filter (where status = 'hidden'), count(*) filter (where status = 'active')
+    into v_hidden, v_active
+    from public.locations where id = any(v_ports);
+
+  if v_active = 3 then
+    return jsonb_build_object('ok', true, 'revealed', 0, 'already_active', true);
+  elsif v_hidden = 3 then
+    update public.locations set status = 'active' where id = any(v_ports);
+    return jsonb_build_object('ok', true, 'revealed', 3, 'already_active', false);
+  else
+    raise exception 'reveal_starter_ports: mixed port states (hidden=%, active=%) — abort with no write', v_hidden, v_active;
+  end if;
+end;
+$$;
+revoke all on function public.reveal_starter_ports() from public, anon, authenticated;
+grant execute on function public.reveal_starter_ports() to service_role;
+
 -- ── Self-assert (deploy-time; a raise aborts the migration txn — nothing half-applies) ───────────────
 do $$
 declare
@@ -132,6 +273,7 @@ declare
   v_fields      int;
   v_anchors     int;
   v_moving_locs int;
+  v_src         text;
 begin
   -- (A) vacuity: the probed classes exist (a world with none would green every sweep below while
   --     proving nothing — the 0220 rule, re-applied).
@@ -229,6 +371,25 @@ begin
     raise exception '0227 self-assert FAIL: only %/% in-flight location-targeted movement(s) match their target''s live active anchor after reconciliation — the rest would terminally fail at arrival', v_n, v_moving_locs;
   end if;
 
+  -- (F2) HAZARD C closed, proven STRUCTURALLY on the deployed function body — never INVOKED here (a
+  --      live hidden→active status flip is a deliberate human/operation-script action, out of scope
+  --      for a geometry migration, exactly per 0068's own dark-by-default charter). The re-created
+  --      reveal_starter_ports() must carry the ×3 arrays and must NOT carry the old pre-rebalance
+  --      arrays or the retired fixed anchor-id predicate.
+  select prosrc into v_src from pg_proc where oid = to_regprocedure('public.reveal_starter_ports()')::oid;
+  if v_src is null then
+    raise exception '0227 self-assert FAIL: public.reveal_starter_ports() does not exist';
+  end if;
+  if position('array[-150, 210, 30]' in v_src) = 0 or position('array[-90, -30, 240]' in v_src) = 0 then
+    raise exception '0227 self-assert FAIL: reveal_starter_ports() does not carry the rebalanced (x3) anchor coordinate arrays';
+  end if;
+  if position('array[-50, 70, 10]' in v_src) > 0 or position('array[-30, -10, 80]' in v_src) > 0 then
+    raise exception '0227 self-assert FAIL: reveal_starter_ports() still carries a pre-rebalance coordinate array — the re-create did not land';
+  end if;
+  if position('a.id = v_anchors[i]' in v_src) > 0 then
+    raise exception '0227 self-assert FAIL: reveal_starter_ports() still pins a fixed anchor-id literal — it cannot survive the §4 relocation';
+  end if;
+
   -- (G) exact retuned-radius class map still holds post-scale (30/36/24/NULL — the 0220 map times 3).
   select count(*) into v_territory from public.locations where territory_radius is not null;
   select count(*) into v_n from public.locations
@@ -242,6 +403,6 @@ begin
 
   select count(*) into v_locations from public.locations;
 
-  raise notice '0227 self-assert ok: % locations spread 3x (envelope-clean); % territory rings retuned 30/36/24 class-complete with zero overlaps/center-hits on the deployed world; % mining_fields rescaled 0.25x (Sparse Ore Belt->(375,225), Singularity Scar->(1050,775)); % active location anchor(s) relocated in lockstep (0066 invariant intact, no dup-actives); % in-flight location-targeted leg(s) reconciled to their new anchor (zero mismatches)',
+  raise notice '0227 self-assert ok: % locations spread 3x (envelope-clean); % territory rings retuned 30/36/24 class-complete with zero overlaps/center-hits on the deployed world; % mining_fields rescaled 0.25x (Sparse Ore Belt->(375,225), Singularity Scar->(1050,775)); % active location anchor(s) relocated in lockstep (0066 invariant intact, no dup-actives); % in-flight location-targeted leg(s) reconciled to their new anchor (zero mismatches); reveal_starter_ports() re-created with the x3 anchor coordinates and no fixed anchor-id pin (structurally proven, not invoked)',
     v_locations, v_territory, v_fields, v_anchors, v_moving_locs;
 end $$;
