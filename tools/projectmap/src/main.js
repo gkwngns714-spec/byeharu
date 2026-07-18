@@ -40,6 +40,33 @@ const gamePurpose = (id) => purpose[id] || ''
 
 const { status, why, frontier } = deriveStatuses(graph, live)
 const { birth, days } = deriveHistory(graph)   // nodeId -> 'YYYY-MM-DD', and the sorted day list
+
+// individual-node reveal order for the playback video — the codebase builds itself
+// ONE node at a time (not a day's whole batch at once). Chronological by birth day,
+// and within a day a migration appears just before the functions/tables/flags it
+// creates (origin-stamp, then kind).
+const _byIdN = new Map(graph.nodes.map((n) => [n.id, n]))
+const _originStamp = new Map()   // symbol/flag id -> earliest creating/seeding migration stamp
+for (const e of graph.edges) {
+  if (e.type !== 'creates' && e.type !== 'seeds') continue
+  const s = _byIdN.get(e.source)?.stamp
+  if (!s) continue
+  const cur = _originStamp.get(e.target)
+  if (!cur || s < cur) _originStamp.set(e.target, s)
+}
+const _ORDER_KIND = { migration: 0, flag: 1, table: 2, function: 3, system: 4, phase: 5, rung: 6 }
+const _orderStamp = (n) => (n.kind === 'migration' ? n.stamp : _originStamp.get(n.id)) ?? '99999999999999'
+const bornOrder = graph.nodes.slice().sort((a, b) => {
+  const ba = birth.get(a.id), bb = birth.get(b.id)
+  if (ba !== bb) return ba < bb ? -1 : 1
+  const sa = _orderStamp(a), sb = _orderStamp(b)
+  if (sa !== sb) return sa < sb ? -1 : 1
+  const ka = _ORDER_KIND[a.kind] ?? 9, kb = _ORDER_KIND[b.kind] ?? 9
+  if (ka !== kb) return ka - kb
+  return a.id < b.id ? -1 : 1
+}).map((n) => n.id)
+const orderRank = new Map(bornOrder.map((id, i) => [id, i]))
+const PB_LAST = bornOrder.length - 1
 const positioned = layout(graph.nodes, graph.edges)
 const byId = new Map(positioned.map((n) => [n.id, n]))
 const idx = new Map(positioned.map((n, i) => [n.id, i]))
@@ -121,13 +148,14 @@ let method = null
 // playback — the build-history time-lapse. `on` gates node visibility by birth
 // day; `i` is the current day index into `days`; `playing` auto-advances in tick.
 const pb = { on: false, playing: false, i: days.length - 1, last: 0 }
-const STEP_MS = 620   // dwell per day while playing
+const STEP_MS = 200    // dwell per NODE while playing (one node revealed at a time)
+const FLASH_MS = 560   // how long a freshly-revealed node stays lit (outlives one step → a trailing cascade)
 
 const matchesQuery = (n) => !state.query || n.label.toLowerCase().includes(state.query)
   || (n.detail ?? '').toLowerCase().includes(state.query)
 
 function nodeVisible(n) {
-  if (pb.on && birth.get(n.id) > days[pb.i]) return false   // not born yet on this day
+  if (pb.on && orderRank.get(n.id) > pb.i) return false   // not revealed yet in the node-by-node build
   return state.status.has(status.get(n.id).key) && state.kind.has(n.kind) && matchesQuery(n)
 }
 
@@ -428,53 +456,35 @@ let bornFlash = []   // [{ i, t }] nodes born on the day just revealed — a bri
 // Rank the newly-born nodes so the headline features the ones that mean the most to
 // a player (a system or a feature switch outranks a lone helper function), surface
 // the top few with their game-purpose, and count the rest as "+N more".
-const CAP_RANK = { system: 0, flag: 1, phase: 2, rung: 3, migration: 4, table: 5, function: 6 }
 const capLabel = (n) => {
   if (n.kind === 'flag') return n.label.replace(/_enabled$/, '').replace(/_/g, ' ')
   if (n.kind === 'migration') return n.label.replace(/^(init|add|create|new|seed|make)_/i, '').replace(/_/g, ' ')
   return n.label
 }
 const capText = (id) => gamePurpose(id).replace(/\s*\([^)]*\)\s*$/, '')   // drop the trailing (technical label)
+// The caption tracks the ONE node being revealed this step — its game-purpose, so
+// the video reads like a guided tour: node appears, it tells you what it's for.
 function renderCaption() {
   if (!pb.on) { pbCaption.classList.remove('on'); return }
-  const day = days[pb.i]
-  const born = graph.nodes
-    .filter((n) => birth.get(n.id) === day && state.kind.has(n.kind) && capText(n.id))
-    .sort((a, b) => (CAP_RANK[a.kind] ?? 9) - (CAP_RANK[b.kind] ?? 9))
+  const id = bornOrder[pb.i]
+  const n = _byIdN.get(id)
+  const p = capText(id)
   pbCaption.classList.add('on')
-  if (!born.length) {
-    pbCaption.innerHTML = `<div class="cap-head"><b>${day}</b> · day ${pb.i + 1} / ${days.length}</div>`
-      + '<div class="cap-quiet">Groundwork and fixes — nothing new to the player this day.</div>'
-  } else {
-    const top = born.slice(0, 3)
-    const rows = top.map((n) => `<div class="cap-row">
-      <span class="cap-dot" style="background:${status.get(n.id).hex}"></span>
-      <span><b>${capLabel(n)}</b> — ${capText(n.id)}</span></div>`).join('')
-    const more = born.length - top.length
-    pbCaption.innerHTML = `<div class="cap-head"><b>${day}</b> · introduced this day</div>${rows}`
-      + (more > 0 ? `<div class="cap-more">+${more} more born this day</div>` : '')
-  }
-  // a gentle fade on change (disabled under reduced-motion via CSS)
-  pbCaption.classList.remove('pop'); void pbCaption.offsetWidth; pbCaption.classList.add('pop')
+  pbCaption.innerHTML = `<div class="cap-head"><span class="cap-dot" style="background:${status.get(id).hex}"></span>`
+    + `<b>${capLabel(n)}</b> <span class="cap-kind">${n.kind}</span></div>`
+    + (p ? `<div class="cap-row">${p}</div>` : '<div class="cap-quiet">Under-the-hood plumbing — no direct player effect.</div>')
 }
 
-const pbNodeCount = (dayIdx) => {
-  let c = 0
-  for (const n of graph.nodes) if (birth.get(n.id) <= days[dayIdx] && state.kind.has(n.kind)) c++
-  return c
-}
 function pbRender() {
-  pbSlider.max = String(days.length - 1)
+  pbSlider.max = String(PB_LAST)
   pbSlider.value = String(pb.i)
-  pbLabel.innerHTML = `<b>${days[pb.i]}</b><span class="pb-sub">day ${pb.i + 1} / ${days.length} · ${pbNodeCount(pb.i)} nodes</span>`
+  const n = _byIdN.get(bornOrder[pb.i])
+  pbLabel.innerHTML = `<b>${capLabel(n)}</b><span class="pb-sub">${pb.i + 1} / ${bornOrder.length} · ${birth.get(bornOrder[pb.i])}</span>`
   pbPlayBtn.textContent = pb.playing ? '⏸' : '▶'
 }
-function pbSetDay(i, flash = false) {
-  const c = Math.max(0, Math.min(days.length - 1, i))
-  if (flash && c > pb.i) {
-    const day = days[c]
-    positioned.forEach((n, idx) => { if (birth.get(n.id) === day) bornFlash.push({ i: idx, t: performance.now() }) })
-  }
+function pbSetStep(i, flash = false) {
+  const c = Math.max(0, Math.min(PB_LAST, i))
+  if (flash && c !== pb.i) { const ix = idx.get(bornOrder[c]); if (ix != null) bornFlash.push({ i: ix, t: performance.now() }) }
   pb.i = c
   apply(); pbRender(); renderCaption()
 }
@@ -485,20 +495,20 @@ function pbSetMode(on) {
   document.body.classList.toggle('history', on)
   historyBtn.setAttribute('aria-pressed', String(on))
   pbBar.classList.toggle('on', on)
-  pb.i = on ? 0 : days.length - 1     // enter at day one; leave on the full present-day map
+  pb.i = on ? 0 : PB_LAST     // enter at the first node; leave on the full present-day map
   apply(); if (on) pbRender()
   renderCaption()
 }
 function pbPlayPause() {
   if (!pb.on) return
-  if (pb.i >= days.length - 1) pbSetDay(0)     // at the end → replay from the start
+  if (pb.i >= PB_LAST) pbSetStep(0)     // at the end → replay from the start
   pb.playing = !pb.playing
   pb.last = performance.now()
   pbRender()
 }
 historyBtn.addEventListener('click', () => pbSetMode(!pb.on))
 pbPlayBtn.addEventListener('click', pbPlayPause)
-pbSlider.addEventListener('input', (e) => { pb.playing = false; pbSetDay(+e.target.value); })
+pbSlider.addEventListener('input', (e) => { pb.playing = false; pbSetStep(+e.target.value); })
 addEventListener('keydown', (e) => {
   if (tab !== 'map' || isTyping()) return
   if (e.key.toLowerCase() === 'p') pbSetMode(!pb.on)   // toggle the time-lapse
@@ -809,22 +819,22 @@ apply()
     mesh.instanceMatrix.needsUpdate = true
   }
 
-  // ── playback: advance the day, and pop in whatever was born on it ──────────
+  // ── playback: reveal the next node, and pop it in ──────────────────────────
   if (pb.on && pb.playing) {
     const now = performance.now()
     if (now - pb.last >= STEP_MS) {
       pb.last = now
-      if (pb.i >= days.length - 1) { pb.playing = false; pbRender() }
-      else pbSetDay(pb.i + 1, true)
+      if (pb.i >= PB_LAST) { pb.playing = false; pbRender() }
+      else pbSetStep(pb.i + 1, true)
     }
   }
   if (bornFlash.length) {
     const now = performance.now()
-    bornFlash = bornFlash.filter((f) => now - f.t < STEP_MS)
+    bornFlash = bornFlash.filter((f) => now - f.t < FLASH_MS)
     for (const f of bornFlash) {
       const n = positioned[f.i]
       if (!nodeVisible(n)) continue
-      const age = (now - f.t) / STEP_MS          // 0..1
+      const age = (now - f.t) / FLASH_MS          // 0..1
       const pop = 1 + 1.6 * (1 - age)            // burst big, settle to normal
       dummy.position.set(n.x, n.y, n.z)
       dummy.scale.setScalar(KIND_SIZE[n.kind] * pop)
