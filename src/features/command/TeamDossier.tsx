@@ -103,7 +103,7 @@ export function TeamDossier({
         </p>
         {memberCount > 0 && (
           <Button size="sm" variant="ghost" onClick={() => setOpen((o) => !o)}>
-            {open ? 'Hide breakdown' : 'Breakdown'}
+            {open ? 'Hide ship details' : 'Ship details'}
           </Button>
         )}
       </div>
@@ -136,10 +136,10 @@ export function TeamDossier({
 
       {open && memberCount > 0 && (
         <div className="mt-2 border-t border-edge/60 pt-1.5">
-          <p className="text-[10px] text-ink-faint">Per-ship contribution · estimate (preview)</p>
+          <p className="text-[10px] text-ink-faint">Per-ship contribution (estimate)</p>
           {curBreakdown === null ? (
             <p className="mt-1 text-[10px] text-ink-faint" aria-busy="true">
-              Fetching breakdown…
+              Fetching details…
             </p>
           ) : !curBreakdown.ok ? (
             <p className="mt-1 text-[10px] text-warning">{teamReasonMessage(curBreakdown.reason)}</p>
