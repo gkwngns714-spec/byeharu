@@ -122,7 +122,10 @@ export async function fetchMyMainShips(): Promise<MainShipRow[]> {
 // resolver turns these into map markers (docked → look up the port coords; transit → interpolate the segment;
 // in_space → space_x/space_y). Coordinates arrive as jsonb numbers (double precision), never numeric strings.
 
-export type FleetPositionPlace = 'transit' | 'in_space' | 'docked' | 'hidden'
+// S1 BERTH MODEL (migration 0216): 'berthed' — an UNFLEETED ship docked at its berth port.
+// INFO only, never a map marker (resolveFleetMarkers deliberately draws nothing for it); the
+// roster/labels read it as "Docked at <port>" via the ONE shared SHIPLOC resolver.
+export type FleetPositionPlace = 'transit' | 'in_space' | 'docked' | 'berthed' | 'hidden'
 
 /** A committed movement segment for client-side interpolation (the shared movementInterpolation contract). */
 export interface FleetPositionSegment {
@@ -142,7 +145,7 @@ export interface FleetPosition {
   status: string
   spatial_state: SpatialState | null
   place: FleetPositionPlace
-  location_id: string | null // docked: the present fleet's current location
+  location_id: string | null // docked: the present fleet's current location; berthed: the berth port
   space_x: number | null // in_space only
   space_y: number | null // in_space only
   segment: FleetPositionSegment | null // transit only

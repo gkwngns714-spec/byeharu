@@ -1,4 +1,4 @@
-import { resolveShipLocationLabel } from '../ship/shipLocation'
+import { resolveBerthedLocationLabel, resolveShipLocationLabel } from '../ship/shipLocation'
 import type { FleetPosition, FleetPositionSegment, MainShipFleet } from '../map/mainshipApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MapLocation } from '../map/mapTypes'
@@ -113,6 +113,11 @@ export function fleetPositionLocationLabel(
   }
   if (pos.place === 'transit' && pos.segment) {
     return resolveShipLocationLabel(null, movementFromSegment(pos.segment), locations).label
+  }
+  // S1 BERTH MODEL (0216): an UNFLEETED ship berthed at a port — a docked read through the ONE
+  // shared resolver ("Docked at <port>"); never a map marker, so only the label surfaces here.
+  if (pos.place === 'berthed') {
+    return resolveBerthedLocationLabel(pos.location_id, locations).label
   }
   return null // 'hidden' (home/destroyed/incoherent) or a transit row with no segment → omit, never guess
 }

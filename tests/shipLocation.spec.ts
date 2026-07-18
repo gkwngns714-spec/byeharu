@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { resolveShipLocationLabel } from '../src/features/ship/shipLocation'
+import { resolveBerthedLocationLabel, resolveShipLocationLabel } from '../src/features/ship/shipLocation'
 import type { MainShipFleet } from '../src/features/map/mainshipApi'
 import type { FleetMovement } from '../src/features/fleets/fleetTypes'
 import type { MapLocation } from '../src/features/map/mapTypes'
@@ -121,4 +121,34 @@ test('fail closed — present at a HIDDEN location (absent from the map) → gen
   expect(r.kind).toBe('docked')
   expect(r.label).toBe('Docked')
   expect(r.label).not.toContain('hidden-x')
+})
+
+// ── S1 BERTH MODEL (0216) — resolveBerthedLocationLabel: a berthed ship is a DOCKED read ─────────
+// The helper COMPOSES resolveShipLocationLabel (one implementation of "where is the ship"), so
+// these cases pin that composition: named port → "Docked at <port>"; combat port inherits the
+// combat wording; unknown port fails closed with no id leak; a null id degrades to deep space.
+
+test('berthed — a berth at a named port reads "Docked at <port>" (kind docked)', () => {
+  const r = resolveBerthedLocationLabel('loc-haven', LOCS)
+  expect(r.kind).toBe('docked')
+  expect(r.label).toBe('Docked at Haven Reach')
+})
+
+test('berthed — a berth at a combat port inherits the combat wording (resolver composition)', () => {
+  const r = resolveBerthedLocationLabel('loc-den', LOCS)
+  expect(r.kind).toBe('combat')
+  expect(r.label).toBe('In combat at Pirate Den')
+})
+
+test('berthed — an unknown/hidden berth port fails closed to "Docked", never a leaked id', () => {
+  const r = resolveBerthedLocationLabel('secret-port', LOCS)
+  expect(r.kind).toBe('docked')
+  expect(r.label).toBe('Docked')
+  expect(r.label).not.toContain('secret-port')
+})
+
+test('berthed — a null berth id (shape-impossible server-side) degrades honestly, no crash, no invented port', () => {
+  const r = resolveBerthedLocationLabel(null, LOCS)
+  expect(r.kind).toBe('deep-space')
+  expect(r.label).toBe('In deep space')
 })
