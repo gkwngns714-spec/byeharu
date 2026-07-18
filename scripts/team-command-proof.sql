@@ -264,14 +264,21 @@
 -- UNCHANGED). The legacy team-send path (0152/0163) still requires status='home', so the FIVE ships
 -- that must be legacy-sendable (a1,a2,a3,b1,c1) no longer need a status/spatial rewrite for that —
 -- but they still carry a live 'present' commission fleet that must be retired (it would otherwise
--- consume the active-fleet cap), so that half of the normalization survives. c2 is the DELIBERATE
--- exception in BOTH directions: it is left OFF the home-normalization list (unchanged), AND it is
--- surgically taken BACK to the pre-repoint commissioned-docked shape (status='stationary',
--- spatial_state='at_location') — the one shape this proof still needs on demand (the all-or-nothing
--- SEND block pins the legacy send's own error text for a stationary ship, 0152:106) that the real
--- commission RPC no longer produces by itself. That surgery — plus a created_at stagger for
--- deterministic member ordering (now() is txn-constant, so same-txn rows tie) — is the ONLY non-RPC
--- state surgery here; everything else goes through the real RPC surface.
+-- consume the active-fleet cap), so that half of the normalization survives.
+-- 4C-MIG-2B TOKEN UPDATE: 'stationary' and spatial_state/space_x/space_y are GONE (migration 0231) —
+-- the all-or-nothing SEND block no longer needs (and cannot construct) the pre-repoint
+-- commissioned-docked shape. c2 is still the DELIBERATE exception, left OFF the home-normalization
+-- list, but the un-sendable shape is now simply status='hunting' (the send RPC's OWN gate is a flat
+-- `status <> 'home'` check on main_ship_instances.status alone — verified against the live
+-- send_main_ship_expedition body, which never reads spatial_state for this decision; 'hunting' is
+-- the SAME non-'home' status this proof's own TEAMSETTLE block already relies on elsewhere as an
+-- established "not sendable" witness). c2's real 'present' commission fleet + active presence are
+-- left exactly as the real RPC minted them (this incoherence — status='hunting' beside a live
+-- 'present' fleet — is invisible to the flat status gate under test and is corrected by the SAME
+-- home-normalization idiom before c2 is reused later in TEAMHUNT). The created_at stagger for
+-- deterministic member ordering (now() is txn-constant, so same-txn rows tie) is unchanged — that,
+-- plus the c2 status surgery, is the ONLY non-RPC state surgery here; everything else goes through
+-- the real RPC surface.
 
 \set ON_ERROR_STOP on
 
@@ -450,7 +457,7 @@ begin
   -- 'home'/NULL from birth) but is kept — cheap, and future-proof if commission's default ever moves
   -- again — and still does the load-bearing fleet-retirement work.
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id in (a1, a2, a3, b1, c1);
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -466,15 +473,18 @@ begin
                         where main_ship_id in (a1, a2, a3, b1, c1) and status = 'destroyed')
      and status = 'active';
 
-  -- c2 SURGERY (the one ADDITIVE fixture step 0222 requires): reconstruct the pre-repoint
-  -- commissioned-docked shape (status='stationary', spatial_state='at_location') that commission
-  -- itself no longer produces. c2's 'present' commission fleet + active presence are UNTOUCHED
-  -- (real-RPC, still minted exactly as before) — only the two ship columns move, together, to
-  -- satisfy the 0055 CHECK (main_ship_instances_stationary_spatial_state: status='stationary'
-  -- requires spatial_state in ('in_space','at_location')). This is the un-sendable member the
-  -- all-or-nothing SEND block needs (0152's own status<>'home' gate, pinned on its exact error text).
+  -- c2 SURGERY (4C-MIG-2B rework — 'stationary'/spatial_state are GONE, migration 0231): the
+  -- un-sendable member no longer needs the pre-repoint commissioned-docked shape at all. The live
+  -- send_main_ship_expedition gate (grep-verified) is a FLAT `if v_ship.status <> 'home'` check on
+  -- main_ship_instances.status alone — it never reads spatial_state for this decision — so ANY
+  -- non-'home', non-fleet-truth-docked status makes c2 un-sendable. 'hunting' is used (the SAME
+  -- established "not sendable" witness this proof's own TEAMSETTLE block relies on elsewhere).
+  -- c2's real 'present' commission fleet + active presence are left UNTOUCHED (real-RPC, still
+  -- minted exactly as before) — the resulting status='hunting'-beside-a-present-fleet incoherence
+  -- is invisible to the flat status gate under test here, and c2 is re-normalized to a coherent
+  -- home shape before its next use (TEAMHUNT's happy-path fixture, below).
   update public.main_ship_instances
-     set status = 'stationary', spatial_state = 'at_location'
+     set status = 'hunting'
    where main_ship_id = c2;
 
   -- Deterministic member ordering: group-send/stop iterate members ORDER BY created_at, but now() is
@@ -484,17 +494,17 @@ begin
   update public.main_ship_instances set created_at = created_at - interval '2 seconds' where main_ship_id = a2;
   update public.main_ship_instances set created_at = created_at - interval '1 second'  where main_ship_id = a3;
 
-  -- post-normalization coherence: 5 home ships with zero active fleets; c2 stationary with its 1 'present'.
+  -- post-normalization coherence: 5 home ships with zero active fleets; c2 hunting with its 1 'present'.
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (a1,a2,a3,b1,c1) and status = 'home' and spatial_state is null;
+    where main_ship_id in (a1,a2,a3,b1,c1) and status = 'home';
   if n <> 5 then raise exception 'PROVISION FAIL: % of 5 normalized home ships', n; end if;
   select count(*) into n from public.fleets
     where main_ship_id in (a1,a2,a3,b1,c1) and status in ('moving','present','returning');
   if n <> 0 then raise exception 'PROVISION FAIL: % active fleets survive normalization (want 0)', n; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and status = 'stationary';
-  if n <> 1 then raise exception 'PROVISION FAIL: c2 is not stationary'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and status = 'hunting';
+  if n <> 1 then raise exception 'PROVISION FAIL: c2 is not hunting'; end if;
 
-  raise notice 'provision ok: uA=3 uB=1 uC=2 ships via real RPCs; 5 normalized to home; c2 left stationary';
+  raise notice 'provision ok: uA=3 uB=1 uC=2 ships via real RPCs; 5 normalized to home; c2 left hunting (un-sendable)';
 end $$;
 
 -- ════════ BLOCK HULLSTATS (activation prep, 0170): hull base combat stats seeded + adapter-folded ════════
@@ -813,7 +823,7 @@ begin
   select count(*) into n from public.main_ship_instances where main_ship_id in (a1, a2) and status = 'traveling';
   if n <> 2 then raise exception 'SEND FAIL: % traveling ships (want 2)', n; end if;
 
-  -- ALL-OR-NOTHING: team {c1 home (ordered FIRST), c2 stationary}. c1's member-send SUCCEEDS inside the
+  -- ALL-OR-NOTHING: team {c1 home (ordered FIRST), c2 hunting}. c1's member-send SUCCEEDS inside the
   -- subtransaction, then c2's raises (not 'home') → the whole loop rolls back → member_send_failed AND
   -- c1 keeps ZERO active fleets and is still 'home' — the already-succeeded member was rolled back.
   r := pg_temp.call_as(uC, 'public.upsert_ship_group(1, ''Charlie'')');
@@ -826,23 +836,37 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'SEND FAIL assign c2: %', r; end if;
   r := pg_temp.call_as(uC, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gC1, slag));
   if (r->>'reason') is distinct from 'member_send_failed' then raise exception 'SEND FAIL all-or-nothing reason: %', r; end if;
-  -- the abort must be pinned to c2 specifically: the live send raises this exact message for a stationary
-  -- ship (0152:106). Its presence in `detail` proves the loop reached (and failed on) c2 AFTER c1's
-  -- member-send had already succeeded inside the subtransaction — i.e. c1 was rolled back, not never-sent.
-  if (r->>'detail') not like '%not available (status stationary)%' then
-    raise exception 'SEND FAIL all-or-nothing detail not pinned to stationary c2: %', r; end if;
+  -- the abort must be pinned to c2 specifically: the live send raises this exact message for a hunting
+  -- ship (its flat status<>'home' gate). Its presence in `detail` proves the loop reached (and failed
+  -- on) c2 AFTER c1's member-send had already succeeded inside the subtransaction — i.e. c1 was rolled
+  -- back, not never-sent.
+  if (r->>'detail') not like '%not available (status hunting)%' then
+    raise exception 'SEND FAIL all-or-nothing detail not pinned to hunting c2: %', r; end if;
   select count(*) into n from public.fleets
     where main_ship_id = c1 and status in ('moving','present','returning');
   if n <> 0 then raise exception 'SEND FAIL all-or-nothing: c1 kept % active fleets (want 0 — the succeeded member must be rolled back)', n; end if;
   select count(*) into n from public.main_ship_instances where main_ship_id = c1 and status = 'home';
   if n <> 1 then raise exception 'SEND FAIL all-or-nothing: c1 is no longer home'; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and status = 'stationary';
-  if n <> 1 then raise exception 'SEND FAIL all-or-nothing: c2 is no longer stationary'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and status = 'hunting';
+  if n <> 1 then raise exception 'SEND FAIL all-or-nothing: c2 is no longer hunting'; end if;
 
   raise notice 'TEAMCMD_PASS_SEND ok: empty_group, foreign fail-closed, 2-ship send (2 movements/fleets/traveling), all-or-nothing rollback';
 end $$;
 
--- ════════ BLOCK STOP: foreign group, EXACT mixed aggregate + held-in-space shape, idempotent re-stop ════════
+-- ════════ BLOCK STOP: foreign group, mixed aggregate, BEST-EFFORT graceful degradation ════════
+-- 4C-MIG-2B REWORK: the legacy per-ship "hold in space" write (command_main_ship_stop_transit,
+-- 0155 — part of the STOP-TRIO the 2b migration is explicitly instructed to leave untouched, pending
+-- the client stop-retirement PR #189 + its own removal in 4b-drop) writes
+-- `status='stationary', spatial_state='in_space', space_x=.., space_y=..` INLINE (no shared helper —
+-- its own header says so). Migration 0231 drops those columns/status value, so this inline write now
+-- raises "column does not exist" the instant a real halt is attempted. stop_ship_group_transit
+-- (0164) wraps EACH member's command_main_ship_stop_transit call in its own exception-catching
+-- subtransaction (BEST-EFFORT, not all-or-nothing — see its header) precisely so one member's
+-- failure never aborts the team op — that design intent is EXACTLY what still holds and is worth
+-- proving here: a1/a2's halt attempts now fail gracefully (outcome='failed', no crash, no corrupt
+-- half-state) instead of physically holding in open space. This block is EXPECTED TO CHANGE AGAIN
+-- once #189 lands and 4b-drop removes the stop-trio outright; until then it proves the failure mode
+-- is graceful, not silent or state-corrupting.
 do $$
 declare r jsonb; n int;
   uA uuid := (select v from tcmd where k='uA');
@@ -854,49 +878,50 @@ begin
   r := pg_temp.call_as(uA, format('public.stop_ship_group_transit(%L::uuid)', gB1));
   if (r->>'reason') is distinct from 'group_not_found' then raise exception 'STOP FAIL foreign group: %', r; end if;
 
-  -- MIXED aggregate: a1,a2 traveling (from BLOCK SEND) + a3 home, all in gA1 → exactly {2,1,0}.
+  -- MIXED aggregate: a1,a2 traveling (from BLOCK SEND, haltable) + a3 home (nothing to halt), all in
+  -- gA1. a1/a2's halt attempts now FAIL (the retired inline write errors, caught per-member) →
+  -- {stopped:0, skipped:1, failed:2} — NOT the pre-2b {2,1,0}.
   r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a3, gA1));
   if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL assign a3: %', r; end if;
   r := pg_temp.call_as(uA, format('public.stop_ship_group_transit(%L::uuid)', gA1));
   if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL mixed stop: %', r; end if;
-  if (r->>'stopped')::int is distinct from 2 or (r->>'skipped')::int is distinct from 1 or (r->>'failed')::int is distinct from 0 then
-    raise exception 'STOP FAIL mixed aggregate: stopped=% skipped=% failed=% (want 2/1/0)', r->>'stopped', r->>'skipped', r->>'failed';
+  if (r->>'stopped')::int is distinct from 0 or (r->>'skipped')::int is distinct from 1 or (r->>'failed')::int is distinct from 2 then
+    raise exception 'STOP FAIL mixed aggregate: stopped=% skipped=% failed=% (want 0/1/2 — the legacy hold write is retired pending #189/4b-drop)', r->>'stopped', r->>'skipped', r->>'failed';
   end if;
-  -- per-member results payload (not just the aggregate): a3 (home, no in-flight fleet) is the skip, tagged
-  -- with the exact outcome/reason token the RPC emits for a member with nothing to halt.
+  -- per-member results payload: a3 (home, no in-flight fleet) is the skip, tagged with the exact
+  -- outcome/reason token the RPC emits for a member with nothing to halt; a1/a2 are failed, each
+  -- carrying the RPC's own graceful-catch token (never a raw crash of the whole team call).
   select count(*) into n from jsonb_array_elements(r->'results') e
     where e->>'main_ship_id' = a3::text and e->>'outcome' = 'skipped' and e->>'reason' = 'no_active_fleet';
   if n <> 1 then raise exception 'STOP FAIL mixed results: a3 not skipped/no_active_fleet: %', r->'results'; end if;
+  select count(*) into n from jsonb_array_elements(r->'results') e
+    where e->>'main_ship_id' in (a1::text, a2::text) and e->>'outcome' = 'failed' and e->>'reason' = 'stop_failed';
+  if n <> 2 then raise exception 'STOP FAIL mixed results: % of a1/a2 tagged failed/stop_failed (want 2): %', n, r->'results'; end if;
 
-  -- physical hold shape (0155): a1,a2 HELD in open space; their fleets settled movement-less; a3 untouched.
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id in (a1, a2) and status = 'stationary' and spatial_state = 'in_space'
-      and space_x is not null and space_y is not null;
-  if n <> 2 then raise exception 'STOP FAIL: % ships held stationary/in_space with coords (want 2)', n; end if;
+  -- GRACEFUL DEGRADATION, NOT CORRUPTION: a1/a2 stay exactly as BLOCK SEND left them — still
+  -- 'traveling' with their fleets still 'moving' and their fleet_movements rows still 'moving' — the
+  -- per-member subtransaction rolled back cleanly, never leaving a half-cancelled/half-held ship.
+  select count(*) into n from public.main_ship_instances where main_ship_id in (a1, a2) and status = 'traveling';
+  if n <> 2 then raise exception 'STOP FAIL: % of a1/a2 still traveling (want 2 — the failed halt must roll back cleanly)', n; end if;
   select count(*) into n from public.fleets
-    where main_ship_id in (a1, a2) and status = 'completed' and active_movement_id is null;
-  if n <> 2 then raise exception 'STOP FAIL: % settled (completed, pointer-cleared) fleets (want 2)', n; end if;
-  -- movement-row terminal: each stopped fleet's fleet_movements row reached the 'cancelled' terminal with
-  -- resolved_at set. A regression that skipped the movement cancel would leave a 'moving' row for the cron
-  -- to later settle (un-holding the ship) yet still pass the ship/fleet shape checks above.
+    where main_ship_id in (a1, a2) and status = 'moving' and active_movement_id is not null;
+  if n <> 2 then raise exception 'STOP FAIL: % of a1/a2 fleets still moving with a live movement pointer (want 2)', n; end if;
   select count(*) into n from public.fleet_movements
     where fleet_id in (select id from public.fleets where main_ship_id in (a1, a2))
-      and status = 'cancelled' and resolved_at is not null;
-  if n <> 2 then raise exception 'STOP FAIL: % cancelled/resolved movement rows for the stopped fleets (want 2)', n; end if;
+      and status = 'moving';
+  if n <> 2 then raise exception 'STOP FAIL: % fleet_movements rows still moving (want 2 — no partial cancel survived the rollback)', n; end if;
   select count(*) into n from public.main_ship_instances where main_ship_id = a3 and status = 'home';
   if n <> 1 then raise exception 'STOP FAIL: a3 was disturbed (not home)'; end if;
 
-  -- idempotent double-stop: nothing left to halt → {0,3,0} (every member is a legitimate skip).
+  -- deterministic repeat: a1/a2 remain haltable-but-failing (never held), so a SECOND call reaches
+  -- the SAME graceful {0,1,2} outcome — proving the failure is repeatable, not a one-off race.
   r := pg_temp.call_as(uA, format('public.stop_ship_group_transit(%L::uuid)', gA1));
-  if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL double stop: %', r; end if;
-  if (r->>'stopped')::int is distinct from 0 or (r->>'skipped')::int is distinct from 3 or (r->>'failed')::int is distinct from 0 then
-    raise exception 'STOP FAIL double-stop aggregate: stopped=% skipped=% failed=% (want 0/3/0)', r->>'stopped', r->>'skipped', r->>'failed';
+  if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL second stop: %', r; end if;
+  if (r->>'stopped')::int is distinct from 0 or (r->>'skipped')::int is distinct from 1 or (r->>'failed')::int is distinct from 2 then
+    raise exception 'STOP FAIL second-stop aggregate: stopped=% skipped=% failed=% (want 0/1/2, same as the first call)', r->>'stopped', r->>'skipped', r->>'failed';
   end if;
-  -- every one of the three members must carry outcome='skipped' in the payload (no silent failed/stopped).
-  select count(*) into n from jsonb_array_elements(r->'results') e where e->>'outcome' = 'skipped';
-  if n <> 3 then raise exception 'STOP FAIL double-stop results: % of 3 entries skipped: %', n, r->'results'; end if;
 
-  raise notice 'TEAMCMD_PASS_STOP ok: foreign fail-closed, mixed {2,1,0} with held-in-space shape, idempotent {0,3,0}';
+  raise notice 'TEAMCMD_PASS_STOP ok: foreign fail-closed, mixed {0,1,2} (the retired legacy hold-in-space write fails gracefully per-member, pending #189/4b-drop), a1/a2 left coherent (still traveling/moving, never half-mutated), repeatable on a second call';
 end $$;
 
 -- ════════ BLOCK DELETE: member SET-NULL un-grouping (ships survive), double-delete fails closed ════════
@@ -1091,21 +1116,18 @@ begin
   exception when check_violation then null; end;
   if v_bad <> 0 then raise exception 'COMBATPARITY FAIL: % illegal identity inserts were ACCEPTED (want 0)', v_bad; end if;
 
-  -- leaf smoke on a fixture team ship (a3: home, spatial_state NULL — undisturbed since BLOCK STOP;
-  -- rolled back with everything): mainship_sync_combat_hp writes hp ONLY (status/spatial untouched);
-  -- mainship_mark_combat_destroyed writes status='destroyed'/hp=0 (the 0059 terminal's lifecycle
-  -- half). 4C-MIG-2A (0222) TOKEN UPDATE: the writer no longer NULLS spatial_state/space_x/space_y
-  -- itself (b3) — a3 already carries them NULL from birth (commission no longer mints them either,
-  -- b1), so the post-condition below still holds, now because the retired columns were never
-  -- touched rather than because this call cleared them.
+  -- leaf smoke on a fixture team ship (a3: home, undisturbed since BLOCK STOP; rolled back with
+  -- everything): mainship_sync_combat_hp writes hp ONLY (status untouched); mainship_mark_combat_
+  -- destroyed writes status='destroyed'/hp=0 (the 0059 terminal's lifecycle half).
+  -- 4C-MIG-2B TOKEN UPDATE: spatial_state/space_x/space_y are GONE (migration 0231, finding F1) —
+  -- both writers' CHECK-required clears retired WITH the columns; only status/hp are checked below.
   perform public.mainship_sync_combat_hp(a3, 123);
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = a3 and hp = 123 and status = 'home' and spatial_state is null;
+    where main_ship_id = a3 and hp = 123 and status = 'home';
   if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_sync_combat_hp did not write hp-only'; end if;
   perform public.mainship_mark_combat_destroyed(a3);
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = a3 and status = 'destroyed' and hp = 0
-      and spatial_state is null and space_x is null and space_y is null;
+    where main_ship_id = a3 and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_mark_combat_destroyed did not write the destroyed/hp=0 terminal'; end if;
 
   -- the no-second-ENGINE pin: EXACTLY one combat cron job RUNS the tick engine (process_combat_ticks),
@@ -1193,8 +1215,9 @@ begin
   r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB1, v_hunt));
   if (r->>'reason') is distinct from 'empty_group' then raise exception 'TEAMHUNT FAIL empty_group: %', r; end if;
   -- invalid_location — a SAFE (activity none) destination MUST reject, and it must answer BEFORE the
-  -- member-readiness check: gA1's members (a1,a2 held stationary since BLOCK STOP; a3 destroyed in
-  -- COMBATPARITY) are all unready, yet the answer is the location's (the reject-order pin).
+  -- member-readiness check: gA1's members (a1,a2 still traveling — BLOCK STOP's halt attempt now
+  -- fails gracefully, see its 4C-MIG-2B rework; a3 destroyed in COMBATPARITY) are all unready either
+  -- way (non-'home', non-fleet-truth-docked), yet the answer is the location's (the reject-order pin).
   r := pg_temp.call_as(uA, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gA1, slag));
   if (r->>'reason') is distinct from 'invalid_location' then raise exception 'TEAMHUNT FAIL invalid_location: %', r; end if;
   -- member_not_ready — the same unready team against the REAL hunt destination.
@@ -1204,7 +1227,7 @@ begin
   -- ── happy-path fixture: uC's pair {c1 (home), c2} — normalize c2 to home (the SAME quarantined
   -- provisioning idiom: home shape + retire its 'present' commission fleet + settle its presence).
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id = c2;
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -1276,7 +1299,7 @@ begin
   if n <> 2 then raise exception 'TEAMHUNT FAIL: % manifest rows (want 2)', n; end if;
   -- both ships out hunting (the 0043 status that only the D3 return path will clear).
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (c1, c2) and status = 'hunting' and spatial_state is null;
+    where main_ship_id in (c1, c2) and status = 'hunting';
   if n <> 2 then raise exception 'TEAMHUNT FAIL: % ships hunting (want 2)', n; end if;
   -- movement speed == the INDEPENDENT D0 totals.speed (min member speed), mission = hunt_pirates.
   select count(*) into n from public.fleet_movements
@@ -1439,7 +1462,7 @@ begin
   select count(*) into n from public.combat_encounters where id = v_enc2 and status = 'defeat' and ended_at is not null;
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: zero-hp encounter did not settle defeat'; end if;
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = b1 and status = 'destroyed' and hp = 0 and spatial_state is null;
+    where main_ship_id = b1 and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: b1 not marked combat-destroyed by the D1 member loop'; end if;
   select count(*) into n from public.fleets where id = v_fleet2 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: sortie fleet not destroyed on defeat'; end if;
@@ -1651,7 +1674,7 @@ begin
 
   -- THE D3 DELTA: surviving members are 'returning' (pair-shape) with combat damage persisted.
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (c1, c2) and status = 'returning' and spatial_state is null;
+    where main_ship_id in (c1, c2) and status = 'returning';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members returning after escape (want 2 — the D3 tick delta)', n; end if;
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
@@ -1702,7 +1725,7 @@ begin
   select hp into v_hp2 from public.main_ship_instances where main_ship_id = c2;
   perform public.process_mainship_expeditions();
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (c1, c2) and status = 'home' and spatial_state is null;
+    where main_ship_id in (c1, c2) and status = 'home';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members re-homed (want 2 home/legacy-shape after the reconciler)', n; end if;
   select count(*) into n from public.main_ship_instances
     where (main_ship_id = c1 and hp = v_hp1) or (main_ship_id = c2 and hp = v_hp2);
@@ -1735,21 +1758,21 @@ begin
   select count(*) into n from public.fleets where id = v_fleet3 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: sortie fleet not destroyed'; end if;
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (c1, c2) and status = 'destroyed' and hp = 0 and spatial_state is null;
+    where main_ship_id in (c1, c2) and status = 'destroyed' and hp = 0;
   if n <> 2 then raise exception 'TEAMSETTLE FAIL loss: members not combat-destroyed by the D1 loop'; end if;
   select count(*) into n from public.combat_reports where encounter_id = v_enc3 and result = 'defeat';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: no defeat report'; end if;
   -- RECOVERY PIN: the 0081 ship-addressed repair revives a combat-destroyed member.
   r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c1));
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = c1 and status = 'home' and hp = max_hp and spatial_state is null;
+    where main_ship_id = c1 and status = 'home' and hp = max_hp;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: repair did not revive the destroyed member (want home @ max_hp)'; end if;
 
   -- ── M1 GUARD PIN: interleaving is untestable in one session — pin the guard's contract instead:
   -- a 'hunting' ship rejects through the send's own not-available raise (never a lost update), and
   -- a legal single send afterwards still works (parity for non-racing callers).
   update public.main_ship_instances
-     set status = 'hunting', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'hunting', updated_at = now()
    where main_ship_id = c1;
   begin
     r := pg_temp.call_as(uC, format('public.send_main_ship_expedition(%L::jsonb, %L::uuid)', jsonb_build_array(c1), slag));
@@ -1765,25 +1788,25 @@ begin
   r := pg_temp.call_as(uC, format('public.send_main_ship_expedition(%L::jsonb, %L::uuid)', jsonb_build_array(c1), slag));
   if (r->>'movement_id') is null then raise exception 'TEAMSETTLE FAIL: legal single send broken by the M1 fix: %', r; end if;
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = c1 and status = 'traveling' and spatial_state is null;
+    where main_ship_id = c1 and status = 'traveling';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: legal single send did not put the ship in flight'; end if;
 
   -- ── SELF-HEAL PIN: manufactured partial states (fixture surgery) whose manifest fleets are ALL
   -- finished (v_fleet completed / v_fleet3 destroyed) → the reconciler re-homes; never destroys.
   r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c2));
   update public.main_ship_instances
-     set status = 'returning', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'returning', updated_at = now()
    where main_ship_id = c2;
   perform public.process_mainship_expeditions();
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = c2 and status = 'home' and spatial_state is null;
+    where main_ship_id = c2 and status = 'home';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned returning member'; end if;
   update public.main_ship_instances
-     set status = 'hunting', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'hunting', updated_at = now()
    where main_ship_id = c2;
   perform public.process_mainship_expeditions();
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = c2 and status = 'home' and spatial_state is null;
+    where main_ship_id = c2 and status = 'home';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned hunting member'; end if;
 
   raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, M1 hunting-reject without a lost update + legal single-send parity, and both self-heal re-homes';
@@ -2635,9 +2658,9 @@ update public.game_config set value='false'::jsonb where key='ship_traits_enable
 --          owner has NO stray tagged fleet beyond those two.
 --   DOCK — rewinding arrive_at (the sanctioned clock surgery) and settling each movement through
 --          movement_settle_arrival (the SAME per-movement settle the cron calls) DOCKS both members
---          at the port (0153: status 'stationary' / spatial_state 'at_location'), their fleets
---          'present' at Slagworks — and the informational tag SURVIVES the settle (the map's
---          docked-team badge read).
+--          at the port (post-4C-MIG-2B: status='home', the lifecycle signal; FLEET TRUTH is the real
+--          dock proof), their fleets 'present' at Slagworks — and the informational tag SURVIVES the
+--          settle (the map's docked-team badge read).
 do $$
 declare r jsonb; n int; uT uuid; t1 uuid; t2 uuid; gT uuid; v_mv uuid;
   slag uuid := (select v from tcmd where k='slag');
@@ -2663,7 +2686,7 @@ begin
   if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'TEAMMAP FAIL provision 2nd: %', r; end if;
   t2 := (r->>'main_ship_id')::uuid;
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id in (t1, t2);
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -2720,14 +2743,17 @@ begin
     if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
       raise exception 'TEAMMAP FAIL settle: %', r; end if;
   end loop;
+  -- 4C-MIG-2B REWORK: 'stationary'/spatial_state are GONE — status='home' is the dock write's own
+  -- literal now (F2's mainship_mark_docked_at_location repoint); FLEET TRUTH (below) is the real
+  -- dock proof, exactly as 0221 R1-f reads it.
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
-  if n <> 2 then raise exception 'TEAMMAP FAIL: % members docked at arrival (want 2 — the 0153 dock write)', n; end if;
+    where main_ship_id in (t1, t2) and status = 'home';
+  if n <> 2 then raise exception 'TEAMMAP FAIL: % members settled at arrival (want 2 — the dock write)', n; end if;
   select count(*) into n from public.fleets
     where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag and group_id = gT;
   if n <> 2 then raise exception 'TEAMMAP FAIL: % present member fleets at the port still tagged (want 2 — the docked-team badge read)', n; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMMAP ok: 2-ship team send tags both member fleets with group_id (= the envelope''s sent[] ids, no strays); arrival settles dock both members at the port (stationary/at_location, fleets present at Slagworks) with the informational tag surviving the settle';
+  raise notice 'TEAMCMD_PASS_TEAMMAP ok: 2-ship team send tags both member fleets with group_id (= the envelope''s sent[] ids, no strays); arrival settles both members home with fleets present at Slagworks, the informational tag surviving the settle';
 end $$;
 
 -- ════════ BLOCK SHIELD0 (SHIELD-0, 0191): the shield foundation is deploy-inert + the leaf clamps ════════
@@ -2873,8 +2899,8 @@ end $$;
 --             present-departure envelopes (from='present', from_location Slagworks, to Driftmarch,
 --             each with a movement_id), the departed fleets are the members' OWN docked fleets
 --             re-departed (the wrapper composes, never re-creates), both 'moving' + group-tagged
---             (the 0187 idiom; no stray tags for the owner), ships in the legacy in-flight pair
---             (traveling / spatial_state NULL, 0152).
+--             (the 0187 idiom; no stray tags for the owner), ships in the legacy in-flight status
+--             (traveling, 0152).
 --   ARRIVE —  rewinding BOTH timestamps (the established two-timestamp idiom — arrive_at alone would
 --             violate the 0007 arrive_at > depart_at CHECK) and settling through
 --             movement_settle_arrival docks the team at Driftmarch (0153 pair) with the
@@ -2948,26 +2974,43 @@ begin
     where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
   if n <> 2 then raise exception 'TEAMMOVE FAIL re-unite: % member fleets present at Slagworks (want 2)', n; end if;
 
-  -- ALL-OR-NOTHING: t1 (ordered FIRST) departs inside the subtransaction, then t2's per-ship move
-  -- raises — its active presence row is fixture-completed (captured by id; restored below). The
-  -- wrapper's own gates still pass (fleet 'present' at Slagworks, ship in the docked pair), so the
-  -- loop is REACHED and fails on member 2 AFTER member 1 already departed → the raise's presence in
-  -- `detail` proves t1 was rolled back, not never-sent (the BLOCK SEND pinning technique).
+  -- PRESENCE-CORRUPTION → ATOMIC PRE-LOOP REJECT (4C-MIG-2B REWORK — see below for why this replaces
+  -- the pre-2b "mid-loop failure, then rollback" test): t2's active presence row is fixture-completed
+  -- (captured by id; restored below) to manufacture a member whose FLEET still LOOKS present/docked
+  -- (status='present', current_location_id=slag) but whose presence is broken underneath it.
+  --
+  -- PRE-2B this made the OUTER wrapper's gate pass (it only read the ship's own status='stationary'/
+  -- spatial_state='at_location' columns, which say nothing about presence) while the INNER per-ship
+  -- move's own presence check failed AFTER t1 had already departed inside the subtransaction — proving
+  -- a genuine mid-loop rollback. POST-2B (F7's fleet-truth repoint) the OUTER gate itself now requires
+  -- an active presence at the fleet's current_location_id — the EXACT same condition this surgery
+  -- breaks — so the SAME manufactured state is now caught BEFORE the loop even starts: t2 fails the
+  -- outer aggregate readiness check, the whole call rejects member_not_ready, and t1 is never even
+  -- attempted (stronger than a rollback — nothing was ever written). Attempting to reach the OLD
+  -- mid-loop path is now structurally impossible: any state that breaks the inner move's presence
+  -- check ALSO breaks the outer gate's presence check, since both now read the same fact. This block
+  -- proves the NEW invariant instead: a broken member blocks the WHOLE team atomically, pre-write.
+  -- (The "member 1 succeeds, member 2 fails, member 1 rolls back" property itself is still proven
+  -- elsewhere — BLOCK SEND's c1/c2 all-or-nothing test, whose underlying send_ship_group_expedition
+  -- has no outer pre-loop gate and so still reaches a genuine mid-loop failure.)
   select id into v_pres from public.location_presence where fleet_id = v_f2 and status = 'active';
-  if v_pres is null then raise exception 'TEAMMOVE FAIL: no active presence to manufacture the mid-loop failure from'; end if;
+  if v_pres is null then raise exception 'TEAMMOVE FAIL: no active presence to manufacture the broken-member shape from'; end if;
   update public.location_presence set status = 'completed', updated_at = now() where id = v_pres;
   r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
-  if (r->>'reason') is distinct from 'member_send_failed' then raise exception 'TEAMMOVE FAIL all-or-nothing reason: %', r; end if;
-  if (r->>'detail') not like '%no active presence%' then
-    raise exception 'TEAMMOVE FAIL all-or-nothing detail not pinned to t2''s presence raise: %', r; end if;
+  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMMOVE FAIL all-or-nothing reason: %', r; end if;
+  -- …and NOTHING departed — not even t1 (stronger than the pre-2b rollback: never-attempted, not
+  -- attempted-then-undone). Reject-before-write, the same posture the earlier MEMBER-NOT-DOCKED and
+  -- MIXED-LOCATION sub-tests already pin for other broken-member shapes.
   select count(*) into n from public.fleets where main_ship_id in (t1, t2) and status = 'moving';
-  if n <> 0 then raise exception 'TEAMMOVE FAIL: % moving member fleets after the aborted move (want 0 — the TEAMMOVE all-or-nothing rollback)', n; end if;
+  if n <> 0 then raise exception 'TEAMMOVE FAIL: % moving member fleets after the reject (want 0 — nothing may depart)', n; end if;
   select count(*) into n from public.fleets
     where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % member fleets still present at the port (want 2 — the departed member must be rolled back)', n; end if;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % member fleets still present at the port (want 2 — t1 was never touched)', n; end if;
+  -- 4C-MIG-2B REWORK: 'stationary'/spatial_state are GONE — status='home' is the docked ship's own
+  -- lifecycle signal now; fleet truth (checked just above) is the real dock proof.
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
-  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % ships still in the docked pair (want 2)', n; end if;
+    where main_ship_id in (t1, t2) and status = 'home';
+  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % ships still settled (want 2)', n; end if;
   update public.location_presence set status = 'active', updated_at = now() where id = v_pres;
 
   -- MOVE (the happy path): the whole docked team moves onward Slagworks → Driftmarch as one.
@@ -2992,8 +3035,8 @@ begin
   select count(*) into n from public.fleets where player_id = uT and group_id is not null;
   if n <> 2 then raise exception 'TEAMMOVE FAIL: % tagged fleets for the owner (want exactly the 2 member fleets — no strays)', n; end if;
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (t1, t2) and status = 'traveling' and spatial_state is null;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL: % ships in the legacy in-flight pair (want 2 — traveling / spatial_state NULL)', n; end if;
+    where main_ship_id in (t1, t2) and status = 'traveling';
+  if n <> 2 then raise exception 'TEAMMOVE FAIL: % ships in the legacy in-flight pair (want 2 — traveling)', n; end if;
 
   -- ARRIVE: settle both arrivals through the cron's own per-movement settle (rewind BOTH timestamps —
   -- the established two-timestamp idiom; arrive_at alone would violate arrive_at > depart_at).
@@ -3009,14 +3052,16 @@ begin
     if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
       raise exception 'TEAMMOVE FAIL arrival settle: %', r; end if;
   end loop;
+  -- 4C-MIG-2B REWORK: 'stationary'/spatial_state are GONE — status='home' + fleet truth (below) is
+  -- the dock proof now.
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
-  if n <> 2 then raise exception 'TEAMMOVE FAIL: % members docked after the hop (want 2 — the team docked at Driftmarch)', n; end if;
+    where main_ship_id in (t1, t2) and status = 'home';
+  if n <> 2 then raise exception 'TEAMMOVE FAIL: % members settled after the hop (want 2 — the team docked at Driftmarch)', n; end if;
   select count(*) into n from public.fleets
     where main_ship_id in (t1, t2) and status = 'present' and current_location_id = drift and group_id = gT;
   if n <> 2 then raise exception 'TEAMMOVE FAIL: % present member fleets at Driftmarch still tagged (want 2 — the moved team present at Driftmarch, tag surviving)', n; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMMOVE ok: empty_group + foreign fail-closed; mid-flight member and split-port team both reject member_not_ready with zero departures; all-or-nothing rolls back the departed member (member_send_failed pinned to the presence raise, both fleets still docked); the whole docked team then moves Slagworks → Driftmarch as one (2 present-departure envelopes over the members'' own fleets, moving + tagged, no strays) and docks at Driftmarch with the tag surviving';
+  raise notice 'TEAMCMD_PASS_TEAMMOVE ok: empty_group + foreign fail-closed; mid-flight member, split-port team, and a presence-corrupted member ALL reject member_not_ready with ZERO departures (the post-2b fleet-truth gate catches a broken member pre-loop, atomically — stronger than the pre-2b mid-loop rollback); the whole docked team then moves Slagworks → Driftmarch as one (2 present-departure envelopes over the members'' own fleets, moving + tagged, no strays) and docks at Driftmarch with the tag surviving';
 end $$;
 
 -- ════════ BLOCK SOUL1 (SOUL-1, 0193): commission roll hook + adapter trait fold — parity + exactness ════════
@@ -3300,7 +3345,7 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL provision: %', r; end if;
   select main_ship_id into sV from public.main_ship_instances where player_id = uV;
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id = sV;
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -3438,7 +3483,7 @@ begin
   if n <> 1 then
     raise exception 'SHIELD1 FAIL defeat: a shielded ship at hull 0 must be dead (defeat is hull-only; encounter did not settle defeat with integrity 0)'; end if;
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = sV and status = 'destroyed' and hp = 0 and spatial_state is null;
+    where main_ship_id = sV and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'SHIELD1 FAIL defeat: the D1 destroyed terminal did not fire on the shielded member'; end if;
   perform public.set_game_config('enemy_attack_base', '1'::jsonb);          -- restore the engine default
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);    -- restore the dark seed in-txn
@@ -3727,7 +3772,7 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL provision B: %', r; end if;
   select main_ship_id into sB from public.main_ship_instances where player_id = uB;
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id = sB;
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -3928,7 +3973,7 @@ begin
     where player_id=uF and status='present';
   update public.location_presence set status='completed', updated_at=now()
     where fleet_id in (select id from public.fleets where player_id=uF and status='destroyed') and status='active';
-  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now()
+  update public.main_ship_instances set status='home', updated_at=now()
     where player_id=uF;
   select array_agg(main_ship_id order by created_at) into f from public.main_ship_instances where player_id=uF;
   if array_length(f,1) <> 11 then raise exception 'FLEETCTRL FAIL: expected 11 fixture ships, got %', array_length(f,1); end if;
@@ -4069,7 +4114,7 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision: %', r; end if;
   select main_ship_id into sN from public.main_ship_instances where player_id = uN;
   -- normalize the commission to legacy home (the TEAMMAP idiom): home pair + retire the present fleet.
-  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now()
+  update public.main_ship_instances set status='home', updated_at=now()
     where main_ship_id = sN;
   update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
       current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
@@ -4082,7 +4127,12 @@ begin
   update public.fleet_movements set depart_at=now()-interval '2 minutes', arrive_at=now()-interval '1 minute' where id=v_mv;
   r := public.movement_settle_arrival(v_mv);
   if (r->>'outcome') is distinct from 'present' then raise exception 'NOHOME FAIL: dock settle %', r; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='stationary' and spatial_state='at_location';
+  -- 4C-MIG-2B REWORK: 'stationary'/spatial_state are GONE — "docked" is FLEET TRUTH now (0221 R1-f /
+  -- F2's mainship_mark_docked_at_location repoint): status='home' (the lifecycle signal only) PLUS a
+  -- real 'present' fleet at the port is the dock proof.
+  select count(*) into n from public.main_ship_instances s
+    where s.main_ship_id=sN and s.status='home'
+      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=slag);
   if n <> 1 then raise exception 'NOHOME FAIL: fixture ship not docked at Slagworks'; end if;
   select id into v_prev_fleet from public.fleets where main_ship_id=sN and status='present' and current_location_id=slag;
 
@@ -4113,13 +4163,15 @@ begin
   if n <> 1 then raise exception 'NOHOME FAIL: outbound movement did not depart from the docked port (Slagworks)'; end if;
   select count(*) into n from public.fleets where id=v_fleet and status='moving' and return_location_id=slag;
   if n <> 1 then raise exception 'NOHOME FAIL: the re-departed fleet is not moving with the return port recorded'; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='traveling' and spatial_state is null;
+  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='traveling';
   if n <> 1 then raise exception 'NOHOME FAIL: ship not in-flight after the docked launch (home was never required)'; end if;
   -- arrives + docks at the destination (movement_settle_arrival, 0153 — the send-to-port dock).
   update public.fleet_movements set depart_at=now()-interval '2 minutes', arrive_at=now()-interval '1 minute' where id=v_mv;
   r := public.movement_settle_arrival(v_mv);
   if (r->>'outcome') is distinct from 'present' then raise exception 'NOHOME FAIL: destination dock settle %', r; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='stationary' and spatial_state='at_location';
+  select count(*) into n from public.main_ship_instances s
+    where s.main_ship_id=sN and s.status='home'
+      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=drift);
   if n <> 1 then raise exception 'NOHOME FAIL: ship not docked at the destination after the launch-from-dock trip'; end if;
 
   -- ── (4) LIT team hunt from dock + reconciler dock-at-return (no combat drive needed) ─────────────
@@ -4136,7 +4188,7 @@ begin
   r := pg_temp.call_as(uNT, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision team: %', r; end if;
   select main_ship_id into sNT from public.main_ship_instances where player_id = uNT;
-  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now() where main_ship_id=sNT;
+  update public.main_ship_instances set status='home', updated_at=now() where main_ship_id=sNT;
   update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
       current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
     where main_ship_id=sNT and status='present';
@@ -4168,16 +4220,21 @@ begin
   -- then the LIT reconciler DOCKS the member at the recorded return port (Slagworks), never home —
   -- SPLITTING the shared team fleet back into the member's OWN tagged present fleet (review H1).
   update public.fleets set status='completed', location_mode='base', active_movement_id=null, updated_at=now() where id=v_team_fleet;
-  update public.main_ship_instances set status='returning', spatial_state=null, space_x=null, space_y=null, updated_at=now() where main_ship_id=sNT;
+  update public.main_ship_instances set status='returning', updated_at=now() where main_ship_id=sNT;
   perform public.process_mainship_expeditions();
-  select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='stationary' and spatial_state='at_location';
-  if n <> 1 then raise exception 'NOHOME FAIL: the reconciler did not dock the returning member (want stationary/at_location at the return port)'; end if;
-  -- H1: the returned member owns its OWN main_ship_id-tagged present fleet at the port (NOT a shared
-  -- untagged team fleet) — the per-ship handle every re-launch path (send/move/re-hunt) keys on.
+  -- 4C-MIG-2B REWORK: 'stationary'/spatial_state are GONE — status='home' is now the reconciler's
+  -- OWN dock-write literal too (F2's mainship_mark_docked_at_location repoint: 'stationary'->'home',
+  -- the same swap 2a already made for every other retiring writer). "Docked, not re-homed to the
+  -- legacy (0,0) base" is proven by FLEET TRUTH below, not by the status column, which is now a pure
+  -- lifecycle signal indistinguishable between "idle at home" and "docked at a port" by design (0221).
+  select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='home';
+  if n <> 1 then raise exception 'NOHOME FAIL: the reconciler did not settle the returning member (want status=home, the lifecycle signal)'; end if;
+  -- H1: the returned member owns its OWN main_ship_id-tagged present fleet AT THE RECORDED RETURN
+  -- PORT (NOT a shared untagged team fleet, and NOT re-anchored to the legacy base) — the per-ship
+  -- handle every re-launch path (send/move/re-hunt) keys on. THIS is the NO-HOME law's real proof
+  -- now: a base-anchored 'idle' fleet would fail this exact check.
   select count(*) into n from public.fleets where main_ship_id=sNT and status='present' and current_location_id=slag;
-  if n <> 1 then raise exception 'NOHOME FAIL: the returned member has no per-ship tagged present fleet at the return port (H1 wedge)'; end if;
-  if exists (select 1 from public.main_ship_instances where main_ship_id=sNT and status='home') then
-    raise exception 'NOHOME FAIL: the returning member was re-homed under the lit flag (the NO-HOME law is violated)'; end if;
+  if n <> 1 then raise exception 'NOHOME FAIL: the returned member has no per-ship tagged present fleet at the return port (H1 wedge, or the NO-HOME law was violated by a re-home)'; end if;
   -- H1 REGRESSION WITNESS (the fix's teeth): the returned docked team can LAUNCH AGAIN — a SECOND hunt
   -- from the port SUCCEEDS. Before the per-ship split fix this dead-ended (member_not_ready / no present
   -- fleet), the exact wedge the current-before-fix dock left behind.
