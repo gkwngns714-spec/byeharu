@@ -9,12 +9,12 @@
 -- already live in this chain. NO FUNCTION is dropped here (that is 4b-drop's job); the stop-trio
 -- (stop_ship_group_transit / command_main_ship_stop_transit) is untouched (needs PR #189 first).
 --
--- ═══ SIX FINDINGS BEYOND THE NAMED PLAN — VERIFIED BY GREP, NOT ASSUMED ══════════════════════════════
+-- ═══ SEVEN FINDINGS BEYOND THE NAMED PLAN — VERIFIED BY GREP, NOT ASSUMED ══════════════════════════════
 -- The corrected plan named FIVE writers 4c-mig-2a already repointed (send_ship_group_hunt,
 -- repair_main_ship, port_entry_commission_build, mainship_mark_combat_destroyed [skipped, already
 -- clean], ensure_main_ship_for_player [skipped, already clean]). Re-deriving the TRUE HEAD of every
 -- function that still touches the doomed columns (by grep, per the ci-apply-proof-is-the-net lesson
--- — "trust the code, not the plan") surfaces SIX more live touch points 2a's dual-safe stage
+-- — "trust the code, not the plan") surfaces SEVEN more live touch points 2a's dual-safe stage
 -- correctly left alone (columns still existed) but that WILL error the instant the columns are gone:
 --
 --   (F1) mainship_mark_combat_destroyed (TRUE head 20260618000167:160, never re-created — 2a's own
@@ -80,8 +80,19 @@
 --        preserve the coverage. Repointed here to fleet truth (mainship_resolve_fleet + present/
 --        location/presence, composed at all three sites: availability check, docked-launch guard,
 --        re-claim-under-lock re-check) mirroring 2a's b5 predicate exactly — not a new formula.
+--   (F7) move_ship_group_to_location(uuid, uuid) (TRUE head 20260618000204:331, the ONE definition
+--        since 0190; no later create-or-replace) decides its "every member docked together"
+--        readiness check via the SAME retired status='stationary'/spatial_state='at_location' pair
+--        — the THIRD sibling of this exact pattern (after send_ship_group_hunt/2a-b5 and F6's
+--        send_main_ship_expedition), also with zero live client callers (moveShipGroup in
+--        teamApi.ts has zero importers). Found via the CI apply-proof: team-command-proof.sql's
+--        BLOCK TEAMMOVE calls it directly and repeatedly (empty/foreign/not-docked/mixed-location/
+--        all-or-nothing/happy-path), so every call hit this line the instant the columns dropped.
+--        Repointed to fleet truth identically to F6; the function's SECOND readiness check (every
+--        member resolves to exactly one 'present' fleet, all at the same location) already used a
+--        direct per-ship fleet join and is unchanged.
 --
--- ═══ A SEVENTH FINDING: THE DEAD RPC'S LIVE CRON ═════════════════════════════════════════════════════
+-- ═══ AN EIGHTH FINDING: THE DEAD RPC'S LIVE CRON ═════════════════════════════════════════════════════
 -- process_mainship_space_arrivals (TRUE head 0064:95) is a DEAD function per the 4b-drop plan (the
 -- OSN coordinate-domain arrival processor; both its gating flags are false in prod, verified in §0
 -- below) — but it is SCHEDULED via pg_cron ('process-mainship-space-arrivals', every 30s, set up at
@@ -112,7 +123,7 @@
 --
 -- ═══ ORDER (constraints before columns; FKs before the table; data-fix before the CHECK narrow) ════
 --   §0 pre-drop guards → §1 orphan reconciliation (DATA-FIX) → §2 DRAINGUARD →
---   §3 re-create the 6 live writers + 1 live reader that still touch the doomed columns →
+--   §3 re-create the 7 live writers + 1 live reader that still touch the doomed columns →
 --   §4 drop the 0054/0055 spatial CHECKs → §5 narrow the status CHECK →
 --   §6 drop main_ship_instances.spatial_state/space_x/space_y →
 --   §7 drop fleets' 2 CHECKs + index + FK + active_space_movement_id →
@@ -199,6 +210,12 @@ begin
   if v_src is null or position('v_ship.status = ''stationary'' and v_ship.spatial_state = ''at_location''' in v_src) = 0 then
     raise exception '4C-MIG-2B GUARD FAIL: send_main_ship_expedition does not match its expected pre-drop (0199) shape';
   end if;
+  -- F7: move_ship_group_to_location (TRUE head 0204, never re-created) must still carry the doomed
+  -- docked-check pair BEFORE this migration repoints it — same pre-image discipline as F1-F6.
+  select prosrc into v_src from pg_proc where oid = 'public.move_ship_group_to_location(uuid, uuid)'::regprocedure;
+  if v_src is null or position('status <> ''stationary'' or spatial_state is distinct from ''at_location''' in v_src) = 0 then
+    raise exception '4C-MIG-2B GUARD FAIL: move_ship_group_to_location does not match its expected pre-drop (0204) shape';
+  end if;
   -- port_entry_commission_build / ensure_main_ship_for_player: already clean since 2a (2a's own §8
   -- proved this) — pin they STAY clean (no doomed-column mint survives) so a regression is caught.
   -- STRIP `--` comments before these negative bans (the 2a apply-proof lesson): b1's OWN hunk
@@ -282,9 +299,9 @@ begin
   raise notice '4C-MIG-2B DRAINGUARD ok: zero fleets carry active_space_movement_id';
 end $drainguard$;
 
--- ══════════════════ §3. RE-CREATE THE LAST LIVE TOUCH POINTS (findings F1/F2/F3/F4/F5/F6) ══════════════
+-- ══════════════════ §3. RE-CREATE THE LAST LIVE TOUCH POINTS (findings F1/F2/F3/F4/F5/F6/F7) ══════════════
 -- No FUNCTION is dropped; each is CREATE OR REPLACE, byte-identical to its pre-drop TRUE head except
--- the doomed-column reference is removed (F1/F2/F4/F5/F6: deleted from the write; F3: deleted from the read).
+-- the doomed-column reference is removed (F1/F2/F4/F5/F6/F7: deleted from the write; F3: deleted from the read).
 
 -- F1 — mainship_mark_combat_destroyed (TRUE head 0167:160). The spatial clears retire WITH the
 -- columns: they existed only to satisfy the 0055 ss_* CHECK coupling, which is dropped in §4 below,
@@ -1348,6 +1365,136 @@ $$;
 revoke execute on function public.send_main_ship_expedition(jsonb, uuid, uuid) from public, anon;
 grant  execute on function public.send_main_ship_expedition(jsonb, uuid, uuid) to authenticated;
 
+-- F7 — move_ship_group_to_location(uuid, uuid) (TRUE head 0204:331, the ONE definition since 0190;
+-- no later create-or-replace). Its readiness check decides "is every member docked together" via
+-- the SAME retired status='stationary'/spatial_state='at_location' pair 2a's b5 hunk already
+-- repointed to fleet truth inside send_ship_group_hunt, and F6 just repointed inside
+-- send_main_ship_expedition — but this THIRD sibling (the team-move wrapper) was never touched, out
+-- of 2a's 5-named scope (zero live client callers: `moveShipGroup` in teamApi.ts has zero
+-- importers, same as `sendShipGroup`). Found via CI: team-command-proof.sql's BLOCK TEAMMOVE calls
+-- it directly and repeatedly (the empty/foreign/not-docked/mixed-location/all-or-nothing/happy-path
+-- sub-tests), so every single call hit this line the instant the columns dropped. Repointed to fleet
+-- truth (mainship_resolve_fleet + present/location/presence), mirroring 2a's b5 / F6's predicate
+-- exactly — not a new formula. The SECOND readiness check just below it (every member resolves to
+-- exactly one 'present' fleet, all at the SAME location) already used a direct per-ship fleet join,
+-- unaffected by this hunk, and is unchanged.
+create or replace function public.move_ship_group_to_location(p_group_id uuid, p_location_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_player     uuid := auth.uid();
+  v_group      uuid;
+  v_members    uuid[];
+  v_fleets     uuid[];
+  v_fleet      uuid;
+  v_locked     integer;
+  v_not_docked integer;
+  v_loc_count  integer;
+  v_null_locs  integer;
+  v_res        jsonb;
+  v_sent       jsonb := '[]'::jsonb;
+  v_fleet_control boolean := public.cfg_bool('fleet_control_enabled');
+begin
+  if v_player is null then
+    return jsonb_build_object('ok', false, 'reason', 'not_authenticated');
+  end if;
+
+  if not public.cfg_bool('team_command_enabled') then
+    return jsonb_build_object('ok', false, 'reason', 'team_command_disabled');
+  end if;
+
+  v_group := public.mainship_resolve_owned_group(v_player, p_group_id);
+  if v_group is null then
+    return jsonb_build_object('ok', false, 'reason', 'group_not_found');
+  end if;
+
+  perform 1 from public.ship_groups where group_id = v_group and player_id = v_player for share;
+  if not found then
+    return jsonb_build_object('ok', false, 'reason', 'group_not_found');
+  end if;
+
+  select coalesce(array_agg(main_ship_id order by created_at), '{}')
+    into v_members
+    from public.main_ship_instances
+   where group_id = v_group and player_id = v_player;
+  if array_length(v_members, 1) is null then
+    return jsonb_build_object('ok', false, 'reason', 'empty_group');
+  end if;
+
+  if v_fleet_control then
+    if not exists (
+      select 1 from public.main_ship_instances
+       where group_id = v_group and player_id = v_player and is_command_ship
+    ) then
+      return jsonb_build_object('ok', false, 'reason', 'fleet_inactive_no_command');
+    end if;
+  end if;
+
+  select count(*) into v_locked from (
+    select main_ship_id from public.main_ship_instances
+     where main_ship_id = any(v_members) and player_id = v_player
+     for update
+  ) locked;
+  if v_locked <> array_length(v_members, 1) then
+    return jsonb_build_object('ok', false, 'reason', 'member_not_ready');
+  end if;
+
+  -- ── ★ 4C-MIG-2B HUNK: "docked" is FLEET TRUTH (mirrors 0221 R1-f / 2a's b5 / F6), not the      ★ ──
+  -- ── ★ retired ship-column status='stationary'/spatial_state='at_location' pair.                ★ ──
+  select count(*) into v_not_docked
+    from public.main_ship_instances s
+    where s.main_ship_id = any(v_members)
+      and not exists (
+        select 1 from public.fleets f
+         where f.id = public.mainship_resolve_fleet(s.main_ship_id)
+           and f.status = 'present' and f.location_mode = 'location'
+           and f.current_location_id is not null and f.active_movement_id is null
+           and exists (
+             select 1 from public.location_presence lp
+              where lp.fleet_id = f.id and lp.status = 'active'
+                and lp.location_id = f.current_location_id)
+      );
+  if v_not_docked > 0 then
+    return jsonb_build_object('ok', false, 'reason', 'member_not_ready');
+  end if;
+
+  select coalesce(array_agg(f.id order by msi.created_at), '{}'),
+         count(distinct f.current_location_id),
+         count(*) filter (where f.current_location_id is null)
+    into v_fleets, v_loc_count, v_null_locs
+    from public.main_ship_instances msi
+    join public.fleets f
+      on f.main_ship_id = msi.main_ship_id and f.player_id = v_player and f.status = 'present'
+   where msi.main_ship_id = any(v_members);
+  if coalesce(array_length(v_fleets, 1), 0) <> array_length(v_members, 1)
+     or v_loc_count <> 1 or v_null_locs > 0 then
+    return jsonb_build_object('ok', false, 'reason', 'member_not_ready');
+  end if;
+
+  begin
+    foreach v_fleet in array v_fleets loop
+      select public.move_main_ship_to_location(v_fleet, p_location_id) into v_res;
+      v_sent := v_sent || jsonb_build_array(v_res);
+    end loop;
+  exception
+    when others then
+      return jsonb_build_object('ok', false, 'reason', 'member_send_failed', 'detail', sqlerrm);
+  end;
+
+  update public.fleets
+     set group_id = v_group
+   where player_id = v_player
+     and id in (select (e->>'fleet_id')::uuid from jsonb_array_elements(v_sent) e);
+
+  return jsonb_build_object('ok', true, 'group_id', v_group, 'sent', v_sent);
+end;
+$$;
+revoke execute on function public.move_ship_group_to_location(uuid, uuid) from public, anon;
+grant  execute on function public.move_ship_group_to_location(uuid, uuid) to authenticated;
+
 -- ══════════════ §4. DROP THE 0054/0055 SPATIAL CHECK CONSTRAINTS (before the columns) ══════════════
 alter table public.main_ship_instances drop constraint if exists main_ship_instances_ss_in_space_status;
 alter table public.main_ship_instances drop constraint if exists main_ship_instances_ss_at_location_status;
@@ -1514,7 +1661,7 @@ begin
     raise exception '4C-MIG-2B POST-DROP FAIL: a live row carries a status outside the narrowed CHECK set';
   end if;
 
-  -- the 8 re-created functions no longer reference the doomed columns (post-drop prosrc re-pin —
+  -- the 9 re-created functions no longer reference the doomed columns (post-drop prosrc re-pin —
   -- belt-and-braces beyond "it compiled": these are TEXT bodies, so a stray reference would only
   -- surface as a runtime error on next call, never at CREATE time).
   -- Every probe below strips `--` comments FIRST (the 2a apply-proof lesson): each re-created body
@@ -1593,11 +1740,24 @@ begin
   if not has_function_privilege('authenticated', 'public.send_main_ship_expedition(jsonb, uuid, uuid)', 'execute') then
     raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition lost its authenticated grant';
   end if;
+  -- F7: move_ship_group_to_location no longer references the doomed columns; the fleet-truth
+  -- readiness compose landed.
+  select prosrc into v_src from pg_proc where oid = 'public.move_ship_group_to_location(uuid, uuid)'::regprocedure;
+  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
+  if position('spatial_state' in v_src) > 0 or position('space_x' in v_src) > 0 or position('space_y' in v_src) > 0 then
+    raise exception '4C-MIG-2B POST-DROP FAIL: move_ship_group_to_location still references a doomed column';
+  end if;
+  if position('public.mainship_resolve_fleet(s.main_ship_id)' in v_src) = 0 then
+    raise exception '4C-MIG-2B POST-DROP FAIL: move_ship_group_to_location does not compose mainship_resolve_fleet for its readiness check';
+  end if;
+  if not has_function_privilege('authenticated', 'public.move_ship_group_to_location(uuid, uuid)', 'execute') then
+    raise exception '4C-MIG-2B POST-DROP FAIL: move_ship_group_to_location lost its authenticated grant';
+  end if;
 
   -- the dead cron is gone.
   if exists (select 1 from cron.job where jobname = 'process-mainship-space-arrivals') then
     raise exception '4C-MIG-2B POST-DROP FAIL: the process-mainship-space-arrivals cron job is still scheduled — it reads a now-dropped table';
   end if;
 
-  raise notice '4C-MIG-2B POST-DROP ok: table gone, 3 ship columns gone, fleets pointer+2 CHECKs+index+FK gone, receipts kept (movement_id gone), status CHECK narrowed (stationary rejected, home/hunting/destroyed kept), all 8 re-created functions clean, dead cron unscheduled';
+  raise notice '4C-MIG-2B POST-DROP ok: table gone, 3 ship columns gone, fleets pointer+2 CHECKs+index+FK gone, receipts kept (movement_id gone), status CHECK narrowed (stationary rejected, home/hunting/destroyed kept), all 9 re-created functions clean, dead cron unscheduled';
 end $postdrop$;

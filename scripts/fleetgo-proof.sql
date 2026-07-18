@@ -861,9 +861,15 @@ begin
   -- read), with zero ship coords in existence — asserted below — every member reads 'hidden' here.
   -- Red-before/green-after by construction.
   -- vacuity guard: ZERO ships carry any position, so only the FLEET could have answered these coords.
-  select count(*) into n from public.main_ship_instances where space_x is not null or space_y is not null;
-  if n <> 0 then
-    raise exception 'MAPSPACE-GROUP FAIL: % ship(s) carry a position — only the FLEET could have answered is unprovable', n; end if;
+  -- 4C-MIG-2B (migration 0223) DROPPED main_ship_instances.space_x/space_y outright — no ship can
+  -- carry a position any more BY CONSTRUCTION, so the runtime count is now permanently, trivially
+  -- satisfied; kept as a one-time schema-fact check instead of a vacuous always-pass count (the same
+  -- rework as BLOCK ISOLATION above).
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'main_ship_instances'
+                and column_name in ('space_x', 'space_y')) then
+    raise exception 'MAPSPACE-GROUP FAIL: main_ship_instances still carries space_x/space_y — 4c-mig-2b did not drop them';
+  end if;
   r := pg_temp.call_as(uA, 'public.get_my_fleet_positions()');
   foreach s in array array[a1, a2] loop
     e := null;
@@ -2579,8 +2585,14 @@ begin
    where id = v_gofleet and status = 'idle' and location_mode = 'space';
   if v_x is null then raise exception 'HUNTUNI-FROMSPACE FAIL: the fleet is not parked idle in space — the from-space state was not built'; end if;
   -- vacuity: ZERO ships carry a position — only the FLEET could supply the origin below (§2).
-  select count(*) into n from public.main_ship_instances where space_x is not null or space_y is not null;
-  if n <> 0 then raise exception 'HUNTUNI-FROMSPACE FAIL: % ship(s) carry a position — the origin could come from the retired layer', n; end if;
+  -- 4C-MIG-2B (migration 0223) DROPPED main_ship_instances.space_x/space_y outright — permanently,
+  -- trivially satisfied by construction; kept as a one-time schema-fact check (the same rework as
+  -- BLOCK ISOLATION / MAPSPACE-GROUP above).
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'main_ship_instances'
+                and column_name in ('space_x', 'space_y')) then
+    raise exception 'HUNTUNI-FROMSPACE FAIL: main_ship_instances still carries space_x/space_y — 4c-mig-2b did not drop them';
+  end if;
 
   -- ── ★ FROMSPACE ★ the hunt consumes the parked fleet and departs its coordinate. ───────────────
   r := pg_temp.call_as(uH, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));

@@ -684,8 +684,8 @@ if [ "$MODE" = "selftest" ]; then
     || fail "HUNTUNI_PASS_BOOTSTRAP does not guard that the leaf really returns zero rows"
   grep -q "the from-space state was not built" "$SQL" \
     || fail "HUNTUNI_PASS_FROMSPACE does not guard that the fleet is really parked idle in space"
-  grep -q "the origin could come from the retired layer" "$SQL" \
-    || fail "HUNTUNI_PASS_FROMSPACE does not guard that zero ships carry a position"
+  grep -qF "HUNTUNI-FROMSPACE FAIL: main_ship_instances still carries space_x/space_y" "$SQL" \
+    || fail "HUNTUNI_PASS_FROMSPACE does not guard that zero ships carry a position (post-2b: a schema-fact check, the runtime count is gone with the columns)"
 
   # ── THE TREE-WIDE DOCK-COPY BAN. 0072 proved an alias-free copy evades exact-substring greps, and
   # the recorded 0136 failure mode is a NEW file re-inlining the block — a file a 0211-only grep never
