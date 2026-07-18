@@ -6,9 +6,9 @@
   "tables": 79,
   "flags": 29,
   "systems": 29,
-  "phases": 18,
+  "phases": 24,
   "rungs": 9,
-  "nodes": 586,
+  "nodes": 592,
   "edges": 1590
  },
  "boundariesParsed": true,
@@ -4605,11 +4605,65 @@
   {
    "id": "phase:BERTH",
    "kind": "phase",
-   "label": "BERTH — the berth model: a ship is fleeted XOR berthed",
-   "planned": true,
-   "size": "M — S1 in review as mig 0216; S2–S6 + cleanup planned",
+   "label": "BERTH — S1 the berth-model foundation: a ship is fleeted XOR berthed",
+   "planned": false,
+   "size": "M — SHIPPED LIVE 2026-07-18 as mig 0216",
    "file": "docs/FULL_CAPACITY_PLAN.md",
-   "detail": "### BERTH — the berth model: a ship is fleeted XOR berthed *(M — S1 in review as mig 0216; S2–S6 + cleanup planned)* The next arc, built on MOVEMENT. A ship's location becomes a schema-level fact: FLEETED (moves with a fleet, IS a map marker) **XOR** BERTHED (docked at a port, shown as info only). S1 (mig 0216) adds `berth_location_id` + a XOR CHECK `(group_id is null) = (berth_location_id is not null)` + one re"
+   "detail": "### BERTH — S1 the berth-model foundation: a ship is fleeted XOR berthed *(M — SHIPPED LIVE 2026-07-18 as mig 0216)* The foundation of the berth arc, now LIVE in production (74 ships berthed, 2 fleeted, zero XOR violations). A ship's location is a schema-level fact: FLEETED (moves with a fleet, IS a map marker) **XOR** BERTHED (docked at a port, shown as info only) — enforced by a CHECK `(group_id is null) = (be"
+  },
+  {
+   "id": "phase:TERRITORY",
+   "kind": "phase",
+   "label": "TERRITORY — S2: each location's radius is its territory",
+   "planned": true,
+   "size": "S/M — planned",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### TERRITORY — S2: each location's radius is its territory *(S/M — planned)* Berth arc S2. A `locations.territory_radius` column drawn as a ring on the map; a fleet entering the radius gets options (dock now, combat later). The ground for future enemy-fleet spawns in hostile territory like a pirate den. One column, one map ring — no parallel system. Deps: BERTH."
+  },
+  {
+   "id": "phase:POSLEAF",
+   "kind": "phase",
+   "label": "POSLEAF — S3: one position + territory server leaf",
+   "planned": true,
+   "size": "S — planned",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### POSLEAF — S3: one position + territory server leaf *(S — planned)* Berth arc S3. Fold the movement-interpolation math currently inlined across the mover and brake into ONE `fleet_current_position` leaf, plus `fleet_in_territory` composing it with the territory radius — the containment authority the dock guard and future enemy-spawn both reuse. Deps: TERRITORY."
+  },
+  {
+   "id": "phase:TIMEDOCK",
+   "kind": "phase",
+   "label": "TIMEDOCK — S4: docking takes time, shown on the map",
+   "planned": true,
+   "size": "S/M — planned, dark behind `timed_docking_enabled`",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### TIMEDOCK — S4: docking takes time, shown on the map *(S/M — planned, dark behind `timed_docking_enabled`)* Berth arc S4. Arriving at a port no longer docks instantly; DOCK becomes a timed movement leg (~45s) riding the existing timer spine, with a live countdown on the map. Dark-first behind a new `timed_docking_enabled` flag. Deps: POSLEAF."
+  },
+  {
+   "id": "phase:MAPUX",
+   "kind": "phase",
+   "label": "MAPUX — S5: one fleet-command panel",
+   "planned": true,
+   "size": "S — planned",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### MAPUX — S5: one fleet-command panel *(S — planned)* Berth arc S5. Consolidate the scattered map panels (destination / stop / dock) into ONE fleet-command surface owning Go / Redirect / Stop / Dock — deletes three panels instead of adding a fourth. Deps: RETIRE."
+  },
+  {
+   "id": "phase:FITTING",
+   "kind": "phase",
+   "label": "FITTING — S6: the ship tab becomes a fitting tab",
+   "planned": true,
+   "size": "M — planned",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### FITTING — S6: the ship tab becomes a fitting tab *(M — planned)* Berth arc S6. Ships grouped by fleet plus a Berthed section — condition, stats, buffs, and fitting when docked; the Command tab owns fleet composition, the Fitting tab owns per-ship equipment. Deps: BERTH."
+  },
+  {
+   "id": "phase:RETIRE",
+   "kind": "phase",
+   "label": "RETIRE — legacy movement retirement",
+   "planned": true,
+   "size": "S/M — 4a-post in review; 4c + 4b-drop planned",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### RETIRE — legacy movement retirement *(S/M — 4a-post in review; 4c + 4b-drop planned)* Retire the replaced per-ship movement system as its own slices: 4a-post deletes the dead per-ship client, 4c retires the legacy movement signals, 4b-drop drops the legacy server movers (drain-asserted). Deps: MOVEMENT live + soaked."
   },
   {
    "id": "phase:P0",

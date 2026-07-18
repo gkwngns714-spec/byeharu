@@ -186,18 +186,47 @@ guard (0213), and the hunt-learns-the-fleet minting fix (0214). The flip (step 4
 control-model (0204/0205). Guard: ONE movement authority — the legacy per-ship movers are retired as their
 own slices (4a-post client delete, 4c signal retirement, 4b-drop server drop).
 
-### BERTH — the berth model: a ship is fleeted XOR berthed *(M — S1 in review as mig 0216; S2–S6 + cleanup planned)*
+### BERTH — S1 the berth-model foundation: a ship is fleeted XOR berthed *(M — SHIPPED LIVE 2026-07-18 as mig 0216)*
 
-The next arc, built on MOVEMENT. A ship's location becomes a schema-level fact: FLEETED (moves with a fleet,
-IS a map marker) **XOR** BERTHED (docked at a port, shown as info only). S1 (mig 0216) adds
-`berth_location_id` + a XOR CHECK `(group_id is null) = (berth_location_id is not null)` + one resolver, so
-ghost-dock becomes structurally impossible; it is built and in adversarial review. Then S2 territory radius
-(a `locations.territory_radius` column + a map ring, the ground for future enemy spawns in hostile
-territory), S3 the position/territory server leaves (fold the interpolation math inlined across the mover
-and brake into one leaf), S4 timed docking (dark behind a new `timed_docking_enabled` flag; docking takes
-time, shown as a live map countdown), S5 the map-UX consolidation (ONE fleet-command panel), and S6 the
-ship→fitting tab (fleet-grouped + a Berthed section). Deps: MOVEMENT. Guard: ONE location authority — the
-fleeted-xor-berthed law is enforced by the CHECK, not by convention.
+The foundation of the berth arc, now LIVE in production (74 ships berthed, 2 fleeted, zero XOR violations).
+A ship's location is a schema-level fact: FLEETED (moves with a fleet, IS a map marker) **XOR** BERTHED
+(docked at a port, shown as info only) — enforced by a CHECK `(group_id is null) = (berth_location_id is
+not null)`, so ghost-dock is structurally impossible. One resolver; `get_my_fleet_positions` gains a
+`berthed` branch. Deps: MOVEMENT. Everything below is built ON this foundation.
+
+### TERRITORY — S2: each location's radius is its territory *(S/M — planned)*
+
+Berth arc S2. A `locations.territory_radius` column drawn as a ring on the map; a fleet entering the radius
+gets options (dock now, combat later). The ground for future enemy-fleet spawns in hostile territory like a
+pirate den. One column, one map ring — no parallel system. Deps: BERTH.
+
+### POSLEAF — S3: one position + territory server leaf *(S — planned)*
+
+Berth arc S3. Fold the movement-interpolation math currently inlined across the mover and brake into ONE
+`fleet_current_position` leaf, plus `fleet_in_territory` composing it with the territory radius — the
+containment authority the dock guard and future enemy-spawn both reuse. Deps: TERRITORY.
+
+### TIMEDOCK — S4: docking takes time, shown on the map *(S/M — planned, dark behind `timed_docking_enabled`)*
+
+Berth arc S4. Arriving at a port no longer docks instantly; DOCK becomes a timed movement leg (~45s) riding
+the existing timer spine, with a live countdown on the map. Dark-first behind a new `timed_docking_enabled`
+flag. Deps: POSLEAF.
+
+### MAPUX — S5: one fleet-command panel *(S — planned)*
+
+Berth arc S5. Consolidate the scattered map panels (destination / stop / dock) into ONE fleet-command
+surface owning Go / Redirect / Stop / Dock — deletes three panels instead of adding a fourth. Deps: RETIRE.
+
+### FITTING — S6: the ship tab becomes a fitting tab *(M — planned)*
+
+Berth arc S6. Ships grouped by fleet plus a Berthed section — condition, stats, buffs, and fitting when
+docked; the Command tab owns fleet composition, the Fitting tab owns per-ship equipment. Deps: BERTH.
+
+### RETIRE — legacy movement retirement *(S/M — 4a-post in review; 4c + 4b-drop planned)*
+
+Retire the replaced per-ship movement system as its own slices: 4a-post deletes the dead per-ship client,
+4c retires the legacy movement signals, 4b-drop drops the legacy server movers (drain-asserted). Deps:
+MOVEMENT live + soaked.
 
 ### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)*
 
