@@ -1,4 +1,4 @@
--- Byeharu — COMBAT SLICE 3: SPATIAL combat. Migration 0231. DARK behind the new flag
+-- Byeharu — COMBAT SLICE 3: SPATIAL combat. Migration 0234. DARK behind the new flag
 -- `spatial_combat_enabled` (seeded false). Depends on S0 (0229, module range/projectile_speed/
 -- power/ammo on module_types + ship_weapon_modules), S1 (0228, combat_units.aggro_priority +
 -- process_combat_ticks' per-ship aggro targeting), S2 (0230, the telegraph — untouched by this
@@ -137,12 +137,15 @@
 -- follow-up scripts/*-proof.sh run against a disposable `supabase start`, exactly like every other
 -- CI-proof-gated combat slice — recommended before this branch merges, not fabricated here.
 --
--- Forward-only: 0001–0230 unedited. This file takes 0231 (0229/0230 are S0/S2, both merged to main).
+-- Forward-only: 0001–0230 unedited. 0231/0232 are the movement schema/function drops (2b/4b-drop,
+-- merged to main after this slice was first written — this file was renumbered 0231→0234 as a result,
+-- with every in-body "(0234)" reference updated to match); 0233 is claimed by the pirate-intercept
+-- slice. This file takes 0234, the next free slot.
 
 -- ── 1) NEW flag spatial_combat_enabled (game_config bool, seeded FALSE) ────────────────────────────
 insert into public.game_config (key, value, description) values
   ('spatial_combat_enabled', 'false',
-   'COMBAT-S3 (0231): server gate for per-ship spatial positions/movement/targeting in group combat '
+   'COMBAT-S3 (0234): server gate for per-ship spatial positions/movement/targeting in group combat '
    'encounters (the CLOSE-vs-KITE AI + per-weapon fire events). Dark: process_combat_ticks runs the '
    'exact S1 (0228) aggregate/per-ship-targeting math, byte-parity; combat_create_group_encounter '
    'never writes positions. Lit: a NEW group encounter gets player positions/speeds/weapons snapshotted '
@@ -174,23 +177,23 @@ alter table public.combat_units
   add column side         text  not null default 'player' check (side in ('player','enemy'));
 
 comment on column public.combat_units.pos_x is
-  'COMBAT-S3 (0231): in-combat world-x. NULL until spatial_combat_enabled is lit AND this row was '
+  'COMBAT-S3 (0234): in-combat world-x. NULL until spatial_combat_enabled is lit AND this row was '
   'created by the spatial hunk; the tick''s null-pos fallback (an encounter with any NULL pos_x row '
   'runs the aggregate path, never the spatial one) keys off this column.';
 comment on column public.combat_units.pos_y is
-  'COMBAT-S3 (0231): in-combat world-y. Paired with pos_x (see its comment).';
+  'COMBAT-S3 (0234): in-combat world-y. Paired with pos_x (see its comment).';
 comment on column public.combat_units.move_speed is
-  'COMBAT-S3 (0231): this unit''s in-combat move speed (player rows: calculate_expedition_stats'' own '
+  'COMBAT-S3 (0234): this unit''s in-combat move speed (player rows: calculate_expedition_stats'' own '
   '''speed'', reused verbatim; enemy rows: a synthetic value derived from base_difficulty). NULL until '
   'spatial.';
 comment on column public.combat_units.weapons_json is
-  'COMBAT-S3 (0231): frozen-at-spawn array of {module_type_id,range,projectile_speed,power,ammo_type,'
+  'COMBAT-S3 (0234): frozen-at-spawn array of {module_type_id,range,projectile_speed,power,ammo_type,'
   'ammo_per_shot,cooldown_seconds,next_ready_at,ammo_remaining}. Every field but next_ready_at/'
   'ammo_remaining is immutable after spawn; those two are the tick''s own per-weapon fire-state, '
   'mutated only by the unit that owns the row. Default ''[]'' — every pre-existing/non-spatial row '
   'stays an inert empty array forever.';
 comment on column public.combat_units.side is
-  'COMBAT-S3 (0231): ''player'' (every row this migration''s creator hunk ever writes — a member ship) '
+  'COMBAT-S3 (0234): ''player'' (every row this migration''s creator hunk ever writes — a member ship) '
   'or ''enemy'' (a synthetic pirate unit, written ONLY by process_combat_ticks'' wave-spawn hunk, and '
   'ONLY on an encounter with spatial_combat_enabled lit). Default ''player'' — every pre-existing row '
   'and every legacy catalog row this column never touches reads ''player'' truthfully (report_create''s '
@@ -260,7 +263,7 @@ as $$
 $$;
 
 comment on function public.combat_unit_decide_move(double precision, double precision, double precision, double precision, double precision, double precision, double precision) is
-  'COMBAT-S3 (0231): the pure CLOSE/KITE/HOLD movement decision. Given my own position/range/speed and '
+  'COMBAT-S3 (0234): the pure CLOSE/KITE/HOLD movement decision. Given my own position/range/speed and '
   'a target''s position/range: CLOSE when the target is out of my range; KITE when I can hit them but '
   'they can''t hit me (retreat to the edge of my own range, never further); HOLD (fire, no movement) '
   'when both are in range. Faster/longer-range ships kite slower/shorter ones — emergent from the '
@@ -291,7 +294,7 @@ declare
   v_aggro_priority integer;
   v_hull    double precision;
   v_enc     uuid;
-  -- COMBAT-S3 (0231): the player position/speed/weapons snapshot — LIT-only working set. Gate read
+  -- COMBAT-S3 (0234): the player position/speed/weapons snapshot — LIT-only working set. Gate read
   -- ONCE at entry (the 0198 v_growth / 0193 v_traits_enabled posture, mirrored). v_loc_x/v_loc_y/
   -- v_ring_radius are only ever populated when lit; the per-member locals (v_pos_x/v_pos_y/
   -- v_move_speed/v_weapons_json) are reset to the inert NULL/NULL/NULL/'[]' shape at the TOP of every
@@ -312,7 +315,7 @@ begin
     raise exception 'combat_create_group_encounter: presence % not found', p_presence;
   end if;
 
-  -- COMBAT-S3 (0231): the arrival location's own center — the formation anchor (command ship spawns
+  -- COMBAT-S3 (0234): the arrival location's own center — the formation anchor (command ship spawns
   -- HERE; escorts ring around it). ONE extra read, dark-gated; a NEW statement, touches nothing else.
   if v_spatial_enabled then
     select x, y into v_loc_x, v_loc_y from locations where id = pr.location_id;
@@ -329,7 +332,7 @@ begin
     v_attack := 0; v_defense := 0; v_hp := 0; v_alive := 0;
     v_shield_max := null; v_shield_cur := null;
     v_aggro_priority := case when m.is_command_ship then 100 else 0 end;
-    -- COMBAT-S3 (0231): the inert default — reset EVERY iteration, before the hp>0 branch (the same
+    -- COMBAT-S3 (0234): the inert default — reset EVERY iteration, before the hp>0 branch (the same
     -- unconditional-reset law aggro_priority already follows), so a degraded member's row lands
     -- exactly the "no spatial data" shape regardless of why it degraded.
     v_pos_x := null; v_pos_y := null; v_move_speed := null; v_weapons_json := '[]'::jsonb;
@@ -344,7 +347,7 @@ begin
           v_shield_max := m.max_shield;
           v_shield_cur := m.shield;
         end if;
-        -- COMBAT-S3 (0231): position/speed/weapons — LIT only, computed from the SAME successful
+        -- COMBAT-S3 (0234): position/speed/weapons — LIT only, computed from the SAME successful
         -- adapter call above (v_stats) — no second calculate_expedition_stats invocation.
         if v_spatial_enabled then
           v_move_speed := coalesce((v_stats->>'speed')::double precision, 1);
@@ -395,7 +398,7 @@ begin
     v_power, v_power, 0, 0, 0, 0, 0, 0, now())
   returning id into v_enc;
 
-  -- COMBAT-S3 (0231): pos_x, pos_y, move_speed, weapons_json, side APPENDED to the existing column and
+  -- COMBAT-S3 (0234): pos_x, pos_y, move_speed, weapons_json, side APPENDED to the existing column and
   -- SELECT lists — every pre-existing column/value is untouched (extract-and-diff proof: nothing
   -- before 'aggro_priority)' in the column list or before the aggro_priority cast in the SELECT list
   -- changed). side is always 'player' here (this function never writes an enemy row) — a literal, not
@@ -492,7 +495,7 @@ declare
   v_absorb        double precision;
   v_per_ship_targeting boolean;
   v_target_unit        uuid;
-  -- ██ COMBAT-S3 (0231) — the spatial working set ██
+  -- ██ COMBAT-S3 (0234) — the spatial working set ██
   v_spatial_combat_enabled boolean;  -- read ONCE per invocation, alongside every other one-read knob
   v_is_spatial             boolean;  -- read ONCE per encounter per tick (the null-pos fallback decision)
   v_wave_paused            boolean;
@@ -548,7 +551,7 @@ begin
   v_log_debug     := cfg_bool('combat_debug_logging');
   v_shield_regen  := coalesce(cfg_num('shield_regen_combat_pct'), 0);
   v_per_ship_targeting := cfg_bool('per_ship_targeting_enabled');
-  -- COMBAT-S3 (0231): joins the SAME one-read-per-invocation block, never re-read inside the loop.
+  -- COMBAT-S3 (0234): joins the SAME one-read-per-invocation block, never re-read inside the loop.
   v_spatial_combat_enabled := cfg_bool('spatial_combat_enabled');
 
   for e in
@@ -562,14 +565,14 @@ begin
     select * into pr from location_presence where id = e.presence_id;
     select base_difficulty, reward_tier, max_presence_seconds into loc from locations where id = e.location_id;
 
-    -- COMBAT-S3 (0231): THE NULL-POS FALLBACK. Read once per encounter per tick, BEFORE the aggregate
+    -- COMBAT-S3 (0234): THE NULL-POS FALLBACK. Read once per encounter per tick, BEFORE the aggregate
     -- select. An encounter with even one NULL pos_x row (dark at creation time, or created before the
     -- flag lit) is NEVER spatial, regardless of what the flag reads THIS tick — an in-flight battle is
     -- never spatialized mid-fight.
     v_is_spatial := v_spatial_combat_enabled
       and exists (select 1 from combat_units where encounter_id = e.id and pos_x is not null);
 
-    -- COMBAT-S3 (0231): THE ONE MARKED AGGREGATE-SELECT HUNK. Dark/no-positions arm is the 0228 head
+    -- COMBAT-S3 (0234): THE ONE MARKED AGGREGATE-SELECT HUNK. Dark/no-positions arm is the 0228 head
     -- SELECT, byte-identical (extract-and-diff: the else-arm below is untouched).
     if v_is_spatial then
       select coalesce(sum(hp_current), 0), coalesce(sum(alive_count), 0)
@@ -655,7 +658,7 @@ begin
     -- (C) Combat step.
     if v_is_spatial then
       -- ██████████████████████████████████████████████████████████████████████████████████████████
-      -- COMBAT-S3 (0231) SPATIAL COMBAT STEP — replaces the aggregate-damage step for any encounter
+      -- COMBAT-S3 (0234) SPATIAL COMBAT STEP — replaces the aggregate-damage step for any encounter
       -- whose combat_units carry positions. See the migration header for the full design walkthrough.
       -- ██████████████████████████████████████████████████████████████████████████████████████████
       v_danger   := 1 + e.waves_cleared + floor(v_secs_inside / coalesce(cfg_num('danger_time_divisor_seconds'), 180))::integer;
@@ -1165,7 +1168,7 @@ begin
     return null;
   end if;
 
-  -- COMBAT-S3 (0231): `and side = 'player'` — the ONE token added to this scan. Every pre-existing row
+  -- COMBAT-S3 (0234): `and side = 'player'` — the ONE token added to this scan. Every pre-existing row
   -- is side='player' by column default, so this is a provable no-op for every non-spatial encounter.
   select
     coalesce(jsonb_object_agg(coalesce(unit_type_id, main_ship_id::text), alive_count) filter (where alive_count > 0), '{}'::jsonb),
