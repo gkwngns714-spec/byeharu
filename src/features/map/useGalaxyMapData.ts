@@ -165,11 +165,16 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         fetchActiveMovements(),
         fetchLocationStates(),
         // FLEETMAP: the single-ship reads now address the SELECTED ship (was implicitly the sole ship — null
-        // at N≥2). The whole-fleet projection is fetched in the SAME parallel batch (owner-read, [] on error),
-        // but gated on the SAME `mainshipSendEnabled` data-dark gate as its layer — a dark/pre-flip env does
-        // ZERO fleet-positions reads (the layer would render nothing anyway).
+        // at N≥2). The whole-fleet projection is fetched in the SAME parallel batch (owner-read, [] on error).
+        // GATE FIX (post-flip): read the fleet layer when EITHER the legacy send OR the unified mover is live.
+        // The flip turned mainship_send_enabled OFF (closing the per-ship send surface) but that flag ALSO
+        // gated this read — so gating on send alone starved the map's fleet layer AND the Port tab (which
+        // derives docked ships from fleetPositions) the instant unified movement went live. A truly dark env
+        // (both off) still does ZERO reads.
         fetchMainShip(selectedShipId),
-        staticRef.current.mainshipSendEnabled ? fetchMyFleetPositions() : Promise.resolve<FleetPosition[]>([]),
+        (staticRef.current.mainshipSendEnabled || staticRef.current.fleetMovementUnifiedEnabled)
+          ? fetchMyFleetPositions()
+          : Promise.resolve<FleetPosition[]>([]),
       ])
       // The active linked fleet (zero units) drives the live main-ship status. Only read it
       // when a ship exists; absent ship or no in-flight fleet → null (home).
