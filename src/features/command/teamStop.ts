@@ -30,8 +30,8 @@ export function groupStopAvailability(input: {
 // ── MOVEMENT-ON-MAP step 2 — which owned fleets are in flight (the map Stop's derivation) ─────────
 //
 // Charter §2a: ALL movement interaction lives on the map. Step 1 stripped Send/Hunt/Stop out of the
-// Command roster; Send/Hunt/Move already had a map home (TeamMapSend) but Stop did NOT — stopShipGroup
-// and groupStopAvailability above were fully built and ORPHANED with no caller. This is the missing
+// Command roster; Send/Hunt/Move already had a map home (TeamMapSend) but Stop did NOT —
+// groupStopAvailability above was fully built and ORPHANED with no caller. This is the missing
 // input to that caller. It is a SELECTOR over rows the shell already polls (map.movements +
 // map.teamGroups) — no new server surface, no second fold.
 //
@@ -142,42 +142,12 @@ export function resolveStoppableFleets(
   return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
 }
 
-// ── Stop outcome copy ────────────────────────────────────────────────────────────────────────────
-// stop_ship_group_transit (0164) is BEST-EFFORT: past the pre-read checks it always returns ok:true with
-// a {stopped, skipped, failed} aggregate only the server can compute (see the header). This builds the
-// summary from the server's OWN numbers rather than assuming every member halted.
-
-// The RPC result is an opaque bag (TeamRpcResult's `{ ok: true; [k: string]: unknown }`); the index
-// signature keeps this assignable from it while still naming the three keys 0164 actually returns.
-export interface GroupStopOutcome {
-  stopped?: unknown
-  skipped?: unknown
-  failed?: unknown
-  [k: string]: unknown
-}
-
-/** Player-facing summary of a best-effort group stop, from the SERVER's aggregate. */
-export function stopOutcomeMessage(fleetName: string, res: GroupStopOutcome): string {
-  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
-  const stopped = n(res.stopped)
-  const failed = n(res.failed)
-  const ships = (c: number) => `${c} ship${c === 1 ? '' : 's'}`
-  if (stopped === 0 && failed === 0) return `${fleetName} was already stopped — nothing was in flight.`
-  const parts = [`Stopped ${fleetName}`]
-  if (stopped > 0) parts.push(`— ${ships(stopped)} holding position`)
-  if (failed > 0) parts.push(`· ${ships(failed)} couldn't stop`)
-  return `${parts.join(' ')}.`
-}
-
 // ── FLEET-GO 4a-1 — the UNIFIED stop's envelope parser + outcome copy (0209). ────────────────────
 //
-// A NEW parser, not a widening of stopOutcomeMessage — because the two envelopes DISAGREE on the
-// same key: `stopped` is a per-member COUNT in 0164 ({stopped: 3, skipped: 1, failed: 0}) but a
-// BOOLEAN in 0209 ({stopped: true} — ONE fleet, ONE brake, nothing to count). stopOutcomeMessage's
-// numeric filter (`typeof v === 'number' && v > 0`) coerces a 0209 success's `stopped: true` to 0
-// and reports "was already stopped — nothing was in flight" ON A SUCCESSFUL STOP. The spec battery
-// pins that divergence explicitly (feed a 0209 success to BOTH; assert they disagree), so nobody
-// "simplifies" the two parsers back into one.
+// The unified brake is the ONLY group-stop path now (fleet_movement_unified_enabled is on in prod;
+// the legacy per-member stop_ship_group_transit parser + its stopShipGroup wrapper were retired with
+// the movement-signal cleanup). Its envelope is BOOLEAN-keyed: `stopped: true` means the fleet's ONE
+// live leg was cancelled and it now holds in open space — there is no per-member count to aggregate.
 //
 // 0209's ok:true shape: { stopped: boolean, reason_code?: 'no_fleet' | 'not_moving' |
 // 'already_settled', cancelled_movement_id?, space_x?, space_y?, … }. reason_code only accompanies

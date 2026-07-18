@@ -205,14 +205,6 @@ export async function moveShipGroup(groupId: string, locationId: string): Promis
   return data as TeamRpcResult
 }
 
-// stop_ship_group_transit (0164) — best-effort halt of every in-flight member. Success carries the aggregate
-// { stopped, skipped, failed }.
-export async function stopShipGroup(groupId: string): Promise<TeamRpcResult> {
-  const { data, error } = await supabase.rpc('stop_ship_group_transit', { p_group_id: groupId })
-  if (error) return { ok: false, reason: 'unavailable' }
-  return data as TeamRpcResult
-}
-
 // ── FLEET-GO 4a-1 — the UNIFIED mover/brake wrappers (charter §2: the fleet is the ONLY mover). ──
 // Thin, normalize-don't-throw (the file's write style, verbatim). Both RPCs are DARK behind
 // fleet_movement_unified_enabled (false in prod) and reject-before-read while dark, so wiring these
