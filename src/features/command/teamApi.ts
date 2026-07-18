@@ -217,6 +217,20 @@ export async function commandShipGroupGo(groupId: string, target: GroupGoTarget)
   return data as TeamRpcResult
 }
 
+// command_ship_group_dock (0219 — S4 TIMED DOCKING) — the DOCK verb: from a fleet PARKED in open
+// space inside a dockable port's territory, mint a normal 45s fleet_movements leg (mission 'dock');
+// the arrival settles into the docked state through the untouched settle. Server-derived
+// everything: the port comes from fleet_in_territory, never from the client. DARK behind
+// timed_docking_enabled (reject-before-read: timed_docking_disabled) — the FleetCommandPanel's
+// dock row only routes here when the runtime flag is lit, and falls back to the instant
+// commandShipGroupGo otherwise. Success carries { fleet_id, movement_id, port_id, arrive_at }.
+// Rejects: not_parked / not_in_territory / not_dockable / group_on_sortie / … (teamReasonMessage).
+export async function commandShipGroupDock(groupId: string): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('command_ship_group_dock', { p_group_id: groupId })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
 // command_ship_group_stop (0209) — the ONE fleet-level brake: cancels the group fleet's live leg and
 // HOLDS it in open space at the interpolated point (immediately re-commandable). Idempotent —
 // pressing it on a parked fleet returns ok:true with stopped:false + a reason_code, never an error.

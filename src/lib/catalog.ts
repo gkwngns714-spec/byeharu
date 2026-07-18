@@ -90,6 +90,19 @@ export async function fetchFleetMovementUnifiedEnabled(): Promise<boolean> {
   return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'fleet_movement_unified_enabled')
 }
 
+// S4 TIMED DOCKING (0219) — the runtime gate for the timed dock verb (command_ship_group_dock) and
+// the mover's dockable-target translate. Same strict jsonb-true fold as the three flags above (the
+// server gates BOTH sides on the SAME flag via cfg_bool FIRST; the row is seeded false by 0219).
+// This MUST stay a RUNTIME read, never a compile constant (the teamApi.ts deploy-order law): Pages
+// deploys ahead of the approval-gated migration, and only a runtime read lets the flag flip switch
+// the already-deployed client atomically with the server. Absent / unreadable / any non-true shape
+// → OFF (fail-closed): the dock row keeps submitting the instant go and the map is byte-identical.
+export async function fetchTimedDockingEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('game_config').select('key, value')
+  if (error) return false
+  return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'timed_docking_enabled')
+}
+
 // OSN-3 S6A feature gate for the coordinate-movement (open-space) command surface. Same safe public
 // read path + boolean semantics as fetchMainshipSendEnabled above. Absent or unreadable → OFF. Read
 // only. NOTE (S6A): nothing renders coordinate-command UI yet — this is a typed seed for S6B's gating;

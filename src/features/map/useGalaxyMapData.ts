@@ -6,7 +6,7 @@ import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import {
   fetchMainshipSendEnabled, fetchFleetMovementUnifiedEnabled,
-  fetchLaunchFromDockEnabled, fetchFleetControlEnabled,
+  fetchLaunchFromDockEnabled, fetchFleetControlEnabled, fetchTimedDockingEnabled,
 } from '../../lib/catalog'
 import {
   fetchActiveMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
@@ -90,6 +90,10 @@ export interface GalaxyMapData {
   // previously fetched per-mount by the deleted TeamMapSend). Feed the panel's hunt arm.
   launchFromDockEnabled: boolean
   fleetControlEnabled: boolean
+  // S4 TIMED DOCKING (0219): the runtime timed-dock gate — read once like unifiedEnabled and
+  // threaded the same way. Lit, the FleetCommandPanel's dock row submits commandShipGroupDock
+  // (the 45s leg); dark, it keeps submitting the instant commandShipGroupGo, byte-identical.
+  timedDockingEnabled: boolean
   refresh: () => Promise<void>
 }
 
@@ -125,6 +129,7 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   unifiedGroupFleets: [],
   launchFromDockEnabled: false,
   fleetControlEnabled: false,
+  timedDockingEnabled: false,
 }
 
 export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = null): GalaxyMapData {
@@ -136,6 +141,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     fleetMovementUnifiedEnabled: boolean
     launchFromDockEnabled: boolean
     fleetControlEnabled: boolean
+    timedDockingEnabled: boolean
   } | null>(null)
 
   const load = useCallback(async () => {
@@ -143,10 +149,10 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
       if (!staticRef.current) {
         // S5 MAP-UX: launch-from-dock + fleet-control ride the SAME once-per-session static batch as
         // the other runtime flags (they were per-mount reads in the deleted TeamMapSend).
-        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled] =
+        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled] =
           await Promise.all([
             fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetMovementUnifiedEnabled(),
-            fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(),
+            fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(), fetchTimedDockingEnabled(),
           ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -160,7 +166,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         }
         staticRef.current = {
           locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled,
-          launchFromDockEnabled, fleetControlEnabled,
+          launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
         }
       }
 
@@ -236,6 +242,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         unifiedGroupFleets,
         launchFromDockEnabled: staticRef.current.launchFromDockEnabled,
         fleetControlEnabled: staticRef.current.fleetControlEnabled,
+        timedDockingEnabled: staticRef.current.timedDockingEnabled,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))

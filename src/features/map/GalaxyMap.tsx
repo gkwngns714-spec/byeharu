@@ -362,6 +362,8 @@ export function GalaxyMap({
                 k={view.k}
                 isReturn={m.target_type === 'base'}
                 arriveAt={m.arrive_at}
+                // S4 TIMED DOCKING: a 'dock' leg labels "Docking m:ss" (FleetMovementLine).
+                missionType={m.mission_type}
               />
             )
           })}
