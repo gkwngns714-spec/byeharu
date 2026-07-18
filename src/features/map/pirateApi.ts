@@ -1,5 +1,5 @@
 // PIRATE INTERCEPT (prototype) — thin, normalize-don't-throw RPC wrappers over the server slice
-// (supabase/migrations/20260618000222_pirate_intercept_danger_zones.sql). Every RPC here is DARK
+// (supabase/migrations/20260618000225_pirate_intercept_danger_zones.sql). Every RPC here is DARK
 // behind pirate_intercept_enabled and rejects-before-read while dark, so wiring these wrappers
 // changes nothing until the flag is lit. Mirrors the teamApi.ts style verbatim: transport error →
 // {ok:false, reason:'unavailable'}, server is the SOLE authority, thin pass-through otherwise.
