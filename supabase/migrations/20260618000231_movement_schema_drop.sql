@@ -1,4 +1,4 @@
--- 4C-MIG-2B — MOVEMENT SCHEMA DROP (migration 0223): the IRREVERSIBLE stage of the legacy-movement
+-- 4C-MIG-2B — MOVEMENT SCHEMA DROP (migration 0231): the IRREVERSIBLE stage of the legacy-movement
 -- retirement. In ONE all-or-nothing transaction this migration: (1) reconciles orphan legacy data,
 -- (2) stops the LAST live writers from touching the doomed columns, (3) drops the 0054/0055 spatial
 -- CHECK constraints, (4) narrows the status CHECK (retires 'stationary'), (5) drops
@@ -46,7 +46,7 @@
 --        Re-created here dropping the select-list column and the emit key (client contract intact:
 --        it never read the field).
 --   (F4) fleet_set_in_space(p_fleet uuid, p_x double precision, p_y double precision) (TRUE head
---        20260618000208:61, the ONLY definition — no later create-or-replace through 0222/0223)
+--        20260618000208:61, the ONLY definition — no later create-or-replace through 0222/0231)
 --        still writes `active_movement_id = null, active_space_movement_id = null` on the fleets
 --        table. §7 below drops fleets.active_space_movement_id — the NEXT call would error "column
 --        does not exist". NOT dead: it is the leaf `command_ship_group_stop` (the player Stop/brake
@@ -1134,7 +1134,7 @@ revoke all on function public.get_my_fleet_positions() from public;
 grant execute on function public.get_my_fleet_positions() to authenticated;
 
 -- F4 — fleet_set_in_space (TRUE head 0208:61, the ONLY definition — no later create-or-replace
--- exists through 0222/0223). LIVE, not dead: called by command_ship_group_stop (the player Stop/
+-- exists through 0222/0231). LIVE, not dead: called by command_ship_group_stop (the player Stop/
 -- brake RPC, src/features/command/teamApi.ts:256, granted to authenticated, gated on
 -- fleet_movement_unified_enabled — TRUE in prod per 0219's header) via 0209/0215/0218, AND by
 -- movement_settle_arrival's target_type='space' branch (0208:165) on every coordinate-target

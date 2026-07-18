@@ -11,7 +11,7 @@
 -- mainship_space_begin_move_core → 'in_transit'; send_ship_group_hunt → 'hunting'). The unified
 -- mover must write NONE. That is not a nice-to-have — it IS the model. So this proof snapshots every
 -- ship column that could carry movement (status, berth_location_id, updated_at — spatial_state/
--- space_x/space_y tracked here too until 4C-MIG-2B/migration 0223 dropped them outright) into a
+-- space_x/space_y tracked here too until 4C-MIG-2B/migration 0231 dropped them outright) into a
 -- temp table BEFORE the command and diffs it AFTER, asserting byte-equality via a full EXCEPT both
 -- ways. If a future edit adds an `update main_ship_instances` to the mover, this fails loudly.
 -- It is asserted after the FIRST go, after a REDIRECT, and after the guards — a ship must never be
@@ -50,7 +50,7 @@ end $$;
 -- S1-BERTH (0216): the snapshot now covers berth_location_id too — under the berth model a ship's
 -- LOCATION for the unfleeted case lives in that column, so the §2 law ("a mover never writes a
 -- ship") must cover it: a go/redirect/brake/settle that moved a berth would be a ship write.
--- 4C-MIG-2B (migration 0223) DROPPED spatial_state/space_x/space_y from main_ship_instances outright
+-- 4C-MIG-2B (migration 0231) DROPPED spatial_state/space_x/space_y from main_ship_instances outright
 -- — there is nothing left in those columns for a mover to write, so they are removed from the
 -- tracked column set (a column that no longer exists cannot be diffed). status/berth_location_id/
 -- updated_at remain the full set of "could carry movement" columns post-drop.
@@ -861,7 +861,7 @@ begin
   -- read), with zero ship coords in existence — asserted below — every member reads 'hidden' here.
   -- Red-before/green-after by construction.
   -- vacuity guard: ZERO ships carry any position, so only the FLEET could have answered these coords.
-  -- 4C-MIG-2B (migration 0223) DROPPED main_ship_instances.space_x/space_y outright — no ship can
+  -- 4C-MIG-2B (migration 0231) DROPPED main_ship_instances.space_x/space_y outright — no ship can
   -- carry a position any more BY CONSTRUCTION, so the runtime count is now permanently, trivially
   -- satisfied; kept as a one-time schema-fact check instead of a vacuous always-pass count (the same
   -- rework as BLOCK ISOLATION above).
@@ -1056,7 +1056,7 @@ begin
   if n <> 0 then raise exception 'ISOLATION FAIL: the mover wrote % sortie manifest row(s)', n; end if;
 
   -- No OSN coordinate movements: the unified mover lives in the fleet domain ONLY.
-  -- 4C-MIG-2B (migration 0223) DROPPED main_ship_space_movements outright — the domain-isolation
+  -- 4C-MIG-2B (migration 0231) DROPPED main_ship_space_movements outright — the domain-isolation
   -- claim this count used to prove ("the mover never touches the OSN coordinate table") is now
   -- PERMANENTLY, trivially true by construction (there is no table left to touch), so the runtime
   -- count is removed rather than kept as a vacuous always-pass. to_regclass confirms the schema
@@ -1069,7 +1069,7 @@ begin
   -- NOT ONE ship in the whole DB carries a coordinate or an in-transit spatial state — even though a
   -- fleet has now flown to a raw coordinate, parked there, and set off again from it. The position
   -- exists; it just lives on the FLEET. That is §2 in a single query.
-  -- 4C-MIG-2B DROPPED main_ship_instances.spatial_state/space_x/space_y outright (migration 0223) —
+  -- 4C-MIG-2B DROPPED main_ship_instances.spatial_state/space_x/space_y outright (migration 0231) —
   -- the claim this count used to prove is now PERMANENTLY, trivially true (there are no columns left
   -- for a ship to carry a coordinate or spatial state IN), so the runtime count is removed rather
   -- than kept as a vacuous always-pass; the schema fact is confirmed once instead.
@@ -1431,11 +1431,11 @@ begin
 end $$;
 
 -- ════════ BLOCK MAPSPACE-RETIRED (was 3c-3 DARKPARITY; rewritten by 4c-mig-1/0221, retired further ════
--- by 4c-mig-2b/0223): a fleetless, berthed ship reads its BERTH, never a per-ship coordinate ═══════
+-- by 4c-mig-2b/0231): a fleetless, berthed ship reads its BERTH, never a per-ship coordinate ═══════
 -- HISTORY: until 0221 this block pinned the OPPOSITE — the 0212/0216 ship-coordinate elsif (the dark
 -- parity path). 4c-mig-1 (0221) retired the oracle's/map's per-ship spatial READS; this block then
 -- proved a PRESENT retired coordinate (surgically written to the still-existing column) was ignored
--- regardless. 4C-MIG-2B (migration 0223) DROPPED spatial_state/space_x/space_y outright — there is
+-- regardless. 4C-MIG-2B (migration 0231) DROPPED spatial_state/space_x/space_y outright — there is
 -- no column left to surgically write a "present retired signal" into, so that specific proof is now
 -- IMPOSSIBLE TO CONSTRUCT and therefore moot (the ISOLATION block's to_regclass/information_schema
 -- checks already confirm the columns are gone, once, for the whole file). What SURVIVES and is still
@@ -2585,7 +2585,7 @@ begin
    where id = v_gofleet and status = 'idle' and location_mode = 'space';
   if v_x is null then raise exception 'HUNTUNI-FROMSPACE FAIL: the fleet is not parked idle in space — the from-space state was not built'; end if;
   -- vacuity: ZERO ships carry a position — only the FLEET could supply the origin below (§2).
-  -- 4C-MIG-2B (migration 0223) DROPPED main_ship_instances.space_x/space_y outright — permanently,
+  -- 4C-MIG-2B (migration 0231) DROPPED main_ship_instances.space_x/space_y outright — permanently,
   -- trivially satisfied by construction; kept as a one-time schema-fact check (the same rework as
   -- BLOCK ISOLATION / MAPSPACE-GROUP above).
   if exists (select 1 from information_schema.columns

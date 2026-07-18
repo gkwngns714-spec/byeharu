@@ -118,7 +118,7 @@ if [ "$MODE" = "selftest" ]; then
   done
   # the snapshot must actually cover every column that could carry movement — S1-BERTH (0216) adds
   # berth_location_id: under the berth model the unfleeted ship's LOCATION lives there, so a mover
-  # that wrote it would be a ship write the old snapshot was blind to. 4C-MIG-2B (migration 0223)
+  # that wrote it would be a ship write the old snapshot was blind to. 4C-MIG-2B (migration 0231)
   # DROPPED spatial_state/space_x/space_y from main_ship_instances outright — a column that no
   # longer exists cannot be tracked, so the covered set narrows to what's left.
   grep -qF "select p_tag, main_ship_id, status, berth_location_id, updated_at" "$SQL" \
@@ -435,7 +435,7 @@ if [ "$MODE" = "selftest" ]; then
     || fail "MAPSPACE_GROUP does not guard that zero ships carry a position"
   # MAPSPACE-RETIRED (rewritten by 4c-mig-1/0221 — the ship-coordinate fallback this section's
   # 0212-file pins record as shipped history is RETIRED in the live 0221 head; retired FURTHER by
-  # 4c-mig-2b/0223, which DROPPED spatial_state/space_x/space_y outright — there is no column left to
+  # 4c-mig-2b/0231, which DROPPED spatial_state/space_x/space_y outright — there is no column left to
   # surgically write a "present retired signal" into, so that specific proof is now impossible and
   # was removed rather than kept as a dead assertion). The runtime block must still prove a
   # fleetless, really-berthed ship settles via BERTH TRUTH ('home'), not some other path.

@@ -265,7 +265,7 @@
 -- that must be legacy-sendable (a1,a2,a3,b1,c1) no longer need a status/spatial rewrite for that —
 -- but they still carry a live 'present' commission fleet that must be retired (it would otherwise
 -- consume the active-fleet cap), so that half of the normalization survives.
--- 4C-MIG-2B TOKEN UPDATE: 'stationary' and spatial_state/space_x/space_y are GONE (migration 0223) —
+-- 4C-MIG-2B TOKEN UPDATE: 'stationary' and spatial_state/space_x/space_y are GONE (migration 0231) —
 -- the all-or-nothing SEND block no longer needs (and cannot construct) the pre-repoint
 -- commissioned-docked shape. c2 is still the DELIBERATE exception, left OFF the home-normalization
 -- list, but the un-sendable shape is now simply status='hunting' (the send RPC's OWN gate is a flat
@@ -473,7 +473,7 @@ begin
                         where main_ship_id in (a1, a2, a3, b1, c1) and status = 'destroyed')
      and status = 'active';
 
-  -- c2 SURGERY (4C-MIG-2B rework — 'stationary'/spatial_state are GONE, migration 0223): the
+  -- c2 SURGERY (4C-MIG-2B rework — 'stationary'/spatial_state are GONE, migration 0231): the
   -- un-sendable member no longer needs the pre-repoint commissioned-docked shape at all. The live
   -- send_main_ship_expedition gate (grep-verified) is a FLAT `if v_ship.status <> 'home'` check on
   -- main_ship_instances.status alone — it never reads spatial_state for this decision — so ANY
@@ -858,7 +858,7 @@ end $$;
 -- 0155 — part of the STOP-TRIO the 2b migration is explicitly instructed to leave untouched, pending
 -- the client stop-retirement PR #189 + its own removal in 4b-drop) writes
 -- `status='stationary', spatial_state='in_space', space_x=.., space_y=..` INLINE (no shared helper —
--- its own header says so). Migration 0223 drops those columns/status value, so this inline write now
+-- its own header says so). Migration 0231 drops those columns/status value, so this inline write now
 -- raises "column does not exist" the instant a real halt is attempted. stop_ship_group_transit
 -- (0164) wraps EACH member's command_main_ship_stop_transit call in its own exception-catching
 -- subtransaction (BEST-EFFORT, not all-or-nothing — see its header) precisely so one member's
@@ -1119,7 +1119,7 @@ begin
   -- leaf smoke on a fixture team ship (a3: home, undisturbed since BLOCK STOP; rolled back with
   -- everything): mainship_sync_combat_hp writes hp ONLY (status untouched); mainship_mark_combat_
   -- destroyed writes status='destroyed'/hp=0 (the 0059 terminal's lifecycle half).
-  -- 4C-MIG-2B TOKEN UPDATE: spatial_state/space_x/space_y are GONE (migration 0223, finding F1) —
+  -- 4C-MIG-2B TOKEN UPDATE: spatial_state/space_x/space_y are GONE (migration 0231, finding F1) —
   -- both writers' CHECK-required clears retired WITH the columns; only status/hp are checked below.
   perform public.mainship_sync_combat_hp(a3, 123);
   select count(*) into n from public.main_ship_instances
