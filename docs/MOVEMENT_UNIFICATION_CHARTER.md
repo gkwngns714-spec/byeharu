@@ -650,3 +650,35 @@ detail. The `fleet_control_enabled` lever (OFF today) can dark the per-ship UI r
 Before touching movement: re-read §12 + this charter. If a change adds a per-command
 readiness branch or a new movement path, it is spaghetti — **stop**. Compose the frozen
 primitives; never gate around them.
+
+---
+
+## 5. THE BERTH ARC (post-flip overhaul, opened 2026-07-18)
+
+The unified mover is LIVE. This arc builds the owner's next layer on top of it — **without spaghetti**:
+one location model, timed docking on the existing timer spine, territory as one column, the map UX
+consolidated (delete panels, don't add), the ship tab reborn as a fitting view. Owner's clarifications:
+territory radius = future combat/spawn zones; docking takes TIME (shown on map); a ship is FLEETED (moves
+with a fleet, IS a map marker) **XOR** BERTHED (docked at a port, shown as INFO only, NOT a marker) — to
+put a ship in a fleet, **the fleet must travel to it**.
+
+**FOUNDATION — S1 berth (building, task #12):** `main_ship_instances.berth_location_id` + CHECK
+`(group_id IS NULL) = (berth_location_id IS NOT NULL)` — the FLEETED-xor-BERTHED law at the schema level
+(ghost-dock becomes structurally impossible). ONE resolver (fleeted→fleet pos; else→berth port).
+`get_my_fleet_positions` gains a `berthed` INFO branch. assign/unassign/delete/commission maintain the XOR.
+
+**Then, in order (each: architect→implementer(worktree)→adversarial review→CI real-PG proof→owner-gated deploy):**
+- **S2 (task #15)** Territory: `locations.territory_radius` (one column, seeded by type — port ~25, pirate_den ~35, waypoint ~15/NULL) + a map ring + orbit labels.
+- **S3 (task #16)** Position/territory server leaves: `fleet_current_position` folds the interpolation math inlined 3× today; `fleet_in_territory` composes it. THE containment authority the dock guard + future enemy-spawn share.
+- **S4 (task #17)** Timed docking (dark behind `timed_docking_enabled`): `docking_seconds`=45 flat; DOCK is a `fleet_movements` leg (mission_type='dock'), countdown = the existing movement countdown; settles via the byte-untouched location branch → every dock consumer works unmodified.
+- **S5 (task #18)** Map UX: consolidate to ONE `FleetCommandPanel` (Go/Redirect/Stop/Dock+countdown); DELETE FleetGoPanel + on-map TeamMapSend + TeamMapStop + the redundant per-ship chevron layer (keep their pure classifiers, compose them). Stop stays first/always-reachable (NO-SOFTLOCK).
+- **S6 (task #19)** Ship tab → Fitting tab: ships grouped by fleet + a "Berthed — not in a fleet" section; per-row location (the ONE read) + condition/stats/buffs; select → fitting detail (compose get_my_ship_fittings + Workshop, docked/berthed only). RETIRE ShipStatusCard + ShipDossier.
+
+**Cleanup slices the no-spaghetti law requires (retire the replaced systems as their own slices):**
+- **4a-post (task #11)** delete the dead per-ship movement client (MainShipCommand/PortNavPanel/SpaceMove/Stop + per-ship mainshipApi wrappers) — S5's precondition.
+- **4c (task #5)** signal retirement (repoint then schema); **4b-DROP/0215-era (task #9)** drop the legacy movers, drain-asserted.
+
+**Ordering truth:** S1 is the ROOT — S2–S6 + 4a-post all share files with it (`mainshipApi.ts`,
+`GalaxyMap.tsx`, `scripts/fleetgo-proof.*`), so they SERIALIZE behind S1's merge, not out of caution but
+because they touch the same files. After S1 lands: migration domain (S2→S3→S4→4c→drop) and frontend domain
+(4a-post→S5, S6) each run their own pipeline; the two domains parallelize (disjoint files).
