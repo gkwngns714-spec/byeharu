@@ -27,11 +27,16 @@ const EDGE_DESC = {
 }
 
 const base = import.meta.env.BASE_URL || '/'
-const [graph, live, wip0] = await Promise.all([
+const [graph, live, wip0, purposeDoc] = await Promise.all([
   fetch(`${base}graph.json`).then((r) => r.json()),
   fetch(`${base}live.json`).then((r) => r.json()).catch(() => null),
   fetch(`${base}wip.json`).then((r) => r.json()).catch(() => null),
+  fetch(`${base}purpose.json`).then((r) => r.json()).catch(() => null),
 ])
+// purpose[nodeId] → a plain-language "what is this FOR in the game?" line, authored
+// in public/purpose.json. Missing/failed load degrades gracefully to nothing.
+const purpose = purposeDoc?.purpose ?? {}
+const gamePurpose = (id) => purpose[id] || ''
 
 const { status, why, frontier } = deriveStatuses(graph, live)
 const { birth, days } = deriveHistory(graph)   // nodeId -> 'YYYY-MM-DD', and the sorted day list
@@ -274,11 +279,13 @@ function inspect(id) {
     ;(groups[k] ??= []).push(e)
   }
   el.classList.add('on')
+  const inGame = gamePurpose(id)
   el.innerHTML = `
     <div class="kind">${n.kind}</div>
     <h3>${n.label}</h3>
     <div class="pill" style="background:${s.hex}22;color:${s.hex}">
       <span class="swatch" style="background:${s.hex}"></span>${s.label}</div>
+    ${inGame ? `<div class="ingame"><span class="ingame-tag">In the game</span>${inGame}</div>` : ''}
     <div class="why">${why.get(id) ?? ''}</div>
     ${n.file ? `<div class="file">${n.file}</div>` : ''}
     ${n.detail ? `<div class="det">${n.detail}</div>` : ''}
@@ -414,7 +421,42 @@ const pbBar = document.getElementById('playback')
 const pbPlayBtn = document.getElementById('pbPlay')
 const pbSlider = document.getElementById('pbSlider')
 const pbLabel = document.getElementById('pbLabel')
+const pbCaption = document.getElementById('pbCaption')
 let bornFlash = []   // [{ i, t }] nodes born on the day just revealed — a brief pop
+
+// ── the day's caption: what THIS day introduced, in player-facing words ─────────
+// Rank the newly-born nodes so the headline features the ones that mean the most to
+// a player (a system or a feature switch outranks a lone helper function), surface
+// the top few with their game-purpose, and count the rest as "+N more".
+const CAP_RANK = { system: 0, flag: 1, phase: 2, rung: 3, migration: 4, table: 5, function: 6 }
+const capLabel = (n) => {
+  if (n.kind === 'flag') return n.label.replace(/_enabled$/, '').replace(/_/g, ' ')
+  if (n.kind === 'migration') return n.label.replace(/^(init|add|create|new|seed|make)_/i, '').replace(/_/g, ' ')
+  return n.label
+}
+const capText = (id) => gamePurpose(id).replace(/\s*\([^)]*\)\s*$/, '')   // drop the trailing (technical label)
+function renderCaption() {
+  if (!pb.on) { pbCaption.classList.remove('on'); return }
+  const day = days[pb.i]
+  const born = graph.nodes
+    .filter((n) => birth.get(n.id) === day && state.kind.has(n.kind) && capText(n.id))
+    .sort((a, b) => (CAP_RANK[a.kind] ?? 9) - (CAP_RANK[b.kind] ?? 9))
+  pbCaption.classList.add('on')
+  if (!born.length) {
+    pbCaption.innerHTML = `<div class="cap-head"><b>${day}</b> · day ${pb.i + 1} / ${days.length}</div>`
+      + '<div class="cap-quiet">Groundwork and fixes — nothing new to the player this day.</div>'
+  } else {
+    const top = born.slice(0, 3)
+    const rows = top.map((n) => `<div class="cap-row">
+      <span class="cap-dot" style="background:${status.get(n.id).hex}"></span>
+      <span><b>${capLabel(n)}</b> — ${capText(n.id)}</span></div>`).join('')
+    const more = born.length - top.length
+    pbCaption.innerHTML = `<div class="cap-head"><b>${day}</b> · introduced this day</div>${rows}`
+      + (more > 0 ? `<div class="cap-more">+${more} more born this day</div>` : '')
+  }
+  // a gentle fade on change (disabled under reduced-motion via CSS)
+  pbCaption.classList.remove('pop'); void pbCaption.offsetWidth; pbCaption.classList.add('pop')
+}
 
 const pbNodeCount = (dayIdx) => {
   let c = 0
@@ -434,7 +476,7 @@ function pbSetDay(i, flash = false) {
     positioned.forEach((n, idx) => { if (birth.get(n.id) === day) bornFlash.push({ i: idx, t: performance.now() }) })
   }
   pb.i = c
-  apply(); pbRender()
+  apply(); pbRender(); renderCaption()
 }
 function pbSetMode(on) {
   pb.on = on
@@ -445,6 +487,7 @@ function pbSetMode(on) {
   pbBar.classList.toggle('on', on)
   pb.i = on ? 0 : days.length - 1     // enter at day one; leave on the full present-day map
   apply(); if (on) pbRender()
+  renderCaption()
 }
 function pbPlayPause() {
   if (!pb.on) return
