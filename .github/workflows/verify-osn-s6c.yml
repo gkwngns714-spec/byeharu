@@ -1,12 +1,13 @@
 name: Verify — OSN S6C coordinate command (unit)
 
-# Runner for the pure OSN-3 S6C unit tests (empty-space coordinate command surface): the framework-free
-# command logic/controller (spaceMoveCommand.spec.ts) and the hook-free presentational pieces
-# (spaceMoveTarget.spec.ts). Node-side Playwright unit tests — NO page/browser interaction, NO DB, NO
-# secrets, NO live verifier. It exists because the dev machine's local toolchain is unreliable (OneDrive
-# node_modules corruption), so these must run in CI. Mirrors verify-osn-s6b.yml: runs on its OWN
-# path-scoped pull requests so S6C is gated before merge, and is workflow_dispatch-able afterward. It is
-# deliberately NOT a gate on every unrelated push, and it touches no production/deploy/Environment state.
+# Runner for the pure OSN-3 S6C-origin unit tests, 4A-POST trimmed to the LIVE survivors of the
+# per-ship client deletion: the framework-free grid/gesture helpers (spaceMoveCommand.spec.ts) and
+# the hook-free coordinate target marker the fleet-go reuses (spaceMoveTarget.spec.ts). Node-side
+# Playwright unit tests — NO page/browser interaction, NO DB, NO secrets, NO live verifier. It exists
+# because the dev machine's local toolchain is unreliable (OneDrive node_modules corruption), so
+# these must run in CI. Runs on its OWN path-scoped pull requests, and is workflow_dispatch-able
+# afterward. It is deliberately NOT a gate on every unrelated push, and it touches no
+# production/deploy/Environment state.
 
 on:
   workflow_dispatch:
@@ -14,7 +15,6 @@ on:
     paths:
       - 'src/features/map/spaceMoveCommand.ts'
       - 'src/features/map/SpaceMoveTarget.tsx'
-      - 'src/features/map/useSpaceMoveCommand.ts'
       - 'tests/spaceMoveCommand.spec.ts'
       - 'tests/spaceMoveTarget.spec.ts'
       - '.github/workflows/verify-osn-s6c.yml'

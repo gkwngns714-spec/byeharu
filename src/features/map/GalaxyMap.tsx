@@ -13,18 +13,12 @@ import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
-import { useSpaceMoveCommand } from './useSpaceMoveCommand'
-import { useSpaceStopCommand } from './useSpaceStopCommand'
-import { SpaceMoveTargetMarker, SpaceMoveControls, type SpaceMoveEligibility } from './SpaceMoveTarget'
-import { SpaceStopControls } from './SpaceStopControls'
-import { isActiveCoordinateTransit } from './spaceStopCommand'
+import { SpaceMoveTargetMarker } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
 import { resolveSpaceTapOwner, fleetGoTargetView } from './fleetGoTarget'
 import { FleetGoPanel } from './FleetGoPanel'
 import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
-import { useOsnReadiness } from './useOsnReadiness'
-import { isCoordinateTargetingActionable, type OsnReadiness } from './osnReadiness'
 import { labelVisible } from './markerStyle'
 import { Button, OverlayPanel, OverlayRail } from '../../components/ui'
 
@@ -55,7 +49,6 @@ export function GalaxyMap({
   onFleetGo,
   selectedId,
   onSelect,
-  deps,
 }: {
   locations: MapLocation[]
   mainShip: MainShipLite | null
@@ -90,11 +83,6 @@ export function GalaxyMap({
   onFleetGo: () => void
   selectedId: string | null
   onSelect: (id: string | null) => void
-  // Test/integration injection seam; defaults to the real server readiness + movement-flag reads.
-  deps?: {
-    readinessFetcher?: () => Promise<OsnReadiness>
-    spaceMoveEnabled?: boolean
-  }
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
@@ -116,52 +104,14 @@ export function GalaxyMap({
   const userMovedRef = useRef(false)
   const lastFitSig = useRef<string | null>(null)
 
-  // ── OSN-3 S6C — empty-space coordinate command surface (flag-dark by default) ──
-  // The hook reads `mainship_space_movement_enabled` itself; while dark `sm.enabled` is false and the
-  // whole surface stays unmounted → zero production visual change. Coordinate-target taps are only
-  // captured when the flag is on AND the ship is eligible. Camera behavior is unchanged either way.
-  // COORD-GUARD (§2.5): the SELECTED ship is threaded exactly like the Stop command + the readiness
-  // read below — the move targets the ship the readiness projection was scoped to (no split-brain).
-  const sm = useSpaceMoveCommand({ mainShipId: mainShip?.main_ship_id ?? null })
-  // OSN-4 — Stop safety. The CTA mounts ONLY for a real active coordinate transit and is INDEPENDENT of the
-  // initiation flag (in-flight safety): an emergency flag disable must never strand an in-flight ship.
-  const stop = useSpaceStopCommand({ mainShipId: mainShip?.main_ship_id ?? null })
-  const inCoordinateTransit = isActiveCoordinateTransit({
-    spatialState: mainShip?.spatial_state,
-    spaceMovementStatus: mainShipSpaceMovement?.status,
-    spaceMovementTargetKind: mainShipSpaceMovement?.target_kind,
-  })
-  const eligibility: SpaceMoveEligibility = !mainShip
-    ? 'no_ship'
-    : mainShip.status === 'destroyed' || mainShip.spatial_state === 'destroyed'
-      ? 'destroyed'
-      : mainShip.status === 'traveling' ||
-          mainShip.spatial_state === 'in_transit' ||
-          mainShipFleet?.status === 'moving' ||
-          mainShipFleet?.status === 'returning' ||
-          mainShipSpaceMovement?.status === 'moving'
-        ? 'in_transit'
-        : 'eligible'
-  // OSN-COORD-ENABLE-1C — runtime coordinate capability. The empty-space command surface is driven SOLELY by
-  // the server-derived readiness projection (coordinate_travel_available), NOT the retired compile-time const.
-  // Readiness re-validates on mount, on any main-ship/movement lifecycle change, and on a manual refresh after
-  // a coordinate command completes. While production stays dark (mainship_coordinate_travel_enabled=false) the
-  // server returns coordinate_travel_available=false → canTarget is false → the whole surface stays unmounted.
-  const readinessLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipPresence?.location_id ?? 'none'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
-  const { readiness, refresh: refreshReadiness } = useOsnReadiness(readinessLifecycleKey, { mainShipId: mainShip?.main_ship_id ?? null, fetcher: deps?.readinessFetcher })
-  const spaceMoveEnabled = deps?.spaceMoveEnabled ?? sm.enabled
-  const canTarget = isCoordinateTargetingActionable(readiness, spaceMoveEnabled, eligibility)
   // ── FLEET-GO 4a-2 — WHO owns an open-space tap (charter §2/§2a: ALL movement on the MAP; the
   // FLEET is the only mover). Unified lit + ≥1 owned group → the fleet coordinate-go surface owns
-  // every tap and the per-ship marker/panel above is suppressed (two movers must never share one
-  // tap). Dark → 'per_ship' exactly when canTarget (today's behavior, byte-identical). The fleet
-  // surface's ONLY gate is the flag + owning a group — deliberately NOT canTarget/useOsnReadiness
-  // (per-SHIP capability), NOT eligibility==='in_transit' (a go while moving IS the redirect,
-  // 0208), and NOT cmd.active (the unified mover has no command-ship gate).
+  // every tap. 4A-POST: the per-ship coordinate arm (useSpaceMoveCommand / readiness / eligibility)
+  // is DELETED — `perShipCanTarget` is hard false, so the owner is only ever 'fleet' or 'none'.
   const tapOwner = resolveSpaceTapOwner({
     unifiedEnabled: fleetMovementUnifiedEnabled,
     hasGroups: teamGroups.length > 0,
-    perShipCanTarget: canTarget,
+    perShipCanTarget: false,
   })
   // The fleet's tapped destination (RAW world point — the wire value; fleetGoTargetView derives the
   // canonical PREVIEW + bounds verdict). Redirect = re-tap a new point, then click the row again —
@@ -256,11 +206,10 @@ export function GalaxyMap({
     pointers.current.delete(e.pointerId)
     drag.current = null
     tap.current = null
-    // S6C: a single short near-stationary tap on EMPTY space (the <svg> itself — markers/backdrop don't
-    // hit here) selects a coordinate target. FLEET-GO 4a-2: the tap's OWNER is resolved by the ONE
-    // pure precedence (resolveSpaceTapOwner) — 'fleet' (unified lit + ≥1 group) targets the fleet
-    // coordinate-go; 'per_ship' is the existing sm.selectTarget path verbatim (dark ⇒ owner is
-    // 'per_ship' exactly when canTarget was, so the dark path is unchanged); 'none' ignores the tap.
+    // S6C gesture rules kept: a single short near-stationary tap on EMPTY space (the <svg> itself —
+    // markers/backdrop don't hit here) selects a coordinate target. FLEET-GO 4a-2: the tap's OWNER is
+    // resolved by the ONE pure precedence (resolveSpaceTapOwner) — 'fleet' (unified lit + ≥1 group)
+    // targets the fleet coordinate-go; 'none' ignores the tap (4A-POST deleted the per-ship arm).
     const svg = svgRef.current
     if (tapOwner === 'none' || !t || !svg || e.target !== svg) return
     const travelPx = Math.hypot(e.clientX - t.x, e.clientY - t.y)
@@ -272,8 +221,7 @@ export function GalaxyMap({
       { k: view.k, tx: view.tx, ty: view.ty },
       { width: rect.width, height: rect.height },
     )
-    if (tapOwner === 'fleet') setFleetGoTarget(world) // RAW point — canonicalized for PREVIEW only
-    else sm.selectTarget(world)
+    setFleetGoTarget(world) // owner is 'fleet' here (the only non-'none' owner) — RAW point, canonicalized for PREVIEW only
   }
   // pointerleave/cancel: end the pan and abandon any tap candidate (never a selection).
   const onPointerLeave = (e: RPointerEvent) => {
@@ -488,15 +436,6 @@ export function GalaxyMap({
             k: view.k,
           })}
 
-          {/* OSN-3 S6C — empty-space coordinate target preview (fixed-domain transform, pointer-transparent).
-              Mounted only when the per-ship surface owns taps, the ship is eligible, and a within-bounds
-              target is chosen. FLEET-GO 4a-2: `tapOwner === 'per_ship'` replaces `canTarget` — dark they
-              are the same predicate (owner is 'per_ship' iff canTarget), lit-with-groups the fleet owns
-              taps and the per-ship marker must not render beside the fleet's. */}
-          {tapOwner === 'per_ship' && sm.state.target && sm.state.targetWithinBounds && (
-            <SpaceMoveTargetMarker target={sm.state.target} k={view.k} />
-          )}
-
           {/* FLEET-GO 4a-2 — the FLEET's coordinate-go target (the same crosshair geometry, reused
               under its own testid + accent tone). Shows the CANONICAL point — the integer-grid
               destination 0208 will store — never the raw tap (which still rides the wire untouched).
@@ -521,35 +460,15 @@ export function GalaxyMap({
 
       {/* ── UI R1 overlay slots: one positioned rail per corner; co-corner overlays stack instead of
           colliding at hand-tuned absolute offsets. MapScreen owns the remaining corners (top-left =
-          port nav + feature rail, top-center = world events, bottom-right = the legacy stop, which is
-          mutually exclusive by state with the coordinate stop below — one active movement owner). ── */}
+          the feature rail incl. TeamMapStop, top-center = world events). ── */}
 
-      {/* top-right: zoom cluster + (when server-lit) the coordinate-move controls, stacked */}
+      {/* top-right: zoom cluster + (when a fleet target is chosen) the fleet coordinate-go panel, stacked */}
       <OverlayRail slot="top-right">
         <OverlayPanel className="flex flex-col gap-1">
           <Button size="icon" onClick={() => zoomByFactor(1.25)} aria-label="Zoom in">+</Button>
           <Button size="icon" onClick={() => zoomByFactor(1 / 1.25)} aria-label="Zoom out">−</Button>
           <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>
         </OverlayPanel>
-
-        {/* OSN-3 S6C / OSN-COORD-ENABLE-1C — overlay controls. Mounts ONLY when the per-ship surface
-            owns taps (dark: identical to the old `canTarget` mount — see the marker note above; lit
-            with groups: suppressed, the fleet panel below is the one coordinate surface). While
-            production is dark (coordinate_travel_available=false) it never mounts; a non-'eligible'
-            ship also keeps it hidden. Port-to-port travel is a separate release surface (PortNavPanel). */}
-        {tapOwner === 'per_ship' && (
-          <SpaceMoveControls
-            enabled={spaceMoveEnabled}
-            eligibility={eligibility}
-            phase={sm.state.phase}
-            target={sm.state.target}
-            targetWithinBounds={sm.state.targetWithinBounds}
-            serverTarget={sm.state.serverTarget}
-            errorMessage={sm.state.errorMessage}
-            onConfirm={() => void sm.submit().finally(() => refreshReadiness())}
-            onClear={sm.clear}
-          />
-        )}
 
         {/* FLEET-GO 4a-2 — the fleet coordinate-go confirm panel (the owner's "move anywhere in open
             space" headline). Mounted ONLY while the fleet owns taps AND a target exists — dark, the
@@ -567,19 +486,6 @@ export function GalaxyMap({
           />
         )}
       </OverlayRail>
-
-      {/* OSN-4 — Stop safety CTA (bottom-right slot). Mounted ONLY for a real active coordinate transit,
-          INDEPENDENT of the initiation flag (in-flight safety). Today this condition is unreachable (no
-          coordinate moves exist while the flag is false) → dark in production. */}
-      {inCoordinateTransit && (
-        <SpaceStopControls
-          slot="bottom-right"
-          phase={stop.state.phase}
-          errorMessage={stop.state.errorMessage}
-          outcome={stop.state.outcome}
-          onStop={() => void stop.submit()}
-        />
-      )}
 
       {/* bottom-left: player-facing marker key + hint (pointer-transparent — never blocks map gestures).
           Mirrors the markerStyle glyph semantics exactly: diamond port / circle waypoint / triangle hostile. */}
