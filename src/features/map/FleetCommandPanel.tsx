@@ -137,6 +137,18 @@ export function FleetCommandPanel({
             </Link>
           </div>
         )
+      case 'prompt':
+        // DISCOVERABILITY: has a sendable fleet, no destination picked. Name the gesture so the
+        // send flow reads as an intentional step instead of appearing out of nowhere on a tap.
+        return (
+          <div key="prompt" data-testid="fleet-command-prompt">
+            <SectionLabel>Send a fleet</SectionLabel>
+            <p className="mt-1 text-xs text-ink-muted">
+              Tap a <span className="text-ink">port</span> to send a fleet there, or tap{' '}
+              <span className="text-ink">open space</span> to set a destination point.
+            </p>
+          </div>
+        )
       case 'stop':
         // NO-SOFTLOCK: one click, no confirm; sortie rows get a non-actionable hint (server brake law).
         return (
@@ -186,25 +198,27 @@ export function FleetCommandPanel({
       case 'context':
         return (
           <div key="context" className="border-t border-edge/60 pt-2 first:border-t-0 first:pt-0">
+            <SectionLabel>Send fleet to</SectionLabel>
             {s.target.kind === 'point' ? (
               s.target.view.withinBounds ? (
                 <>
-                  <p data-testid="fleet-go-target-readout" className="text-xs text-ink">
-                    Destination: <span className="font-mono font-medium">{formatWorldPoint(s.target.view.canonical)}</span>
+                  <p data-testid="fleet-go-target-readout" className="mt-1 text-xs text-ink">
+                    <span className="font-medium">Open space</span>{' '}
+                    <span className="font-mono text-[11px] text-ink-faint">{formatWorldPoint(s.target.view.canonical)}</span>
                   </p>
                   <p className="mt-0.5 text-[11px] text-ink-faint">
-                    Open-space point — the whole fleet travels here from wherever it is.
+                    The whole fleet travels here from wherever it is.
                   </p>
                 </>
               ) : (
                 // OOB mirror of 0208's RAW-point bound check — saves the doomed round-trip.
-                <Notice tone="danger" data-testid="fleet-go-oob">
+                <Notice tone="danger" data-testid="fleet-go-oob" className="mt-1">
                   That point lies outside charted space.
                 </Notice>
               )
             ) : (
-              <p data-testid="fleet-go-target-readout" className="text-xs text-ink">
-                Destination: <span className="font-medium">{s.target.locationName}</span>
+              <p data-testid="fleet-go-target-readout" className="mt-1 text-sm font-medium text-ink">
+                {s.target.locationName}
               </p>
             )}
             <Button
@@ -419,7 +433,9 @@ export function FleetCommandPanel({
   return (
     <OverlayPanel
       data-testid="fleet-command-panel"
-      slot="bottom-center"
+      // Play-test move: the location/destination surface lives in the bottom-RIGHT corner (out of
+      // the map's center, beside where a tapped location's info reads), not stacked over the middle.
+      slot="bottom-right"
       className="flex max-h-[45%] w-72 max-w-[calc(100vw-1.5rem)] flex-col"
     >
       {notice && (
