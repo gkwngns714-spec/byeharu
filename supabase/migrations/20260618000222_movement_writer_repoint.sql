@@ -1,18 +1,31 @@
 -- 4C-MIG-2A — MOVEMENT-WRITER REPOINT (migration 0222): the DUAL-SAFE first stage of the writer
--- retirement. Every LIVE WRITE that still minted the retired per-ship movement signals
--- (main_ship_space_movements, main_ship_instances.spatial_state/space_x/space_y, the legacy
--- status literal 'stationary') now either stops minting them (they still exist; nothing is
--- dropped here) or, for the ONE writer whose launch-ELIGIBILITY logic READ those columns to decide
--- "is this member docked at a port" (send_ship_group_hunt), is repointed onto FLEET TRUTH —
--- mirroring 0221 R1-f, the same fleet+presence pair the oracle now trusts.
+-- retirement. The status literal 'stationary' is retired to 'home' everywhere a writer below still
+-- mints it, and send_ship_group_hunt's launch-ELIGIBILITY logic — which READ
+-- main_ship_instances.status/spatial_state to decide "is this member docked at a port" — is
+-- repointed onto FLEET TRUTH, mirroring 0221 R1-f (the same fleet+presence pair the oracle trusts).
+--
+-- ─── CI-CORRECTED SCOPE (2026-07-18): the column WRITES themselves are NOT touched in this ────────
+-- ─── migration — an earlier draft did, and it was a genuine constraint-safety bug. ─────────────────
+-- The 0055 CHECKs COUPLE spatial_state to status (main_ship_instances_ss_at_location_status /
+-- _ss_in_space_status: spatial_state='at_location'/'in_space' ⟹ status='stationary'). Every TRUE
+-- head that moves status OFF 'stationary' (mainship_mark_combat_destroyed → 'destroyed',
+-- repair_main_ship's docked revival → was 'stationary' now 'home', send_ship_group_hunt's departure
+-- → 'hunting') ALWAYS clears spatial_state (and space_x/space_y) in the SAME statement, precisely
+-- to satisfy that coupling. An earlier draft of this file deleted those clears, reasoning that 0221
+-- already stopped every READ from consulting the column — true for reads, fatal for writes: THREE
+-- real prod ships carry spatial_state='at_location' today, and any of the three writers above firing
+-- on one of them would have left status≠'stationary' with spatial_state='at_location' still set —
+-- a CHECK VIOLATION that aborts the write in prod (caught for real by the disposable-Postgres
+-- apply-proof, not by the earlier static/adversarial review). THE FIX: every status-changing write
+-- below KEEPS clearing spatial_state/space_x/space_y exactly as its head did — this migration
+-- changes STATUS LITERALS and ONE READ, never leaves a write half-clearing a CHECK-coupled column
+-- set. Column-WRITE removal (dropping the clears entirely) is safe ONLY after 4c-mig-2b narrows the
+-- status CHECK and drops the columns together — it never belonged in this dual-safe stage.
 --
 -- Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2 (the FLEET is the only mover; membership IS
 -- position) + the legacy-schema retirement plan (4c). This is the SECOND dual-safe stage (after
 -- 4c-mig-1/0221's READ repoint): the legacy objects all STILL EXIST after this migration —
--- NOTHING is dropped or altered here — but the writers below stop minting the retired columns, so
--- the LATER schema-drop migration (4c-mig-2b) can remove them without any writer needing to change
--- again. The status literal 'stationary' is retired to 'home' everywhere this file touches it —
--- 4c-mig-2b's status-CHECK narrow removes 'stationary' from the allowed set entirely.
+-- NOTHING is dropped or altered here.
 --
 -- ─── ZERO DROPS / ZERO ALTER / ZERO CHECK NARROW. ─────────────────────────────────────────────────
 -- This file contains ONLY `create or replace function` re-creates + grants + a self-assert. If a
@@ -20,13 +33,19 @@
 -- here. The §0 gate below ASSERTS the legacy objects still exist at apply time (the dual-safe
 -- contract stated as code, exactly as 0221's).
 --
--- ─── THE FIVE RE-CREATES (byte-parity discipline: each body is its TRUE head byte-for-byte with ──
+-- ─── THE FOUR RE-CREATES (byte-parity discipline: each body is its TRUE head byte-for-byte with ──
 -- ─── ONLY the marked hunks changed; the reviewer independently diffs body-vs-head). ──────────────
 -- TRUE heads re-derived by grep over ALL migrations 2026-07-18 (trust the code, not the plan doc —
 -- the plan's own inventory has been wrong repeatedly across this arc):
 --   a1 mainship_space_lock_context  — TRUE head 20260618000056:20-86 (the ONLY definition ever;
 --                                     ~19 live callers, verified by grep — matches the plan's count).
+--                                     READ repoint only — no writes in this function.
 --   b1 port_entry_commission_build  — TRUE head 20260618000216:651-764 (0080→0184→0193→0194→0197→0216).
+--                                     A FRESH INSERT, not an update — dropping spatial_state/space_x/
+--                                     space_y from the column list leaves them at the column DEFAULT
+--                                     (NULL, no CHECK-coupling risk: there is no PRIOR row value to
+--                                     conflict with 'home'). Confirmed constraint-safe by the
+--                                     apply-proof; unchanged by this correction.
 --   b2 ensure_main_ship_for_player  — TRUE head 20260618000216:772-828 — READ IN FULL: this body's
 --                                     INSERT never lists status/spatial_state/space_x/space_y at
 --                                     all (relies on the table's own column DEFAULTS: status
@@ -35,13 +54,24 @@
 --                                     document's "same shape, same hunk" instruction is WRONG vs
 --                                     the code; this function is SKIPPED (not re-created) below.
 --                                     See the note at §3.
---   b3 mainship_mark_combat_destroyed — TRUE head 20260618000167:160-171 (the ONLY definition ever).
+--   b3 mainship_mark_combat_destroyed — SKIPPED. TRUE head 20260618000167:160-171 writes
+--                                     status='destroyed', hp=0, spatial_state=null, space_x=null,
+--                                     space_y=null in ONE statement. Once the CI-corrected spatial
+--                                     clears are restored (constraint-required — see above), this
+--                                     function has ZERO delta from its head, so — like b2 — it is
+--                                     left un-re-created. See the note at §4.
 --   b4 repair_main_ship             — TRUE head 20260618000199:750-797 (sig `(uuid default null)`;
 --                                     the 0-arg overload was dropped at 0081 — this is the only
 --                                     live overload, verified by grep: only 0052/0081-drop/0199).
+--                                     The hunk is the status literal 'stationary'→'home' (SET +
+--                                     return jsonb) PLUS the constraint-required spatial_state
+--                                     co-change 'at_location'→null (space_x/space_y=null unchanged).
 --   b5 send_ship_group_hunt         — TRUE head 20260618000214:114-632 (0168→0199-drop+recreate→
 --                                     0204→0214; the ONLY four definitions found by grep, 0214 last).
 --                                     THE HIGHEST-RISK re-create in this migration — see §6 below.
+--                                     The three departure writes are now HEAD-VERBATIM (no hunk —
+--                                     see the CI-corrected-scope note above); the ONLY real hunk is
+--                                     the launch-eligibility READ repoint onto fleet truth.
 --
 -- ─── COMPOSITION LAW (NO new formulas). ───────────────────────────────────────────────────────────
 -- b5's fleet-truth eligibility hunk composes the SAME leaves 0221 R1-f already trusts:
@@ -328,27 +358,24 @@ grant  execute on function public.port_entry_commission_build(uuid, text) to ser
 -- written — there is nothing to change. Re-creating it here with a no-op body would be pure churn
 -- against the byte-parity discipline this migration otherwise enforces, so it is left untouched.
 
--- ═══════════ §4. b3 — mainship_mark_combat_destroyed: the 0167:160 TRUE head (the ONLY ══════════
--- ═══════════ definition ever), byte-copied, with the marked repoint hunk ONLY. ═══════════════════
-create or replace function public.mainship_mark_combat_destroyed(p_main_ship_id uuid)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  -- ── ★ 4C-MIG-2A HUNK b3: spatial_state/space_x/space_y are DELETED from the SET — this        ★ ──
-  -- ── ★ migration stops WRITING them while the columns still exist. status='destroyed'/hp=0 are ★ ──
-  -- ── ★ KEPT verbatim — the ONE lifecycle signal; every live host already reads 'destroyed' off  ★ ──
-  -- ── ★ status alone post-0221 (repair_main_ship's own gate reads v_ship.status <> 'destroyed'). ★ ──
-  update public.main_ship_instances
-    set status = 'destroyed', hp = 0, updated_at = now()
-    where main_ship_id = p_main_ship_id;
-end;
-$$;
--- ACL re-asserted exactly as 0167 (CREATE OR REPLACE preserves it; defense-in-depth re-assert).
-revoke execute on function public.mainship_mark_combat_destroyed(uuid) from public, anon, authenticated;
-grant  execute on function public.mainship_mark_combat_destroyed(uuid) to service_role;
+-- ═══════════ §4. b3 — mainship_mark_combat_destroyed: SKIPPED (CI-caught: the naive hunk was a ══
+-- ═══════════ genuine constraint-safety bug, not a style choice). ═════════════════════════════════
+-- The TRUE head (20260618000167:160-171, the ONLY definition ever) writes
+--   set status = 'destroyed', hp = 0, spatial_state = null, space_x = null, space_y = null, updated_at = now()
+-- An EARLIER draft of this migration deleted the spatial_state/space_x/space_y clears, reasoning
+-- that 0221 already stopped every READ from consulting them. That reasoning ignored the WRITE-side
+-- 0055 CHECK coupling: main_ship_instances_ss_at_location_status / _ss_in_space_status require
+-- spatial_state='at_location'/'in_space' ⟹ status='stationary'. THREE prod ships currently carry
+-- spatial_state='at_location' with a live per-ship fleet; a live combat kill on one of them would
+-- have written status='destroyed' while spatial_state stayed 'at_location' — a CHECK VIOLATION
+-- that aborts the whole combat-tick transaction in prod. The disposable-Postgres apply-proof (which
+-- actually enforces the CHECK, unlike the adversarial static review) caught this for real.
+-- THE FIX: restore spatial_state/space_x/space_y = null verbatim. Once restored, this function has
+-- ZERO delta from its 0167 head — there is nothing left to re-create. Re-creating a byte-identical
+-- body would be pure churn against this migration's own byte-parity discipline (the §3/b2 rule
+-- applied consistently), so — like b2 — it is left untouched. NO re-create, NO ACL re-assert below.
+
+-- (mainship_mark_combat_destroyed intentionally has no §4 body — see the note above.)
 
 -- ═══════════ §5. b4 — repair_main_ship: the 0199:750 TRUE head (sig `(uuid default null)`; the ══
 -- ═══════════ 0-arg overload was DROPPED at 0081 — grep-verified this is the only live overload), ══
@@ -387,15 +414,24 @@ begin
   end if;
 
   if v_launch_from_dock then
-    -- ── ★ 4C-MIG-2A HUNK b4: spatial_state='at_location'/space_x=null/space_y=null are DELETED ★ ──
-    -- ── ★ from the SET, and the revived-docked status literal changes 'stationary' → 'home'.   ★ ──
-    -- ── ★ This branch mints NO fleet/presence pair (the 0199 header's "Kept SIMPLE" note,       ★ ──
-    -- ── ★ carried forward unchanged) — a revived ship now reads through whatever the fleet-     ★ ──
-    -- ── ★ truth oracle already says about it post-0221 (its own berth_location_id / group / any ★ ──
-    -- ── ★ leftover fleet row), never through this column pair.                                  ★ ──
+    -- ── ★ 4C-MIG-2A HUNK b4 (CI-corrected): the revived-docked status literal changes            ★ ──
+    -- ── ★ 'stationary' → 'home'. space_x=null/space_y=null are KEPT VERBATIM (byte-parity — no   ★ ──
+    -- ── ★ value in dropping only the unconstrained coords while the columns still exist; 2b      ★ ──
+    -- ── ★ removes all three writes together when it drops the columns). spatial_state is NOT    ★ ──
+    -- ── ★ deleted from the SET — it is CO-CHANGED from 'at_location' to null: the 0055 CHECK     ★ ──
+    -- ── ★ main_ship_instances_ss_at_location_status requires spatial_state='at_location' ⟹      ★ ──
+    -- ── ★ status='stationary'; since this hunk already changes status to 'home', LEAVING         ★ ──
+    -- ── ★ spatial_state='at_location' would violate that CHECK on every real docked-then-        ★ ──
+    -- ── ★ destroyed-then-revived ship (an earlier draft did exactly that and the disposable-     ★ ──
+    -- ── ★ Postgres apply-proof caught it). null is constraint-legal for status='home'            ★ ──
+    -- ── ★ (ss_home_status: spatial_state='home' ⟹ status='home' — vacuous on null) and matches   ★ ──
+    -- ── ★ the fleet-truth oracle's own posture: nothing downstream reads this column any more    ★ ──
+    -- ── ★ (0221), the revived ship reads through whatever the oracle says from its               ★ ──
+    -- ── ★ berth_location_id/group/any leftover fleet row instead. This branch mints NO fleet/     ★ ──
+    -- ── ★ presence pair (the 0199 header's "Kept SIMPLE" note, carried forward unchanged).       ★ ──
     update main_ship_instances
-      set hp = v_ship.max_hp, status = 'home',
-          updated_at = now()
+      set hp = v_ship.max_hp, status = 'home', spatial_state = null,
+          space_x = null, space_y = null, updated_at = now()
       where main_ship_id = v_ship.main_ship_id;
     return jsonb_build_object(
       'main_ship_id', v_ship.main_ship_id, 'status', 'home',
@@ -418,23 +454,27 @@ revoke execute on function public.repair_main_ship(uuid) from public, anon;
 grant execute on function public.repair_main_ship(uuid) to authenticated;
 
 -- ═══════════ §6. b5 — send_ship_group_hunt: the 0214:114 TRUE head, byte-copied, with the ═══════
--- ═══════════ FIVE marked hunks below. THE HIGHEST-RISK re-create in this migration (live hunt ════
--- ═══════════ launch path; team_command is ON in prod). ══════════════════════════════════════════
+-- ═══════════ launch-eligibility READ hunk below (CI-corrected — see the file header). THE ════════
+-- ═══════════ HIGHEST-RISK re-create in this migration (live hunt launch path; team_command ═══════
+-- ═══════════ is ON in prod). ═══════════════════════════════════════════════════════════════════
 --
--- SCOPE (matches the corrected plan's b5 instruction exactly):
+-- SCOPE (CI-corrected — an earlier draft also hunked the three departure writes; that was reverted,
+-- see the file header's "CI-CORRECTED SCOPE" note):
 --   (i)  the THREE departure writes (Hunk C's mint / the NOHOME launch-branch mint / the 0168 dark
---        head's mint) delete spatial_state/space_x/space_y=null from the SET; status='hunting' is
---        KEPT verbatim (it is the sortie/combat layer's own signal — process_combat_ticks and
---        shield-regen exclusion read it; it retires at step 4c with the status-CHECK narrow, not
---        here).
---   (ii) the launch-ELIGIBILITY logic that read the ship's own status='stationary' AND
---        spatial_state='at_location' pair to decide "this member is docked at a port" becomes
---        FLEET TRUTH, mirroring 0221 R1-f exactly: a member is docked ⇔ its ONE resolved fleet
---        (mainship_resolve_fleet) is 'present' at a location (location_mode='location',
---        current_location_id not null, no live movement pointer) with a matching active
---        location_presence row. The common-port check is rekeyed the same way: it now reads the
---        port FROM THE FLEET (f.current_location_id), never by joining on the ship's own
---        main_ship_id column.
+--        head's mint) are HEAD-VERBATIM — no hunk. status='hunting', spatial_state=null,
+--        space_x=null, space_y=null are all KEPT exactly as the head writes them: status is the
+--        sortie/combat layer's own signal (process_combat_ticks + shield-regen exclusion read it;
+--        it retires at step 4c with the status-CHECK narrow), and the spatial clears are REQUIRED
+--        by the 0055 CHECK coupling (spatial_state='at_location'/'in_space' ⟹ status='stationary')
+--        on any docked member whose spatial_state is still non-null when the hunt fires.
+--   (ii) the ONLY real hunk: the launch-ELIGIBILITY logic that read the ship's own
+--        status='stationary' AND spatial_state='at_location' pair to decide "this member is docked
+--        at a port" becomes FLEET TRUTH, mirroring 0221 R1-f exactly: a member is docked ⇔ its ONE
+--        resolved fleet (mainship_resolve_fleet) is 'present' at a location
+--        (location_mode='location', current_location_id not null, no live movement pointer) with a
+--        matching active location_presence row. The common-port check is rekeyed the same way: it
+--        now reads the port FROM THE FLEET (f.current_location_id), never by joining on the ship's
+--        own main_ship_id column.
 --
 -- WHY mainship_resolve_fleet IS THE RIGHT COMPOSE HERE (not a new formula): by the time control
 -- reaches ANY of these three call sites, Hunk C (BELOW, unchanged from 0214) has ALREADY proven
@@ -754,14 +794,18 @@ begin
         'hunt_pirates', v_speed);
       perform fleet_set_moving(v_fleet, v_movement);
 
-      -- ── ★ 4C-MIG-2A HUNK B5-e1 (of 3): spatial_state/space_x/space_y are DELETED from the SET ★ ──
-      -- ── ★ — 0221 already stopped every live read from consulting them, so leaving them at     ★ ──
-      -- ── ★ whatever stale value they carried is inert. status='hunting' is KEPT verbatim (the  ★ ──
-      -- ── ★ sortie/combat layer's own signal — 0199 reconciler + shield-regen exclusion read it ★ ──
-      -- ── ★ — NOT the movement layer §2 retires; IT RETIRES AT STEP 4c with the status-column   ★ ──
-      -- ── ★ narrowing; do not delete it before the reconciler stops reading it).                ★ ──
+      -- (CI-corrected: this write is HEAD-VERBATIM — no hunk. An earlier draft deleted
+      -- spatial_state/space_x/space_y from this SET, reasoning 0221 already stopped every live
+      -- READ from consulting them. That ignored the WRITE-side 0055 CHECK coupling
+      -- (main_ship_instances_ss_at_location_status: spatial_state='at_location' ⟹
+      -- status='stationary') — a docked member (3 such ships in prod carry spatial_state=
+      -- 'at_location' today) launching a hunt would write status='hunting' while spatial_state
+      -- stayed 'at_location', violating the CHECK and aborting the hunt. The disposable-Postgres
+      -- apply-proof caught this for real. status='hunting' is KEPT verbatim (the sortie/combat
+      -- layer's own signal — 0199 reconciler + shield-regen exclusion read it — NOT the movement
+      -- layer §2 retires; IT RETIRES AT STEP 4c with the status-column narrowing).
       update main_ship_instances
-        set status = 'hunting', updated_at = now()
+        set status = 'hunting', spatial_state = null, space_x = null, space_y = null, updated_at = now()
         where main_ship_id = any(v_members);
 
       insert into group_sortie_members (fleet_id, main_ship_id, player_id)
@@ -942,10 +986,9 @@ begin
       'hunt_pirates', v_speed);
     perform fleet_set_moving(v_fleet, v_movement);
 
-    -- ── ★ 4C-MIG-2A HUNK B5-e2 (of 3): same as B5-e1 — spatial_state/space_x/space_y deleted;   ★ ──
-    -- ── ★ status='hunting' kept verbatim.                                                       ★ ──
+    -- (CI-corrected: HEAD-VERBATIM, same reasoning as the first departure write above.)
     update main_ship_instances
-      set status = 'hunting', updated_at = now()
+      set status = 'hunting', spatial_state = null, space_x = null, space_y = null, updated_at = now()
       where main_ship_id = any(v_members);
 
     insert into group_sortie_members (fleet_id, main_ship_id, player_id)
@@ -1000,10 +1043,10 @@ begin
     'hunt_pirates', v_speed);
   perform fleet_set_moving(v_fleet, v_movement);
 
-  -- ── ★ 4C-MIG-2A HUNK B5-e3 (of 3): same as B5-e1/e2 — spatial_state/space_x/space_y deleted; ★ ──
-  -- ── ★ status='hunting' kept verbatim.                                                        ★ ──
+  -- (CI-corrected: HEAD-VERBATIM — this is the 0168 dark path, byte-identical to the head; it was
+  -- never supposed to carry a hunk at all.)
   update main_ship_instances
-    set status = 'hunting', updated_at = now()
+    set status = 'hunting', spatial_state = null, space_x = null, space_y = null, updated_at = now()
     where main_ship_id = any(v_members);
 
   insert into group_sortie_members (fleet_id, main_ship_id, player_id)
@@ -1065,14 +1108,16 @@ begin
   if position('f.current_location_id as location_id' in v_src) = 0 then
     raise exception '4C-MIG-2A self-assert FAIL: the common-port select no longer reads the port FROM THE FLEET'; end if;
 
-  -- the three departure writes survive (status='hunting' in exactly 3 mint paths — the 0214 (e)
-  -- check, RETARGETED at the new marker: the retired columns must be GONE from all three.
-  if (length(v_src) - length(replace(v_src, 'set status = ''hunting'', updated_at = now()', ''))) / length('set status = ''hunting'', updated_at = now()') <> 3 then
-    raise exception '4C-MIG-2A self-assert FAIL: expected the repointed status=hunting write (no spatial columns) in exactly 3 mint paths'; end if;
-  if position('spatial_state = null, space_x = null, space_y = null' in v_src) > 0 then
-    raise exception '4C-MIG-2A self-assert FAIL: send_ship_group_hunt still writes the retired spatial columns on a departure'; end if;
+  -- the three departure writes survive HEAD-VERBATIM (CI-corrected — the 0214 (e) check,
+  -- RETARGETED: an earlier draft dropped the spatial clears from these writes, which is a genuine
+  -- CHECK-constraint hazard (main_ship_instances_ss_at_location_status — see the file header), not
+  -- a repoint. This asserts the ORIGINAL head shape is intact in EXACTLY the 3 mint paths.
+  if (length(v_src) - length(replace(v_src,
+        'set status = ''hunting'', spatial_state = null, space_x = null, space_y = null, updated_at = now()', ''))
+     ) / length('set status = ''hunting'', spatial_state = null, space_x = null, space_y = null, updated_at = now()') <> 3 then
+    raise exception '4C-MIG-2A self-assert FAIL: expected the HEAD-VERBATIM status=hunting write (with its spatial clears intact) in exactly 3 mint paths — a departure write must never leave spatial_state set while status leaves ''stationary'' (the 0055 CHECK coupling)'; end if;
 
-  raise notice '4C-MIG-2A self-assert ok (send_ship_group_hunt): 0204/0214 heads intact; the retired ship-column docked predicate and ship-column port join are BOTH gone; mainship_resolve_fleet composed at all 3 fleet-truth sites; all 3 departure writes drop the retired columns and keep status=hunting verbatim';
+  raise notice '4C-MIG-2A self-assert ok (send_ship_group_hunt): 0204/0214 heads intact; the retired ship-column docked predicate and ship-column port join are BOTH gone; mainship_resolve_fleet composed at all 3 fleet-truth sites; all 3 departure writes are HEAD-VERBATIM (status=hunting + the required spatial clears, CHECK-safe)';
 end $huntuni_carry$;
 
 -- ═══════════ §8. per-function repoint self-asserts (deploy-time, raises on failure): each host ══
@@ -1125,17 +1170,21 @@ begin
   if position('spatial_state' in v_src) > 0 or position('space_x' in v_src) > 0 or position('space_y' in v_src) > 0 then
     raise exception '4C-MIG-2A self-assert FAIL: ensure_main_ship_for_player now mints a retired column — this migration''s "nothing to repoint" claim is stale, it needs a real hunk'; end if;
 
-  -- b3: mainship_mark_combat_destroyed — spatial columns gone; destroyed/hp=0 survive verbatim.
+  -- b3: mainship_mark_combat_destroyed — UNCHANGED (§4 documents why: once the CHECK-required
+  -- spatial clears are restored, this function has zero delta from its 0167 head). Pin that the
+  -- head's FULL terminal write — status/hp AND the spatial clears TOGETHER — is still exactly what
+  -- is deployed, so a future edit cannot silently drop the clears again without updating this
+  -- migration's rationale (the exact regression the disposable-Postgres apply-proof caught).
   select prosrc into v_src from pg_proc where oid = 'public.mainship_mark_combat_destroyed(uuid)'::regprocedure;
   if v_src is null then raise exception '4C-MIG-2A self-assert FAIL: mainship_mark_combat_destroyed(uuid) not deployed'; end if;
   v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
-  if position('spatial_state = null' in v_src) > 0 or position('space_x = null' in v_src) > 0 or position('space_y = null' in v_src) > 0 then
-    raise exception '4C-MIG-2A self-assert FAIL: mainship_mark_combat_destroyed still writes a retired column'; end if;
-  if position('status = ''destroyed'', hp = 0' in v_src) = 0 then
-    raise exception '4C-MIG-2A self-assert FAIL: mainship_mark_combat_destroyed lost its destroyed/hp=0 write'; end if;
+  if position('status = ''destroyed'', hp = 0, spatial_state = null, space_x = null, space_y = null' in v_src) = 0 then
+    raise exception '4C-MIG-2A self-assert FAIL: mainship_mark_combat_destroyed no longer matches its 0167 head (the destroyed/hp=0 write and its CHECK-required spatial clears must land together)'; end if;
 
-  -- b4: repair_main_ship — the launch-from-dock branch no longer mints the retired columns or the
-  -- 'stationary' literal (SET or return jsonb); the dark 0081 head survives verbatim.
+  -- b4: repair_main_ship — the launch-from-dock branch no longer mints the retired 'stationary'/
+  -- 'at_location' shape (SET or return jsonb), but spatial_state IS still written — co-changed to
+  -- null (CHECK-required: status now leaves 'stationary', so spatial_state may no longer be
+  -- 'at_location') — and space_x/space_y=null survive verbatim. The dark 0081 head is untouched.
   select prosrc into v_src from pg_proc where oid = 'public.repair_main_ship(uuid)'::regprocedure;
   if v_src is null then raise exception '4C-MIG-2A self-assert FAIL: repair_main_ship(uuid) not deployed'; end if;
   v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
@@ -1143,12 +1192,16 @@ begin
     raise exception '4C-MIG-2A self-assert FAIL: repair_main_ship still mints the retired at_location shape'; end if;
   if position('''status'', ''stationary''' in v_src) > 0 then
     raise exception '4C-MIG-2A self-assert FAIL: repair_main_ship still returns the retired stationary literal'; end if;
+  if position('status = ''home'', spatial_state = null' in v_src) = 0 then
+    raise exception '4C-MIG-2A self-assert FAIL: repair_main_ship lost the CHECK-required spatial_state=null co-change (status now leaves ''stationary'' — leaving spatial_state=''at_location'' would violate main_ship_instances_ss_at_location_status)'; end if;
+  if position('space_x = null, space_y = null' in v_src) = 0 then
+    raise exception '4C-MIG-2A self-assert FAIL: repair_main_ship lost the space_x/space_y=null clear on the docked-revival branch'; end if;
   if position('set hp = v_ship.max_hp, status = ''home'', updated_at = now()' in v_src) = 0 then
     raise exception '4C-MIG-2A self-assert FAIL: repair_main_ship lost the 0081 dark home restore'; end if;
   if not has_function_privilege('authenticated', 'public.repair_main_ship(uuid)', 'execute') then
     raise exception '4C-MIG-2A self-assert FAIL: repair_main_ship not authenticated-executable (safelock broken)'; end if;
 
-  raise notice '4C-MIG-2A self-assert ok (a1/b1/b2/b3/b4): each host re-created from its true head with only the marked hunk; ACLs unchanged; ensure_main_ship_for_player confirmed to need no hunk';
+  raise notice '4C-MIG-2A self-assert ok (a1/b1/b2/b3/b4): a1/b1/b4 re-created from their true heads with only the marked (constraint-legal) hunk; b2/b3 confirmed to need no re-create; ACLs unchanged';
 end $repoint_writers$;
 
 -- ═══════════ §9. THE HIGH-RISK PROOF: reconcile the b5 fleet-truth "docked" predicate against ════
