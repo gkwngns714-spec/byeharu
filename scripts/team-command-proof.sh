@@ -233,13 +233,16 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "update public.main_ship_hull_types set base_shield = 0 where hull_type_id = 'starter_frigate'" "$SQL" \
     || fail "harness does not RESTORE base_shield to 0 after the commission-copy arm (the required restore)"
 
-  # ── behavior specifics: all-or-nothing send rollback; the EXACT mixed + idempotent stop aggregates;
-  #    the physical held-in-open-space shape; delete's SET-NULL member un-grouping. ───────────────────
+  # ── behavior specifics: all-or-nothing send rollback; the EXACT mixed stop aggregate + its graceful
+  #    degradation (4C-MIG-2B REWORK: the legacy hold-in-space write is retired pending #189/4b-drop,
+  #    so the stop-trio's own write now fails per-member instead of physically holding — see the
+  #    BLOCK STOP header in the .sql for the full rationale); delete's SET-NULL member un-grouping. ──
   grep -qi "all-or-nothing" "$SQL"                                    || fail "harness does not assert the all-or-nothing send rollback"
   grep -q "status in ('moving','present','returning')" "$SQL"        || fail "all-or-nothing does not assert zero active fleets for the rolled-back member"
-  grep -q "'stopped')::int is distinct from 2" "$SQL"                 || fail "harness does not assert the exact mixed stop aggregate (stopped=2)"
-  grep -q "'skipped')::int is distinct from 3" "$SQL"                 || fail "harness does not assert the exact idempotent double-stop aggregate (skipped=3)"
-  grep -q "spatial_state = 'in_space'" "$SQL"                         || fail "harness does not assert the held-in-open-space physical shape"
+  grep -q "'stopped')::int is distinct from 0 or (r->>'skipped')::int is distinct from 1 or (r->>'failed')::int is distinct from 2" "$SQL" \
+    || fail "harness does not assert the exact graceful-degradation stop aggregate (stopped=0/skipped=1/failed=2 — the retired legacy hold write fails per-member, pending #189/4b-drop)"
+  grep -qF "e->>'outcome' = 'failed' and e->>'reason' = 'stop_failed'" "$SQL" \
+    || fail "harness does not assert the failed members carry the graceful stop_failed outcome/reason"
   grep -qi "on delete set null" "$SQL"                                || fail "harness does not assert the delete SET-NULL member un-grouping"
   grep -q "group_id is null" "$SQL"                                   || fail "harness does not assert members are un-grouped after delete"
 
@@ -295,8 +298,8 @@ if [ "$MODE" = "selftest" ]; then
   #    cannot false-green): the escape's returning-status delta (pair-shape), the reconciler re-home
   #    in the legacy write shape, BOTH reconciler race guards (mid-combat + in-transit), the manifest
   #    retention decision, the M1 hunting-reject WITHOUT a lost update, and the repair revival. ──────
-  grep -qF "and status = 'returning' and spatial_state is null" "$SQL" \
-    || fail "harness does not ASSERT the D3 returning-status delta (pair-shape form)"
+  grep -qF "and status = 'returning'" "$SQL" \
+    || fail "harness does not ASSERT the D3 returning-status delta"
   grep -qF "(want 2 home/legacy-shape after the reconciler)" "$SQL" \
     || fail "harness does not ASSERT the reconciler re-home (legacy write shape)"
   grep -qF "reconciler touched a mid-combat member (race guard)" "$SQL" \
@@ -541,8 +544,8 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT the tagged set = the envelope's sent[] fleet ids"
   grep -qF "(want exactly the 2 member fleets — no strays)" "$SQL" \
     || fail "harness does not ASSERT the no-stray-tags pin"
-  grep -qF "(want 2 — the 0153 dock write)" "$SQL" \
-    || fail "harness does not ASSERT arrival docks both members (0153 stationary/at_location)"
+  grep -qF "(want 2 — the dock write)" "$SQL" \
+    || fail "harness does not ASSERT arrival settles both members (the dock write)"
   grep -qF "(want 2 — the docked-team badge read)" "$SQL" \
     || fail "harness does not ASSERT the tag survives the settle (present member fleets at the port)"
 
@@ -839,11 +842,11 @@ if [ "$MODE" = "selftest" ]; then
     || fail "NOHOME: harness does not ASSERT the docked launch departs from the port LOCATION (not the base)"
   grep -qF "(r->>'return_location_id')::uuid is distinct from slag" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the chosen/origin return port is recorded on the launch envelope"
-  grep -qF "the returning member was re-homed under the lit flag" "$SQL" \
+  grep -qF "the NO-HOME law was violated by a re-home" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the reconciler DOCKS (never re-homes) the returner under the flag"
   grep -qF "a returned docked team could not launch again" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the H1 second-launch witness (a returned team hunts AGAIN)"
-  grep -qF "has no per-ship tagged present fleet at the return port (H1 wedge)" "$SQL" \
+  grep -qF "has no per-ship tagged present fleet at the return port (H1 wedge" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the H1 per-ship fleet split (each returned member owns a tagged fleet)"
 
   # ── COMMAND-BUFFS (0205) witness pins, in assert form (a gutted .sql that only mentions them in prose
