@@ -9,6 +9,8 @@ import { territoryLayer } from './territoryLayer'
 import { miningFieldRangeLayer } from './miningFieldLayer'
 import { MiningFieldMarker } from './MiningFieldMarker'
 import type { MiningField } from '../mining/miningTypes'
+import { dangerZoneLayer } from './dangerZoneLayer'
+import type { DangerZoneLite } from './pirateApi'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
@@ -47,6 +49,10 @@ export function GalaxyMap({
   miningExtractRadius,
   selectedMiningFieldName,
   onSelectMiningField,
+  dangerZones = [],
+  pirateMode = 'off',
+  pirateDraftPoints = [],
+  onPirateTap,
 }: {
   locations: MapLocation[]
   movements: FleetMovement[]
@@ -83,6 +89,19 @@ export function GalaxyMap({
   miningExtractRadius: number
   selectedMiningFieldName: string | null
   onSelectMiningField: (name: string | null) => void
+  // PIRATE INTERCEPT (prototype) — [] / 'off' / [] / undefined while the flag is dark (the caller's
+  // gate), so every prop below defaults to a no-op shape and the map is byte-identical to today.
+  /** Active danger_zones (get_danger_zones) — rendered as smooth blobs, UNDER movement lines/markers. */
+  dangerZones?: DangerZoneLite[]
+  /** 'off' = normal ship-go tap handling (byte-identical to pre-slice behavior). 'route' / 'draw' TAKE
+   *  OVER the entire empty-space tap surface (mutually exclusive with the fleet-go tap) — each tap
+   *  appends a point via onPirateTap instead of setting a fleet-go target. */
+  pirateMode?: 'off' | 'route' | 'draw'
+  /** The in-progress route/zone points, drawn as a connected polyline + vertex dots while plotting. */
+  pirateDraftPoints?: WorldCoord[]
+  /** Called with the tapped RAW world point whenever pirateMode !== 'off' (ownership/group checks do
+   *  NOT apply — route planning and zone drawing are not gated on owning a fleet the way ship-go is). */
+  onPirateTap?: (world: WorldCoord) => void
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
@@ -185,7 +204,7 @@ export function GalaxyMap({
     // resolved by the ONE pure precedence (resolveSpaceTapOwner) — 'fleet' (unified lit + ≥1 group)
     // targets the fleet coordinate-go; 'none' ignores the tap (4A-POST deleted the per-ship arm).
     const svg = svgRef.current
-    if (tapOwner === 'none' || !t || !svg || e.target !== svg) return
+    if (!t || !svg || e.target !== svg) return
     const travelPx = Math.hypot(e.clientX - t.x, e.clientY - t.y)
     const durationMs = e.timeStamp - t.t
     if (classifyPointerGesture({ travelPx, durationMs, maxPointers: t.maxPointers }) !== 'tap') return
@@ -195,6 +214,14 @@ export function GalaxyMap({
       { k: view.k, tx: view.tx, ty: view.ty },
       { width: rect.width, height: rect.height },
     )
+    // PIRATE INTERCEPT (prototype): route-planning / zone-drawing TAKES OVER the entire tap surface —
+    // mutually exclusive with the fleet-go tap below (never both for the same tap). 'off' (the flag's
+    // dark default) falls straight through to the untouched fleet-go path.
+    if (pirateMode !== 'off') {
+      onPirateTap?.(world)
+      return
+    }
+    if (tapOwner === 'none') return
     // Owner is 'fleet' here (the only non-'none' owner). S5 MAP-UX: the RAW world point goes UP to
     // MapScreen (the ONE FleetCommandTarget owner) — canonicalization stays PREVIEW-only there.
     // Redirect = re-tap a new point, then click the row again (the §2a deviation argued in
@@ -335,6 +362,11 @@ export function GalaxyMap({
               disabled) or a non-positive radius → renders nothing. */}
           {miningFieldRangeLayer({ fields: miningFields, norm, k: view.k, radius: miningExtractRadius })}
 
+          {/* PIRATE INTERCEPT (prototype) — smooth danger-zone blobs (get_danger_zones), ABOVE the
+              plain circle territoryLayer rings (untouched) and UNDER movement lines/markers. []
+              while the flag is dark (the caller's gate) → renders nothing, byte-identical to today. */}
+          {dangerZoneLayer({ zones: dangerZones, norm, k: view.k })}
+
           {/* Movement paths (under markers) — IN-FLIGHT ONLY.
               The rows arrive already filtered to status='moving', but that status is settled by the 30s
               `process_fleet_movements` cron, so a finished trip keeps its row for up to ~30s and used to
@@ -442,6 +474,26 @@ export function GalaxyMap({
               testId="fleet-go-target"
               stroke="var(--color-accent)"
             />
+          )}
+
+          {/* PIRATE INTERCEPT (prototype) — the in-progress route/zone draft: a connected polyline
+              through the tapped points + a dot per vertex. 'off' or an empty draft renders nothing. */}
+          {pirateMode !== 'off' && pirateDraftPoints.length > 0 && (
+            <g data-testid="pirate-draft-layer" style={{ pointerEvents: 'none' }}>
+              {pirateDraftPoints.length > 1 && (
+                <polyline
+                  points={pirateDraftPoints.map((p) => { const s = norm(p); return `${s.x},${s.y}` }).join(' ')}
+                  fill="none"
+                  stroke="var(--color-accent)"
+                  strokeWidth={1.5 / view.k}
+                  strokeDasharray={`${4 / view.k} ${3 / view.k}`}
+                />
+              )}
+              {pirateDraftPoints.map((p, i) => {
+                const s = norm(p)
+                return <circle key={i} cx={s.x} cy={s.y} r={4 / view.k} fill="var(--color-accent)" />
+              })}
+            </g>
           )}
 
           {/* OSN-3 S6B3 — DEVELOPMENT-ONLY, non-interactive fixed-space preview. Final visual child of the
