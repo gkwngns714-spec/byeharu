@@ -25,7 +25,7 @@ const SERVICE_LABELS: Record<string, string> = {
 
 // Plain player language for what each active service means at this port today.
 const SERVICE_NOTES: Record<string, string> = {
-  docking: 'Berth secured',
+  docking: 'Docked',
   market: 'Buy & sell goods',
   repair: 'Hull repairs',
   refit: 'Refit your ship',
@@ -51,7 +51,7 @@ export function DockedPortCard({ dock }: { dock: DockServices }) {
 
       {/* 2 · RIGHT NOW — docking is passive; the one thing to decide is when to leave */}
       <div data-testid="port-right-now" className="mt-4 rounded-lg border border-edge bg-surface-2/50 p-3">
-        <p className="text-sm text-ink">Berth secured — your ship is safe while docked.</p>
+        <p className="text-sm text-ink">Your ship is safe while docked here.</p>
         <p className="mt-1 text-xs text-ink-faint">
           Ready to leave? Pick your next destination on the <span className="text-ink">Map</span>.
         </p>
