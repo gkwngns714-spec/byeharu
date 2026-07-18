@@ -16,7 +16,6 @@ const fleet = (over: Partial<MainShipFleet> = {}): MainShipFleet => ({
   current_location_id: null,
   location_mode: null,
   active_movement_id: null,
-  active_space_movement_id: null,
   ...over,
 })
 

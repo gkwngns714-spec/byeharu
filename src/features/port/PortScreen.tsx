@@ -56,7 +56,8 @@ export function PortScreen() {
   // dock context (useDockServices also refetches on its mainShipId dep) and every lifecycleKey-keyed panel
   // (store, Workshop, salvage, shipyard, invest, haul). The main-ship lifecycle fields ride along so a
   // status/movement transition still ticks a refetch as before.
-  const lifecycleKey = `${chosenShipId ?? 'none'}|${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
+  // (4C-CLIENT: the legacy spatial_state / space-movement fields left the key with the schema they read.)
+  const lifecycleKey = `${chosenShipId ?? 'none'}|${map.mainShip?.status ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}`
   const dock = useDockServices(lifecycleKey, { mainShipId: chosenShipId })
   // MAP-INTEGRATION M3 — the chosen ship's BERTHED read (from the same fleet-positions row the port
   // list derives from). A berthed ship is AT its port (so it lists above, consistent with the

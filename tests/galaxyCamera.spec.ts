@@ -21,7 +21,6 @@ import {
   focusCamera,
   type FocusInputs,
 } from '../src/features/map/galaxyCamera'
-import { markerViewBoxPoint } from '../src/features/map/MainShipMarker'
 
 // S6B-PRES — pure unit proofs for the UNIFIED fixed-coordinate frame + content-fit camera. No browser/
 // page/DB. The map's `norm` is `worldToViewBox`, so named locations, base, movement lines, legacy ship
@@ -41,26 +40,10 @@ const applyCamera = (cam: { k: number; tx: number; ty: number }, p: { x: number;
 const inView = (p: { x: number; y: number }, m = 0) =>
   p.x >= -m && p.x <= VIEW + m && p.y >= -m && p.y <= VIEW + m
 
-// ── 1. Fixed-transform / co-registration: a named location and a ship at the SAME world coordinate
-//       render to the SAME viewBox point (both go through the unified `worldToViewBox`). ────────────
-test('S6B-PRES: location and ship at the same world coordinate co-register', () => {
-  const w: WorldCoord = { x: 33, y: 23 }
-  // GalaxyMap positions named markers via `norm = worldToViewBox`; the open-space ship via worldToViewBox.
-  nearPt(worldToViewBox(w), worldToViewBox(w))
-  // And the routing helper agrees for both provenances when the supplied `norm` is the unified transform.
-  const viaLegacy = markerViewBoxPoint({ x: w.x, y: w.y, coordinateSpace: 'legacy_dynamic' }, worldToViewBox)
-  const viaFixed = markerViewBoxPoint({ x: w.x, y: w.y, coordinateSpace: 'open_space_fixed' }, worldToViewBox)
-  nearPt(viaLegacy, viaFixed) // unified frame: legacy + open-space coincide at the same world point
-})
-
-// ── 2. Movement-line endpoint alignment: line endpoints (worldToViewBox of origin/target) coincide
-//       with markers placed at those same world points. ─────────────────────────────────────────────
-test('S6B-PRES: movement-line endpoints align with markers in the unified frame', () => {
-  const origin: WorldCoord = { x: -1500, y: 800 }
-  const target: WorldCoord = { x: 2200, y: -400 }
-  nearPt(worldToViewBox(origin), markerViewBoxPoint({ ...origin, coordinateSpace: 'open_space_fixed' }, worldToViewBox))
-  nearPt(worldToViewBox(target), markerViewBoxPoint({ ...target, coordinateSpace: 'legacy_dynamic' }, worldToViewBox))
-})
+// ── 1. Fixed-transform / co-registration ─────────────────────────────────────────────────────────
+// (4C-CLIENT: the co-registration tests via markerViewBoxPoint were deleted with the per-ship
+// marker pipeline — every marker layer projects through the ONE worldToViewBox `norm` now, so
+// co-registration is structural rather than a routing property to prove.)
 
 // ── 3. Tap/click world-coordinate round trip UNDER pan/zoom: a tap at the screen position of a world
 //       point returns that world point — same fixed frame both directions (markers drawn via

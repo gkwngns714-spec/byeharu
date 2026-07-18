@@ -17,7 +17,7 @@ import type { FleetPosition } from '../src/features/map/mainshipApi'
 function fp(over: Partial<FleetPosition>): FleetPosition {
   return {
     main_ship_id: 'ship-x', name: 'Ship X', class: 'frigate', status: 'stationary',
-    spatial_state: null, place: 'docked', location_id: null, space_x: null, space_y: null, segment: null,
+    place: 'docked', location_id: null, segment: null,
     ...over,
   }
 }
@@ -122,7 +122,7 @@ test('derivePortsWithShips: only DOCKED ships count — transit / in_space / hid
     [
       fp({ main_ship_id: 's1', place: 'docked', location_id: 'loc-haven' }),
       fp({ main_ship_id: 's2', place: 'transit', location_id: 'loc-haven', segment: null }),
-      fp({ main_ship_id: 's3', place: 'in_space', location_id: null, space_x: 1, space_y: 2 }),
+      fp({ main_ship_id: 's3', place: 'in_space', location_id: null }),
       fp({ main_ship_id: 's4', place: 'hidden', location_id: 'loc-haven' }),
     ],
     name,

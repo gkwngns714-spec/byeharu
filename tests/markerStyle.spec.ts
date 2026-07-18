@@ -8,7 +8,7 @@ import {
   LABEL_REVEAL_K,
   type MarkerStyleInputs,
 } from '../src/features/map/markerStyle'
-import type { ActivityType, LocationType } from '../src/features/map/mapTypes'
+import { isDockablePortForDisplay, type ActivityType, type LocationType } from '../src/features/map/mapTypes'
 
 // UI R1 (galaxy map) — pure unit proofs for the marker-hierarchy + label-declutter policy. No
 // browser/page/DB: markerStyle.ts is a pure module (props in → style/visibility decision out).
@@ -143,4 +143,14 @@ test('label reveal is monotonic in k (zooming in never HIDES a label)', () => {
 
 test('the reveal thresholds keep the tiers strictly ordered', () => {
   expect(LABEL_REVEAL_K[1]).toBeLessThan(LABEL_REVEAL_K[2])
+})
+
+// ── isDockablePortForDisplay — the ONE display-dockability classifier (mapTypes) ─────────────────
+// Rehomed from portEntry.spec.ts when 4c-client deleted the normalize affordance; the classifier
+// stays LIVE (fleetCommandModel dock legality, the port glyph above), so its pin lives with a
+// live consumer's spec.
+test('dockability classifier: trade_outpost is the ONLY display-dockable type', () => {
+  expect(isDockablePortForDisplay('trade_outpost')).toBe(true)
+  expect(isDockablePortForDisplay('safe_zone')).toBe(false)
+  expect(isDockablePortForDisplay('pirate_hunt')).toBe(false)
 })

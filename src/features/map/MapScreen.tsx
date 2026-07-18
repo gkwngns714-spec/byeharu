@@ -48,7 +48,6 @@ export function MapScreen() {
   const {
     map: {
       loading, error, locations, meta, mainShip, movements,
-      mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement,
       teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups,
       fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
       launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, refresh,
@@ -83,7 +82,9 @@ export function MapScreen() {
       ? { kind: 'port', locationId: selected.id }
       : null
 
-  const panelLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
+  // 4C-CLIENT: the legacy spatial_state / space-movement fields left the key with the schema they
+  // read — the ship's own status transition still ticks a refetch.
+  const panelLifecycleKey = `${mainShip?.status ?? 'n'}`
 
   return (
     <div data-testid="galaxy-map-screen" className="relative flex h-full flex-col overflow-hidden md:flex-row">
@@ -117,11 +118,6 @@ export function MapScreen() {
           <div className="relative h-full w-full">
             <GalaxyMap
               locations={locations}
-              mainShip={mainShip}
-              mainShipFleet={mainShipFleet}
-              mainShipPresence={mainShipPresence}
-              mainShipSpaceMovement={mainShipSpaceMovement}
-              mainshipSendEnabled={mainshipSendEnabled}
               movements={movements}
               teamGroups={teamGroups}
               dockedTeamRollups={dockedTeamRollups}
@@ -140,19 +136,23 @@ export function MapScreen() {
                 intercepts map gestures). GalaxyMap owns top-right (zoom), bottom-left (legend) and
                 bottom-right; WorldEvents takes top-center; the FleetCommandPanel takes bottom-center. */}
             <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
-              {/* EXPLORATION-P11 — dark scan + discoveries; legal only settled in space. */}
+              {/* EXPLORATION-P11 / MINING-P12 — dark scan/extract; legal only settled in space.
+                  4C-CLIENT: the ships' legacy spatial_state column is no longer read (4c-mig-2
+                  drops it) and no reachable state satisfies the panels' in_space gate, so the
+                  gate input is a hard null — fail closed, byte-identical to before. When
+                  4c-mig-1 R5 repoints scan/extract legality to fleet-truth, these gates should
+                  be repointed to the fleet position ('in_space' place) in the same slice. */}
               <ExplorationPanel
                 lifecycleKey={panelLifecycleKey}
                 mainShipId={mainShip?.main_ship_id ?? null}
                 shipStatus={mainShip?.status}
-                shipSpatialState={mainShip?.spatial_state}
+                shipSpatialState={null}
               />
-              {/* MINING-P12 — dark extract + extraction history; legal only settled in space. */}
               <MiningPanel
                 lifecycleKey={panelLifecycleKey}
                 mainShipId={mainShip?.main_ship_id ?? null}
                 shipStatus={mainShip?.status}
-                shipSpatialState={mainShip?.spatial_state}
+                shipSpatialState={null}
               />
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}

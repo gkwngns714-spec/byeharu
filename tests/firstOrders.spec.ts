@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import {
-  DOCKED_SPATIAL_STATE,
+  DOCKED_PLACES,
   deriveFirstOrders,
   firstOrdersComplete,
   firstOrdersDismissKey,
@@ -107,17 +107,19 @@ const project = (o: Partial<Parameters<typeof projectFirstOrders>[0]> = {}) =>
   projectFirstOrders({
     selectionShipCount: 0,
     polledShipKnown: false,
-    spatialState: null,
+    shipPlace: null,
     reports: [],
     expeditionsLit: true,
     additionalShipsLit: true,
     ...o,
   })
 
-test('projection: docked ONLY for the canonical at_location spatial mode (fail closed)', () => {
-  expect(project({ spatialState: DOCKED_SPATIAL_STATE }).docked).toBe(true)
-  for (const s of ['home', 'in_transit', 'in_space', 'destroyed', null, undefined, '']) {
-    expect(project({ spatialState: s }).docked).toBe(false)
+test('projection: docked ONLY for a docked/berthed fleet-position place (fail closed)', () => {
+  for (const p of DOCKED_PLACES) {
+    expect(project({ shipPlace: p }).docked).toBe(true)
+  }
+  for (const p of ['transit', 'in_space', 'hidden', null, undefined, '']) {
+    expect(project({ shipPlace: p }).docked).toBe(false)
   }
 })
 
