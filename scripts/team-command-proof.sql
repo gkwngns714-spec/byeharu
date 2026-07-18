@@ -46,8 +46,9 @@
 --            jsonb key is a legacy unit_type id, hp and fleet_units sync are exact, the escape
 --            settle's return speed equals legacy fleet_speed, the new exactly-one-identity CHECK
 --            raises on both illegal shapes, the three D1 leaves smoke-check (NULL return speed for a
---            legacy fleet; hp-only sync; the 0059 destruction terminal), and EXACTLY ONE combat cron
---            job exists (the no-second-engine pin).
+--            legacy fleet; hp-only sync; the 0059 destruction terminal), and EXACTLY ONE combat-TICK
+--            engine cron exists (process-combat-ticks; the no-second-engine pin — the COMBAT-S2
+--            telegraph resolver is combat-named but is not an engine and never runs the tick).
 --   TEAMSTATS (Slice D0, 0166) — get_my_group_expedition_totals rejects dark BEFORE the team-flag
 --            flip; invalid_activity / group_not_found (random + cross-player) / empty_group; on the
 --            happy path every additive total EQUALS the proof's OWN independent per-member sum over
@@ -1107,14 +1108,33 @@ begin
       and spatial_state is null and space_x is null and space_y is null;
   if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_mark_combat_destroyed did not write the destroyed/hp=0 terminal'; end if;
 
-  -- the no-second-engine pin: EXACTLY one combat cron job, and it is the 0026 tick schedule.
-  select count(*) into n from cron.job where jobname like '%combat%';
-  if n <> 1 then raise exception 'COMBATPARITY FAIL: % combat cron jobs (want exactly 1)', n; end if;
+  -- the no-second-ENGINE pin: EXACTLY one combat cron job RUNS the tick engine (process_combat_ticks),
+  -- and it is the 0026 'process-combat-ticks' schedule. Counting by COMMAND (not by the '%combat%'
+  -- jobname) is the true engine identity and is naming-independent — the intent has always been "no
+  -- SECOND tick/combat engine", never "no other combat-named cron".
+  --   COMBAT-S2 (0230): the telegraph resolver 'process-combat-telegraphs' is a legitimate NEW
+  --   combat-named cron, but it is NOT a combat engine — it only DELAYS a hunt arrival and then
+  --   delegates to the SAME combat_create_encounter (running the untouched tick engine one hop later).
+  --   Its command is process_combat_telegraphs (NOT process_combat_ticks), so the engine count stays 1,
+  --   and we pin below that it never invokes the tick engine itself (the real no-second-engine guard).
+  --   It is scheduled unconditionally with a flag-gated body (the process_combat_ticks pattern), so it
+  --   exists in cron.job even while combat_telegraph_enabled is dark — expected.
+  select count(*) into n from cron.job where command like '%process_combat_ticks%';
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: % combat-TICK engine cron jobs (want exactly 1)', n; end if;
   select count(*) into n from cron.job
     where jobname = 'process-combat-ticks' and command like '%process_combat_ticks%';
-  if n <> 1 then raise exception 'COMBATPARITY FAIL: the one combat job is not process-combat-ticks'; end if;
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: the one combat-tick engine job is not process-combat-ticks'; end if;
+  -- the telegraph resolver (if scheduled) must NOT be a second engine: it never runs process_combat_ticks.
+  select count(*) into n from cron.job
+    where jobname = 'process-combat-telegraphs' and command like '%process_combat_ticks%';
+  if n <> 0 then raise exception 'COMBATPARITY FAIL: the telegraph resolver must not run the tick engine (found % )', n; end if;
+  -- and the ONLY combat-named crons allowed are the tick engine and the (COMBAT-S2) telegraph resolver —
+  -- a THIRD combat-named cron would be an unaccounted-for engine/side-path and must fail this pin.
+  select count(*) into n from cron.job
+    where jobname like '%combat%' and jobname not in ('process-combat-ticks', 'process-combat-telegraphs');
+  if n <> 0 then raise exception 'COMBATPARITY FAIL: % unexpected combat-named cron job(s) beyond the tick engine + telegraph resolver', n; end if;
 
-  raise notice 'TEAMCMD_PASS_COMBATPARITY ok: legacy hunt via real chain under team flag ON; tick damage = independent Σ(attack×alive); enemy damage = independent defense-curve value; legacy jsonb keys; hp+fleet sync exact; escaped report legacy-keyed; return speed = fleet_speed; identity CHECK raises both ways; leaf smoke (NULL return speed, hp-only sync, 0059 terminal); exactly 1 combat cron job';
+  raise notice 'TEAMCMD_PASS_COMBATPARITY ok: legacy hunt via real chain under team flag ON; tick damage = independent Σ(attack×alive); enemy damage = independent defense-curve value; legacy jsonb keys; hp+fleet sync exact; escaped report legacy-keyed; return speed = fleet_speed; identity CHECK raises both ways; leaf smoke (NULL return speed, hp-only sync, 0059 terminal); exactly 1 combat-TICK engine cron (process-combat-ticks) + the COMBAT-S2 telegraph resolver which never runs the tick engine, and no third combat-named cron';
 end $$;
 
 -- ════════ BLOCK TEAMHUNT (Slice D2, 0168): hunt send + sortie manifest + member encounter routing ════════
