@@ -433,9 +433,9 @@ export function FleetCommandPanel({
   return (
     <OverlayPanel
       data-testid="fleet-command-panel"
-      // Play-test move: the location/destination surface lives in the bottom-RIGHT corner (out of
-      // the map's center, beside where a tapped location's info reads), not stacked over the middle.
-      slot="bottom-right"
+      // Play-test move: the command surfaces live in the bottom-RIGHT corner, out of the map's
+      // center. Rides MapScreen's bottom-right OverlayRail (shared with the pirate-intercept panel,
+      // which stacks above it) — no self-positioning, so it omits `slot`.
       className="flex max-h-[45%] w-72 max-w-[calc(100vw-1.5rem)] flex-col"
     >
       {notice && (

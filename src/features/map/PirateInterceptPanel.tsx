@@ -29,6 +29,7 @@ export function PirateInterceptPanel({
   onUndoDraft,
   onClearDraft,
   onCommanded,
+  onClose,
 }: {
   groupId: string | null
   locations: MapLocation[]
@@ -38,6 +39,7 @@ export function PirateInterceptPanel({
   onUndoDraft: () => void
   onClearDraft: () => void
   onCommanded: () => void
+  onClose: () => void
 }) {
   const [preview, setPreview] = useState<RoutePreviewResult | null>(null)
   const [busy, setBusy] = useState(false)
@@ -117,9 +119,17 @@ export function PirateInterceptPanel({
   }
 
   return (
-    <OverlayPanel slot="bottom-center" className="pointer-events-auto flex w-64 flex-col gap-2 text-xs">
+    <OverlayPanel className="pointer-events-auto flex w-64 flex-col gap-2 text-xs">
       <div className="flex items-center justify-between">
         <span className="font-semibold text-ink">Pirate Intercept (prototype)</span>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close pirate intercept"
+          className="-mr-1 flex h-6 w-6 items-center justify-center rounded text-base leading-none text-ink-muted hover:bg-edge/40 hover:text-ink"
+        >
+          ×
+        </button>
       </div>
       <div className="flex gap-2">
         <Button size="sm" variant={mode === 'route' ? 'primary' : 'secondary'} onClick={() => toggle('route')}>

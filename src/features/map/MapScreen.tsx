@@ -72,6 +72,10 @@ export function MapScreen() {
   // the two modes via PirateInterceptPanel (itself mounted only while pirateInterceptEnabled is lit).
   const [pirateMode, setPirateMode] = useState<'off' | 'route' | 'draw'>('off')
   const [pirateDraftPoints, setPirateDraftPoints] = useState<WorldCoord[]>([])
+  // The panel is dismissible — a launcher chip re-opens it. Closing also disarms
+  // any tap mode + clears the draft so the map returns to plain navigation.
+  const [piratePanelOpen, setPiratePanelOpen] = useState(true)
+  const closePiratePanel = () => { setPiratePanelOpen(false); setPirateMode('off'); setPirateDraftPoints([]) }
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
@@ -212,46 +216,59 @@ export function MapScreen() {
                 panel renders nothing unless a fleet is in flight, a target is live, or a fleet sits
                 in a dockable port's territory. onCommanded refreshes the map reads AND the shell's
                 ship statuses (the TeamMapSend post-command discipline, kept). */}
-            {TEAM_COMMAND_ENABLED && (
-              <FleetCommandPanel
-                target={target}
-                movements={movements}
-                groups={teamGroups}
-                groupsLoaded={teamGroupsOk}
-                unifiedEnabled={fleetMovementUnifiedEnabled}
-                unifiedFleets={unifiedGroupFleets}
-                rollups={dockedTeamRollups}
-                locations={locations}
-                ships={selection.ships}
-                membership={teamGroupMap}
-                launchFromDock={launchFromDockEnabled}
-                fleetControlEnabled={fleetControlEnabled}
-                timedDockingEnabled={timedDockingEnabled}
-                onCommanded={() => {
-                  void refresh()
-                  void selection.refresh()
-                }}
-                onClearTarget={() => {
-                  setPointTarget(null)
-                  setSelectedId(null)
-                }}
-              />
-            )}
-            {/* PIRATE INTERCEPT (prototype) — mounted ONLY while the runtime flag is lit (fail-closed:
-                a dark deploy never mounts this, byte-identical to today). Operates on the player's
-                FIRST ship group (see the panel's own header note on that prototype limitation). */}
-            {pirateInterceptEnabled && (
-              <PirateInterceptPanel
-                groupId={teamGroups[0]?.group_id ?? null}
-                locations={locations}
-                mode={pirateMode}
-                onModeChange={setPirateMode}
-                draftPoints={pirateDraftPoints}
-                onUndoDraft={() => setPirateDraftPoints((pts) => pts.slice(0, -1))}
-                onClearDraft={() => setPirateDraftPoints([])}
-                onCommanded={() => void refresh()}
-              />
-            )}
+            {/* BOTTOM-RIGHT COMMAND RAIL — the fleet-command ("send a fleet") surface, with the
+                pirate-intercept panel stacked ABOVE it when open. Both live out of the map's center
+                (play-test rule: command panels go bottom-right, never bottom-center). The pirate
+                panel is dismissible; a launcher chip re-opens it. */}
+            <OverlayRail slot="bottom-right" className="max-w-[calc(100vw-1.5rem)]">
+              {pirateInterceptEnabled && piratePanelOpen && (
+                <PirateInterceptPanel
+                  groupId={teamGroups[0]?.group_id ?? null}
+                  locations={locations}
+                  mode={pirateMode}
+                  onModeChange={setPirateMode}
+                  draftPoints={pirateDraftPoints}
+                  onUndoDraft={() => setPirateDraftPoints((pts) => pts.slice(0, -1))}
+                  onClearDraft={() => setPirateDraftPoints([])}
+                  onCommanded={() => void refresh()}
+                  onClose={closePiratePanel}
+                />
+              )}
+              {pirateInterceptEnabled && !piratePanelOpen && (
+                <button
+                  type="button"
+                  onClick={() => setPiratePanelOpen(true)}
+                  className="pointer-events-auto rounded-lg border bg-surface/90 px-3 py-1.5 text-xs font-semibold text-ink shadow-overlay backdrop-blur hover:bg-surface"
+                >
+                  ☠ Pirate Intercept
+                </button>
+              )}
+              {TEAM_COMMAND_ENABLED && (
+                <FleetCommandPanel
+                  target={target}
+                  movements={movements}
+                  groups={teamGroups}
+                  groupsLoaded={teamGroupsOk}
+                  unifiedEnabled={fleetMovementUnifiedEnabled}
+                  unifiedFleets={unifiedGroupFleets}
+                  rollups={dockedTeamRollups}
+                  locations={locations}
+                  ships={selection.ships}
+                  membership={teamGroupMap}
+                  launchFromDock={launchFromDockEnabled}
+                  fleetControlEnabled={fleetControlEnabled}
+                  timedDockingEnabled={timedDockingEnabled}
+                  onCommanded={() => {
+                    void refresh()
+                    void selection.refresh()
+                  }}
+                  onClearTarget={() => {
+                    setPointTarget(null)
+                    setSelectedId(null)
+                  }}
+                />
+              )}
+            </OverlayRail>
           </div>
         )}
       </div>
