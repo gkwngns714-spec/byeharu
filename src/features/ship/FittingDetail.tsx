@@ -7,11 +7,12 @@ import {
   type FleetPosition,
   type MainShipRow,
 } from '../map/mainshipApi'
-import { fitModuleToShip, getMyModuleInstances, unfitModuleFromShip } from '../modules/modulesApi'
+import { fetchModuleCatalog, fitModuleToShip, getMyModuleInstances, unfitModuleFromShip } from '../modules/modulesApi'
 import {
   fittingErrorMessage,
   type FittingCommandResult,
   type GetMyModuleInstancesResult,
+  type ModuleCatalogEntry,
   type ModuleInstance,
   type ShipFittingRow,
 } from '../modules/modulesTypes'
@@ -39,6 +40,7 @@ import {
 } from './shipDossierView'
 import { fitGateMessage, fittingEditability, unfittedModuleInstances } from './fittingView'
 import { shipTraitCards } from './shipTraits'
+import { moduleInfoView } from './moduleInfoView'
 import { fetchShipSoul, type ShipSoulData } from './soulApi'
 import { shipCommandBuffCard } from './commandBuff'
 import { fetchShipCommandBuff, type ShipCommandBuffData } from './commandBuffApi'
@@ -120,6 +122,12 @@ export function FittingDetail({
   const [roomSlotsRes, setRoomSlotsRes] = useState<GetShipRoomSlotsResult | null>(null)
   const [soul, setSoul] = useState<ShipSoulData | null>(null)
   const [commandBuff, setCommandBuff] = useState<ShipCommandBuffData | null>(null)
+  // The public module_types catalog (stats/combat attributes/description) — powers the tap-to-info
+  // panel on every module row. null while loading / on read error → rows stay non-interactive
+  // (nothing to reveal), never a crash: fit/unfit is the always-present surface.
+  const [moduleCatalog, setModuleCatalog] = useState<ModuleCatalogEntry[] | null>(null)
+  // The module row (by instance id) whose info panel is open — one at a time; tap again to collapse.
+  const [openModule, setOpenModule] = useState<string | null>(null)
 
   // Per-row command state (the ModulesPanel Record idiom — module rows and room slots share the
   // maps; instance uuids and `room-N` keys cannot collide).
@@ -142,7 +150,7 @@ export function FittingDetail({
   const refresh = useCallback(async () => {
     // One batched per-ship wave (the ShipDossier refresh idiom): RPC reads carry their own dark
     // envelopes; direct selects collapse to []/null inside their wrappers.
-    const [inst, cargo, preview, decks, rooms, soulData, buffData] = await Promise.all([
+    const [inst, cargo, preview, decks, rooms, soulData, buffData, modCatalog] = await Promise.all([
       getMyModuleInstances(), // fit candidates (module_crafting read; dark → no candidate list)
       getShipCargoLots(shipId),
       fetchMyExpeditionPreview(shipId),
@@ -150,6 +158,7 @@ export function FittingDetail({
       getMyShipRoomSlots(shipId),
       fetchShipSoul(shipId),
       fetchShipCommandBuff(shipId),
+      fetchModuleCatalog(), // public catalog: module stats/attributes/description for tap-to-info
     ])
     if (!activeRef.current) return
     setInstancesRes(inst)
@@ -159,6 +168,7 @@ export function FittingDetail({
     setRoomSlotsRes(rooms)
     setSoul(soulData)
     setCommandBuff(buffData)
+    setModuleCatalog(modCatalog)
   }, [activeRef, shipId])
 
   // refreshKey is a deliberate re-fetch trigger (the ShipDossier dep idiom).
@@ -279,6 +289,59 @@ export function FittingDetail({
     </span>
   )
   const num = (v: number | null): number | string => v ?? '—'
+
+  // TAP-TO-INFO — the module catalog indexed by type id (null until the public catalog loads; a
+  // row is interactive only once its info exists to reveal). Toggling closes any other open row.
+  const moduleById = moduleCatalog ? new Map(moduleCatalog.map((m) => [m.id, m])) : null
+  const toggleModule = (rowKey: string) => setOpenModule((cur) => (cur === rowKey ? null : rowKey))
+
+  // The inline module-info card (the trait-card block's twin): signed stat effects + plain combat/
+  // spatial attribute rows + description. Pure view-model from moduleInfoView; renders nothing when
+  // the catalog lacks this type (fail-soft join miss).
+  const moduleInfoPanel = (moduleTypeId: string, rowKey: string) => {
+    const row = moduleById?.get(moduleTypeId)
+    if (!row) return null
+    const info = moduleInfoView(row)
+    return (
+      <div
+        data-testid={`module-info-${rowKey}`}
+        className="mt-1.5 rounded-lg border border-edge bg-surface-2/50 px-3 py-2"
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">{info.slotType}</span>
+          {info.slotCost != null && (
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-ink-muted">
+              {info.slotCost} {info.slotCost === 1 ? 'slot' : 'slots'}
+            </span>
+          )}
+          {info.effects.map((e) => (
+            <span
+              key={e.label}
+              className={`font-mono text-[10px] tabular-nums ${
+                e.tone === 'positive' ? 'text-success' : 'text-danger'
+              }`}
+            >
+              {e.label}
+            </span>
+          ))}
+        </div>
+        {info.attributes.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {info.attributes.map((a) => (
+              <span
+                key={a.label}
+                className="inline-flex items-baseline gap-1 rounded border border-edge bg-surface px-1.5 py-0.5 text-[10px]"
+              >
+                <span className="text-ink-faint">{a.label}</span>
+                <span className="font-mono tabular-nums text-ink">{a.value}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {info.description && <p className="mt-1 text-[10px] text-ink-faint">{info.description}</p>}
+      </div>
+    )
+  }
 
   return (
     <Card tone="accent" data-testid="fitting-detail">
@@ -547,7 +610,27 @@ export function FittingDetail({
                 return (
                   <li key={f.module_instance_id} data-testid={`fitting-fitted-${f.module_instance_id}`} className="text-xs">
                     <div className="flex items-center justify-between gap-2">
-                      <ItemChip id={f.module_type_id} kind="module" label={f.name} />
+                      {moduleById ? (
+                        <button
+                          type="button"
+                          data-testid={`fitting-info-toggle-${f.module_instance_id}`}
+                          aria-expanded={openModule === f.module_instance_id}
+                          onClick={() => toggleModule(f.module_instance_id)}
+                          className="flex min-w-0 items-center gap-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                        >
+                          <ItemChip id={f.module_type_id} kind="module" label={f.name} />
+                          <span
+                            aria-hidden="true"
+                            className={`shrink-0 text-ink-faint transition-transform ${
+                              openModule === f.module_instance_id ? 'rotate-180' : ''
+                            }`}
+                          >
+                            ▾
+                          </span>
+                        </button>
+                      ) : (
+                        <ItemChip id={f.module_type_id} kind="module" label={f.name} />
+                      )}
                       <Button
                         variant="secondary"
                         size="sm"
@@ -566,6 +649,7 @@ export function FittingDetail({
                         Unfit
                       </Button>
                     </div>
+                    {openModule === f.module_instance_id && moduleInfoPanel(f.module_type_id, f.module_instance_id)}
                     {note && (
                       <p data-testid={`fitting-note-${f.module_instance_id}`} className="mt-0.5 text-[10px] text-accent">
                         {note}
@@ -594,13 +678,37 @@ export function FittingDetail({
                     return (
                       <li key={m.instance_id} data-testid={`fitting-available-${m.instance_id}`} className="text-xs">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <ItemGlyph id={m.module_type_id} kind="module" size={14} className="shrink-0 text-accent" />
-                            <span className="truncate text-ink">{m.name}</span>
-                            <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
-                              {m.slot_type}
+                          {moduleById ? (
+                            <button
+                              type="button"
+                              data-testid={`fitting-info-toggle-${m.instance_id}`}
+                              aria-expanded={openModule === m.instance_id}
+                              onClick={() => toggleModule(m.instance_id)}
+                              className="flex min-w-0 items-center gap-1.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                            >
+                              <ItemGlyph id={m.module_type_id} kind="module" size={14} className="shrink-0 text-accent" />
+                              <span className="truncate text-ink">{m.name}</span>
+                              <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
+                                {m.slot_type}
+                              </span>
+                              <span
+                                aria-hidden="true"
+                                className={`shrink-0 text-ink-faint transition-transform ${
+                                  openModule === m.instance_id ? 'rotate-180' : ''
+                                }`}
+                              >
+                                ▾
+                              </span>
+                            </button>
+                          ) : (
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <ItemGlyph id={m.module_type_id} kind="module" size={14} className="shrink-0 text-accent" />
+                              <span className="truncate text-ink">{m.name}</span>
+                              <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[9px] text-accent">
+                                {m.slot_type}
+                              </span>
                             </span>
-                          </span>
+                          )}
                           <Button
                             variant="primary"
                             size="sm"
@@ -615,6 +723,7 @@ export function FittingDetail({
                             Fit
                           </Button>
                         </div>
+                        {openModule === m.instance_id && moduleInfoPanel(m.module_type_id, m.instance_id)}
                         {note && (
                           <p data-testid={`fitting-note-${m.instance_id}`} className="mt-0.5 text-[10px] text-accent">
                             {note}
