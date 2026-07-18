@@ -5,6 +5,7 @@ import { createTree } from './tree.js'
 import { createTimeline } from './timeline.js'
 import { createMethod } from './method.js'
 import { deriveStatuses, STATUS, STATUS_ORDER } from './status.js'
+import { deriveHistory } from './history.js'
 
 const KIND_SIZE = { system: 5.2, rung: 4.6, phase: 4.2, flag: 3.4, table: 2.4, migration: 1.7, function: 1.3 }
 const EDGE_TYPES = ['creates', 'supersedes', 'extends', 'alters', 'drops', 'seeds', 'gated-by', 'calls', 'touches', 'owned-by', 'delivers', 'delivered-by', 'flips', 'waits-on']
@@ -33,6 +34,7 @@ const [graph, live, wip0] = await Promise.all([
 ])
 
 const { status, why, frontier } = deriveStatuses(graph, live)
+const { birth, days } = deriveHistory(graph)   // nodeId -> 'YYYY-MM-DD', and the sorted day list
 const positioned = layout(graph.nodes, graph.edges)
 const byId = new Map(positioned.map((n) => [n.id, n]))
 const idx = new Map(positioned.map((n, i) => [n.id, i]))
@@ -111,10 +113,16 @@ let tree = null
 let timeline = null
 let method = null
 
+// playback — the build-history time-lapse. `on` gates node visibility by birth
+// day; `i` is the current day index into `days`; `playing` auto-advances in tick.
+const pb = { on: false, playing: false, i: days.length - 1, last: 0 }
+const STEP_MS = 620   // dwell per day while playing
+
 const matchesQuery = (n) => !state.query || n.label.toLowerCase().includes(state.query)
   || (n.detail ?? '').toLowerCase().includes(state.query)
 
 function nodeVisible(n) {
+  if (pb.on && birth.get(n.id) > days[pb.i]) return false   // not born yet on this day
   return state.status.has(status.get(n.id).key) && state.kind.has(n.kind) && matchesQuery(n)
 }
 
@@ -398,6 +406,59 @@ const toggleClean = () => {
 declutter.addEventListener('click', toggleClean)
 addEventListener('keydown', (e) => {
   if (e.key.toLowerCase() === 'h' && tab === 'map' && !isTyping()) toggleClean()
+})
+
+// ── playback: watch the codebase build itself, day by day ───────────────────────
+const historyBtn = document.getElementById('historyBtn')
+const pbBar = document.getElementById('playback')
+const pbPlayBtn = document.getElementById('pbPlay')
+const pbSlider = document.getElementById('pbSlider')
+const pbLabel = document.getElementById('pbLabel')
+let bornFlash = []   // [{ i, t }] nodes born on the day just revealed — a brief pop
+
+const pbNodeCount = (dayIdx) => {
+  let c = 0
+  for (const n of graph.nodes) if (birth.get(n.id) <= days[dayIdx] && state.kind.has(n.kind)) c++
+  return c
+}
+function pbRender() {
+  pbSlider.max = String(days.length - 1)
+  pbSlider.value = String(pb.i)
+  pbLabel.innerHTML = `<b>${days[pb.i]}</b><span class="pb-sub">day ${pb.i + 1} / ${days.length} · ${pbNodeCount(pb.i)} nodes</span>`
+  pbPlayBtn.textContent = pb.playing ? '⏸' : '▶'
+}
+function pbSetDay(i, flash = false) {
+  const c = Math.max(0, Math.min(days.length - 1, i))
+  if (flash && c > pb.i) {
+    const day = days[c]
+    positioned.forEach((n, idx) => { if (birth.get(n.id) === day) bornFlash.push({ i: idx, t: performance.now() }) })
+  }
+  pb.i = c
+  apply(); pbRender()
+}
+function pbSetMode(on) {
+  pb.on = on
+  pb.playing = false
+  bornFlash = []
+  document.body.classList.toggle('history', on)
+  historyBtn.setAttribute('aria-pressed', String(on))
+  pbBar.classList.toggle('on', on)
+  pb.i = on ? 0 : days.length - 1     // enter at day one; leave on the full present-day map
+  apply(); if (on) pbRender()
+}
+function pbPlayPause() {
+  if (!pb.on) return
+  if (pb.i >= days.length - 1) pbSetDay(0)     // at the end → replay from the start
+  pb.playing = !pb.playing
+  pb.last = performance.now()
+  pbRender()
+}
+historyBtn.addEventListener('click', () => pbSetMode(!pb.on))
+pbPlayBtn.addEventListener('click', pbPlayPause)
+pbSlider.addEventListener('input', (e) => { pb.playing = false; pbSetDay(+e.target.value); })
+addEventListener('keydown', (e) => {
+  if (tab !== 'map' || isTyping()) return
+  if (e.key.toLowerCase() === 'p') pbSetMode(!pb.on)   // toggle the time-lapse
 })
 
 // ── the drawer (small screens only) ───────────────────────────────────────────
@@ -703,6 +764,36 @@ apply()
       mesh.setMatrixAt(i, dummy.matrix)
     }
     mesh.instanceMatrix.needsUpdate = true
+  }
+
+  // ── playback: advance the day, and pop in whatever was born on it ──────────
+  if (pb.on && pb.playing) {
+    const now = performance.now()
+    if (now - pb.last >= STEP_MS) {
+      pb.last = now
+      if (pb.i >= days.length - 1) { pb.playing = false; pbRender() }
+      else pbSetDay(pb.i + 1, true)
+    }
+  }
+  if (bornFlash.length) {
+    const now = performance.now()
+    bornFlash = bornFlash.filter((f) => now - f.t < STEP_MS)
+    for (const f of bornFlash) {
+      const n = positioned[f.i]
+      if (!nodeVisible(n)) continue
+      const age = (now - f.t) / STEP_MS          // 0..1
+      const pop = 1 + 1.6 * (1 - age)            // burst big, settle to normal
+      dummy.position.set(n.x, n.y, n.z)
+      dummy.scale.setScalar(KIND_SIZE[n.kind] * pop)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(f.i, dummy.matrix)
+      const o = f.i * 3, w = 1 - age              // flash white on arrival
+      mesh.instanceColor.array[o]     = baseColor[o]     * (1 - w) + w
+      mesh.instanceColor.array[o + 1] = baseColor[o + 1] * (1 - w) + w
+      mesh.instanceColor.array[o + 2] = baseColor[o + 2] * (1 - w) + w
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.instanceColor.needsUpdate = true
   }
 
   renderer.render(scene, camera)

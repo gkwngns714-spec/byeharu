@@ -206,6 +206,27 @@
   body.clean.map #controls, body.clean.map #hud, body.clean.map #workingNow.on, body.clean.map #inspect.on { display: none; }
   body.clean #declutter { color: var(--accent); border-color: var(--accent); left: 14px; }
 
+  /* build-history playback — a toggle button + a bottom transport bar */
+  #historyBtn { position: fixed; top: 14px; left: 318px; z-index: 8; width: 34px; height: 34px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(14px);
+    color: var(--dim); font-size: 15px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+  #historyBtn:hover { color: var(--text); }
+  #historyBtn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+  body:not(.map) #historyBtn { display: none; }
+  body.clean #historyBtn { left: 52px; }
+
+  #playback { bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 7; display: none;
+    align-items: center; gap: 12px; padding: 9px 15px; width: min(600px, calc(100vw - 28px)); }
+  body.map #playback.on { display: flex; }
+  #pbPlay { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--accent);
+    background: rgba(53,193,224,.14); color: var(--accent); font-size: 13px; cursor: pointer; display: grid; place-items: center; }
+  #pbPlay:hover { background: rgba(53,193,224,.26); }
+  #pbSlider { flex: 1; accent-color: var(--accent); cursor: pointer; min-width: 0; }
+  .pb-label { flex: 0 0 auto; min-width: 150px; text-align: right; font-size: 12.5px; color: var(--text);
+    font-variant-numeric: tabular-nums; line-height: 1.25; }
+  .pb-label b { font-weight: 600; }
+  .pb-label .pb-sub { display: block; font-size: 10px; color: var(--dim); }
+
   /* ── WIP blink on the tree + timeline views ────────────────────────────────
      Same overlay as the map's pulse, in each view's own medium. --wc is the
      PR's hue, set inline per element. */
@@ -283,6 +304,7 @@
 
   <button id="menuBtn" aria-label="Filters and options" aria-expanded="false" aria-controls="controls">☰</button>
   <button id="declutter" class="mapOnly" title="Hide all panels (H)" aria-label="Hide all panels">⤢</button>
+  <button id="historyBtn" class="mapOnly" title="Play build history (P)" aria-label="Play build history" aria-pressed="false">🎬</button>
   <div id="scrim"></div>
 
   <nav class="panel" id="tabs">
@@ -355,6 +377,11 @@
 
   <aside class="panel" id="inspect"></aside>
   <div class="panel" id="workingNow"></div>
+  <div class="panel" id="playback">
+    <button id="pbPlay" title="Play / pause" aria-label="Play or pause">▶</button>
+    <input id="pbSlider" type="range" min="0" max="1" value="0" step="1" aria-label="Build day" />
+    <div id="pbLabel" class="pb-label">—</div>
+  </div>
   <div class="panel" id="hud">—</div>
   <div id="tip"></div>
 
