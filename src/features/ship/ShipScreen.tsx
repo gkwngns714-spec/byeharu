@@ -9,11 +9,11 @@ import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { fetchMyShipGroups, fetchMyShipGroupMap, type ShipGroupMapEntry } from '../command/teamApi'
 import {
   buildTeamRoster,
+  commandFleetState,
   fleetPositionLocationLabel,
   type GroupRow,
   type RosterShip,
 } from '../command/teamRoster'
-import { mainShipInstanceStatusLabel, mainShipInstanceStatusTone } from '../map/mainshipStatusLabel'
 import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { captainsForShip, fittingsForShip } from './shipDossierView'
 import { shipMeterPair } from './meterPair'
@@ -191,6 +191,9 @@ export function ShipScreen() {
     const meters = row ? shipMeterPair(row) : null
     const isDisabled = s.status === 'destroyed'
     const locLabel = fleetPositionLocationLabel(posByShip.get(s.main_ship_id), game.locations)
+    // Fleet-aware state (same selector the Command roster uses): a moving/docked ship no longer
+    // reads the raw 'home' status as "Ready to launch" — that shows only when genuinely idle.
+    const fleetState = commandFleetState(posByShip.get(s.main_ship_id), game.locations, s.status, Date.now())
     const rowCaptains = litCaptainRows ? captainsForShip(litCaptainRows, s.main_ship_id) : null
     const fittedCount = litFittingRows ? fittingsForShip(litFittingRows, s.main_ship_id).length : null
     const note = repairNote[s.main_ship_id]
@@ -227,7 +230,7 @@ export function ShipScreen() {
                 <span className="font-mono tabular-nums text-ink">{fittedCount}</span>
               </span>
             )}
-            <Badge tone={mainShipInstanceStatusTone(s.status)}>{mainShipInstanceStatusLabel(s.status)}</Badge>
+            <Badge tone={fleetState.tone}>{fleetState.label}</Badge>
             {selected && <Badge tone="accent">Selected</Badge>}
           </span>
         </div>
