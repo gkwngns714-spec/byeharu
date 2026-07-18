@@ -326,7 +326,11 @@ const _r = new THREE.Vector3(), _u = new THREE.Vector3(), _f = new THREE.Vector3
 
 function resize() {
   const w = innerWidth, h = innerHeight
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix()
+  // updateStyle MUST stay on: a <canvas> is a replaced element, so without an explicit CSS size it
+  // falls back to its intrinsic drawing-buffer size (viewport × devicePixelRatio). On a dpr>1 screen
+  // that overflows the viewport by the DPR factor, pushing the whole scene — and every click target —
+  // off the visible area (nodes become un-tappable). setSize(w,h) keeps CSS = viewport, buffer = ×dpr.
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix()
 }
 addEventListener('resize', resize); resize()
 
