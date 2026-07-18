@@ -7,7 +7,7 @@
 --
 -- THE CROWN-JEWEL PROPERTY IS FLEETGO_PASS_NOSHIPWRITE.
 -- Charter §2 says "THE FLEET IS THE ONLY UNIT OF MOVEMENT. A SHIP DOES NOT MOVE." Every OTHER mover
--- in this codebase writes ship-level movement state (move_main_ship_to_location → 'traveling';
+-- in this codebase writes ship-level movement state (the legacy single-ship move (retired 0232) → 'traveling';
 -- mainship_space_begin_move_core → 'in_transit'; send_ship_group_hunt → 'hunting'). The unified
 -- mover must write NONE. That is not a nice-to-have — it IS the model. So this proof snapshots every
 -- ship column that could carry movement (status, berth_location_id, updated_at — spatial_state/
@@ -183,8 +183,8 @@ update public.game_config set value='true'::jsonb where key='mainship_additional
 -- HUNTOVERLAP block launches a REAL docked hunt, which needs launch_from_dock_enabled (also ON in prod).
 update public.game_config set value='true'::jsonb where key='station_storage_enabled';
 update public.game_config set value='true'::jsonb where key='launch_from_dock_enabled';
--- 4b-0 (0213): the PERMEMBER-TAG block launches a REAL legacy expedition (send_ship_group_expedition
--- → send_main_ship_expedition), which is gated on mainship_send_enabled (ON in prod, seeded false on
+-- 4b-0 (0213): the PERMEMBER-TAG block launches a REAL legacy expedition (the legacy group send (retired 0232)
+-- → the legacy single-ship send (retired 0232)), which is gated on mainship_send_enabled (ON in prod, seeded false on
 -- a fresh chain — 0050).
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 
@@ -1888,7 +1888,7 @@ end $$;
 
 -- ════════ BLOCK ASSIGNGUARD-PERMEMBER-TAG (4b-0, lit): the legacy expedition's display-only
 -- group_id tag on PER-MEMBER fleets must NOT trip the guard — pins the main_ship_id IS NULL key ════════
--- send_ship_group_expedition (0204:316-318) tags fleets.group_id onto each member's OWN fleet after a
+-- the legacy group send (retired 0232) (0204:316-318) tags fleets.group_id onto each member's OWN fleet after a
 -- send — display-only, "ROUTING NEVER reads fleets.group_id". A guard keyed on group_id ALONE (the
 -- exact key mistake 0210:69-71 records) would see that tagged per-member fleet 'moving' and reject
 -- every assign into a group that merely has a legacy expedition out — banning assignment for the
@@ -1915,13 +1915,13 @@ begin
     raise exception 'ASSIGNGUARD-PERMEMBER FAIL: dark fixture assign of b1 was rejected: %', r; end if;
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
-  -- the REAL legacy expedition send (docked launch — launch_from_dock is lit): mints b1's OWN
-  -- per-member fleet and tags it with gB. Destination DRIFT, not slag: b1 is docked AT slag (the
-  -- SETTLEPARITY block flew it there and the 0153 hunk docked it), and the single send rejects a
-  -- destination equal to the ship's current dock ('already at that location') — the CI run caught
-  -- exactly that on the first cut of this fixture.
-  r := pg_temp.call_as(uB, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gB, drift));
-  if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD-PERMEMBER FAIL: legacy expedition send: %', r; end if;
+  -- 4B-DROP REPOINT: the legacy group send that minted + group_id-tagged b1's OWN per-member fleet was
+  -- DROPPED by 0232, and the unified group-fleet model never tags a per-member (main_ship_id set) fleet.
+  -- The exact state under test — a per-member fleet, main_ship_id set, group_id-tagged, 'moving' — is
+  -- manufactured by DIRECT FIXTURE INSERT (the SAME surgery idiom the MEMBERBUSY fixture below uses for a
+  -- moving per-ship fleet), so the guard-key property is still proven without the retired send.
+  insert into public.fleets (player_id, status, location_mode, group_id, main_ship_id)
+    values (uB, 'moving', 'movement', gB, b1);
 
   r := pg_temp.call_as(uB, 'public.commission_additional_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD-PERMEMBER FAIL: commission b2: %', r; end if;
@@ -2297,21 +2297,15 @@ begin
   select id into v_f3fleet from public.fleets
    where player_id = uF and main_ship_id = f3 and status = 'present';
   if v_f3fleet is null then raise exception 'HUNTUNI-CONSUME FAIL: f3 has no present commission fleet — the co-located fixture cannot be built'; end if;
-  -- ⚠ ENVELOPE SHAPE (verified at the 0156 TRUE head — 0053→0152→0156 are its only re-creates,
-  -- loose-grep derived): the per-ship legacy movers do NOT return the group RPCs' {ok:...}
-  -- envelope. move_main_ship_to_location returns a BARE movement envelope — {fleet_id, movement_id,
-  -- main_ship_id, from, from_location_id, to_location_id, arrive_at} — and every failure path
-  -- RAISES (0156:87-187), which call_as propagates, so a genuinely failed move aborts this block
-  -- with the RPC's own error. Success is therefore asserted on what the head actually returns: a
-  -- minted movement_id targeting slag. An `->>'ok'` check here reads NULL and raises on a
-  -- SUCCESSFUL move (the CI caught exactly that — the third fixture-envelope class in this arc).
-  r := pg_temp.call_as(uF, format('public.move_main_ship_to_location(%L::uuid, %L::uuid)', v_f3fleet, slag));
-  if (r->>'movement_id') is null or (r->>'to_location_id')::uuid is distinct from slag then
-    raise exception 'HUNTUNI-CONSUME FAIL: legacy move of f3 returned no movement toward slag: %', r; end if;
-  update public.fleet_movements
-     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
-   where id = (r->>'movement_id')::uuid;
-  perform public.movement_settle_arrival((r->>'movement_id')::uuid);
+  -- 4B-DROP REPOINT: the legacy per-ship move that relocated f3's dock to slag was DROPPED by 0232, and
+  -- no live single-ship mover survives to relocate ONE ship (the fleet is the unit of movement now). The
+  -- co-located-dock STATE under test — f3's OWN present fleet + active presence AT slag — is what this
+  -- block exercises (not the mover), so it is built by DIRECT FIXTURE SURGERY on f3's commission present
+  -- fleet (the same idiom the MEMBERBUSY/catastrophe fixtures below use).
+  update public.fleets set current_location_id = slag, current_base_id = null, location_mode = 'location', updated_at = now()
+   where id = v_f3fleet;
+  update public.location_presence set location_id = slag, status = 'active', updated_at = now()
+   where fleet_id = v_f3fleet;
   select count(*) into n from public.fleets f
     join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active' and lp.location_id = slag
    where f.id = v_f3fleet and f.status = 'present' and f.current_location_id = slag;
