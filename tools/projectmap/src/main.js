@@ -450,7 +450,12 @@ const pbPlayBtn = document.getElementById('pbPlay')
 const pbSlider = document.getElementById('pbSlider')
 const pbLabel = document.getElementById('pbLabel')
 const pbCaption = document.getElementById('pbCaption')
-let bornFlash = []   // [{ i, t }] nodes born on the day just revealed — a brief pop
+const pbSpeedSel = document.getElementById('pbSpeed')
+let pbSpeed = 1                          // playback speed multiplier (0.5×–8×)
+pbSpeedSel.addEventListener('change', (e) => { pbSpeed = parseFloat(e.target.value) || 1 })
+let bornFlash = []   // [{ i, t }] nodes revealed recently — a brief pop
+// the git commit day of the node — the real day that work was done — nicely formatted
+const fmtDate = (ymd) => { try { return new Date(ymd + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) } catch { return ymd } }
 
 // ── the day's caption: what THIS day introduced, in player-facing words ─────────
 // Rank the newly-born nodes so the headline features the ones that mean the most to
@@ -470,7 +475,8 @@ function renderCaption() {
   const n = _byIdN.get(id)
   const p = capText(id)
   pbCaption.classList.add('on')
-  pbCaption.innerHTML = `<div class="cap-head"><span class="cap-dot" style="background:${status.get(id).hex}"></span>`
+  pbCaption.innerHTML = `<div class="cap-date">${fmtDate(birth.get(id))}</div>`
+    + `<div class="cap-head"><span class="cap-dot" style="background:${status.get(id).hex}"></span>`
     + `<b>${capLabel(n)}</b> <span class="cap-kind">${n.kind}</span></div>`
     + (p ? `<div class="cap-row">${p}</div>` : '<div class="cap-quiet">Under-the-hood plumbing — no direct player effect.</div>')
 }
@@ -822,7 +828,7 @@ apply()
   // ── playback: reveal the next node, and pop it in ──────────────────────────
   if (pb.on && pb.playing) {
     const now = performance.now()
-    if (now - pb.last >= STEP_MS) {
+    if (now - pb.last >= STEP_MS / pbSpeed) {   // faster/slower per the speed selector
       pb.last = now
       if (pb.i >= PB_LAST) { pb.playing = false; pbRender() }
       else pbSetStep(pb.i + 1, true)

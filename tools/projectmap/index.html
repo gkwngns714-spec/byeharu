@@ -233,6 +233,11 @@
     font-variant-numeric: tabular-nums; line-height: 1.25; }
   .pb-label b { font-weight: 600; }
   .pb-label .pb-sub { display: block; font-size: 10px; color: var(--dim); }
+  #pbSpeed { flex: 0 0 auto; border-radius: 7px; border: 1px solid var(--line); background: rgba(0,0,0,.35);
+    color: var(--text); font: inherit; font-size: 11.5px; padding: 4px 6px; cursor: pointer; }
+  #pbSpeed:focus { outline: 1px solid var(--accent); }
+  #pbCaption .cap-date { font-size: 15px; font-weight: 700; color: var(--accent); letter-spacing: .01em;
+    font-variant-numeric: tabular-nums; margin-bottom: 5px; }
 
   /* playback caption — what THIS day introduced, in the player's words. Rides just
      above the transport bar during the time-lapse so the video narrates itself. */
@@ -404,8 +409,15 @@
   <div class="panel" id="pbCaption"></div>
   <div class="panel" id="playback">
     <button id="pbPlay" title="Play / pause" aria-label="Play or pause">▶</button>
-    <input id="pbSlider" type="range" min="0" max="1" value="0" step="1" aria-label="Build day" />
+    <input id="pbSlider" type="range" min="0" max="1" value="0" step="1" aria-label="Build step" />
     <div id="pbLabel" class="pb-label">—</div>
+    <select id="pbSpeed" title="Playback speed" aria-label="Playback speed">
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+      <option value="4">4×</option>
+      <option value="8">8×</option>
+    </select>
   </div>
   <div class="panel" id="hud">—</div>
   <div id="tip"></div>
