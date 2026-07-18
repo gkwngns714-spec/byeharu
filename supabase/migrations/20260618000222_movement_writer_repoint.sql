@@ -1204,6 +1204,137 @@ begin
   raise notice '4C-MIG-2A self-assert ok (a1/b1/b2/b3/b4): a1/b1/b4 re-created from their true heads with only the marked (constraint-legal) hunk; b2/b3 confirmed to need no re-create; ACLs unchanged';
 end $repoint_writers$;
 
+-- ═══════════ §8.5. ORPHAN RECONCILIATION (added after the first prod apply attempt FAILED §9's ═════
+-- ═══════════ self-assert): berthed-ungrouped ships stuck in a transition-era corrupt shape MUST ═════
+-- ═══════════ be settled BEFORE §9 compares the retired vs. fleet-truth predicates, or that ══════════
+-- ═══════════ comparison correctly aborts the deploy again. ══════════════════════════════════════════
+-- ROOT CAUSE (investigated live against prod, read-only, via the Management API — the exact query
+-- below reproduces it): a BERTHED, UNGROUPED ship (group_id IS NULL, berth_location_id IS NOT
+-- NULL — the S1/0216 XOR's berthed arm; its location IS its berth port, full stop, by that model)
+-- can ALSO still own a leftover per-ship `fleets` row (main_ship_id = the ship) in a LIVE status — a
+-- transition-era artifact never torn down when the ship settled into its berth.
+-- mainship_resolve_fleet (0210:52-118) does not consult berth_location_id at all: for an ungrouped
+-- ship (v_group is null) it skips straight past the group branch to its TRANSITION FALLBACK
+-- (0210:102-116), which answers with WHATEVER single live per-ship fleet row exists for that ship,
+-- unconditionally. On the 2 ships found in prod (209f7d66-9908-4540-b20e-91a314ac0e71,
+-- 268d904e-b303-4d93-8a1a-c59eab6fe304) that stray fleet is status='present', location_mode=
+-- 'location', current_location_id = their OWN berth_location_id, active_movement_id null, with a
+-- matching active location_presence row — so the b5 fleet-truth predicate (mirrored again below)
+-- reads "docked" (TRUE). Meanwhile the ships themselves carry status='traveling'/spatial_state=null
+-- (a SECOND symptom of the same abandoned transition — 'traveling' is not a settled value for a ship
+-- that owns no live movement), so the retired predicate (status='stationary' AND spatial_state=
+-- 'at_location') reads FALSE. Two independent lies about the same ship, one root cause: nothing ever
+-- dissolved the pre-berth-model per-ship fleet+presence pair when these ships were berthed.
+--
+-- THE CLEAN STATE (S1/0216 + 0210): a berthed ship is settled AT ITS BERTH, represented ENTIRELY by
+-- berth_location_id — under §2/0216 it has no fleet of its own at all, live or otherwise, and its
+-- status must be the settled value 'home', never 'traveling'/'hunting'/any transient literal.
+--
+-- THE TEARDOWN IDIOM (reused, NOT invented): the exact presence_complete + fleets-status='completed'
+-- dissolve THIS SAME FILE already performs twice for a member's own present fleet — §6 above,
+-- 20260618000222_movement_writer_repoint.sql:759-767 and :964-972 (dissolving a hunt member's per-
+-- ship present fleet before the sortie fleet is minted) — itself carried from
+-- 20260618000204_fleetctrl_command_ship.sql:668-676 and
+-- 20260618000208_fleetgo_coordinate_targets.sql:512-520,549-557. THE ONE dissolve-a-per-ship-fleet
+-- formula in this codebase; composed here verbatim, never a new one.
+--
+-- SCOPE IS BY DATA SHAPE, NOT BY UUID — there may be more than these 2 ships in prod by deploy time.
+-- The reconciled ship set is every ungrouped, berthed ship (group_id IS NULL AND berth_location_id
+-- IS NOT NULL — mutually exclusive with "fleeted" by the S1 XOR CHECK, so this can never accidentally
+-- net a fleeted ship) that is NOT destroyed, and is either (a) not yet settled (status <> 'home') or
+-- (b) still owns a live per-ship fleet row (status in idle/moving/present/returning) — the exact
+-- shape that can make mainship_resolve_fleet answer anything other than NULL for it.
+do $berth_orphan_reconcile$
+declare
+  v_ships             uuid[];
+  v_ship_count        integer;
+  v_dissolved_fleets  integer;
+  v_still_mismatched  integer;
+  v_cap constant integer := 25;  -- defensive cap: 72 real ships / 2 corrupt at investigation time —
+                                 -- a healthy deploy touches a small handful, never a large slice. A
+                                 -- count above this means the corruption is broader than understood
+                                 -- and this migration must NOT reconcile blind.
+begin
+  select coalesce(array_agg(s.main_ship_id), '{}'), count(*)
+    into v_ships, v_ship_count
+    from public.main_ship_instances s
+   where s.group_id is null
+     and s.berth_location_id is not null
+     and s.status <> 'destroyed'
+     and (
+       s.status <> 'home'
+       or exists (
+         select 1 from public.fleets f
+          where f.main_ship_id = s.main_ship_id
+            and f.status in ('idle', 'moving', 'present', 'returning')
+       )
+     );
+
+  if v_ship_count = 0 then
+    raise notice '4C-MIG-2A pre-§9 reconciliation: zero berthed-ungrouped orphans found — nothing to reconcile';
+  else
+    if v_ship_count > v_cap then
+      raise exception '4C-MIG-2A pre-§9 reconciliation FAIL: % berthed-ungrouped orphan ship(s) found — exceeds the defensive cap (%); this is no longer the small transition-era residue this migration was written for — STOP and investigate before reconciling blind', v_ship_count, v_cap;
+    end if;
+
+    -- (a) dissolve every stray per-ship fleet these ships still own — presence first (the idiom
+    --     always closes the presence before completing its fleet), then the fleet row itself.
+    perform presence_complete(lp.id)
+      from public.fleets f
+      join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+      where f.main_ship_id = any(v_ships)
+        and f.status in ('idle', 'moving', 'present', 'returning');
+
+    update public.fleets
+       set status = 'completed', location_mode = 'movement', active_movement_id = null,
+           current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+           updated_at = now()
+     where main_ship_id = any(v_ships)
+       and status in ('idle', 'moving', 'present', 'returning');
+    get diagnostics v_dissolved_fleets = row_count;
+
+    -- (b) settle status: these ships are docked at their berth — 'home', the settled value. The
+    --     CHECK-coupled columns (spatial_state/space_x/space_y) are co-cleared unconditionally, the
+    --     same discipline this migration's b1/b4 hunks follow (harmless if already null, required
+    --     if not: main_ship_instances_ss_at_location_status/_ss_in_space_status couple spatial_state
+    --     to status, and 'home' admits neither 'at_location' nor 'in_space').
+    update public.main_ship_instances
+       set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     where main_ship_id = any(v_ships);
+
+    raise notice '4C-MIG-2A pre-§9 reconciliation: % berthed-ungrouped orphan ship(s) reconciled (% stray per-ship fleet row(s) dissolved) — settled to status=home, no live per-ship fleet remains', v_ship_count, v_dissolved_fleets;
+  end if;
+
+  -- RE-ASSERT, immediately, restricted to exactly this scope: the retired predicate and the
+  -- fleet-truth predicate now AGREE for every berthed-ungrouped ship. This is a NARROWER re-run of
+  -- §9's own whole-table comparison (below, unchanged) — a failure here is attributable to THIS
+  -- reconciliation specifically; §9 itself becomes redundant-but-passing once this holds.
+  select count(*) into v_still_mismatched
+    from public.main_ship_instances s
+   where s.group_id is null
+     and s.berth_location_id is not null
+     and s.status <> 'destroyed'
+     and (
+       (s.status = 'stationary' and s.spatial_state = 'at_location')
+       is distinct from
+       exists (
+         select 1 from public.fleets f
+          where f.id = public.mainship_resolve_fleet(s.main_ship_id)
+            and f.status = 'present' and f.location_mode = 'location'
+            and f.current_location_id is not null and f.active_movement_id is null
+            and exists (
+              select 1 from public.location_presence lp
+               where lp.fleet_id = f.id and lp.status = 'active'
+                 and lp.location_id = f.current_location_id)
+       )
+     );
+  if v_still_mismatched > 0 then
+    raise exception '4C-MIG-2A pre-§9 reconciliation FAIL: % berthed-ungrouped ship(s) STILL disagree between the retired and fleet-truth predicates after reconciliation — the reconcile did not cover the actual corrupt shape', v_still_mismatched;
+  end if;
+
+  raise notice '4C-MIG-2A pre-§9 reconciliation ok: zero berthed-ungrouped ships disagree between the retired and fleet-truth predicates — §9''s whole-table proof below is now guaranteed to pass on this axis';
+end $berth_orphan_reconcile$;
+
 -- ═══════════ §9. THE HIGH-RISK PROOF: reconcile the b5 fleet-truth "docked" predicate against ════
 -- ═══════════ EVERY REAL SHIP ROW the retired predicate could ever have judged, at apply time. ═════
 -- Scope of the comparison (matches EXACTLY the domain Hunks B5-b/B5-c/B5-d can reach — see the
