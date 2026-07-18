@@ -290,3 +290,16 @@ test('teamGatherState: all home (no dock) → all_home', () => {
 test('teamGatherState: split ports / in transit, not all home → scattered', () => {
   expect(teamGatherState({ memberCount: 2, allHome: false, dockedLocationId: null })).toBe('scattered')
 })
+
+// ── S1 BERTH MODEL (0216): place='berthed' — an UNFLEETED ship at its berth port ─────────────────
+test('fleetPositionLocationLabel: berthed → "Docked at <port>" (the ONE resolver, reused)', () => {
+  expect(fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'berthed', location_id: 'haven' }), world)).toBe(
+    'Docked at Haven Reach',
+  )
+})
+
+test('fleetPositionLocationLabel: berthed at a HIDDEN port → generic "Docked", never a leaked id', () => {
+  const label = fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'berthed', location_id: 'secret' }), world)
+  expect(label).toBe('Docked')
+  expect(label).not.toContain('secret')
+})

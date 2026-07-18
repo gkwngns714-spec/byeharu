@@ -119,3 +119,30 @@ export function resolveShipLocationLabel(
   if (!fleet) return { kind: 'idle', label: 'Idle', etaText, destination, heading }
   return { kind: 'in-transit', label: 'In transit', etaText, destination, heading }
 }
+
+// ── S1 BERTH MODEL (migration 0216) — a BERTHED ship's location, through the ONE resolver ────────
+// The server's fleet-positions projection now answers place='berthed' for an unfleeted ship docked
+// at its berth port (location_id = the port). Its label is a DOCKED read — "Docked at <port>" —
+// so this helper COMPOSES resolveShipLocationLabel with a synthetic present-at-port fleet instead
+// of minting a second name-resolution path (anti-spaghetti: one implementation of "where is the
+// ship"). Combat-port berths therefore also inherit the "In combat at …" wording, and an unknown/
+// hidden port fails closed to a bare "Docked" exactly like the docked arm — one rule, one place.
+// Pure; a null port id (shape-impossible for a server 'berthed' row, but typed honestly) degrades
+// to the deep-space read rather than inventing a port.
+export function resolveBerthedLocationLabel(
+  berthLocationId: string | null,
+  locations: MapLocation[],
+): ShipLocationResolved {
+  return resolveShipLocationLabel(
+    {
+      id: '',
+      status: 'present',
+      current_location_id: berthLocationId,
+      location_mode: null,
+      active_movement_id: null,
+      active_space_movement_id: null,
+    },
+    null,
+    locations,
+  )
+}

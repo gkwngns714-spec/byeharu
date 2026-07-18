@@ -21,6 +21,11 @@ MIGRATION_3C2="$REPO_ROOT/supabase/migrations/20260618000211_fleetgo_dock_dedup.
 MIGRATION_3C3="$REPO_ROOT/supabase/migrations/20260618000212_fleetgo_map_read.sql"
 MIGRATION_4B0="$REPO_ROOT/supabase/migrations/20260618000213_fleetgo_assign_guard.sql"
 MIGRATION_4B1="$REPO_ROOT/supabase/migrations/20260618000214_fleetgo_hunt_unified.sql"
+# MIGRATION_S1 is 0216 — the BERTH model. It is the NEW true head of assign_ship_to_group,
+# delete_ship_group, port_entry_commission_build, ensure_main_ship_for_player, and
+# get_my_fleet_positions; the static checks below aim at IT for those bodies (the 0215/0211 rule:
+# a ban pointed at a superseded head guards nothing).
+MIGRATION_S1="$REPO_ROOT/supabase/migrations/20260618000216_berth_model.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -29,7 +34,7 @@ MIGRATION_4B1="$REPO_ROOT/supabase/migrations/20260618000214_fleetgo_hunt_unifie
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -64,8 +69,10 @@ if [ "$MODE" = "selftest" ]; then
     grep -q "assert_ships_untouched('before_.*', 'after_.*', $ctx)" "$SQL" \
       || fail "the §2 ship-untouched assertion is not applied to: $ctx"
   done
-  # the snapshot must actually cover every column that could carry movement.
-  for col in status spatial_state space_x space_y updated_at; do
+  # the snapshot must actually cover every column that could carry movement — S1-BERTH (0216) adds
+  # berth_location_id: under the berth model the unfleeted ship's LOCATION lives there, so a mover
+  # that wrote it would be a ship write the old snapshot was blind to.
+  for col in status spatial_state space_x space_y berth_location_id updated_at; do
     grep -q "$col" "$SQL" || fail "ship snapshot does not cover the '$col' column"
   done
 
@@ -624,6 +631,11 @@ if [ "$MODE" = "selftest" ]; then
   # superseded by 0211 host D (the missed fifth copy); 0087/0089/0090 = pre-0092 trade bodies and
   # 0136 = the recorded re-inline (superseded by 0092→0136→0138); 0092 = the helper's own original
   # body (superseded by 0210).
+  # 0216 is allowlisted for ONE statement only: the S1-BERTH BACKFILL — the sanctioned one-time
+  # conversion of the legacy corpse layer into berth_location_id (a data migration reading "the
+  # ship's most recent 'present' fleet's port" ONCE, at deploy time; 0216's header records it and
+  # its LIVE code paths compose mainship_resolve_fleet instead — the berth-read guard below pins
+  # that no function body in 0216 carries the copy).
   DOCKCOPY_ALLOW="20260618000069_phase9_dock_services_read.sql
 20260618000072_port_entry_commission_normalize.sql
 20260618000082_trade_fleet_0c_cmd_p_main_ship_id_reads.sql
@@ -634,7 +646,8 @@ if [ "$MODE" = "selftest" ]; then
 20260618000136_world_balance_p19_price_drift.sql
 20260618000158_station_storage_p2_docked_store_read.sql
 20260618000159_a0_owned_ship_resolve_docked_store_and_preview.sql
-20260618000200_fleetmap_fleet_positions_read.sql"
+20260618000200_fleetmap_fleet_positions_read.sql
+20260618000216_berth_model.sql"
   DOCKCOPY_HITS="$(perl -e '
     for my $f (@ARGV) {
       open my $h, "<", $f or next; local $/; my $s = <$h>;
@@ -658,6 +671,200 @@ if [ "$MODE" = "selftest" ]; then
   # SCANNER went blind (regex rot), not the tree clean — a ban that detects nothing passes everything.
   printf '%s\n' "$DOCKCOPY_HITS" | grep -qx "20260618000072_port_entry_commission_normalize.sql" \
     || fail "the dock-copy scanner no longer detects 0072's known copy — the ban has gone blind"
+
+  # ── S1 — THE BERTH MODEL (0216): the XOR schema fact + the five re-created true heads. ──────────
+  # MUTATIONS (each executed statically while building — strip the construct, watch the named check
+  # red, restore; the runtime reds are TRACED, CI-only — no local Docker):
+  #   • drop the XOR CHECK          → the constraint grep reds; runtime BERTH_XOR's both-null/both-set
+  #                                   probes "succeed" and raise.
+  #   • drop the BACKFILL           → the derivation grep + order chain red; on any chain with data,
+  #                                   0216's own in-file assert raises at deploy; runtime
+  #                                   BERTH_BACKFILL reds on a berthless ungrouped ship.
+  #   • drop assign HUNK E (berth)  → the update-clause grep reds; runtime: the first lit assign
+  #                                   lands both-set → check_violation aborts ASSIGN_CLEARS_BERTH.
+  #   • drop assign HUNK F (mint)   → the mint grep + order chain red; runtime ASSIGN_CLEARS_BERTH
+  #                                   reds on "expected the ONE minted group fleet, found 0".
+  #   • drop the unassign refusal   → the reason-form grep reds; runtime ASSIGNGUARD_UNASSIGN and
+  #                                   UNASSIGN_BERTHS red on ok-instead-of-fleet_in_flight.
+  #   • keep the old per-ship guard → the berth-read grep reds (and the banned old key trips);
+  #                                   runtime ASSIGNGUARD_ELSEWHERE/COLOCATED drift off the berth.
+  #   • drop delete HUNK C          → the order chain reds; runtime DELETE_BERTHS aborts on the FK
+  #                                   SET-NULL check_violation (both-null members).
+  #   • drop a creator's berth hunk → the two-creators grep reds; runtime COMMISSION_BERTHED aborts
+  #                                   (the INSERT itself violates the XOR).
+  #   • drop the map berthed hunk   → the gated-branch grep reds; runtime BERTH_RESOLVER phase B
+  #                                   draws hidden; un-gate it → phase C draws berthed while dark.
+  [ -f "$MIGRATION_S1" ] || fail "migration 0216 not found"
+  # The stripped code goes into a TEMP FILE and every check READS THE FILE — never
+  # `printf "$CODE" | grep -q`: under tp_init's pipefail, grep -q exits at its first match, the
+  # still-writing printf takes EPIPE on a later stdio chunk, and the PIPELINE fails on a body that
+  # MATCHED (CI-red / local-green — Windows pipe scheduling hides the race; the first 0216 CI run
+  # died exactly here, at the XOR-CHECK grep). 0216's stripped code (~33KB) is the largest stream
+  # in this arc, so it is the one that loses the race. perl -0777 slurps stdin and is immune, but
+  # it reads the file too, for uniformity. The temp file is removed at the end of this section.
+  MIGS1_TMP="$(mktemp)"
+  sql_code "$MIGRATION_S1" > "$MIGS1_TMP"
+  # the column + the XOR, and their ORDER: add column < backfill < coverage assert < add CHECK.
+  grep -q "add column berth_location_id uuid null references public.locations" "$MIGS1_TMP" \
+    || fail "0216 does not add the berth column (locations-FK'd, nullable)"
+  grep -q "check ((group_id is null) = (berth_location_id is not null))" "$MIGS1_TMP" \
+    || fail "0216's XOR CHECK is missing or does not state the mutual exclusion"
+  grep -q "add constraint main_ship_instances_berth_xor_fleet" "$MIGS1_TMP" \
+    || fail "0216's XOR CHECK does not carry the charter's constraint name"
+  perl -0777 -ne '
+    my $col   = index($_, "add column berth_location_id");
+    my $bf    = index($_, "set berth_location_id = coalesce(");
+    my $asrt  = index($_, "ungrouped ship(s) left berthless");
+    my $chk   = index($_, "add constraint main_ship_instances_berth_xor_fleet");
+    exit 1 unless $col >= 0 && $bf >= 0 && $asrt >= 0 && $chk >= 0;
+    exit 1 unless $col < $bf && $bf < $asrt && $asrt < $chk;
+    exit 0;' "$MIGS1_TMP" \
+    || fail "0216's order broke: add-column -> backfill -> coverage-assert -> XOR CHECK (a CHECK before the backfill rejects every pre-existing ungrouped ship)"
+  # the backfill derivation: most-recent 'present' corpse port, Haven fallback, ungrouped scope.
+  grep -q "order by f.created_at desc" "$MIGS1_TMP" \
+    || fail "0216's backfill lost the most-recent-'present' derivation (charter :292-295 shape)"
+  grep -q "'b1a00001-0066-4a00-8a00-000000000001'::uuid)" "$MIGS1_TMP" \
+    || fail "0216's backfill lost the Haven fallback"
+  grep -q "where s.group_id is null" "$MIGS1_TMP" \
+    || fail "0216's backfill is not scoped to UNGROUPED ships (grouped ships must stay berthless)"
+  # exactly FIVE re-creates, and they are the five named true heads — never an md5-pinned body.
+  [ "$(grep -c "create or replace function" "$MIGS1_TMP")" = "5" ] \
+    || fail "0216 must contain exactly FIVE re-creates (assign / delete / build / ensure / map read)"
+  for fn in "assign_ship_to_group(p_main_ship_id uuid, p_group_id uuid default null)" \
+            "delete_ship_group(p_group_id uuid)" \
+            "ensure_main_ship_for_player(p_player uuid)" \
+            "get_my_fleet_positions()"; do
+    grep -qF "create or replace function public.$fn" "$MIGS1_TMP" \
+      || fail "0216 does not re-create public.$fn with its head's exact signature"
+  done
+  grep -q "create or replace function public.port_entry_commission_build" "$MIGS1_TMP" \
+    || fail "0216 does not re-create port_entry_commission_build (its 0197 TRUE head)"
+  for pinned in port_entry_commission_writer commission_first_main_ship normalize_main_ship_dock; do
+    grep -q "create or replace function public.$pinned" "$MIGS1_TMP" \
+      && fail "0216 re-creates the md5-PINNED port-entry body '$pinned' — the pins would be invalidated silently" || true
+  done
+  # §2 stays law: no per-ship mover composed anywhere in 0216.
+  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+    grep -q "$banned" "$MIGS1_TMP" \
+      && fail "0216 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
+  done
+  # the assign body: gated lock arms in BOTH branches survive; the guard's ship-side read is the
+  # BERTH (the old per-ship key is BANNED); the S1-review arms exist — the SHIP-ROW lock (MAJOR-4),
+  # the same-group short-circuit (MINOR-5), the cross-group must_unassign_first (MAJOR-1), the
+  # mint's berth-legality gate (N-2) — in order: group lock -> SHIP lock -> ambiguous -> same-group
+  # ok -> cross-group refusal -> in-flight -> elsewhere -> sortie -> cap -> update -> MINT (a mint
+  # before the update could precede a reject; one before the cap leaks a fleet on fleet_full).
+  grep -q "f.main_ship_id = v_ship" "$MIGS1_TMP" \
+    && fail "0216's assign still carries the old per-ship dock pair read — the berth is the ONE ship-side authority now" || true
+  grep -q "v_ship_berth = v_gf.current_location_id" "$MIGS1_TMP" \
+    || fail "0216's co-location guard does not read the assignee's BERTH"
+  grep -qF "'reason', 'fleet_in_flight'" "$MIGS1_TMP" \
+    || fail "0216's unassign lost its fleet_in_flight refusal (reason-form; the bare token is a substring of group_fleet_in_flight)"
+  grep -qF "'reason', 'must_unassign_first'" "$MIGS1_TMP" \
+    || fail "0216's assign lost the cross-group must_unassign_first refusal (review MAJOR-1 — the leave-guard side door reopens)"
+  # (the mint's legality gate is judged INSIDE the assign body below — a file-wide grep is
+  # satisfied by the migration's own self-assert literal, the recurring grep-vacuity class.)
+  # the two NEW sortie-manifest reads are LIVE-SCOPED (review MINOR-6): with the head's guard-7
+  # read that is exactly THREE gsm-fleet joins carrying the live-status set.
+  [ "$(grep -c "join public.fleets f on f.id = gsm.fleet_id" "$MIGS1_TMP")" = "3" ] \
+    || fail "0216's sortie-manifest reads are not all live-scoped joins (a bare EXISTS lets a RETAINED dead manifest block — the 0169/0215 law)"
+  perl -0777 -ne '
+    my $i = index($_, "create or replace function public.assign_ship_to_group");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$\$;", $i);
+    exit 1 if $j < 0;
+    my $body = substr($_, $i, $j - $i);
+    exit 1 unless $body =~ /if v_unified then\s*perform 1 from public\.ship_groups where group_id = v_group and player_id = v_player for update;\s*else\s*perform 1 from public\.ship_groups where group_id = v_group and player_id = v_player for share;\s*end if;/;
+    exit 1 unless $body =~ /if v_unified then\s*perform 1 from public\.ship_groups where group_id = v_cur_group and player_id = v_player for update;\s*else\s*perform 1 from public\.ship_groups where group_id = v_cur_group and player_id = v_player for share;\s*end if;/;
+    my $lock  = index($body, "from public.ship_groups");
+    my $slock = index($body, "main_ship_id = v_ship and player_id = v_player for update");
+    my $amb   = index($body, "fleet_ambiguous");
+    my $same  = index($body, "if v_cur_group = v_group then");
+    my $cross = index($body, "\x27must_unassign_first\x27");
+    my $infl  = index($body, "group_fleet_in_flight");
+    my $elsw  = index($body, "group_fleet_elsewhere");
+    my $sort  = index($body, "group_on_sortie");
+    my $cap   = index($body, "fleet_full");
+    my $upd   = index($body, "update public.main_ship_instances");
+    my $mint  = index($body, "insert into public.fleets");
+    my $pres  = index($body, "presence_create(v_player, v_mint");
+    my $legal = index($body, "mainship_space_location_target_legal(v_ship_berth)");
+    exit 1 unless $lock >= 0 && $slock >= 0 && $amb >= 0 && $same >= 0 && $cross >= 0 && $infl >= 0
+               && $elsw >= 0 && $sort >= 0 && $cap >= 0 && $upd >= 0 && $mint >= 0 && $pres >= 0
+               && $legal >= 0;
+    exit 1 unless $lock < $slock && $slock < $amb && $amb < $same && $same < $cross && $cross < $infl
+               && $infl < $elsw && $elsw < $sort && $sort < $cap && $cap < $upd && $upd < $mint && $mint < $pres;
+    exit 1 unless $legal > $upd && $legal < $mint;
+    exit 0;' "$MIGS1_TMP" \
+    || fail "0216's assign body lost a gated lock branch, the ship-row lock, an S1-review arm, the mint legality gate (N-2, between update and mint), or its order (group lock -> ship lock -> ambiguous -> same-group ok -> must_unassign_first -> in-flight -> elsewhere -> sortie -> cap -> update -> mint(+presence))"
+  # the XOR maintenance clause rides the ONE update.
+  grep -q "berth_location_id = case when v_group is not null then null else v_berth end" "$MIGS1_TMP" \
+    || fail "0216's assign update lost the XOR maintenance clause (group_id and berth must move in ONE statement)"
+  # the delete body: leaf composed, consume + member-berth BEFORE the delete.
+  perl -0777 -ne '
+    my $i = index($_, "create or replace function public.delete_ship_group");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$\$;", $i);
+    exit 1 if $j < 0;
+    my $body = substr($_, $i, $j - $i);
+    my $leaf = index($body, "ship_group_resolve_fleet");
+    my $cons = index($body, "set status = \x27completed\x27");
+    my $bert = index($body, "update public.main_ship_instances");
+    my $del  = index($body, "delete from public.ship_groups");
+    exit 1 unless $leaf >= 0 && $cons >= 0 && $bert >= 0 && $del >= 0;
+    exit 1 unless $leaf < $cons && $cons < $bert && $bert < $del;
+    exit 0;' "$MIGS1_TMP" \
+    || fail "0216's delete body lost its order (leaf -> consume -> berth-the-members -> delete) — the FK SET NULL alone is a guaranteed check_violation on every non-empty group"
+  # BOTH creators carry the berth in their INSERT (creator consistency, the 0197 rule).
+  [ "$(grep -c "berth_location_id)" "$MIGS1_TMP")" = "2" ] \
+    || fail "0216's two ship creators do not BOTH add berth_location_id to their INSERT column lists"
+  # the map read: true-head declaration, the 0211/0212 hunks survive (stale-head tripwires), the
+  # berthed branch exists and is GATED, and it keys on the RESOLVER having no fleet.
+  grep -q "TRUE-HEAD DECLARATION" "$MIGRATION_S1" \
+    || fail "0216 does not declare itself get_my_fleet_positions' true head — the 0136 stale-head mistake repeats by default"
+  grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and f.status = 'present'" "$MIGS1_TMP" \
+    || fail "0216's map read lost 0211's docked hunk — rebuilt from a stale head"
+  grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and fm.status = 'moving'" "$MIGS1_TMP" \
+    || fail "0216's map read lost 0212's transit hunk — rebuilt from a stale head"
+  grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and f.location_mode = 'space'" "$MIGS1_TMP" \
+    || fail "0216's map read lost 0212's fleet-first in_space hunk — rebuilt from a stale head"
+  grep -q "s.space_x is not null" "$MIGS1_TMP" \
+    || fail "0216's map read dropped the ship-coordinate fallback (the dark parity path dies)"
+  grep -q "if v_unified and v_place = 'hidden' and s.berth_location_id is not null" "$MIGS1_TMP" \
+    || fail "0216's berthed branch is missing or un-gated (rollback must keep the 0212 behavior byte-exact)"
+  grep -q "and public.mainship_resolve_fleet(s.main_ship_id) is null then" "$MIGS1_TMP" \
+    || fail "0216's berthed branch does not key on the RESOLVER having no fleet — a second location authority"
+  # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
+  # failed to reach the state its marker claims to pin).
+  grep -q "the open-sortie state was not built (member off the live manifest)" "$SQL" \
+    || fail "ASSIGN_CROSSGROUP does not guard that the member is really ON a LIVE manifest (the side-door probe vacuous otherwise)"
+  grep -q "the member stepped off the frozen manifest" "$SQL" \
+    || fail "ASSIGN_CROSSGROUP does not name its fail mode (ok on the cross-group probe = the manifest side door)"
+  grep -q "never-blocked promise broke" "$SQL" \
+    || fail "ASSIGN_CROSSGROUP does not pin the same-group re-assign (the 0204 :294 promise — MINOR-5)"
+  grep -q "phase A would be vacuous" "$SQL" \
+    || fail "BERTH_RESOLVER does not guard that the corpse-docked phase is real"
+  grep -q "could be answered by the retired layer" "$SQL" \
+    || fail "BERTH_RESOLVER does not guard that j1 resolves NO fleet before asserting berthed"
+  grep -q "the contrast pin would be vacuous" "$SQL" \
+    || fail "BERTH_RESOLVER does not guard the fleeted-ship contrast (fleeted must read the fleet)"
+  grep -q "the mint port could come from the retired layer" "$SQL" \
+    || fail "ASSIGN_CLEARS_BERTH does not guard that the mint's port can only come from the BERTH"
+  grep -q "the docked phase would be vacuous" "$SQL" \
+    || fail "UNASSIGN_BERTHS does not guard that the fleet is really docked"
+  grep -q "the in-flight phase would be vacuous" "$SQL" \
+    || fail "UNASSIGN_BERTHS does not guard that the fleet is really moving"
+  grep -q "the flying phase would be vacuous" "$SQL" \
+    || fail "DELETE_BERTHS does not guard that the fleet is really moving"
+  grep -q "the docked phase would be vacuous" "$SQL" \
+    || fail "DELETE_BERTHS does not guard the settled shape"
+  grep -q "the accept half is vacuous" "$SQL" \
+    || fail "BERTH_XOR does not guard that BOTH legal shapes exist in-world"
+  grep -q "the sweep would be vacuous" "$SQL" \
+    || fail "BERTH_BACKFILL does not guard that both populations exist"
+  grep -q "executed only at the prod deploy" "$SQL" \
+    || fail "BERTH_BACKFILL does not state the traced-vs-executed honesty (the real-data run is the deploy's)"
+  rm -f "$MIGS1_TMP"
 
   tp_assert_out_of_scope "$SQL"
 

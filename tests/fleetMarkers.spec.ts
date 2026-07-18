@@ -160,3 +160,13 @@ test('empty exclude set (the default) draws every placeable ship — byte-identi
   expect(resolveFleetMarkers(ships, LOCS, null, midMs, new Set()).map((x) => x.main_ship_id)).toEqual(['ship-1', 'ship-2'])
   expect(resolveFleetMarkers(ships, LOCS, null, midMs).map((x) => x.main_ship_id)).toEqual(['ship-1', 'ship-2'])
 })
+
+test('S1 BERTH MODEL: berthed ship → deliberately NO marker (only fleets are map markers)', () => {
+  const m = resolveFleetMarkers(
+    [base({ place: 'berthed', location_id: 'loc-A', spatial_state: null, status: 'home' })],
+    LOCS,
+    null,
+    midMs,
+  )
+  expect(m).toHaveLength(0)
+})
