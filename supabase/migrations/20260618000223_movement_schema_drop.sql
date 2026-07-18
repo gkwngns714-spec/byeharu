@@ -9,12 +9,12 @@
 -- already live in this chain. NO FUNCTION is dropped here (that is 4b-drop's job); the stop-trio
 -- (stop_ship_group_transit / command_main_ship_stop_transit) is untouched (needs PR #189 first).
 --
--- ═══ THREE FINDINGS BEYOND THE NAMED PLAN — VERIFIED BY GREP, NOT ASSUMED ═══════════════════════════
+-- ═══ FOUR FINDINGS BEYOND THE NAMED PLAN — VERIFIED BY GREP, NOT ASSUMED ════════════════════════════
 -- The corrected plan named FIVE writers 4c-mig-2a already repointed (send_ship_group_hunt,
 -- repair_main_ship, port_entry_commission_build, mainship_mark_combat_destroyed [skipped, already
 -- clean], ensure_main_ship_for_player [skipped, already clean]). Re-deriving the TRUE HEAD of every
 -- function that still touches the doomed columns (by grep, per the ci-apply-proof-is-the-net lesson
--- — "trust the code, not the plan") surfaces THREE more live touch points 2a's dual-safe stage
+-- — "trust the code, not the plan") surfaces FOUR more live touch points 2a's dual-safe stage
 -- correctly left alone (columns still existed) but that WILL error the instant the columns are gone:
 --
 --   (F1) mainship_mark_combat_destroyed (TRUE head 20260618000167:160, never re-created — 2a's own
@@ -45,8 +45,21 @@
 --        primary read RPC — called on every page load, authenticated-executable — errors instantly.
 --        Re-created here dropping the select-list column and the emit key (client contract intact:
 --        it never read the field).
+--   (F4) fleet_set_in_space(p_fleet uuid, p_x double precision, p_y double precision) (TRUE head
+--        20260618000208:61, the ONLY definition — no later create-or-replace through 0222/0223)
+--        still writes `active_movement_id = null, active_space_movement_id = null` on the fleets
+--        table. §7 below drops fleets.active_space_movement_id — the NEXT call would error "column
+--        does not exist". NOT dead: it is the leaf `command_ship_group_stop` (the player Stop/brake
+--        RPC, src/features/command/teamApi.ts:256, granted to authenticated) calls when parking a
+--        braked fleet in open space — gated on fleet_movement_unified_enabled, confirmed TRUE in prod
+--        (0219's header) — AND the leaf movement_settle_arrival's target_type='space' branch
+--        (0208:165) calls on every coordinate-target arrival. Left unfixed, the next player who
+--        presses Stop on a fleet headed into open space breaks the brake for everyone, forever.
+--        Re-created here dropping ONLY the active_space_movement_id=null clause — active_movement_id
+--        (a DIFFERENT, KEPT fleets column, the legacy fleet_movements pointer) and every other clause
+--        (space_x/space_y/status/location_mode/current_*) survive verbatim.
 --
--- ═══ A FOURTH FINDING: THE DEAD RPC'S LIVE CRON ═══════════════════════════════════════════════════
+-- ═══ A FIFTH FINDING: THE DEAD RPC'S LIVE CRON ══════════════════════════════════════════════════════
 -- process_mainship_space_arrivals (TRUE head 0064:95) is a DEAD function per the 4b-drop plan (the
 -- OSN coordinate-domain arrival processor; both its gating flags are false in prod, verified in §0
 -- below) — but it is SCHEDULED via pg_cron ('process-mainship-space-arrivals', every 30s, set up at
@@ -77,7 +90,7 @@
 --
 -- ═══ ORDER (constraints before columns; FKs before the table; data-fix before the CHECK narrow) ════
 --   §0 pre-drop guards → §1 orphan reconciliation (DATA-FIX) → §2 DRAINGUARD →
---   §3 re-create the 3 live writers + 1 live reader that still touch the doomed columns →
+--   §3 re-create the 4 live writers + 1 live reader that still touch the doomed columns →
 --   §4 drop the 0054/0055 spatial CHECKs → §5 narrow the status CHECK →
 --   §6 drop main_ship_instances.spatial_state/space_x/space_y →
 --   §7 drop fleets' 2 CHECKs + index + FK + active_space_movement_id →
@@ -145,6 +158,12 @@ begin
   select prosrc into v_src from pg_proc where oid = 'public.get_my_fleet_positions()'::regprocedure;
   if v_src is null or position('''spatial_state'', s.spatial_state' in v_src) = 0 then
     raise exception '4C-MIG-2B GUARD FAIL: get_my_fleet_positions does not match its expected pre-drop (0221) shape';
+  end if;
+  -- F4: fleet_set_in_space (TRUE head 0208, never re-created) must still carry the doomed clause
+  -- BEFORE this migration re-creates it — same pre-image discipline as F1/F2/F3 above.
+  select prosrc into v_src from pg_proc where oid = 'public.fleet_set_in_space(uuid, double precision, double precision)'::regprocedure;
+  if v_src is null or position('active_movement_id = null, active_space_movement_id = null' in v_src) = 0 then
+    raise exception '4C-MIG-2B GUARD FAIL: fleet_set_in_space does not match its expected pre-drop (0208) shape';
   end if;
   -- port_entry_commission_build / ensure_main_ship_for_player: already clean since 2a (2a's own §8
   -- proved this) — pin they STAY clean (no doomed-column mint survives) so a regression is caught.
@@ -229,9 +248,9 @@ begin
   raise notice '4C-MIG-2B DRAINGUARD ok: zero fleets carry active_space_movement_id';
 end $drainguard$;
 
--- ══════════════════ §3. RE-CREATE THE LAST LIVE TOUCH POINTS (findings F1/F2/F3) ═══════════════════
+-- ══════════════════ §3. RE-CREATE THE LAST LIVE TOUCH POINTS (findings F1/F2/F3/F4) ════════════════
 -- No FUNCTION is dropped; each is CREATE OR REPLACE, byte-identical to its pre-drop TRUE head except
--- the doomed-column reference is removed (F1/F2: deleted from the write; F3: deleted from the read).
+-- the doomed-column reference is removed (F1/F2/F4: deleted from the write; F3: deleted from the read).
 
 -- F1 — mainship_mark_combat_destroyed (TRUE head 0167:160). The spatial clears retire WITH the
 -- columns: they existed only to satisfy the 0055 ss_* CHECK coupling, which is dropped in §4 below,
@@ -1034,6 +1053,43 @@ $$;
 revoke all on function public.get_my_fleet_positions() from public;
 grant execute on function public.get_my_fleet_positions() to authenticated;
 
+-- F4 — fleet_set_in_space (TRUE head 0208:61, the ONLY definition — no later create-or-replace
+-- exists through 0222/0223). LIVE, not dead: called by command_ship_group_stop (the player Stop/
+-- brake RPC, src/features/command/teamApi.ts:256, granted to authenticated, gated on
+-- fleet_movement_unified_enabled — TRUE in prod per 0219's header) via 0209/0215/0218, AND by
+-- movement_settle_arrival's target_type='space' branch (0208:165) on every coordinate-target
+-- arrival. §7 below drops fleets.active_space_movement_id; this write retires WITH that column.
+-- 4C-MIG-2B HUNK: active_space_movement_id=null retires WITH the fleets column — deleted from the
+-- SET. active_movement_id=null is UNCHANGED (a DIFFERENT, KEPT fleets column — the legacy
+-- fleet_movements pointer this migration never touches), and every other clause
+-- (status/location_mode/space_x/space_y/current_*) survives byte-identical to the 0208 head.
+create or replace function public.fleet_set_in_space(p_fleet uuid, p_x double precision, p_y double precision)
+returns void
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+begin
+  if p_x is null or p_y is null then
+    raise exception 'fleet_set_in_space: coordinates required (fleet %)', p_fleet;
+  end if;
+  -- Mirrors fleet_set_present: clears the movement pointer + every "somewhere else" pointer, and
+  -- writes the one place the fleet now IS. status 'idle' (not 'present'): 'present' means docked at a
+  -- location and carries a location_presence row; open space has no presence to create.
+  update fleets
+     set status = 'idle', location_mode = 'space',
+         space_x = p_x, space_y = p_y,
+         active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where id = p_fleet;
+  if not found then
+    raise exception 'fleet_set_in_space: fleet % not found', p_fleet;
+  end if;
+end;
+$function$;
+revoke all on function public.fleet_set_in_space(uuid, double precision, double precision) from public;
+
 -- ══════════════ §4. DROP THE 0054/0055 SPATIAL CHECK CONSTRAINTS (before the columns) ══════════════
 alter table public.main_ship_instances drop constraint if exists main_ship_instances_ss_in_space_status;
 alter table public.main_ship_instances drop constraint if exists main_ship_instances_ss_at_location_status;
@@ -1200,7 +1256,7 @@ begin
     raise exception '4C-MIG-2B POST-DROP FAIL: a live row carries a status outside the narrowed CHECK set';
   end if;
 
-  -- the 5 re-created functions no longer reference the doomed columns (post-drop prosrc re-pin —
+  -- the 6 re-created functions no longer reference the doomed columns (post-drop prosrc re-pin —
   -- belt-and-braces beyond "it compiled": these are TEXT bodies, so a stray reference would only
   -- surface as a runtime error on next call, never at CREATE time).
   -- Every probe below strips `--` comments FIRST (the 2a apply-proof lesson): each re-created body
@@ -1241,11 +1297,23 @@ begin
   if not has_function_privilege('authenticated', 'public.get_my_fleet_positions()', 'execute') then
     raise exception '4C-MIG-2B POST-DROP FAIL: get_my_fleet_positions lost its authenticated grant';
   end if;
+  -- F4: fleet_set_in_space legitimately KEEPS space_x/space_y (the fleet's own coords, written every
+  -- call — `space_x = p_x, space_y = p_y`), so the collision-free probe is `active_space_movement_id`
+  -- specifically, not a bare space_x/space_y ban. Strip comments first (the hunk comment above names
+  -- the retired clause).
+  select prosrc into v_src from pg_proc where oid = 'public.fleet_set_in_space(uuid, double precision, double precision)'::regprocedure;
+  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
+  if position('active_space_movement_id' in v_src) > 0 then
+    raise exception '4C-MIG-2B POST-DROP FAIL: fleet_set_in_space still references active_space_movement_id';
+  end if;
+  if position('active_movement_id = null' in v_src) = 0 then
+    raise exception '4C-MIG-2B POST-DROP FAIL: fleet_set_in_space lost its active_movement_id=null clear (a DIFFERENT, KEPT fleets column) — byte-parity broken beyond the marked hunk';
+  end if;
 
   -- the dead cron is gone.
   if exists (select 1 from cron.job where jobname = 'process-mainship-space-arrivals') then
     raise exception '4C-MIG-2B POST-DROP FAIL: the process-mainship-space-arrivals cron job is still scheduled — it reads a now-dropped table';
   end if;
 
-  raise notice '4C-MIG-2B POST-DROP ok: table gone, 3 ship columns gone, fleets pointer+2 CHECKs+index+FK gone, receipts kept (movement_id gone), status CHECK narrowed (stationary rejected, home/hunting/destroyed kept), all 5 re-created functions clean, dead cron unscheduled';
+  raise notice '4C-MIG-2B POST-DROP ok: table gone, 3 ship columns gone, fleets pointer+2 CHECKs+index+FK gone, receipts kept (movement_id gone), status CHECK narrowed (stationary rejected, home/hunting/destroyed kept), all 6 re-created functions clean, dead cron unscheduled';
 end $postdrop$;
