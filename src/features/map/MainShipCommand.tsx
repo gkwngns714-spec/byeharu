@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { MapLocation } from './mapTypes'
 import type { MainShipLite } from './useGalaxyMapData'
 import { deriveMainShipStatus, moveMainShipToLocation, sendMainShipExpedition, type MainShipFleet } from './mainshipApi'
+import { mainShipCommandMode, fleetGuidanceText } from './mainshipCommandMode'
 import { Button, Notice, SectionLabel } from '../../components/ui'
 
 // Phase 10D/10H — main-ship send/move surface. Deliberately SEPARATE from the retired legacy
@@ -26,6 +27,7 @@ export function MainShipCommand({
   onSent,
   fleetControlEnabled = false,
   shipInFleet = false,
+  unifiedEnabled = false,
 }: {
   location: MapLocation
   mainShip: MainShipLite | null
@@ -37,6 +39,11 @@ export function MainShipCommand({
   // a fleet gets guidance to add it first. Dark (default false) → byte-identical to today.
   fleetControlEnabled?: boolean
   shipInFleet?: boolean
+  // FLEET-GO 4a-1: fleet_movement_unified_enabled (0207, OFF in prod). When lit, the FLEET is the
+  // only mover (charter §2) and the map's "Send a fleet here" arm owns movement — the per-ship
+  // Send/Move affordance is suppressed exactly like the fleet-control world, with guidance pointing
+  // at the map's fleet send. Dark (default false) → byte-identical to today.
+  unifiedEnabled?: boolean
 }) {
   const [confirming, setConfirming] = useState(false)
   const [sending, setSending] = useState(false)
@@ -120,13 +127,12 @@ export function MainShipCommand({
             </Notice>
           )}
 
-          {fleetControlEnabled ? (
-            // FLEET-CONTROL (0204): everything moves as a FLEET — the per-ship Send/Move affordance is
-            // hidden and movement is routed through fleets. A ship not in a fleet is told to add it first.
+          {mainShipCommandMode({ fleetControlEnabled, unifiedEnabled }) === 'fleet_guidance' ? (
+            // FLEET-CONTROL (0204) or FLEET-GO 4a-1 (unified §2): everything moves as a FLEET — the
+            // per-ship Send/Move affordance is hidden. The pure mode/copy pair (mainshipCommandMode.ts)
+            // keeps the 0204 strings verbatim and points the unified world at the map's fleet send.
             <p data-testid="mainship-fleet-guidance" className="mt-3 text-center text-xs text-ink-muted">
-              {shipInFleet
-                ? `Move ${mainShip.name} with its fleet from the Fleets screen.`
-                : 'Add this ship to a fleet to move it.'}
+              {fleetGuidanceText({ shipName: mainShip.name, shipInFleet, unifiedEnabled })}
             </p>
           ) : isHere ? (
             <p data-testid="mainship-already-here" className="mt-3 text-center text-xs text-ink-muted">

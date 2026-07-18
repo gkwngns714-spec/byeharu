@@ -79,3 +79,46 @@ export function teamMapSendAction(input: {
   if (input.dockedCount > 0) return input.launchFromDock ? 'send' : 'docked_unready'
   return 'send'
 }
+
+// ── FLEET-GO 4a-1 — the UNIFIED-world expedition-arm classifier (charter §2). ──────────────────────
+// A SEPARATE classifier, NOT a rewrite of teamMapSendAction above: the old three-arm world stays the
+// live default until 4b flips fleet_movement_unified_enabled, so both classifiers coexist and the
+// sheet picks one at RUNTIME. Under §2 the unified mover (command_ship_group_go, 0207/0208) launches
+// from ANYWHERE — docked, split-docked, parked in open space, or mid-flight (redirect = re-issue) —
+// so the docked/home readiness taxonomy ('move' / 'send' / 'docked_unready') collapses to ONE 'go'.
+// The single survivor is the trivial "docked here" suppression: a fleet already docked at the
+// destination has nothing to do, and dispatching it anyway would mint a zero-distance leg
+// (origin === target → arrive_at = depart_at, tripping fleet_movements_check(arrive_at > depart_at)
+// server-side). The server stays authoritative for everything else (member_busy, group_on_sortie,
+// group_scattered, … arrive as reject envelopes through teamReasonMessage).
+export type UnifiedMapSendAction = 'go' | 'docked_here'
+
+export function unifiedMapSendAction(input: {
+  /** The rollup's docked location (the unified fleet's 'present' port, or the legacy n/n fold). */
+  dockedLocationId: string | null
+  destinationId: string
+}): UnifiedMapSendAction {
+  if (input.dockedLocationId !== null && input.dockedLocationId === input.destinationId) return 'docked_here'
+  return 'go'
+}
+
+// ── FLEET-GO 4a-1 — the pure arg builder for command_ship_group_go (0208's 4-arg signature). ───────
+// The target is a discriminated union: a PORT ({locationId}) XOR a COORDINATE ({x,y}) — never both.
+// The builder ENFORCES the exclusive shape by construction: the location branch emits ONLY
+// p_location_id (0208 rejects invalid_target_shape if coords ride alongside a location — "a port's
+// position is the server's to know, not the caller's to assert"), and the coordinate branch emits the
+// RAW x/y with NO client-side rounding: 0208 canonicalizes to the integer world grid server-side
+// (0208:259-261), and a client pre-round would be a second authority over the grid.
+export type GroupGoTarget = { locationId: string } | { x: number; y: number }
+
+export interface CommandShipGroupGoArgs {
+  p_group_id: string
+  p_location_id?: string
+  p_target_x?: number
+  p_target_y?: number
+}
+
+export function buildCommandShipGroupGoArgs(groupId: string, target: GroupGoTarget): CommandShipGroupGoArgs {
+  if ('locationId' in target) return { p_group_id: groupId, p_location_id: target.locationId }
+  return { p_group_id: groupId, p_target_x: target.x, p_target_y: target.y }
+}

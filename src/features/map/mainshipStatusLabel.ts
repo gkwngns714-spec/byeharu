@@ -1,5 +1,6 @@
 import type { ShipMarker } from './resolveMainShipMarker'
 import type { MainShipSpaceMovement } from './mainshipApi'
+import type { BadgeTone } from '../../components/ui/Badge'
 
 // OSN-HUB-1A — pure, read-only presentation helper for the main ship's human-readable location status.
 // It NEVER reveals a non-public location: a name is resolved SOLELY from the public get_world_map() result
@@ -85,6 +86,31 @@ const INSTANCE_STATUS_LABELS: Record<string, string> = {
   returning: 'Returning',
   repairing: 'Repairing',
   destroyed: 'Disabled',
+}
+
+// FLEET-READ (UI): the semantic tone for each status, so a roster row is scannable at a glance instead
+// of a wall of one grey. It deliberately speaks the SAME colour language the galaxy map already uses —
+// outbound travel = warning (the amber FleetMovementLine), returning = accent (the map's return-home
+// colour), combat = danger — so a ship reads identically on both surfaces. Tones are semantic tokens
+// only; no raw colours here (the Badge/design-system law).
+const INSTANCE_STATUS_TONES: Record<string, BadgeTone> = {
+  home: 'success', // ready to launch
+  stationary: 'neutral', // docked / at rest — the quiet default
+  traveling: 'warning', // in transit — matches the map's outbound path
+  returning: 'accent', // matches the map's return-home path
+  hunting: 'danger',
+  retreating: 'danger',
+  destroyed: 'danger',
+  repairing: 'warning',
+  trading: 'accent',
+  exploring: 'accent',
+  mining: 'accent',
+}
+
+/** The semantic tone for a raw main_ship_instances.status. An unmapped/future status falls back to
+ *  'neutral' — readable and never a wrong-colour claim (mirrors the label map's `?? status` idiom). */
+export function mainShipInstanceStatusTone(status: string): BadgeTone {
+  return INSTANCE_STATUS_TONES[status] ?? 'neutral'
 }
 
 /** A short human label for a raw main_ship_instances.status; falls back to the raw value so an unmapped/future

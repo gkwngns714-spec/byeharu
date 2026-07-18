@@ -12,14 +12,26 @@ import { Button, Notice, OverlayPanel } from '../../components/ui'
 // Projects a fixed-domain WORLD target through the S6B1 fixed transform (`worldToViewBox`) — never the
 // dynamic named-location normalizer. Distinct dashed warning-toned crosshair (not a filled location dot /
 // ship chevron). No text label that could be read as a place name.
-export function SpaceMoveTargetMarker({ target, k }: { target: WorldCoord; k: number }) {
+// FLEET-GO 4a-2: `testId`/`stroke` are OPTIONAL with the original values as defaults, so every
+// existing caller (and its spec) renders byte-identical; the fleet coordinate-go target reuses this
+// geometry under its own testid + accent tone instead of cloning the crosshair.
+export function SpaceMoveTargetMarker({
+  target,
+  k,
+  testId = 's6c-space-move-target',
+  stroke = 'var(--color-warning)',
+}: {
+  target: WorldCoord
+  k: number
+  testId?: string
+  stroke?: string
+}) {
   const p = worldToViewBox(target)
   const r = 9 / k
   const arm = 6 / k
   const dash = 3 / k
-  const stroke = 'var(--color-warning)'
   return (
-    <g data-testid="s6c-space-move-target" style={{ pointerEvents: 'none' }} aria-hidden="true">
+    <g data-testid={testId} style={{ pointerEvents: 'none' }} aria-hidden="true">
       <circle
         cx={p.x}
         cy={p.y}

@@ -4,14 +4,17 @@ import { fetchWorldMap, fetchLocationStates } from './mapApi'
 import type { LocationState, MapLocation } from './mapTypes'
 import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
-import { fetchMainshipSendEnabled, fetchFleetControlEnabled } from '../../lib/catalog'
+import { fetchMainshipSendEnabled, fetchFleetControlEnabled, fetchFleetMovementUnifiedEnabled } from '../../lib/catalog'
 import {
   fetchActiveMainShipFleet, fetchHeldMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
   fetchMyFleetPositions, resolveOwnedShip,
   type FleetPosition, type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
-import { fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets } from '../command/teamApi'
-import { deriveDockedTeamRollups, type DockedTeamRollup } from '../command/teamRollup'
+import {
+  fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
+  type UnifiedGroupFleetLite,
+} from '../command/teamApi'
+import { deriveDockedTeamRollups, excludeCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
 import { deriveTeamRepresentedShipIds } from './teamMarkers'
 import type { GroupRow } from '../command/teamRoster'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
@@ -85,6 +88,12 @@ export interface GalaxyMapData {
   // dark-inert: fleetControlEnabled false → MainShipCommand is byte-identical to today.
   fleetControlEnabled: boolean
   mainShipInFleet: boolean
+  // FLEET-GO 4a-1: the RUNTIME unified-movement gate (0207's fleet_movement_unified_enabled, OFF in
+  // prod; read once like the other static flags) + the group's own fleets (the §2 movers). While the
+  // flag is dark the fleet read never runs and this stays [] — the map is byte-identical to today.
+  // When 4b flips the flag, the already-deployed client switches arms with no further deploy.
+  fleetMovementUnifiedEnabled: boolean
+  unifiedGroupFleets: UnifiedGroupFleetLite[]
   refresh: () => Promise<void>
 }
 
@@ -119,6 +128,8 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   fleetPositions: [],
   fleetControlEnabled: false,
   mainShipInFleet: false,
+  fleetMovementUnifiedEnabled: false,
+  unifiedGroupFleets: [],
 }
 
 export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = null): GalaxyMapData {
@@ -128,13 +139,14 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     meta: Record<string, LocationMeta>
     mainshipSendEnabled: boolean
     fleetControlEnabled: boolean
+    fleetMovementUnifiedEnabled: boolean
   } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [world, mainshipSendEnabled, fleetControlEnabled] = await Promise.all([
-          fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetControlEnabled(),
+        const [world, mainshipSendEnabled, fleetControlEnabled, fleetMovementUnifiedEnabled] = await Promise.all([
+          fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetControlEnabled(), fetchFleetMovementUnifiedEnabled(),
         ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -146,18 +158,23 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
             }
           }
         }
-        staticRef.current = { locations, meta, mainshipSendEnabled, fleetControlEnabled }
+        staticRef.current = { locations, meta, mainshipSendEnabled, fleetControlEnabled, fleetMovementUnifiedEnabled }
       }
 
       const [movements, locationStates, mainShip, fleetPositions] = await Promise.all([
         fetchActiveMovements(),
         fetchLocationStates(),
         // FLEETMAP: the single-ship reads now address the SELECTED ship (was implicitly the sole ship — null
-        // at N≥2). The whole-fleet projection is fetched in the SAME parallel batch (owner-read, [] on error),
-        // but gated on the SAME `mainshipSendEnabled` data-dark gate as its layer — a dark/pre-flip env does
-        // ZERO fleet-positions reads (the layer would render nothing anyway).
+        // at N≥2). The whole-fleet projection is fetched in the SAME parallel batch (owner-read, [] on error).
+        // GATE FIX (post-flip): read the fleet layer when EITHER the legacy send OR the unified mover is live.
+        // The flip turned mainship_send_enabled OFF (closing the per-ship send surface) but that flag ALSO
+        // gated this read — so gating on send alone starved the map's fleet layer AND the Port tab (which
+        // derives docked ships from fleetPositions) the instant unified movement went live. A truly dark env
+        // (both off) still does ZERO reads.
         fetchMainShip(selectedShipId),
-        staticRef.current.mainshipSendEnabled ? fetchMyFleetPositions() : Promise.resolve<FleetPosition[]>([]),
+        (staticRef.current.mainshipSendEnabled || staticRef.current.fleetMovementUnifiedEnabled)
+          ? fetchMyFleetPositions()
+          : Promise.resolve<FleetPosition[]>([]),
       ])
       // The active linked fleet (zero units) drives the live main-ship status. Only read it
       // when a ship exists; absent ship or no in-flight fleet → null (home).
@@ -189,12 +206,28 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         teamGroups.length > 0
           ? await Promise.all([fetchMyShipGroupMap(), fetchMyPresentShipFleets()])
           : [{}, []]
-      const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets)
-      // FLEETMAP de-dup: which owned ships are ALREADY drawn by a team marker (docked-team badge or
-      // in-flight moving badge) — reuses the SAME rollup + teamMarkers derivations (no second fold),
-      // intersected with the live membership map, so the fleet chevron layer can skip them.
+      // FLEET-GO 4a-1: the group's own fleets (charter §2 — the fleet IS the mover). The fetch is
+      // gated on the RUNTIME unified flag — NOT dark-inert by construction, because the live hunt
+      // mints the same fleet shape (main_ship_id NULL + group_id) today; gating the read keeps the
+      // dark world doing ZERO extra reads and folding ZERO extra rows (byte-identical). Lit, rows
+      // 'present' at a COMBAT location are excluded before the dock fold: the unified mover refuses
+      // combat destinations (0208 combat_destination), so a group fleet at a hunt site can only be
+      // the hunt's sortie — folding it as a dock would badge the fleet "docked" mid-combat.
+      const rawUnifiedFleets =
+        teamGroups.length > 0 && staticRef.current.fleetMovementUnifiedEnabled
+          ? await fetchMyUnifiedGroupFleets()
+          : []
+      const unifiedGroupFleets = excludeCombatSortieFleets(rawUnifiedFleets, staticRef.current.locations)
+      const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets, unifiedGroupFleets)
+      // FLEETMAP de-dup: which owned ships are ALREADY drawn by a team marker (docked-team badge,
+      // in-flight moving badge, or 4a-1's in-space fleet badge) — reuses the SAME rollup + teamMarkers
+      // derivations (no second fold), intersected with the live membership map, so the fleet chevron
+      // layer can skip them.
       const teamRepresentedShipIds = [
-        ...deriveTeamRepresentedShipIds({ membership: groupMap, rollups: dockedTeamRollups, movements, groups: teamGroups, nowMs: Date.now() }),
+        ...deriveTeamRepresentedShipIds({
+          membership: groupMap, rollups: dockedTeamRollups, movements, groups: teamGroups, nowMs: Date.now(),
+          unifiedFleets: unifiedGroupFleets,
+        }),
       ]
       // FLEET-CONTROL (0204): is the resolved main ship in a fleet? groupMap is the SAME owner-RLS
       // membership read the roster uses (fetched only when the player has ≥1 team). A ship not in a
@@ -222,6 +255,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         fleetPositions,
         fleetControlEnabled: staticRef.current.fleetControlEnabled,
         mainShipInFleet,
+        fleetMovementUnifiedEnabled: staticRef.current.fleetMovementUnifiedEnabled,
+        unifiedGroupFleets,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))

@@ -1,8 +1,9 @@
 import { formatCountdown } from '../../lib/time'
 
-// Read-only path indicator for an active fleet movement, drawn from origin→target in
-// normalized 0..1000 space. Dashed amber for outbound, sky for return-home. Shows a small
-// ETA at the midpoint. Purely visual — clicking does nothing that mutates state.
+// Read-only path indicator for an active fleet movement. (x1,y1) is the fleet's CURRENT
+// interpolated position and (x2,y2) the target, so the dashed line is the REMAINING path and
+// shrinks in real time as the fleet advances (the caller re-feeds x1,y1 each clock tick). Dashed
+// amber for outbound, sky for return-home. ETA at the midpoint. Purely visual — no state mutation.
 
 export function FleetMovementLine({
   x1,
@@ -31,8 +32,8 @@ export function FleetMovementLine({
   return (
     <g data-testid="galaxy-movement-line" style={{ pointerEvents: 'none' }}>
       <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity={0.75} />
-      {/* travelling fleet dot near the destination end */}
-      <circle cx={x2 - (x2 - x1) * 0.12} cy={y2 - (y2 - y1) * 0.12} r={dotR} fill={color} stroke="var(--color-app)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+      {/* travelling fleet dot AT its current position (the shrinking line's start) */}
+      <circle cx={x1} cy={y1} r={dotR} fill={color} stroke="var(--color-app)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
       {eta && (
         <text
           x={mx}

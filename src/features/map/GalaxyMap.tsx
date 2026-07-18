@@ -5,11 +5,13 @@ import type { MainShipLite } from './useGalaxyMapData'
 import type { FleetPosition, MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
+import { isMovementInFlight, interpolateMovementPoint } from './movementInterpolation'
 import { shipLayer } from './SpaceRouteLine'
 import { fleetShipsLayer } from './fleetShipsLayer'
 import { teamMarkersLayer } from './teamMarkers'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
+import type { UnifiedGroupFleetLite } from '../command/teamApi'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { useSpaceMoveCommand } from './useSpaceMoveCommand'
 import { useSpaceStopCommand } from './useSpaceStopCommand'
@@ -17,6 +19,8 @@ import { SpaceMoveTargetMarker, SpaceMoveControls, type SpaceMoveEligibility } f
 import { SpaceStopControls } from './SpaceStopControls'
 import { isActiveCoordinateTransit } from './spaceStopCommand'
 import { classifyPointerGesture } from './spaceMoveCommand'
+import { resolveSpaceTapOwner, fleetGoTargetView } from './fleetGoTarget'
+import { FleetGoPanel } from './FleetGoPanel'
 import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
 import { useOsnReadiness } from './useOsnReadiness'
@@ -46,6 +50,9 @@ export function GalaxyMap({
   dockedTeamRollups,
   teamRepresentedShipIds,
   fleetPositions,
+  unifiedGroupFleets,
+  fleetMovementUnifiedEnabled,
+  onFleetGo,
   selectedId,
   onSelect,
   deps,
@@ -69,6 +76,18 @@ export function GalaxyMap({
   // `mainShip`) is drawn by the single shipLayer below. No separate selected-ship id prop is needed — the
   // exclusion is keyed to `mainShip` so it can never disagree with what the single marker renders.
   fleetPositions: FleetPosition[]
+  // FLEET-GO 4a-1: the group's own unified fleets (charter §2). Feeds the in-space fleet badge in the
+  // team layer. [] while the unified flag is dark (useGalaxyMapData gates the read) → byte-identical.
+  unifiedGroupFleets: UnifiedGroupFleetLite[]
+  // FLEET-GO 4a-2: the RUNTIME unified flag (useGalaxyMapData's one read) — with ≥1 owned group it
+  // hands every open-space tap to the FLEET (resolveSpaceTapOwner) and suppresses the per-ship
+  // coordinate surface. False (prod today) → the tap path + tree are byte-identical to 4a-1.
+  // ⚠ Deliberately NOT mainship_send_enabled: that flag gates the fleet-positions READ — using it as
+  // a hide-lever would blank the whole marker layer (the mainshipCommandMode lesson, restated).
+  fleetMovementUnifiedEnabled: boolean
+  // FLEET-GO 4a-2: fired after a confirmed fleet go/redirect — the map refetch (TeamMapStop's
+  // onStopped precedent), so the new leg/marker appears without waiting for the next poll.
+  onFleetGo: () => void
   selectedId: string | null
   onSelect: (id: string | null) => void
   // Test/integration injection seam; defaults to the real server readiness + movement-flag reads.
@@ -80,6 +99,17 @@ export function GalaxyMap({
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
+
+  // 1s clock for the in-flight path filter below. Same idiom as SpaceRouteLine/MainShipMarker: Date.now()
+  // stays OUT of render (it is impure and would re-read unpredictably on any re-render), and the interval
+  // runs ONLY while there is a movement to time — with none, no timer exists and the map is idle as before.
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  const anyMovement = movements.length > 0
+  useEffect(() => {
+    if (!anyMovement) return
+    const iv = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(iv)
+  }, [anyMovement])
   // S6B-PRES camera policy: content-fit is applied for the initial view + explicit reset only; once the
   // player pans/zooms (`userMovedRef`) the camera is frozen. `lastFitSig` makes the fit fire once per
   // meaningful focus change rather than per animation frame.
@@ -121,6 +151,25 @@ export function GalaxyMap({
   const { readiness, refresh: refreshReadiness } = useOsnReadiness(readinessLifecycleKey, { mainShipId: mainShip?.main_ship_id ?? null, fetcher: deps?.readinessFetcher })
   const spaceMoveEnabled = deps?.spaceMoveEnabled ?? sm.enabled
   const canTarget = isCoordinateTargetingActionable(readiness, spaceMoveEnabled, eligibility)
+  // ── FLEET-GO 4a-2 — WHO owns an open-space tap (charter §2/§2a: ALL movement on the MAP; the
+  // FLEET is the only mover). Unified lit + ≥1 owned group → the fleet coordinate-go surface owns
+  // every tap and the per-ship marker/panel above is suppressed (two movers must never share one
+  // tap). Dark → 'per_ship' exactly when canTarget (today's behavior, byte-identical). The fleet
+  // surface's ONLY gate is the flag + owning a group — deliberately NOT canTarget/useOsnReadiness
+  // (per-SHIP capability), NOT eligibility==='in_transit' (a go while moving IS the redirect,
+  // 0208), and NOT cmd.active (the unified mover has no command-ship gate).
+  const tapOwner = resolveSpaceTapOwner({
+    unifiedEnabled: fleetMovementUnifiedEnabled,
+    hasGroups: teamGroups.length > 0,
+    perShipCanTarget: canTarget,
+  })
+  // The fleet's tapped destination (RAW world point — the wire value; fleetGoTargetView derives the
+  // canonical PREVIEW + bounds verdict). Redirect = re-tap a new point, then click the row again —
+  // a deliberate deviation from §2a's literal "bare tap redirects" (accidental-redirect hazard +
+  // N-group disambiguation; argued in FleetGoPanel's header). Null while the flag is dark: the
+  // setter below only runs when tapOwner === 'fleet', so the dark tree renders no fleet-go node.
+  const [fleetGoTarget, setFleetGoTarget] = useState<WorldCoord | null>(null)
+  const fleetGoView = tapOwner === 'fleet' && fleetGoTarget ? fleetGoTargetView(fleetGoTarget) : null
   // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a target tap; drags
   // and multi-touch stay map pan. Tracked alongside (never replacing) the existing pan snapshot.
   const tap = useRef<{ x: number; y: number; t: number; maxPointers: number } | null>(null)
@@ -208,20 +257,23 @@ export function GalaxyMap({
     drag.current = null
     tap.current = null
     // S6C: a single short near-stationary tap on EMPTY space (the <svg> itself — markers/backdrop don't
-    // hit here) selects a coordinate target. Only when the flag is on and the ship is eligible.
+    // hit here) selects a coordinate target. FLEET-GO 4a-2: the tap's OWNER is resolved by the ONE
+    // pure precedence (resolveSpaceTapOwner) — 'fleet' (unified lit + ≥1 group) targets the fleet
+    // coordinate-go; 'per_ship' is the existing sm.selectTarget path verbatim (dark ⇒ owner is
+    // 'per_ship' exactly when canTarget was, so the dark path is unchanged); 'none' ignores the tap.
     const svg = svgRef.current
-    if (!canTarget || !t || !svg || e.target !== svg) return
+    if (tapOwner === 'none' || !t || !svg || e.target !== svg) return
     const travelPx = Math.hypot(e.clientX - t.x, e.clientY - t.y)
     const durationMs = e.timeStamp - t.t
     if (classifyPointerGesture({ travelPx, durationMs, maxPointers: t.maxPointers }) !== 'tap') return
     const rect = svg.getBoundingClientRect()
-    sm.selectTarget(
-      screenToWorld(
-        { x: e.clientX - rect.left, y: e.clientY - rect.top },
-        { k: view.k, tx: view.tx, ty: view.ty },
-        { width: rect.width, height: rect.height },
-      ),
+    const world = screenToWorld(
+      { x: e.clientX - rect.left, y: e.clientY - rect.top },
+      { k: view.k, tx: view.tx, ty: view.ty },
+      { width: rect.width, height: rect.height },
     )
+    if (tapOwner === 'fleet') setFleetGoTarget(world) // RAW point — canonicalized for PREVIEW only
+    else sm.selectTarget(world)
   }
   // pointerleave/cancel: end the pan and abandon any tap candidate (never a selection).
   const onPointerLeave = (e: RPointerEvent) => {
@@ -339,9 +391,19 @@ export function GalaxyMap({
         <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-grid-major)" pointerEvents="none" />
         <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-vignette)" pointerEvents="none" />
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.k})`}>
-          {/* movement paths (under markers) */}
-          {movements.map((m) => {
-            const a = norm({ x: m.origin_x, y: m.origin_y })
+          {/* Movement paths (under markers) — IN-FLIGHT ONLY.
+              The rows arrive already filtered to status='moving', but that status is settled by the 30s
+              `process_fleet_movements` cron, so a finished trip keeps its row for up to ~30s and used to
+              leave a stale path hanging on the map from a journey already over (with no ETA, since the
+              countdown expires at arrive_at). The filter is display-only — it settles nothing and claims
+              no arrival; it just stops drawing a path whose time is up. The 1s clock above retires the
+              path within a second of arrival rather than waiting on the next poll. */}
+          {movements.filter((m) => isMovementInFlight(m, nowMs)).map((m) => {
+            // Draw the path from the fleet's CURRENT interpolated position (not the origin), so the
+            // traversed portion disappears in real time as it advances — a shrinking remaining-path,
+            // not a fixed origin→target trail. The 1s clock (nowMs) re-renders it each tick.
+            const cur = interpolateMovementPoint(m, nowMs) ?? { x: m.origin_x, y: m.origin_y }
+            const a = norm(cur)
             const b = norm({ x: m.target_x, y: m.target_y })
             return (
               <FleetMovementLine
@@ -390,6 +452,8 @@ export function GalaxyMap({
             locations,
             norm,
             k: view.k,
+            // FLEET-GO 4a-1: parked unified fleets → the in-space fleet badge ([] while dark).
+            unifiedFleets: unifiedGroupFleets,
           })}
 
           {/* FLEETMAP — the whole-fleet layer: a subdued marker for every owned ship EXCEPT the selected one
@@ -425,9 +489,25 @@ export function GalaxyMap({
           })}
 
           {/* OSN-3 S6C — empty-space coordinate target preview (fixed-domain transform, pointer-transparent).
-              Mounted only when the flag is on, the ship is eligible, and a within-bounds target is chosen. */}
-          {canTarget && sm.state.target && sm.state.targetWithinBounds && (
+              Mounted only when the per-ship surface owns taps, the ship is eligible, and a within-bounds
+              target is chosen. FLEET-GO 4a-2: `tapOwner === 'per_ship'` replaces `canTarget` — dark they
+              are the same predicate (owner is 'per_ship' iff canTarget), lit-with-groups the fleet owns
+              taps and the per-ship marker must not render beside the fleet's. */}
+          {tapOwner === 'per_ship' && sm.state.target && sm.state.targetWithinBounds && (
             <SpaceMoveTargetMarker target={sm.state.target} k={view.k} />
+          )}
+
+          {/* FLEET-GO 4a-2 — the FLEET's coordinate-go target (the same crosshair geometry, reused
+              under its own testid + accent tone). Shows the CANONICAL point — the integer-grid
+              destination 0208 will store — never the raw tap (which still rides the wire untouched).
+              Mounted only while the fleet owns taps AND the tapped point is within bounds. */}
+          {fleetGoView && fleetGoView.withinBounds && (
+            <SpaceMoveTargetMarker
+              target={fleetGoView.canonical}
+              k={view.k}
+              testId="fleet-go-target"
+              stroke="var(--color-accent)"
+            />
           )}
 
           {/* OSN-3 S6B3 — DEVELOPMENT-ONLY, non-interactive fixed-space preview. Final visual child of the
@@ -452,11 +532,12 @@ export function GalaxyMap({
           <Button size="icon" onClick={reset} aria-label="Reset view" className="text-xs">⟲</Button>
         </OverlayPanel>
 
-        {/* OSN-3 S6C / OSN-COORD-ENABLE-1C — overlay controls. Mounts ONLY when the SERVER readiness
-            capability is true AND the movement domain is enabled AND the ship is eligible (canTarget).
-            While production is dark (coordinate_travel_available=false) it never mounts; a non-'eligible'
+        {/* OSN-3 S6C / OSN-COORD-ENABLE-1C — overlay controls. Mounts ONLY when the per-ship surface
+            owns taps (dark: identical to the old `canTarget` mount — see the marker note above; lit
+            with groups: suppressed, the fleet panel below is the one coordinate surface). While
+            production is dark (coordinate_travel_available=false) it never mounts; a non-'eligible'
             ship also keeps it hidden. Port-to-port travel is a separate release surface (PortNavPanel). */}
-        {canTarget && (
+        {tapOwner === 'per_ship' && (
           <SpaceMoveControls
             enabled={spaceMoveEnabled}
             eligibility={eligibility}
@@ -467,6 +548,22 @@ export function GalaxyMap({
             errorMessage={sm.state.errorMessage}
             onConfirm={() => void sm.submit().finally(() => refreshReadiness())}
             onClear={sm.clear}
+          />
+        )}
+
+        {/* FLEET-GO 4a-2 — the fleet coordinate-go confirm panel (the owner's "move anywhere in open
+            space" headline). Mounted ONLY while the fleet owns taps AND a target exists — dark, the
+            owner is never 'fleet', so this node never renders and the rail is byte-identical. One
+            click per group confirms (a go CREATES commitment); redirect = re-tap + click again (the
+            §2a deviation argued in the panel's header). Rows classify through the ONE pure
+            classifier; the wire carries the RAW tapped point (0208 rounds server-side). */}
+        {tapOwner === 'fleet' && fleetGoView && (
+          <FleetGoPanel
+            groups={teamGroups}
+            unifiedFleets={unifiedGroupFleets}
+            view={fleetGoView}
+            onCommanded={onFleetGo}
+            onClear={() => setFleetGoTarget(null)}
           />
         )}
       </OverlayRail>
