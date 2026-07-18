@@ -1,13 +1,11 @@
 name: OSN-2b closure (strict)
 
-# Focused, on-demand closure gate for OSN-2b. Every step is BLOCKING (no continue-on-error):
-#   1. npm ci             — reproducible install (incl. tracked, exactly-pinned @playwright/test)
-#   2. npm run lint       — FULL-REPO ESLint (eslint .), no continue-on-error. Green after the
-#                           dedicated lint-fix of the two prior Date.now()-during-render errors
-#                           (dashboard/MainShipPanel.tsx, map/MainShipMarker.tsx).
-#   3. tsc -b             — whole-project typecheck
-#   4. vite build         — whole-project production build
-#   5. resolver unit test — npm run verify:osn:resolver
+# Focused, on-demand closure gate. Every step is BLOCKING (no continue-on-error):
+#   1. npm ci     — reproducible install
+#   2. npm run lint — FULL-REPO ESLint (eslint .), no continue-on-error
+#   3. tsc -b     — whole-project typecheck
+#   4. vite build — whole-project production build
+# (The OSN-2b resolver unit test was retired with the legacy movement client — 4c-client.)
 # This is an on-demand gate; it does not change the repo-wide push CI policy.
 
 on:
