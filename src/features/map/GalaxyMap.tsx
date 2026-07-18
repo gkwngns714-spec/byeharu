@@ -521,34 +521,42 @@ export function GalaxyMap({
 
       {/* bottom-left: player-facing marker key + hint (pointer-transparent — never blocks map gestures).
           Mirrors the markerStyle glyph semantics exactly: diamond port / circle waypoint / triangle hostile. */}
-      <OverlayPanel slot="bottom-left" inert className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-faint">
-        <span className="flex items-center gap-1">
-          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
-            <polygon points="5,0 10,5 5,10 0,5" fill="var(--color-accent)" />
-          </svg>
-          Port — dock &amp; trade
-        </span>
-        <span className="flex items-center gap-1">
-          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
-            <circle cx="5" cy="5" r="4" fill="var(--color-success)" />
-          </svg>
-          Safe
-        </span>
-        <span className="flex items-center gap-1">
-          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
-            <polygon points="5,0.5 9.5,9 0.5,9" fill="var(--color-danger)" />
-          </svg>
-          Hostile
-        </span>
-        {miningFields.length > 0 && (
-          <span className="flex items-center gap-1">
-            <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
-              <polygon points="9.7,5 6.7,10 3.3,10 0.3,5 3.3,0 6.7,0" fill="var(--color-warning)" />
-            </svg>
-            Mining field — settle within range to extract
-          </span>
-        )}
-        <span className="basis-full">Tap a marker for details · drag to pan · scroll to zoom</span>
+      {/* bottom-left: collapsible marker key — a small "Map key" chip by default so it never
+          covers the map; expands to a readable vertical list (was a tiny wrapping block that
+          sprawled across the bottom on narrow screens). */}
+      <OverlayPanel slot="bottom-left" className="pointer-events-auto max-w-[calc(100vw-1.5rem)] text-xs text-ink-muted">
+        <details>
+          <summary className="cursor-pointer select-none list-none font-medium">Map key</summary>
+          <div className="mt-2 flex flex-col gap-1.5 text-ink-faint">
+            <span className="flex items-center gap-1.5">
+              <svg viewBox="0 0 10 10" className="h-3 w-3" aria-hidden="true">
+                <polygon points="5,0 10,5 5,10 0,5" fill="var(--color-accent)" />
+              </svg>
+              Port — dock &amp; trade
+            </span>
+            <span className="flex items-center gap-1.5">
+              <svg viewBox="0 0 10 10" className="h-3 w-3" aria-hidden="true">
+                <circle cx="5" cy="5" r="4" fill="var(--color-success)" />
+              </svg>
+              Safe
+            </span>
+            <span className="flex items-center gap-1.5">
+              <svg viewBox="0 0 10 10" className="h-3 w-3" aria-hidden="true">
+                <polygon points="5,0.5 9.5,9 0.5,9" fill="var(--color-danger)" />
+              </svg>
+              Hostile
+            </span>
+            {miningFields.length > 0 && (
+              <span className="flex items-center gap-1.5">
+                <svg viewBox="0 0 10 10" className="h-3 w-3" aria-hidden="true">
+                  <polygon points="9.7,5 6.7,10 3.3,10 0.3,5 3.3,0 6.7,0" fill="var(--color-warning)" />
+                </svg>
+                Mining field — settle within range to extract
+              </span>
+            )}
+            <span className="mt-1">Tap a marker for details · drag to pan · scroll to zoom</span>
+          </div>
+        </details>
       </OverlayPanel>
     </div>
   )
