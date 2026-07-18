@@ -59,6 +59,16 @@ MIGRATION_S2R="$REPO_ROOT/supabase/migrations/20260618000220_territory_radius_re
 # REPOINT-PARITY section below aims the LIVE-body pins at IT; every earlier section keeps pinning
 # its own frozen shipped-history file (the 0215/0211 rule, exactly as the S4 mover repoint did).
 MIGRATION_4C1="$REPO_ROOT/supabase/migrations/20260618000221_movement_signal_repoint.sql"
+# MIGRATION_4C2A is 0222 — 4C-MIG-2A, the MOVEMENT-WRITER REPOINT (zero drops, zero schema): the
+# five live WRITERS that still minted the retired per-ship movement signals (or, for
+# send_ship_group_hunt, read them to decide launch eligibility) are re-created from their TRUE
+# heads. ⚠ HEAD REPOINTS: since 0222 the TRUE head of mainship_space_lock_context stays 0056 (its
+# only-ever definition, re-created in place), port_entry_commission_build / repair_main_ship /
+# mainship_mark_combat_destroyed keep their pre-0222 heads (0216/0199/0167) with a hunk applied in
+# 0222, and send_ship_group_hunt's TRUE head is now 0222 (was 0214) — the REPOINT-PARITY section
+# below aims the LIVE-body pins at IT; every earlier section keeps pinning its own frozen
+# shipped-history file (the 0215/0211 rule).
+MIGRATION_4C2A="$REPO_ROOT/supabase/migrations/20260618000222_movement_writer_repoint.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -1441,6 +1451,76 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the settled-safe contrast is broken" "$SQL" \
     || fail "REPOINT FITGATE has no failing contrast (an in-flight member must FAIL the same leaf, else the gate probe is vacuous)"
   rm -f "$MIG4C1_TMP"
+
+  # ── 4C-MIG-2A (0222): the MOVEMENT-WRITER REPOINT — REPOINT-PARITY static checks. 0222 is the ──
+  #    DUAL-SAFE first stage of the writer retirement: five re-creates (a1 lock_context, b1
+  #    commission_build, b3 mark_combat_destroyed, b4 repair_main_ship, b5 send_ship_group_hunt —
+  #    b2 ensure_main_ship_for_player is DOCUMENTED-SKIPPED, it has no hunk). mktemp-FILE pattern.
+  [ -f "$MIGRATION_4C2A" ] || fail "migration 0222 (4c-mig-2a, the writer repoint) not found"
+  MIG4C2A_TMP="$(mktemp)"
+  sql_code "$MIGRATION_4C2A" > "$MIG4C2A_TMP"
+  # ZERO DROPS / ZERO ALTER / ZERO CHECK NARROW: 0222 is dual-safe — any drop/alter/narrow belongs
+  # to 4c-mig-2b.
+  grep -qE "^[[:space:]]*(alter table|drop function|drop table|drop index|drop trigger)" "$MIG4C2A_TMP" \
+    && fail "0222 drops/alters an object — 4c-mig-2a must be dual-safe (writer repoints only; the drops are 4c-mig-2b)" || true
+  # exactly FIVE re-creates (a1/b1/b3/b4/b5 — b2 is a documented skip, not a sixth re-create).
+  [ "$(grep -c "create or replace function" "$MIG4C2A_TMP")" = "5" ] \
+    || fail "0222 must contain exactly FIVE re-creates (lock_context / commission_build / mark_combat_destroyed / repair_main_ship / send_ship_group_hunt)"
+  for fn in "mainship_space_lock_context(p_main_ship_id uuid, p_skip_locked boolean default false)" \
+            "mainship_mark_combat_destroyed(p_main_ship_id uuid)" \
+            "repair_main_ship(p_main_ship_id uuid default null)" \
+            "send_ship_group_hunt(p_group_id uuid, p_location uuid, p_return_location_id uuid default null)"; do
+    grep -qF "create or replace function public.$fn" "$MIG4C2A_TMP" \
+      || fail "0222 does not re-create public.$fn with its head's exact signature"
+  done
+  grep -q "create or replace function public.port_entry_commission_build(" "$MIG4C2A_TMP" \
+    || fail "0222 does not re-create port_entry_commission_build (its 0216 TRUE head)"
+  # b2 is a DOCUMENTED skip, never a silent one — the file must say why, in prose.
+  grep -q "ensure_main_ship_for_player" "$MIG4C2A_TMP" \
+    || fail "0222 lost its documented-skip note for ensure_main_ship_for_player"
+  grep -qF "create or replace function public.ensure_main_ship_for_player" "$MIG4C2A_TMP" \
+    && fail "0222 re-creates ensure_main_ship_for_player — the plan doc's hunk instruction was verified WRONG vs the true head (no status/spatial_state/space_x/space_y in its insert); it must stay a documented skip" || true
+  # a1: the coordinate-movement rowtype/lock/return-key are gone (grep -F for the literal quotes).
+  grep -q "main_ship_space_movements%rowtype" "$MIG4C2A_TMP" \
+    && fail "0222's lock_context still declares the coordinate-movement rowtype — the a1 repoint did not land" || true
+  grep -qF "'space_movement'," "$MIG4C2A_TMP" \
+    && fail "0222's lock_context still returns the space_movement key — the a1 repoint did not land" || true
+  grep -q "has_active_legacy_movement" "$MIG4C2A_TMP" \
+    || fail "0222's lock_context lost has_active_legacy_movement — byte-parity broken beyond the marked hunk"
+  # b1: commission_build no longer mints the retired columns or the stationary/at_location shape.
+  grep -qE "\(player_id, hull_type_id, name, status, spatial_state, space_x, space_y," "$MIG4C2A_TMP" \
+    && fail "0222's commission_build still lists the retired columns in its insert — the b1 repoint did not land" || true
+  grep -qF "'stationary', 'at_location', null, null," "$MIG4C2A_TMP" \
+    && fail "0222's commission_build still mints the retired stationary/at_location literal shape — the b1 repoint did not land" || true
+  # b3: mark_combat_destroyed no longer nulls the retired columns.
+  grep -qE "status = 'destroyed', hp = 0, spatial_state = null" "$MIG4C2A_TMP" \
+    && fail "0222's mark_combat_destroyed still nulls the retired columns — the b3 repoint did not land" || true
+  # b4: repair_main_ship's docked-revival branch no longer mints at_location or returns 'stationary'.
+  grep -qE "status = 'stationary', spatial_state = 'at_location'" "$MIG4C2A_TMP" \
+    && fail "0222's repair_main_ship still mints the retired at_location shape — the b4 repoint did not land" || true
+  grep -qF "'status', 'stationary'," "$MIG4C2A_TMP" \
+    && fail "0222's repair_main_ship still returns the retired stationary literal — the b4 repoint did not land" || true
+  # b5 — THE HIGH-RISK ONE: the retired ship-column docked predicate is gone everywhere, the
+  # fleet-truth compose landed at all three sites, and all three departure writes dropped the
+  # retired columns while keeping status='hunting' verbatim.
+  grep -qF "status = 'stationary' and spatial_state = 'at_location'" "$MIG4C2A_TMP" \
+    && fail "0222's send_ship_group_hunt still reads the retired status/spatial_state docked pair — the b5 repoint did not land" || true
+  grep -qF "f.main_ship_id = s.main_ship_id and f.player_id = v_player and f.status = 'present'" "$MIG4C2A_TMP" \
+    && fail "0222's send_ship_group_hunt common-port check still joins on the ship's own main_ship_id column — the b5 repoint did not land" || true
+  [ "$(grep -c "f.id = public.mainship_resolve_fleet(s.main_ship_id)" "$MIG4C2A_TMP")" -ge 3 ] \
+    || fail "0222's send_ship_group_hunt does not compose mainship_resolve_fleet at all three fleet-truth sites (readiness / docked-count / common-port)"
+  [ "$(grep -c "set status = 'hunting', updated_at = now()" "$MIG4C2A_TMP")" = "3" ] \
+    || fail "0222's send_ship_group_hunt must write the repointed status=hunting (no spatial columns) in exactly 3 mint paths"
+  grep -qE "set status = 'hunting', spatial_state = null" "$MIG4C2A_TMP" \
+    && fail "0222's send_ship_group_hunt still writes a retired spatial column on a departure — the b5 repoint did not land" || true
+  # the dual-safe §0 gate + the b5 real-row reconciliation + the dual-safe re-confirmation exist.
+  grep -q "to_regclass('public.main_ship_space_movements')" "$MIG4C2A_TMP" \
+    || fail "0222 lost its §0 dual-safe gate (must assert the legacy schema is INTACT at apply time)"
+  grep -q "reconcile the b5 fleet-truth" "$MIGRATION_4C2A" \
+    || fail "0222 lost its §9 real-data reconciliation (the b5 fleet-truth predicate must be proven against every real ship row at apply)"
+  grep -q "zero drop, zero alter" "$MIGRATION_4C2A" \
+    || fail "0222 lost its §10 dual-safe re-confirmation (must re-prove the legacy objects are still fully intact after apply)"
+  rm -f "$MIG4C2A_TMP"
 
   tp_assert_out_of_scope "$SQL"
 
