@@ -605,8 +605,10 @@ if [ "$MODE" = "selftest" ]; then
 
   # ── TEAMMOVE (0190 / TEAMMOVE-1) pins, in assert form (a gutted .sql that only mentions them in
   #    prose cannot false-green): the mid-flight and split-port member_not_ready rejects (each with
-  #    its zero-departures half), the all-or-nothing rollback (member_send_failed pinned to the
-  #    mid-loop presence raise + zero moving fleets + both fleets still docked), the happy-path
+  #    its zero-departures half), the presence-corrupted-member all-or-nothing reject (4C-MIG-2B
+  #    REWORK: post-repoint the OUTER fleet-truth gate catches the broken member BEFORE the loop —
+  #    member_not_ready + zero departures + t1 never touched — stronger than the pre-2b mid-loop
+  #    rollback; the mid-loop-rollback property itself stays covered by BLOCK SEND), the happy-path
   #    present-departure envelopes over the members' OWN fleets, the moving + group-tagged departure
   #    with the no-strays pin, and the onward dock with the tag surviving. ───────────────────────────
   grep -qF "TEAMMOVE FAIL not-docked reject" "$SQL" \
@@ -617,12 +619,12 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT the split-port-team member_not_ready reject"
   grep -qF "the mixed-location reject departed a member" "$SQL" \
     || fail "harness does not ASSERT zero departures on the mixed-location reject"
-  grep -qF "all-or-nothing detail not pinned to t2''s presence raise" "$SQL" \
-    || fail "harness does not PIN the all-or-nothing abort to the mid-loop member raise"
-  grep -qF "(want 0 — the TEAMMOVE all-or-nothing rollback)" "$SQL" \
-    || fail "harness does not ASSERT zero moving fleets after the aborted team move"
-  grep -qF "(want 2 — the departed member must be rolled back)" "$SQL" \
-    || fail "harness does not ASSERT both fleets still docked after the aborted team move"
+  grep -qF "TEAMMOVE FAIL all-or-nothing reason" "$SQL" \
+    || fail "harness does not ASSERT the presence-corrupted-member reject reason"
+  grep -qF "(want 0 — nothing may depart)" "$SQL" \
+    || fail "harness does not ASSERT zero moving fleets after the presence-corrupted-member reject"
+  grep -qF "(want 2 — t1 was never touched)" "$SQL" \
+    || fail "harness does not ASSERT both fleets still docked (t1 never attempted) after the reject"
   grep -qF "present-departure envelopes from Slagworks to Driftmarch (want 2)" "$SQL" \
     || fail "harness does not ASSERT the 0156 present-departure envelope shape"
   grep -qF "are not the members'' own docked fleets" "$SQL" \

@@ -2974,23 +2974,38 @@ begin
     where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
   if n <> 2 then raise exception 'TEAMMOVE FAIL re-unite: % member fleets present at Slagworks (want 2)', n; end if;
 
-  -- ALL-OR-NOTHING: t1 (ordered FIRST) departs inside the subtransaction, then t2's per-ship move
-  -- raises — its active presence row is fixture-completed (captured by id; restored below). The
-  -- wrapper's own gates still pass (fleet 'present' at Slagworks, ship in the docked pair), so the
-  -- loop is REACHED and fails on member 2 AFTER member 1 already departed → the raise's presence in
-  -- `detail` proves t1 was rolled back, not never-sent (the BLOCK SEND pinning technique).
+  -- PRESENCE-CORRUPTION → ATOMIC PRE-LOOP REJECT (4C-MIG-2B REWORK — see below for why this replaces
+  -- the pre-2b "mid-loop failure, then rollback" test): t2's active presence row is fixture-completed
+  -- (captured by id; restored below) to manufacture a member whose FLEET still LOOKS present/docked
+  -- (status='present', current_location_id=slag) but whose presence is broken underneath it.
+  --
+  -- PRE-2B this made the OUTER wrapper's gate pass (it only read the ship's own status='stationary'/
+  -- spatial_state='at_location' columns, which say nothing about presence) while the INNER per-ship
+  -- move's own presence check failed AFTER t1 had already departed inside the subtransaction — proving
+  -- a genuine mid-loop rollback. POST-2B (F7's fleet-truth repoint) the OUTER gate itself now requires
+  -- an active presence at the fleet's current_location_id — the EXACT same condition this surgery
+  -- breaks — so the SAME manufactured state is now caught BEFORE the loop even starts: t2 fails the
+  -- outer aggregate readiness check, the whole call rejects member_not_ready, and t1 is never even
+  -- attempted (stronger than a rollback — nothing was ever written). Attempting to reach the OLD
+  -- mid-loop path is now structurally impossible: any state that breaks the inner move's presence
+  -- check ALSO breaks the outer gate's presence check, since both now read the same fact. This block
+  -- proves the NEW invariant instead: a broken member blocks the WHOLE team atomically, pre-write.
+  -- (The "member 1 succeeds, member 2 fails, member 1 rolls back" property itself is still proven
+  -- elsewhere — BLOCK SEND's c1/c2 all-or-nothing test, whose underlying send_ship_group_expedition
+  -- has no outer pre-loop gate and so still reaches a genuine mid-loop failure.)
   select id into v_pres from public.location_presence where fleet_id = v_f2 and status = 'active';
-  if v_pres is null then raise exception 'TEAMMOVE FAIL: no active presence to manufacture the mid-loop failure from'; end if;
+  if v_pres is null then raise exception 'TEAMMOVE FAIL: no active presence to manufacture the broken-member shape from'; end if;
   update public.location_presence set status = 'completed', updated_at = now() where id = v_pres;
   r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
-  if (r->>'reason') is distinct from 'member_send_failed' then raise exception 'TEAMMOVE FAIL all-or-nothing reason: %', r; end if;
-  if (r->>'detail') not like '%no active presence%' then
-    raise exception 'TEAMMOVE FAIL all-or-nothing detail not pinned to t2''s presence raise: %', r; end if;
+  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMMOVE FAIL all-or-nothing reason: %', r; end if;
+  -- …and NOTHING departed — not even t1 (stronger than the pre-2b rollback: never-attempted, not
+  -- attempted-then-undone). Reject-before-write, the same posture the earlier MEMBER-NOT-DOCKED and
+  -- MIXED-LOCATION sub-tests already pin for other broken-member shapes.
   select count(*) into n from public.fleets where main_ship_id in (t1, t2) and status = 'moving';
-  if n <> 0 then raise exception 'TEAMMOVE FAIL: % moving member fleets after the aborted move (want 0 — the TEAMMOVE all-or-nothing rollback)', n; end if;
+  if n <> 0 then raise exception 'TEAMMOVE FAIL: % moving member fleets after the reject (want 0 — nothing may depart)', n; end if;
   select count(*) into n from public.fleets
     where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % member fleets still present at the port (want 2 — the departed member must be rolled back)', n; end if;
+  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % member fleets still present at the port (want 2 — t1 was never touched)', n; end if;
   -- 4C-MIG-2B REWORK: 'stationary'/spatial_state are GONE — status='home' is the docked ship's own
   -- lifecycle signal now; fleet truth (checked just above) is the real dock proof.
   select count(*) into n from public.main_ship_instances
@@ -3046,7 +3061,7 @@ begin
     where main_ship_id in (t1, t2) and status = 'present' and current_location_id = drift and group_id = gT;
   if n <> 2 then raise exception 'TEAMMOVE FAIL: % present member fleets at Driftmarch still tagged (want 2 — the moved team present at Driftmarch, tag surviving)', n; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMMOVE ok: empty_group + foreign fail-closed; mid-flight member and split-port team both reject member_not_ready with zero departures; all-or-nothing rolls back the departed member (member_send_failed pinned to the presence raise, both fleets still docked); the whole docked team then moves Slagworks → Driftmarch as one (2 present-departure envelopes over the members'' own fleets, moving + tagged, no strays) and docks at Driftmarch with the tag surviving';
+  raise notice 'TEAMCMD_PASS_TEAMMOVE ok: empty_group + foreign fail-closed; mid-flight member, split-port team, and a presence-corrupted member ALL reject member_not_ready with ZERO departures (the post-2b fleet-truth gate catches a broken member pre-loop, atomically — stronger than the pre-2b mid-loop rollback); the whole docked team then moves Slagworks → Driftmarch as one (2 present-departure envelopes over the members'' own fleets, moving + tagged, no strays) and docks at Driftmarch with the tag surviving';
 end $$;
 
 -- ════════ BLOCK SOUL1 (SOUL-1, 0193): commission roll hook + adapter trait fold — parity + exactness ════════

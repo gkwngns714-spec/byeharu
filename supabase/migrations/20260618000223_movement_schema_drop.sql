@@ -80,6 +80,14 @@
 --        preserve the coverage. Repointed here to fleet truth (mainship_resolve_fleet + present/
 --        location/presence, composed at all three sites: availability check, docked-launch guard,
 --        re-claim-under-lock re-check) mirroring 2a's b5 predicate exactly — not a new formula.
+--        SELF-CAUGHT BUG (via the CI apply-proof, fleetgo-proof.sql BLOCK ASSIGNGUARD-PERMEMBER):
+--        the first draft repointed the re-claim-under-lock re-check to the SAME fleet-truth
+--        predicate too — but that re-check runs AFTER this same branch's own writes (presence
+--        completed, fleet status -> 'moving'), which ALWAYS invalidate that exact predicate for
+--        THIS fleet. It failed on every docked-launch call, not just a genuine race. Removed —
+--        the guarded fleet UPDATE's own "where ... and status = 'present'" (already raising above
+--        if not found) is the real race-closure, mirroring how move_main_ship_to_location (0156)
+--        needs no separate re-check either.
 --   (F7) move_ship_group_to_location(uuid, uuid) (TRUE head 20260618000204:331, the ONE definition
 --        since 0190; no later create-or-replace) decides its "every member docked together"
 --        readiness check via the SAME retired status='stationary'/spatial_state='at_location' pair
@@ -1298,20 +1306,18 @@ begin
     if not found then
       raise exception 'send_main_ship_expedition: docked ship % no longer present', v_ship_id;
     end if;
-    perform 1 from main_ship_instances where main_ship_id = v_ship_id for update;
-    if not found or not exists (
-      select 1 from public.fleets f
-       where f.id = public.mainship_resolve_fleet(v_ship_id)
-         and f.status = 'present' and f.location_mode = 'location'
-         and f.current_location_id is not null and f.active_movement_id is null
-         and exists (
-           select 1 from public.location_presence lp
-            where lp.fleet_id = f.id and lp.status = 'active'
-              and lp.location_id = f.current_location_id)
-    ) then
-      select * into v_ship from main_ship_instances where main_ship_id = v_ship_id;
-      raise exception 'send_main_ship_expedition: ship not available (status %)', v_ship.status;
-    end if;
+    -- 4C-MIG-2B BUG FIX (found via the CI apply-proof, fleetgo-proof.sql BLOCK
+    -- ASSIGNGUARD-PERMEMBER): the ORIGINAL 0199 head re-verified the ship's OWN status/
+    -- spatial_state columns here (the 0169 M1 race-closure idiom) — columns the writes ABOVE never
+    -- touch, so re-checking them after the fact was sound. Repointing that re-check to the SAME
+    -- fleet-truth predicate as v_docked is WRONG: the guarded fleet UPDATE just above (status->
+    -- 'moving', presence completed) ALWAYS invalidates that exact predicate for THIS fleet, so a
+    -- fleet-truth re-check here would fail on every single call, never just a genuine race. The
+    -- guarded UPDATE's own "where ... and active_movement_id is null and status = 'present'" (with
+    -- its "if not found then raise" above) IS the race-closure now — a concurrent modification to
+    -- this fleet already fails there, exactly mirroring how move_main_ship_to_location (0156) closes
+    -- the identical race with no separate re-check of its own. Removed; proceed directly to the
+    -- in-flight mark.
     perform public.mainship_mark_legacy_in_flight(v_ship_id, 'traveling');
 
     select arrive_at into v_arrive from fleet_movements where id = v_movement;
@@ -1734,8 +1740,17 @@ begin
   if position('spatial_state' in v_src) > 0 or position('space_x' in v_src) > 0 or position('space_y' in v_src) > 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition still references a doomed column';
   end if;
-  if (length(v_src) - length(replace(v_src, 'public.mainship_resolve_fleet(v_ship_id)', ''))) / length('public.mainship_resolve_fleet(v_ship_id)') < 3 then
-    raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition does not compose mainship_resolve_fleet at all three fleet-truth sites';
+  -- TWO sites (the availability check's v_docked compose, and the docked-launch branch's own
+  -- fleet resolve) — the THIRD (a re-check-under-lock, after the fleet UPDATE already invalidates
+  -- the same predicate) was a genuine bug, found via the CI apply-proof, and removed; see the hunk
+  -- comment in §3.
+  if (length(v_src) - length(replace(v_src, 'public.mainship_resolve_fleet(v_ship_id)', ''))) / length('public.mainship_resolve_fleet(v_ship_id)') < 2 then
+    raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition does not compose mainship_resolve_fleet at both fleet-truth sites';
+  end if;
+  -- the REMOVED bug's exact bare-lock text (no status filter — unlike the dark path's legitimate
+  -- `main_ship_id = v_ship_id and status = 'home' for update`, which must NOT trip this ban).
+  if position('main_ship_id = v_ship_id for update' in v_src) > 0 then
+    raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition still carries the broken post-write fleet-truth re-check-under-lock';
   end if;
   if not has_function_privilege('authenticated', 'public.send_main_ship_expedition(jsonb, uuid, uuid)', 'execute') then
     raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition lost its authenticated grant';
