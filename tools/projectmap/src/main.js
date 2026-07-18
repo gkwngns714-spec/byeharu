@@ -361,12 +361,19 @@ function renderWorkingNow(payload) {
   }))
 }
 
+let lastWipGen = wip0?.generatedAt ?? null
 setWip(wip0)
 // Poll for movement — a merge, a new PR, a force-push — so the map tracks the work
-// as it shifts without a reload. Cache-busted; failures leave the last overlay up.
+// as it shifts without a reload. Only re-render when the overlay ACTUALLY changed
+// (generatedAt moves only when scan/wip.mjs regenerates it); an unchanged poll is a
+// no-op, so the view never redraws on its own. Cache-busted; failures keep the last.
 setInterval(async () => {
+  if (document.hidden) return
   try {
     const p = await fetch(`${base}wip.json?t=${Math.floor(performance.now())}`).then((r) => r.json())
+    const gen = p?.generatedAt ?? null
+    if (gen === lastWipGen) return          // nothing moved — do not touch the DOM/scene
+    lastWipGen = gen
     setWip(p)
   } catch { /* keep the last good overlay */ }
 }, 20000)
