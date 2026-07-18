@@ -148,12 +148,16 @@ begin
   end if;
   -- port_entry_commission_build / ensure_main_ship_for_player: already clean since 2a (2a's own §8
   -- proved this) — pin they STAY clean (no doomed-column mint survives) so a regression is caught.
+  -- STRIP `--` comments before these negative bans (the 2a apply-proof lesson): b1's OWN hunk
+  -- comment in port_entry_commission_build names the retired columns it DELETED, so a naive prosrc
+  -- probe trips on the comment, not the (clean) INSERT column list. Ban the real code only.
   select prosrc into v_src from pg_proc where oid = 'public.port_entry_commission_build(uuid, text)'::regprocedure;
-  if v_src is null or position('spatial_state, space_x, space_y' in v_src) > 0 then
+  if v_src is null or position('spatial_state, space_x, space_y' in regexp_replace(v_src, '--[^\n]*', '', 'g')) > 0 then
     raise exception '4C-MIG-2B GUARD FAIL: port_entry_commission_build mints a retired column — 2a''s repoint regressed';
   end if;
   select prosrc into v_src from pg_proc where oid = 'public.ensure_main_ship_for_player(uuid)'::regprocedure;
-  if v_src is null or position('spatial_state' in v_src) > 0 or position('space_x' in v_src) > 0 or position('space_y' in v_src) > 0 then
+  v_src := regexp_replace(coalesce(v_src, ''), '--[^\n]*', '', 'g');
+  if v_src = '' or position('spatial_state' in v_src) > 0 or position('space_x' in v_src) > 0 or position('space_y' in v_src) > 0 then
     raise exception '4C-MIG-2B GUARD FAIL: ensure_main_ship_for_player mints a retired column — 2a''s no-hunk claim regressed';
   end if;
 
@@ -1199,11 +1203,17 @@ begin
   -- the 5 re-created functions no longer reference the doomed columns (post-drop prosrc re-pin —
   -- belt-and-braces beyond "it compiled": these are TEXT bodies, so a stray reference would only
   -- surface as a runtime error on next call, never at CREATE time).
+  -- Every probe below strips `--` comments FIRST (the 2a apply-proof lesson): each re-created body
+  -- carries a "4C-MIG-2B HUNK: the spatial_state/... clears retire WITH the columns" comment naming
+  -- the removed columns, so a naive prosrc ban would trip on the function's OWN explanation. Ban the
+  -- real CODE only.
   select prosrc into v_src from pg_proc where oid = 'public.mainship_mark_combat_destroyed(uuid)'::regprocedure;
+  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
   if position('spatial_state' in v_src) > 0 or position('space_x' in v_src) > 0 or position('space_y' in v_src) > 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: mainship_mark_combat_destroyed still references a doomed column';
   end if;
   select prosrc into v_src from pg_proc where oid = 'public.repair_main_ship(uuid)'::regprocedure;
+  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
   if position('spatial_state' in v_src) > 0 or position('space_x' in v_src) > 0 or position('space_y' in v_src) > 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: repair_main_ship still references a doomed column';
   end if;
@@ -1214,14 +1224,17 @@ begin
   -- main_ship_instances ever had that column, and every doomed write coupled it in the SAME clause
   -- as the space_x/space_y=null it sat beside) — it alone is the precise, collision-free probe.
   select prosrc into v_src from pg_proc where oid = 'public.send_ship_group_hunt(uuid, uuid, uuid)'::regprocedure;
+  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
   if position('spatial_state' in v_src) > 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: send_ship_group_hunt still references spatial_state';
   end if;
   select prosrc into v_src from pg_proc where oid = 'public.mainship_mark_docked_at_location(uuid)'::regprocedure;
+  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
   if position('spatial_state' in v_src) > 0 or position('space_x' in v_src) > 0 or position('space_y' in v_src) > 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: mainship_mark_docked_at_location still references a doomed column';
   end if;
   select prosrc into v_src from pg_proc where oid = 'public.get_my_fleet_positions()'::regprocedure;
+  v_src := regexp_replace(v_src, '--[^\n]*', '', 'g');
   if position('spatial_state' in v_src) > 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: get_my_fleet_positions still references spatial_state';
   end if;
