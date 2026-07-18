@@ -15,6 +15,7 @@ import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { TelegraphBanner } from '../combat/TelegraphBanner'
 import type { WorldCoord } from './openSpaceTransform'
 import { Badge, Button, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
+import { PirateInterceptPanel } from './PirateInterceptPanel'
 
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
 // stays the hero; the location detail panel now speaks the shared design language (IDENTITY →
@@ -53,7 +54,8 @@ export function MapScreen() {
       teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups,
       fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
       launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
-      miningFields, miningExtractRadius, refresh,
+      miningFields, miningExtractRadius,
+      pirateInterceptEnabled, dangerZones, refresh,
     },
     selection,
   } = useShellState()
@@ -65,6 +67,11 @@ export function MapScreen() {
   // part of selectedId's id-space) — mutually exclusive with the location selection + the point
   // target below, same "only one live selection" posture as the rest of this screen.
   const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null)
+  // PIRATE INTERCEPT (prototype): the route-planner / zone-drawing tap mode + its accumulated points.
+  // 'off' by default — the map's tap handling is byte-identical to today until the player arms one of
+  // the two modes via PirateInterceptPanel (itself mounted only while pirateInterceptEnabled is lit).
+  const [pirateMode, setPirateMode] = useState<'off' | 'route' | 'draw'>('off')
+  const [pirateDraftPoints, setPirateDraftPoints] = useState<WorldCoord[]>([])
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
@@ -84,6 +91,15 @@ export function MapScreen() {
   const handleSelectMiningField = (name: string | null) => {
     setSelectedFieldName(name)
     if (name !== null) setSelectedId(null)
+  }
+
+  // PIRATE INTERCEPT (prototype): appends a tapped point to the active draft, capped per mode (route:
+  // 3 waypoints + 1 final = 4; draw: the server's pirate_zone_create vertex ceiling is 64, capped lower
+  // here for a usable tap-to-add UX). Ignored while pirateMode is 'off' (GalaxyMap itself already
+  // routes taps to onTargetPoint in that case — this handler only ever fires for 'route'/'draw').
+  const handlePirateTap = (world: WorldCoord) => {
+    const cap = pirateMode === 'route' ? 4 : 24
+    setPirateDraftPoints((pts) => (pts.length >= cap ? pts : [...pts, world]))
   }
 
   // The point target resolved ONCE (raw + canonical preview + bounds verdict); feeds both the
@@ -147,6 +163,10 @@ export function MapScreen() {
               miningExtractRadius={miningExtractRadius}
               selectedMiningFieldName={selectedFieldName}
               onSelectMiningField={handleSelectMiningField}
+              dangerZones={dangerZones}
+              pirateMode={pirateMode}
+              pirateDraftPoints={pirateDraftPoints}
+              onPirateTap={handlePirateTap}
             />
             {/* top-left overlay rail: the server-lit feature panels ride ONE stacked, scrollable
                 slot so that WHEN a capability lights they read as coherent map overlays instead of
@@ -215,6 +235,21 @@ export function MapScreen() {
                   setPointTarget(null)
                   setSelectedId(null)
                 }}
+              />
+            )}
+            {/* PIRATE INTERCEPT (prototype) — mounted ONLY while the runtime flag is lit (fail-closed:
+                a dark deploy never mounts this, byte-identical to today). Operates on the player's
+                FIRST ship group (see the panel's own header note on that prototype limitation). */}
+            {pirateInterceptEnabled && (
+              <PirateInterceptPanel
+                groupId={teamGroups[0]?.group_id ?? null}
+                locations={locations}
+                mode={pirateMode}
+                onModeChange={setPirateMode}
+                draftPoints={pirateDraftPoints}
+                onUndoDraft={() => setPirateDraftPoints((pts) => pts.slice(0, -1))}
+                onClearDraft={() => setPirateDraftPoints([])}
+                onCommanded={() => void refresh()}
               />
             )}
           </div>

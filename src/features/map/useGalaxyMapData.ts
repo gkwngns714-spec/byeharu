@@ -8,9 +8,11 @@ import {
   fetchMainshipSendEnabled, fetchFleetMovementUnifiedEnabled,
   fetchLaunchFromDockEnabled, fetchFleetControlEnabled, fetchTimedDockingEnabled,
   fetchGameConfig,
+  fetchPirateInterceptEnabled,
 } from '../../lib/catalog'
 import { getActiveMiningFields } from '../mining/miningApi'
 import type { MiningField } from '../mining/miningTypes'
+import { fetchDangerZones, type DangerZoneLite } from './pirateApi'
 import {
   fetchActiveMainShipFleet, fetchActiveMainShipPresence,
   fetchMyFleetPositions, resolveOwnedShip,
@@ -114,6 +116,12 @@ export interface GalaxyMapData {
   // fetched ONCE per session alongside `locations`, not on the movement/ship poll.
   miningFields: MiningField[]
   miningExtractRadius: number
+  // PIRATE INTERCEPT (prototype): the runtime gate (read once with the other static flags) + the
+  // active danger_zones read (get_danger_zones), gated on the RUNTIME flag — dark → zero extra reads,
+  // [] zones, byte-identical to today (the same gating discipline as fleetMovementUnifiedEnabled's
+  // fleet-position read above).
+  pirateInterceptEnabled: boolean
+  dangerZones: DangerZoneLite[]
   refresh: () => Promise<void>
 }
 
@@ -157,6 +165,8 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   timedDockingEnabled: false,
   miningFields: [],
   miningExtractRadius: DEFAULT_MINING_EXTRACT_RADIUS,
+  pirateInterceptEnabled: false,
+  dangerZones: [],
 }
 
 export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = null): GalaxyMapData {
@@ -171,6 +181,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     timedDockingEnabled: boolean
     miningFields: MiningField[]
     miningExtractRadius: number
+    pirateInterceptEnabled: boolean
   } | null>(null)
   // M2 review fix: the last SUCCESSFULLY-read groups list. A failed poll re-serves this instead of
   // [] so a transient ship_groups error never dissolves fleets (badges, rollups, stop rows) for a
@@ -185,11 +196,12 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         // MINING-FIELD-MARKERS: the active fields + the extract radius join the SAME batch — both
         // are static reference reads (fields are migration-seeded; the radius is a game_config
         // tunable), not per-poll dynamic state.
-        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, miningFields, gameConfig] =
+        // PIRATE INTERCEPT (prototype): the runtime gate rides the SAME once-per-session static batch.
+        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, miningFields, gameConfig, pirateInterceptEnabled] =
           await Promise.all([
             fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetMovementUnifiedEnabled(),
             fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(), fetchTimedDockingEnabled(),
-            getActiveMiningFields(), fetchGameConfig(),
+            getActiveMiningFields(), fetchGameConfig(), fetchPirateInterceptEnabled(),
           ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -205,11 +217,11 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         staticRef.current = {
           locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled,
           launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
-          miningFields, miningExtractRadius,
+          miningFields, miningExtractRadius, pirateInterceptEnabled,
         }
       }
 
-      const [movements, locationStates, mainShip, fleetPositions] = await Promise.all([
+      const [movements, locationStates, mainShip, fleetPositions, dangerZones] = await Promise.all([
         fetchActiveMovements(),
         fetchLocationStates(),
         // FLEETMAP: the single-ship reads now address the SELECTED ship (was implicitly the sole ship — null
@@ -223,6 +235,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         (staticRef.current.mainshipSendEnabled || staticRef.current.fleetMovementUnifiedEnabled)
           ? fetchMyFleetPositions()
           : Promise.resolve<FleetPosition[]>([]),
+        // PIRATE INTERCEPT (prototype): gated on the RUNTIME flag — dark → zero extra reads, [] zones.
+        staticRef.current.pirateInterceptEnabled ? fetchDangerZones() : Promise.resolve<DangerZoneLite[]>([]),
       ])
       // The active linked fleet (zero units) drives the live main-ship status. Only read it
       // when a ship exists; absent ship or no in-flight fleet → null (home).
@@ -291,6 +305,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         timedDockingEnabled: staticRef.current.timedDockingEnabled,
         miningFields: staticRef.current.miningFields,
         miningExtractRadius: staticRef.current.miningExtractRadius,
+        pirateInterceptEnabled: staticRef.current.pirateInterceptEnabled,
+        dangerZones,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))
