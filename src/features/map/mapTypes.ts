@@ -45,6 +45,9 @@ export interface MapLocation {
   min_power_required: number
   is_public: boolean
   status: string
+  /** S2 TERRITORY: world-unit radius of the location's zone of influence (0217). NULL = projects
+   *  no territory. Additive, always present in the RPC JSON (never conditional). */
+  territory_radius: number | null
 }
 
 export interface MapZone {

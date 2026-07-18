@@ -3273,6 +3273,107 @@ begin
   raise notice 'BERTH_BACKFILL: world-wide after every mutation — ungrouped ⇒ berthed at a real port; grouped ⇒ berthless (the invariant the migration-time backfill establishes)';
 end $$;
 
+-- ════════ BLOCK TERRITORY_PASS_SEEDED (0217): the CASE seed landed on the decided radius map ══════
+-- trade_outpost → 25, pirate_hunt/pirate_den → 35, safe_zone/rally_point → 15, every other type
+-- NULL — asserted on the WHOLE world, plus named probes (slag, an ACTIVE hunt site) so a red is
+-- actionable. VACUITY: each probed class must exist or the sweep greens while proving nothing.
+-- FAIL MODE: drop the migration's CASE seed → slag reads NULL → the 25-probe raises.
+do $$
+declare n int;
+  slag uuid := (select v from fg where k='slag');
+begin
+  -- vacuity guards: the probed rows exist.
+  select count(*) into n from public.locations where id = slag and location_type = 'trade_outpost';
+  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag is not a trade_outpost row — the port probe would be vacuous'; end if;
+  select count(*) into n from public.locations where location_type in ('pirate_hunt', 'pirate_den') and status = 'active';
+  if n = 0 then raise exception 'TERRITORY_SEEDED FAIL: no ACTIVE hunt site exists — the hostile probe would be vacuous'; end if;
+  select count(*) into n from public.locations where location_type = 'safe_zone';
+  if n = 0 then raise exception 'TERRITORY_SEEDED FAIL: no safe_zone exists — the safe probe would be vacuous'; end if;
+
+  -- named probes: the decided values, on real rows.
+  select count(*) into n from public.locations where id = slag and territory_radius = 25;
+  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not 25'; end if;
+  select count(*) into n from public.locations
+   where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 35;
+  if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=35', n; end if;
+
+  -- the world-wide sweep: every location on the map obeys the CASE map (25/35/15/NULL).
+  select count(*) into n from public.locations
+   where (location_type = 'trade_outpost' and territory_radius is distinct from 25)
+      or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 35)
+      or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 15)
+      or (location_type in ('mining_site', 'derelict_station', 'event_site') and territory_radius is not null);
+  if n <> 0 then raise exception 'TERRITORY_PASS_SEEDED FAIL: % location(s) off the decided radius map', n; end if;
+
+  raise notice 'TERRITORY_PASS_SEEDED: slag=25, every ACTIVE hunt site=35, world-wide sweep clean (trade 25 / hostile 35 / safe+rally 15 / else NULL)';
+end $$;
+
+-- ════════ BLOCK TERRITORY_PASS_MAPREAD (0217): get_world_map carries territory_radius, ADDITIVELY ═
+-- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on status='active';
+-- the 0175 hidden-port pin ran BEFORE the 0217 re-create on this chain, so it cannot vouch for the
+-- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 25.
+-- (3) NULL-KEY — a NULL-territory ACTIVE location still returns the KEY (json null), never a
+-- conditionally-omitted field. SURGERY: the live seed has no NULL-territory ACTIVE location
+-- (mining/derelict/event sites are unseeded), so pin 3 inserts ONE active mining_site fixture —
+-- rolled back with the txn (the committed world is still written only by its declared owner).
+do $$
+declare n int; v_map jsonb; v_src text;
+  slag uuid := (select v from fg where k='slag');
+  v_fix uuid := gen_random_uuid();
+begin
+  -- (1) structural: the three status='active' filters survive in the DEPLOYED 0217 body.
+  select prosrc into v_src from pg_proc where oid = to_regprocedure('public.get_world_map()')::oid;
+  if v_src is null then raise exception 'TERRITORY_MAPREAD FAIL: public.get_world_map() does not exist'; end if;
+  if position('l.zone_id = z.id and l.status = ''active''' in v_src) = 0
+     or position('z.sector_id = se.id and z.status = ''active''' in v_src) = 0
+     or position('se.status = ''active''' in v_src) = 0 then
+    raise exception 'TERRITORY_MAPREAD FAIL: the deployed get_world_map lost a status=''active'' filter — hidden ports would leak';
+  end if;
+
+  -- (2) value: slag's location JSON carries the seeded 25. Vacuity: slag must be IN the read at all.
+  v_map := public.get_world_map();
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = slag::text;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag is not in get_world_map — the parity probe would be vacuous'; end if;
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = slag::text and (lc ? 'territory_radius') and (lc->>'territory_radius')::numeric = 25;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag''s map JSON does not carry territory_radius=25'; end if;
+
+  -- (3) NULL-KEY: an active NULL-territory location returns the key as json null (additive, never
+  -- conditional). SURGERY: the fixture insert (see header) — reverted by the txn ROLLBACK.
+  insert into public.locations (id, zone_id, name, location_type, x, y, activity_type, status)
+  values (v_fix, (select zone_id from public.locations where id = slag),
+          'Territory Null Probe', 'mining_site', 71, -11, 'none', 'active');
+  v_map := public.get_world_map();
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = v_fix::text;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: the mining_site fixture is not in get_world_map — the NULL-key probe would be vacuous'; end if;
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = v_fix::text and (lc ? 'territory_radius') and jsonb_typeof(lc->'territory_radius') = 'null';
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: the NULL-territory location does not return the territory_radius KEY as json null — the field went conditional'; end if;
+  -- and additivity holds map-wide: EVERY location element carries the key.
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where not (lc ? 'territory_radius');
+  if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: % map location(s) MISSING the territory_radius key — additive means every element', n; end if;
+
+  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries territory_radius=25; a NULL-territory location returns the key as json null; every map element carries the key';
+end $$;
+
 select 'FLEET-GO PROOF PASSED' as result;
 
 rollback;

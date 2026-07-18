@@ -187,7 +187,9 @@ test('de-dup: no groups / no markers → empty set (dark posture; every ship kee
 })
 
 // ── teamMarkersLayer — the GalaxyMap wiring proof (element-tree convention) ─────────────────────────
-const locations = [{ id: 'loc-A', x: 100, y: 200 }]
+// S2 TERRITORY widened the layer's location pick (name + territory_radius feed the orbit label);
+// loc-A carries no territory, so every pre-S2 expectation below is byte-identical.
+const locations = [{ id: 'loc-A', name: 'Alpha Port', x: 100, y: 200, territory_radius: null }]
 
 test('layer: zero groups → [] (map byte-identical to today while TEAM_COMMAND is dark)', () => {
   expect(
@@ -256,6 +258,24 @@ test('space badge: one badge per group (first wins on a duplicate); deterministi
   )
   expect(out.map((b) => b.groupId)).toEqual(['g1', 'g2'])
   expect(out[0]).toMatchObject({ x: 40, y: 60 }) // the duplicate's coords never overwrite the first
+})
+
+// ── S2 TERRITORY — the "in orbit of X" label extension (territoryAt composed, ONE distance()) ──
+test('space badge: parked inside a territory → the label extends with "in orbit of X"', () => {
+  const locs = [{ id: 'loc-T', name: 'Slagworks Anchorage', x: 45, y: 60, territory_radius: 25 }]
+  const out = resolveFleetSpaceBadges([spaceFleet()], groups, [rollup({ locationId: null, dockedCount: 0 })], locs)
+  expect(out[0].label).toBe('Fleet Alpha · 2 ships · in orbit of Slagworks Anchorage')
+  // bare-label form extends the same way
+  expect(resolveFleetSpaceBadges([spaceFleet()], groups, [], locs)[0].label).toBe('Fleet Alpha · in orbit of Slagworks Anchorage')
+})
+
+test('space badge: outside every territory, or a NULL-territory world, keeps the plain label', () => {
+  const far = [{ id: 'loc-T', name: 'Slagworks Anchorage', x: 500, y: 500, territory_radius: 25 }]
+  expect(resolveFleetSpaceBadges([spaceFleet()], groups, [], far)[0].label).toBe('Fleet Alpha')
+  const nul = [{ id: 'loc-T', name: 'Slagworks Anchorage', x: 45, y: 60, territory_radius: null }]
+  expect(resolveFleetSpaceBadges([spaceFleet()], groups, [], nul)[0].label).toBe('Fleet Alpha')
+  // omitting the locations arg entirely is the pre-S2 call — byte-identical
+  expect(resolveFleetSpaceBadges([spaceFleet()], groups, [])[0].label).toBe('Fleet Alpha')
 })
 
 test('de-dup: members of an IN-SPACE parked fleet are represented (chevrons suppressed under the badge)', () => {

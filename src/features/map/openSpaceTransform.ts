@@ -37,7 +37,9 @@ export const WORLD_MIN = -10000
 export const WORLD_MAX = 10000
 export const WORLD_SPAN = WORLD_MAX - WORLD_MIN // 20000
 export const VIEWBOX_SIZE = 1000 // == GalaxyMap VIEW and the SVG viewBox width/height
-const WORLD_TO_VIEWBOX_SCALE = VIEWBOX_SIZE / WORLD_SPAN // 0.05 viewBox-units per world-unit
+/** 0.05 viewBox-units per world-unit — exported as the ONE authority for converting a world-true
+ *  LENGTH (e.g. a territory radius) into viewBox units; positions go through worldToViewBox. */
+export const WORLD_TO_VIEWBOX_SCALE = VIEWBOX_SIZE / WORLD_SPAN
 
 // ── Coordinate types (one per space; never interchangeable by accident) ──────────────────────────────
 export interface WorldCoord {

@@ -26,6 +26,11 @@ MIGRATION_4B1="$REPO_ROOT/supabase/migrations/20260618000214_fleetgo_hunt_unifie
 # get_my_fleet_positions; the static checks below aim at IT for those bodies (the 0215/0211 rule:
 # a ban pointed at a superseded head guards nothing).
 MIGRATION_S1="$REPO_ROOT/supabase/migrations/20260618000216_berth_model.sql"
+# MIGRATION_S2 is 0217 — S2 TERRITORY: the additive locations.territory_radius column + seed, and
+# the PARITY re-create of get_world_map (its 0002 TRUE head was never re-created before 0217; the
+# parity diff below aims at 0002 because that IS the head being copied).
+MIGRATION_S2="$REPO_ROOT/supabase/migrations/20260618000217_territory_radius.sql"
+MIGRATION_0002="$REPO_ROOT/supabase/migrations/20260616000002_world_map.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -34,7 +39,7 @@ MIGRATION_S1="$REPO_ROOT/supabase/migrations/20260618000216_berth_model.sql"
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_MAPREAD"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -865,6 +870,94 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "executed only at the prod deploy" "$SQL" \
     || fail "BERTH_BACKFILL does not state the traced-vs-executed honesty (the real-data run is the deploy's)"
   rm -f "$MIGS1_TMP"
+
+  # ── S2 — TERRITORY (0217): additive column + seed + the get_world_map PARITY re-create. ─────────
+  # MUTATIONS (each executed statically while building — strip the construct, watch the named check
+  # red, restore; the runtime reds are TRACED, CI-only — no local Docker):
+  #   • drop the add-column          → the column grep reds; runtime: the seeding UPDATE (and the
+  #                                    re-created read) error at deploy — nothing to trace.
+  #   • drop the CASE seed           → the seed greps red; runtime TERRITORY_PASS_SEEDED reds on
+  #                                    slag's NULL radius (and 0217's in-file assert raises first).
+  #   • drop a status='active' filter→ the filter grep + the parity diff red; 0217's in-file assert
+  #                                    raises at deploy; runtime MAPREAD's structural re-pin reds
+  #                                    (the 0175 pin ran against the PRE-0217 body — it cannot).
+  #   • add a SECOND field / any body
+  #     drift beyond the one hunk    → the byte-parity diff below reds (the whole point: PARITY
+  #                                    means the 0002 head plus EXACTLY ONE added field).
+  #   • drop the grant re-emit       → the grant grep reds.
+  # Static checks READ THE mktemp FILE — never `printf | grep -q` (the S1 pipefail/EPIPE lesson:
+  # grep -q exits at first match, the still-writing printf takes EPIPE, the pipeline fails on a
+  # body that MATCHED).
+  [ -f "$MIGRATION_S2" ] || fail "migration 0217 not found"
+  MIGS2_TMP="$(mktemp)"
+  sql_code "$MIGRATION_S2" > "$MIGS2_TMP"
+  # the additive column (nullable numeric, no default surgery) + the CASE seed with the decided map.
+  grep -q "alter table public.locations add column territory_radius numeric;" "$MIGS2_TMP" \
+    || fail "0217 does not add locations.territory_radius (nullable numeric)"
+  grep -q "set territory_radius = case location_type" "$MIGS2_TMP" \
+    || fail "0217's seed is not a CASE on location_type"
+  grep -q "when 'trade_outpost' then 25" "$MIGS2_TMP" || fail "0217's seed lost trade_outpost -> 25"
+  grep -q "when 'pirate_hunt' then 35"   "$MIGS2_TMP" || fail "0217's seed lost pirate_hunt -> 35"
+  grep -q "when 'pirate_den' then 35"    "$MIGS2_TMP" || fail "0217's seed lost pirate_den -> 35 (0 rows today; seeded for the day it gains one)"
+  grep -q "when 'safe_zone' then 15"     "$MIGS2_TMP" || fail "0217's seed lost safe_zone -> 15"
+  grep -q "when 'rally_point' then 15"   "$MIGS2_TMP" || fail "0217's seed lost rally_point -> 15"
+  # posture: exactly ONE re-create and it is get_world_map(); exactly ONE alter table (the column);
+  # no drops, no ship writes, no flag (additive data is always-on — a flag would gate nothing).
+  [ "$(grep -c "create or replace function" "$MIGS2_TMP")" = "1" ] \
+    || fail "0217 must contain exactly ONE re-create (the get_world_map parity copy)"
+  grep -q "create or replace function public.get_world_map()" "$MIGS2_TMP" \
+    || fail "0217's one re-create is not public.get_world_map()"
+  [ "$(grep -c "alter table" "$MIGS2_TMP")" = "1" ] \
+    || fail "0217 must contain exactly ONE alter table (the territory_radius column)"
+  grep -qE "drop (function|table|column)" "$MIGS2_TMP" \
+    && fail "0217 drops an existing object (S2 is purely additive)" || true
+  grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIGS2_TMP" \
+    && fail "0217 UPDATEs main_ship_instances — territory is world data, never a ship write" || true
+  grep -qiE "(insert into|update)[[:space:]]+(public\.)?game_config" "$MIGS2_TMP" \
+    && fail "0217 seeds or flips a flag (additive always-on data needs no gate)" || true
+  # THE PARITY DIFF (the crown of this section): the 0217 get_world_map body must equal the 0002
+  # TRUE-head body EXACTLY, minus the ONE added field — whitespace-normalized, judged on the raw
+  # bodies (neither head carries comments inside the function). A second added field, a reordered
+  # key, a dropped filter, or any silent drift reds here.
+  perl -0777 -e '
+    sub body {
+      my ($f) = @_;
+      open my $h, "<", $f or exit 1; local $/; my $s = <$h>;
+      my $i = index($s, "create or replace function public.get_world_map()"); exit 1 if $i < 0;
+      my $j = index($s, "\$\$;", $i); exit 1 if $j < 0;
+      my $b = substr($s, $i, $j - $i); $b =~ s/\s+/ /g; return $b;
+    }
+    my $old = body($ARGV[0]);
+    my $new = body($ARGV[1]);
+    exit 1 unless $new =~ s/, \x27territory_radius\x27, l\.territory_radius//;
+    exit($new eq $old ? 0 : 1);' "$MIGRATION_0002" "$MIGRATION_S2" \
+    || fail "0217's get_world_map is NOT the 0002 head plus exactly the one territory_radius field — parity broke (drift, a second field, or a lost hunk)"
+  # belt-and-braces: the three status='active' filters + the grant re-emit, named individually so a
+  # red is actionable without reverse-engineering the parity diff.
+  grep -qF "l.zone_id = z.id and l.status = 'active'" "$MIGS2_TMP" \
+    || fail "0217's get_world_map lost the location-level status='active' filter (hidden-port leak)"
+  grep -qF "z.sector_id = se.id and z.status = 'active'" "$MIGS2_TMP" \
+    || fail "0217's get_world_map lost the zone-level status='active' filter (hidden-port leak)"
+  grep -qF "se.status = 'active'" "$MIGS2_TMP" \
+    || fail "0217's get_world_map lost the sector-level status='active' filter (hidden-port leak)"
+  grep -qF "grant execute on function public.get_world_map() to anon, authenticated;" "$MIGS2_TMP" \
+    || fail "0217 does not re-emit the anon/authenticated execute grant (0002:134)"
+  # the header must record WHY the dormant zones.radius sibling is not reused (prose — raw file).
+  grep -q "zones.radius" "$MIGRATION_S2" \
+    || fail "0217's header does not explain why the dormant zones.radius sibling is not reused"
+  # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
+  # failed to reach the state its marker claims to pin).
+  grep -q "the port probe would be vacuous" "$SQL" \
+    || fail "TERRITORY_SEEDED does not guard that slag (the trade_outpost probe) exists"
+  grep -q "the hostile probe would be vacuous" "$SQL" \
+    || fail "TERRITORY_SEEDED does not guard that an ACTIVE hunt site exists"
+  grep -q "the safe probe would be vacuous" "$SQL" \
+    || fail "TERRITORY_SEEDED does not guard that a safe_zone exists"
+  grep -q "the parity probe would be vacuous" "$SQL" \
+    || fail "TERRITORY_MAPREAD does not guard that slag is actually IN the map read"
+  grep -q "the NULL-key probe would be vacuous" "$SQL" \
+    || fail "TERRITORY_MAPREAD does not guard that the NULL-territory fixture is IN the map read"
+  rm -f "$MIGS2_TMP"
 
   tp_assert_out_of_scope "$SQL"
 
