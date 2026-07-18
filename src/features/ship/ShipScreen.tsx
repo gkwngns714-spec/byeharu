@@ -1,128 +1,389 @@
-import { useReducer } from 'react'
+import { useCallback, useEffect, useReducer, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useShellState } from '../../app/shellState'
-import { ShipStatusCard } from './ShipStatusCard'
-import { ShipDossier } from './ShipDossier'
+import { fetchHullTypes, fetchMyMainShips, repairMainShip, type HullRow, type MainShipRow } from '../map/mainshipApi'
+import { getMyShipFittings } from '../modules/modulesApi'
+import type { GetMyShipFittingsResult } from '../modules/modulesTypes'
+import { getMyCaptainInstances } from '../captains/captainsApi'
+import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
+import { fetchMyShipGroups, fetchMyShipGroupMap, type ShipGroupMapEntry } from '../command/teamApi'
+import {
+  buildTeamRoster,
+  fleetPositionLocationLabel,
+  type GroupRow,
+  type RosterShip,
+} from '../command/teamRoster'
+import { mainShipInstanceStatusLabel, mainShipInstanceStatusTone } from '../map/mainshipStatusLabel'
+import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
+import { captainsForShip, fittingsForShip } from './shipDossierView'
+import { shipMeterPair } from './meterPair'
+import { MeterPairBars } from './MeterPairBars'
+import { FittingDetail } from './FittingDetail'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
 import { InventoryPanel } from '../inventory/InventoryPanel'
-import { ShipSwitcher } from '../map/ShipSwitcher'
-import { MAINSHIP_ADDITIONAL_ENABLED, TRADE_MARKET_ENABLED } from '../map/osnReleaseGates'
-import { CommissionShipPanel } from './CommissionShipPanel'
-import { resolveShipLocationLabel } from './shipLocation'
-import { PageHeader, Screen, screenRailClass, screenSplitClass } from '../../components/ui'
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  EmptyState,
+  Icon,
+  Notice,
+  PageHeader,
+  Screen,
+  SectionLabel,
+  Skeleton,
+  buttonClasses,
+  screenRailClass,
+  screenSplitClass,
+} from '../../components/ui'
 
-// UI-REBUILD (2b, Ship interior) — the Ship destination: ONE merged ship-status surface
-// (ShipStatusCard — the audit-mandated MainShipPreview + MainShipPanel collapse; identity →
-// right-now primary action → details), then the dark capabilities behind their server-lit gates,
-// verbatim — surfaced only when lit, omitted otherwise (never dead panels).
+// S6 — the FITTING tab (rebuilt from the old Ship tab; ShipStatusCard + ShipDossier + ShipSwitcher
+// are RETIRED, not shipped alongside). The destination answers "what is ON each of my ships, and
+// where is it" — ships grouped BY FLEET plus the "Berthed — not in a fleet" bucket, each row
+// showing location / condition / captains, and a per-ship fitting detail on selection.
 //
-// NO-SOFTLOCK: ShipStatusCard mounts UNGATED and renders Repair whenever the ship is disabled,
-// matching the server's ungated repair safelock (0052).
+// BOUNDARY (charter §2a): Command owns fleet COMPOSITION (create/rename/delete fleet, add/remove
+// ship, command-ship toggle — TeamRosterPanel); this screen renders the grouping READ-ONLY through
+// the SAME pure fold (buildTeamRoster — never a second grouping implementation) with ZERO
+// membership and ZERO movement controls. Fitting owns per-ship EQUIPMENT + CONDITION (modules,
+// rename, repair, rooms, captains-at-the-ship, cargo, traits/buffs).
+//
+// ONE READ PER FACT:
+//   · LOCATION — solely map.fleetPositions (the shell's already-polled get_my_fleet_positions
+//     projection; fleeted → the fleet's place, berthed → the S1 'berthed' place at the berth
+//     port). ZERO new location/dockedness queries; the old sole-ship mainShipFleet+movements
+//     derivation this screen carried is DELETED with ShipStatusCard. An empty projection (both
+//     movement gates dark) shows "Location unavailable" — honest, never a guess.
+//   · GROUPING — buildTeamRoster over the shell ship list × the membership map. Post-S1 the
+//     `ungrouped` bucket IS the berthed set (the 0216 XOR: group_id NULL ⇔ berth set).
+//   · SELECTION — the shell's ONE selection (selection.selectShip); no local selected-ship state.
+//
+// NO-SOFTLOCK: the free repair CTA (repair_main_ship — server-side deliberately UNGATED, 0052)
+// renders on EVERY destroyed ship's row (and again in the detail): a disabled ship must always
+// have its recovery path on screen, independent of selection and of every feature flag.
+//
+// Fan-out (the brief's measured budget): the shared roster facts are ~6 requests total regardless
+// of ship count (ships 1 + groups 1 + group-map 2 + fittings 1 + captains 1; location costs 0 —
+// already polled). The per-ship dossier surfaces load ONLY in the selected ship's detail. No new
+// server RPC.
 
 export function ShipScreen() {
-  const { game, map, selection: shipSelection } = useShellState()
+  const { game, map, selection } = useShellState()
   const lifecycleKey = `${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
-  // SHIP-DOSSIER — the screen's loadout revision: bumped by any panel AFTER a successful
-  // loadout/inventory-changing command (assign/unassign/recruit — the captain panels; WORKSHOP
-  // moved craft/fit to Port, whose route remount re-reads this screen's panels on return), folded
-  // into the read panels' refresh key so ShipDossier + InventoryPanel re-read the server state the
-  // command just changed (non-optimistic: the command panel refetched itself first, then pinged us).
+  // Bumped by any panel after a successful loadout-changing command (captain assign/recruit on the
+  // aside, fit/unfit in the detail) so the read surfaces re-read the state the command just changed
+  // (non-optimistic: the command's own refetch ran first, then pinged us).
   const [loadoutRev, bumpLoadoutRev] = useReducer((n: number) => n + 1, 0)
   const readRefreshKey = `${lifecycleKey}|r${loadoutRev}`
 
-  // SHIPLOC — the selected ship's LOCATION for the dossier (owner: "in ship tab, i should be able to
-  // see where the ship is"). The shell's map poll resolves the SOLE ship's fleet/movement today
-  // (fetchMainShip no-id → null at N≥2), so it corresponds to the selected ship ONLY when the
-  // selection IS that resolved ship. When it does, resolve the location with the ONE shared helper
-  // (the same one ShipStatusCard above uses); otherwise pass null so the dossier honestly shows
-  // "Location unavailable" rather than a wrong place. Per-ship location for a non-sole ship arrives
-  // later via the MAP slice's fleet-positions projection.
-  const locFleet = map.mainShipFleet
-  const locMove = locFleet ? (map.movements.find((m) => m.fleet_id === locFleet.id && m.status === 'moving') ?? null) : null
-  const locationMatchesSelected =
-    !!shipSelection.selectedShipId && map.mainShip?.main_ship_id === shipSelection.selectedShipId
-  const shipLocation = locationMatchesSelected ? resolveShipLocationLabel(locFleet, locMove, game.locations) : null
-  // TRADE-UI-1 — client selected-ship model, now the ONE shell instance (A0 lifted it here; Port's MarketPanel
-  // reads the SAME selection). Consumed by the DARK ShipSwitcher only (compile-gated false + server-rejected).
+  // ── the shared roster facts (one batched wave; re-read on lifecycle/loadout changes) ───────────
+  const [ships, setShips] = useState<MainShipRow[] | null>(null)
+  const [groups, setGroups] = useState<GroupRow[]>([])
+  const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
+  const [fittingsRes, setFittingsRes] = useState<GetMyShipFittingsResult | null>(null)
+  const [captainsRes, setCaptainsRes] = useState<GetMyCaptainInstancesResult | null>(null)
+  const [repairNote, setRepairNote] = useState<Record<string, string | null>>({})
+  const [repairPending, setRepairPending] = useState<Record<string, boolean>>({})
+  // The hull catalog (public-read Reference/Config) — fetched ONCE per mount (static data), so
+  // every ship's class name resolves from ITS OWN hull_type_id. REVIEW FIX (S6 major 1): the
+  // first cut read game.mainShip.hull — the NO-ID sole-ship view, which at N≥2 fail-closes to the
+  // starter-frigate teaser and would wear the WRONG class on every non-starter ship.
+  const [hullTypes, setHullTypes] = useState<HullRow[]>([])
 
-  // UI R3 (composition): desktop ops split — main rail = the ship's vitals + the per-ship dossier
-  // (SHIP-DOSSIER: fitted modules · captains · cargo hold) + the heavy outfitting surface
-  // (Modules); aside rail = the player's item inventory (SHIP-DOSSIER: live data, always lit) +
-  // the crew roster surfaces (Captains/Recruit) + the dark ship switcher. The dark panels still
-  // render null behind their server gates; the dossier + inventory are lit read surfaces, so both
-  // rails now always have content. Mobile keeps top-down order. NO SectionLabels above the dark
-  // panels: their lit-ness is server-decided at runtime, so a screen-owned header could label a void.
+  const guards = useActivityPanelGuards()
+  const { activeRef } = guards
+
+  const refreshShared = useCallback(async () => {
+    const [myShips, g, m, fit, cap] = await Promise.all([
+      fetchMyMainShips(),
+      fetchMyShipGroups(),
+      fetchMyShipGroupMap(),
+      getMyShipFittings(),
+      getMyCaptainInstances(),
+    ])
+    if (!activeRef.current) return
+    setShips(myShips)
+    setGroups(g)
+    setGroupMap(m)
+    setFittingsRes(fit)
+    setCaptainsRes(cap)
+  }, [activeRef])
+
+  // readRefreshKey is a deliberate re-fetch trigger (the ShipDossier dep idiom).
+  useEffect(() => {
+    void refreshShared()
+  }, [refreshShared, readRefreshKey])
+
+  // Static hull catalog — once per mount (inline .then so setState lands async, the
+  // TeamRosterPanel effect idiom). [] on error → rows fall back to the raw class id.
+  useEffect(() => {
+    let active = true
+    void fetchHullTypes().then((rows) => {
+      if (active) setHullTypes(rows)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  // NO-SOFTLOCK — the row-level free repair (see header). Throw-style wrapper → try/catch, the
+  // ShipStatusCard doRepair shape, keyed per ship so rows never share pending state.
+  async function repairShip(shipId: string) {
+    const key = `repair:${shipId}`
+    if (!guards.tryClaim(key)) return
+    setRepairPending((p) => ({ ...p, [shipId]: true }))
+    setRepairNote((n) => ({ ...n, [shipId]: null }))
+    try {
+      await repairMainShip(shipId) // explicit ship id; server asserts ownership
+      await Promise.all([game.refresh(), map.refresh(), selection.refresh(), refreshShared()])
+    } catch (e) {
+      if (activeRef.current) {
+        setRepairNote((n) => ({ ...n, [shipId]: e instanceof Error ? e.message : String(e) }))
+      }
+    } finally {
+      guards.release(key)
+      if (activeRef.current) setRepairPending((p) => ({ ...p, [shipId]: false }))
+    }
+  }
+
+  // ── pure projections ───────────────────────────────────────────────────────────────────────────
+  // The SAME roster fold Command uses (buildTeamRoster) over the SAME shell ship list — never a
+  // second grouping implementation. `ungrouped` IS the berthed bucket post-S1.
+  const rosterShips: RosterShip[] = selection.ships.map((s) => ({
+    main_ship_id: s.main_ship_id,
+    name: s.name,
+    status: s.status,
+    group_id: groupMap[s.main_ship_id]?.group_id ?? null,
+    is_command_ship: groupMap[s.main_ship_id]?.is_command_ship ?? false,
+  }))
+  const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
+  const posByShip = new Map(map.fleetPositions.map((p) => [p.main_ship_id, p]))
+  const shipRowById = new Map((ships ?? []).map((r) => [r.main_ship_id, r]))
+  const litFittingRows = isServerLit(fittingsRes) ? (fittingsRes.fittings ?? []) : null
+  const litCaptainRows = isServerLit(captainsRes) ? (captainsRes.captains ?? []) : null
+
+  const selectedShip = selection.selectedShip
+  const selectedPos = selectedShip ? posByShip.get(selectedShip.main_ship_id) : undefined
+  // The hull class display name — resolved from the SELECTED SHIP'S OWN hull_type_id against the
+  // catalog (per-ship-correct at any N; never the sole-ship-resolved polled view). Catalog miss /
+  // read error → null → the detail falls back to the raw class id.
+  const selectedShipRow = selectedShip ? (shipRowById.get(selectedShip.main_ship_id) ?? null) : null
+  const selectedHullName = selectedShipRow
+    ? (hullTypes.find((h) => h.hull_type_id === selectedShipRow.hull_type_id)?.name ?? null)
+    : null
+
+  // One roster row (the TeamRosterPanel role="button" selected-row idiom — READ-ONLY here: no
+  // membership/movement controls; the only action a row ever carries is the destroyed-ship Repair).
+  const shipRow = (s: RosterShip) => {
+    const selected = s.main_ship_id === selection.selectedShipId
+    const row = shipRowById.get(s.main_ship_id)
+    const meters = row ? shipMeterPair(row) : null
+    const isDisabled = s.status === 'destroyed'
+    const locLabel = fleetPositionLocationLabel(posByShip.get(s.main_ship_id), game.locations)
+    const rowCaptains = litCaptainRows ? captainsForShip(litCaptainRows, s.main_ship_id) : null
+    const fittedCount = litFittingRows ? fittingsForShip(litFittingRows, s.main_ship_id).length : null
+    const note = repairNote[s.main_ship_id]
+    const pick = () => selection.selectShip(s.main_ship_id)
+    return (
+      <div
+        key={s.main_ship_id}
+        role="button"
+        tabIndex={0}
+        aria-pressed={selected}
+        data-testid={`fitting-row-${s.main_ship_id}`}
+        onClick={pick}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            pick()
+          }
+        }}
+        className={`cursor-pointer rounded-lg border px-3 py-2 transition-colors ${
+          selected
+            ? 'border-accent bg-accent-soft'
+            : 'border-edge bg-surface hover:border-accent/40 hover:bg-accent-soft'
+        }`}
+      >
+        <div className="flex items-center justify-between">
+          <span className={`truncate text-sm ${selected ? 'text-ink' : 'text-ink-muted'}`}>{s.name}</span>
+          <span className="ml-3 flex shrink-0 items-center gap-2">
+            {fittedCount !== null && fittedCount > 0 && (
+              <span
+                data-testid={`fitting-row-modules-${s.main_ship_id}`}
+                className="inline-flex items-baseline gap-1 rounded border border-edge bg-surface-2 px-1.5 py-0.5 text-[10px]"
+              >
+                <span className="text-ink-faint">Modules</span>
+                <span className="font-mono tabular-nums text-ink">{fittedCount}</span>
+              </span>
+            )}
+            <Badge tone={mainShipInstanceStatusTone(s.status)}>{mainShipInstanceStatusLabel(s.status)}</Badge>
+            {selected && <Badge tone="accent">Selected</Badge>}
+          </span>
+        </div>
+        {/* LOCATION — the ONE read. A missing/hidden projection row shows the honest fallback,
+            never a guessed place (the projection is [] while both movement gates are dark). */}
+        <p data-testid={`fitting-row-location-${s.main_ship_id}`} className="mt-0.5 text-[11px] text-ink-muted">
+          {locLabel ?? 'Location unavailable'}
+        </p>
+        {/* CONDITION — the shared shield/hull pair (shield row data-gated inside). */}
+        {meters && (
+          <div className="mt-1.5">
+            <MeterPairBars pair={meters} hullTone={isDisabled ? 'danger' : meters.hull.pct < 100 ? 'accent' : 'success'} />
+          </div>
+        )}
+        {/* Captains aboard — from the ONE shared captains read (server-lit; dark → nothing). */}
+        {rowCaptains && rowCaptains.length > 0 && (
+          <p data-testid={`fitting-row-captains-${s.main_ship_id}`} className="mt-1 truncate text-[10px] text-ink-faint">
+            Captains · {rowCaptains.map((c) => c.name).join(', ')}
+          </p>
+        )}
+        {/* NO-SOFTLOCK — the UNGATED free repair on the ROW: a destroyed ship's recovery path is
+            always on screen, whatever is selected. stopPropagation: repairing must not double as
+            a selection change. */}
+        {isDisabled && (
+          <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant="warning"
+              size="sm"
+              data-testid={`fitting-row-repair-${s.main_ship_id}`}
+              busy={repairPending[s.main_ship_id] ?? false}
+              busyLabel="Repairing…"
+              onClick={() => void repairShip(s.main_ship_id)}
+            >
+              Repair ship
+            </Button>
+            {note && (
+              <Notice tone="danger" className="mt-1" data-testid={`fitting-row-repair-error-${s.main_ship_id}`}>
+                {note}
+              </Notice>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // No commissioned ship yet → EmptyState pointing at Command (acquisition = composition; the
+  // CommissionShipPanel lives there). REVIEW FIX (S6 minor 3, NO-SOFTLOCK-adjacent): the shell
+  // ship-list read collapses a transient error to [] and never re-polls, so this state could
+  // stick for a ship-OWNING player (hiding a destroyed ship's repair CTA) with no way back but a
+  // reload — the "Check again" retry re-runs selection.refresh() so one bad read never strands
+  // the roster.
+  if (!selection.loading && selection.ships.length === 0) {
+    return (
+      <Screen wide>
+        <PageHeader eyebrow="Ops · Vessel" title="Fitting" subtitle="Your ships' loadouts" />
+        <EmptyState
+          data-testid="fitting-no-ship"
+          icon={<Icon name="ship" size={28} />}
+          title="No ship yet"
+          body="Commission your first ship from Command — its fitting, captains, and cargo appear here."
+          action={
+            <span className="inline-flex items-center gap-2">
+              <Link to="/command" className={buttonClasses('primary', 'md')}>
+                Go to Command
+              </Link>
+              <Button
+                variant="ghost"
+                data-testid="fitting-no-ship-retry"
+                onClick={() => void selection.refresh()}
+              >
+                Check again
+              </Button>
+            </span>
+          }
+        />
+      </Screen>
+    )
+  }
+
   return (
     <Screen wide>
-      <PageHeader eyebrow="Ops · Vessel" title="Ship" subtitle="Your ship" />
+      <PageHeader eyebrow="Ops · Vessel" title="Fitting" subtitle="Your ships, by fleet — select one to outfit it" />
       <div className={screenSplitClass()}>
         <div className={screenRailClass('main')}>
-          {/* THE ship surface: identity + hull integrity, the one right-now action (repair /
-              travel countdown), cargo & fittings. Port-centric: no recall/return-home. */}
-          <ShipStatusCard
-            mainShip={game.mainShip}
-            fleet={map.mainShipFleet}
-            movements={map.movements}
-            locations={game.locations}
-            onChanged={async () => {
-              await Promise.all([game.refresh(), map.refresh()])
-            }}
-          />
-          {/* SHIP-DOSSIER — what is ON the selected ship (the ONE shell selection): the ship's
-              own stats strip (SHIP-POWER) · fitted modules (lit, READ-ONLY — editing moved to
-              Port → Workshop; seeing ≠ editing) · assigned captains (server-lit gated) · cargo
-              hold (owner-read, works undocked). The captain panels beside stay the acting
-              surfaces and ping loadoutRev after success. */}
-          {/* key=ship id: switching ships (dark ShipSwitcher) REMOUNTS the dossier, so one ship's
-              sections can never briefly wear another ship's name while the new reads land. */}
-          <ShipDossier
-            key={shipSelection.selectedShipId ?? 'no-ship'}
-            selectedShip={shipSelection.selectedShip}
-            refreshKey={readRefreshKey}
-            location={shipLocation}
-          />
-          {/* WORKSHOP: ModulesPanel (craft & fit) moved to PortScreen — fitting is port-work
-              (the 0114 settled-SAFE law); the dossier above keeps the read-only fitted view. */}
+          {/* THE ROSTER — grouped by fleet (read-only; composition lives in Command). */}
+          <Card data-testid="fitting-roster">
+            <CardHeader
+              title="Ships"
+              subtitle="Grouped by fleet. Manage fleet membership in Command."
+              className="mb-2"
+            />
+            {ships === null || selection.loading ? (
+              <div aria-busy="true">
+                <Skeleton className="h-8 w-32 rounded-lg" />
+                <Skeleton className="mt-3 h-16 w-full rounded-lg" />
+                <span className="sr-only">Loading the roster…</span>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {teams.map(({ group, ships: members }) => (
+                  <div key={group.group_id} data-testid={`fitting-fleet-${group.group_id}`}>
+                    <SectionLabel>
+                      {group.name} · Fleet {group.group_index} · {members.length} ship{members.length === 1 ? '' : 's'}
+                    </SectionLabel>
+                    {members.length > 0 ? (
+                      <div className="mt-1.5 space-y-1.5">{members.map(shipRow)}</div>
+                    ) : (
+                      <p className="mt-1.5 text-xs text-ink-faint">No ships in this fleet.</p>
+                    )}
+                  </div>
+                ))}
+                {/* THE BERTHED BUCKET — buildTeamRoster's `ungrouped`, which post-S1 is exactly
+                    the berthed ships (group_id NULL ⇔ berthed at a port, the 0216 XOR). Rows
+                    resolve their berth port through the SAME location fold ('berthed' place →
+                    "Docked at <port>"). */}
+                <div data-testid="fitting-berthed">
+                  <SectionLabel>Berthed — not in a fleet</SectionLabel>
+                  {ungrouped.length > 0 ? (
+                    <div className="mt-1.5 space-y-1.5">{ungrouped.map(shipRow)}</div>
+                  ) : (
+                    <p data-testid="fitting-berthed-empty" className="mt-1.5 text-xs text-ink-faint">
+                      Every ship is with a fleet.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* THE FITTING DETAIL — the selected ship's outfitting surface. key = ship id: switching
+              ships REMOUNTS the detail, so one ship's sections never briefly wear another's name. */}
+          {selectedShip && (
+            <FittingDetail
+              key={selectedShip.main_ship_id}
+              ship={selectedShip}
+              shipRow={selectedShipRow}
+              hullName={selectedHullName}
+              position={selectedPos}
+              locations={game.locations}
+              allFittings={litFittingRows}
+              shipCaptains={litCaptainRows ? captainsForShip(litCaptainRows, selectedShip.main_ship_id) : null}
+              refreshKey={readRefreshKey}
+              onLoadoutChanged={refreshShared}
+              onIdentityChanged={async () => {
+                await Promise.all([selection.refresh(), game.refresh(), map.refresh(), refreshShared()])
+              }}
+            />
+          )}
         </div>
         <div className={screenRailClass('aside')}>
-          {/* SHIP-DOSSIER — the player's item inventory (player_inventory), previously visible
-              NOWHERE except as 'have n' recipe hints. Live data, no feature flag — always shown.
-              Aside home: these items feed RecruitCaptainPanel here and the Port Workshop's
-              recipes (WORKSHOP moved ModulesPanel there; this read refetches on route remount). */}
+          {/* The player's item inventory — live data, always lit (feeds RecruitCaptainPanel here
+              and the Port Workshop's recipes). */}
           <InventoryPanel refreshKey={readRefreshKey} />
-          {/* CAPTAIN-P15 (dark, server-lit only): assign/unassign captains to this ship. */}
+          {/* CAPTAIN-P15 (dark, server-lit only): assign/unassign captains to the SELECTED ship.
+              REVIEW FIX (S6 major 2): the target is the shell selection DIRECTLY — the same source
+              the detail uses — never the polled map.mainShip, which lags a roster click and would
+              briefly show/mutate the PREVIOUS ship's captains (wrong-target once captains light). */}
           <CaptainsPanel
             lifecycleKey={lifecycleKey}
-            mainShipId={map.mainShip?.main_ship_id ?? null}
+            mainShipId={selection.selectedShipId}
             onChanged={bumpLoadoutRev}
           />
           {/* CAPTAIN-P16 (dark, server-lit only): captain recruitment (progression). */}
           <RecruitCaptainPanel lifecycleKey={lifecycleKey} onChanged={bumpLoadoutRev} />
-          {/* Multi-ship selection (dark, compile-gated false + server-rejected). TEAM-ACTIVATION
-              PREP re-gate: the switcher was born under TRADE_MARKET_ENABLED only because TRADE-UI-1
-              was its first multi-ship consumer — the selection itself is generic (modules, captains,
-              market all address the selected ship), and a second ship now arrives via multi-ship
-              COMMISSIONING, so either gate must light it. OR (not a move): trade can still light it
-              independently. Still dark today — both constants are false. */}
-          {(TRADE_MARKET_ENABLED || MAINSHIP_ADDITIONAL_ENABLED) && (
-            <ShipSwitcher
-              ships={shipSelection.ships}
-              selectedShipId={shipSelection.selectedShipId}
-              selectShip={shipSelection.selectShip}
-            />
-          )}
-          {/* TEAM-ACTIVATION PREP (dark, compile-gated false + server-rejected): commission an
-              additional main ship — the in-client path to ship #2+, beside the switcher (ship
-              acquisition next to ship selection). Await→refetch: the new ship must appear in the
-              ONE shell selection list + the game/map state, never optimistically. */}
-          {MAINSHIP_ADDITIONAL_ENABLED && (
-            <CommissionShipPanel
-              ships={shipSelection.ships}
-              onCommissioned={async () => {
-                await Promise.all([shipSelection.refresh(), game.refresh(), map.refresh()])
-              }}
-            />
-          )}
         </div>
       </div>
     </Screen>

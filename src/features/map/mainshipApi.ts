@@ -61,6 +61,20 @@ async function fetchHull(hullTypeId: string): Promise<HullRow | undefined> {
 }
 
 /**
+ * S6 (Fitting tab) — the WHOLE hull catalog (public-read Reference/Config; the same table/columns
+ * fetchHull reads per id, kept in this module so there is ONE hull-select convention). The Fitting
+ * roster resolves every ship's class display name from its own hull_type_id — per-ship-correct at
+ * any N, never via the sole-ship-resolved view (fetchMyMainShip with no id fail-closes to the
+ * starter teaser at N≥2, whose hull is the WRONG class for any non-starter ship). Static reference
+ * data: callers fetch once per mount. Returns [] on error (rows fall back to the raw class id).
+ */
+export async function fetchHullTypes(): Promise<HullRow[]> {
+  const { data, error } = await supabase.from('main_ship_hull_types').select(HULL_COLS)
+  if (error) return []
+  return (data ?? []) as HullRow[]
+}
+
+/**
  * The ONE client owned-ship resolution rule — mirrors the backend `mainship_resolve_owned_ship`: an explicit
  * `mainShipId` selects that owned ship; otherwise the SOLE ship, and ONLY when the player owns exactly one.
  * Zero or >1 (ambiguous, once multi-ship is live) → null (fail closed). Never picks an arbitrary/first ship,

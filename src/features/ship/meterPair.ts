@@ -1,6 +1,7 @@
 // SHIELD-2 — the PURE shield/hull meter-pair view-model (no React, no IO; specs in
-// tests/shipMeterPair.spec.ts). The ONE derivation both ship cards (ShipStatusCard + ShipDossier)
-// render through MeterPairBars — never a second copy of the bar math.
+// tests/shipMeterPair.spec.ts). The ONE derivation the Fitting tab's roster rows + FittingDetail
+// (S6; formerly ShipStatusCard + ShipDossier) render through MeterPairBars — never a second copy
+// of the bar math.
 //
 // DATA-GATED (the 0191 posture, no flag): the shield reading is non-null ONLY when
 // max_shield > 0. Every ship is 0/0 until the human ACT-SHIELD flip, so on prod today the pair

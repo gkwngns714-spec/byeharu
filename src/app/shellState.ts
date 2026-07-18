@@ -14,9 +14,10 @@ export interface ShellState {
   combat: CombatState
   map: GalaxyMapData
   // A0 FOUNDATION FIXUP — the SINGLE client selected-ship model. Previously ShipScreen and PortScreen each
-  // mounted their own useMainShipSelection, so a selection made on one screen was invisible to the other. Lifted
-  // here so there is ONE source of truth (the documented TODO in ShipScreen). Drives the dark ShipSwitcher /
-  // MarketPanel today; ready for the multi-ship lit path.
+  // mounted their own useMainShipSelection, so a selection made on one screen was invisible to the other.
+  // Lifted here so there is ONE source of truth. S6: the Fitting tab's roster rows are the primary selection
+  // surface (selection.selectShip; ShipSwitcher retired); the Fitting detail, CaptainsPanel, and the dark
+  // MarketPanel all address this same selection.
   selection: MainShipSelection
 }
 

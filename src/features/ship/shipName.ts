@@ -3,7 +3,8 @@
 // Client-side mirror of rename_main_ship_self's validation (migration 0184, which itself mirrors
 // the 0043 server rename: btrim → non-empty → length ≤ 40). Display-only: the SERVER re-validates
 // and owns the write; this mirror only lets the inline rename form disable Save + hint honestly
-// before a doomed round-trip. Composed by ShipStatusCard; unit-tested in tests/shipRename.spec.ts.
+// before a doomed round-trip. Composed by FittingDetail (S6; formerly ShipStatusCard); unit-tested
+// in tests/shipRename.spec.ts.
 
 /** The server's name length cap (0043/0184: `length(v_clean) > 40 → reject`). */
 export const SHIP_NAME_MAX = 40

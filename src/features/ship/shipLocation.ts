@@ -3,6 +3,15 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MapLocation } from '../map/mapTypes'
 import { formatCountdown } from '../../lib/time'
 
+// S6 NOTE (Fitting tab): ShipStatusCard/ShipDossier/ShipScreen's direct consumption is RETIRED —
+// every live consumer now reaches this resolver through the fleet-positions adapter
+// (teamRoster.fleetPositionLocationLabel / resolveBerthedLocationLabel below), i.e. the ONE
+// map.fleetPositions read. CLEANUP FLAG (recorded, not done here): with the status card gone,
+// deriveMainShipStatus (mainshipApi) lost its last location-UI consumer; its documented mirror
+// fleetDisplayStatus below survives only as this resolver's internal fleet-status mapper — fold
+// the two when the MAP slice's remaining consumer (MainShipCommand) is next touched. Do NOT add
+// a third copy.
+//
 // SHIPLOC — the ONE shared main-ship LOCATION resolver. Born to answer the owner order "in ship
 // tab, i should be able to see where the ship is, the location as well." ShipStatusCard already
 // inlined this name-resolution (docked → the present fleet's location name; traveling → the moving

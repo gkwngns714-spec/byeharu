@@ -9,7 +9,7 @@ import { selectActiveLegacyMovement } from '../features/map/spaceStopCommand'
 import { Icon, type IconName } from '../components/ui'
 
 // UI-REBUILD (2b) — the persistent four-destination shell. ONE mobile-first bottom tab bar
-// (Map · Ship · Port · Command; active tab derived from the router) over a single shared data
+// (Map · Fitting · Port · Command; active tab derived from the router) over a single shared data
 // layer: the three polled hooks (map/game/combat) mount HERE exactly once and reach every
 // destination through useShellState — destinations never mount their own useGameState/useCombat.
 //
@@ -22,7 +22,9 @@ import { Icon, type IconName } from '../components/ui'
 // NavLink's token color: accent when active, ink-muted otherwise). No emoji in chrome.
 const TABS: readonly { to: string; label: string; icon: IconName }[] = [
   { to: '/map', label: 'Map', icon: 'map' },
-  { to: '/ship', label: 'Ship', icon: 'ship' },
+  // S6: the Ship destination is now FITTING (ship outfitting by fleet; route kept at /ship so old
+  // bookmarks keep resolving). nav testid follows the label → `nav-fitting`.
+  { to: '/ship', label: 'Fitting', icon: 'ship' },
   { to: '/port', label: 'Port', icon: 'anchor' },
   { to: '/command', label: 'Command', icon: 'command' },
 ]

@@ -100,16 +100,14 @@ export function PortScreen() {
           <div className={screenRailClass('main')}>
             {/* The docked-port surface (identity → right now → service details). */}
             <DockedPortCard dock={dock} />
-            {/* WORKSHOP — module crafting & fitting, MOVED from the Ship tab (owner order: "modules
-                should be in Port → Workshop, not the ship tab"). Fitting is port-work — the 0114
-                settled-SAFE law needs a settled ship, and this docked branch guarantees exactly
-                that (not docked → the screen's EmptyState, no Workshop) — and crafting rides along
-                (non-spatial, 0109: player-scoped, no settled precondition — reachable wherever the
-                ship is docked). The panel itself is UNCHANGED (a move, not a refactor): server-lit
-                only, with the Workshop label rendered inside its lit branch so a dark read never
-                leaves a label over a void. The Ship tab keeps the dossier's READ-ONLY fitted view
-                (seeing ≠ editing). No onChanged wiring: no sibling on this screen reads the player
-                inventory / ship loadout, and the Ship tab's readers (ShipDossier, InventoryPanel)
+            {/* WORKSHOP — module CRAFTING (non-spatial, 0109: player-scoped, no settled
+                precondition — reachable wherever the ship is docked). S6: the fit/unfit EDIT
+                surface moved to the Fitting tab's per-ship detail (FittingDetail — the ONE
+                fitting-edit surface; its enable derives from the ship's own fleet-positions row
+                and the server's 0114 settled-safe rule stays the enforcer), so this panel is
+                crafting only. Server-lit only, with the Workshop label rendered inside its lit
+                branch so a dark read never leaves a label over a void. No onChanged wiring: no
+                sibling on this screen reads the player inventory, and the Fitting tab's readers
                 refetch on route remount — screens unmount on navigation. */}
             <ModulesPanel lifecycleKey={lifecycleKey} sectionLabel="Workshop" />
             {/* TRADE-MARKET-1 (dark, compile-gated false + server-rejected): buy/sell at the docked port. */}
