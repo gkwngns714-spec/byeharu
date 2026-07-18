@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useShellState } from '../../app/shellState'
-import { Card, CardHeader, Badge, SectionLabel, Button, Notice, Skeleton, Icon } from '../../components/ui'
+import { Card, CardHeader, Badge, SectionLabel, Button, Notice, Skeleton, Icon, Meter } from '../../components/ui'
 import {
   fetchMyShipGroups,
   fetchMyShipGroupMap,
@@ -18,6 +18,7 @@ import {
   buildTeamRoster,
   nextTeamSlot,
   fleetPositionLocationLabel,
+  commandFleetState,
   fleetCommandState,
   fleetCapacityState,
   type GroupRow,
@@ -32,7 +33,7 @@ import { getMyCaptainInstances } from '../captains/captainsApi'
 import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { isServerLit } from '../../lib/useActivityPanelGuards'
 import { fetchMyExpeditionPreview } from '../map/mainshipApi'
-import { mainShipInstanceStatusLabel, mainShipInstanceStatusTone } from '../map/mainshipStatusLabel'
+import { mainShipInstanceStatusLabel } from '../map/mainshipStatusLabel'
 import { shipPowerFromPreview } from '../ship/shipDossierView'
 import { fetchFleetControlEnabled } from '../../lib/catalog'
 
@@ -234,10 +235,13 @@ export function TeamRosterPanel() {
 
   const shipRow = (s: RosterShip) => {
     const selected = s.main_ship_id === selection.selectedShipId
-    // TEAM-FRIENDLY: humanized status (mainShipInstanceStatusLabel — stationary→"Docked", 0199) plus
-    // the leak-safe per-ship location from the ONE resolver. Location is OMITTED (never a wrong port)
-    // when the ship isn't in the FLEETMAP projection.
+    // TEAM-FRIENDLY: the leak-safe per-ship location from the ONE resolver. Location is OMITTED
+    // (never a wrong port) when the ship isn't in the FLEETMAP projection.
     const locLabel = fleetPositionLocationLabel(posByShip.get(s.main_ship_id), game.locations)
+    // COMMAND-FLEET-STATE (play-test fix): the badge derives from the SAME fleet-position row, not
+    // the raw status column — fixes "Ready to launch" showing for a ship whose fleet is actually
+    // moving or docked away. See teamRoster.ts's commandFleetState doc comment for the full derivation.
+    const fleetState = commandFleetState(posByShip.get(s.main_ship_id), game.locations, s.status)
     // FLEET-READ (UI): the WHOLE row is the select target, not just the name. The row is a <div>, not a
     // <button>, because it already contains buttons (Remove / command-ship) and nesting them is invalid
     // HTML — so it carries the button ROLE plus keyboard activation instead, and the action strip below
@@ -266,13 +270,21 @@ export function TeamRosterPanel() {
           <span className="ml-3 flex shrink-0 items-center gap-2">
             {/* Status is the row's main signal, so it reads as a semantic pill rather than faint grey
                 text — same colour language as the map (travelling = amber, returning = accent, …). */}
-            <Badge tone={mainShipInstanceStatusTone(s.status)}>{mainShipInstanceStatusLabel(s.status)}</Badge>
+            <Badge tone={fleetState.tone}>{fleetState.label}</Badge>
             {selected && <Badge tone="accent">Selected</Badge>}
           </span>
         </div>
         {/* TEAM-FRIENDLY: where the ship IS — "Docked at Haven Reach" / "In transit to …" / "In combat".
             Omitted entirely when unknown, so a row never claims a place it can't prove. */}
         {locLabel && <p className="mt-0.5 text-[11px] text-ink-muted">{locLabel}</p>}
+        {/* COMMAND-FLEET-STATE: a moving fleet also gets a live ETA + progress bar — the owner's
+            play-test ask ("how long it takes, and more"). Omitted for anything not currently moving. */}
+        {fleetState.etaText && (
+          <div className="mt-1 space-y-1">
+            <p className="text-[11px] text-ink-faint">Arrives in {fleetState.etaText}</p>
+            {fleetState.progress !== null && <Meter pct={fleetState.progress * 100} tone="accent" className="h-1" />}
+          </div>
+        )}
         {/* Remove is the only per-ship membership control that remains on a member row — the ONE add
             surface is each team's "+ Add ship" picker (below). Same assign RPC + run key; await → refetch. */}
         {s.group_id != null && (
