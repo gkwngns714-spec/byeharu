@@ -46,8 +46,9 @@
 --            jsonb key is a legacy unit_type id, hp and fleet_units sync are exact, the escape
 --            settle's return speed equals legacy fleet_speed, the new exactly-one-identity CHECK
 --            raises on both illegal shapes, the three D1 leaves smoke-check (NULL return speed for a
---            legacy fleet; hp-only sync; the 0059 destruction terminal), and EXACTLY ONE combat cron
---            job exists (the no-second-engine pin).
+--            legacy fleet; hp-only sync; the 0059 destruction terminal), and EXACTLY ONE combat-TICK
+--            engine cron exists (process-combat-ticks; the no-second-engine pin — the COMBAT-S2
+--            telegraph resolver is combat-named but is not an engine and never runs the tick).
 --   TEAMSTATS (Slice D0, 0166) — get_my_group_expedition_totals rejects dark BEFORE the team-flag
 --            flip; invalid_activity / group_not_found (random + cross-player) / empty_group; on the
 --            happy path every additive total EQUALS the proof's OWN independent per-member sum over
@@ -256,15 +257,21 @@
 -- chain lacks (reveal_starter_ports) — all reverted by ROLLBACK. No committed flag/state changes.
 --
 -- ── THE ONE NON-RPC-PURE STEP (fixture normalization; quarantined below) ──────────────────────────
--- Provisioning is 100% real-RPC (commission_first_main_ship + commission_additional_main_ship). But
--- commissioning docks ships CANONICALLY (status='stationary', spatial_state='at_location', plus a
--- 'present' commission fleet at Haven), while the legacy team-send path (0152/0163) requires
--- status='home' — and NO RPC cleanly transitions a stationary commissioned ship to 'home' under the
--- 0055 spatial CHECKs. So the harness fixture-normalizes the ships that must be legacy-sendable into
--- canonical home shape and retires their 'present' commission fleets (so they don't consume the
--- active-fleet cap). That single UPDATE pair — plus a created_at stagger for deterministic member
--- ordering (now() is txn-constant, so same-txn rows tie) — is the ONLY non-RPC state surgery here;
--- everything else goes through the real RPC surface.
+-- Provisioning is 100% real-RPC (commission_first_main_ship + commission_additional_main_ship).
+-- 4C-MIG-2A (0222) TOKEN UPDATE: commissioning USED to dock ships CANONICALLY (status='stationary',
+-- spatial_state='at_location', plus a 'present' commission fleet at Haven) — port_entry_commission_
+-- build's b1 hunk now mints status='home' with spatial NULL instead (the fleet+presence mint is
+-- UNCHANGED). The legacy team-send path (0152/0163) still requires status='home', so the FIVE ships
+-- that must be legacy-sendable (a1,a2,a3,b1,c1) no longer need a status/spatial rewrite for that —
+-- but they still carry a live 'present' commission fleet that must be retired (it would otherwise
+-- consume the active-fleet cap), so that half of the normalization survives. c2 is the DELIBERATE
+-- exception in BOTH directions: it is left OFF the home-normalization list (unchanged), AND it is
+-- surgically taken BACK to the pre-repoint commissioned-docked shape (status='stationary',
+-- spatial_state='at_location') — the one shape this proof still needs on demand (the all-or-nothing
+-- SEND block pins the legacy send's own error text for a stationary ship, 0152:106) that the real
+-- commission RPC no longer produces by itself. That surgery — plus a created_at stagger for
+-- deterministic member ordering (now() is txn-constant, so same-txn rows tie) — is the ONLY non-RPC
+-- state surgery here; everything else goes through the real RPC surface.
 
 \set ON_ERROR_STOP on
 
@@ -437,12 +444,11 @@ begin
   insert into tcmd values ('a1',a1),('a2',a2),('a3',a3),('b1',b1),('c1',c1),('c2',c2);
 
   -- ── FIXTURE NORMALIZATION — the ONE non-RPC-pure step in this proof (see header). ────────────────
-  -- Commissioning docks ships canonically (stationary / at_location + a 'present' commission fleet at
-  -- Haven), but the legacy send (0152) requires status='home', and NO RPC cleanly transitions a
-  -- stationary commissioned ship to 'home' under the 0055 spatial CHECKs. Normalize the ships that
-  -- must be legacy-sendable (a1,a2,a3,b1,c1) into canonical home shape, and retire their 'present'
-  -- commission fleets so they don't consume the active-fleet cap. c2 is DELIBERATELY LEFT in its
-  -- commissioned 'stationary' shape — it is the un-sendable member the all-or-nothing test needs.
+  -- 4C-MIG-2A (0222): commission now births status='home'/spatial NULL directly (b1), so the FIVE
+  -- legacy-sendable ships (a1,a2,a3,b1,c1) need only their 'present' commission fleet retired, not a
+  -- status/spatial rewrite. The UPDATE below is dark on the ship-column set for these five (already
+  -- 'home'/NULL from birth) but is kept — cheap, and future-proof if commission's default ever moves
+  -- again — and still does the load-bearing fleet-retirement work.
   update public.main_ship_instances
      set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
    where main_ship_id in (a1, a2, a3, b1, c1);
@@ -459,6 +465,17 @@ begin
    where fleet_id in (select id from public.fleets
                         where main_ship_id in (a1, a2, a3, b1, c1) and status = 'destroyed')
      and status = 'active';
+
+  -- c2 SURGERY (the one ADDITIVE fixture step 0222 requires): reconstruct the pre-repoint
+  -- commissioned-docked shape (status='stationary', spatial_state='at_location') that commission
+  -- itself no longer produces. c2's 'present' commission fleet + active presence are UNTOUCHED
+  -- (real-RPC, still minted exactly as before) — only the two ship columns move, together, to
+  -- satisfy the 0055 CHECK (main_ship_instances_stationary_spatial_state: status='stationary'
+  -- requires spatial_state in ('in_space','at_location')). This is the un-sendable member the
+  -- all-or-nothing SEND block needs (0152's own status<>'home' gate, pinned on its exact error text).
+  update public.main_ship_instances
+     set status = 'stationary', spatial_state = 'at_location'
+   where main_ship_id = c2;
 
   -- Deterministic member ordering: group-send/stop iterate members ORDER BY created_at, but now() is
   -- txn-constant so same-txn commissions tie. Stagger so a1<a2<a3 and c1<c2 — the all-or-nothing test
@@ -1076,7 +1093,11 @@ begin
 
   -- leaf smoke on a fixture team ship (a3: home, spatial_state NULL — undisturbed since BLOCK STOP;
   -- rolled back with everything): mainship_sync_combat_hp writes hp ONLY (status/spatial untouched);
-  -- mainship_mark_combat_destroyed writes the exact 0059 terminal (status/hp/spatial_state/coords).
+  -- mainship_mark_combat_destroyed writes status='destroyed'/hp=0 (the 0059 terminal's lifecycle
+  -- half). 4C-MIG-2A (0222) TOKEN UPDATE: the writer no longer NULLS spatial_state/space_x/space_y
+  -- itself (b3) — a3 already carries them NULL from birth (commission no longer mints them either,
+  -- b1), so the post-condition below still holds, now because the retired columns were never
+  -- touched rather than because this call cleared them.
   perform public.mainship_sync_combat_hp(a3, 123);
   select count(*) into n from public.main_ship_instances
     where main_ship_id = a3 and hp = 123 and status = 'home' and spatial_state is null;
@@ -1085,16 +1106,35 @@ begin
   select count(*) into n from public.main_ship_instances
     where main_ship_id = a3 and status = 'destroyed' and hp = 0
       and spatial_state is null and space_x is null and space_y is null;
-  if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_mark_combat_destroyed did not write the 0059 terminal'; end if;
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_mark_combat_destroyed did not write the destroyed/hp=0 terminal'; end if;
 
-  -- the no-second-engine pin: EXACTLY one combat cron job, and it is the 0026 tick schedule.
-  select count(*) into n from cron.job where jobname like '%combat%';
-  if n <> 1 then raise exception 'COMBATPARITY FAIL: % combat cron jobs (want exactly 1)', n; end if;
+  -- the no-second-ENGINE pin: EXACTLY one combat cron job RUNS the tick engine (process_combat_ticks),
+  -- and it is the 0026 'process-combat-ticks' schedule. Counting by COMMAND (not by the '%combat%'
+  -- jobname) is the true engine identity and is naming-independent — the intent has always been "no
+  -- SECOND tick/combat engine", never "no other combat-named cron".
+  --   COMBAT-S2 (0230): the telegraph resolver 'process-combat-telegraphs' is a legitimate NEW
+  --   combat-named cron, but it is NOT a combat engine — it only DELAYS a hunt arrival and then
+  --   delegates to the SAME combat_create_encounter (running the untouched tick engine one hop later).
+  --   Its command is process_combat_telegraphs (NOT process_combat_ticks), so the engine count stays 1,
+  --   and we pin below that it never invokes the tick engine itself (the real no-second-engine guard).
+  --   It is scheduled unconditionally with a flag-gated body (the process_combat_ticks pattern), so it
+  --   exists in cron.job even while combat_telegraph_enabled is dark — expected.
+  select count(*) into n from cron.job where command like '%process_combat_ticks%';
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: % combat-TICK engine cron jobs (want exactly 1)', n; end if;
   select count(*) into n from cron.job
     where jobname = 'process-combat-ticks' and command like '%process_combat_ticks%';
-  if n <> 1 then raise exception 'COMBATPARITY FAIL: the one combat job is not process-combat-ticks'; end if;
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: the one combat-tick engine job is not process-combat-ticks'; end if;
+  -- the telegraph resolver (if scheduled) must NOT be a second engine: it never runs process_combat_ticks.
+  select count(*) into n from cron.job
+    where jobname = 'process-combat-telegraphs' and command like '%process_combat_ticks%';
+  if n <> 0 then raise exception 'COMBATPARITY FAIL: the telegraph resolver must not run the tick engine (found % )', n; end if;
+  -- and the ONLY combat-named crons allowed are the tick engine and the (COMBAT-S2) telegraph resolver —
+  -- a THIRD combat-named cron would be an unaccounted-for engine/side-path and must fail this pin.
+  select count(*) into n from cron.job
+    where jobname like '%combat%' and jobname not in ('process-combat-ticks', 'process-combat-telegraphs');
+  if n <> 0 then raise exception 'COMBATPARITY FAIL: % unexpected combat-named cron job(s) beyond the tick engine + telegraph resolver', n; end if;
 
-  raise notice 'TEAMCMD_PASS_COMBATPARITY ok: legacy hunt via real chain under team flag ON; tick damage = independent Σ(attack×alive); enemy damage = independent defense-curve value; legacy jsonb keys; hp+fleet sync exact; escaped report legacy-keyed; return speed = fleet_speed; identity CHECK raises both ways; leaf smoke (NULL return speed, hp-only sync, 0059 terminal); exactly 1 combat cron job';
+  raise notice 'TEAMCMD_PASS_COMBATPARITY ok: legacy hunt via real chain under team flag ON; tick damage = independent Σ(attack×alive); enemy damage = independent defense-curve value; legacy jsonb keys; hp+fleet sync exact; escaped report legacy-keyed; return speed = fleet_speed; identity CHECK raises both ways; leaf smoke (NULL return speed, hp-only sync, 0059 terminal); exactly 1 combat-TICK engine cron (process-combat-ticks) + the COMBAT-S2 telegraph resolver which never runs the tick engine, and no third combat-named cron';
 end $$;
 
 -- ════════ BLOCK TEAMHUNT (Slice D2, 0168): hunt send + sortie manifest + member encounter routing ════════

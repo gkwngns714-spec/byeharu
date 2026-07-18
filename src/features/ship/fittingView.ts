@@ -6,12 +6,13 @@ import type { ModuleInstance, ShipFittingRow } from '../modules/modulesTypes'
 //
 // ONE-READ LAW: fit-eligibility derives from the SAME get_my_fleet_positions row every location
 // label folds from (map.fleetPositions via useShellState) — NEVER a second dockedness query. The
-// client mirror is display-only: the server (fitting_execute_command step 6, migration 0114) stays
-// the enforcer — it requires mainship_space_validate_context ok AND state in ('home','at_location')
-// plus the cross-domain exclusion, and answers ship_not_settled otherwise. A place the client
-// enables that the server rejects surfaces the server's own honest copy; the UI is never the control.
+// client mirror is display-only: the server (fitting_execute_command → assert_settled_safe →
+// mainship_space_validate_context) stays the enforcer — it requires validate_context ok AND
+// state in ('home','at_location') plus the cross-domain exclusion, and answers ship_not_settled
+// otherwise. A place the client enables that the server rejects surfaces the server's own honest
+// copy; the UI is never the control.
 
-export type FitGateReason = 'position_unknown' | 'not_settled' | 'berthed_not_fittable'
+export type FitGateReason = 'position_unknown' | 'not_settled'
 
 export interface FitEditability {
   editable: boolean
@@ -20,33 +21,24 @@ export interface FitEditability {
 
 /**
  * Whether the loadout edit surface (fit/unfit) is ENABLED for a ship, from its ONE fleet-positions
- * row. Editable exactly when the server-decided `place` is 'docked' (fleeted, settled at a port —
- * best-effort: its fleet is normally at_location, which 0114 accepts; the rare legacy-corpse edge
- * still surfaces the server's own ship_not_settled copy on attempt). Everything else fails closed:
- * transit / in_space are the exact states the 0114 settled-safe rule exists to forbid, 'hidden' is
+ * row. Editable when the server-decided `place` is 'docked' (fleeted, settled at a port) OR
+ * 'berthed' (unfleeted at its berth port — the S1/0216 place): 4c-mig-1 (0221) repointed
+ * validate_context onto berth truth so a berthed ship resolves to state='home', which the
+ * settled-safe rule accepts — so both surface as fittable. Everything else fails closed:
+ * transit / in_space are the exact states the settled-safe rule exists to forbid, 'hidden' is
  * an unknown place (never guess), and a missing row (projection dark/empty, or a destroyed ship —
  * the projection excludes those) is position-unknown.
- *
- * INTERIM-UNTIL-4C: 'berthed' (unfleeted at its berth port — the S1/0216 place) is NOT editable.
- * A berthed ship validates to legacy_home / a contradictory state, and the server's settled-safe
- * rule (0114) accepts ONLY ('home','at_location') — so every fit attempt on a berthed ship returns
- * ship_not_settled. Until slice 4c/4d canonicalizes berthed to a settled state 0114 accepts, the
- * client must not promise a capability the server will always reject. When 4c lands: restore
- * berthed → editable here and delete the 'berthed_not_fittable' reason.
  */
 export function fittingEditability(pos: FleetPosition | undefined): FitEditability {
   if (!pos) return { editable: false, reason: 'position_unknown' }
-  if (pos.place === 'docked') return { editable: true, reason: null }
-  if (pos.place === 'berthed') return { editable: false, reason: 'berthed_not_fittable' }
+  if (pos.place === 'docked' || pos.place === 'berthed') return { editable: true, reason: null }
   return { editable: false, reason: 'not_settled' }
 }
 
 /** Short player copy for a disabled fit gate (the teamReasonMessage tone; never a raw code). */
 export function fitGateMessage(reason: FitGateReason): string {
   if (reason === 'position_unknown') return 'Ship position unavailable right now — loadout editing is paused.'
-  if (reason === 'berthed_not_fittable')
-    return 'This ship is berthed. Bring a fleet to its port — assign it to a fleet, or dock a fleet here — to change its fitting.'
-  return 'The ship must be docked at a port to change its loadout.'
+  return 'The ship must be docked or berthed at a port to change its loadout.'
 }
 
 /**

@@ -68,8 +68,9 @@ export async function fetchLaunchFromDockEnabled(): Promise<boolean> {
 // fetchLaunchFromDockEnabled (the server gates its group RPCs on the SAME flag via cfg_bool FIRST).
 // true ⇔ fleet_control_enabled's row exists AND its jsonb value is exactly `true`. Absent / unreadable
 // / any non-true shape → OFF, so the client is byte-identical to today until a human flips it: no
-// command-ship control, no active/inactive indicator, no 8-cap surfacing, and MainShipCommand keeps
-// the per-ship Move affordance. Read only.
+// command-ship control, no active/inactive indicator, no 8-cap surfacing. (This note once said
+// "MainShipCommand keeps the per-ship Move affordance" — that surface was DELETED in 4a-post; the
+// unified fleet mover is the only movement surface. n2 comment fix.) Read only.
 export async function fetchFleetControlEnabled(): Promise<boolean> {
   const { data, error } = await supabase.from('game_config').select('key, value')
   if (error) return false

@@ -2,7 +2,6 @@ import { test, expect } from '@playwright/test'
 import {
   groupStopAvailability,
   resolveStoppableFleets,
-  stopOutcomeMessage,
   parseUnifiedStopResult,
   unifiedStopOutcomeMessage,
 } from '../src/features/command/teamStop'
@@ -228,48 +227,14 @@ test('DARK is the DEFAULT: omitting the flag bag is exactly the dark arm (caller
   expect(resolveStoppableFleets(rows, [G1])).toEqual(resolveStoppableFleets(rows, [G1], DARK))
 })
 
-test('stopOutcomeMessage: ships actually halted', () => {
-  expect(stopOutcomeMessage('Vanguard', { stopped: 3, skipped: 0, failed: 0 })).toBe(
-    'Stopped Vanguard — 3 ships holding position.',
-  )
-})
+// ── FLEET-GO 4a-1 — the UNIFIED stop's parser (0209), the ONLY group-stop path now. ──────────────
+// The legacy per-member stopOutcomeMessage (0164) was retired with the movement-signal cleanup once
+// fleet_movement_unified_enabled went on in prod. `stopped` is a BOOLEAN here (ONE fleet, one brake).
 
-test('stopOutcomeMessage: singular ship', () => {
-  expect(stopOutcomeMessage('Vanguard', { stopped: 1 })).toBe('Stopped Vanguard — 1 ship holding position.')
-})
-
-test('stopOutcomeMessage: all-skipped reads as a no-op, not a success', () => {
-  expect(stopOutcomeMessage('Vanguard', { stopped: 0, skipped: 2, failed: 0 })).toBe(
-    'Vanguard was already stopped — nothing was in flight.',
-  )
-})
-
-test('stopOutcomeMessage: partial failure is reported, never swallowed', () => {
-  const msg = stopOutcomeMessage('Hammer', { stopped: 2, skipped: 0, failed: 1 })
-  expect(msg).toContain('2 ships holding position')
-  expect(msg).toContain("1 ship couldn't stop")
-})
-
-test('stopOutcomeMessage: an opaque/missing aggregate degrades to the no-op line, never NaN', () => {
-  expect(stopOutcomeMessage('Vanguard', {})).toBe('Vanguard was already stopped — nothing was in flight.')
-  expect(stopOutcomeMessage('Vanguard', { stopped: 'x', failed: null })).not.toContain('NaN')
-})
-
-// ── FLEET-GO 4a-1 — the UNIFIED stop's parser (0209) + THE ENVELOPE TRAP, pinned. ────────────────
-// `stopped` is a COUNT in 0164 but a BOOLEAN in 0209. These specs are the reason two parsers exist;
-// if anyone "deduplicates" them, the trap spec below goes red.
-
-test('THE TRAP, pinned: a 0209 SUCCESS fed to the 0164 parser reads as "nothing was in flight" — the new parser disagrees', () => {
+test('unifiedStopOutcomeMessage: a 0209 SUCCESS reads the boolean and reports the halt in open space', () => {
   // A real 0209 success envelope: the fleet's leg was cancelled, it now holds in space.
   const success = { ok: true, group_id: 'g1', fleet_id: 'f1', stopped: true, cancelled_movement_id: 'm1', space_x: 10, space_y: 20 }
-  // The OLD parser coerces the boolean to 0 (its filter is `typeof v === 'number'`) and mis-reports
-  // a successful stop as a no-op. This is exactly why the unified arm must never route through it.
-  const oldMsg = stopOutcomeMessage('Vanguard', success)
-  expect(oldMsg).toBe('Vanguard was already stopped — nothing was in flight.')
-  // The NEW parser reads the boolean and reports the halt.
-  const newMsg = unifiedStopOutcomeMessage('Vanguard', success)
-  expect(newMsg).toBe('Stopped Vanguard — holding position in open space.')
-  expect(newMsg).not.toBe(oldMsg) // the two parsers MUST disagree on a 0209 success
+  expect(unifiedStopOutcomeMessage('Vanguard', success)).toBe('Stopped Vanguard — holding position in open space.')
 })
 
 test('parseUnifiedStopResult: strict boolean — only `stopped: true` is a halt (counts never leak in)', () => {

@@ -95,12 +95,34 @@ export function deriveDockedTeamRollups(
 // (this arc's whole disease is copies). Locations are structurally typed so the helper stays pure
 // and does not depend on MapLocation's full shape. Dark: unifiedFleets is always [] (the fetch is
 // gated), so this is a no-op and the fold is byte-identical to today.
+// The ONE combat-sortie classification both folds below share (never a second inline copy).
+function combatLocationIdSet(locations: readonly { id: string; activity_type: string }[]): Set<string> {
+  return new Set(locations.filter((l) => l.activity_type !== 'none').map((l) => l.id))
+}
+
+function isCombatSortiePresence(f: UnifiedGroupFleetLite, combatIds: ReadonlySet<string>): boolean {
+  return f.status === 'present' && f.current_location_id !== null && combatIds.has(f.current_location_id)
+}
+
 export function excludeCombatSortieFleets(
   fleets: readonly UnifiedGroupFleetLite[],
   locations: readonly { id: string; activity_type: string }[],
 ): UnifiedGroupFleetLite[] {
-  const combatLocationIds = new Set(locations.filter((l) => l.activity_type !== 'none').map((l) => l.id))
-  return fleets.filter(
-    (f) => !(f.status === 'present' && f.current_location_id !== null && combatLocationIds.has(f.current_location_id)),
-  )
+  const combatIds = combatLocationIdSet(locations)
+  return fleets.filter((f) => !isCombatSortiePresence(f, combatIds))
+}
+
+// MAP-INTEGRATION M1 — the exact COMPLEMENT of excludeCombatSortieFleets (same predicate, same
+// authority — the two partition the raw fleet read, nothing double-counts and nothing vanishes).
+// The exclusion above strips a mid-combat fleet from the dock fold (correct: it is not docked), but
+// with the per-ship chevron layer deleted (S5) that stripping made the fleet INVISIBLE for the whole
+// combat phase of every hunt — no dock badge, no moving badge, no space badge. This selector feeds
+// the map's "in combat at X" team badge (teamMarkers.resolveFleetCombatBadges) so a combat-present
+// fleet keeps a real marker. Dark: unifiedFleets is always [] (the fetch is gated) → always [].
+export function selectCombatSortieFleets(
+  fleets: readonly UnifiedGroupFleetLite[],
+  locations: readonly { id: string; activity_type: string }[],
+): UnifiedGroupFleetLite[] {
+  const combatIds = combatLocationIdSet(locations)
+  return fleets.filter((f) => isCombatSortiePresence(f, combatIds))
 }

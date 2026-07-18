@@ -1,7 +1,10 @@
-import { resolveBerthedLocationLabel, resolveShipLocationLabel } from '../ship/shipLocation'
+import { resolveBerthedLocationLabel, resolveShipLocationLabel, type ShipLocationResolved } from '../ship/shipLocation'
 import type { FleetPosition, FleetPositionSegment, MainShipFleet } from '../map/mainshipApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MapLocation } from '../map/mapTypes'
+import { movementProgress } from '../map/movementInterpolation'
+import { mainShipInstanceStatusLabel, mainShipInstanceStatusTone } from '../map/mainshipStatusLabel'
+import type { BadgeTone } from '../../components/ui/Badge'
 
 // TEAM-COMMAND Slice A — pure, server-truth-free roster + ownership logic.
 //
@@ -95,10 +98,14 @@ export function nextTeamSlot(groups: GroupRow[]): number | null {
 // guessed place. A transit segment carries coordinates, not a target location id, so an outbound leg
 // fails closed to "In transit to its destination" (the resolver's own fallback) — honest, never a
 // wrong port. Pure: names resolve solely from the passed world locations.
-export function fleetPositionLocationLabel(
+// Shared internals of fleetPositionLocationLabel/commandFleetState, factored out so BOTH read the
+// SAME resolved shape (kind/label/etaText) instead of the label-only view re-deriving its own copy.
+// Returns null exactly where the old fleetPositionLocationLabel returned null: 'hidden' placement, a
+// transit row with no segment, or no row at all — never a guess.
+function resolveFleetPositionLocation(
   pos: FleetPosition | undefined,
   locations: MapLocation[],
-): string | null {
+): ShipLocationResolved | null {
   if (!pos) return null
   if (pos.place === 'docked' || pos.place === 'in_space') {
     const fleet: MainShipFleet = {
@@ -107,19 +114,102 @@ export function fleetPositionLocationLabel(
       current_location_id: pos.place === 'docked' ? pos.location_id : null,
       location_mode: null,
       active_movement_id: null,
-      active_space_movement_id: null,
     }
-    return resolveShipLocationLabel(fleet, null, locations).label
+    return resolveShipLocationLabel(fleet, null, locations)
   }
   if (pos.place === 'transit' && pos.segment) {
-    return resolveShipLocationLabel(null, movementFromSegment(pos.segment), locations).label
+    return resolveShipLocationLabel(null, movementFromSegment(pos.segment), locations)
   }
   // S1 BERTH MODEL (0216): an UNFLEETED ship berthed at a port — a docked read through the ONE
   // shared resolver ("Docked at <port>"); never a map marker, so only the label surfaces here.
   if (pos.place === 'berthed') {
-    return resolveBerthedLocationLabel(pos.location_id, locations).label
+    return resolveBerthedLocationLabel(pos.location_id, locations)
   }
   return null // 'hidden' (home/destroyed/incoherent) or a transit row with no segment → omit, never guess
+}
+
+export function fleetPositionLocationLabel(
+  pos: FleetPosition | undefined,
+  locations: MapLocation[],
+): string | null {
+  return resolveFleetPositionLocation(pos, locations)?.label ?? null
+}
+
+// COMMAND-FLEET-STATE — the Command roster's per-ship state badge (play-test fix, 2026-07-18): "the
+// command UI right now doesn't show the state of the fleet itself... The ship in Command — fleet
+// says 'ready to launch', which doesn't make sense." The OLD badge read straight off the raw
+// main_ship_instances.status via mainShipInstanceStatusLabel — and post-berth-model virtually every
+// SETTLED ship carries status='home' regardless of what its fleet is actually doing, so the badge said
+// "Ready to launch" even for a ship whose fleet was mid-transit or docked at an away port. It reflected
+// the ship's raw column, never its resolved place.
+//
+// Derivation order, over the SAME fleet-position row fleetPositionLocationLabel already folds (never a
+// second position pipeline):
+//   • moving (in-transit/returning)   → a short tone-coded verb ("Traveling"/"Returning"); etaText +
+//     progress (0..1, the SAME clamped fraction the map's dot interpolation uses) let the caller render
+//     the destination/ETA/progress bar the row's OTHER line already shows the port name for.
+//   • docked / berthed at a real port → "Docked", neutral — never "Ready to launch": the ship IS
+//     somewhere, and that somewhere is honestly a port, not idle readiness.
+//   • in deep space (no port)         → "In deep space", neutral.
+//   • at a combat/hunt site           → "In combat", danger (matches the map's combat colour).
+//   • position UNRESOLVED (hidden/missing — a ship with no berth AND no fleet: e.g. freshly grouped
+//     but its group has never yet been sent, or destroyed, or the FLEETMAP row hasn't loaded) → falls
+//     back to the RAW per-ship status label/tone (mainShipInstanceStatusLabel/Tone). This is the one
+//     place "Ready to launch" can still appear, and it is honest there: a ship with no known position
+//     genuinely has nothing holding it. Pure; unit-tested in tests/teamRoster.spec.ts.
+export interface CommandFleetState {
+  /** Short badge word — "Docked" / "Traveling" / "Returning" / "In combat" / "In deep space", or the
+   *  raw-status fallback label (e.g. "Ready to launch", "Disabled") when position is unresolved. */
+  label: string
+  tone: BadgeTone
+  /** Live "3m 12s"-style remaining time — moving legs only, else null. */
+  etaText: string | null
+  /** Clamped 0..1 fraction of the leg traveled — moving legs only, else null. */
+  progress: number | null
+}
+
+export function commandFleetState(
+  pos: FleetPosition | undefined,
+  locations: MapLocation[],
+  rawStatus: string,
+  nowMs: number = Date.now(),
+): CommandFleetState {
+  const resolved = resolveFleetPositionLocation(pos, locations)
+  if (!resolved) {
+    return {
+      label: mainShipInstanceStatusLabel(rawStatus),
+      tone: mainShipInstanceStatusTone(rawStatus),
+      etaText: null,
+      progress: null,
+    }
+  }
+  if (resolved.kind === 'in-transit' || resolved.kind === 'returning') {
+    const seg = pos && pos.place === 'transit' ? pos.segment : null
+    return {
+      label: resolved.kind === 'returning' ? 'Returning' : 'Traveling',
+      tone: resolved.kind === 'returning' ? 'accent' : 'warning', // matches the map's outbound/return colours
+      etaText: resolved.etaText,
+      progress: seg ? movementProgress(seg, nowMs) : null,
+    }
+  }
+  if (resolved.kind === 'combat') {
+    return { label: 'In combat', tone: 'danger', etaText: null, progress: null }
+  }
+  if (resolved.kind === 'deep-space') {
+    return { label: 'In deep space', tone: 'neutral', etaText: null, progress: null }
+  }
+  if (resolved.kind === 'docked') {
+    return { label: 'Docked', tone: 'neutral', etaText: null, progress: null }
+  }
+  // 'idle' is unreachable through resolveFleetPositionLocation (it always synthesizes a present/moving
+  // fleet), but this stays total/honest rather than assuming — a future resolved kind falls back to raw
+  // status rather than silently mis-rendering.
+  return {
+    label: mainShipInstanceStatusLabel(rawStatus),
+    tone: mainShipInstanceStatusTone(rawStatus),
+    etaText: null,
+    progress: null,
+  }
 }
 
 // A transit segment → the minimal FleetMovement the resolver reads (target_type / target_location_id /

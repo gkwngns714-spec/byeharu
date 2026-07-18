@@ -13,13 +13,29 @@ import type { PreviewMember } from './teamSkillset'
 // selection (shellState.selection); this only supplies the group metadata + membership the shell doesn't carry.
 
 // The player's teams (backend: ship_groups rows), owner-read, ordered by the deterministic slot.
-export async function fetchMyShipGroups(): Promise<GroupRow[]> {
+//
+// MAP-INTEGRATION M2 review fix: the CHECKED variant reports transport success, because a bare "[]"
+// is AMBIGUOUS — it means both "genuinely zero groups" and "the read errored" (the normalize-don't-
+// throw posture collapses them). Callers that must DISTINGUISH the two (the map's no-fleet guidance
+// must never tell a fleet-owning player "No fleet yet" over one flaky poll) read this; everyone else
+// keeps the plain list via the thin wrapper below — ONE query, one authority, no second copy.
+export interface ShipGroupsRead {
+  /** True ⇔ the read itself succeeded (an empty `groups` is then a REAL zero-groups answer). */
+  ok: boolean
+  groups: GroupRow[]
+}
+
+export async function fetchMyShipGroupsChecked(): Promise<ShipGroupsRead> {
   const { data, error } = await supabase
     .from('ship_groups')
     .select('group_id, group_index, name')
     .order('group_index', { ascending: true })
-  if (error || !data) return []
-  return data as GroupRow[]
+  if (error || !data) return { ok: false, groups: [] }
+  return { ok: true, groups: data as GroupRow[] }
+}
+
+export async function fetchMyShipGroups(): Promise<GroupRow[]> {
+  return (await fetchMyShipGroupsChecked()).groups
 }
 
 // Per-ship membership + capacity read: main_ship_id → { group_id, captain_slots }. Owner-read; merged onto
@@ -185,14 +201,6 @@ export async function moveShipGroup(groupId: string, locationId: string): Promis
     p_group_id: groupId,
     p_location_id: locationId,
   })
-  if (error) return { ok: false, reason: 'unavailable' }
-  return data as TeamRpcResult
-}
-
-// stop_ship_group_transit (0164) — best-effort halt of every in-flight member. Success carries the aggregate
-// { stopped, skipped, failed }.
-export async function stopShipGroup(groupId: string): Promise<TeamRpcResult> {
-  const { data, error } = await supabase.rpc('stop_ship_group_transit', { p_group_id: groupId })
   if (error) return { ok: false, reason: 'unavailable' }
   return data as TeamRpcResult
 }

@@ -7,17 +7,20 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import {
   fetchMainshipSendEnabled, fetchFleetMovementUnifiedEnabled,
   fetchLaunchFromDockEnabled, fetchFleetControlEnabled, fetchTimedDockingEnabled,
+  fetchGameConfig,
 } from '../../lib/catalog'
+import { getActiveMiningFields } from '../mining/miningApi'
+import type { MiningField } from '../mining/miningTypes'
 import {
-  fetchActiveMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
+  fetchActiveMainShipFleet, fetchActiveMainShipPresence,
   fetchMyFleetPositions, resolveOwnedShip,
-  type FleetPosition, type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
+  type FleetPosition, type MainShipFleet, type MainShipPresence,
 } from './mainshipApi'
 import {
-  fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
+  fetchMyShipGroupsChecked, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
   type ShipGroupMapEntry, type UnifiedGroupFleetLite,
 } from '../command/teamApi'
-import { deriveDockedTeamRollups, excludeCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
+import { deriveDockedTeamRollups, excludeCombatSortieFleets, selectCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
 import type { GroupRow } from '../command/teamRoster'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 
@@ -37,10 +40,9 @@ export interface MainShipLite {
   shield: number
   max_shield: number
   cargo_capacity: number
-  // OSN-2 (migration 0054). NULL on every row today (legacy). Read-only here; no writer in OSN-2b.
-  spatial_state: SpatialState | null
-  space_x: number | null
-  space_y: number | null
+  // 4C-CLIENT: the legacy OSN spatial columns (spatial_state / space_x / space_y) are no longer
+  // read — 4c-mig-2 drops them from main_ship_instances. Ship placement is served exclusively by
+  // the get_my_fleet_positions projection (fleetPositions below).
 }
 
 /** Sector + zone names for a location, for the read-only detail panel. */
@@ -60,17 +62,21 @@ export interface GalaxyMapData {
   // Phase 10D: feature flag (read once) + the ship's active linked fleet (polled, for status).
   mainshipSendEnabled: boolean
   mainShipFleet: MainShipFleet | null
-  // OSN-2b: the active location-presence for the main-ship fleet (polled), used by the resolver to
-  // validate a named-location marker. Null unless the fleet is genuinely present at a location.
+  // OSN-2b: the active location-presence for the main-ship fleet (polled). Feeds the Port screen's
+  // dock-context refetch key. (4C-CLIENT: the per-ship space-movement read is deleted — the
+  // main_ship_space_movements table is retired by 4c-mig-2 and nothing client-side consumed it.)
   mainShipPresence: MainShipPresence | null
-  // OSN-3 S1: the active coordinate movement for the main ship (polled, read-only). Null unless a
-  // future coordinate move exists (no writer in S1, so always null in practice until OSN-3 S3+).
-  mainShipSpaceMovement: MainShipSpaceMovement | null
   // TEAMMAP-0: the owner's teams (the REUSED teamApi groups read — id → name/slot) and the pure
   // docked-team rollup (live membership × 'present' fleets). Both are gated on the SAME
   // compile-time constant that mounts every other team surface (TEAM_COMMAND_ENABLED): while it is
   // false none of the team reads run and both stay empty — the map renders byte-identical to today.
   teamGroups: GroupRow[]
+  // MAP-INTEGRATION M2 review fix: whether the LAST groups read genuinely SUCCEEDED. The plain read
+  // normalizes any transport error to [] — indistinguishable from "no fleets" — so one flaky poll
+  // would flash the false "No fleet yet" guidance over a fleet-owning player's map. The guidance
+  // gates on THIS flag (an affirmative successful-and-empty read); on a failed read the hook also
+  // KEEPS the previous poll's groups (below), so fleets/stop rows never dissolve transiently either.
+  teamGroupsOk: boolean
   // S5 MAP-UX: the live membership map (main_ship_id → group/command flags) — already fetched for
   // the rollup fold every poll; exposed so the FleetCommandPanel's hunt arm is props-fed from the
   // shell instead of running its own reads (the deleted TeamMapSend fetched this itself).
@@ -86,6 +92,12 @@ export interface GalaxyMapData {
   // When 4b flips the flag, the already-deployed client switches arms with no further deploy.
   fleetMovementUnifiedEnabled: boolean
   unifiedGroupFleets: UnifiedGroupFleetLite[]
+  // MAP-INTEGRATION M1: the COMBAT-PRESENT group fleets — the exact complement of the
+  // excludeCombatSortieFleets filter applied to unifiedGroupFleets above (one raw read, one shared
+  // classification, partitioned once here). Feeds the map's "in combat at X" team badge so a fleet
+  // mid-hunt-combat keeps a marker (it is stripped from the dock fold by design, has no movement,
+  // and the per-ship chevron fallback was deleted in S5). [] while the unified fetch is dark.
+  combatSortieFleets: UnifiedGroupFleetLite[]
   // S5 MAP-UX: the NO-HOME + fleet-control runtime gates (read once with the other static flags —
   // previously fetched per-mount by the deleted TeamMapSend). Feed the panel's hunt arm.
   launchFromDockEnabled: boolean
@@ -94,8 +106,20 @@ export interface GalaxyMapData {
   // threaded the same way. Lit, the FleetCommandPanel's dock row submits commandShipGroupDock
   // (the 45s leg); dark, it keeps submitting the instant commandShipGroupGo, byte-identical.
   timedDockingEnabled: boolean
+  // MINING-FIELD-MARKERS: the active fields visible on the map (get_active_mining_fields, 0226 —
+  // [] while mining_enabled is false, fail-closed) + the extraction radius (mining_extract_radius,
+  // game_config — already public-read, 0003; read via the SAME fetchGameConfig() every other
+  // numeric tunable uses, no new config surface). Fields are migration-seeded static world data
+  // (is_active can change, but rarely — an admin action, not a runtime gameplay event), so both are
+  // fetched ONCE per session alongside `locations`, not on the movement/ship poll.
+  miningFields: MiningField[]
+  miningExtractRadius: number
   refresh: () => Promise<void>
 }
+
+/** Mirrors the server's own coalesce(cfg_num('mining_extract_radius'), 750) fallback (0104) — used
+ *  only if the game_config row is somehow missing/unreadable, so the range ring still renders. */
+const DEFAULT_MINING_EXTRACT_RADIUS = 750
 
 async function fetchMainShip(mainShipId?: string | null): Promise<MainShipLite | null> {
   // Owner-read RLS returns only the caller's ship(s). Plural-safe: read ALL and resolve deterministically
@@ -103,7 +127,7 @@ async function fetchMainShip(mainShipId?: string | null): Promise<MainShipLite |
   // a selection — the map then renders no main-ship marker rather than an arbitrary one.
   const { data, error } = await supabase
     .from('main_ship_instances')
-    .select('main_ship_id, name, status, hull_type_id, hp, max_hp, shield, max_shield, cargo_capacity, spatial_state, space_x, space_y')
+    .select('main_ship_id, name, status, hull_type_id, hp, max_hp, shield, max_shield, cargo_capacity')
     .order('created_at', { ascending: true }) // stable enumeration only; the pick is resolver-decided, not first-row
   if (error) return null // non-fatal: ship is optional in Phase 9A
   return resolveOwnedShip((data ?? []) as MainShipLite[], mainShipId)
@@ -120,16 +144,19 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainshipSendEnabled: false,
   mainShipFleet: null,
   mainShipPresence: null,
-  mainShipSpaceMovement: null,
   teamGroups: [],
+  teamGroupsOk: false, // fail closed: no "No fleet yet" until a groups read affirmatively succeeds
   teamGroupMap: {},
   dockedTeamRollups: [],
   fleetPositions: [],
   fleetMovementUnifiedEnabled: false,
   unifiedGroupFleets: [],
+  combatSortieFleets: [],
   launchFromDockEnabled: false,
   fleetControlEnabled: false,
   timedDockingEnabled: false,
+  miningFields: [],
+  miningExtractRadius: DEFAULT_MINING_EXTRACT_RADIUS,
 }
 
 export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = null): GalaxyMapData {
@@ -142,17 +169,27 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     launchFromDockEnabled: boolean
     fleetControlEnabled: boolean
     timedDockingEnabled: boolean
+    miningFields: MiningField[]
+    miningExtractRadius: number
   } | null>(null)
+  // M2 review fix: the last SUCCESSFULLY-read groups list. A failed poll re-serves this instead of
+  // [] so a transient ship_groups error never dissolves fleets (badges, rollups, stop rows) for a
+  // poll — the same keep-prior posture a player expects from any flaky read.
+  const lastGroupsRef = useRef<GroupRow[]>([])
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
         // S5 MAP-UX: launch-from-dock + fleet-control ride the SAME once-per-session static batch as
         // the other runtime flags (they were per-mount reads in the deleted TeamMapSend).
-        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled] =
+        // MINING-FIELD-MARKERS: the active fields + the extract radius join the SAME batch — both
+        // are static reference reads (fields are migration-seeded; the radius is a game_config
+        // tunable), not per-poll dynamic state.
+        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, miningFields, gameConfig] =
           await Promise.all([
             fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetMovementUnifiedEnabled(),
             fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(), fetchTimedDockingEnabled(),
+            getActiveMiningFields(), fetchGameConfig(),
           ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -164,9 +201,11 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
             }
           }
         }
+        const miningExtractRadius = gameConfig.mining_extract_radius ?? DEFAULT_MINING_EXTRACT_RADIUS
         staticRef.current = {
           locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled,
           launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
+          miningFields, miningExtractRadius,
         }
       }
 
@@ -194,17 +233,21 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         mainShipFleet && mainShipFleet.status === 'present'
           ? await fetchActiveMainShipPresence(mainShipFleet.id)
           : null
-      // OSN-3 S1: at most one active coordinate movement, scoped by main_ship_id (read-only).
-      const mainShipSpaceMovement = mainShip
-        ? await fetchActiveMainShipSpaceMovement(mainShip.main_ship_id)
-        : null
       // TEAMMAP-0: the team read set — the REUSED owner groups read, the live membership map, and
       // the docked/present fleets — folded by the PURE rollup. Compile-time gated (the teamApi
       // mount-gate law: these reads must not run against a DB predating the team migrations).
       // Poll-cost posture: the groups read goes FIRST; a team-less player (zero groups → zero
       // possible badges/rollups) skips the membership + present-fleet reads entirely, paying one
       // extra read per poll instead of three.
-      const teamGroups = TEAM_COMMAND_ENABLED ? await fetchMyShipGroups() : []
+      // M2 review fix: the CHECKED read distinguishes "genuinely zero groups" from "the read
+      // errored" (both used to arrive as []). Success → adopt + remember the answer; failure →
+      // KEEP the previous poll's groups (never transiently dissolve fleets/stop rows) and report
+      // teamGroupsOk=false so the no-fleet guidance can't false-fire.
+      const groupsRead = TEAM_COMMAND_ENABLED
+        ? await fetchMyShipGroupsChecked()
+        : { ok: true, groups: [] as GroupRow[] }
+      if (groupsRead.ok) lastGroupsRef.current = groupsRead.groups
+      const teamGroups = groupsRead.ok ? groupsRead.groups : lastGroupsRef.current
       const [groupMap, presentFleets] =
         teamGroups.length > 0
           ? await Promise.all([fetchMyShipGroupMap(), fetchMyPresentShipFleets()])
@@ -221,6 +264,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
           ? await fetchMyUnifiedGroupFleets()
           : []
       const unifiedGroupFleets = excludeCombatSortieFleets(rawUnifiedFleets, staticRef.current.locations)
+      // M1: the complement — combat-present sorties, kept visible via the map's in-combat badge.
+      const combatSortieFleets = selectCombatSortieFleets(rawUnifiedFleets, staticRef.current.locations)
       const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets, unifiedGroupFleets)
       setState({
         loading: false,
@@ -233,16 +278,19 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         mainshipSendEnabled: staticRef.current.mainshipSendEnabled,
         mainShipFleet,
         mainShipPresence,
-        mainShipSpaceMovement,
         teamGroups,
+        teamGroupsOk: groupsRead.ok,
         teamGroupMap: groupMap,
         dockedTeamRollups,
         fleetPositions,
         fleetMovementUnifiedEnabled: staticRef.current.fleetMovementUnifiedEnabled,
         unifiedGroupFleets,
+        combatSortieFleets,
         launchFromDockEnabled: staticRef.current.launchFromDockEnabled,
         fleetControlEnabled: staticRef.current.fleetControlEnabled,
         timedDockingEnabled: staticRef.current.timedDockingEnabled,
+        miningFields: staticRef.current.miningFields,
+        miningExtractRadius: staticRef.current.miningExtractRadius,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))

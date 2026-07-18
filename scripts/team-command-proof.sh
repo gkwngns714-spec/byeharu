@@ -7,7 +7,7 @@
 # Slice-D0 teamstats block (0166: get_my_group_expedition_totals — the AUTHORITATIVE team totals;
 # proven by an independent per-member sum over direct adapter calls, and strict-vs-preview) plus the
 # Slice-D1 combat-parity block (0167: the re-created LIVE combat tick/report keep LEGACY byte-parity —
-# tick damage equals the proof's own independent Σ(attack×alive); one combat cron; identity CHECK)
+# tick damage equals the proof's own independent Σ(attack×alive); one combat-tick engine cron; identity CHECK)
 # plus the Slice-D2 team-hunt block (0168: send_ship_group_hunt → ONE fleet + frozen sortie manifest →
 # member encounter routing — snapshots equal the proof's own direct adapter calls, speed equals the
 # independent D0 totals.speed, tick damage equals Σ attack_snapshot, and the manifest-wins law; the
@@ -245,18 +245,22 @@ if [ "$MODE" = "selftest" ]; then
 
   # ── D1 (0167) combat-parity pins: the COMBATPARITY block must compute its OWN independent
   #    Σ(unit_types.attack × alive_count) / Σ(defense × alive_count) and ASSERT the tick's
-  #    player_damage AND enemy_damage against them, and must ASSERT the no-second-engine cron count —
-  #    pinned in assert form so a gutted .sql that merely mentions them in prose cannot false-green. ──
+  #    player_damage AND enemy_damage against them, and must ASSERT the no-second-ENGINE cron count by
+  #    COMMAND (process_combat_ticks — naming-independent) plus the COMBAT-S2 pin that the telegraph
+  #    resolver is not a second engine — pinned in assert form so a gutted .sql that merely mentions
+  #    them in prose cannot false-green. ──
   grep -qF "select sum(ut.attack * cu.alive_count), sum(ut.defense * cu.alive_count), sum(cu.hp_current)" "$SQL" \
     || fail "harness does not compute the independent legacy attack+defense sums (D1 parity pin)"
   grep -qF "if t.player_damage is distinct from v_expected_attack then" "$SQL" \
     || fail "harness does not ASSERT tick player_damage = the independent attack sum"
   grep -qF "if t.enemy_damage is distinct from v_expected_enemy then" "$SQL" \
     || fail "harness does not ASSERT tick enemy_damage = the independent defense-curve value"
-  grep -qF "from cron.job where jobname like '%combat%'" "$SQL" \
-    || fail "harness does not count the combat cron jobs (no-second-engine pin)"
-  grep -qF "% combat cron jobs (want exactly 1)" "$SQL" \
-    || fail "harness does not ASSERT exactly one combat cron job"
+  grep -qF "from cron.job where command like '%process_combat_ticks%'" "$SQL" \
+    || fail "harness does not count the combat-TICK engine cron jobs by command (no-second-engine pin)"
+  grep -qF "% combat-TICK engine cron jobs (want exactly 1)" "$SQL" \
+    || fail "harness does not ASSERT exactly one combat-tick engine cron job"
+  grep -qF "the telegraph resolver must not run the tick engine" "$SQL" \
+    || fail "harness does not pin that the COMBAT-S2 telegraph resolver is not a second combat engine"
   grep -qF "exception when check_violation then null; end;" "$SQL" \
     || fail "harness does not probe the combat_units exactly-one-identity CHECK"
 

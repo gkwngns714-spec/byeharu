@@ -3,11 +3,12 @@ import {
   resolveTeamMarkers,
   resolveTeamDockBadges,
   resolveFleetSpaceBadges,
+  resolveFleetCombatBadges,
   teamMarkersLayer,
-  deriveTeamRepresentedShipIds,
   TeamMovingMarkers,
   TeamMarkerBadge,
   TeamDockBadge,
+  TeamCombatBadge,
 } from '../src/features/map/teamMarkers'
 import { interpolateMovementPoint } from '../src/features/map/movementInterpolation'
 import type { FleetMovement } from '../src/features/fleets/fleetTypes'
@@ -146,45 +147,8 @@ test('dock badges: complete rollups map to "Fleet <name> n/n"; partial/split/emp
   expect(out).toEqual([{ groupId: 'g1', label: 'Fleet Alpha 2/2', locationId: 'loc-A' }])
 })
 
-// ── deriveTeamRepresentedShipIds — the FLEETMAP de-dup set (which ships a team marker already draws) ──
-test('de-dup: members of a COMPLETE docked team (its dock badge) are represented', () => {
-  const ids = deriveTeamRepresentedShipIds({
-    membership: { s1: { group_id: 'g1' }, s2: { group_id: 'g1' }, solo: { group_id: null } },
-    rollups: [rollup()], // g1 complete (n/n) → dock badge drawn
-    movements: [],
-    groups,
-    nowMs: midMs,
-  })
-  expect([...ids].sort()).toEqual(['s1', 's2'])
-})
-
-test('de-dup: members of an IN-FLIGHT moving team (its moving badge) are represented', () => {
-  const ids = deriveTeamRepresentedShipIds({
-    membership: { s1: { group_id: 'g2' }, s2: { group_id: 'g2' } },
-    rollups: [],
-    movements: [mv({ group_id: 'g2' })], // g2 moving → moving badge drawn
-    groups,
-    nowMs: midMs,
-  })
-  expect([...ids].sort()).toEqual(['s1', 's2'])
-})
-
-test('de-dup: a ship in NO marked group (solo, or a partial/incoherent team) keeps its own chevron', () => {
-  const ids = deriveTeamRepresentedShipIds({
-    membership: { solo: { group_id: null }, partial: { group_id: 'g2' } },
-    rollups: [rollup({ groupId: 'g2', name: 'Bravo', dockedCount: 1, locationId: null })], // partial → no badge
-    movements: [], // g2 not in flight either
-    groups,
-    nowMs: midMs,
-  })
-  expect(ids.size).toBe(0)
-})
-
-test('de-dup: no groups / no markers → empty set (dark posture; every ship keeps its chevron)', () => {
-  expect(
-    deriveTeamRepresentedShipIds({ membership: { s1: { group_id: 'g1' } }, rollups: [], movements: [], groups: [], nowMs: midMs }).size,
-  ).toBe(0)
-})
+// (4C-CLIENT: the deriveTeamRepresentedShipIds de-dup specs were deleted with the function — its
+// only consumer, the per-ship chevron layer, was removed in S5.)
 
 // ── teamMarkersLayer — the GalaxyMap wiring proof (element-tree convention) ─────────────────────────
 // S2 TERRITORY widened the layer's location pick (name + territory_radius feed the orbit label);
@@ -278,29 +242,6 @@ test('space badge: outside every territory, or a NULL-territory world, keeps the
   expect(resolveFleetSpaceBadges([spaceFleet()], groups, [])[0].label).toBe('Fleet Alpha')
 })
 
-test('de-dup: members of an IN-SPACE parked fleet are represented (chevrons suppressed under the badge)', () => {
-  const ids = deriveTeamRepresentedShipIds({
-    membership: { s1: { group_id: 'g1' }, s2: { group_id: 'g1' }, solo: { group_id: null } },
-    rollups: [],
-    movements: [],
-    groups,
-    nowMs: midMs,
-    unifiedFleets: [spaceFleet()],
-  })
-  expect([...ids].sort()).toEqual(['s1', 's2'])
-})
-
-test('de-dup: omitting unifiedFleets is byte-identical to the pre-slice call (dark parity)', () => {
-  const args = {
-    membership: { s1: { group_id: 'g1' } },
-    rollups: [rollup()],
-    movements: [] as FleetMovement[],
-    groups,
-    nowMs: midMs,
-  }
-  expect([...deriveTeamRepresentedShipIds(args)]).toEqual([...deriveTeamRepresentedShipIds({ ...args, unifiedFleets: [] })])
-})
-
 test('layer: a parked unified fleet renders a TeamMarkerBadge under the fleet-space testid, through the map norm', () => {
   const layer = teamMarkersLayer({
     movements: [],
@@ -322,6 +263,95 @@ test('layer: a parked unified fleet renders a TeamMarkerBadge under the fleet-sp
 test('layer: omitting unifiedFleets leaves the tree byte-identical (dark parity for the map)', () => {
   const base = { movements: [], groups, rollups: [rollup()], locations, norm, k: 1 }
   expect(teamMarkersLayer({ ...base, unifiedFleets: [] })).toEqual(teamMarkersLayer(base))
+})
+
+// ── MAP-INTEGRATION M1 — resolveFleetCombatBadges: the in-combat fleet badge ─────────────────────
+// A group fleet 'present' at a combat site is stripped from the dock fold (correct), has no moving
+// movement and no space park — without THIS badge it is invisible for the whole combat phase. Input
+// is the pre-partitioned combat set (teamRollup.selectCombatSortieFleets); position is the SITE's.
+const combatFleet = (o: Partial<UnifiedGroupFleetLite> = {}): UnifiedGroupFleetLite => ({
+  group_id: 'g1',
+  status: 'present',
+  location_mode: 'location',
+  current_location_id: 'loc-A',
+  space_x: null,
+  space_y: null,
+  ...o,
+})
+
+test('combat badge: a combat-present fleet → one badge AT the site, labeled "in combat at X" with the member count', () => {
+  const out = resolveFleetCombatBadges([combatFleet()], groups, [rollup({ locationId: null, dockedCount: 0 })], locations)
+  expect(out).toEqual([
+    { groupId: 'g1', label: 'Fleet Alpha · 2 ships · in combat at Alpha Port', locationId: 'loc-A', x: 100, y: 200 },
+  ])
+})
+
+test('combat badge: single-member (or unknown-count) fleets take the bare label form', () => {
+  const one = resolveFleetCombatBadges([combatFleet()], groups, [rollup({ memberCount: 1, dockedCount: 0, locationId: null })], locations)
+  expect(one[0].label).toBe('Fleet Alpha · in combat at Alpha Port')
+  expect(resolveFleetCombatBadges([combatFleet()], groups, [], locations)[0].label).toBe('Fleet Alpha · in combat at Alpha Port')
+})
+
+test('combat badge: fail closed — non-present status, no location, unknown group, unrevealed site, zero groups', () => {
+  expect(resolveFleetCombatBadges([combatFleet({ status: 'moving' })], groups, [], locations)).toEqual([])
+  expect(resolveFleetCombatBadges([combatFleet({ current_location_id: null })], groups, [], locations)).toEqual([])
+  expect(resolveFleetCombatBadges([combatFleet({ group_id: 'ghost' })], groups, [], locations)).toEqual([])
+  expect(resolveFleetCombatBadges([combatFleet({ current_location_id: 'loc-hidden' })], groups, [], locations)).toEqual([]) // no id leak
+  expect(resolveFleetCombatBadges([combatFleet()], [], [], locations)).toEqual([])
+})
+
+test('combat badge: one badge per group (first wins on a duplicate); deterministic order by groupId', () => {
+  const out = resolveFleetCombatBadges(
+    [combatFleet({ group_id: 'g2' }), combatFleet(), combatFleet()],
+    groups,
+    [],
+    locations,
+  )
+  expect(out.map((b) => b.groupId)).toEqual(['g1', 'g2'])
+})
+
+test('layer: a combat-present fleet renders a TeamCombatBadge at the site through the map norm', () => {
+  const layer = teamMarkersLayer({
+    movements: [],
+    groups,
+    rollups: [],
+    locations,
+    norm: (p) => ({ x: p.x + 1, y: p.y + 1 }), // non-identity: proves projection happens
+    k: 1,
+    combatFleets: [combatFleet()],
+  })
+  const badge = layer.find((e) => e.type === TeamCombatBadge)
+  expect(badge).toBeTruthy()
+  const props = badge!.props as { groupId: string; label: string; x: number; y: number; stack: number }
+  expect(props.groupId).toBe('g1')
+  expect(props.label).toBe('Fleet Alpha · in combat at Alpha Port')
+  expect({ x: props.x, y: props.y }).toEqual({ x: 101, y: 201 })
+  expect(props.stack).toBe(0)
+})
+
+test('layer: co-fighting teams at one site STACK their combat labels', () => {
+  const layer = teamMarkersLayer({
+    movements: [],
+    groups,
+    rollups: [],
+    locations,
+    norm,
+    k: 1,
+    combatFleets: [combatFleet(), combatFleet({ group_id: 'g2' })],
+  })
+  const badges = layer.filter((e) => e.type === TeamCombatBadge)
+  expect(badges.map((b) => (b.props as { stack: number }).stack)).toEqual([0, 1])
+})
+
+test('layer: omitting combatFleets leaves the tree byte-identical (dark parity — dock/moving/space badges untouched)', () => {
+  const base = { movements: [mv({ group_id: 'g1' })], groups, rollups: [rollup()], locations, norm, k: 1, unifiedFleets: [spaceFleet()] }
+  expect(teamMarkersLayer({ ...base, combatFleets: [] })).toEqual(teamMarkersLayer(base))
+  // and the normal markers still render alongside a combat badge (nothing suppressed)
+  const withCombat = teamMarkersLayer({ ...base, combatFleets: [combatFleet({ group_id: 'g2' })] })
+  expect(withCombat.some((e) => e.type === TeamMovingMarkers)).toBe(true)
+  expect(withCombat.some((e) => e.type === TeamDockBadge)).toBe(true)
+  expect(withCombat.some((e) => e.type === TeamMarkerBadge)).toBe(true) // the in-space badge
+  expect(withCombat.some((e) => e.type === TeamCombatBadge)).toBe(true)
 })
 
 test('layer: co-docked teams stack; a rollup at an unrevealed location renders no badge (fail closed)', () => {

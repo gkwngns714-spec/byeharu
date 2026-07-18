@@ -1,20 +1,21 @@
 import { supabase } from '../../lib/supabase'
+import { fetchMyFleetPositions, resolveOwnedShip } from '../map/mainshipApi'
 import {
-  fetchActiveMainShipFleet, fetchActiveMainShipPresence, resolveOwnedShip, type SpatialState,
-} from '../map/mainshipApi'
-import {
-  COMMISSION_RPC, NORMALIZE_RPC, parseCommissionResult, parseNormalizeResult,
-  type CommissionResult, type NormalizeResult, type PortEntryShipState,
+  COMMISSION_RPC, parseCommissionResult,
+  type CommissionResult, type PortEntryShipState,
 } from './portEntry'
 
 // PORT-ENTRY player UI — client API.
 //
-// One zero-arg authenticated RPC (commission_first_main_ship) + one that takes the explicit selected/sole
-// main-ship id (normalize_main_ship_dock — TRADE-FLEET-0C §2.5: p_main_ship_id, null → server sole-ship shim,
-// ownership server-asserted) + a small owner-read that assembles the DISPLAY state used to choose the
-// affordance. Aside from that ship id, the client sends NO player/port id, coordinates, status, or lifecycle
-// data — the server derives everything and is the sole authority. Nothing here touches coordinate travel, its
-// flag/gate, port-to-port travel, migrations, or production data.
+// One zero-arg authenticated RPC (commission_first_main_ship) + a small owner-read that assembles the
+// DISPLAY state used to choose the affordance. The client sends NO player/port id, coordinates, status,
+// or lifecycle data — the server derives everything and is the sole authority.
+//
+// 4C-CLIENT: the normalize wrapper (normalize_main_ship_dock) is DELETED with the normalize affordance
+// (see portEntry.ts — the legacy_present state it served is extinct and unmintable), and the ship-state
+// read is REPOINTED off the retired main_ship_instances.spatial_state column onto the ship's
+// get_my_fleet_positions `place` — the ONE placement projection every other surface reads. The old
+// per-ship fleet/presence reads existed only to classify the legacy fleet shape and are gone with it.
 
 /**
  * Claim the caller's FIRST main ship (commission_first_main_ship). Zero-arg; the server race-serializes on
@@ -31,32 +32,18 @@ export async function commissionFirstMainShip(): Promise<CommissionResult> {
   }
 }
 
-/**
- * Finish docking the caller's legacy-present ship IN PLACE (normalize_main_ship_dock). TRADE-FLEET-0C §2.5:
- * sends the EXPLICIT selected/sole main-ship id (p_main_ship_id); the server asserts ownership (own ship only)
- * and a null id preserves the sole-ship shim (behavior-identical while single-ship). Idempotent
- * (already-canonical → normalized:false). Errors collapse to a safe failure result — this never throws.
- */
-export async function normalizeMainShipDock(mainShipId?: string | null): Promise<NormalizeResult> {
-  try {
-    const { data, error } = await supabase.rpc(NORMALIZE_RPC, { p_main_ship_id: mainShipId ?? null })
-    if (error) return { ok: false, reason: 'not_normalizable' }
-    return parseNormalizeResult(data)
-  } catch {
-    return { ok: false, reason: 'not_normalizable' }
-  }
-}
-
 interface MainShipStateRow {
   main_ship_id: string
   status: string
-  spatial_state: SpatialState | null
 }
 
+const NO_SHIP: PortEntryShipState = { hasShip: false, shipStatus: null, place: null }
+
 /**
- * Owner-read the DISPLAY state that drives affordance selection: does a ship exist, its spatial_state +
- * status, and (only when a ship exists) the linked-fleet shape used to distinguish legacy_present from
- * legacy_home. All owner-read RLS; no RPC mutation, no writes. Any read error fails closed to "no ship".
+ * Owner-read the DISPLAY state that drives affordance selection: does a ship exist, its status, and its
+ * fleet-positions `place`. All owner-reads; no RPC mutation, no writes. Any read error fails closed —
+ * a missing ship read → "no ship"; an unreadable projection → place null (→ the 'indeterminate'
+ * explanation, never a wrong action).
  */
 export async function fetchPortEntryShipState(mainShipId?: string | null): Promise<PortEntryShipState> {
   // Plural-safe owner-read: read ALL owned ships and resolve deterministically (never `.maybeSingle()`, which
@@ -64,31 +51,17 @@ export async function fetchPortEntryShipState(mainShipId?: string | null): Promi
   // → the no-ship affordance, never an arbitrary ship's state.
   const { data, error } = await supabase
     .from('main_ship_instances')
-    .select('main_ship_id, status, spatial_state')
+    .select('main_ship_id, status')
     .order('created_at', { ascending: true }) // stable enumeration only; the pick is resolver-decided, not first-row
-  if (error) {
-    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null }
-  }
+  if (error) return NO_SHIP
   const ship = resolveOwnedShip((data ?? []) as MainShipStateRow[], mainShipId)
-  if (!ship) {
-    return { hasShip: false, spatialState: null, shipStatus: null, fleetStatus: null, fleetLocationMode: null, hasActivePresence: false, presentLocationId: null }
-  }
+  if (!ship) return NO_SHIP
 
-  // Only read the linked fleet/presence when a ship exists (mirrors useGalaxyMapData's ordering).
-  const fleet = await fetchActiveMainShipFleet(ship.main_ship_id)
-  const hasActivePresence =
-    fleet && fleet.status === 'present' ? (await fetchActiveMainShipPresence(fleet.id)) !== null : false
+  // The ship's placement, from the ONE projection (get_my_fleet_positions — the same read the map,
+  // Port hub, and Fitting tab consume). A destroyed ship has no row (handled by the status check in
+  // the classifier); a transport error yields [] → place null → fail-closed 'indeterminate'.
+  const positions = await fetchMyFleetPositions()
+  const place = positions.find((p) => p.main_ship_id === ship.main_ship_id)?.place ?? null
 
-  return {
-    hasShip: true,
-    main_ship_id: ship.main_ship_id, // §2.5: surfaced so the normalize path can send an explicit p_main_ship_id
-    spatialState: ship.spatial_state,
-    shipStatus: ship.status,
-    fleetStatus: fleet?.status ?? null,
-    fleetLocationMode: fleet?.location_mode ?? null,
-    hasActivePresence,
-    // UX-CLEANUP item 2: the legacy-present location, from the fleet row ALREADY fetched above (no new
-    // read) — drives the display-only waypoint-vs-port affordance split.
-    presentLocationId: fleet?.status === 'present' ? (fleet.current_location_id ?? null) : null,
-  }
+  return { hasShip: true, shipStatus: ship.status, place }
 }

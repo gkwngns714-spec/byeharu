@@ -76,7 +76,9 @@ export function PortPickerPanel({
                             : 'border-edge bg-surface-2/40 text-ink-muted hover:border-accent/30 hover:text-ink'
                         }`}
                       >
-                        {s.name}
+                        {/* M3: a berthed ship (unfleeted, S1) is honestly marked — it is AT this
+                            port but dock services stay unavailable until 4c (see PortScreen). */}
+                        {s.berthed ? `${s.name} · berthed` : s.name}
                       </button>
                     )
                   })}

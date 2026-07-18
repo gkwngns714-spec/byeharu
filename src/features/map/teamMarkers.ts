@@ -10,12 +10,11 @@ import { territoryAt } from './territoryAt'
 // TEAMMAP-2 — the team's OWN map marker (owner directive: "The team should have a marker of its own
 // and be shown on map"). Read-only display layer over server-committed rows; additive beside the
 // existing marker/line layers — it changes NO existing marker resolution and duplicates NO pipeline:
-//   • position math   → the ONE shared interpolateMovementPoint (extracted from resolveMainShipMarker)
+//   • position math   → the ONE shared interpolateMovementPoint (movementInterpolation)
 //   • fleet team tag  → movements' flattened fleets.group_id (0168/0187, informational/display-only)
 //   • docked teams    → the pure deriveDockedTeamRollups fold (command/teamRollup)
 //   • wiring          → the pure, hook-free `teamMarkersLayer` element-descriptor helper (the
-//                       SpaceRouteLine `shipLayer` element-tree convention; GalaxyMap and the unit
-//                       tests call the SAME function).
+//                       element-tree convention; GalaxyMap and the unit tests call the SAME function).
 //
 // Cluster semantics (pure, unit-tested in tests/teamMarkers.spec.ts):
 //   • multi-fleet group (expedition send, N member fleets) → ONE badge at the LEAD (earliest-ETA)
@@ -154,40 +153,59 @@ export function resolveFleetSpaceBadges(
   return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
 }
 
-// ── FLEETMAP de-dup — the set of owned ship ids ALREADY represented by a TEAM marker ─────────────────
-// A docked-together team draws a dock badge ("Fleet X n/n") and an in-flight team draws a moving badge;
-// the whole-fleet chevron layer (fleetShipsLayer) would otherwise ALSO draw each member as an individual
-// chevron at the same coordinates — the team badge stacked over redundant chevrons. This returns the ship
-// ids the team layer already covers so the chevron layer can skip them, the SAME exclusion posture the
-// selected ship already uses.
-//
-// It reuses the SAME two derivations the team layer renders — resolveTeamDockBadges (complete docked
-// rollups) + resolveTeamMarkers (in-flight moving groups) — so there is NO second docked-team fold, then
-// intersects the marked GROUP ids with the LIVE membership map (main_ship_instances.group_id). A group
-// with no marker contributes nothing; a ship in no marked group keeps its own chevron (solo/ungrouped
-// ships still draw). Pure; the nowMs only picks which groups are in flight (that set is time-stable).
-export function deriveTeamRepresentedShipIds(args: {
-  membership: Readonly<Record<string, { group_id: string | null }>>
-  rollups: readonly DockedTeamRollup[]
-  movements: readonly FleetMovement[]
-  groups: readonly GroupRow[]
-  nowMs: number
-  /** FLEET-GO 4a-1: unified group fleets — an IN-SPACE fleet badge also represents its members.
-   *  Optional, default [] → every existing caller/spec byte-identical (dark-inert; see the badge). */
-  unifiedFleets?: readonly UnifiedGroupFleetLite[]
-}): Set<string> {
-  const markedGroups = new Set<string>()
-  for (const b of resolveTeamDockBadges(args.rollups)) markedGroups.add(b.groupId)
-  for (const m of resolveTeamMarkers(args.movements, args.groups, args.nowMs)) markedGroups.add(m.groupId)
-  for (const s of resolveFleetSpaceBadges(args.unifiedFleets ?? [], args.groups, args.rollups)) markedGroups.add(s.groupId)
-  const ids = new Set<string>()
-  if (markedGroups.size === 0) return ids
-  for (const shipId of Object.keys(args.membership)) {
-    const gid = args.membership[shipId].group_id
-    if (gid !== null && markedGroups.has(gid)) ids.add(shipId)
-  }
-  return ids
+// ── MAP-INTEGRATION M1 — the IN-COMBAT fleet badge (a mid-combat fleet must never vanish) ──────────
+// A group fleet 'present' at a COMBAT location is the hunt's sortie mid-fight: it is deliberately
+// stripped from the dock fold (excludeCombatSortieFleets — it must not badge "docked" mid-combat),
+// has no 'moving' movement (no in-flight badge) and no space park (no orbit badge), and the per-ship
+// chevron fallback that used to draw its members (fleetShipsLayer) was DELETED in S5 — so without
+// this badge the fleet is INVISIBLE for the whole combat phase of every hunt. Input is the exact
+// COMPLEMENT of the dock fold's exclusion (teamRollup.selectCombatSortieFleets — the ONE combat
+// classification, never re-derived here); this resolver only validates shape, names, and renders at
+// the site's own position. Fail closed like every sibling: unknown/foreign group tag, or a combat
+// site not in the visible world read → NO badge (never a guessed name/position, no hidden-site leak).
+export interface FleetCombatBadgeDescriptor {
+  groupId: string
+  label: string
+  locationId: string
+  /** WORLD coordinates — the combat site's own position (the fleet is present AT it). */
+  x: number
+  y: number
 }
+
+export function resolveFleetCombatBadges(
+  combatFleets: readonly UnifiedGroupFleetLite[],
+  groups: readonly GroupRow[],
+  rollups: readonly DockedTeamRollup[],
+  locations: readonly Pick<MapLocation, 'id' | 'name' | 'x' | 'y'>[],
+): FleetCombatBadgeDescriptor[] {
+  if (groups.length === 0) return []
+  const nameById = new Map(groups.map((g) => [g.group_id, g.name]))
+  const countByGroup = new Map(rollups.map((r) => [r.groupId, r.memberCount]))
+  const out: FleetCombatBadgeDescriptor[] = []
+  const seen = new Set<string>()
+  for (const f of combatFleets) {
+    if (!f.group_id || f.status !== 'present' || !f.current_location_id) continue // shape guard on the pre-filtered input
+    if (!nameById.has(f.group_id)) continue // fail closed: unknown/foreign tag → no badge
+    if (seen.has(f.group_id)) continue // one fleet per group; duplicates are a broken invariant — first wins
+    const loc = locations.find((l) => l.id === f.current_location_id)
+    if (!loc) continue // combat site not in the visible world read → no badge, no id leak
+    seen.add(f.group_id)
+    const name = nameById.get(f.group_id) as string
+    const n = countByGroup.get(f.group_id) ?? 0
+    const base = n > 1 ? `Fleet ${name} · ${n} ships` : `Fleet ${name}`
+    out.push({
+      groupId: f.group_id,
+      label: `${base} · in combat at ${loc.name}`,
+      locationId: loc.id,
+      x: loc.x,
+      y: loc.y,
+    })
+  }
+  return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
+}
+
+// (4C-CLIENT: deriveTeamRepresentedShipIds — the fleetShipsLayer de-dup set — DELETED. Its only
+// consumer, the per-ship chevron layer, was removed in S5; nothing draws per-ship chevrons now.)
 
 // ── Presentation ────────────────────────────────────────────────────────────────────────────────────
 
@@ -276,7 +294,58 @@ export function TeamDockBadge({
   )
 }
 
-/** In-flight team badges with the MainShipMarker 1s visual tick (only while any team is moving). */
+/** MAP-INTEGRATION M1 — the in-combat fleet badge: a DANGER-tinted engagement ring around the combat
+ *  site's marker plus a haloed danger label below it (the TeamDockBadge below-marker convention, so
+ *  it never collides with the site's own name label above; `stack` staggers co-fighting teams).
+ *  Pointer-transparent, tokens only — the combat tint is the map's existing hostile color. */
+export function TeamCombatBadge({
+  groupId,
+  label,
+  x,
+  y,
+  k,
+  stack,
+}: {
+  groupId: string
+  label: string
+  x: number
+  y: number
+  k: number
+  stack: number
+}) {
+  const r = 5 / k
+  return createElement(
+    'g',
+    { 'data-testid': `fleet-combat-badge-${groupId}`, style: { pointerEvents: 'none' as const } },
+    createElement('circle', {
+      cx: x,
+      cy: y,
+      r: r * 2.4,
+      fill: 'none',
+      stroke: 'var(--color-danger)',
+      strokeWidth: 1.25,
+      vectorEffect: 'non-scaling-stroke',
+      opacity: 0.85,
+    }),
+    createElement(
+      'text',
+      {
+        x,
+        y: y + (14 + stack * 11) / k,
+        fontSize: 10 / k,
+        textAnchor: 'middle',
+        fill: 'var(--color-danger)',
+        stroke: 'var(--color-map-halo)',
+        strokeWidth: 3 / k,
+        paintOrder: 'stroke',
+        style: { userSelect: 'none' as const },
+      },
+      label,
+    ),
+  )
+}
+
+/** In-flight team badges with a 1s visual tick (only while any team is moving). */
 export function TeamMovingMarkers({
   movements,
   groups,
@@ -288,8 +357,8 @@ export function TeamMovingMarkers({
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
 }) {
-  // `now` in state (lazy init), advanced by the tick ONLY while a team badge exists — the exact
-  // MainShipMarker idiom (Date.now() stays out of render; the interval clears when static).
+  // `now` in state (lazy init), advanced by the tick ONLY while a team badge exists
+  // (Date.now() stays out of render; the interval clears when static).
   const [now, setNow] = useState(() => Date.now())
   const markers = resolveTeamMarkers(movements, groups, now)
   const active = markers.length > 0
@@ -328,6 +397,10 @@ export function teamMarkersLayer(args: {
    *  byte-identical layer (dark-inert by construction — nothing writes location_mode='space'
    *  while the unified gate is false). */
   unifiedFleets?: UnifiedGroupFleetLite[]
+  /** MAP-INTEGRATION M1: the COMBAT-PRESENT fleets (teamRollup.selectCombatSortieFleets — the exact
+   *  complement of the dock fold's exclusion) for the in-combat badge. Optional, default [] →
+   *  byte-identical layer (dark: the unified fetch is gated, so this is always []). */
+  combatFleets?: UnifiedGroupFleetLite[]
 }): ReactElement[] {
   if (args.groups.length === 0) return []
   const out: ReactElement[] = [
@@ -349,6 +422,26 @@ export function teamMarkersLayer(args: {
     out.push(
       createElement(TeamDockBadge, {
         key: `team-dock-${b.groupId}`,
+        groupId: b.groupId,
+        label: b.label,
+        x: p.x,
+        y: p.y,
+        k: args.k,
+        stack,
+      }),
+    )
+  }
+  // MAP-INTEGRATION M1 — in-combat fleet badges (the hunt sortie's combat phase). Static (a fleet
+  // in combat holds at the site), rendered at the site's own marker with the danger tint. Shares
+  // the per-location stack counter with the dock badges so co-located badge text never overlaps
+  // (a combat site can never carry a dock badge — the fold excludes it — but co-fighting teams stack).
+  for (const b of resolveFleetCombatBadges(args.combatFleets ?? [], args.groups, args.rollups, args.locations)) {
+    const stack = perLoc.get(b.locationId) ?? 0
+    perLoc.set(b.locationId, stack + 1)
+    const p = args.norm({ x: b.x, y: b.y })
+    out.push(
+      createElement(TeamCombatBadge, {
+        key: `fleet-combat-${b.groupId}`,
         groupId: b.groupId,
         label: b.label,
         x: p.x,

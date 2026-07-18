@@ -1,26 +1,26 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
-  derivePortEntryAffordance, resolvePresentLocation,
-  type PortEntryAffordance, type PortEntryShipState, type PortEntryKnownLocation,
-  type CommissionResult, type NormalizeResult,
+  derivePortEntryAffordance,
+  type PortEntryAffordance, type PortEntryShipState, type CommissionResult,
 } from './portEntry'
 import {
   createPortEntryController, type PortEntryActionKind, type PortEntryCommandController, type PortEntryPhase,
 } from './portEntryCommand'
-import { commissionFirstMainShip, fetchPortEntryShipState, normalizeMainShipDock } from './portEntryApi'
+import { commissionFirstMainShip, fetchPortEntryShipState } from './portEntryApi'
 
 // PORT-ENTRY player UI — React adapter. Self-contained (its own owner-reads, like useDockServices): it fetches
 // the caller's port-entry ship state on mount, derives the single affordance, and adapts the framework-free
 // one-shot controller. After a successful action it re-reads authoritative state and notifies the parent so
 // the rest of the UI (e.g. the main-ship panel / dock surface) reconciles. No polling loop — a one-time claim
-// / dock is not a high-frequency surface; state also refreshes after every action.
+// is not a high-frequency surface; state also refreshes after every action.
+// (4C-CLIENT: the normalize action + the legacy-present location classification left with the
+// normalize affordance — see portEntry.ts.)
 
 export interface UsePortEntryOverrides {
   // Test injection seams (default to the real authenticated server calls).
   fetchState?: () => Promise<PortEntryShipState>
   commission?: () => Promise<CommissionResult>
-  normalize?: (mainShipId?: string | null) => Promise<NormalizeResult>
-  // Notify the parent (e.g. Dashboard.refresh) after a successful commission/normalize.
+  // Notify the parent (e.g. Dashboard.refresh) after a successful commission.
   onChanged?: () => void
 }
 
@@ -33,16 +33,9 @@ export interface UsePortEntry {
   reset: () => void
 }
 
-// `locations` (optional): the parent's already-polled get_world_map list, used ONLY to classify the
-// legacy-present location for display (waypoint vs dockable port). No fetch happens here; omitted/unknown
-// falls back to the pre-existing 'normalize' affordance (the server still rejects a wrong guess).
-export function usePortEntry(
-  overrides?: UsePortEntryOverrides,
-  locations?: readonly PortEntryKnownLocation[],
-): UsePortEntry {
+export function usePortEntry(overrides?: UsePortEntryOverrides): UsePortEntry {
   const fetchState = overrides?.fetchState ?? fetchPortEntryShipState
   const commission = overrides?.commission ?? commissionFirstMainShip
-  const normalize = overrides?.normalize ?? normalizeMainShipDock
 
   // null ⇒ not loaded yet (affordance renders 'loading' — never a premature action or "unavailable").
   const [state, setState] = useState<PortEntryShipState | null>(null)
@@ -70,7 +63,6 @@ export function usePortEntry(
     // eslint-disable-next-line react-hooks/refs -- pre-existing: lazy-init the stable controller exactly once
     controllerRef.current = createPortEntryController({
       commission,
-      normalize,
       onSettled: async () => {
         await refresh()
         onChangedRef.current?.()
@@ -87,13 +79,11 @@ export function usePortEntry(
     void refresh()
   }, [refresh])
 
-  // §2.5: thread the loaded ship's explicit id into the normalize command (null → server sole-ship shim). Read
-  // from `state` (a regular value, not a ref) at call time, so no new render-phase ref access is introduced.
-  const submit = useCallback((kind: PortEntryActionKind) => controller.submit(kind, state?.main_ship_id ?? null), [controller, state])
+  const submit = useCallback((kind: PortEntryActionKind) => controller.submit(kind), [controller])
   const reset = useCallback(() => controller.reset(), [controller])
 
   return {
-    affordance: derivePortEntryAffordance(state, resolvePresentLocation(state, locations)),
+    affordance: derivePortEntryAffordance(state),
     phase: cmd.phase,
     actionKind: cmd.kind,
     message: cmd.message,

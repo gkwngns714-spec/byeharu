@@ -4,8 +4,6 @@ import { useGameState } from '../features/dashboard/useGameState'
 import { useCombat } from '../features/combat/useCombat'
 import { useGalaxyMapData } from '../features/map/useGalaxyMapData'
 import { useMainShipSelection } from '../features/map/useMainShipSelection'
-import { useSettleDueArrival } from '../features/map/useSettleDueArrival'
-import { selectActiveLegacyMovement } from '../features/map/spaceStopCommand'
 import { Icon, type IconName } from '../components/ui'
 
 // UI-REBUILD (2b) — the persistent four-destination shell. ONE mobile-first bottom tab bar
@@ -13,10 +11,11 @@ import { Icon, type IconName } from '../components/ui'
 // layer: the three polled hooks (map/game/combat) mount HERE exactly once and reach every
 // destination through useShellState — destinations never mount their own useGameState/useCombat.
 //
-// CONSOLIDATED ARRIVAL SETTLE: the old Dashboard mounted useSettleDueArrival for the legacy leg
-// and GalaxyMapScreen for the OSN leg — safe only because those routes were mutually exclusive.
-// The persistent shell breaks that invariant, so the hook mounts EXACTLY ONCE here, covering BOTH
-// families; no destination mounts it again.
+// 4C-CLIENT: the consolidated arrival-settle mount (useSettleDueArrival — both per-ship movement
+// families) is DELETED with the per-ship movement client. Neither family can fire anymore: no
+// client writer can create a main_ship_space_movements row or a moving main-ship fleet_movements
+// row (4a-post deleted the per-ship command client; the legacy mover flags are off; the drain is
+// 0). Unified fleet arrivals are settled by the server's own cron (process_fleet_movements).
 
 // Tab glyphs come from the design-system Icon set (currentColor line icons — they inherit the
 // NavLink's token color: accent when active, ink-muted otherwise). No emoji in chrome.
@@ -40,20 +39,6 @@ export function AppShell() {
   const map = useGalaxyMapData(4000, selection.selectedShipId)
   const game = useGameState()
   const combat = useCombat()
-
-  // Both settle legs in one mount (see header). The legacy leg needs the active main-ship fleet's
-  // moving row — the ONE shared selector (MapScreen's stop CTA uses the same one).
-  const legacyMove = selectActiveLegacyMovement(map.mainShipFleet, map.movements)
-  useSettleDueArrival({
-    mainShipId: map.mainShip?.main_ship_id ?? null,
-    movement: map.mainShipSpaceMovement,
-    legacyMovement: legacyMove,
-    legacyFleetId: map.mainShipFleet?.id ?? null,
-    onSettled: () => {
-      void map.refresh()
-      void game.refresh()
-    },
-  })
 
   return (
     <ShellStateContext.Provider value={{ game, combat, map, selection }}>

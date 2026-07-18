@@ -26,6 +26,16 @@ export type GetMyMiningExtractionsResult =
   | { ok: true; extractions: MiningExtraction[] }
   | { ok: false; reason: string }
 
+/** MINING-FIELD-MARKERS: one row of get_active_mining_fields() (0226) — position + name ONLY, never
+ *  reward_bundle_json (composition stays revealed only via get_my_mining_extractions above). The
+ *  server returns a plain jsonb array, [] while mining is disabled (fail-closed gate, not an ok/
+ *  reason envelope — there is no caller-specific failure to report). */
+export interface MiningField {
+  name: string
+  space_x: number
+  space_y: number
+}
+
 // The server's narrow extract result contract (mirrors command_mining_extract's wrapper).
 // retry_after_seconds is REAL server data, present only on the 'cooldown' failure (0104).
 export type CommandMiningExtractResult =

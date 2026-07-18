@@ -78,6 +78,7 @@ const base = (over: Partial<FleetCommandModelInput> = {}): FleetCommandModelInpu
   target: null,
   movements: [],
   groups: [G1],
+  groupsLoaded: true, // the groups read succeeded (the normal world; the M2 review-fix spec flips it)
   unifiedEnabled: true,
   unifiedFleets: [],
   rollups: [],
@@ -148,6 +149,32 @@ test('(c) NO dock row: open space, a non-port territory, a moving fleet, or a do
     const m = buildFleetCommandModel(base({ unifiedFleets: fleets }))
     expect(kinds(m.sections)).not.toContain('dock')
   }
+})
+
+// ── (e) DISCOVERABILITY: the "send a fleet" prompt fills the otherwise-empty state ───────────────
+
+test('(e) a fleet owner with no flight, no dockable fleet, and no target gets the prompt (panel is NOT empty)', () => {
+  const m = buildFleetCommandModel(base()) // one group, nothing in flight, no target
+  expect(m.mount).toBe(true)
+  expect(kinds(m.sections)).toEqual(['prompt'])
+})
+
+test('(e) the prompt yields to a live section — target, in-flight, or dockable all suppress it', () => {
+  // a picked destination → context/go, no prompt
+  const withTarget = buildFleetCommandModel(base({ target: { kind: 'point', view: fleetGoTargetView({ x: 10, y: 10 }) } }))
+  expect(kinds(withTarget.sections)).not.toContain('prompt')
+  // a fleet in flight → stop, no prompt
+  const inFlight = buildFleetCommandModel(base({ movements: [mov('g1')] }))
+  expect(kinds(inFlight.sections)).not.toContain('prompt')
+  // a dockable parked fleet → dock, no prompt
+  const dockable = buildFleetCommandModel(base({ unifiedFleets: [parked('g1', 120, 120)] }))
+  expect(kinds(dockable.sections)).not.toContain('prompt')
+})
+
+test('(e) a player with NO fleet never gets the prompt (that is the groupless guidance branch)', () => {
+  const noFleet = buildFleetCommandModel(base({ groups: [], ships: [], target: null }))
+  expect(kinds(noFleet.sections)).not.toContain('prompt')
+  expect(noFleet.mount).toBe(false)
 })
 
 // ── (d) THE RAW-COORDS LAW on the point wire ─────────────────────────────────────────────────────
@@ -280,11 +307,73 @@ test('brake decoupling: the brake yields ONLY to its own in-flight stop; verbs y
 
 // ── the mount predicate: stop ∨ target ∨ dockable parked fleets ──────────────────────────────────
 
-test('mount predicate: nothing live → no panel; a team-less player never mounts it', () => {
-  expect(buildFleetCommandModel(base()).mount).toBe(false)
-  expect(buildFleetCommandModel(base()).sections).toEqual([])
-  // groups.length === 0 fails closed even with a target (the TeamMapSend posture, kept)
+test('mount predicate: a fleet owner with nothing else live gets the send prompt (never an empty panel)', () => {
+  // DISCOVERABILITY: base() owns one fleet with no flight/dock/target — the panel now names the
+  // send gesture instead of rendering nothing and popping in on the next tap.
+  const m = buildFleetCommandModel(base())
+  expect(m.mount).toBe(true)
+  expect(m.sections).toEqual([{ kind: 'prompt' }])
+})
+
+test('mount predicate: NO fleet and nothing live → no panel', () => {
+  const m = buildFleetCommandModel(base({ groups: [], ships: [] }))
+  expect(m.mount).toBe(false)
+  expect(m.sections).toEqual([])
+})
+
+// ── MAP-INTEGRATION M2 — the groupless-player guidance (the prod-majority dead end) ──────────────
+// A player whose only ships are berthed (no fleet) used to select a port and get NOTHING here,
+// while PortScreen's empty state pointed back at the Map — a circular dead end. Ships + a live
+// target + zero groups now mounts ONE guidance section pointing at Command (where TeamRosterPanel
+// creates fleets). Guidance only — NO movement/composition controls (charter §2a).
+
+test('M2 guidance: ships + a port target + zero groups → the guidance section (and nothing else)', () => {
+  const m = buildFleetCommandModel(
+    base({ groups: [], ships: [{ main_ship_id: 's1', status: 'stationary' }], target: { kind: 'port', locationId: 'port-1' } }),
+  )
+  expect(m.mount).toBe(true)
+  expect(m.sections).toEqual([{ kind: 'guidance' }])
+})
+
+test('M2 guidance: a point target guides the same way (any live destination counts)', () => {
+  const m = buildFleetCommandModel(
+    base({
+      groups: [],
+      ships: [{ main_ship_id: 's1', status: 'stationary' }],
+      target: { kind: 'point', view: fleetGoTargetView({ x: 10, y: 10 }) },
+    }),
+  )
+  expect(m.sections).toEqual([{ kind: 'guidance' }])
+})
+
+test('M2 guidance REVIEW FIX: a FAILED groups read (groups=[] but groupsLoaded=false) shows NO "No fleet yet"', () => {
+  // fetchMyShipGroups collapses transport errors to [] — the same shape as "no fleets". A fleet-
+  // owning player on one flaky poll must NOT see the false no-fleet guidance: the claim requires an
+  // affirmative successful-and-empty read (groupsLoaded=true).
+  const m = buildFleetCommandModel(
+    base({
+      groups: [],
+      groupsLoaded: false,
+      ships: [{ main_ship_id: 's1', status: 'stationary' }],
+      target: { kind: 'port', locationId: 'port-1' },
+    }),
+  )
+  expect(m.mount).toBe(false)
+  expect(m.sections).toEqual([])
+})
+
+test('M2 guidance: fails closed without ships, or without a target (the panel stays out of the way)', () => {
+  // no ships → nothing to guide (the pre-M2 posture, kept)
   expect(
-    buildFleetCommandModel(base({ groups: [], target: { kind: 'port', locationId: 'port-1' } })).mount,
+    buildFleetCommandModel(base({ groups: [], ships: [], target: { kind: 'port', locationId: 'port-1' } })).mount,
   ).toBe(false)
+  // no target → no panel (guidance surfaces at the dead end, not permanently)
+  expect(
+    buildFleetCommandModel(base({ groups: [], ships: [{ main_ship_id: 's1', status: 'stationary' }], target: null })).mount,
+  ).toBe(false)
+})
+
+test('M2 guidance: never renders for a player WITH a fleet (the normal sections own that world)', () => {
+  const m = buildFleetCommandModel(base({ target: { kind: 'port', locationId: 'port-1' } }))
+  expect(m.sections.some((s) => s.kind === 'guidance')).toBe(false)
 })

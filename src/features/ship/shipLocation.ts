@@ -6,11 +6,9 @@ import { formatCountdown } from '../../lib/time'
 // S6 NOTE (Fitting tab): ShipStatusCard/ShipDossier/ShipScreen's direct consumption is RETIRED —
 // every live consumer now reaches this resolver through the fleet-positions adapter
 // (teamRoster.fleetPositionLocationLabel / resolveBerthedLocationLabel below), i.e. the ONE
-// map.fleetPositions read. CLEANUP FLAG (recorded, not done here): with the status card gone,
-// deriveMainShipStatus (mainshipApi) lost its last location-UI consumer; its documented mirror
-// fleetDisplayStatus below survives only as this resolver's internal fleet-status mapper — fold
-// the two when the MAP slice's remaining consumer (MainShipCommand) is next touched. Do NOT add
-// a third copy.
+// map.fleetPositions read. 4C-CLIENT closed the MAP-INTEGRATION n2 cleanup flag: mainshipApi's
+// orphaned deriveMainShipStatus is DELETED; fleetDisplayStatus below is now the ONE copy of the
+// fleet-status mapping (this resolver's internal mapper). Do NOT add a second copy.
 //
 // SHIPLOC — the ONE shared main-ship LOCATION resolver. Born to answer the owner order "in ship
 // tab, i should be able to see where the ship is, the location as well." ShipStatusCard already
@@ -60,10 +58,9 @@ function isCombatLocation(loc: MapLocation): boolean {
   return loc.location_type === 'pirate_hunt' || loc.location_type === 'pirate_den' || loc.activity_type === 'hunt_pirates'
 }
 
-// A byte-for-byte mirror of mainshipApi's deriveMainShipStatus (no fleet → home · present · returning
-// · else traveling). Inlined ONLY because this helper must stay supabase-free so it is directly
-// unit-testable, and mainshipApi (which imports the client) is owned by the parallel MAP slice — not
-// ours to re-home its exports. It is a fleet-status mapper, NOT a second LOCATION resolver.
+// The ONE fleet-status mapper (no fleet → home · present · returning · else traveling) — formerly a
+// mirror of mainshipApi's deriveMainShipStatus, which 4c-client deleted as an orphan. Lives here so
+// this helper stays supabase-free and directly unit-testable. NOT a second LOCATION resolver.
 type DisplayStatus = 'home' | 'traveling' | 'present' | 'returning'
 function fleetDisplayStatus(fleet: { status: string } | null): DisplayStatus {
   if (!fleet) return 'home'
@@ -149,7 +146,6 @@ export function resolveBerthedLocationLabel(
       current_location_id: berthLocationId,
       location_mode: null,
       active_movement_id: null,
-      active_space_movement_id: null,
     },
     null,
     locations,

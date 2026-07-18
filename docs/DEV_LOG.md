@@ -5,6 +5,52 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-18 — COMBAT SLICE 0: the module-attribute foundation (mig 0229, DARK `module_range_attributes_enabled`)
+
+**Request.** Owner intent: "each module (mining laser, missile launcher) has its own range, ammo speed,
+power — shown on map as a radius; the range concept is used in combat AND mining." Lay the catalog
+foundation both future spatial combat (S3, parallel branch) and mining will read, and migrate mining's
+flat radius onto the fitted mining module — additive, dark, byte-parity except one marked hunk.
+
+**Work done** (branch `slice-combat-s0-module-attrs`, worktree `byeharu-combat-s0`):
+- `module_types` += 6 nullable-by-default catalog columns: `range` (world units), `projectile_speed`
+  (units/sec; NULL = hitscan), `power` (weapon damage OR mining extraction rate), `ammo_type` (FK
+  `item_types(item_id)`; NULL = energy/unlimited), `ammo_per_shot` (int, default 0), `cooldown_seconds`
+  (numeric, default 0) — plus 5 nonneg CHECKs. NULL is the honest "no spatial/combat reach" answer.
+- Backfill: `autocannon_battery` (attack 10) → range 150 / projectile_speed 300 / power 10 / cooldown 2s;
+  `autocannon_battery_mk2` (attack 18) → range 180 / projectile_speed 320 / power 18 / cooldown 2.5s (fires
+  slightly slower — the 0202 "bigger guns draw more heat" narrative extended to rate of fire);
+  `mining_rig_extension` (the ONE existing mining module, 0183 — no new "Mining Laser" needed) → range 120
+  / power 8 (mirrors its own existing `stats_json.mining=8`, not a second invented number) / hitscan
+  (`projectile_speed` NULL). Every other module type (engine/cargo/sensor/defense) stays explicit NULL — no
+  spatial reach. Ranges picked in the low-hundreds band to read sanely once the parallel world-rebalance
+  (mig 0227, 3x map distances) lands — this slice reads none of that geometry, just future-proofs the scale.
+- New read-leaf `ship_weapon_modules(ship)` — owner-scoped (`authenticated`-only; empty for a ship you don't
+  own), composes the EXISTING fitting join (`ship_module_fittings` → `module_instances` → `module_types`,
+  the exact join `calculate_expedition_stats` already performs) filtered to `range IS NOT NULL`. This is the
+  ONE shape S3 (spatial combat) and the client map-radius layer will both reuse.
+- `mining_extract` re-created BYTE-PARITY from the 0104 head with exactly ONE marked hunk: while
+  `module_range_attributes_enabled` is dark, the radius is the exact original flat
+  `coalesce(cfg_num('mining_extract_radius'), 750)` one-liner; lit, it becomes `max(module_types.range)`
+  over the ship's OWN fitted mining modules (identified by `slot_type='mining'` OR a `mining` `stats_json`
+  key — never a weapon's range, even though both now carry `range`), falling back to the SAME flat default
+  when no mining module is fitted (mining is never hard-blocked for lacking one).
+- Flag `module_range_attributes_enabled` seeded `false`. Self-asserted at deploy time: column shape, FK,
+  CHECKs, exact backfill per module type, flag dark, leaf ACL (authenticated-only, never anon) + shape,
+  and `mining_extract` prosrc byte-parity outside the one marked hunk (comment-stripped probes, the 0221
+  lesson) with unchanged ACL on both `mining_extract`/`command_mining_extract`.
+- `docs/SYSTEM_BOUNDARIES.md` synced: `module_types` row, the Mining row's radius-source clause + new
+  Fitting/Modules read edge, and the Fitting row's inbound-edge note for the new leaf.
+
+**Verify:** `bash scripts/team-command-proof.sh selftest` and `bash scripts/fleetgo-proof.sh selftest` both
+pass (DB-free harness checks, unaffected by this slice). No TS touched — `tsc -b` not required this slice
+(no client change; a client `moduleTypes` field is left for a later slice to add on demand).
+
+**Independent of S1** (parallel per-ship-damage combat slice, different files) — not yet applied to any
+deployed environment; `main` still ends at migration 0222 plus whichever of 0223+ lands first.
+
+---
+
 ## 2026-07-15 — SESSION WRAP: the FLEET RESHAPE + audit-fix batch is COMPLETE (all merged, all DARK) — pending state = owner-gated
 
 **What this entry is.** A consolidated close-out for the fleet-control-model reshape and the 7-agent-audit

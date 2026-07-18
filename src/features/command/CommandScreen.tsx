@@ -57,7 +57,7 @@ export function CommandScreen() {
                 self-hides when all steps are done or the player dismisses it (localStorage). */}
             <FirstOrdersCard />
             {/* RIGHT NOW #1 — onboarding (self-hides unless the server says an action is needed). */}
-            <PortEntryPanel deps={{ onChanged: game.refresh }} locations={game.locations} />
+            <PortEntryPanel deps={{ onChanged: game.refresh }} />
             {/* RIGHT NOW #2 — live battles (only while an encounter exists). */}
             {combat.encounters.map((enc) => (
               <ActiveCombatPanel

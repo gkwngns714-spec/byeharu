@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import type { MapLocation } from './mapTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
-import type { MainShipLite } from './useGalaxyMapData'
-import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { isMovementInFlight, interpolateMovementPoint } from './movementInterpolation'
-import { shipLayer } from './SpaceRouteLine'
 import { teamMarkersLayer } from './teamMarkers'
 import { territoryLayer } from './territoryLayer'
+import { miningFieldRangeLayer } from './miningFieldLayer'
+import { MiningFieldMarker } from './MiningFieldMarker'
+import type { MiningField } from '../mining/miningTypes'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
@@ -33,27 +33,22 @@ const norm = (p: { x: number; y: number }): { x: number; y: number } => worldToV
 
 export function GalaxyMap({
   locations,
-  mainShip,
-  mainShipFleet,
-  mainShipPresence,
-  mainShipSpaceMovement,
-  mainshipSendEnabled,
   movements,
   teamGroups,
   dockedTeamRollups,
   unifiedGroupFleets,
+  combatSortieFleets,
   fleetMovementUnifiedEnabled,
   fleetGoView,
   onTargetPoint,
   selectedId,
   onSelect,
+  miningFields,
+  miningExtractRadius,
+  selectedMiningFieldName,
+  onSelectMiningField,
 }: {
   locations: MapLocation[]
-  mainShip: MainShipLite | null
-  mainShipFleet: MainShipFleet | null
-  mainShipPresence: MainShipPresence | null
-  mainShipSpaceMovement: MainShipSpaceMovement | null
-  mainshipSendEnabled: boolean
   movements: FleetMovement[]
   // TEAMMAP-2: the owner's teams + the pure docked-team rollup (both empty while TEAM_COMMAND is
   // dark — the additive team layer then renders nothing and the map is byte-identical to today).
@@ -62,6 +57,10 @@ export function GalaxyMap({
   // FLEET-GO 4a-1: the group's own unified fleets (charter §2). Feeds the in-space fleet badge in the
   // team layer. [] while the unified flag is dark (useGalaxyMapData gates the read) → byte-identical.
   unifiedGroupFleets: UnifiedGroupFleetLite[]
+  // MAP-INTEGRATION M1: the COMBAT-PRESENT group fleets (the dock fold's exact complement, partitioned
+  // once in useGalaxyMapData). Feeds the team layer's "in combat at X" badge so a fleet mid-hunt-combat
+  // never vanishes from the map. [] while the unified fetch is dark → byte-identical.
+  combatSortieFleets: UnifiedGroupFleetLite[]
   // FLEET-GO 4a-2: the RUNTIME unified flag (useGalaxyMapData's one read) — with ≥1 owned group it
   // hands every open-space tap to the FLEET (resolveSpaceTapOwner) and suppresses the per-ship
   // coordinate surface. False (prod today) → the tap path + tree are byte-identical to 4a-1.
@@ -76,12 +75,20 @@ export function GalaxyMap({
   onTargetPoint: (world: WorldCoord) => void
   selectedId: string | null
   onSelect: (id: string | null) => void
+  // MINING-FIELD-MARKERS: the active fields ([] while mining is disabled — 0226 fail-closed) + the
+  // world-unit extraction radius (game_config mining_extract_radius) for the range-ring layer.
+  // Selection is its OWN state (a field is not a MapLocation) — MapScreen owns it, mutually
+  // exclusive with `selectedId` the same way point-target vs. port-selection already are.
+  miningFields: MiningField[]
+  miningExtractRadius: number
+  selectedMiningFieldName: string | null
+  onSelectMiningField: (name: string | null) => void
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
 
-  // 1s clock for the in-flight path filter below. Same idiom as SpaceRouteLine/MainShipMarker: Date.now()
+  // 1s clock for the in-flight path filter below. Same idiom as TeamMovingMarkers: Date.now()
   // stays OUT of render (it is impure and would re-read unpredictably on any re-render), and the interval
   // runs ONLY while there is a movement to time — with none, no timer exists and the map is idle as before.
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -112,40 +119,21 @@ export function GalaxyMap({
   const pointers = useRef<Set<number>>(new Set())
 
   // ── S6B-PRES content-fit camera (presentation only; never alters world/marker coordinates) ──
-  // Deterministic focus: open-space / in-transit ships and their active movement segment take focus
-  // priority so the player is always visible. Derived PURELY from ship state (no clock / interpolation),
-  // so it is render-pure and the focus signature stays stable per move (not per animation frame).
-  const focusInputs: FocusInputs = useMemo(() => {
-    const sx = mainShip?.space_x
-    const sy = mainShip?.space_y
-    const shipWorld: WorldCoord | null =
-      mainShip?.spatial_state === 'in_space' && typeof sx === 'number' && Number.isFinite(sx) && typeof sy === 'number' && Number.isFinite(sy)
-        ? { x: sx, y: sy }
-        : null
-    const seg: readonly [WorldCoord, WorldCoord] | null =
-      mainShipSpaceMovement && mainShipSpaceMovement.status === 'moving'
-        ? [
-            { x: mainShipSpaceMovement.origin_x, y: mainShipSpaceMovement.origin_y },
-            { x: mainShipSpaceMovement.target_x, y: mainShipSpaceMovement.target_y },
-          ]
-        : null
-    return {
-      shipWorld,
-      movementSegment: seg,
+  // 4C-CLIENT: the per-ship open-space focus arm (spatial_state='in_space' point / legacy coordinate
+  // movement segment) is DELETED with the per-ship movement client — those states can no longer
+  // exist. Focus derives from the named world content; the FocusInputs ship/segment slots stay null.
+  const focusInputs: FocusInputs = useMemo(
+    () => ({
+      shipWorld: null,
+      movementSegment: null,
       locations: locations.map((l) => ({ x: l.x, y: l.y })),
-    }
-  }, [mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations])
+    }),
+    [locations],
+  )
 
-  // Stable focus signature: changes only on a MEANINGFUL focus change (open-space mode / active
-  // movement id / parked point / named-content set), never per animation frame — so the fit is applied
-  // once per context. Uses the static space_x/space_y + movement id, never the live interpolated point.
-  const focusSignature = useMemo(() => {
-    if (focusInputs.shipWorld || focusInputs.movementSegment) {
-      const seg = mainShipSpaceMovement?.status === 'moving' ? mainShipSpaceMovement.id : 'noseg'
-      return `os:${mainShip?.spatial_state ?? 'n'}:${seg}:${mainShip?.space_x ?? 'n'},${mainShip?.space_y ?? 'n'}`
-    }
-    return `named:${locations.map((l) => l.id).join(',')}`
-  }, [focusInputs, mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations])
+  // Stable focus signature: changes only on a MEANINGFUL focus change (the named-content set),
+  // never per animation frame — so the fit is applied once per context.
+  const focusSignature = useMemo(() => `named:${locations.map((l) => l.id).join(',')}`, [locations])
 
   // Apply the content-fit camera for the INITIAL view (once per focus change), never after the player
   // has interacted. Explicit reset re-enables it.
@@ -267,7 +255,10 @@ export function GalaxyMap({
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerLeave}
         onPointerCancel={onPointerLeave}
-        onClick={() => onSelect(null)}
+        onClick={() => {
+          onSelect(null)
+          onSelectMiningField(null)
+        }}
       >
         {/* Static backdrop (NOT transformed): the map area always renders a deliberate background,
             even at the camera bounds. Visual safety layer only — not a map-layer framework.
@@ -338,6 +329,12 @@ export function GalaxyMap({
               nothing — the pre-0217 map is byte-identical. */}
           {territoryLayer({ locations, norm, k: view.k })}
 
+          {/* MINING-FIELD-MARKERS — the extraction-range ring per active field, same "world-true
+              region, under every marker" placement as the territory rings just above (pure,
+              hook-free `miningFieldRangeLayer`, unit-tested the SAME way). [] fields (mining
+              disabled) or a non-positive radius → renders nothing. */}
+          {miningFieldRangeLayer({ fields: miningFields, norm, k: view.k, radius: miningExtractRadius })}
+
           {/* Movement paths (under markers) — IN-FLIGHT ONLY.
               The rows arrive already filtered to status='moving', but that status is settled by the 30s
               `process_fleet_movements` cron, so a finished trip keeps its row for up to ~30s and used to
@@ -388,6 +385,27 @@ export function GalaxyMap({
             )
           })}
 
+          {/* MINING-FIELD-MARKERS — the interactive field glyphs (hexagon "gem", distinct from every
+              LocationMarker shape). Positioned through the SAME `norm` world→viewBox projection as
+              every other spatial object; a field is OPEN-SPACE world data (space_x/space_y), not a
+              MapLocation, so it is not part of the `locations` list above. Always labelled (a
+              handful of fields, world-wide — the whole point is to be found), unlike the zoom-tiered
+              LocationMarker declutter built for a much denser location set. */}
+          {miningFields.map((f) => {
+            const p = norm({ x: f.space_x, y: f.space_y })
+            return (
+              <MiningFieldMarker
+                key={f.name}
+                x={p.x}
+                y={p.y}
+                k={view.k}
+                field={f}
+                selected={f.name === selectedMiningFieldName}
+                onSelect={(field) => onSelectMiningField(field.name)}
+              />
+            )
+          })}
+
           {/* TEAMMAP-2 — the team marker layer, composed by the pure, hook-free `teamMarkersLayer`
               helper (the shipLayer element-tree convention; the unit tests call the SAME function).
               ADDITIVE beside the existing layers: in-flight team badges ride the shared movement
@@ -403,24 +421,14 @@ export function GalaxyMap({
             k: view.k,
             // FLEET-GO 4a-1: parked unified fleets → the in-space fleet badge ([] while dark).
             unifiedFleets: unifiedGroupFleets,
+            // MAP-INTEGRATION M1: combat-present sorties → the in-combat fleet badge ([] while dark).
+            combatFleets: combatSortieFleets,
           })}
 
-          {/* S5 MAP-UX: the redundant per-ship chevron layer (fleetShipsLayer) is DELETED — S1's
-              fleeted-XOR-berthed invariant means the team badges above + the single shipLayer below
-              already cover every owned marker (charter cleanup; the audit's redundancy finding). */}
-
-          {/* OSN-1 + OSN-3 S6B-ROUTE: the local player's own ship overlay layer, composed by the pure,
-              hook-free `shipLayer` helper (route UNDER the main-ship marker, in that order). Gated by the
-              existing `mainshipSendEnabled` data-dark gate — NOT the space-movement flag; both children are
-              naturally empty in production (no coherent active coordinate route can exist while
-              mainship_space_movement_enabled = false). Read-only; coherence comes solely from the resolvers.
-              The single helper is what the GalaxyMap-wiring unit test exercises (no duplicated wiring). */}
-          {shipLayer({
-            mainshipSendEnabled,
-            inputs: { mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, locations },
-            norm,
-            k: view.k,
-          })}
+          {/* 4C-CLIENT: the per-ship overlay layer (shipLayer — route + MainShipMarker) is DELETED
+              with the per-ship movement client (S5 already deleted the redundant fleetShipsLayer).
+              Owned ships are represented by the team badges above (fleeted) or as INFO surfaces
+              (berthed — roster/Port labels); the legacy per-ship spatial states can no longer exist. */}
 
           {/* FLEET-GO 4a-2 — the FLEET's coordinate-go target (the same crosshair geometry, reused
               under its own testid + accent tone). Shows the CANONICAL point — the integer-grid
@@ -447,7 +455,7 @@ export function GalaxyMap({
 
       {/* ── UI R1 overlay slots: one positioned rail per corner; co-corner overlays stack instead of
           colliding at hand-tuned absolute offsets. MapScreen owns the remaining slots (top-left =
-          the feature rail, top-center = world events, bottom-center = the ONE FleetCommandPanel). ── */}
+          the feature rail, top-center = world events, bottom-right = the ONE FleetCommandPanel). ── */}
 
       {/* top-right: the zoom cluster. S5 MAP-UX: the fleet coordinate-go confirm panel that used to
           stack here moved into the ONE bottom-center FleetCommandPanel (MapScreen). */}
@@ -480,6 +488,14 @@ export function GalaxyMap({
           </svg>
           Hostile
         </span>
+        {miningFields.length > 0 && (
+          <span className="flex items-center gap-1">
+            <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
+              <polygon points="9.7,5 6.7,10 3.3,10 0.3,5 3.3,0 6.7,0" fill="var(--color-warning)" />
+            </svg>
+            Mining field — settle within range to extract
+          </span>
+        )}
         <span className="basis-full">Tap a marker for details · drag to pan · scroll to zoom</span>
       </OverlayPanel>
     </div>

@@ -10,9 +10,11 @@ import type { FleetCommandTarget } from './fleetCommandModel'
 import { teamDestinationKind } from '../command/teamDestination'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 import { MiningPanel } from '../mining/MiningPanel'
+import type { MiningField } from '../mining/miningTypes'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
+import { TelegraphBanner } from '../combat/TelegraphBanner'
 import type { WorldCoord } from './openSpaceTransform'
-import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
+import { Badge, Button, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
 // stays the hero; the location detail panel now speaks the shared design language (IDENTITY →
@@ -48,10 +50,10 @@ export function MapScreen() {
   const {
     map: {
       loading, error, locations, meta, mainShip, movements,
-      mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement,
-      teamGroups, teamGroupMap, dockedTeamRollups,
-      fleetMovementUnifiedEnabled, unifiedGroupFleets,
-      launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, refresh,
+      teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups,
+      fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
+      launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
+      miningFields, miningExtractRadius, refresh,
     },
     selection,
   } = useShellState()
@@ -59,9 +61,14 @@ export function MapScreen() {
   // S5 MAP-UX: the fleet's tapped open-space destination (RAW world point — the wire value). The
   // ONLY point-target state; the port target derives from selectedId below (ONE selection source).
   const [pointTarget, setPointTarget] = useState<WorldCoord | null>(null)
+  // MINING-FIELD-MARKERS: a tapped field's OWN selection (a field is not a MapLocation, so it is not
+  // part of selectedId's id-space) — mutually exclusive with the location selection + the point
+  // target below, same "only one live selection" posture as the rest of this screen.
+  const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null)
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
+  const selectedField: MiningField | null = miningFields.find((f) => f.name === selectedFieldName) ?? null
 
   // Selecting a marker retires any live point target (never two live targets); a bare-space tap
   // already clears the selection on GalaxyMap's own svg click path — the two stay exclusive by
@@ -69,7 +76,14 @@ export function MapScreen() {
   // point target here is gated on an actual (non-null) marker selection.
   const handleSelect = (id: string | null) => {
     setSelectedId(id)
-    if (id !== null) setPointTarget(null)
+    if (id !== null) {
+      setPointTarget(null)
+      setSelectedFieldName(null)
+    }
+  }
+  const handleSelectMiningField = (name: string | null) => {
+    setSelectedFieldName(name)
+    if (name !== null) setSelectedId(null)
   }
 
   // The point target resolved ONCE (raw + canonical preview + bounds verdict); feeds both the
@@ -83,7 +97,9 @@ export function MapScreen() {
       ? { kind: 'port', locationId: selected.id }
       : null
 
-  const panelLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
+  // 4C-CLIENT: the legacy spatial_state / space-movement fields left the key with the schema they
+  // read — the ship's own status transition still ticks a refetch.
+  const panelLifecycleKey = `${mainShip?.status ?? 'n'}`
 
   return (
     <div data-testid="galaxy-map-screen" className="relative flex h-full flex-col overflow-hidden md:flex-row">
@@ -117,46 +133,60 @@ export function MapScreen() {
           <div className="relative h-full w-full">
             <GalaxyMap
               locations={locations}
-              mainShip={mainShip}
-              mainShipFleet={mainShipFleet}
-              mainShipPresence={mainShipPresence}
-              mainShipSpaceMovement={mainShipSpaceMovement}
-              mainshipSendEnabled={mainshipSendEnabled}
               movements={movements}
               teamGroups={teamGroups}
               dockedTeamRollups={dockedTeamRollups}
               unifiedGroupFleets={unifiedGroupFleets}
+              combatSortieFleets={combatSortieFleets}
               fleetMovementUnifiedEnabled={fleetMovementUnifiedEnabled}
               fleetGoView={pointView}
               onTargetPoint={setPointTarget}
               selectedId={selectedId}
               onSelect={handleSelect}
+              miningFields={miningFields}
+              miningExtractRadius={miningExtractRadius}
+              selectedMiningFieldName={selectedFieldName}
+              onSelectMiningField={handleSelectMiningField}
             />
             {/* top-left overlay rail: the server-lit feature panels ride ONE stacked, scrollable
                 slot so that WHEN a capability lights they read as coherent map overlays instead of
                 colliding at hand-tuned offsets. All keep their server-lit `return null` gates
                 verbatim (dark today → the rail renders empty and, being pointer-transparent, never
-                intercepts map gestures). GalaxyMap owns top-right (zoom), bottom-left (legend) and
-                bottom-right; WorldEvents takes top-center; the FleetCommandPanel takes bottom-center. */}
+                intercepts map gestures). GalaxyMap owns top-right (zoom) and bottom-left (legend);
+                WorldEvents takes top-center; the FleetCommandPanel takes bottom-right. */}
             <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
-              {/* EXPLORATION-P11 — dark scan + discoveries; legal only settled in space. */}
+              {/* EXPLORATION-P11 / MINING-P12 — dark scan/extract; legal only settled in space.
+                  4C-CLIENT: the ships' legacy spatial_state column is no longer read (4c-mig-2
+                  drops it) and no reachable state satisfies the panels' in_space gate, so the
+                  gate input is a hard null — fail closed, byte-identical to before. When
+                  4c-mig-1 R5 repoints scan/extract legality to fleet-truth, these gates should
+                  be repointed to the fleet position ('in_space' place) in the same slice. */}
               <ExplorationPanel
                 lifecycleKey={panelLifecycleKey}
                 mainShipId={mainShip?.main_ship_id ?? null}
                 shipStatus={mainShip?.status}
-                shipSpatialState={mainShip?.spatial_state}
+                shipSpatialState={null}
               />
-              {/* MINING-P12 — dark extract + extraction history; legal only settled in space. */}
               <MiningPanel
                 lifecycleKey={panelLifecycleKey}
                 mainShipId={mainShip?.main_ship_id ?? null}
                 shipStatus={mainShip?.status}
-                shipSpatialState={mainShip?.spatial_state}
+                shipSpatialState={null}
               />
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
-            {/* S5 MAP-UX — THE fleet-command surface (bottom-center): Stop (NO-SOFTLOCK, always
+            {/* COMBAT-S2 TELEGRAPH — the pre-combat warning beat (top-center, urgent). Renders nothing
+                unless the caller has a telegraphed encounter; while combat_telegraph_enabled is dark the
+                pending table is empty so this is invisible (fail-closed by data). Flee withdraws the
+                fleet home, then re-polls the map + ship reads. */}
+            <TelegraphBanner
+              onChange={() => {
+                void refresh()
+                void selection.refresh()
+              }}
+            />
+            {/* S5 MAP-UX — THE fleet-command surface (bottom-right): Stop (NO-SOFTLOCK, always
                 first, state-predicated only) + go/redirect + dock + hunt, all composed from the ONE
                 pure model. Mounted behind the same compile-time gate as every team surface; the
                 panel renders nothing unless a fleet is in flight, a target is live, or a fleet sits
@@ -167,6 +197,7 @@ export function MapScreen() {
                 target={target}
                 movements={movements}
                 groups={teamGroups}
+                groupsLoaded={teamGroupsOk}
                 unifiedEnabled={fleetMovementUnifiedEnabled}
                 unifiedFleets={unifiedGroupFleets}
                 rollups={dockedTeamRollups}
@@ -189,6 +220,58 @@ export function MapScreen() {
           </div>
         )}
       </div>
+
+      {/* MINING-FIELD-MARKERS — the field detail panel: name + a "send fleet here to mine" affordance
+          that REUSES the existing open-space go (sets the SAME pointTarget the GalaxyMap space-tap
+          path sets — no second command surface). Mutually exclusive with the location panel below
+          (handleSelect/handleSelectMiningField keep only one selection live). Gated on
+          TEAM_COMMAND_ENABLED like the FleetCommandPanel itself — setting a point target with no
+          command surface mounted to consume it would be a dead click. */}
+      {selectedField && (
+        <aside
+          data-testid="mining-field-detail-panel"
+          className="max-h-[45dvh] overflow-y-auto border-t border-edge bg-surface p-4 md:max-h-none md:w-80 md:border-l md:border-t-0"
+        >
+          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-edge md:hidden" aria-hidden="true" />
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-ink">{selectedField.name}</h2>
+              <p className="mt-0.5 text-xs text-ink-muted">Mining field</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Badge tone="warning">Resource</Badge>
+              <button
+                onClick={() => setSelectedFieldName(null)}
+                className="flex min-h-6 min-w-6 items-center justify-center text-ink-faint transition hover:text-ink"
+                aria-label="Close details"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <dl className="mt-4 space-y-1.5 text-sm">
+            <StatRow
+              label="Extraction range"
+              value={`${Math.round(miningExtractRadius)} units`}
+              hint="settle a fleet within range to extract"
+            />
+          </dl>
+          {TEAM_COMMAND_ENABLED && (
+            <Button
+              variant="warning"
+              size="sm"
+              data-testid="mining-field-send-fleet"
+              className="mt-4 w-full"
+              onClick={() => {
+                setPointTarget({ x: selectedField.space_x, y: selectedField.space_y })
+                setSelectedFieldName(null)
+              }}
+            >
+              Send fleet here to mine
+            </Button>
+          )}
+        </aside>
+      )}
 
       {/* Location detail panel — IDENTITY → DETAILS. READ-ONLY since S5 MAP-UX: every command verb
           lives in the bottom-center FleetCommandPanel (the port target derives from this selection).

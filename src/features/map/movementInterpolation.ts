@@ -47,3 +47,15 @@ export function interpolateMovementPoint(seg: MovementSegment, nowMs: number): {
     y: seg.origin_y + t * (seg.target_y - seg.origin_y),
   }
 }
+
+// COMMAND-FLEET-STATE — the SAME clamped [0,1] fraction interpolateMovementPoint uses internally,
+// exposed directly for a progress bar/percent display (the Command roster's per-fleet meter). Not a
+// second interpolation formula — this is the identical `t` that already drives the map's dot position;
+// a caller that only needs "how far along" reads this instead of computing {x,y} and discarding it.
+// Same fail-closed contract: a malformed or zero-duration segment → null (never a guessed fraction).
+export function movementProgress(seg: MovementSegment, nowMs: number): number | null {
+  const dep = Date.parse(seg.depart_at)
+  const arr = Date.parse(seg.arrive_at)
+  if (!finite(dep) || !finite(arr) || arr <= dep) return null
+  return Math.max(0, Math.min(1, (nowMs - dep) / (arr - dep)))
+}
