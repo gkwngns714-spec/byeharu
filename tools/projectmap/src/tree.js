@@ -249,6 +249,7 @@ export function createTree({ graph, status, svg, onSelect }) {
   let root = null
   let collapsed = new Set()
   let selected = null
+  let wip = new Map()   // nodeId -> hex, the open-PR overlay (blinks)
 
   function build() {
     root = BUILDERS[mode](graph, status)
@@ -310,7 +311,8 @@ export function createTree({ graph, status, svg, onSelect }) {
       const dim = query && !matches(r.n) ? 0.42 : 1
       const sel = selected === r.n.id
       const label = r.n.label.length > 30 ? `${r.n.label.slice(0, 29)}…` : r.n.label
-      parts.push(`<g class="tn" data-id="${r.n.id}" data-node="${r.n.nodeId ?? ''}" transform="translate(${r.x},${r.y - BOX_H / 2})" opacity="${dim}">
+      const wc = r.n.nodeId ? wip.get(r.n.nodeId) : null
+      parts.push(`<g class="tn${wc ? ' wip' : ''}" data-id="${r.n.id}" data-node="${r.n.nodeId ?? ''}"${wc ? ` style="--wc:${wc}"` : ''} transform="translate(${r.x},${r.y - BOX_H / 2})" opacity="${dim}">
         <rect width="${BOX_W}" height="${BOX_H}" rx="4"
           fill="${isGroup ? 'rgba(255,255,255,.045)' : `${s.hex}1c`}"
           stroke="${sel ? '#fff' : s.hex}" stroke-opacity="${sel ? 1 : isGroup ? .3 : .62}" stroke-width="${sel ? 1.6 : 1}"/>
@@ -344,6 +346,7 @@ export function createTree({ graph, status, svg, onSelect }) {
   return {
     setMode(m) { mode = m; selected = null; build(); render() },
     setQuery(q) { query = q.trim().toLowerCase(); render() },
+    setWip(map) { wip = map ?? new Map(); render() },
     expandAll() { collapsed = new Set(); render() },
     collapseAll() { build(); render() },
     counts() { return { nodes: tally(root) } },

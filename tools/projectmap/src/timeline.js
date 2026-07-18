@@ -19,6 +19,7 @@ const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt
 export function createTimeline({ graph, status, mount, onSelect }) {
   let query = ''
   let selected = null
+  let wip = new Map()   // nodeId -> hex, the open-PR overlay (blinks)
 
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
   const jobs = graph.jobs ?? [] // the scanned DEV_LOG build log, oldest first
@@ -234,6 +235,13 @@ export function createTimeline({ graph, status, mount, onSelect }) {
         <div class="tl-subhead">development queue (${planned.length} planned slices)</div>
         ${plannedRows}
       </section>`
+
+    // WIP overlay: mark any row/chip an open PR is touching so it blinks. Runs
+    // after every render because innerHTML wipes the classes each time.
+    if (wip.size) for (const el of mount.querySelectorAll('[data-goto]')) {
+      const hex = wip.get(el.dataset.goto)
+      if (hex) { el.classList.add('wip'); el.style.setProperty('--wc', hex) }
+    }
   }
 
   mount.addEventListener('click', (e) => {
@@ -248,5 +256,6 @@ export function createTimeline({ graph, status, mount, onSelect }) {
 
   return {
     setQuery(q) { query = q.trim().toLowerCase(); render() },
+    setWip(map) { wip = map ?? new Map(); render() },
   }
 }

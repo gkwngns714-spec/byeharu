@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-18T14:55:24.948Z",
+  "generatedAt": "2026-07-18T15:10:10.646Z",
   "source": "open pull requests on gkwngns714-spec/byeharu",
   "count": 4,
   "items": [
@@ -84,7 +84,7 @@
       "pr": 198,
       "title": "Pirate danger-zone prototype (0225): PostGIS polygon zones + intercept + waypoints (DARK)",
       "branch": "slice-pirate-intercept",
-      "stamp": "20260618000225",
+      "stamp": "20260618000233",
       "color": "#00e5ff",
       "touches": {
         "functions": [

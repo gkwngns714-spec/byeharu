@@ -100,7 +100,16 @@ const state = {
 // wipTint: instanceIndex -> THREE.Color, the item colour to pulse toward.
 let wipItems = []
 let wipIds = new Set()
-const wipTint = new Map()
+const wipTint = new Map()          // instanceIndex -> THREE.Color (map pulse)
+let wipPulse = []                  // [{ i, n, col }] visible wip nodes, for the scale breathe
+const wipHex = new Map()           // nodeId -> hex, shared with the tree + timeline views
+
+// view state — declared here (not at setTab) so the WIP overlay, which runs at
+// load, can notify the tree/timeline the moment they exist without a TDZ.
+let tab = 'map'
+let tree = null
+let timeline = null
+let method = null
 
 const matchesQuery = (n) => !state.query || n.label.toLowerCase().includes(state.query)
   || (n.detail ?? '').toLowerCase().includes(state.query)
@@ -303,12 +312,19 @@ const wnEl = document.getElementById('workingNow')
 function setWip(payload) {
   wipItems = payload?.items ?? []
   wipIds = new Set(wipItems.flatMap((it) => it.nodes))
-  wipTint.clear()
+  wipTint.clear(); wipHex.clear(); wipPulse = []
   for (const it of wipItems) {
-    const col = new THREE.Color(it.color || '#ff2d95')
-    for (const nid of it.nodes) { const i = idx.get(nid); if (i != null) wipTint.set(i, col) }
+    const hex = it.color || '#ff2d95'
+    const col = new THREE.Color(hex)
+    for (const nid of it.nodes) {
+      wipHex.set(nid, hex)
+      const i = idx.get(nid)
+      if (i != null) { wipTint.set(i, col); wipPulse.push({ i, n: positioned[i], col }) }
+    }
   }
   renderWorkingNow(payload)
+  tree?.setWip?.(wipHex)
+  timeline?.setWip?.(wipHex)
   apply()   // pick up the size bump
 }
 
@@ -333,8 +349,13 @@ function renderWorkingNow(payload) {
       <span class="wn-meta">${meta}</span></span></div>`
   }).join('')
   wnEl.innerHTML = `<div class="wn-head"><span class="wn-live"></span><span>Working now</span>`
-    + `<span class="wn-when">${when}</span></div>${rows}`
+    + `<span class="wn-when">${when}</span>`
+    + `<button class="wn-fold" title="Collapse" aria-label="Collapse">${wnEl.classList.contains('folded') ? '+' : '–'}</button></div>${rows}`
   wnEl.classList.add('on')
+  wnEl.querySelector('.wn-fold')?.addEventListener('click', () => {
+    wnEl.classList.toggle('folded')
+    wnEl.querySelector('.wn-fold').textContent = wnEl.classList.contains('folded') ? '+' : '–'
+  })
   wnEl.querySelectorAll('.wn-item').forEach((el) => el.addEventListener('click', () => {
     const id = el.getAttribute('data-node'); if (byId.has(id)) select(id)
   }))
@@ -349,6 +370,28 @@ setInterval(async () => {
     setWip(p)
   } catch { /* keep the last good overlay */ }
 }, 20000)
+
+// ── folding + declutter ────────────────────────────────────────────────────────
+// Each .fold button collapses its named panel to the title bar; ⤢ / the H key
+// hide every panel at once so the 3D view is clear. One authority: a body/panel
+// class, toggled here, styled in CSS.
+document.querySelectorAll('.fold[data-fold]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const panel = document.getElementById(btn.dataset.fold)
+    panel?.classList.toggle('folded')
+    btn.textContent = panel?.classList.contains('folded') ? '+' : '–'
+  })
+})
+const declutter = document.getElementById('declutter')
+const toggleClean = () => {
+  const on = document.body.classList.toggle('clean')
+  declutter.setAttribute('aria-pressed', String(on))
+  declutter.title = on ? 'Show panels (H)' : 'Hide all panels (H)'
+}
+declutter.addEventListener('click', toggleClean)
+addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'h' && tab === 'map' && !isTyping()) toggleClean()
+})
 
 // ── the drawer (small screens only) ───────────────────────────────────────────
 const menuBtn = document.getElementById('menuBtn')
@@ -370,7 +413,7 @@ const target = new THREE.Vector3(0, 0, 0)       // live — what the camera fram
 const targetG = new THREE.Vector3(0, 0, 0)      // goal — where it's heading
 let dist = 520, yaw = 0.7, pitch = 0.35, drag = null
 let distG = 520, yawG = 0.7, pitchG = 0.35
-const EASE = 0.16                                // per-frame catch-up (higher = snappier, lower = floatier)
+const EASE = 0.22                                // per-frame catch-up (higher = snappier, lower = floatier)
 
 // ── free movement: fly the pivot through the scene (WASD / arrows), drag-pan to slide it ──
 // The camera always frames `target`; moving `target` moves you through the graph. Keys fly it
@@ -455,7 +498,7 @@ addEventListener('pointermove', (e) => {
       targetG.addScaledVector(_r, -dx * k)
       targetG.addScaledVector(_u, dy * k)
     } else {
-      yawG -= dx * 0.005; pitchG = Math.max(-1.5, Math.min(1.5, pitchG - dy * 0.005))
+      yawG -= dx * 0.0034; pitchG = Math.max(-1.45, Math.min(1.45, pitchG - dy * 0.0034))
     }
     drag.x = e.clientX; drag.y = e.clientY
   } else if (e.pointerType === 'mouse') hover(e)
@@ -527,11 +570,6 @@ const TREE_HINT = {
   method: 'How this codebase is actually built — the no-spaghetti law, the per-slice build loop (architect → implementer → adversarial reviewer → real-Postgres proof → owner-gated deploy), the verification discipline, and the server-authoritative stance. Every citation is a real node — click one to jump to it on the map. Grounded in docs/HOW_ITS_BUILT.md.',
 }
 
-let tab = 'map'
-let tree = null
-let timeline = null
-let method = null
-
 function setTab(next) {
   tab = next
   document.body.className = next
@@ -563,13 +601,14 @@ function setTab(next) {
     })
     // The <select> defaults to the first option; make the tree agree with it
     // rather than quietly rendering a different arrangement than it advertises.
-    if (firstOpen) tree.setMode(document.getElementById('treeMode').value)
+    if (firstOpen) { tree.setMode(document.getElementById('treeMode').value); tree.setWip(wipHex) }
     else tree.setQuery('')
   } else if (next === 'timeline') {
     timeline ??= createTimeline({
       graph, status, mount: document.getElementById('timeline'),
       onSelect: (nodeId) => select(nodeId),
     })
+    timeline.setWip(wipHex)
     timeline.setQuery('')
   } else if (next === 'method') {
     method ??= createMethod({
@@ -605,7 +644,7 @@ apply()
 ;(function tick() {
   requestAnimationFrame(tick)
   if (held.size) {
-    const sp = distG * 0.02                          // fly speed scales with zoom
+    const sp = distG * 0.012                         // fly speed scales with zoom
     _f.set(-Math.sin(yawG), 0, -Math.cos(yawG))      // horizontal forward
     _r.set(Math.cos(yawG), 0, -Math.sin(yawG))       // strafe right
     if (held.has('w') || held.has('arrowup')) targetG.addScaledVector(_f, sp)
@@ -631,19 +670,32 @@ apply()
   camera.lookAt(target)
 
   // ── pulse the work-in-progress nodes ──────────────────────────────────────
-  // Own their instanceColor each frame, easing base → a bright tint of the PR's
-  // hue and back, so they breathe against the static field. apply() set the rest.
+  // A hard, unmissable strobe: colour snaps base → over-bright PR hue and the
+  // node swells ~2×, both driven off the same phase. apply() set everyone else,
+  // so we only touch wip indices here (colour every frame, matrix while visible).
   if (wipTint.size) {
-    const k = 0.5 + 0.5 * Math.sin(performance.now() * 0.005)   // 0..1
-    const hi = 0.4 + 0.6 * k
+    const raw = 0.5 + 0.5 * Math.sin(performance.now() * 0.0075)  // 0..1, faster
+    const k = raw * raw                                           // sharpen — sit dark, snap bright
+    const hi = 0.25 + 0.75 * k
     const arr = mesh.instanceColor.array
     for (const [i, col] of wipTint) {
       const o = i * 3
-      arr[o]     = baseColor[o]     * (1 - hi) + Math.min(1, col.r * 1.5) * hi
-      arr[o + 1] = baseColor[o + 1] * (1 - hi) + Math.min(1, col.g * 1.5) * hi
-      arr[o + 2] = baseColor[o + 2] * (1 - hi) + Math.min(1, col.b * 1.5) * hi
+      arr[o]     = baseColor[o]     * (1 - hi) + Math.min(1, col.r * 2.0 + 0.15) * hi
+      arr[o + 1] = baseColor[o + 1] * (1 - hi) + Math.min(1, col.g * 2.0 + 0.15) * hi
+      arr[o + 2] = baseColor[o + 2] * (1 - hi) + Math.min(1, col.b * 2.0 + 0.15) * hi
     }
     mesh.instanceColor.needsUpdate = true
+
+    const grow = 1 + 1.1 * k                                      // breathe up to ~2.1×
+    for (const { i, n } of wipPulse) {
+      if (!nodeVisible(n)) continue                              // respect the active filters
+      const s = KIND_SIZE[n.kind] * 1.7 * grow
+      dummy.position.set(n.x, n.y, n.z)
+      dummy.scale.setScalar(s)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(i, dummy.matrix)
+    }
+    mesh.instanceMatrix.needsUpdate = true
   }
 
   renderer.render(scene, camera)

@@ -176,6 +176,53 @@
     display: none; z-index: 10; white-space: nowrap; }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--dim); }
 
+  /* ── folding + declutter ──────────────────────────────────────────────────
+     Every panel can collapse to its title bar, and one control (⤢ / the H key)
+     hides them all so the 3D field is unobstructed. */
+  .panelbar { display: flex; align-items: center; gap: 8px; }
+  .panelbar h1 { flex: 1; }
+  .fold { flex: 0 0 auto; width: 22px; height: 22px; border-radius: 7px; border: 1px solid var(--line);
+    background: rgba(255,255,255,.05); color: var(--dim); font: 15px/1 ui-sans-serif, system-ui;
+    cursor: pointer; display: grid; place-items: center; padding: 0; }
+  .fold:hover { background: rgba(255,255,255,.12); color: var(--text); }
+
+  #controls.folded { padding-bottom: 14px; }
+  #controls.folded .sub, #controls.folded .grp { display: none; }
+  #controls.folded .fold::after { content: "+"; }
+  #controls.folded .fold { font-size: 0; }
+  #controls.folded .fold::after { font-size: 15px; }
+
+  #workingNow.folded .wn-item, #workingNow.folded .wn-empty { display: none; }
+  #workingNow .wn-fold { margin-left: 6px; width: 18px; height: 18px; border-radius: 6px; border: 1px solid var(--line);
+    background: transparent; color: var(--dim); cursor: pointer; font: 13px/1 ui-sans-serif; padding: 0; }
+  #workingNow .wn-fold:hover { color: var(--text); background: rgba(255,255,255,.1); }
+
+  /* declutter toggle — a persistent floating control on the map view */
+  #declutter { position: fixed; top: 14px; left: 278px; z-index: 8; width: 34px; height: 34px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(14px);
+    color: var(--dim); font-size: 16px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+  #declutter:hover { color: var(--text); }
+  body:not(.map) #declutter { display: none; }
+  body.clean.map #controls, body.clean.map #hud, body.clean.map #workingNow.on, body.clean.map #inspect.on { display: none; }
+  body.clean #declutter { color: var(--accent); border-color: var(--accent); left: 14px; }
+
+  /* ── WIP blink on the tree + timeline views ────────────────────────────────
+     Same overlay as the map's pulse, in each view's own medium. --wc is the
+     PR's hue, set inline per element. */
+  #tree .tn.wip { animation: tnGlow 1.05s ease-in-out infinite; }
+  #tree .tn.wip rect { stroke: var(--wc); animation: tnStroke 1.05s ease-in-out infinite; }
+  #tree .tn.wip circle { fill: var(--wc); }
+  @keyframes tnGlow { 0%, 100% { filter: none; } 50% { filter: drop-shadow(0 0 5px var(--wc)); } }
+  @keyframes tnStroke { 0%, 100% { stroke-width: 1; stroke-opacity: .55; } 50% { stroke-width: 2.6; stroke-opacity: 1; } }
+
+  #timeline .wip { animation: tlBlink 1.05s ease-in-out infinite; border-radius: 7px; }
+  @keyframes tlBlink { 0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50% { box-shadow: 0 0 0 1.5px var(--wc), 0 0 11px var(--wc); } }
+  @media (prefers-reduced-motion: reduce) {
+    #tree .tn.wip, #tree .tn.wip rect, #timeline .wip { animation: none; }
+    #tree .tn.wip rect { stroke-width: 2.4; } #timeline .wip { box-shadow: 0 0 0 1.5px var(--wc); }
+  }
+
   /* the drawer toggle + scrim exist only on small screens */
   #menuBtn, #scrim { display: none; }
 
@@ -235,6 +282,7 @@
   <div id="methodWrap"><div id="method"></div></div>
 
   <button id="menuBtn" aria-label="Filters and options" aria-expanded="false" aria-controls="controls">☰</button>
+  <button id="declutter" class="mapOnly" title="Hide all panels (H)" aria-label="Hide all panels">⤢</button>
   <div id="scrim"></div>
 
   <nav class="panel" id="tabs">
@@ -245,7 +293,8 @@
   </nav>
 
   <aside class="panel" id="controls">
-    <h1>Byeharu — Project Map</h1>
+    <div class="panelbar"><h1>Byeharu — Project Map</h1>
+      <button class="fold" data-fold="controls" title="Collapse" aria-label="Collapse panel">–</button></div>
     <div class="sub" id="subtitle">—</div>
 
     <div class="grp">
