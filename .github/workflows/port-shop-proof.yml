@@ -1,0 +1,59 @@
+name: PORT-SHOP — port outfitter (buy modules + ammo) disposable proof (no production)
+
+# Runs the PORT-SHOP disposable proof on a single throwaway local Supabase — NEVER production:
+#   1. DB-free selftest: the harness is well-formed, self-rolling-back (opens a txn, toggles
+#      port_shop_enabled ONLY inside it, provisions via the REAL RPCs — commission_first_main_ship;
+#      never a direct module_instances / player_inventory / port_shop_receipts / port_shop_offers
+#      insert — and ends in ROLLBACK with NO COMMIT, so it persists nothing and leaves the committed
+#      flag = false);
+#   2. a disposable local Supabase (the full chain incl. 0235) running the real-chain matrix: dark
+#      gate (buy + read reject, zero writes) → seed pins (flag key, autocannon_rounds + shield_generator
+#      + wired ammo, 3×8 active offers, Mk-II excluded) → buy MODULE (exact debit + minted instance +
+#      receipt) → buy ITEM/ammo (exact debit + inventory + receipt) → idempotent replay → the guard
+#      envelope (invalid_quantity / no_offer / module_qty_must_be_one / not_docked / insufficient_credits).
+# The proof flips NO committed flag. No `environment:` on any job — none can read production secrets.
+# Disposable local Supabase only. (Modeled on repair-econ-proof.yml / salvage-market flow, reusing
+# scripts/lib/trade-proof-lib.sh.)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-port**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: port-shop-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/port-shop-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0235)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: PORT-SHOP real-chain matrix (buy modules + ammo at port)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/port-shop-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
