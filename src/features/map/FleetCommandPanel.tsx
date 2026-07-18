@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Badge, Button, Notice, OverlayPanel, SectionLabel } from '../../components/ui'
 import {
+  commandShipGroupDock,
   commandShipGroupGo,
   commandShipGroupStop,
   sendShipGroupHunt,
@@ -37,10 +38,11 @@ import {
 // disable it; the consolidated panel keeps that property with a dedicated stop lock (supabase-js
 // has no client timeout — a mover request that never settles must not take the brake down with it).
 //
-// ⚠ DOCK v1 — S4 REPOINT MARKER: the Dock row submits the EXISTING instant mover
-// (commandShipGroupGo(gid, { locationId: orbit.id }) — arrival docks via 0208's location branch).
-// When S4/timed_docking lands (NOT merged — a later slice), ONLY this submit repoints to the dock
-// RPC (+ a countdown); the shell, the model's dock-row derivation, and every other section stand.
+// DOCK — the S4 REPOINT (landed, 0219): the Dock row submit branches on the RUNTIME
+// timedDockingEnabled flag — lit → commandShipGroupDock (the 45s timed leg; the map line shows
+// "Docking m:ss"), dark → the EXISTING instant commandShipGroupGo(gid, { locationId }), byte-
+// identical to pre-S4. Exactly as the v1 marker promised: ONLY the submit repointed — the shell,
+// the model's dock-row derivation (fleetCommandModel.ts), and every other section stand untouched.
 //
 // HUNT — absorbed from TeamMapSend VERBATIM so no second command surface survives: two-click armed
 // confirm carrying the location id it was armed FOR (switching targets disarms by derivation), the
@@ -49,12 +51,15 @@ import {
 export function FleetCommandPanel({
   onCommanded,
   onClearTarget,
+  timedDockingEnabled,
   ...inputs
 }: FleetCommandModelInput & {
   /** Fired after any confirmed command — the shell refetch (non-optimistic, the house discipline). */
   onCommanded: () => void
   /** Clears the live target (point AND port selection) — the model re-derives to no target. */
   onClearTarget: () => void
+  /** S4 (0219): runtime timed-dock gate — branches ONLY the dock-row submit (see the header). */
+  timedDockingEnabled: boolean
 }) {
   // THE BRAKE DECOUPLING (S5 review): TWO lock namespaces. `busy` locks the non-safety verbs
   // (go/dock/hunt); `stopBusy` locks ONLY the brake. The pure verdicts (fleetCommandLocks) make the
@@ -269,10 +274,15 @@ export function FleetCommandPanel({
                     disabled={locks.verbDisabled}
                     onClick={() =>
                       void run(
-                        // DOCK v1 (S4 repoint marker in the header): the existing instant go-to-port.
+                        // THE S4 REPOINT (header): lit → the timed dock verb (server resolves the
+                        // port from the territory — no client-asserted target); dark → the instant
+                        // go-to-port, byte-identical to pre-S4.
                         `dock:${r.groupId}`,
-                        () => commandShipGroupGo(r.groupId, r.wire),
-                        () => `Sent ${r.name} to dock at ${r.portName}.`,
+                        () => (timedDockingEnabled ? commandShipGroupDock(r.groupId) : commandShipGroupGo(r.groupId, r.wire)),
+                        () =>
+                          timedDockingEnabled
+                            ? `${r.name} is docking at ${r.portName}.`
+                            : `Sent ${r.name} to dock at ${r.portName}.`,
                       )
                     }
                   >

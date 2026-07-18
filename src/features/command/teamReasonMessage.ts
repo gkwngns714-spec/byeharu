@@ -44,6 +44,11 @@ const REASON_MESSAGES: Record<string, string> = {
   target_out_of_bounds: 'That point lies outside charted space.',
   invalid_target_shape: 'Pick one destination — a port or a point in space, not both.',
   invalid_coordinate: 'That isn’t a usable point in space.',
+  // S4 TIMED DOCKING — the dock verb's reject vocabulary (command_ship_group_dock, 0219).
+  timed_docking_disabled: 'Docking isn’t available right now.',
+  not_parked: 'The fleet must be holding in open space to dock — stop it first.',
+  not_in_territory: 'The fleet isn’t in any port’s territory — move into orbit first.',
+  not_dockable: 'There’s nothing to dock at here.',
 }
 
 /** A short player-facing message for a server/transport team reason; unknown → generic "Fleet order unavailable." */

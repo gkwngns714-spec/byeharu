@@ -51,7 +51,7 @@ export function MapScreen() {
       mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement,
       teamGroups, teamGroupMap, dockedTeamRollups,
       fleetMovementUnifiedEnabled, unifiedGroupFleets,
-      launchFromDockEnabled, fleetControlEnabled, refresh,
+      launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, refresh,
     },
     selection,
   } = useShellState()
@@ -175,6 +175,7 @@ export function MapScreen() {
                 membership={teamGroupMap}
                 launchFromDock={launchFromDockEnabled}
                 fleetControlEnabled={fleetControlEnabled}
+                timedDockingEnabled={timedDockingEnabled}
                 onCommanded={() => {
                   void refresh()
                   void selection.refresh()
