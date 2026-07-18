@@ -46,6 +46,28 @@ export interface CombatUnit {
   alive_count: number
   hp_max: number
   hp_current: number
+  // COMBAT-S3/S4 (0234) spatial columns — NULL/'player'/[] on every pre-existing and non-spatial
+  // row (a select('*') read returns them once 0234 is applied). pos_x/pos_y are in the SAME world
+  // domain as locations.x/y (a spatial unit is seeded from the location centre and displaced in world
+  // units), so the map projects them through the SAME `norm`=worldToViewBox as every other object,
+  // and weapon range scales by WORLD_TO_VIEWBOX_SCALE exactly like a territory/mining ring. NULL pos_x
+  // is the fail-closed signal: while spatial_combat_enabled is dark NO encounter carries positions, so
+  // the spatial map layer renders nothing (data-gated, no client flag read needed).
+  pos_x?: number | null
+  pos_y?: number | null
+  move_speed?: number | null
+  side?: 'player' | 'enemy'
+  // Frozen-at-spawn weapon array; the map reads only `range` (the max across weapons is the unit's
+  // range ring). Other fields (power/cooldown/projectile_speed/…) are server fire-state, unused here.
+  weapons_json?: CombatWeapon[]
+}
+
+/** One entry of combat_units.weapons_json — the map consumes only `range` (world units, may be null). */
+export interface CombatWeapon {
+  module_type_id?: string | null
+  range?: number | null
+  projectile_speed?: number | null
+  power?: number | null
 }
 
 export interface CombatTick {

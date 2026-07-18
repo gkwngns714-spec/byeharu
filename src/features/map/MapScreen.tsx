@@ -57,6 +57,10 @@ export function MapScreen() {
       miningFields, miningExtractRadius,
       pirateInterceptEnabled, dangerZones, refresh,
     },
+    // COMBAT-S4: the shell's already-mounted combat poll (useCombat, ~1.5s — the tick cadence). Its
+    // units/events feed the map's spatial-combat layer; dark today (no positioned rows exist while
+    // spatial_combat_enabled is off) → the layer renders nothing.
+    combat,
     selection,
   } = useShellState()
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -168,6 +172,8 @@ export function MapScreen() {
               selectedMiningFieldName={selectedFieldName}
               onSelectMiningField={handleSelectMiningField}
               dangerZones={dangerZones}
+              combatUnits={combat.units}
+              combatEvents={combat.events}
               pirateMode={pirateMode}
               pirateDraftPoints={pirateDraftPoints}
               onPirateTap={handlePirateTap}
