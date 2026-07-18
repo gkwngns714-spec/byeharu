@@ -49,7 +49,8 @@ test('reject order mirrors the server: gate → group → empty → docked-toget
   })
 })
 
-// ── teamMapSendAction — the expedition-arm classifier (TeamMapSend consumes NOTHING else) ──
+// ── teamMapSendAction — the LEGACY expedition-arm classifier (S5: kept as a module for un-flip
+//    insurance; the on-map surface is FleetCommandPanel, whose lit arm uses unifiedMapSendAction) ──
 
 test('fully docked elsewhere → move (the 0190 onward hop)', () => {
   expect(

@@ -89,6 +89,19 @@ test('OverlayPanel slot prop self-positions each corner distinctly', () => {
   expect(overlayPanelClass('default', 'top-center')).toContain('-translate-x-1/2')
 })
 
+// ── S5 map-UX: the bottom-center slot (the ONE FleetCommandPanel anchor) ──────────────────────────
+
+test('bottom-center slot: horizontally centered at the bottom edge, content packed to the bottom', () => {
+  expect(OVERLAY_SLOTS).toContain('bottom-center')
+  const panel = overlayPanelClass('default', 'bottom-center')
+  for (const part of ['bottom-3', 'left-1/2', '-translate-x-1/2']) {
+    expect(panel).toContain(part)
+  }
+  const rail = overlayRailClass('bottom-center')
+  expect(rail).toContain('items-center')
+  expect(rail).toContain('justify-end')
+})
+
 test('OverlayPanel tones swap ONLY the border tint; inert panels are pointer-transparent', () => {
   expect(overlayPanelClass('accent')).toBe(overlayPanelClass('default').replace('border-edge', 'border-accent/20'))
   expect(overlayPanelClass('warning')).toContain('border-warning/25')

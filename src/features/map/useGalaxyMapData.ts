@@ -4,7 +4,10 @@ import { fetchWorldMap, fetchLocationStates } from './mapApi'
 import type { LocationState, MapLocation } from './mapTypes'
 import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
-import { fetchMainshipSendEnabled, fetchFleetMovementUnifiedEnabled } from '../../lib/catalog'
+import {
+  fetchMainshipSendEnabled, fetchFleetMovementUnifiedEnabled,
+  fetchLaunchFromDockEnabled, fetchFleetControlEnabled,
+} from '../../lib/catalog'
 import {
   fetchActiveMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
   fetchMyFleetPositions, resolveOwnedShip,
@@ -12,10 +15,9 @@ import {
 } from './mainshipApi'
 import {
   fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
-  type UnifiedGroupFleetLite,
+  type ShipGroupMapEntry, type UnifiedGroupFleetLite,
 } from '../command/teamApi'
 import { deriveDockedTeamRollups, excludeCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
-import { deriveTeamRepresentedShipIds } from './teamMarkers'
 import type { GroupRow } from '../command/teamRoster'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 
@@ -69,11 +71,11 @@ export interface GalaxyMapData {
   // compile-time constant that mounts every other team surface (TEAM_COMMAND_ENABLED): while it is
   // false none of the team reads run and both stay empty — the map renders byte-identical to today.
   teamGroups: GroupRow[]
+  // S5 MAP-UX: the live membership map (main_ship_id → group/command flags) — already fetched for
+  // the rollup fold every poll; exposed so the FleetCommandPanel's hunt arm is props-fed from the
+  // shell instead of running its own reads (the deleted TeamMapSend fetched this itself).
+  teamGroupMap: Record<string, ShipGroupMapEntry>
   dockedTeamRollups: DockedTeamRollup[]
-  // FLEETMAP de-dup: the ship ids a TEAM marker already represents (a complete docked-team badge or an
-  // in-flight moving-team badge). The whole-fleet chevron layer skips these so a docked/moving team is not
-  // drawn as a badge AND a stack of redundant individual chevrons. Empty while TEAM_COMMAND is dark.
-  teamRepresentedShipIds: string[]
   // FLEETMAP: the whole-fleet position projection (get_my_fleet_positions, 0200) — ONE owner-read of EVERY
   // owned non-destroyed ship, polled with the rest of the map. The fleet layer draws a marker per ship, so a
   // player owning 2+ ships is no longer invisible on the map (the single-ship resolver goes null at N≥2). [].
@@ -84,6 +86,10 @@ export interface GalaxyMapData {
   // When 4b flips the flag, the already-deployed client switches arms with no further deploy.
   fleetMovementUnifiedEnabled: boolean
   unifiedGroupFleets: UnifiedGroupFleetLite[]
+  // S5 MAP-UX: the NO-HOME + fleet-control runtime gates (read once with the other static flags —
+  // previously fetched per-mount by the deleted TeamMapSend). Feed the panel's hunt arm.
+  launchFromDockEnabled: boolean
+  fleetControlEnabled: boolean
   refresh: () => Promise<void>
 }
 
@@ -112,11 +118,13 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainShipPresence: null,
   mainShipSpaceMovement: null,
   teamGroups: [],
+  teamGroupMap: {},
   dockedTeamRollups: [],
-  teamRepresentedShipIds: [],
   fleetPositions: [],
   fleetMovementUnifiedEnabled: false,
   unifiedGroupFleets: [],
+  launchFromDockEnabled: false,
+  fleetControlEnabled: false,
 }
 
 export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = null): GalaxyMapData {
@@ -126,14 +134,20 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     meta: Record<string, LocationMeta>
     mainshipSendEnabled: boolean
     fleetMovementUnifiedEnabled: boolean
+    launchFromDockEnabled: boolean
+    fleetControlEnabled: boolean
   } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled] = await Promise.all([
-          fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetMovementUnifiedEnabled(),
-        ])
+        // S5 MAP-UX: launch-from-dock + fleet-control ride the SAME once-per-session static batch as
+        // the other runtime flags (they were per-mount reads in the deleted TeamMapSend).
+        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled] =
+          await Promise.all([
+            fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetMovementUnifiedEnabled(),
+            fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(),
+          ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
         for (const sector of world.sectors) {
@@ -144,7 +158,10 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
             }
           }
         }
-        staticRef.current = { locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled }
+        staticRef.current = {
+          locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled,
+          launchFromDockEnabled, fleetControlEnabled,
+        }
       }
 
       const [movements, locationStates, mainShip, fleetPositions] = await Promise.all([
@@ -199,16 +216,6 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
           : []
       const unifiedGroupFleets = excludeCombatSortieFleets(rawUnifiedFleets, staticRef.current.locations)
       const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets, unifiedGroupFleets)
-      // FLEETMAP de-dup: which owned ships are ALREADY drawn by a team marker (docked-team badge,
-      // in-flight moving badge, or 4a-1's in-space fleet badge) — reuses the SAME rollup + teamMarkers
-      // derivations (no second fold), intersected with the live membership map, so the fleet chevron
-      // layer can skip them.
-      const teamRepresentedShipIds = [
-        ...deriveTeamRepresentedShipIds({
-          membership: groupMap, rollups: dockedTeamRollups, movements, groups: teamGroups, nowMs: Date.now(),
-          unifiedFleets: unifiedGroupFleets,
-        }),
-      ]
       setState({
         loading: false,
         error: null,
@@ -222,11 +229,13 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         mainShipPresence,
         mainShipSpaceMovement,
         teamGroups,
+        teamGroupMap: groupMap,
         dockedTeamRollups,
-        teamRepresentedShipIds,
         fleetPositions,
         fleetMovementUnifiedEnabled: staticRef.current.fleetMovementUnifiedEnabled,
         unifiedGroupFleets,
+        launchFromDockEnabled: staticRef.current.launchFromDockEnabled,
+        fleetControlEnabled: staticRef.current.fleetControlEnabled,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))
