@@ -714,9 +714,10 @@ begin
     -- v_gf_n = 0 → fall through: the head's readiness + launch arms run VERBATIM (bootstrap parity).
   end if;
 
-  -- Readiness UNDER the locks. NOHOME (0199): the ONE marked readiness hunk. DARK — the 0168 check
-  -- verbatim (EVERY member status='home' AND hp>0). LIT — a member is ready if home OR DOCKED
-  -- (the settled-safe pair) AND hp>0; a docked team is checked for a common port in the launch branch.
+  -- Readiness UNDER the locks. NOHOME (0199): the ONE marked readiness hunk. DARK — home-only
+  -- (a fleet-truth-docked member does NOT count as ready while dark — see the 4C-MIG-2B GATE FIX
+  -- note below). LIT — a member is ready if home OR DOCKED (the settled-safe pair) AND hp>0; a
+  -- docked team is checked for a common port in the launch branch.
   if v_launch_from_dock then
     -- 2a's b5 fleet-truth repoint (unchanged here): "docked" is FLEET TRUTH, mirroring 0221 R1-f.
     select count(*) into v_not_home
@@ -733,9 +734,29 @@ begin
                       and lp.location_id = f.current_location_id)
              )) or s.hp <= 0);
   else
+    -- 4C-MIG-2B GATE FIX (the SAME bug class the CI apply-proof found in send_main_ship_expedition's
+    -- gate, fixed here proactively): the ORIGINAL 0168 dark check was `status <> 'home' or hp <= 0`
+    -- because a DOCKED member was status='stationary' — distinct from 'home' by construction, so
+    -- the dark (home-only) check rejected it for free. Post-repoint, F2 writes status='home' for a
+    -- DOCKED member too, so `status <> 'home'` alone can no longer tell a docked member from a
+    -- truly-home one while dark. A fleet-truth-docked member must still count as NOT ready here
+    -- (dark = home-only, no dock exception — matching the exact original intent), else it would
+    -- fall through to the 0168 dark tail and mint a SECOND, phantom base fleet alongside its real
+    -- dock fleet.
     select count(*) into v_not_home
-      from public.main_ship_instances
-      where main_ship_id = any(v_members) and (status <> 'home' or hp <= 0);
+      from public.main_ship_instances s
+      where s.main_ship_id = any(v_members)
+        and (s.status <> 'home' or s.hp <= 0
+             or exists (
+               select 1 from public.fleets f
+               where f.id = public.mainship_resolve_fleet(s.main_ship_id)
+                 and f.status = 'present' and f.location_mode = 'location'
+                 and f.current_location_id is not null and f.active_movement_id is null
+                 and exists (
+                   select 1 from public.location_presence lp
+                    where lp.fleet_id = f.id and lp.status = 'active'
+                      and lp.location_id = f.current_location_id)
+             ));
   end if;
   if v_not_home > 0 then
     return jsonb_build_object('ok', false, 'reason', 'member_not_ready');
@@ -1255,10 +1276,22 @@ begin
           where lp.fleet_id = f.id and lp.status = 'active'
             and lp.location_id = f.current_location_id)
   );
-  if v_ship.status <> 'home' then
-    if not (v_launch_from_dock and v_docked) then
+  -- 4C-MIG-2B GATE FIX (found via the CI apply-proof, team-command-proof.sql BLOCK NOHOME's DARK
+  -- witness): the ORIGINAL 0199 gate keyed on `v_ship.status <> 'home'` because a DOCKED ship was
+  -- status='stationary' — a value distinct from 'home' by construction, so the dark (non-docked)
+  -- gate rejected it for free. Post-repoint, F2's mainship_mark_docked_at_location writes
+  -- status='home' for a DOCKED ship too (status is now a pure lifecycle signal — 0221), so
+  -- `status <> 'home'` can no longer tell a docked ship from a truly-home one AT ALL, dark or lit.
+  -- Check v_docked FIRST, independent of status: a fleet-truth-docked ship requires the LIT flag
+  -- regardless of its (now-shared) 'home' label; a non-docked ship keeps the exact original
+  -- status='home' requirement. This is the same fleet-truth-first restructuring as v_docked's own
+  -- introduction — not a new rule, just correctly ordered against the label collision F2 created.
+  if v_docked then
+    if not v_launch_from_dock then
       raise exception 'send_main_ship_expedition: ship not available (status %)', v_ship.status;
     end if;
+  elsif v_ship.status <> 'home' then
+    raise exception 'send_main_ship_expedition: ship not available (status %)', v_ship.status;
   end if;
 
   select l.id, l.x, l.y, l.activity_type, l.status, l.zone_id, z.sector_id
@@ -1751,6 +1784,16 @@ begin
   -- `main_ship_id = v_ship_id and status = 'home' for update`, which must NOT trip this ban).
   if position('main_ship_id = v_ship_id for update' in v_src) > 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition still carries the broken post-write fleet-truth re-check-under-lock';
+  end if;
+  -- GATE FIX: v_docked is checked FIRST, independent of status (a docked ship requires the lit flag
+  -- regardless of its shared 'home' label) — the buggy `if v_ship.status <> 'home' then if not
+  -- (v_launch_from_dock and v_docked)` (which skips the WHOLE check whenever status='home', letting
+  -- every docked ship through even while dark) must be gone.
+  if position('if v_docked then' in v_src) = 0 or position('if not v_launch_from_dock then' in v_src) = 0 then
+    raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition lost the v_docked-first gate restructure — a docked ship would bypass the dark gate again';
+  end if;
+  if position('if v_ship.status <> ''home'' then' in v_src) > 0 then
+    raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition still nests the docked check under the buggy status<>home guard';
   end if;
   if not has_function_privilege('authenticated', 'public.send_main_ship_expedition(jsonb, uuid, uuid)', 'execute') then
     raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition lost its authenticated grant';
