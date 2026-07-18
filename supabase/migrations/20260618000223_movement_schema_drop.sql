@@ -1792,7 +1792,13 @@ begin
   if position('if v_docked then' in v_src) = 0 or position('if not v_launch_from_dock then' in v_src) = 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition lost the v_docked-first gate restructure — a docked ship would bypass the dark gate again';
   end if;
-  if position('if v_ship.status <> ''home'' then' in v_src) > 0 then
+  -- NOTE: position('if v_ship.status <> ''home'' then' in v_src) is NOT a safe probe here — it
+  -- false-positives on the NEW code's own `elsif v_ship.status <> 'home' then` (elsIF contains the
+  -- substring "if v_ship.status <> 'home' then" starting mid-keyword: "els" + "if ..."). This bit
+  -- 2a's comment-strip lesson in spirit but the actual mechanism here is a keyword substring
+  -- collision in LIVE code, not a comment — stripping `--` comments does not touch it. Ban the
+  -- precise OLD buggy inner condition instead, which cannot collide with "elsif" or the new code.
+  if position('if not (v_launch_from_dock and v_docked) then' in v_src) > 0 then
     raise exception '4C-MIG-2B POST-DROP FAIL: send_main_ship_expedition still nests the docked check under the buggy status<>home guard';
   end if;
   if not has_function_privilege('authenticated', 'public.send_main_ship_expedition(jsonb, uuid, uuid)', 'execute') then
