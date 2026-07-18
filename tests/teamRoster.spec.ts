@@ -5,6 +5,7 @@ import {
   commissionAvailability,
   nextTeamSlot,
   fleetPositionLocationLabel,
+  commandFleetState,
   teamGatherState,
   type GroupRow,
   type RosterShip,
@@ -299,4 +300,115 @@ test('fleetPositionLocationLabel: berthed at a HIDDEN port → generic "Docked",
   const label = fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'berthed', location_id: 'secret' }), world)
   expect(label).toBe('Docked')
   expect(label).not.toContain('secret')
+})
+
+// ── commandFleetState — the Command roster's per-ship badge (play-test fix, 2026-07-18) ───────────
+// "the command UI right now doesn't show the state of the fleet itself... The ship in Command —
+// fleet says 'ready to launch', which doesn't make sense." These pin: a MOVING fleet shows a
+// destination-agnostic verb + a live eta/progress; a DOCKED/BERTHED fleet reads "Docked" (never
+// "Ready to launch"); "Ready to launch" survives ONLY as the raw-status fallback for a genuinely
+// unresolved position.
+
+const DEP = '2026-01-01T00:00:00Z'
+const ARR = '2026-01-01T00:10:00Z'
+const depMs = Date.parse(DEP)
+const arrMs = Date.parse(ARR)
+
+test('commandFleetState: no position row at all → falls back to the raw status label/tone', () => {
+  const s = commandFleetState(undefined, world, 'home')
+  expect(s.label).toBe('Ready to launch')
+  expect(s.tone).toBe('success')
+  expect(s.etaText).toBeNull()
+  expect(s.progress).toBeNull()
+})
+
+test('commandFleetState: place=hidden (no berth, no fleet — e.g. freshly grouped, never sent) → same raw-status fallback', () => {
+  // THE REGRESSION THIS FIX GUARDS: this is the one true "Ready to launch" case — a ship with no
+  // resolvable position genuinely has nothing holding it. It must NOT appear for a moving/docked ship.
+  const s = commandFleetState(pos({ main_ship_id: 's1', place: 'hidden', status: 'home' }), world, 'home')
+  expect(s.label).toBe('Ready to launch')
+  expect(s.tone).toBe('success')
+})
+
+test('commandFleetState: docked at a named port → "Docked", neutral — never "Ready to launch"', () => {
+  const s = commandFleetState(pos({ main_ship_id: 's1', place: 'docked', location_id: 'haven' }), world, 'home')
+  expect(s.label).toBe('Docked')
+  expect(s.tone).toBe('neutral')
+  expect(s.label).not.toBe('Ready to launch')
+  expect(s.etaText).toBeNull()
+  expect(s.progress).toBeNull()
+})
+
+test('commandFleetState: BERTHED (unfleeted, docked) with raw status=home → "Docked", NOT "Ready to launch"', () => {
+  // The exact owner complaint: an unfleeted ship settled at a berth carries status='home', and the
+  // OLD badge read that raw column straight → "Ready to launch" even though the ship is plainly
+  // docked somewhere real.
+  const s = commandFleetState(pos({ main_ship_id: 's1', place: 'berthed', location_id: 'haven' }), world, 'home')
+  expect(s.label).toBe('Docked')
+  expect(s.label).not.toBe('Ready to launch')
+})
+
+test('commandFleetState: docked at a COMBAT site → "In combat", danger', () => {
+  const s = commandFleetState(pos({ main_ship_id: 's1', place: 'docked', location_id: 'ember' }), world, 'home')
+  expect(s.label).toBe('In combat')
+  expect(s.tone).toBe('danger')
+})
+
+test('commandFleetState: in_space with no port → "In deep space", neutral', () => {
+  const s = commandFleetState(pos({ main_ship_id: 's1', place: 'in_space' }), world, 'home')
+  expect(s.label).toBe('In deep space')
+  expect(s.tone).toBe('neutral')
+})
+
+test('commandFleetState: outbound transit → "Traveling", warning tone, live eta + mid-flight progress', () => {
+  const s = commandFleetState(
+    pos({
+      main_ship_id: 's1',
+      place: 'transit',
+      segment: {
+        origin_x: 0, origin_y: 0, target_x: 10, target_y: 10,
+        target_kind: 'location', depart_at: DEP, arrive_at: '2999-01-01T00:00:00Z', // far future → live eta
+      },
+    }),
+    world,
+    'home', // the raw status must NOT leak through while a position resolves
+  )
+  expect(s.label).toBe('Traveling')
+  expect(s.tone).toBe('warning')
+  expect(s.etaText).not.toBeNull()
+  expect(s.progress).not.toBeNull()
+  expect(s.progress as number).toBeGreaterThan(0)
+  expect(s.progress as number).toBeLessThanOrEqual(1)
+})
+
+test('commandFleetState: return-home transit → "Returning", accent tone, live eta', () => {
+  const s = commandFleetState(
+    pos({
+      main_ship_id: 's1',
+      place: 'transit',
+      segment: {
+        origin_x: 0, origin_y: 0, target_x: 10, target_y: 10,
+        target_kind: 'base', depart_at: DEP, arrive_at: '2999-01-01T00:00:00Z',
+      },
+    }),
+    world,
+    'home',
+  )
+  expect(s.label).toBe('Returning')
+  expect(s.tone).toBe('accent')
+  expect(s.etaText).not.toBeNull()
+})
+
+test('commandFleetState: progress is the SAME clamped fraction at a fixed nowMs (midpoint → 0.5)', () => {
+  const s = commandFleetState(
+    pos({
+      main_ship_id: 's1',
+      place: 'transit',
+      segment: { origin_x: 0, origin_y: 0, target_x: 10, target_y: 10, target_kind: 'location', depart_at: DEP, arrive_at: ARR },
+    }),
+    world,
+    'home',
+    depMs + (arrMs - depMs) / 2, // explicit nowMs for a deterministic spec
+  )
+  expect(s.progress).toBe(0.5)
 })
