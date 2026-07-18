@@ -10,6 +10,8 @@ import { miningFieldRangeLayer } from './miningFieldLayer'
 import { MiningFieldMarker } from './MiningFieldMarker'
 import type { MiningField } from '../mining/miningTypes'
 import { dangerZoneLayer } from './dangerZoneLayer'
+import { spatialCombatLayer } from './spatialCombatLayer'
+import type { CombatEvent, CombatUnit } from '../combat/combatTypes'
 import type { DangerZoneLite } from './pirateApi'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
@@ -50,6 +52,8 @@ export function GalaxyMap({
   selectedMiningFieldName,
   onSelectMiningField,
   dangerZones = [],
+  combatUnits = [],
+  combatEvents = [],
   pirateMode = 'off',
   pirateDraftPoints = [],
   onPirateTap,
@@ -93,6 +97,17 @@ export function GalaxyMap({
   // gate), so every prop below defaults to a no-op shape and the map is byte-identical to today.
   /** Active danger_zones (get_danger_zones) — rendered as smooth blobs, UNDER movement lines/markers. */
   dangerZones?: DangerZoneLite[]
+  // COMBAT-S4 — the caller's active combat_units + recent combat_events (both already polled every
+  // ~1.5s by the shell's useCombat and exposed via useShellState().combat). The spatial-combat layer
+  // draws the units that carry positions (their range rings, side-distinct glyphs, and this tick's fire
+  // lines). [] defaults → the layer renders nothing, so a map with no active battle — or ANY map while
+  // spatial_combat_enabled is dark (no positioned rows can exist) — is byte-identical to today.
+  /** Active combat units (RLS-scoped to the caller — enemy pirate rows carry the caller's own
+   *  player_id, so they arrive in the SAME read). Only positioned+alive rows render. */
+  combatUnits?: CombatUnit[]
+  /** Recent combat events; the layer consumes only the latest tick's spatial `missile_salvo`s (fire
+   *  lines between units), ignoring the aggregate/dark-path events that carry no unit_id. */
+  combatEvents?: CombatEvent[]
   /** 'off' = normal ship-go tap handling (byte-identical to pre-slice behavior). 'route' / 'draw' TAKE
    *  OVER the entire empty-space tap surface (mutually exclusive with the fleet-go tap) — each tap
    *  appends a point via onPirateTap instead of setting a fleet-go target. */
@@ -456,6 +471,17 @@ export function GalaxyMap({
             // MAP-INTEGRATION M1: combat-present sorties → the in-combat fleet badge ([] while dark).
             combatFleets: combatSortieFleets,
           })}
+
+          {/* COMBAT-S4 — the SPATIAL-COMBAT layer, composed by the pure, hook-free `spatialCombatLayer`
+              helper (the territoryLayer/teamMarkersLayer element-tree convention; the unit test calls
+              the SAME function). Renders the caller's active on-map battle: each positioned unit at its
+              world pos (player accent chevrons vs enemy danger triangles), its weapon RANGE ring, and
+              this tick's fire lines between units. Above the markers (the battle is the focus of the
+              frame) and pointer-transparent (the location under it stays the tap target). DARK BY DATA:
+              while spatial_combat_enabled is off, no combat_units row carries a position, so `combatUnits`
+              has no positioned rows and this renders NOTHING — byte-identical to today. Re-renders each
+              ~1.5s poll (useCombat), so approach + kiting + fire animate as ticks land. */}
+          {spatialCombatLayer({ units: combatUnits, events: combatEvents, norm, k: view.k })}
 
           {/* 4C-CLIENT: the per-ship overlay layer (shipLayer — route + MainShipMarker) is DELETED
               with the per-ship movement client (S5 already deleted the redundant fleetShipsLayer).
