@@ -315,7 +315,7 @@ begin
         where smf.main_ship_id = p_main_ship_id
           and mt.range is not null
           and (mt.slot_type = 'mining' or mt.stats_json ? 'mining')),
-      public.cfg_num('mining_extract_radius'), 750);
+      coalesce(public.cfg_num('mining_extract_radius'), 750));
   else
     v_radius := coalesce(public.cfg_num('mining_extract_radius'), 750);
   end if;
