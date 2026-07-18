@@ -200,19 +200,19 @@ Berth arc S2. A `locations.territory_radius` column drawn as a ring on the map; 
 gets options (dock now, combat later). The ground for future enemy-fleet spawns in hostile territory like a
 pirate den. One column, one map ring — no parallel system. Deps: BERTH.
 
-### POSLEAF — S3: one position + territory server leaf *(S — planned)*
+### POSLEAF — S3: one position + territory server leaf *(S — SHIPPED LIVE 2026-07-18 as mig 0218)*
 
 Berth arc S3. Fold the movement-interpolation math currently inlined across the mover and brake into ONE
 `fleet_current_position` leaf, plus `fleet_in_territory` composing it with the territory radius — the
 containment authority the dock guard and future enemy-spawn both reuse. Deps: TERRITORY.
 
-### TIMEDOCK — S4: docking takes time, shown on the map *(S/M — planned, dark behind `timed_docking_enabled`)*
+### TIMEDOCK — S4: docking takes time, shown on the map *(S/M — SHIPPED dark as mig 0219, behind `timed_docking_enabled`)*
 
 Berth arc S4. Arriving at a port no longer docks instantly; DOCK becomes a timed movement leg (~45s) riding
 the existing timer spine, with a live countdown on the map. Dark-first behind a new `timed_docking_enabled`
 flag. Deps: POSLEAF.
 
-### MAPUX — S5: one fleet-command panel *(S — planned)*
+### MAPUX — S5: one fleet-command panel *(S — SHIPPED, merged to main 2026-07-18)*
 
 Berth arc S5. Consolidate the scattered map panels (destination / stop / dock) into ONE fleet-command
 surface owning Go / Redirect / Stop / Dock — deletes three panels instead of adding a fourth. Deps: RETIRE.
@@ -222,7 +222,7 @@ surface owning Go / Redirect / Stop / Dock — deletes three panels instead of a
 Berth arc S6. Ships grouped by fleet plus a Berthed section — condition, stats, buffs, and fitting when
 docked; the Command tab owns fleet composition, the Fitting tab owns per-ship equipment. Deps: BERTH.
 
-### RETIRE — legacy movement retirement *(S/M — 4a-post in review; 4c + 4b-drop planned)*
+### RETIRE — legacy movement retirement *(S/M — 4a-post SHIPPED; 4c-mig-1 repoints in progress; 4c-mig-2 + 4b-drop planned)*
 
 Retire the replaced per-ship movement system as its own slices: 4a-post deletes the dead per-ship client,
 4c retires the legacy movement signals, 4b-drop drops the legacy server movers (drain-asserted). Deps:
