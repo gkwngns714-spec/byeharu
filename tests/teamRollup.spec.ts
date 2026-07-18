@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { deriveDockedTeamRollups, excludeCombatSortieFleets } from '../src/features/command/teamRollup'
+import { deriveDockedTeamRollups, excludeCombatSortieFleets, selectCombatSortieFleets } from '../src/features/command/teamRollup'
 import type { GroupRow } from '../src/features/command/teamRoster'
 // type-only import — erased at compile, so the spec never loads teamApi's supabase client.
 import type { UnifiedGroupFleetLite } from '../src/features/command/teamApi'
@@ -216,4 +216,34 @@ test('excludeCombatSortieFleets: the mid-hunt group no longer folds as docked at
     groups, { s1: { group_id: 'g1' }, s2: { group_id: 'g1' } }, [], filtered,
   )
   expect(rollups.find((r) => r.groupId === 'g1')?.locationId).toBeNull()
+})
+
+// MAP-INTEGRATION M1 — selectCombatSortieFleets: the exact COMPLEMENT of the exclusion (same
+// predicate, same authority). Feeds the map's "in combat at X" badge so a mid-combat fleet — which
+// the exclusion correctly strips from the dock fold — never vanishes from the map.
+test('selectCombatSortieFleets: picks ONLY present-at-combat fleets (the exclusion complement)', () => {
+  expect(selectCombatSortieFleets([uf({ current_location_id: 'hunt-site' })], combatLocs)).toHaveLength(1)
+  expect(selectCombatSortieFleets([uf({ current_location_id: 'haven' })], combatLocs)).toHaveLength(0)
+  expect(
+    selectCombatSortieFleets(
+      [
+        uf({ status: 'moving', current_location_id: 'hunt-site' }), // in flight — not a combat presence
+        uf({ status: 'idle', location_mode: 'space', current_location_id: null }),
+      ],
+      combatLocs,
+    ),
+  ).toHaveLength(0)
+})
+
+test('select/exclude PARTITION the raw read: every fleet lands in exactly one of the two', () => {
+  const fleets = [
+    uf({ current_location_id: 'hunt-site' }),
+    uf({ group_id: 'g2', current_location_id: 'haven' }),
+    uf({ group_id: 'g3', status: 'moving', current_location_id: 'hunt-site' }),
+  ]
+  const excluded = excludeCombatSortieFleets(fleets, combatLocs)
+  const selected = selectCombatSortieFleets(fleets, combatLocs)
+  expect(excluded.length + selected.length).toBe(fleets.length)
+  expect(selected.map((f) => f.group_id)).toEqual(['g1'])
+  expect(excluded.map((f) => f.group_id)).toEqual(['g2', 'g3'])
 })

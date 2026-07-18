@@ -17,7 +17,7 @@ import {
   fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
   type ShipGroupMapEntry, type UnifiedGroupFleetLite,
 } from '../command/teamApi'
-import { deriveDockedTeamRollups, excludeCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
+import { deriveDockedTeamRollups, excludeCombatSortieFleets, selectCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
 import type { GroupRow } from '../command/teamRoster'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 
@@ -86,6 +86,12 @@ export interface GalaxyMapData {
   // When 4b flips the flag, the already-deployed client switches arms with no further deploy.
   fleetMovementUnifiedEnabled: boolean
   unifiedGroupFleets: UnifiedGroupFleetLite[]
+  // MAP-INTEGRATION M1: the COMBAT-PRESENT group fleets — the exact complement of the
+  // excludeCombatSortieFleets filter applied to unifiedGroupFleets above (one raw read, one shared
+  // classification, partitioned once here). Feeds the map's "in combat at X" team badge so a fleet
+  // mid-hunt-combat keeps a marker (it is stripped from the dock fold by design, has no movement,
+  // and the per-ship chevron fallback was deleted in S5). [] while the unified fetch is dark.
+  combatSortieFleets: UnifiedGroupFleetLite[]
   // S5 MAP-UX: the NO-HOME + fleet-control runtime gates (read once with the other static flags —
   // previously fetched per-mount by the deleted TeamMapSend). Feed the panel's hunt arm.
   launchFromDockEnabled: boolean
@@ -127,6 +133,7 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   fleetPositions: [],
   fleetMovementUnifiedEnabled: false,
   unifiedGroupFleets: [],
+  combatSortieFleets: [],
   launchFromDockEnabled: false,
   fleetControlEnabled: false,
   timedDockingEnabled: false,
@@ -221,6 +228,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
           ? await fetchMyUnifiedGroupFleets()
           : []
       const unifiedGroupFleets = excludeCombatSortieFleets(rawUnifiedFleets, staticRef.current.locations)
+      // M1: the complement — combat-present sorties, kept visible via the map's in-combat badge.
+      const combatSortieFleets = selectCombatSortieFleets(rawUnifiedFleets, staticRef.current.locations)
       const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets, unifiedGroupFleets)
       setState({
         loading: false,
@@ -240,6 +249,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         fleetPositions,
         fleetMovementUnifiedEnabled: staticRef.current.fleetMovementUnifiedEnabled,
         unifiedGroupFleets,
+        combatSortieFleets,
         launchFromDockEnabled: staticRef.current.launchFromDockEnabled,
         fleetControlEnabled: staticRef.current.fleetControlEnabled,
         timedDockingEnabled: staticRef.current.timedDockingEnabled,

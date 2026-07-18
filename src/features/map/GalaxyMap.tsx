@@ -42,6 +42,7 @@ export function GalaxyMap({
   teamGroups,
   dockedTeamRollups,
   unifiedGroupFleets,
+  combatSortieFleets,
   fleetMovementUnifiedEnabled,
   fleetGoView,
   onTargetPoint,
@@ -62,6 +63,10 @@ export function GalaxyMap({
   // FLEET-GO 4a-1: the group's own unified fleets (charter §2). Feeds the in-space fleet badge in the
   // team layer. [] while the unified flag is dark (useGalaxyMapData gates the read) → byte-identical.
   unifiedGroupFleets: UnifiedGroupFleetLite[]
+  // MAP-INTEGRATION M1: the COMBAT-PRESENT group fleets (the dock fold's exact complement, partitioned
+  // once in useGalaxyMapData). Feeds the team layer's "in combat at X" badge so a fleet mid-hunt-combat
+  // never vanishes from the map. [] while the unified fetch is dark → byte-identical.
+  combatSortieFleets: UnifiedGroupFleetLite[]
   // FLEET-GO 4a-2: the RUNTIME unified flag (useGalaxyMapData's one read) — with ≥1 owned group it
   // hands every open-space tap to the FLEET (resolveSpaceTapOwner) and suppresses the per-ship
   // coordinate surface. False (prod today) → the tap path + tree are byte-identical to 4a-1.
@@ -403,6 +408,8 @@ export function GalaxyMap({
             k: view.k,
             // FLEET-GO 4a-1: parked unified fleets → the in-space fleet badge ([] while dark).
             unifiedFleets: unifiedGroupFleets,
+            // MAP-INTEGRATION M1: combat-present sorties → the in-combat fleet badge ([] while dark).
+            combatFleets: combatSortieFleets,
           })}
 
           {/* S5 MAP-UX: the redundant per-ship chevron layer (fleetShipsLayer) is DELETED — S1's

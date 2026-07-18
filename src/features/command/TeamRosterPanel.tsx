@@ -31,7 +31,7 @@ import { TeamDossier } from './TeamDossier'
 import { getMyCaptainInstances } from '../captains/captainsApi'
 import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { isServerLit } from '../../lib/useActivityPanelGuards'
-import { fetchMyExpeditionPreview, fetchMyFleetPositions, type FleetPosition } from '../map/mainshipApi'
+import { fetchMyExpeditionPreview } from '../map/mainshipApi'
 import { mainShipInstanceStatusLabel, mainShipInstanceStatusTone } from '../map/mainshipStatusLabel'
 import { shipPowerFromPreview } from '../ship/shipDossierView'
 import { fetchFleetControlEnabled } from '../../lib/catalog'
@@ -73,16 +73,19 @@ import { fetchFleetControlEnabled } from '../../lib/catalog'
 // notice. All paths share the same assign run key, busy guard, and await-then-refetch discipline.
 
 export function TeamRosterPanel() {
-  const { selection, game } = useShellState()
+  const { selection, game, map } = useShellState()
+  // n1: the shell map refresh, detached once (load holds no `this`) so reload()'s dep is the stable
+  // callback rather than the whole per-poll map object.
+  const { refresh: refreshMapReads } = map
   const [groups, setGroups] = useState<GroupRow[]>([])
   const [groupMap, setGroupMap] = useState<Record<string, ShipGroupMapEntry>>({})
   // TEAMMAP-0: the docked-location read (a docked ship's 'present' fleet carries its location) —
   // refetched with the group reads so the rollup can never lag a membership/send mutation.
   const [presentFleets, setPresentFleets] = useState<PresentShipFleetLite[]>([])
-  // TEAM-FRIENDLY: whole-fleet map positions (FLEETMAP / get_my_fleet_positions, 0200) — read ONCE
-  // and mapped to a per-ship location label on every roster row. Refetched with the group reads so a
-  // membership/send mutation can never leave a row's location stale.
-  const [fleetPositions, setFleetPositions] = useState<FleetPosition[]>([])
+  // TEAM-FRIENDLY / MAP-INTEGRATION n1: whole-fleet map positions come from the SHELL's polled
+  // map.fleetPositions — the ONE get_my_fleet_positions read S6 declared (this panel used to run its
+  // own copy of the fetch; that second read is folded away). reload() pings map.refresh() so a
+  // membership mutation (docked ↔ berthed flips the row's place) never leaves a location label stale.
   const [captainRoster, setCaptainRoster] = useState<GetMyCaptainInstancesResult | null>(null)
   const [rosterVersion, setRosterVersion] = useState(0) // bumped per reload — stales cached previews
   const [loading, setLoading] = useState(true)
@@ -95,19 +98,21 @@ export function TeamRosterPanel() {
   const [fleetControl, setFleetControl] = useState(false) // FLEET-CONTROL (0204) gate; dark → no command-ship/cap surface
 
   const reload = useCallback(async () => {
-    const [g, m, cr, pf, fp, fc] = await Promise.all([
+    const [g, m, cr, pf, fc] = await Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-      fetchMyFleetPositions(), fetchFleetControlEnabled(),
+      fetchFleetControlEnabled(),
+      // n1: refresh the SHELL's map reads (the ONE fleet-positions read) in the same wave, so a
+      // membership mutation's docked↔berthed place flip shows without waiting on the next poll.
+      refreshMapReads(),
     ])
     setGroups(g)
     setGroupMap(m)
     setCaptainRoster(cr)
     setPresentFleets(pf)
-    setFleetPositions(fp)
     setFleetControl(fc)
     setRosterVersion((v) => v + 1) // membership may have changed — any cached preview is stale
     setLoading(false)
-  }, [])
+  }, [refreshMapReads])
 
   // Initial load: inline .then so setState lands in an async callback, not synchronously in the effect body
   // (react-hooks/set-state-in-effect). reload() reuses the same four fetches after every mutation.
@@ -115,14 +120,13 @@ export function TeamRosterPanel() {
     let active = true
     void Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-      fetchMyFleetPositions(), fetchFleetControlEnabled(),
-    ]).then(([g, m, cr, pf, fp, fc]) => {
+      fetchFleetControlEnabled(),
+    ]).then(([g, m, cr, pf, fc]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
       setCaptainRoster(cr)
       setPresentFleets(pf)
-      setFleetPositions(fp)
       setFleetControl(fc)
       setLoading(false)
     })
@@ -214,7 +218,8 @@ export function TeamRosterPanel() {
   // TEAM-FRIENDLY: one FLEETMAP row per owned ship, indexed by id → each roster row resolves its
   // location label through the ONE shared resolver (fleetPositionLocationLabel). A ship missing from
   // the projection has no entry → the row omits the location (honest, never a guessed place).
-  const posByShip = new Map(fleetPositions.map((p) => [p.main_ship_id, p]))
+  // n1: sourced from the SHELL's polled map.fleetPositions (the one read), not a panel-local fetch.
+  const posByShip = new Map(map.fleetPositions.map((p) => [p.main_ship_id, p]))
   const dockLineFor = (groupId: string): string | null => {
     const r = dockRollups.find((x) => x.groupId === groupId)
     if (!r || r.locationId === null) return null
