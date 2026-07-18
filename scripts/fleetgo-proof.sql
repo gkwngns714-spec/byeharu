@@ -46,16 +46,19 @@ begin
 end $$;
 
 -- the ship-state snapshot/diff helpers — the §2 assertion machinery.
+-- S1-BERTH (0216): the snapshot now covers berth_location_id too — under the berth model a ship's
+-- LOCATION for the unfleeted case lives in that column, so the §2 law ("a mover never writes a
+-- ship") must cover it: a go/redirect/brake/settle that moved a berth would be a ship write.
 create or replace function pg_temp.snap_ships(p_tag text) returns void language plpgsql as $$
 begin
   insert into pg_temp.ship_snap
-    select p_tag, main_ship_id, status, spatial_state, space_x, space_y, updated_at
+    select p_tag, main_ship_id, status, spatial_state, space_x, space_y, berth_location_id, updated_at
       from public.main_ship_instances;
 end $$;
 
 create temp table ship_snap(
   tag text, main_ship_id uuid, status text, spatial_state text,
-  space_x double precision, space_y double precision, updated_at timestamptz
+  space_x double precision, space_y double precision, berth_location_id uuid, updated_at timestamptz
 ) on commit preserve rows;
 
 -- ★ THE GHOST-DOCK ASSERTION ★ — the property NOSHIPWRITE is structurally blind to.
@@ -91,13 +94,13 @@ returns void language plpgsql as $$
 declare n int;
 begin
   select count(*) into n from (
-    (select main_ship_id,status,spatial_state,space_x,space_y,updated_at from pg_temp.ship_snap where tag=p_before
+    (select main_ship_id,status,spatial_state,space_x,space_y,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_before
      except
-     select main_ship_id,status,spatial_state,space_x,space_y,updated_at from pg_temp.ship_snap where tag=p_after)
+     select main_ship_id,status,spatial_state,space_x,space_y,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_after)
     union all
-    (select main_ship_id,status,spatial_state,space_x,space_y,updated_at from pg_temp.ship_snap where tag=p_after
+    (select main_ship_id,status,spatial_state,space_x,space_y,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_after
      except
-     select main_ship_id,status,spatial_state,space_x,space_y,updated_at from pg_temp.ship_snap where tag=p_before)
+     select main_ship_id,status,spatial_state,space_x,space_y,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_before)
   ) d;
   if n <> 0 then
     raise exception 'SHIP-WRITE FAIL (%): the unified mover touched % ship row(s) — charter §2 says a ship does not move', p_ctx, n;
@@ -127,11 +130,14 @@ end $$;
 -- =0 bootstrap pin / the from-space consume — each its own world because every one of them
 -- launches a REAL hunt, and a hunt's manifest + 'hunting' ship writes poison any shared fixture),
 -- uI (the 0215 brake-sortie world — its own REAL hunt, driven all the way to a RETAINED completed
--- manifest, so it must not share fixtures for the same reason as uE..uH).
+-- manifest, so it must not share fixtures for the same reason as uE..uH),
+-- uJ/uK (the S1-BERTH 0216 worlds: uJ runs the whole berth chain — commission → berthed map read →
+-- first-assign mint → unassign → delete; uK exists ONLY to exercise the SECOND ship creator,
+-- ensure_main_ship_for_player, whose create branch needs a zero-ship player).
 do $$
 declare u uuid; k text;
 begin
-  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI'] loop
+  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK'] loop
     insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
       values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
               'fg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -163,7 +169,6 @@ end $$;
 -- ════════ Enable the dark capabilities ONLY inside this txn (reverted by ROLLBACK) ════════
 update public.game_config set value='true'::jsonb where key='team_command_enabled';
 update public.game_config set value='true'::jsonb where key='mainship_additional_commission_enabled';
-update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 -- 3c-2 (0211): the docked-store host is gated on station_storage_enabled (ON in prod, seeded false on a
 -- fresh chain) — without this its dark-parity assertion would see 'disabled' and prove nothing. And the
 -- HUNTOVERLAP block launches a REAL docked hunt, which needs launch_from_dock_enabled (also ON in prod).
@@ -180,7 +185,7 @@ update public.game_config set value='true'::jsonb where key='mainship_send_enabl
 -- player_wallet is lazy, so on_conflict covers a row a signup/ensure path may already have created.
 -- (The trade-market-1 / team-command proofs use this same direct-owner insert.)
 insert into public.player_wallet (player_id, balance)
-select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI')
+select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK')
 on conflict (player_id) do update set balance = excluded.balance;
 
 -- ════════ PROVISION via the REAL commission RPCs ════════
@@ -212,6 +217,14 @@ begin
   insert into fg values ('a1',a1),('a2',a2),('b1',b1),('g',g);
   raise notice 'provisioned: uA 2 ships in group Vanguard, uB 1 ship';
 end $$;
+
+-- S1-BERTH (0216): the unification flag lights only NOW — AFTER provisioning. The fixture assigns
+-- above must run DARK: a LIT first-assign into an EMPTY group now MINTS the group's fleet at the
+-- assignee's berth (its own behavior, pinned by ASSIGN_CLEARS_BERTH below), and every pre-0216
+-- world in this proof — the bootstrap go, ORACLEPARITY's "group with no fleet yet", the hunt
+-- bootstrap arms — is built on a FLEETLESS provisioned group. Dark fixture-building preserves
+-- those worlds byte-for-byte; the mint is exercised deliberately, in its own world (uJ).
+update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
 -- ════════ BLOCK ORACLEPARITY (3c-1): with the flag OFF, the oracle is the 0056 head, verbatim ════════
 -- validate_context is the transitive authority behind ten surfaces (the hangar, dock services, the three
@@ -1540,17 +1553,33 @@ begin
   -- ── light the flag for the lit phases. ──────────────────────────────────────────────────────────
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
-  -- ── ★ UNASSIGN ★ lit, the group's fleet still in flight: unassign (p_group_id null) SUCCEEDS —
-  --    pins that the guard sits INSIDE the non-null branch (leaving a fleet is manifest-law; the
-  --    frozen manifest neither gains nor loses a member by live membership).
+  -- ── ★ UNASSIGN ★ REWRITTEN BY S1-BERTH (0216): leaving a fleet means BERTHING, and a ship cannot
+  --    berth in open space — so a LIT unassign while the group's fleet is IN FLIGHT is now REFUSED
+  --    ('fleet_in_flight'), with zero writes; DARK the head's always-allowed semantics survive
+  --    (flag-exact rollback), and the dark unassign BERTHS the ship at its own real port (the
+  --    transition arm). Both halves asserted on the same real-hunt fixture.
+  --    HOW THIS FAILS IF THE CODE WERE WRONG: drop 0216's unassign guard → the lit probe answers
+  --    ok:true and d2 leaves with group NULL + a berth while the manifest still binds it → red on
+  --    the reason; un-gate the guard → the dark restore probe is refused → red on ok.
   if (select status from public.fleets where id = v_huntfleet) is distinct from 'moving' then
     raise exception 'ASSIGNGUARD FAIL: hunt fleet no longer moving — the unassign phase would be vacuous'; end if;
   r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, null)', d2));
+  if (r->>'reason') is distinct from 'fleet_in_flight' then
+    raise exception 'ASSIGNGUARD-UNASSIGN FAIL: lit unassign from an in-flight group answered % (ok here = a ship berthed in open space)', r; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = d2 and group_id = gD and berth_location_id is null;
+  if n <> 1 then raise exception 'ASSIGNGUARD-UNASSIGN FAIL: the refused unassign wrote the ship row (group/berth changed)'; end if;
+  -- DARK: the head's always-allowed unassign survives, and the transition arm berths d2 at its OWN
+  -- present per-ship port (v_portD) — this also RESTORES d2 to ungrouped for the later phases.
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, null)', d2));
   if (r->>'ok')::boolean is not true then
-    raise exception 'ASSIGNGUARD-UNASSIGN FAIL: lit unassign from an in-flight group was rejected: %', r; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id = d2 and group_id is null;
-  if n <> 1 then raise exception 'ASSIGNGUARD-UNASSIGN FAIL: unassign did not clear group_id'; end if;
-  raise notice 'FLEETGO_PASS_ASSIGNGUARD_UNASSIGN: lit unassign from an in-flight group succeeds — the guard is inside the non-null branch';
+    raise exception 'ASSIGNGUARD-UNASSIGN FAIL: DARK unassign was rejected — the rollback contract broke: %', r; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = d2 and group_id is null and berth_location_id = v_portD;
+  if n <> 1 then raise exception 'ASSIGNGUARD-UNASSIGN FAIL: dark unassign did not berth d2 at its own port'; end if;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_ASSIGNGUARD_UNASSIGN: lit unassign from an in-flight fleet -> fleet_in_flight, zero writes; dark unassign stays always-allowed and berths the ship at its own port';
 
   -- ── ★ INFLIGHT ★ lit, fleet 'moving': the assign is rejected with ZERO writes — snapshot-diff of
   --    ALL THREE tables the ghost-dock class lives in, both ways (the NOSHIPWRITE idiom; NOSHIPWRITE
@@ -1638,7 +1667,7 @@ declare r jsonb; n int; v_flag jsonb; r_before jsonb; r_after jsonb;
   uD uuid := (select v from fg where k='uD'); d2 uuid := (select v from fg where k='d2');
   gD uuid := (select v from fg where k='gD'); v_hunt uuid := (select v from fg where k='huntD');
   v_huntfleet uuid := (select v from fg where k='huntfleetD');
-  v_zone uuid; v_sector uuid; v_frow record; v_prow record;
+  v_zone uuid; v_sector uuid; v_frow record; v_prow record; v_berth_save uuid;
 begin
   select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
@@ -1661,6 +1690,11 @@ begin
    where id = v_frow.id;
   update public.location_presence set location_id = v_hunt, zone_id = v_zone, sector_id = v_sector
    where id = v_prow.id;
+  -- S1-BERTH (0216): the guard's ship-side read is now d2's BERTH, so the surgery must move it with
+  -- the dock pair (the backfill/unassign law: berth follows the real dock; the fixture mirrors it).
+  -- CHECK-coupled: d2 is UNGROUPED, so berth stays non-null throughout — the XOR holds.
+  select berth_location_id into v_berth_save from public.main_ship_instances where main_ship_id = d2;
+  update public.main_ship_instances set berth_location_id = v_hunt where main_ship_id = d2;
 
   -- vacuity guards: the assignee's own dock IS the hunt site, the group fleet is present there, and
   -- an OPEN SORTIE exists for gD — the exact state the co-location arm would otherwise ALLOW.
@@ -1668,6 +1702,10 @@ begin
     join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active' and lp.location_id = v_hunt
    where f.main_ship_id = d2 and f.status = 'present' and f.current_location_id = v_hunt;
   if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: the co-located-sortie state was not built (assignee not docked AT the site)'; end if;
+  -- S1-BERTH (0216): the co-location read under test is the BERTH — pin it moved with the dock.
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = d2 and group_id is null and berth_location_id = v_hunt;
+  if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: d2 is not BERTHED at the site — the co-located-sortie state was not built (0216 reads berth)'; end if;
   select count(*) into n from public.fleets
    where id = v_huntfleet and group_id = gD and main_ship_id is null
      and status = 'present' and current_location_id = v_hunt;
@@ -1694,6 +1732,11 @@ begin
   update public.location_presence
      set location_id = v_prow.location_id, zone_id = v_prow.zone_id, sector_id = v_prow.sector_id
    where id = v_prow.id;
+  -- S1-BERTH (0216): restore the berth with the dock pair (and prove it below with the rest).
+  update public.main_ship_instances set berth_location_id = v_berth_save where main_ship_id = d2;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = d2 and berth_location_id is not distinct from v_berth_save;
+  if n <> 1 then raise exception 'ASSIGNGUARD-ONSORTIE FAIL: the berth restore did not put the row back'; end if;
   select count(*) into n from public.fleets
    where id = v_frow.id and current_location_id is not distinct from v_frow.current_location_id
      and current_zone_id is not distinct from v_frow.current_zone_id;
@@ -1738,6 +1781,11 @@ begin
     join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active' and lp.location_id = haven
    where f.main_ship_id = a3 and f.player_id = uA and f.status = 'present' and f.current_location_id = haven;
   if n <> 1 then raise exception 'ASSIGNGUARD FAIL: the assignee is not docked (fleet+presence) at haven — co-location has nothing to compare'; end if;
+  -- S1-BERTH (0216): the guard's ship-side read is now the BERTH — pin that a3 was BORN berthed at
+  -- haven (the commission hunk), so the phases below exercise the berth read, not the corpse.
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = a3 and group_id is null and berth_location_id = haven;
+  if n <> 1 then raise exception 'ASSIGNGUARD FAIL: a3 is not BERTHED at haven — co-location has nothing to compare (0216 reads berth)'; end if;
 
   -- ── ★ ELSEWHERE ★ fleet present at slag, assignee docked at haven ≠ slag → reject. ──────────────
   r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a3, g));
@@ -1808,11 +1856,15 @@ begin
   r := pg_temp.call_as(uB, 'public.upsert_ship_group(1, ''Haulers'')');
   if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD-PERMEMBER FAIL: group: %', r; end if;
   gB := (r->>'group_id')::uuid;
-  -- LIT assign of b1 into the fleetless group: ALSO pins the 0-rows bootstrap arm (no group-shaped
-  -- fleet → allow, today's semantics).
+  -- S1-BERTH (0216): b1's fixture assign runs DARK — a LIT first-assign into an EMPTY group now
+  -- MINTS the group fleet at the assignee's berth (its own world, ASSIGN_CLEARS_BERTH, pins that),
+  -- and THIS block's whole point requires gB to stay FLEETLESS. The lit 0-rows bootstrap pin this
+  -- assign used to carry lives on b2's assign below (a NON-empty fleetless group: allow, no mint).
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
   r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', b1, gB));
   if (r->>'ok')::boolean is not true then
-    raise exception 'ASSIGNGUARD-PERMEMBER FAIL: lit assign into a group with NO fleet was rejected (the bootstrap arm broke): %', r; end if;
+    raise exception 'ASSIGNGUARD-PERMEMBER FAIL: dark fixture assign of b1 was rejected: %', r; end if;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
   -- the REAL legacy expedition send (docked launch — launch_from_dock is lit): mints b1's OWN
   -- per-member fleet and tags it with gB. Destination DRIFT, not slag: b1 is docked AT slag (the
@@ -2108,8 +2160,14 @@ begin
   r := pg_temp.call_as(uF, 'public.upsert_ship_group(1, ''Lancers'')');
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-CONSUME FAIL: group: %', r; end if;
   gF := (r->>'group_id')::uuid;
+  -- S1-BERTH (0216): f1's fixture assign runs DARK (a lit first-assign into an empty group mints
+  -- the group fleet — ASSIGN_CLEARS_BERTH's world; this chain must start fleetless so the GO below
+  -- exercises the bootstrap origin exactly as before). f2's assign stays LIT: a non-empty
+  -- fleetless group is the 0-rows bootstrap-allow arm, no mint.
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
   r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f1, gF));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-CONSUME FAIL: assign f1: %', r; end if;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
   r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f2, gF));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-CONSUME FAIL: assign f2: %', r; end if;
   select id into v_hunt from public.locations
@@ -2194,6 +2252,11 @@ begin
     join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active' and lp.location_id = slag
    where f.id = v_f3fleet and f.status = 'present' and f.current_location_id = slag;
   if n <> 1 then raise exception 'HUNTUNI-CONSUME FAIL: f3''s own dock (fleet+presence) is not at slag — the co-located shape was not built'; end if;
+  -- S1-BERTH (0216) FIXTURE SYNC: the LIVE legacy per-ship mover maintains no berth (it is dark in
+  -- prod; the migration's backfill did this conversion once for real pre-flip ships). The fixture
+  -- mirrors the backfill so f3's berth follows its REAL dock — the co-location guard reads BERTH
+  -- now. CHECK-coupled: f3 is ungrouped, berth stays non-null → the XOR holds.
+  update public.main_ship_instances set berth_location_id = slag where main_ship_id = f3;
   r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f3, gF));
   if (r->>'ok')::boolean is not true then
     raise exception 'HUNTUNI-CONSUME FAIL: the co-located assign of f3 was rejected: % (0213''s ALLOW arm regressed?)', r; end if;
@@ -2352,8 +2415,12 @@ begin
   r := pg_temp.call_as(uG, 'public.upsert_ship_group(1, ''Pathfinders'')');
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-BOOTSTRAP FAIL: group: %', r; end if;
   gG := (r->>'group_id')::uuid;
+  -- S1-BERTH (0216): the fixture assign runs DARK — a lit first-assign into an empty group now
+  -- MINTS the group fleet, and this block's whole point is the leaf returning ZERO rows.
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
   r := pg_temp.call_as(uG, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', g1, gG));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-BOOTSTRAP FAIL: assign g1: %', r; end if;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
@@ -2414,8 +2481,12 @@ begin
   r := pg_temp.call_as(uH, 'public.upsert_ship_group(1, ''Drifters'')');
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-FROMSPACE FAIL: group: %', r; end if;
   gH := (r->>'group_id')::uuid;
+  -- S1-BERTH (0216): the fixture assign runs DARK (no first-assign mint) so the go below exercises
+  -- the same bootstrap chain it always did — worlds stay byte-stable; the mint has its own world.
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
   r := pg_temp.call_as(uH, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', h1, gH));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-FROMSPACE FAIL: assign h1: %', r; end if;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
@@ -2504,8 +2575,12 @@ begin
   r := pg_temp.call_as(uI, 'public.upsert_ship_group(1, ''Brakemen'')');
   if (r->>'ok')::boolean is not true then raise exception 'STOP-SORTIE FAIL: group: %', r; end if;
   gI := (r->>'group_id')::uuid;
+  -- S1-BERTH (0216): the fixture assign runs DARK (no first-assign mint) so the hunt below still
+  -- launches through the head's =0 docked arm exactly as this block documents.
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
   r := pg_temp.call_as(uI, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', i1, gI));
   if (r->>'ok')::boolean is not true then raise exception 'STOP-SORTIE FAIL: assign i1: %', r; end if;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
@@ -2748,6 +2823,555 @@ begin
 
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
   raise notice 'FLEETGO_PASS_STOP_SORTIE_LIVESCOPE: sortie finished through the real chain, manifest RETAINED on the completed fleet -> a NEW go and its brake BOTH succeed; the manifest survives untouched';
+end $$;
+
+-- ═════════════════════════════ S1 — THE BERTH MODEL (migration 0216) ═════════════════════════════
+-- A ship is FLEETED xor BERTHED, as a SCHEMA FACT. Eight markers over uD/uJ/uK's worlds plus one
+-- world-wide sweep. NOTE (the LIVESCOPE global-tick rule): these blocks run AFTER the global
+-- combat/reconciler ticks and deliberately read NO uC/uE encounter state; the CROSSGROUP block
+-- reads uD's deliberately-persisted open sortie and guards its own vacuity (one global combat step
+-- cannot finish a full-hp low-danger encounter — the LIVESCOPE argument — and if that ever drifts
+-- the vacuity guard raises rather than passing hollow).
+
+-- ════════ BLOCK ASSIGN_CROSSGROUP_GUARDED (0216, lit — review MAJOR-1 + MINOR-5): the leave-guards
+-- cannot be bypassed through a direct cross-group assign; a same-group re-assign is never blocked ══
+-- THE SIDE DOOR: assign(S, G2) never used to inspect S's CURRENT group, so a ship bound to a
+-- mid-sortie FROZEN MANIFEST in G1 could be assigned into an empty G2 — stepping off the manifest
+-- (the exact state the unassign refusals forbid), resolving to nothing, going hidden, and minting
+-- a stray fleet at its stale berth. One rule, one door now: cross-group movement = unassign first.
+-- FAIL MODES: drop the must_unassign_first arm → the cross-group probe answers ok (the member
+-- left the manifest's group) → red; drop the same-group short-circuit → the re-assign probe hits
+-- the co-location arm with a NULL berth → group_fleet_elsewhere → red (the 0204 :294 promise).
+do $$
+declare r jsonb; n int; v_flag jsonb; v_manifest_n int; g2 uuid; d1 uuid;
+  uD uuid := (select v from fg where k='uD'); gD uuid := (select v from fg where k='gD');
+  v_huntfleet uuid := (select v from fg where k='huntfleetD');
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- vacuity: a gD member exists, it is ON the open manifest, and the sortie fleet is LIVE — the
+  -- exact shape the side door would leak (a finished sortie would make both probes hollow).
+  select main_ship_id into d1 from public.main_ship_instances where player_id = uD and group_id = gD;
+  if d1 is null then raise exception 'ASSIGN_CROSSGROUP FAIL: gD has no member — the cross-group probe would be vacuous'; end if;
+  select count(*) into n
+    from public.group_sortie_members gsm
+    join public.fleets f on f.id = gsm.fleet_id
+   where gsm.main_ship_id = d1 and f.id = v_huntfleet
+     and f.status in ('moving', 'present', 'returning');
+  if n = 0 then raise exception 'ASSIGN_CROSSGROUP FAIL: the open-sortie state was not built (member off the live manifest)'; end if;
+  select count(*) into v_manifest_n from public.group_sortie_members where fleet_id = v_huntfleet;
+
+  r := pg_temp.call_as(uD, 'public.upsert_ship_group(2, ''Sidedoor'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ASSIGN_CROSSGROUP FAIL: group 2: %', r; end if;
+  g2 := (r->>'group_id')::uuid;
+
+  -- ── ★ the side door is CLOSED ★ mid-sortie member → empty group: refused, zero writes, no mint.
+  create temp table cg_ships_before as select * from public.main_ship_instances;
+  if (select count(*) from cg_ships_before) = 0 then
+    raise exception 'ASSIGN_CROSSGROUP FAIL: empty before-snapshot — the zero-write diff would be vacuous'; end if;
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', d1, g2));
+  if (r->>'reason') is distinct from 'must_unassign_first' then
+    raise exception 'ASSIGN_CROSSGROUP FAIL: cross-group assign of a mid-sortie member answered % (ok here = the member stepped off the frozen manifest and went hidden)', r; end if;
+  select count(*) into n from (
+    (table cg_ships_before except select * from public.main_ship_instances)
+    union all (select * from public.main_ship_instances except table cg_ships_before)) d;
+  if n <> 0 then raise exception 'ASSIGN_CROSSGROUP FAIL: the refused cross-group assign wrote % ship row(s)', n; end if;
+  select count(*) into n from public.fleets
+   where group_id = g2 and player_id = uD and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'ASSIGN_CROSSGROUP FAIL: the refused assign minted % fleet(s) for the empty group', n; end if;
+
+  -- ── ★ MINOR-5 ★ same-group re-assign of the SAME mid-sortie member: ok, zero writes (a member's
+  --    berth is NULL — without the short-circuit this reads group_fleet_elsewhere).
+  r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', d1, gD));
+  if r is distinct from jsonb_build_object('ok', true, 'main_ship_id', d1, 'group_id', gD) then
+    raise exception 'ASSIGN_CROSSGROUP FAIL: same-group re-assign answered % (the 0204 :294 never-blocked promise broke)', r; end if;
+  select count(*) into n from (
+    (table cg_ships_before except select * from public.main_ship_instances)
+    union all (select * from public.main_ship_instances except table cg_ships_before)) d;
+  if n <> 0 then raise exception 'ASSIGN_CROSSGROUP FAIL: the idempotent re-assign wrote % ship row(s)', n; end if;
+  drop table cg_ships_before;
+
+  -- the frozen manifest survived both probes byte-count-intact.
+  if (select count(*) from public.group_sortie_members where fleet_id = v_huntfleet) <> v_manifest_n then
+    raise exception 'ASSIGN_CROSSGROUP FAIL: a probe changed the manifest row count'; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'ASSIGN_CROSSGROUP_GUARDED: mid-sortie member -> must_unassign_first (no write, no mint, manifest intact); same-group re-assign -> ok with zero writes';
+end $$;
+
+-- ════════ BLOCK COMMISSION_BERTHED (0216): a new ship is BORN berthed at Haven, in BOTH creators ══
+-- FAIL MODE: drop either creator's berth hunk → that INSERT lands group NULL + berth NULL → the XOR
+-- CHECK raises at commission time (a raw error here), or — were the CHECK also dropped — the
+-- explicit shape asserts below go red.
+do $$
+declare r jsonb; n int;
+  uJ uuid := (select v from fg where k='uJ'); uK uuid := (select v from fg where k='uK');
+  haven uuid := (select v from fg where k='haven'); j1 uuid;
+  v_row public.main_ship_instances%rowtype;
+begin
+  -- creator 1: the port-entry commission chain (→ port_entry_commission_build).
+  r := pg_temp.call_as(uJ, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'COMMISSION_BERTHED FAIL: commission j1: %', r; end if;
+  select main_ship_id into j1 from public.main_ship_instances where player_id = uJ;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = j1 and group_id is null and berth_location_id = haven;
+  if n <> 1 then raise exception 'COMMISSION_BERTHED FAIL: build-creator ship is not born berthed at Haven (ungrouped)'; end if;
+
+  -- creator 2: ensure_main_ship_for_player (the legacy bootstrap — service-role internal; the
+  -- proof session is superuser). Its create branch needs a ZERO-ship player: uK.
+  v_row := public.ensure_main_ship_for_player(uK);
+  if v_row.group_id is not null or v_row.berth_location_id is distinct from haven then
+    raise exception 'COMMISSION_BERTHED FAIL: ensure-creator ship is not born berthed at Haven (group %, berth %)', v_row.group_id, v_row.berth_location_id; end if;
+
+  -- creator consistency, world-wide: after EVERY creator and mutator this proof has run, zero rows
+  -- violate the XOR anywhere.
+  select count(*) into n from public.main_ship_instances
+   where (group_id is null) <> (berth_location_id is not null);
+  if n <> 0 then raise exception 'COMMISSION_BERTHED FAIL: % ship row(s) violate the XOR world-wide', n; end if;
+
+  insert into fg values ('j1', j1);
+  raise notice 'COMMISSION_BERTHED: both creators birth berthed-at-Haven ungrouped ships; zero XOR violations world-wide';
+end $$;
+
+-- ════════ BLOCK BERTH_RESOLVER (0216): the map read answers place='berthed' — and ONLY when the ═══
+-- resolver has no fleet ════════
+-- Three phases on j1 + a contrast pin on uA's fleeted a1 (impersonation via call_as, the
+-- reconcile/flip-proof idiom):
+--   A) transition truth: j1's commission corpse is still 'present' → the resolver answers it →
+--      place='docked' and the berthed branch stays QUIET (no double authority).
+--   B) the post-4c shape (SURGERY: corpse completed + presence closed + the prod-majority legacy
+--      'home' ship shape — deliberately NOT restored: the later berth blocks build on it) →
+--      resolver NULL + berth set → place='berthed' at the berth.
+--   C) DARK → the branch is gated → 'hidden' (the 0212 behavior; flag-exact rollback).
+-- FAIL MODES: drop the 0216 hunk → phase B draws 'hidden' (the ship-tab blackout) → red; un-gate
+-- it → phase C draws 'berthed' while dark → red; key it on something other than resolver-NULL →
+-- phase A stops answering 'docked' → red.
+do $$
+declare r jsonb; e jsonb; n int; v_flag jsonb;
+  uJ uuid := (select v from fg where k='uJ'); j1 uuid := (select v from fg where k='j1');
+  uA uuid := (select v from fg where k='uA'); a1 uuid := (select v from fg where k='a1');
+  haven uuid := (select v from fg where k='haven');
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- phase A: the corpse is live → docked, not berthed.
+  select count(*) into n from public.fleets where main_ship_id = j1 and status = 'present';
+  if n <> 1 then raise exception 'BERTH_RESOLVER FAIL: j1 has no present commission fleet — phase A would be vacuous'; end if;
+  r := pg_temp.call_as(uJ, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = j1::text;
+  if e is null or (e->>'place') is distinct from 'docked' or (e->>'location_id')::uuid is distinct from haven then
+    raise exception 'BERTH_RESOLVER FAIL (phase A): a corpse-docked ship drew % — the berthed branch must yield to the resolver', e; end if;
+
+  -- phase B SURGERY: the post-4c shape (the corpses die at 4c/4d; the backfill made berth carry
+  -- their truth). CHECK-coupled columns move together: j1 stays ungrouped + berthed → XOR holds.
+  perform public.presence_complete(lp.id)
+    from public.location_presence lp
+    join public.fleets f on f.id = lp.fleet_id
+   where f.main_ship_id = j1 and lp.status = 'active';
+  update public.fleets
+     set status = 'completed', location_mode = 'movement', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where main_ship_id = j1 and status = 'present';
+  update public.main_ship_instances set status = 'home', spatial_state = null where main_ship_id = j1;
+  if public.mainship_resolve_fleet(j1) is not null then
+    raise exception 'BERTH_RESOLVER FAIL: j1 still resolves a fleet — phase B could be answered by the retired layer'; end if;
+  r := pg_temp.call_as(uJ, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = j1::text;
+  if e is null or (e->>'place') is distinct from 'berthed' or (e->>'location_id')::uuid is distinct from haven
+     or (e->>'space_x') is not null or (e->'segment') is distinct from 'null'::jsonb then
+    raise exception 'BERTH_RESOLVER FAIL (phase B): an unfleeted berthed ship drew % — hidden here is the ship-tab blackout', e; end if;
+
+  -- contrast: a FLEETED ship reads its FLEET's place (uA's a1 — grouped, fleet present at haven
+  -- after the COLOCATED settle), through the same call.
+  select count(*) into n from public.fleets f
+    join public.main_ship_instances s on s.group_id = f.group_id
+   where s.main_ship_id = a1 and f.main_ship_id is null and f.status = 'present' and f.current_location_id = haven;
+  if n <> 1 then raise exception 'BERTH_RESOLVER FAIL: uA''s fleet is not present at haven — the contrast pin would be vacuous'; end if;
+  r := pg_temp.call_as(uA, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = a1::text;
+  if e is null or (e->>'place') is distinct from 'docked' or (e->>'location_id')::uuid is distinct from haven then
+    raise exception 'BERTH_RESOLVER FAIL (contrast): the FLEETED ship drew % — fleeted must read the fleet, never a berth', e; end if;
+
+  -- phase C: dark → the branch is gated off → hidden (0212 byte-behavior; the rollback contract).
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+  r := pg_temp.call_as(uJ, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = j1::text;
+  if e is null or (e->>'place') is distinct from 'hidden' then
+    raise exception 'BERTH_RESOLVER FAIL (phase C): dark drew % — the berthed branch leaked into the rolled-back world', e; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'BERTH_RESOLVER: berthed answers ONLY when the resolver has no fleet (corpse->docked, post-4c->berthed at the berth, fleeted->docked via the fleet, dark->hidden)';
+end $$;
+
+-- ════════ BLOCK ASSIGN_CLEARS_BERTH (0216): assign clears the berth; the FIRST assign into an ═════
+-- EMPTY group MINTS the group fleet 'present' at the berth port ════════
+-- FAIL MODES: drop HUNK E's berth clause → the assign lands group+berth both set → the XOR raises
+-- (raw error); drop HUNK F → no fleet exists → the minted-fleet asserts and the oracle handoff
+-- assert go red (j1 would be LOCATIONLESS: berth gone, no fleet); mint on non-empty groups too →
+-- the second-assign single-fleet assert goes red.
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uJ uuid := (select v from fg where k='uJ'); j1 uuid := (select v from fg where k='j1');
+  haven uuid := (select v from fg where k='haven'); gJ uuid; j2 uuid; v_fleet uuid;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  r := pg_temp.call_as(uJ, 'public.upsert_ship_group(1, ''Berthmen'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ASSIGN_CLEARS_BERTH FAIL: group: %', r; end if;
+  gJ := (r->>'group_id')::uuid;
+
+  -- vacuity: j1 is the post-4c berthed shape (no fleets at all) — the mint's port can ONLY come
+  -- from the berth.
+  select count(*) into n from public.fleets
+   where main_ship_id = j1 and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'ASSIGN_CLEARS_BERTH FAIL: j1 holds a live per-ship fleet — the mint port could come from the retired layer'; end if;
+
+  -- ── the FIRST assign into the EMPTY group. ──
+  r := pg_temp.call_as(uJ, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', j1, gJ));
+  if r is distinct from jsonb_build_object('ok', true, 'main_ship_id', j1, 'group_id', gJ) then
+    raise exception 'ASSIGN_CLEARS_BERTH FAIL: first assign answered %', r; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = j1 and group_id = gJ and berth_location_id is null;
+  if n <> 1 then raise exception 'ASSIGN_CLEARS_BERTH FAIL: the assign did not land FLEETED-no-berth (XOR shape)'; end if;
+  -- the MINT: exactly ONE group-shaped fleet, 'present' at the berth port, with an active presence.
+  select count(*) into n from public.fleets
+   where group_id = gJ and player_id = uJ and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'ASSIGN_CLEARS_BERTH FAIL: expected the ONE minted group fleet, found % — an unminted empty-group first assign leaves the ship locationless', n; end if;
+  select id into v_fleet from public.fleets
+   where group_id = gJ and player_id = uJ and main_ship_id is null
+     and status = 'present' and location_mode = 'location' and current_location_id = haven;
+  if v_fleet is null then raise exception 'ASSIGN_CLEARS_BERTH FAIL: the minted fleet is not present at the BERTH port'; end if;
+  select count(*) into n from public.location_presence
+   where fleet_id = v_fleet and status = 'active' and location_id = haven;
+  if n <> 1 then raise exception 'ASSIGN_CLEARS_BERTH FAIL: the minted fleet has no active presence at the berth port'; end if;
+  -- the read HANDOFF is seamless: the oracle now answers the FLEET at the same port the berth
+  -- answered a moment ago, and the map draws docked there.
+  r := public.mainship_space_validate_context(j1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'ASSIGN_CLEARS_BERTH FAIL: post-assign oracle answered % (the berth->fleet handoff broke)', r; end if;
+  if public.mainship_resolve_docked_location(j1) is distinct from haven then
+    raise exception 'ASSIGN_CLEARS_BERTH FAIL: post-assign dock resolver is not the berth port'; end if;
+
+  -- ── the SECOND assign (j2, co-located) into the now NON-empty group: no second mint. ──
+  r := pg_temp.call_as(uJ, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'ASSIGN_CLEARS_BERTH FAIL: commission j2: %', r; end if;
+  j2 := (r->>'main_ship_id')::uuid;
+  r := pg_temp.call_as(uJ, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', j2, gJ));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'ASSIGN_CLEARS_BERTH FAIL: co-located second assign rejected: %', r; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = j2 and group_id = gJ and berth_location_id is null;
+  if n <> 1 then raise exception 'ASSIGN_CLEARS_BERTH FAIL: j2 did not land FLEETED-no-berth'; end if;
+  select count(*) into n from public.fleets
+   where group_id = gJ and player_id = uJ and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'ASSIGN_CLEARS_BERTH FAIL: % group fleets after the second assign — the mint must fire ONLY on the first-into-empty case', n; end if;
+
+  insert into fg values ('gJ', gJ), ('j2', j2), ('fleetJ', v_fleet);
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'ASSIGN_CLEARS_BERTH: assign lands fleeted-no-berth; the first-into-empty assign mints the ONE group fleet present at the berth port (presence + oracle handoff); no second mint';
+end $$;
+
+-- ════════ BLOCK UNASSIGN_BERTHS (0216): unassign from a DOCKED fleet berths at that port; from a ══
+-- MOVING fleet it is refused with no write ════════
+-- FAIL MODES: drop the unassign berth resolution → the unassign lands both-NULL → the XOR raises;
+-- drop the in-flight refusal → the moving-phase probe answers ok and j1 "berths" mid-flight → red
+-- on the reason + the zero-write diff.
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uJ uuid := (select v from fg where k='uJ'); j1 uuid := (select v from fg where k='j1');
+  j2 uuid := (select v from fg where k='j2'); gJ uuid := (select v from fg where k='gJ');
+  v_fleet uuid := (select v from fg where k='fleetJ');
+  haven uuid := (select v from fg where k='haven'); drift uuid := (select v from fg where k='drift');
+  v_mv uuid;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- ── DOCKED: the fleet is present at haven → unassigning j2 BERTHS it there. ──
+  select count(*) into n from public.fleets
+   where id = v_fleet and status = 'present' and current_location_id = haven;
+  if n <> 1 then raise exception 'UNASSIGN_BERTHS FAIL: the fleet is not docked at haven — the docked phase would be vacuous'; end if;
+  r := pg_temp.call_as(uJ, format('public.assign_ship_to_group(%L::uuid, null)', j2));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'UNASSIGN_BERTHS FAIL: unassign from a DOCKED fleet was rejected: %', r; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = j2 and group_id is null and berth_location_id = haven;
+  if n <> 1 then raise exception 'UNASSIGN_BERTHS FAIL: j2 is not BERTHED at the fleet''s port after the unassign'; end if;
+
+  -- ── MOVING: launch the fleet, then try to unassign j1 mid-flight → refused, zero writes. ──
+  r := pg_temp.call_as(uJ, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gJ, drift));
+  if (r->>'ok')::boolean is not true then raise exception 'UNASSIGN_BERTHS FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  if (select status from public.fleets where id = v_fleet) is distinct from 'moving' then
+    raise exception 'UNASSIGN_BERTHS FAIL: the fleet is not moving — the in-flight phase would be vacuous'; end if;
+  create temp table ub_ships_before as select * from public.main_ship_instances;
+  if (select count(*) from ub_ships_before) = 0 then
+    raise exception 'UNASSIGN_BERTHS FAIL: empty before-snapshot — the zero-write diff would be vacuous'; end if;
+  r := pg_temp.call_as(uJ, format('public.assign_ship_to_group(%L::uuid, null)', j1));
+  if (r->>'reason') is distinct from 'fleet_in_flight' then
+    raise exception 'UNASSIGN_BERTHS FAIL: unassign from a MOVING fleet answered % (ok here = a ship berthed in open space)', r; end if;
+  select count(*) into n from (
+    (table ub_ships_before except select * from public.main_ship_instances)
+    union all (select * from public.main_ship_instances except table ub_ships_before)) d;
+  if n <> 0 then raise exception 'UNASSIGN_BERTHS FAIL: the refused unassign wrote % ship row(s)', n; end if;
+  drop table ub_ships_before;
+
+  -- settle the leg at drift for the DELETE block (the fleet ends docked at drift with member j1).
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  perform public.movement_settle_arrival(v_mv);
+  select count(*) into n from public.fleets
+   where id = v_fleet and status = 'present' and current_location_id = drift;
+  if n <> 1 then raise exception 'UNASSIGN_BERTHS FAIL: the fleet did not settle at drift (handoff to DELETE_BERTHS broke)'; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'UNASSIGN_BERTHS: unassign from a docked fleet berths at that port; unassign from a moving fleet -> fleet_in_flight with zero ship writes';
+end $$;
+
+-- ════════ BLOCK DELETE_BERTHS (0216): delete berths the members at the group's docked port and ════
+-- consumes the fleet; a flying fleet refuses the delete ════════
+-- FAIL MODES: drop HUNK C (the member berth UPDATE) → the delete's FK SET NULL lands both-NULL →
+-- the XOR raises (raw error, never a silent un-group); drop HUNK B's refusal arms → the flying
+-- phase deletes a group under a live leg → red on the reason; drop the consume → an orphan live
+-- group-shaped fleet + active presence survive with no group → the ghost-dock asserts go red.
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uJ uuid := (select v from fg where k='uJ'); j1 uuid := (select v from fg where k='j1');
+  gJ uuid := (select v from fg where k='gJ'); v_fleet uuid := (select v from fg where k='fleetJ');
+  drift uuid := (select v from fg where k='drift'); haven uuid := (select v from fg where k='haven');
+  v_mv uuid;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- ── FLYING: a live leg refuses the delete, zero writes across ships/groups. ──
+  r := pg_temp.call_as(uJ, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gJ, haven));
+  if (r->>'ok')::boolean is not true then raise exception 'DELETE_BERTHS FAIL: go for the flying phase: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  if (select status from public.fleets where id = v_fleet) is distinct from 'moving' then
+    raise exception 'DELETE_BERTHS FAIL: the fleet is not moving — the flying phase would be vacuous'; end if;
+  create temp table db_ships_before as select * from public.main_ship_instances;
+  r := pg_temp.call_as(uJ, format('public.delete_ship_group(%L::uuid)', gJ));
+  if (r->>'reason') is distinct from 'fleet_in_flight' then
+    raise exception 'DELETE_BERTHS FAIL: deleting a group with a FLYING fleet answered %', r; end if;
+  select count(*) into n from (
+    (table db_ships_before except select * from public.main_ship_instances)
+    union all (select * from public.main_ship_instances except table db_ships_before)) d;
+  if n <> 0 then raise exception 'DELETE_BERTHS FAIL: the refused delete wrote % ship row(s)', n; end if;
+  drop table db_ships_before;
+  select count(*) into n from public.ship_groups where group_id = gJ;
+  if n <> 1 then raise exception 'DELETE_BERTHS FAIL: the refused delete removed the group'; end if;
+
+  -- ── DOCKED: settle at haven, then delete → members berthed THERE, fleet consumed, group gone. ──
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  perform public.movement_settle_arrival(v_mv);
+  select count(*) into n from public.fleets
+   where id = v_fleet and status = 'present' and current_location_id = haven;
+  if n <> 1 then raise exception 'DELETE_BERTHS FAIL: the fleet did not settle at haven — the docked phase would be vacuous'; end if;
+  r := pg_temp.call_as(uJ, format('public.delete_ship_group(%L::uuid)', gJ));
+  if (r->>'ok')::boolean is not true then raise exception 'DELETE_BERTHS FAIL: docked delete answered %', r; end if;
+  -- the member is BERTHED at the port the fleet was docked at; the XOR holds; the ship survives.
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = j1 and group_id is null and berth_location_id = haven;
+  if n <> 1 then raise exception 'DELETE_BERTHS FAIL: j1 is not berthed at the group''s docked port after the delete'; end if;
+  select count(*) into n from public.ship_groups where group_id = gJ;
+  if n <> 0 then raise exception 'DELETE_BERTHS FAIL: the group survived its delete'; end if;
+  -- the fleet was CONSUMED: terminal, presence closed, nothing group-shaped left alive — a deleted
+  -- group must not leave a ghost dock (§0's class).
+  select count(*) into n from public.fleets where id = v_fleet and status = 'completed';
+  if n <> 1 then raise exception 'DELETE_BERTHS FAIL: the group fleet was not consumed (terminal) by the delete'; end if;
+  select count(*) into n from public.location_presence where fleet_id = v_fleet and status = 'active';
+  if n <> 0 then raise exception 'DELETE_BERTHS FAIL: % active presence row(s) survive the deleted group — a ghost dock', n; end if;
+  select count(*) into n from public.fleets
+   where player_id = uJ and main_ship_id is null and group_id is not null
+     and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'DELETE_BERTHS FAIL: % live group-shaped fleet(s) survive after the delete', n; end if;
+  -- and the ship's location survives the whole trip: the map now answers BERTHED at haven.
+  r := pg_temp.call_as(uJ, 'public.get_my_fleet_positions()');
+  select count(*) into n from jsonb_array_elements(r) as t(elem)
+   where t.elem->>'main_ship_id' = j1::text and t.elem->>'place' = 'berthed'
+     and (t.elem->>'location_id')::uuid = haven;
+  if n <> 1 then raise exception 'DELETE_BERTHS FAIL: j1 does not read berthed at haven after the delete: %', r; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'DELETE_BERTHS: flying fleet -> refused with zero writes; docked delete berths the members at the fleet''s port, consumes the fleet (no ghost dock), and the map reads berthed';
+end $$;
+
+-- ════════ BLOCK BERTH_XOR (0216): the CHECK rejects both-null and both-set; accepts both legal ════
+-- shapes ════════
+-- Direct column probes (deliberately NOT through the RPCs — the CHECK is the last line of defense
+-- when some future writer forgets the pair). FAIL MODE: drop the CHECK → both probes "succeed" →
+-- the not-raised branches raise loudly.
+do $$
+declare n int;
+  j1 uuid := (select v from fg where k='j1'); g uuid := (select v from fg where k='g');
+  haven uuid := (select v from fg where k='haven');
+begin
+  -- vacuity: both LEGAL shapes exist in the world right now (else "the CHECK accepts them" is vacuous).
+  select count(*) into n from public.main_ship_instances where group_id is null and berth_location_id is not null;
+  if n = 0 then raise exception 'BERTH_XOR FAIL: no berthed-no-group ship exists — the accept half is vacuous'; end if;
+  select count(*) into n from public.main_ship_instances where group_id is not null and berth_location_id is null;
+  if n = 0 then raise exception 'BERTH_XOR FAIL: no fleeted-no-berth ship exists — the accept half is vacuous'; end if;
+
+  -- reject BOTH-NULL: strip j1's berth while ungrouped.
+  begin
+    update public.main_ship_instances set berth_location_id = null where main_ship_id = j1;
+    raise exception 'BERTH_XOR FAIL: a both-NULL ship row was accepted — the ship has NO location and the XOR is decoration';
+  exception when check_violation then null; end;
+
+  -- reject BOTH-SET: give j1 a group (any FK-valid group) while it keeps its berth.
+  begin
+    update public.main_ship_instances set group_id = g where main_ship_id = j1;
+    raise exception 'BERTH_XOR FAIL: a both-SET ship row was accepted — the ship is fleeted AND berthed at once';
+  exception when check_violation then null; end;
+
+  -- and the probes really were rejected: j1 is byte-unchanged (still berthed at haven, ungrouped).
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = j1 and group_id is null and berth_location_id = haven;
+  if n <> 1 then raise exception 'BERTH_XOR FAIL: a rejected probe still mutated j1'; end if;
+
+  raise notice 'BERTH_XOR: both-null and both-set REJECTED (check_violation); fleeted-no-berth and berthed-no-group both live in-world';
+end $$;
+
+-- ════════ BLOCK BERTH_BACKFILL (0216): every ungrouped ship in the WHOLE world ends berthed ═══════
+-- HONESTY: the backfill DML itself ran at MIGRATION time — on prod over the REAL pre-flip ships
+-- (its in-file assert RAISES the deploy if any ungrouped ship is left berthless); a fresh CI chain
+-- has zero pre-existing ships, so that execution is vacuous HERE and cannot be re-staged (the XOR
+-- admits no berthless-ungrouped fixture afterward, by design). What this block pins at runtime is
+-- the INVARIANT the backfill exists to establish, over every ship every world in this proof
+-- created, moved, assigned, unassigned, consumed, hunted, braked and deleted: ungrouped ⇒ berthed
+-- (at a real port), grouped ⇒ berthless. The derivation shape (most-recent 'present' corpse port,
+-- else Haven) is pinned statically by the selftest (fleetgo-proof.sh) and by 0216's own in-file
+-- assert — stated plainly: the real-data run is TRACED here, executed only at the prod deploy.
+do $$
+declare n int; m int;
+begin
+  select count(*) into n from public.main_ship_instances where group_id is null;
+  select count(*) into m from public.main_ship_instances where group_id is not null;
+  if n = 0 or m = 0 then
+    raise exception 'BERTH_BACKFILL FAIL: the world has % ungrouped / % grouped ships — the sweep would be vacuous', n, m; end if;
+  select count(*) into n from public.main_ship_instances
+   where group_id is null and berth_location_id is null;
+  if n <> 0 then raise exception 'BERTH_BACKFILL FAIL: % ungrouped ship(s) berthless', n; end if;
+  select count(*) into n from public.main_ship_instances s
+   where s.group_id is null
+     and not exists (select 1 from public.locations l where l.id = s.berth_location_id);
+  if n <> 0 then raise exception 'BERTH_BACKFILL FAIL: % berth(s) point at no real port', n; end if;
+  select count(*) into n from public.main_ship_instances
+   where group_id is not null and berth_location_id is not null;
+  if n <> 0 then raise exception 'BERTH_BACKFILL FAIL: % grouped ship(s) carry a berth', n; end if;
+  raise notice 'BERTH_BACKFILL: world-wide after every mutation — ungrouped ⇒ berthed at a real port; grouped ⇒ berthless (the invariant the migration-time backfill establishes)';
+end $$;
+
+-- ════════ BLOCK TERRITORY_PASS_SEEDED (0217): the CASE seed landed on the decided radius map ══════
+-- trade_outpost → 25, pirate_hunt/pirate_den → 35, safe_zone/rally_point → 15, every other type
+-- NULL — asserted on the WHOLE world, plus named probes (slag, an ACTIVE hunt site) so a red is
+-- actionable. VACUITY: each probed class must exist or the sweep greens while proving nothing.
+-- FAIL MODE: drop the migration's CASE seed → slag reads NULL → the 25-probe raises.
+do $$
+declare n int;
+  slag uuid := (select v from fg where k='slag');
+begin
+  -- vacuity guards: the probed rows exist.
+  select count(*) into n from public.locations where id = slag and location_type = 'trade_outpost';
+  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag is not a trade_outpost row — the port probe would be vacuous'; end if;
+  select count(*) into n from public.locations where location_type in ('pirate_hunt', 'pirate_den') and status = 'active';
+  if n = 0 then raise exception 'TERRITORY_SEEDED FAIL: no ACTIVE hunt site exists — the hostile probe would be vacuous'; end if;
+  select count(*) into n from public.locations where location_type = 'safe_zone';
+  if n = 0 then raise exception 'TERRITORY_SEEDED FAIL: no safe_zone exists — the safe probe would be vacuous'; end if;
+
+  -- named probes: the decided values, on real rows.
+  select count(*) into n from public.locations where id = slag and territory_radius = 25;
+  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not 25'; end if;
+  select count(*) into n from public.locations
+   where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 35;
+  if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=35', n; end if;
+
+  -- the world-wide sweep: every location on the map obeys the CASE map (25/35/15/NULL).
+  select count(*) into n from public.locations
+   where (location_type = 'trade_outpost' and territory_radius is distinct from 25)
+      or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 35)
+      or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 15)
+      or (location_type in ('mining_site', 'derelict_station', 'event_site') and territory_radius is not null);
+  if n <> 0 then raise exception 'TERRITORY_PASS_SEEDED FAIL: % location(s) off the decided radius map', n; end if;
+
+  raise notice 'TERRITORY_PASS_SEEDED: slag=25, every ACTIVE hunt site=35, world-wide sweep clean (trade 25 / hostile 35 / safe+rally 15 / else NULL)';
+end $$;
+
+-- ════════ BLOCK TERRITORY_PASS_MAPREAD (0217): get_world_map carries territory_radius, ADDITIVELY ═
+-- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on status='active';
+-- the 0175 hidden-port pin ran BEFORE the 0217 re-create on this chain, so it cannot vouch for the
+-- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 25.
+-- (3) NULL-KEY — a NULL-territory ACTIVE location still returns the KEY (json null), never a
+-- conditionally-omitted field. SURGERY: the live seed has no NULL-territory ACTIVE location
+-- (mining/derelict/event sites are unseeded), so pin 3 inserts ONE active mining_site fixture —
+-- rolled back with the txn (the committed world is still written only by its declared owner).
+do $$
+declare n int; v_map jsonb; v_src text;
+  slag uuid := (select v from fg where k='slag');
+  v_fix uuid := gen_random_uuid();
+begin
+  -- (1) structural: the three status='active' filters survive in the DEPLOYED 0217 body.
+  select prosrc into v_src from pg_proc where oid = to_regprocedure('public.get_world_map()')::oid;
+  if v_src is null then raise exception 'TERRITORY_MAPREAD FAIL: public.get_world_map() does not exist'; end if;
+  if position('l.zone_id = z.id and l.status = ''active''' in v_src) = 0
+     or position('z.sector_id = se.id and z.status = ''active''' in v_src) = 0
+     or position('se.status = ''active''' in v_src) = 0 then
+    raise exception 'TERRITORY_MAPREAD FAIL: the deployed get_world_map lost a status=''active'' filter — hidden ports would leak';
+  end if;
+
+  -- (2) value: slag's location JSON carries the seeded 25. Vacuity: slag must be IN the read at all.
+  v_map := public.get_world_map();
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = slag::text;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag is not in get_world_map — the parity probe would be vacuous'; end if;
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = slag::text and (lc ? 'territory_radius') and (lc->>'territory_radius')::numeric = 25;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag''s map JSON does not carry territory_radius=25'; end if;
+
+  -- (3) NULL-KEY: an active NULL-territory location returns the key as json null (additive, never
+  -- conditional). SURGERY: the fixture insert (see header) — reverted by the txn ROLLBACK.
+  insert into public.locations (id, zone_id, name, location_type, x, y, activity_type, status)
+  values (v_fix, (select zone_id from public.locations where id = slag),
+          'Territory Null Probe', 'mining_site', 71, -11, 'none', 'active');
+  v_map := public.get_world_map();
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = v_fix::text;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: the mining_site fixture is not in get_world_map — the NULL-key probe would be vacuous'; end if;
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where lc->>'id' = v_fix::text and (lc ? 'territory_radius') and jsonb_typeof(lc->'territory_radius') = 'null';
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: the NULL-territory location does not return the territory_radius KEY as json null — the field went conditional'; end if;
+  -- and additivity holds map-wide: EVERY location element carries the key.
+  select count(*) into n
+    from jsonb_array_elements(v_map->'sectors') as se(sec),
+         jsonb_array_elements(sec->'zones') as z(zn),
+         jsonb_array_elements(zn->'locations') as l(lc)
+   where not (lc ? 'territory_radius');
+  if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: % map location(s) MISSING the territory_radius key — additive means every element', n; end if;
+
+  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries territory_radius=25; a NULL-territory location returns the key as json null; every map element carries the key';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;

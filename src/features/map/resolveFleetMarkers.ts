@@ -75,6 +75,8 @@ export function resolveFleetMarkers(
         break
       }
       // 'hidden' (home / incoherent / destroyed) → no marker.
+      // 'berthed' (S1 berth model, 0216: an UNFLEETED ship at its berth port) → DELIBERATELY no
+      // marker: only FLEETS are map markers; a berthed ship is INFO (roster/dossier label only).
     }
 
     if (x === null || y === null || state === null) continue

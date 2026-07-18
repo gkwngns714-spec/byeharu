@@ -5,6 +5,7 @@ import type { DockedTeamRollup } from '../command/teamRollup'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
 import type { MapLocation } from './mapTypes'
 import { interpolateMovementPoint } from './movementInterpolation'
+import { territoryAt } from './territoryAt'
 
 // TEAMMAP-2 — the team's OWN map marker (owner directive: "The team should have a marker of its own
 // and be shown on map"). Read-only display layer over server-committed rows; additive beside the
@@ -120,6 +121,11 @@ export function resolveFleetSpaceBadges(
   unifiedFleets: readonly UnifiedGroupFleetLite[],
   groups: readonly GroupRow[],
   rollups: readonly DockedTeamRollup[],
+  /** S2 TERRITORY: world locations for the "in orbit of X" read — a fleet parked inside a
+   *  location's territory_radius extends its badge label. Containment is the ONE pure territoryAt
+   *  (which composes the ONE distance()). Optional, default [] → byte-identical labels for every
+   *  existing caller (and for a world with no territory data). */
+  locations: readonly Pick<MapLocation, 'id' | 'name' | 'x' | 'y' | 'territory_radius'>[] = [],
 ): FleetSpaceBadgeDescriptor[] {
   if (groups.length === 0) return []
   const nameById = new Map(groups.map((g) => [g.group_id, g.name]))
@@ -134,9 +140,13 @@ export function resolveFleetSpaceBadges(
     seen.add(f.group_id)
     const name = nameById.get(f.group_id) as string
     const n = countByGroup.get(f.group_id) ?? 0
+    const base = n > 1 ? `Fleet ${name} · ${n} ships` : `Fleet ${name}`
+    // S2 TERRITORY: the parked coordinate is WORLD-domain, exactly what territoryAt takes. No
+    // containing territory → the plain label (never a guessed orbit).
+    const orbit = territoryAt({ x: f.space_x, y: f.space_y }, locations)
     out.push({
       groupId: f.group_id,
-      label: n > 1 ? `Fleet ${name} · ${n} ships` : `Fleet ${name}`,
+      label: orbit ? `${base} · in orbit of ${orbit.name}` : base,
       x: f.space_x,
       y: f.space_y,
     })
@@ -309,7 +319,9 @@ export function teamMarkersLayer(args: {
   movements: FleetMovement[]
   groups: GroupRow[]
   rollups: DockedTeamRollup[]
-  locations: Pick<MapLocation, 'id' | 'x' | 'y'>[]
+  // S2 TERRITORY widened the pick with name + territory_radius for the in-space badge's
+  // "in orbit of X" read; the dock badges still use only id/x/y.
+  locations: Pick<MapLocation, 'id' | 'name' | 'x' | 'y' | 'territory_radius'>[]
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
   /** FLEET-GO 4a-1: unified group fleets for the in-space badge. Optional, default [] →
@@ -348,7 +360,8 @@ export function teamMarkersLayer(args: {
   }
   // FLEET-GO 4a-1 — in-space fleet badges (parked unified fleets). Static (no interpolation tick —
   // a parked fleet does not move), reusing the moving badge's presentation under its own testid.
-  for (const b of resolveFleetSpaceBadges(args.unifiedFleets ?? [], args.groups, args.rollups)) {
+  // S2 TERRITORY: the world read feeds the "in orbit of X" label extension.
+  for (const b of resolveFleetSpaceBadges(args.unifiedFleets ?? [], args.groups, args.rollups, args.locations)) {
     const p = args.norm({ x: b.x, y: b.y })
     out.push(
       createElement(TeamMarkerBadge, {

@@ -2,12 +2,13 @@ import { Meter, type MeterTone } from '../../components/ui'
 import { meterPairSrLabel, type ShipMeterPair } from './meterPair'
 
 // SHIELD-2 — THE one shield/hull bar pair (the classic layout: shield ABOVE hull), shared by
-// ShipStatusCard and ShipDossier so the bar markup exists exactly once. Rendering rules:
+// the Fitting tab's roster rows and FittingDetail (S6; formerly ShipStatusCard + ShipDossier) so
+// the bar markup exists exactly once. Rendering rules:
 //   · shield row — ONLY when the pure view-model derived a reading (max_shield > 0; data-gated,
 //     no flag — every ship is 0/0 on prod today, so this renders nothing new anywhere yet), plus
 //     the sr-only "Shield x/y · Hull x/y" pair label riding the same condition;
-//   · hull row — byte-identical markup to the pre-SHIELD-2 ShipStatusCard block (label row +
-//     Meter), tone owned by the caller (the status card keeps its disabled/danger logic).
+//   · hull row — label row + Meter, tone owned by the caller (destroyed → danger, damaged →
+//     accent, full → success).
 export function MeterPairBars({ pair, hullTone }: { pair: ShipMeterPair; hullTone: MeterTone }) {
   const srLabel = meterPairSrLabel(pair)
   return (

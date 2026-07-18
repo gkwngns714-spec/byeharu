@@ -3,6 +3,15 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import type { MapLocation } from '../map/mapTypes'
 import { formatCountdown } from '../../lib/time'
 
+// S6 NOTE (Fitting tab): ShipStatusCard/ShipDossier/ShipScreen's direct consumption is RETIRED —
+// every live consumer now reaches this resolver through the fleet-positions adapter
+// (teamRoster.fleetPositionLocationLabel / resolveBerthedLocationLabel below), i.e. the ONE
+// map.fleetPositions read. CLEANUP FLAG (recorded, not done here): with the status card gone,
+// deriveMainShipStatus (mainshipApi) lost its last location-UI consumer; its documented mirror
+// fleetDisplayStatus below survives only as this resolver's internal fleet-status mapper — fold
+// the two when the MAP slice's remaining consumer (MainShipCommand) is next touched. Do NOT add
+// a third copy.
+//
 // SHIPLOC — the ONE shared main-ship LOCATION resolver. Born to answer the owner order "in ship
 // tab, i should be able to see where the ship is, the location as well." ShipStatusCard already
 // inlined this name-resolution (docked → the present fleet's location name; traveling → the moving
@@ -118,4 +127,31 @@ export function resolveShipLocationLabel(
   // an odd state with no movement row degrades to a plain "In transit" rather than a false place.
   if (!fleet) return { kind: 'idle', label: 'Idle', etaText, destination, heading }
   return { kind: 'in-transit', label: 'In transit', etaText, destination, heading }
+}
+
+// ── S1 BERTH MODEL (migration 0216) — a BERTHED ship's location, through the ONE resolver ────────
+// The server's fleet-positions projection now answers place='berthed' for an unfleeted ship docked
+// at its berth port (location_id = the port). Its label is a DOCKED read — "Docked at <port>" —
+// so this helper COMPOSES resolveShipLocationLabel with a synthetic present-at-port fleet instead
+// of minting a second name-resolution path (anti-spaghetti: one implementation of "where is the
+// ship"). Combat-port berths therefore also inherit the "In combat at …" wording, and an unknown/
+// hidden port fails closed to a bare "Docked" exactly like the docked arm — one rule, one place.
+// Pure; a null port id (shape-impossible for a server 'berthed' row, but typed honestly) degrades
+// to the deep-space read rather than inventing a port.
+export function resolveBerthedLocationLabel(
+  berthLocationId: string | null,
+  locations: MapLocation[],
+): ShipLocationResolved {
+  return resolveShipLocationLabel(
+    {
+      id: '',
+      status: 'present',
+      current_location_id: berthLocationId,
+      location_mode: null,
+      active_movement_id: null,
+      active_space_movement_id: null,
+    },
+    null,
+    locations,
+  )
 }
