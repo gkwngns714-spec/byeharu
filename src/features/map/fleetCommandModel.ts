@@ -84,6 +84,7 @@ export interface FleetCommandHuntRow {
 
 export type FleetCommandSection =
   | { kind: 'guidance' } // MAP-INTEGRATION M2: ships but NO fleet + a live target → point at Command
+  | { kind: 'prompt' } // has a sendable fleet but NO destination picked → discoverable "tap to send" hint
   | { kind: 'stop'; rows: FleetCommandStopRow[] }
   | { kind: 'context'; target: { kind: 'point'; view: FleetGoTargetView } | { kind: 'port'; locationId: string; locationName: string } }
   | { kind: 'go'; destination: { kind: 'point'; view: FleetGoTargetView } | { kind: 'port'; locationId: string; locationName: string }; rows: FleetCommandGoRow[] }
@@ -279,15 +280,24 @@ export function buildFleetCommandModel(input: FleetCommandModelInput): FleetComm
     }
   }
 
+  // DISCOVERABILITY (the "out of the blue" fix): the panel used to render NOTHING for a player who
+  // owns a fleet but has no fleet in flight, no dockable fleet, and no destination picked — so the
+  // send/destination UI popped into existence only AFTER a tap, with no lead-in. Fill that EXACT
+  // empty state with a calm prompt that names the gesture. Scoped to the otherwise-empty case (no
+  // stop, no dock, no target → context/go/hunt are all null when target is null), so it never
+  // competes with a live section. groups.length > 0 here (the groupless branch returned above).
+  const promptable = target === null && stopRows.length === 0 && dockRows.length === 0
+
   const sections: FleetCommandSection[] = []
   if (stopRows.length > 0) sections.push({ kind: 'stop', rows: stopRows }) // ALWAYS first
   if (context) sections.push(context)
   if (go) sections.push(go)
+  if (promptable) sections.push({ kind: 'prompt' })
   if (dockRows.length > 0) sections.push({ kind: 'dock', rows: dockRows })
   if (hunt) sections.push(hunt)
 
   return {
-    mount: stopRows.length > 0 || context !== null || dockRows.length > 0,
+    mount: stopRows.length > 0 || context !== null || dockRows.length > 0 || promptable,
     sections,
   }
 }
