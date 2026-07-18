@@ -36,12 +36,37 @@ export type CraftModuleResult =
     }
   | { ok: false; code: string; message: string; item_id?: string; have?: number; need?: number }
 
-/** One module_types catalog row (0107; public read — direct client select). */
+/** One module_types catalog row (0107 identity + 0111 slot_cost/stats_json + 0229 combat
+ *  attributes; all public read — direct client select). numeric columns (range/projectile_speed/
+ *  power/cooldown_seconds) arrive as strings over PostgREST; slot_cost/ammo_per_shot are integers. */
 export interface ModuleTypeRow {
   id: string
   name: string
   slot_type: string
   description: string
+  /** Σ-slot-cost this module consumes when fitted (0111; integer ≥ 1). */
+  slot_cost: number
+  /** Fitted stat contributions — keys attack/defense/repair/cargo/scan/mining/evasion/
+   *  speed_mult_bonus (0111; the trait/adapter input vocabulary). */
+  stats_json: unknown
+  /** COMBAT-S0 (0229) spatial/combat attributes. NULL = the module has none of that reach. */
+  range: number | string | null
+  projectile_speed: number | string | null
+  power: number | string | null
+  ammo_type: string | null
+  ammo_per_shot: number
+  cooldown_seconds: number | string
+}
+
+/** One item_types catalog row (0039; Reference/Config public read — display fields for item info). */
+export interface ItemTypeRow {
+  item_id: string
+  name: string
+  category: string
+  rarity: string
+  description: string | null
+  stackable: boolean
+  icon_key: string | null
 }
 
 /** One module_recipe_ingredients row (0107; public read — direct client select). */
