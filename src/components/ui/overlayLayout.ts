@@ -2,7 +2,7 @@
 // (the screenLayout.ts idiom: pure module beside the component so react-refresh stays happy and the
 // slot/chrome contract is unit-testable — tests/uiPrimitives.spec.ts). Tokens only.
 
-export const OVERLAY_SLOTS = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'top-center'] as const
+export const OVERLAY_SLOTS = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'top-center', 'bottom-center'] as const
 export type OverlaySlot = (typeof OVERLAY_SLOTS)[number]
 
 export type OverlayTone = 'default' | 'accent' | 'success' | 'warning' | 'danger'
@@ -14,6 +14,8 @@ const SLOT_POS: Record<OverlaySlot, string> = {
   'bottom-left': 'bottom-3 left-3',
   'bottom-right': 'bottom-3 right-3',
   'top-center': 'left-1/2 top-3 -translate-x-1/2',
+  // S5 map-UX: the ONE bottom-center fleet-command slot (FleetCommandPanel).
+  'bottom-center': 'bottom-3 left-1/2 -translate-x-1/2',
 }
 
 // Cross-axis alignment for a rail's stacked children (right rails hug the right edge, etc.).
@@ -23,6 +25,7 @@ const SLOT_ALIGN: Record<OverlaySlot, string> = {
   'bottom-left': 'items-start justify-end',
   'bottom-right': 'items-end justify-end',
   'top-center': 'items-center',
+  'bottom-center': 'items-center justify-end',
 }
 
 // Border tint per tone — mirrors Card's TONE alphas so feature identity reads the same language.
