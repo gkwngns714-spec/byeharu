@@ -118,10 +118,18 @@ if [ "$MODE" = "selftest" ]; then
   done
   # the snapshot must actually cover every column that could carry movement — S1-BERTH (0216) adds
   # berth_location_id: under the berth model the unfleeted ship's LOCATION lives there, so a mover
-  # that wrote it would be a ship write the old snapshot was blind to.
-  for col in status spatial_state space_x space_y berth_location_id updated_at; do
+  # that wrote it would be a ship write the old snapshot was blind to. 4C-MIG-2B (migration 0223)
+  # DROPPED spatial_state/space_x/space_y from main_ship_instances outright — a column that no
+  # longer exists cannot be tracked, so the covered set narrows to what's left.
+  grep -qF "select p_tag, main_ship_id, status, berth_location_id, updated_at" "$SQL" \
+    || fail "ship snapshot's SELECT list drifted from the post-2b tracked column set (status, berth_location_id, updated_at)"
+  for col in status berth_location_id updated_at; do
     grep -q "$col" "$SQL" || fail "ship snapshot does not cover the '$col' column"
   done
+  # negative: the dropped columns must NOT still be tracked (that would be a hard "column does not
+  # exist" error on snap_ships' very first INSERT, every single time this proof runs).
+  grep -qF "select p_tag, main_ship_id, status, spatial_state" "$SQL" \
+    && fail "ship snapshot still selects the dropped spatial_state/space_x/space_y columns — every apply would error" || true
 
   # ── the redirect proof must be non-vacuous: now() is txn-constant, so without backdating t=0 and the
   #    "interpolated" point trivially equals the origin. The harness must backdate and assert a midpoint.
@@ -426,12 +434,13 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "only the FLEET could have answered" "$SQL" \
     || fail "MAPSPACE_GROUP does not guard that zero ships carry a position"
   # MAPSPACE-RETIRED (rewritten by 4c-mig-1/0221 — the ship-coordinate fallback this section's
-  # 0212-file pins record as shipped history is RETIRED in the live 0221 head): the runtime block
-  # must prove a PRESENT retired coordinate is ignored, on a really-berthed, really-fleetless ship.
-  grep -q "the retired coordinate must be ignored" "$SQL" \
-    || fail "MAPSPACE_RETIRED does not assert the oracle ignores a PRESENT retired coordinate (the 4c-mig-1 point)"
-  grep -q "ignoring an absent signal is vacuous" "$SQL" \
-    || fail "MAPSPACE_RETIRED does not guard that the retired coordinate is really present (vacuous otherwise)"
+  # 0212-file pins record as shipped history is RETIRED in the live 0221 head; retired FURTHER by
+  # 4c-mig-2b/0223, which DROPPED spatial_state/space_x/space_y outright — there is no column left to
+  # surgically write a "present retired signal" into, so that specific proof is now impossible and
+  # was removed rather than kept as a dead assertion). The runtime block must still prove a
+  # fleetless, really-berthed ship settles via BERTH TRUTH ('home'), not some other path.
+  grep -q "the berth is the truth" "$SQL" \
+    || fail "MAPSPACE_RETIRED does not assert the fleetless ship settles via berth truth (the post-2b point)"
   grep -q "b1 is not berthed" "$SQL" \
     || fail "MAPSPACE_RETIRED does not guard that the probe ship is berthed (berth truth could not answer — vacuous)"
 
