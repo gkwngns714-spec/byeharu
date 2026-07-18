@@ -221,7 +221,8 @@ function hud(nodesShown, edgesShown) {
       : '<span class="warn">no live read — colours are unproven</span>'} &nbsp;|&nbsp;
     deploy: <b class="${warn ? 'warn' : ''}">${dep}</b>
     ${frontier.missingFrom ? `&nbsp;|&nbsp; <span class="warn">prod is behind main from ${frontier.missingFrom} onward</span>` : ''}
-    &nbsp;|&nbsp; read ${when}`
+    &nbsp;|&nbsp; read ${when}
+    <br><b>drag</b> rotate · <b>WASD / arrows</b> fly · <b>Q / E</b> down·up · <b>scroll</b> zoom · <b>shift- or right-drag</b> pan`
 }
 
 // inspector
@@ -293,6 +294,27 @@ addEventListener('keydown', (e) => { if (e.key === 'Escape') drawer(false) })
 const target = new THREE.Vector3(0, 0, 0)
 let dist = 520, yaw = 0.7, pitch = 0.35, drag = null
 
+// ── free movement: fly the pivot through the scene (WASD / arrows), drag-pan to slide it ──
+// The camera always frames `target`; moving `target` moves you through the graph. Keys fly it
+// in the camera's own horizontal frame; shift-drag / right-drag pans it in true screen space.
+const held = new Set()
+const MOVE_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', ' ',
+  'arrowup', 'arrowdown', 'arrowleft', 'arrowright'])
+const isTyping = () => {
+  const el = document.activeElement
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')
+}
+addEventListener('keydown', (e) => {
+  if (tab !== 'map' || isTyping()) return
+  const k = e.key.toLowerCase()
+  if (MOVE_KEYS.has(k)) { held.add(k); if (k === ' ') e.preventDefault() }
+})
+addEventListener('keyup', (e) => held.delete(e.key.toLowerCase()))
+addEventListener('blur', () => held.clear())
+// right-drag needs the browser context menu out of the way
+canvas.addEventListener('contextmenu', (e) => e.preventDefault())
+const _r = new THREE.Vector3(), _u = new THREE.Vector3(), _f = new THREE.Vector3()
+
 function resize() {
   const w = innerWidth, h = innerHeight
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix()
@@ -313,7 +335,7 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture?.(e.pointerId)
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
   if (pointers.size === 2) { pinchFrom = { d: spread(), dist }; drag = null }
-  else if (pointers.size === 1) drag = { x: e.clientX, y: e.clientY, moved: false }
+  else if (pointers.size === 1) drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.button === 2 || e.shiftKey }
 })
 
 function endPointer(e) {
@@ -344,7 +366,15 @@ addEventListener('pointermove', (e) => {
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y
     if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true
-    yaw -= dx * 0.005; pitch = Math.max(-1.5, Math.min(1.5, pitch - dy * 0.005))
+    if (drag.pan) {
+      // slide the pivot in true screen space (grab-and-drag), scaled by zoom distance
+      camera.matrixWorld.extractBasis(_r, _u, _f)
+      const k = dist * 0.0016
+      target.addScaledVector(_r, -dx * k)
+      target.addScaledVector(_u, dy * k)
+    } else {
+      yaw -= dx * 0.005; pitch = Math.max(-1.5, Math.min(1.5, pitch - dy * 0.005))
+    }
     drag.x = e.clientX; drag.y = e.clientY
   } else if (e.pointerType === 'mouse') hover(e)
 })
@@ -454,12 +484,23 @@ setTab('map')
 apply()
 ;(function tick() {
   requestAnimationFrame(tick)
+  if (held.size) {
+    const sp = dist * 0.02                          // fly speed scales with zoom
+    _f.set(-Math.sin(yaw), 0, -Math.cos(yaw))       // horizontal forward
+    _r.set(Math.cos(yaw), 0, -Math.sin(yaw))        // strafe right
+    if (held.has('w') || held.has('arrowup')) target.addScaledVector(_f, sp)
+    if (held.has('s') || held.has('arrowdown')) target.addScaledVector(_f, -sp)
+    if (held.has('d') || held.has('arrowright')) target.addScaledVector(_r, sp)
+    if (held.has('a') || held.has('arrowleft')) target.addScaledVector(_r, -sp)
+    if (held.has('e') || held.has(' ')) target.y += sp
+    if (held.has('q')) target.y -= sp
+  }
   camera.position.set(
     target.x + dist * Math.cos(pitch) * Math.sin(yaw),
     target.y + dist * Math.sin(pitch),
     target.z + dist * Math.cos(pitch) * Math.cos(yaw),
   )
   camera.lookAt(target)
-  if (!drag) yaw += 0.0004
+  if (!drag && !held.size) yaw += 0.0004            // auto-orbit pauses while you fly
   renderer.render(scene, camera)
 })()
