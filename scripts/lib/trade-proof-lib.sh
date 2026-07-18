@@ -86,8 +86,12 @@ tp_run_local() {
   local name="$1" sql="$2" pass_line="$3" markers="$4" out m
   out="$(psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$sql" 2>&1)" || { echo "$out" >&2; fail "real-chain $name proof failed"; }
   printf '%s\n' "$out"
-  printf '%s' "$out" | grep -q "$pass_line" || fail "proof did not report PASS"
+  # Here-strings, NOT `printf | grep -q`: under `set -o pipefail`, grep -q exits on first match
+  # while printf is still writing, printf takes EPIPE, and pipefail turns a MATCHED grep into a
+  # failed pipeline — a race that intermittently reports a PRESENT marker as missing on large
+  # output (the team-command proof's marker stream is the biggest). A here-string has no pipe.
+  grep -q "$pass_line" <<<"$out" || fail "proof did not report PASS"
   for m in $markers; do
-    printf '%s' "$out" | grep -q "$m" || fail "proof missing marker $m"
+    grep -q "$m" <<<"$out" || fail "proof missing marker $m"
   done
 }
