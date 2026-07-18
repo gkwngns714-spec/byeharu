@@ -74,10 +74,17 @@ begin
   return v;
 end $$;
 
--- ════════ SETUP: one fixture player, funded, with the config this scenario deliberately engineers ═══
+-- ════════ SETUP: reveal the starter ports (a fresh disposable chain seeds Haven/Slagworks/
+--          Driftmarch INACTIVE — port_entry_commission_build hard-requires Haven to be dockable, so
+--          without this, EVERY commission call fails closed with commission_unavailable; this is the
+--          team-command-proof.sql precedent's own first setup step, mirrored verbatim), then one
+--          fixture player, funded ═══════════════════════════════════════════════════════════════════
 do $$
-declare uZ uuid;
+declare r jsonb; uZ uuid;
 begin
+  r := public.reveal_starter_ports();
+  if (r->>'ok')::boolean is not true then raise exception 'SETUP FAIL: reveal_starter_ports %', r; end if;
+
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
             'cspatial.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')

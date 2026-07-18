@@ -36,6 +36,12 @@ if [ "$MODE" = "selftest" ]; then
   tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled \
     module_crafting_enabled module_fitting_enabled spatial_combat_enabled
 
+  # ── the commission precondition: a fresh disposable chain seeds the starter ports INACTIVE, and
+  #    port_entry_commission_build hard-requires Haven to be dockable — without this call every
+  #    commission fails closed (commission_unavailable). The team-command-proof.sql precedent's own
+  #    first setup step, mirrored. ─────────────────────────────────────────────────────────────────────
+  grep -q "public.reveal_starter_ports()" "$SQL" || fail "harness does not reveal the starter ports (commission would fail closed on a fresh chain)"
+
   # ── SOLE-WRITER LAW: group_sortie_members and combat_units are NEVER hand-written — provisioning
   #    and the encounter/tick both go through the real writers only. ──────────────────────────────────
   grep -qiE 'insert[[:space:]]+into[[:space:]]+(public\.)?group_sortie_members' "$SQL" \
