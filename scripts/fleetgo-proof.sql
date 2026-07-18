@@ -2021,9 +2021,24 @@ begin
    order by coalesce(min_power_required, 0) asc limit 1;
   if v_hunt is null then raise exception 'HUNTUNI-DARKPARITY FAIL: no active hunt site — the fixture cannot be built'; end if;
   -- vacuity: e1 really is docked (the 0199 lit arm's input shape) and gE has NO group-shaped fleet.
-  select count(*) into n from public.main_ship_instances
-   where main_ship_id = e1 and status = 'stationary' and spatial_state = 'at_location';
-  if n <> 1 then raise exception 'HUNTUNI-DARKPARITY FAIL: e1 is not docked — the docked-launch head path would be vacuous'; end if;
+  -- 4C-MIG-2A (0222) TOKEN UPDATE: port_entry_commission_build no longer mints status='stationary'/
+  -- spatial_state='at_location' (b1) — a fresh commission now reads status='home' with spatial NULL,
+  -- and send_ship_group_hunt's own docked-detection is repointed onto FLEET TRUTH (b5). "Docked" is
+  -- therefore proven the same way the RPC itself now proves it: e1 resolves (via the ONE resolver)
+  -- to a fleet 'present' at haven with a matching active presence. The PROPERTY (e1 really is docked
+  -- before the hunt) is unchanged; only the token moved with the repoint.
+  select count(*) into n from public.main_ship_instances s
+   where s.main_ship_id = e1 and s.status = 'home' and s.hp > 0
+     and exists (
+       select 1 from public.fleets f
+        where f.id = public.mainship_resolve_fleet(s.main_ship_id)
+          and f.status = 'present' and f.location_mode = 'location'
+          and f.current_location_id = haven and f.active_movement_id is null
+          and exists (
+            select 1 from public.location_presence lp
+             where lp.fleet_id = f.id and lp.status = 'active' and lp.location_id = f.current_location_id)
+     );
+  if n <> 1 then raise exception 'HUNTUNI-DARKPARITY FAIL: e1 is not docked (fleet truth) — the docked-launch head path would be vacuous'; end if;
   select count(*) into n from public.fleets
    where group_id = gE and player_id = uE and main_ship_id is null
      and status in ('idle','moving','present','returning');
@@ -2466,9 +2481,23 @@ begin
   -- vacuity: the leaf REALLY returns zero rows (the =0 arm is what runs), and g1 is docked.
   select count(*) into n from public.ship_group_resolve_fleet(uG, gG);
   if n <> 0 then raise exception 'HUNTUNI-BOOTSTRAP FAIL: a group-shaped fleet exists — this would not exercise the =0 arm'; end if;
-  select count(*) into n from public.main_ship_instances
-   where main_ship_id = g1 and status = 'stationary' and spatial_state = 'at_location';
-  if n <> 1 then raise exception 'HUNTUNI-BOOTSTRAP FAIL: g1 is not docked — the 0199 arm would be vacuous'; end if;
+  -- 4C-MIG-2A (0222) TOKEN UPDATE: same repoint as HUNTUNI-DARKPARITY above — commission no longer
+  -- mints stationary/at_location (b1), and docked-detection here is FLEET TRUTH (b5). g1 was
+  -- assigned into gG while its group carried no unified fleet (the leaf just proved =0 rows above),
+  -- so mainship_resolve_fleet falls to its transition fallback: g1's own per-ship commission fleet —
+  -- the exact row this probe checks.
+  select count(*) into n from public.main_ship_instances s
+   where s.main_ship_id = g1 and s.status = 'home' and s.hp > 0
+     and exists (
+       select 1 from public.fleets f
+        where f.id = public.mainship_resolve_fleet(s.main_ship_id)
+          and f.status = 'present' and f.location_mode = 'location'
+          and f.current_location_id = haven and f.active_movement_id is null
+          and exists (
+            select 1 from public.location_presence lp
+             where lp.fleet_id = f.id and lp.status = 'active' and lp.location_id = f.current_location_id)
+     );
+  if n <> 1 then raise exception 'HUNTUNI-BOOTSTRAP FAIL: g1 is not docked (fleet truth) — the 0199 arm would be vacuous'; end if;
 
   r := pg_temp.call_as(uG, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gG, v_hunt));
   if (r->>'ok')::boolean is not true then
