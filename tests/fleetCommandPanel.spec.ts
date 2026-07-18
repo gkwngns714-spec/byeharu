@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   buildFleetCommandModel,
+  fleetCommandLocks,
   type FleetCommandModelInput,
   type FleetCommandSection,
 } from '../src/features/map/fleetCommandModel'
@@ -256,6 +257,25 @@ test('hunt target: the absorbed hunt arm (both worlds) — readiness mirror + NO
   if (!h3 || h3.kind !== 'hunt') throw new Error('no hunt section')
   expect(h3.rows[0].canHunt).toBe(false)
   expect(h3.rows[0].readyHint).toBe('Every ship must be home to hunt.')
+})
+
+// ── the brake lock: Stop is NEVER disabled by another verb's in-flight request ───────────────────
+// (S5 review fix: the consolidation must not couple the safety brake to the shared verb lock —
+// supabase-js has no client timeout, so a wedged go/dock/hunt must never take Stop down with it.)
+
+test('brake decoupling: Stop stays enabled while a go/dock/hunt request is busy', () => {
+  for (const key of ['go:g1', 'dock:g1', 'hunt:g1']) {
+    const locks = fleetCommandLocks({ busy: key, stopBusy: null })
+    expect(locks.stopDisabled, `brake must stay live while ${key} is in flight`).toBe(false)
+    expect(locks.verbDisabled).toBe(true) // non-safety verbs stay one-at-a-time
+  }
+})
+
+test('brake decoupling: the brake yields ONLY to its own in-flight stop; verbs yield to the brake', () => {
+  const stopping = fleetCommandLocks({ busy: null, stopBusy: 'stop:g1' })
+  expect(stopping.stopDisabled).toBe(true) // no double-fired stop
+  expect(stopping.verbDisabled).toBe(true) // the one-directional asymmetry: verbs wait for the brake
+  expect(fleetCommandLocks({ busy: null, stopBusy: null })).toEqual({ stopDisabled: false, verbDisabled: false })
 })
 
 // ── the mount predicate: stop ∨ target ∨ dockable parked fleets ──────────────────────────────────

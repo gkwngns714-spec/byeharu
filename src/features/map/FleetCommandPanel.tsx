@@ -12,6 +12,7 @@ import { stopOutcomeMessage, unifiedStopOutcomeMessage } from '../command/teamSt
 import { fleetGoSuccessMessage, formatWorldPoint } from './fleetGoTarget'
 import {
   buildFleetCommandModel,
+  fleetCommandLocks,
   type FleetCommandModelInput,
   type FleetCommandSection,
 } from './fleetCommandModel'
@@ -24,13 +25,17 @@ import {
 // owns nothing but React state (busy/notice/armed-hunt/return-choice) and the submit wrappers.
 //
 // PROPS-FED, NO fetches of its own (the FleetGoPanel law): everything arrives from the shell's
-// polled reads. ONE busy/notice pair, ONE run() (the FleetGoPanel.tsx idiom verbatim), namespaced
-// busy keys (stop:/go:/dock:/hunt:) — one in-flight command at a time.
+// polled reads. ONE notice pair; namespaced busy keys (stop:/go:/dock:/hunt:) in TWO lock
+// namespaces — see the brake decoupling below.
 //
 // NO-SOFTLOCK: the stop section is model-guaranteed FIRST and target-independent, and it renders
 // OUTSIDE the internal scroll container below, so the brake can never scroll away and never hides
 // behind a target/selection gate. Stop stays ONE CLICK, no confirm (the TeamMapStop law: a stop is
 // the recovery FROM a commitment; a confirm in front of the brake is a hazard, not a safeguard).
+// And the brake is NEVER locked by another verb's in-flight request (fleetCommandLocks — the pure,
+// spec-pinned verdict): pre-S5 TeamMapStop had its OWN busy state, so a wedged go/send could never
+// disable it; the consolidated panel keeps that property with a dedicated stop lock (supabase-js
+// has no client timeout — a mover request that never settles must not take the brake down with it).
 //
 // ⚠ DOCK v1 — S4 REPOINT MARKER: the Dock row submits the EXISTING instant mover
 // (commandShipGroupGo(gid, { locationId: orbit.id }) — arrival docks via 0208's location branch).
@@ -51,7 +56,12 @@ export function FleetCommandPanel({
   /** Clears the live target (point AND port selection) — the model re-derives to no target. */
   onClearTarget: () => void
 }) {
+  // THE BRAKE DECOUPLING (S5 review): TWO lock namespaces. `busy` locks the non-safety verbs
+  // (go/dock/hunt); `stopBusy` locks ONLY the brake. The pure verdicts (fleetCommandLocks) make the
+  // asymmetry structural: stopDisabled never reads `busy`, so a wedged mover request can never
+  // disable Stop; non-safety verbs stay one-at-a-time and also yield to a firing brake.
   const [busy, setBusy] = useState<string | null>(null)
+  const [stopBusy, setStopBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'warning' | 'success'; text: string } | null>(null)
   // armed hunt confirm — carries the location it was armed for (stale-destination disarm by derivation)
   const [confirmHunt, setConfirmHunt] = useState<{ groupId: string; locationId: string } | null>(null)
@@ -59,21 +69,42 @@ export function FleetCommandPanel({
   const [returnChoice, setReturnChoice] = useState<Record<string, string>>({})
 
   const model = buildFleetCommandModel(inputs)
+  const locks = fleetCommandLocks({ busy, stopBusy })
   if (!model.mount) return null
 
+  // The shared submit body (ONE notice pair, non-optimistic await→refetch) — the lock discipline
+  // lives in the two runners below, never here.
+  const dispatch = async (op: () => Promise<TeamRpcResult>, summarize: (res: TeamRpcResult & { ok: true }) => string) => {
+    const res = await op()
+    if (!res.ok) setNotice({ tone: 'warning', text: teamReasonMessage(res.reason) })
+    else {
+      setNotice({ tone: 'success', text: summarize(res) })
+      onCommanded() // shell reads (movements/fleets/ships) — non-optimistic, the server answered
+    }
+  }
+
   const run = async (key: string, op: () => Promise<TeamRpcResult>, summarize: (res: TeamRpcResult & { ok: true }) => string) => {
-    if (busy) return
+    if (locks.verbDisabled) return
     setBusy(key)
     setNotice(null)
     try {
-      const res = await op()
-      if (!res.ok) setNotice({ tone: 'warning', text: teamReasonMessage(res.reason) })
-      else {
-        setNotice({ tone: 'success', text: summarize(res) })
-        onCommanded() // shell reads (movements/fleets/ships) — non-optimistic, the server answered
-      }
+      await dispatch(op, summarize)
     } finally {
       setBusy(null) // never wedge the panel, even if a wrapper unexpectedly rejects
+    }
+  }
+
+  // The brake's OWN runner: gated on the stop namespace ONLY — a pending go/dock/hunt never blocks
+  // it. A stop fired over a pending go is the intended outcome (the server serializes on the fleet
+  // lock and the brake cancels the leg).
+  const runStop = async (key: string, op: () => Promise<TeamRpcResult>, summarize: (res: TeamRpcResult & { ok: true }) => string) => {
+    if (locks.stopDisabled) return
+    setStopBusy(key)
+    setNotice(null)
+    try {
+      await dispatch(op, summarize)
+    } finally {
+      setStopBusy(null)
     }
   }
 
@@ -105,11 +136,13 @@ export function FleetCommandPanel({
                       size="sm"
                       variant="warning"
                       data-testid={`team-stop-${f.groupId}`}
-                      busy={busy === `stop:${f.groupId}`}
+                      busy={stopBusy === `stop:${f.groupId}`}
                       busyLabel="Stopping…"
-                      disabled={busy !== null || !f.canStop}
+                      // BRAKE DECOUPLING: the safety CTA answers ONLY to its own in-flight stop —
+                      // never to `busy` (a pending go/dock/hunt must not disable the brake).
+                      disabled={locks.stopDisabled || !f.canStop}
                       onClick={() =>
-                        void run(
+                        void runStop(
                           `stop:${f.groupId}`,
                           // LIT → the ONE unified brake (0209); DARK → the legacy per-member loop (0164).
                           () => (inputs.unifiedEnabled ? commandShipGroupStop(f.groupId) : stopShipGroup(f.groupId)),
@@ -155,7 +188,7 @@ export function FleetCommandPanel({
               variant="ghost"
               size="sm"
               data-testid="fleet-go-clear"
-              disabled={busy !== null}
+              disabled={locks.verbDisabled}
               onClick={onClearTarget}
               className="mt-1.5 w-full"
             >
@@ -183,7 +216,7 @@ export function FleetCommandPanel({
                     data-testid={s.destination.kind === 'point' ? `fleet-go-${r.groupId}` : `team-go-${r.groupId}`}
                     busy={busy === `go:${r.groupId}`}
                     busyLabel="Sending…"
-                    disabled={busy !== null}
+                    disabled={locks.verbDisabled}
                     onClick={() => {
                       const wire = r.wire
                       if (!wire) return
@@ -233,7 +266,7 @@ export function FleetCommandPanel({
                     data-testid={`team-dock-${r.groupId}`}
                     busy={busy === `dock:${r.groupId}`}
                     busyLabel="Docking…"
-                    disabled={busy !== null}
+                    disabled={locks.verbDisabled}
                     onClick={() =>
                       void run(
                         // DOCK v1 (S4 repoint marker in the header): the existing instant go-to-port.
@@ -274,7 +307,7 @@ export function FleetCommandPanel({
                       <Button
                         size="sm"
                         variant="secondary"
-                        disabled={busy !== null || !r.canHunt || armed || !r.cmdActive}
+                        disabled={locks.verbDisabled || !r.canHunt || armed || !r.cmdActive}
                         onClick={() => setConfirmHunt({ groupId: r.groupId, locationId: s.locationId })}
                       >
                         Hunt here
@@ -299,7 +332,7 @@ export function FleetCommandPanel({
                           data-testid="fleet-return-port-picker"
                           value={returnChoice[r.groupId] ?? picker.launchPortId}
                           onChange={(e) => setReturnChoice((c) => ({ ...c, [r.groupId]: e.target.value }))}
-                          disabled={busy !== null}
+                          disabled={locks.verbDisabled}
                           aria-label={`Return port for ${r.name}`}
                           className="mt-1 rounded-lg border border-edge bg-surface-2 px-2 py-1 text-xs text-ink"
                         >
@@ -320,7 +353,7 @@ export function FleetCommandPanel({
                             variant="danger"
                             busy={busy === `hunt:${r.groupId}`}
                             busyLabel="Sending…"
-                            disabled={busy !== null || !r.canHunt || !r.cmdActive}
+                            disabled={locks.verbDisabled || !r.canHunt || !r.cmdActive}
                             onClick={() =>
                               void run(
                                 `hunt:${r.groupId}`,
@@ -334,7 +367,7 @@ export function FleetCommandPanel({
                           >
                             Confirm hunt
                           </Button>
-                          <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setConfirmHunt(null)}>
+                          <Button size="sm" variant="ghost" disabled={locks.verbDisabled} onClick={() => setConfirmHunt(null)}>
                             Cancel
                           </Button>
                         </span>

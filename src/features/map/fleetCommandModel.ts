@@ -96,6 +96,29 @@ export interface FleetCommandModel {
   sections: FleetCommandSection[]
 }
 
+// ── THE BRAKE DECOUPLING (S5 review fix) ─────────────────────────────────────────────────────────
+// Consolidating the three panels put every verb behind ONE busy lock — which coupled the SAFETY
+// BRAKE to go/dock/hunt requests. supabase-js has no client timeout, so a mover request that never
+// settles would have left `busy` stuck and Stop disabled forever: a NEW softlock vector on the one
+// control that must always work (pre-S5, TeamMapStop had its OWN busy state). The law, made pure
+// and spec-pinned here: the brake's disabled verdict depends ONLY on the stop namespace — NEVER on
+// another verb's in-flight request. The asymmetry is one-directional: non-safety verbs stay
+// one-at-a-time AND yield to a firing brake. A stop racing a pending go is safe — the server
+// serializes on the fleet lock, and the brake cancelling a go is the intended outcome.
+export interface FleetCommandLocks {
+  /** The brake's disabled verdict — true ONLY while a stop itself is in flight. */
+  stopDisabled: boolean
+  /** Non-safety verbs (go/dock/hunt + target-clearing chrome): any in-flight command blocks them. */
+  verbDisabled: boolean
+}
+
+export function fleetCommandLocks(input: { busy: string | null; stopBusy: string | null }): FleetCommandLocks {
+  return {
+    stopDisabled: input.stopBusy !== null, // deliberately NEVER reads `busy` (the go/dock/hunt lock)
+    verbDisabled: input.busy !== null || input.stopBusy !== null,
+  }
+}
+
 export interface FleetCommandModelInput {
   target: FleetCommandTarget
   movements: readonly FleetMovement[]
