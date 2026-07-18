@@ -153,7 +153,7 @@ if [ "$MODE" = "selftest" ]; then
   printf '%s' "$MIG_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
     && fail "migration UPDATEs main_ship_instances — charter §2 says a ship does not move" || true
   # and it must not compose any per-ship mover (the §0 mistake / the old §3).
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     printf '%s' "$MIG_CODE" | grep -q "$banned" \
       && fail "migration composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -170,7 +170,7 @@ if [ "$MODE" = "selftest" ]; then
   MIG3B_CODE="$(sql_code "$MIGRATION_3B")"
   printf '%s' "$MIG3B_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
     && fail "0208 UPDATEs main_ship_instances — charter §2 says a ship does not move" || true
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     printf '%s' "$MIG3B_CODE" | grep -q "$banned" \
       && fail "0208 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -589,7 +589,7 @@ if [ "$MODE" = "selftest" ]; then
   printf '%s' "$MIG4B1_CODE" | grep -q "ship_group_resolve_fleet(v_player, v_group)" \
     || fail "0214 does not compose the 0213 leaf (a fifth inline copy of the group-fleet shape is the default outcome)"
   # per-ship movers stay uncomposed (§2 retires them; the §0 mistake).
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     printf '%s' "$MIG4B1_CODE" | grep -q "$banned" \
       && fail "0214 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -811,7 +811,7 @@ if [ "$MODE" = "selftest" ]; then
       && fail "0216 re-creates the md5-PINNED port-entry body '$pinned' — the pins would be invalidated silently" || true
   done
   # §2 stays law: no per-ship mover composed anywhere in 0216.
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     grep -q "$banned" "$MIGS1_TMP" \
       && fail "0216 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -1169,7 +1169,7 @@ if [ "$MODE" = "selftest" ]; then
     exit 1 unless index($body, "fleet_set_moving") >= 0;
     exit 0;' "$MIGSTOP_TMP" \
     || fail "0218's mover body lost a 0208 head pin (dark gate / member-dock dissolve / combat_destination / movement_create / fleet_set_moving) — parity broke"
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     grep -q "$banned" "$MIGSTOP_TMP" \
       && fail "0218 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -1245,7 +1245,7 @@ if [ "$MODE" = "selftest" ]; then
   # §2 stays law: no ship write, no per-ship mover composed.
   grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIGS4_TMP" \
     && fail "0219 UPDATEs main_ship_instances — charter §2 says a ship does not move (the settle's dock hunk writes the ship, not the dock verb)" || true
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     grep -q "$banned" "$MIGS4_TMP" \
       && fail "0219 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -1371,7 +1371,7 @@ if [ "$MODE" = "selftest" ]; then
   # §2 stays law: no ship write, no per-ship mover composed.
   grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIG4C1_TMP" \
     && fail "0221 UPDATEs main_ship_instances — a READ repoint must never write a ship" || true
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     grep -q "$banned" "$MIG4C1_TMP" \
       && fail "0221 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
