@@ -87,7 +87,10 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: supabase db push --password "$SUPABASE_DB_PASSWORD"
+        # --include-all: apply EVERY migration not yet in prod, even one numbered below the current
+        # head (out-of-order can happen when an independent dark migration deploys ahead of an
+        # earlier-numbered one). Without it, `db push` skips anything older than the applied max.
+        run: supabase db push --include-all --password "$SUPABASE_DB_PASSWORD"
 
       - name: Post-push migration list (no secrets in output)
         if: always()
