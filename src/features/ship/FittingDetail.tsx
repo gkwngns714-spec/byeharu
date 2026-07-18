@@ -61,10 +61,10 @@ import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 //     regardless of any flag);
 //   · THE FITTING EDIT SURFACE — the ONE place fit/unfit renders (moved OUT of ModulesPanel's
 //     Workshop in this same slice; ModulesPanel keeps crafting only). The row IS the ship: fit
-//     targets this ship directly, no <select>. ENABLED only when the ship's place is 'docked'
-//     (fittingEditability over the SAME positions row — never a 2nd dockedness query);
-//     INTERIM-UNTIL-4C: 'berthed' is honestly NOT editable (the 0114 settled-safe rule rejects
-//     every berthed fit today — 4c re-enables it). The server's 0114 rule stays the enforcer and
+//     targets this ship directly, no <select>. ENABLED when the ship's place is 'docked' or
+//     'berthed' (fittingEditability over the SAME positions row — never a 2nd dockedness query):
+//     4c-mig-1 (0221) repointed validate_context onto berth truth, so a berthed ship resolves to
+//     state='home' and the settled-safe rule accepts it. The server rule stays the enforcer and
 //     its ship_not_settled copy surfaces verbatim on a reject.
 //   · traits / command buff (fail-closed gate-first fetchers — dark → byte-identical nothing);
 //   · captains & rooms — the ROOMS-8 configurable board re-homed from ShipDossier (room config
@@ -314,9 +314,8 @@ export function FittingDetail({
           </span>
         }
         aside={
-          /* INTERIM-UNTIL-4C: a berthed ship lands in the locked branch (gate reason
-             'berthed_not_fittable') — the green badge must never promise an edit the server's
-             0114 rule will reject. 4c makes berthed settled server-side and re-enables it. */
+          /* The badge tracks the SAME server-decided gate: 4c-mig-1 (0221) made berthed settled
+             server-side (validate_context → state='home'), so berthed now reads editable too. */
           gate.editable ? (
             <Badge tone="success">Loadout editable</Badge>
           ) : (
@@ -524,9 +523,9 @@ export function FittingDetail({
 
       {/* ── THE FITTING SURFACE — the ONE fit/unfit edit surface in the app (Workshop rows retired
           this same slice). Server-lit on get_my_ship_fittings; enable derives from the SAME
-          positions row — the server's 0114 settled-safe rule stays the enforcer.
-          INTERIM-UNTIL-4C: 'berthed' disables Fit/Unfit and the gate note tells the player how to
-          fit (bring a fleet to the berth port) — 0114 rejects every berthed attempt today. */}
+          positions row — the server's settled-safe rule stays the enforcer. Docked AND berthed
+          ships are editable (4c-mig-1/0221 made berthed resolve to state='home'); transit/in_space/
+          hidden stay locked and the gate note explains why. */}
       {litFittings && (
         <>
           <div className="mt-4 flex items-baseline justify-between gap-2">

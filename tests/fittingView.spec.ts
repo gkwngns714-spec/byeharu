@@ -7,9 +7,8 @@ import type { MapLocation } from '../src/features/map/mapTypes'
 
 // S6 FITTING — pure-logic specs for the Fitting tab's selectors (no app/Supabase; the
 // teamRoster.spec idiom). Covers the three view facts the screen derives:
-//   · fit-eligibility from the ONE fleet-positions row (docked editable; berthed honestly closed
-//     INTERIM-UNTIL-4C — the server's 0114 settled-safe rule rejects every berthed fit today;
-//     all else closed);
+//   · fit-eligibility from the ONE fleet-positions row (docked AND berthed editable — 4c-mig-1/
+//     0221 made berthed resolve to state='home', which the settled-safe rule accepts; all else closed);
 //   · the unfitted module pool (fit candidates — never a module already fitted somewhere);
 //   · the berthed section = buildTeamRoster's ungrouped bucket, whose rows resolve their berth
 //     port through the ONE shared location fold ('berthed' → "Docked at <port>").
@@ -66,13 +65,12 @@ test('fittingEditability: docked → editable', () => {
   expect(fittingEditability(pos({ place: 'docked' }))).toEqual({ editable: true, reason: null })
 })
 
-// INTERIM-UNTIL-4C: berthed is honestly NOT editable — 0114 accepts only ('home','at_location')
-// and a berthed ship never validates to either, so the server rejects every attempt. When 4c
-// canonicalizes berthed as settled, this flips back to editable and the reason is deleted.
-test('fittingEditability: berthed (the S1 place) → closed with the honest berthed reason', () => {
+// 4c-mig-1 (0221) repointed validate_context onto berth truth: a berthed ship resolves to
+// state='home', which assert_settled_safe accepts — so berthed, like docked, is editable.
+test('fittingEditability: berthed (the S1 place) → editable', () => {
   expect(fittingEditability(pos({ place: 'berthed', location_id: 'loc-haven' }))).toEqual({
-    editable: false,
-    reason: 'berthed_not_fittable',
+    editable: true,
+    reason: null,
   })
 })
 
@@ -88,10 +86,7 @@ test('fittingEditability: no projection row (dark gates / destroyed ship) → cl
 
 test('fitGateMessage: every reason maps to player copy (never a raw code)', () => {
   expect(fitGateMessage('position_unknown')).toMatch(/position unavailable/i)
-  expect(fitGateMessage('not_settled')).toMatch(/docked at a port/i)
-  // The berthed copy must tell the player HOW to fit: bring a fleet to the berth port.
-  expect(fitGateMessage('berthed_not_fittable')).toMatch(/berthed/i)
-  expect(fitGateMessage('berthed_not_fittable')).toMatch(/bring a fleet to its port/i)
+  expect(fitGateMessage('not_settled')).toMatch(/docked or berthed at a port/i)
 })
 
 // ── unfittedModuleInstances — the fit-candidate pool ─────────────────────────────────────────────
