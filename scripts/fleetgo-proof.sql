@@ -142,7 +142,7 @@ end $$;
 do $$
 declare u uuid; k text;
 begin
-  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU'] loop
+  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU','uR'] loop
     insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
       values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
               'fg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -190,7 +190,7 @@ update public.game_config set value='true'::jsonb where key='mainship_send_enabl
 -- player_wallet is lazy, so on_conflict covers a row a signup/ensure path may already have created.
 -- (The trade-market-1 / team-command proofs use this same direct-owner insert.)
 insert into public.player_wallet (player_id, balance)
-select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU')
+select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU','uR')
 on conflict (player_id) do update set balance = excluded.balance;
 
 -- ════════ PROVISION via the REAL commission RPCs ════════
@@ -1197,6 +1197,12 @@ end $$;
 -- HOW THIS FAILS IF THE CODE WERE WRONG: collapse the 0200 site onto mainship_resolve_docked_location
 -- (which returns NULL for anything not strictly 'at_location') and this ship maps place='hidden' — every
 -- legacy-present prod ship would vanish from the map the day 0211 deploys, flag OFF.
+-- ⚠ 4C-MIG-1 (0221) TOKEN UPDATE: the oracle no longer reads the ship's spatial column, so the two
+-- shapes the column used to split (spatial 'at_location' vs NULL, same honest present-fleet pair)
+-- now answer ONE token: 'at_location' — the R1-f merge recorded in 0221's header. The PROPERTY this
+-- block pins is UNCHANGED and still asserted below: the stuck prod shape draws place='docked' at its
+-- fleet's port. Only the expected token moved with the repoint (map-wise the two tokens take the
+-- same branch — the 0211/0216 read keeps its 'at_location' OR 'legacy_present' guard).
 do $$
 declare r jsonb; e jsonb; n int;
   uB uuid := (select v from fg where k='uB'); b1 uuid := (select v from fg where k='b1');
@@ -1227,9 +1233,11 @@ begin
    where f.main_ship_id = b1 and lp.status = 'active' and lp.location_id = v_port;
   if n <> 1 then raise exception 'LEGACYPRESENT FAIL: no active presence at the port — fixture vacuous'; end if;
 
+  -- 4C-MIG-1 (0221): the honest present-fleet pair answers 'at_location' under FLEET truth (the
+  -- R1-f merge — see the block header). Pre-0221 this exact fixture answered 'legacy_present'.
   r := public.mainship_space_validate_context(b1);
-  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_present' then
-    raise exception 'LEGACYPRESENT FAIL: validate_context = % (expected legacy_present)', r; end if;
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'LEGACYPRESENT FAIL: validate_context = % (expected at_location — the 0221 fleet-truth answer for the present-fleet pair)', r; end if;
 
   r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
   select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
@@ -1396,20 +1404,26 @@ begin
   raise notice 'FLEETGO_PASS_MAPTRANSIT_DARKPARITY: a legacy in-transit ship (grouped AND ungrouped) still draws its OWN fleet''s leg while dark';
 end $$;
 
--- ════════ BLOCK MAPSPACE-DARKPARITY (3c-3, dark): an OSN-held ship still draws its OWN coordinates ════════
--- 0212's hunks 2-3 make the in_space arm FLEET-FIRST; the ship-coordinate elsif is the preserved dark
--- parity path. Dark, the 0056 head's in_space demands ZERO active fleets, so the resolver returns NULL,
--- the fleet read matches nothing, and ONLY the elsif can answer — this block pins that it still does.
+-- ════════ BLOCK MAPSPACE-RETIRED (was 3c-3 DARKPARITY; rewritten by 4c-mig-1/0221): the retired ════════
+-- ship coordinate is IGNORED — an OSN-held ship reads its BERTH, never its per-ship columns ════════
+-- HISTORY: until 0221 this block pinned the OPPOSITE — the 0212/0216 ship-coordinate elsif (the dark
+-- parity path, explicitly "load-bearing until step 4c retires the ship columns"). Step 4c-mig-1 IS
+-- that retirement: 0221's R1 deleted the oracle's per-ship spatial branches and R3 deleted the map's
+-- ship-coordinate fallback arm, so the OSN-held shape (zero fleets + a ship coordinate the retired
+-- layer wrote) now answers from BERTH truth: the oracle says settled-'home' (the XOR guarantees the
+-- unfleeted ship carries a berth), and the map draws 'berthed' at the berth (lit) / fail-closed
+-- 'hidden' (dark — the berthed place is gated). ZERO prod ships hold this shape and its writers are
+-- dark, so this is a historical-shape pin: it proves a PRESENT retired signal no longer answers.
 -- PLACEMENT IS LOAD-BEARING: this writes a ship coordinate, which ISOLATION rightly asserts the unified
 -- flow never produces — it must stay AFTER the ISOLATION block (the HUNTOVERLAP placement rule).
--- HOW THIS FAILS IF THE CODE WERE WRONG: "clean up" the elsif (delete the ship fallback) and this ship —
--- zero fleets, so the fleet-first read finds nothing — draws place='hidden' with null coords: red here,
--- and every real OSN-held prod ship would vanish from the map the day 0212 deploys, flag OFF.
+-- HOW THIS FAILS IF THE CODE WERE WRONG: resurrect the ship-column read anywhere in the oracle/map
+-- chain and this ship answers 'in_space' / draws the retired 555,-444 — red below; drop the berth
+-- branch instead and the oracle answers ok:false — red below.
 do $$
 declare r jsonb; e jsonb; n int; v_flag jsonb; r_before jsonb; r_after jsonb;
   uB uuid := (select v from fg where k='uB'); b1 uuid := (select v from fg where k='b1');
   v_old_status text; v_old_ss text; v_old_x double precision; v_old_y double precision;
-  v_frow record; v_had_pres boolean; v_act text;
+  v_frow record; v_had_pres boolean; v_act text; v_berth uuid;
 begin
   -- self-contained DARK: save the flag's ACTUAL prior value and restore IT at the end.
   select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
@@ -1421,7 +1435,7 @@ begin
   -- what it tests — the shape is built and torn down entirely in-block.
   select count(*) into n from public.fleets
    where main_ship_id = b1 and status in ('idle','moving','present','returning');
-  if n <> 1 then raise exception 'MAPSPACE-DARKPARITY FAIL: b1 holds % active fleet(s) (expected its one docked fleet) — fixture shape drifted', n; end if;
+  if n <> 1 then raise exception 'MAPSPACE-RETIRED FAIL: b1 holds % active fleet(s) (expected its one docked fleet) — fixture shape drifted', n; end if;
   r_before := public.mainship_space_validate_context(b1);
   select f.id, f.status, f.location_mode, f.active_movement_id,
          f.current_sector_id, f.current_zone_id, f.current_location_id, f.current_base_id
@@ -1449,21 +1463,40 @@ begin
      set status='stationary', spatial_state='in_space', space_x=555, space_y=-444
    where main_ship_id = b1;
 
-  -- vacuity guards: ZERO active fleets (the resolver MUST return NULL — only the ship fallback can
-  -- answer), and the oracle must answer in_space, or the marker pins nothing.
+  -- vacuity guards: ZERO active fleets (the resolver MUST return NULL), the RETIRED coordinate IS
+  -- present on the ship row (555,-444 — the retired layer WOULD have answered; ignoring an absent
+  -- signal proves nothing), and the ship is really berthed (the XOR shape) so berth truth CAN answer.
   select count(*) into n from public.fleets
    where main_ship_id = b1 and status in ('idle','moving','present','returning');
-  if n <> 0 then raise exception 'MAPSPACE-DARKPARITY FAIL: b1 holds % active fleet(s) — the ship-fallback claim would be vacuous', n; end if;
-  r := public.mainship_space_validate_context(b1);
-  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'in_space' then
-    raise exception 'MAPSPACE-DARKPARITY FAIL: fixture did not reach in_space — %', r; end if;
+  if n <> 0 then raise exception 'MAPSPACE-RETIRED FAIL: b1 holds % active fleet(s) — the retired-signal probe would be vacuous', n; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = b1 and spatial_state = 'in_space' and space_x = 555 and space_y = -444;
+  if n <> 1 then raise exception 'MAPSPACE-RETIRED FAIL: the retired coordinate is not present on the ship row — ignoring an absent signal is vacuous'; end if;
+  select berth_location_id into v_berth from public.main_ship_instances where main_ship_id = b1;
+  if v_berth is null then
+    raise exception 'MAPSPACE-RETIRED FAIL: b1 is not berthed — the XOR shape drifted and berth truth cannot answer'; end if;
 
+  -- the oracle IGNORES the present retired signal (dark AND lit — the fallback carries no gate):
+  -- the unfleeted ship is settled at its berth, 'home' (0221 R1-h), never 'in_space'.
+  r := public.mainship_space_validate_context(b1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'home' then
+    raise exception 'MAPSPACE-RETIRED FAIL: the OSN-held ship answered % — the retired coordinate must be ignored; the berth is the truth', r; end if;
+
+  -- DARK map: the berthed place is gated off → fail-closed 'hidden', and the retired coordinate
+  -- never surfaces in the emit.
   r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
   select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
-  if e is null or (e->>'place') is distinct from 'in_space'
-     or (e->>'space_x')::double precision is distinct from 555::double precision
-     or (e->>'space_y')::double precision is distinct from (-444)::double precision then
-    raise exception 'MAPSPACE-DARKPARITY FAIL: an OSN-held ship draws % (expected in_space at its OWN 555,-444) — the ship fallback died', e; end if;
+  if e is null or (e->>'place') is distinct from 'hidden' or (e->>'space_x') is not null then
+    raise exception 'MAPSPACE-RETIRED FAIL (dark): an OSN-held ship draws % (expected hidden, no coordinate)', e; end if;
+
+  -- LIT map: place='berthed' at the BERTH — the retired coordinate still never surfaces.
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
+  if e is null or (e->>'place') is distinct from 'berthed' or (e->>'location_id')::uuid is distinct from v_berth
+     or (e->>'space_x') is not null then
+    raise exception 'MAPSPACE-RETIRED FAIL (lit): an OSN-held ship draws % (expected berthed at its berth, no coordinate)', e; end if;
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
 
   -- restore b1 EXACTLY as found: ship row back (all four columns, ONE update), fleet row rewound
   -- column-for-column, active presence re-created — then PROVE the rewind with the oracle.
@@ -1483,9 +1516,9 @@ begin
   end if;
   r_after := public.mainship_space_validate_context(b1);
   if r_after is distinct from r_before then
-    raise exception 'MAPSPACE-DARKPARITY FAIL: b1 was not restored to what it was (oracle % -> %)', r_before, r_after; end if;
+    raise exception 'MAPSPACE-RETIRED FAIL: b1 was not restored to what it was (oracle % -> %)', r_before, r_after; end if;
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
-  raise notice 'FLEETGO_PASS_MAPSPACE_DARKPARITY: an OSN-held ship (zero fleets) still draws in_space at its OWN ship coordinates — the elsif fallback (dark parity path) survives';
+  raise notice 'FLEETGO_PASS_MAPSPACE_RETIRED: a PRESENT retired ship coordinate is ignored end-to-end — the OSN-held shape answers settled-home at its berth (oracle), berthed lit / hidden dark (map), never in_space';
 end $$;
 
 -- ════════ BLOCK ASSIGNGUARD-HUNTWORLD (4b-0, 0213): dark parity, unassign, in-flight, hunt-present,
@@ -3882,6 +3915,210 @@ begin
   update public.game_config set value = v_uflag where key='fleet_movement_unified_enabled';
   update public.game_config set value = v_tflag where key='timed_docking_enabled';
   raise notice 'S4_PASS_GUARD_ONSORTIE: docking a mid-combat sortie -> group_on_sortie (refused AS a sortie), fleets + manifest byte-unchanged, encounter alive';
+end $$;
+
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+-- ════════ 4C-MIG-1 (0221) — REPOINT-PARITY runtime blocks. The movement-signal repoint: every ════
+-- ════════ re-created read answers from FLEET/BERTH truth; these blocks pin the THREE prod    ════
+-- ════════ shapes (berthed / grouped-fleet member / placeless transition "legacy-home") plus  ════
+-- ════════ the B1 fit-gate outcome and the R5 fleet-position compose. Fixture world: uR       ════
+-- ════════ (fresh, shared with no other block — the uE..uI isolation reasoning).              ════
+-- ════════════════════════════════════════════════════════════════════════════════════════════════
+
+-- ════════ BLOCK REPOINT BERTHED (0221 R1): a settled BERTHED ship answers a 0114-accepted ════════
+-- state ('home'), passes the cross-domain gate AND the whole 0121/0114 fit gate, and its map row
+-- is byte-identical to the pre-repoint row (place='berthed' at the berth; no coordinate/segment).
+-- FAIL MODES: drop hunk R1-h → the oracle answers the pre-repoint hidden token and the settled
+-- assert reds; answer a non-0114 token → the fitgate assert reds; break the S1 berthed branch →
+-- the map assert reds (the ship-tab blackout).
+do $$
+declare r jsonb; e jsonb; n int; v_flag jsonb;
+  uR uuid := (select v from fg where k='uR');
+  haven uuid := (select v from fg where k='haven'); r1 uuid;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  r := pg_temp.call_as(uR, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then
+    raise exception 'REPOINT BERTHED FAIL: the berthed repoint fixture was not built (commission: %)', r; end if;
+  select main_ship_id into r1 from public.main_ship_instances where player_id = uR;
+
+  -- SURGERY to the post-4c berthed majority shape (the BERTH_RESOLVER phase-B idiom, verbatim):
+  -- commission corpse completed + presence closed + the prod-majority legacy 'home' ship shape.
+  perform public.presence_complete(lp.id)
+    from public.location_presence lp
+    join public.fleets f on f.id = lp.fleet_id
+   where f.main_ship_id = r1 and lp.status = 'active';
+  update public.fleets
+     set status = 'completed', location_mode = 'movement', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where main_ship_id = r1 and status = 'present';
+  update public.main_ship_instances set status = 'home', spatial_state = null where main_ship_id = r1;
+
+  -- vacuity RAISE guards: the shape is REALLY the berthed majority (ungrouped, berthed at Haven,
+  -- and the resolver answers NO fleet — else the probe could be answered by the retired layer).
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = r1 and group_id is null and berth_location_id = haven and status = 'home';
+  if n <> 1 then
+    raise exception 'REPOINT BERTHED FAIL: the berthed repoint fixture was not built (shape)'; end if;
+  if public.mainship_resolve_fleet(r1) is not null then
+    raise exception 'REPOINT BERTHED FAIL: the berthed repoint fixture was not built (a fleet still answers)'; end if;
+
+  -- THE B1 OUTCOME: settled state 0114 ACCEPTS — 'home' — never the pre-repoint hidden token.
+  r := public.mainship_space_validate_context(r1);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'home' then
+    raise exception 'REPOINT BERTHED FAIL: a settled berthed ship answered % (must be ok + state=home)', r; end if;
+  r := public.mainship_space_assert_cross_domain_exclusion(r1);
+  if (r->>'ok')::boolean is not true then
+    raise exception 'REPOINT BERTHED FAIL: cross-domain exclusion refused a settled berthed ship: %', r; end if;
+  raise notice 'REPOINT_PASS_BERTHED_SETTLED: the settled berthed shape answers ok + ''home'' (0114-accepted) and clears cross-domain exclusion';
+
+  -- THE FIT GATE (0114 via the 0121 leaf — the exact accepted-set + exclusion pair fitting runs):
+  -- the berthed ship PASSES. (The non-vacuity contrast — an in-flight member must FAIL the same
+  -- leaf — is pinned in the GROUPED block below.)
+  if public.mainship_space_assert_settled_safe(r1) is not true then
+    raise exception 'REPOINT FITGATE FAIL: a settled berthed ship is still rejected by the settled-safe rule (B1 not fixed)'; end if;
+  raise notice 'REPOINT_PASS_FITGATE_BERTHED: the settled berthed ship passes the 0121/0114 settled-safe fit gate';
+
+  -- MAP PARITY: the berthed ship's row is IDENTICAL to the pre-repoint row — place='berthed' at
+  -- the berth, no coordinate, no segment (pre-repoint: legacy_home→hidden→berthed branch;
+  -- post-repoint: home→hidden→berthed branch; same emitted row).
+  r := pg_temp.call_as(uR, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = r1::text;
+  if e is null or (e->>'place') is distinct from 'berthed' or (e->>'location_id')::uuid is distinct from haven
+     or (e->>'space_x') is not null or (e->'segment') is distinct from 'null'::jsonb then
+    raise exception 'REPOINT MAP FAIL: the berthed ship''s map row changed across the repoint: %', e; end if;
+  raise notice 'REPOINT_PASS_MAP_PARITY: the berthed map row is unchanged (berthed at the berth; no coordinate, no segment)';
+
+  insert into fg values ('r1', r1);
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+end $$;
+
+-- ════════ BLOCK REPOINT GROUPED (0221 R1/R2/R5): a grouped-fleet member resolves IDENTICALLY ═════
+-- pre-vs-post (the unified branch is retained verbatim): docked → 'at_location' + the dock
+-- resolver's port; in flight → 'legacy_transit' (and the fit gate REFUSES it — the non-vacuity
+-- contrast for FITGATE_BERTHED); parked in open space → 'in_space' AND the R5 compose
+-- (fleet_current_position over the ONE resolver — the exact read exploration_scan/mining_extract
+-- now perform) answers the FLEET's parked coordinate. Then the fleet is retired (SURGERY) and the
+-- member becomes the placeless transition shape → 'legacy_home', IDENTICAL to pre-repoint, still
+-- settled-UNSAFE, map fail-closed 'hidden'.
+do $$
+declare r jsonb; e jsonb; n int; v_flag jsonb;
+  uR uuid := (select v from fg where k='uR');
+  haven uuid := (select v from fg where k='haven'); slag uuid := (select v from fg where k='slag');
+  r2 uuid; gR uuid; fR uuid;
+  sx double precision; sy double precision; px double precision; py double precision;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- fixture: a second uR ship, surgically taken to the post-4c berthed shape (corpse retired —
+  -- ASSIGN_CLEARS_BERTH's vacuity rule: the assign's mint port must come from the BERTH), then
+  -- assigned into a fresh group → the first-into-empty assign mints the unified fleet AT the berth.
+  r := pg_temp.call_as(uR, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then
+    raise exception 'REPOINT GROUPED FAIL: the grouped repoint fixture was not built (commission r2: %)', r; end if;
+  r2 := (r->>'main_ship_id')::uuid;
+  perform public.presence_complete(lp.id)
+    from public.location_presence lp
+    join public.fleets f on f.id = lp.fleet_id
+   where f.main_ship_id = r2 and lp.status = 'active';
+  update public.fleets
+     set status = 'completed', location_mode = 'movement', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where main_ship_id = r2 and status = 'present';
+  update public.main_ship_instances set status = 'home', spatial_state = null where main_ship_id = r2;
+  r := pg_temp.call_as(uR, 'public.upsert_ship_group(1, ''Repointers'')');
+  if (r->>'ok')::boolean is not true then
+    raise exception 'REPOINT GROUPED FAIL: the grouped repoint fixture was not built (group: %)', r; end if;
+  gR := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uR, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', r2, gR));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'REPOINT GROUPED FAIL: the grouped repoint fixture was not built (assign: %)', r; end if;
+
+  -- vacuity: the ONE unified fleet is REALLY docked at haven before the docked probe.
+  select id into fR from public.fleets
+   where group_id = gR and player_id = uR and main_ship_id is null
+     and status = 'present' and location_mode = 'location' and current_location_id = haven;
+  if fR is null then
+    raise exception 'REPOINT GROUPED FAIL: the grouped repoint fixture was not built (no docked group fleet)'; end if;
+
+  -- DOCKED member: 'at_location' + the dock resolver answers the fleet's port — identical
+  -- pre-vs-post (the 0210 unified branch is untouched by the repoint).
+  r := public.mainship_space_validate_context(r2);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'at_location' then
+    raise exception 'REPOINT GROUPED FAIL: docked member answered % (must be at_location, as pre-repoint)', r; end if;
+  if public.mainship_resolve_docked_location(r2) is distinct from haven then
+    raise exception 'REPOINT GROUPED FAIL: docked member does not resolve its fleet''s port'; end if;
+
+  -- IN-FLIGHT member: 'legacy_transit', identical pre-vs-post — and the fit gate REFUSES it
+  -- (the contrast that proves FITGATE_BERTHED is a real gate, not a vacuous always-true).
+  r := pg_temp.call_as(uR, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gR, slag));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'REPOINT GROUPED FAIL: go: %', r; end if;
+  if (select status from public.fleets where id = fR) is distinct from 'moving' then
+    raise exception 'REPOINT GROUPED FAIL: the in-flight grouped probe would be vacuous (fleet not moving)'; end if;
+  r := public.mainship_space_validate_context(r2);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_transit' then
+    raise exception 'REPOINT GROUPED FAIL: in-flight member answered % (must be legacy_transit, as pre-repoint)', r; end if;
+  if public.mainship_space_assert_settled_safe(r2) is true then
+    raise exception 'REPOINT GROUPED FAIL: the fit gate passed an IN-FLIGHT member — the settled-safe contrast is broken (vacuous gate)'; end if;
+  raise notice 'REPOINT_PASS_GROUPED_IDENTICAL: grouped member reads its fleet identically pre-vs-post (docked->at_location+port, in-flight->legacy_transit, fit gate refuses in-flight)';
+
+  -- PARKED IN SPACE: brake mid-leg (SURGERY: backdate so the turn point is a real midpoint, the
+  -- redirect-block idiom), then the member reads 'in_space' and the R5 COMPOSE —
+  -- fleet_current_position over the ONE resolver, the exact read the exploration/mining writers
+  -- now perform — answers the FLEET's parked coordinate.
+  update public.fleet_movements
+     set depart_at = now() - interval '30 seconds', arrive_at = now() + interval '30 seconds'
+   where fleet_id = fR and status = 'moving';
+  r := pg_temp.call_as(uR, format('public.command_ship_group_stop(%L::uuid)', gR));
+  if (r->>'ok')::boolean is not true or (r->>'stopped')::boolean is not true then
+    raise exception 'REPOINT SPACEPOS FAIL: stop: %', r; end if;
+  select space_x, space_y into sx, sy from public.fleets where id = fR;
+  if sx is null or sy is null then
+    raise exception 'REPOINT SPACEPOS FAIL: the parked-space probe would be vacuous (no fleet coordinate after the brake)'; end if;
+  r := public.mainship_space_validate_context(r2);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'in_space' then
+    raise exception 'REPOINT SPACEPOS FAIL: parked member answered % (must be in_space)', r; end if;
+  select p.o_x, p.o_y into px, py
+    from public.fleet_current_position(public.mainship_resolve_fleet(r2)) p;
+  if px is distinct from sx or py is distinct from sy then
+    raise exception 'REPOINT SPACEPOS FAIL: the R5 compose answered (%, %) but the fleet is parked at (%, %)', px, py, sx, sy; end if;
+  raise notice 'REPOINT_PASS_SPACEPOS_FLEET: the R5 compose (fleet_current_position over the ONE resolver) answers the parked FLEET coordinate for a member in space';
+
+  -- PLACELESS TRANSITION shape (grouped, group has NO unified fleet — the honest legacy_home
+  -- remainder): SURGERY retires the group fleet; the member's own status is the prod 'home' shape
+  -- (fleet ops never write it — §2). IDENTICAL pre-vs-post: ok + 'legacy_home', settled-UNSAFE,
+  -- map fail-closed 'hidden' (berth is NULL under the XOR — nothing may answer a place).
+  update public.fleets
+     set status = 'completed', location_mode = 'movement', active_movement_id = null,
+         space_x = null, space_y = null,
+         current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where id = fR;
+  update public.main_ship_instances set status = 'home' where main_ship_id = r2;
+  if public.mainship_resolve_fleet(r2) is not null then
+    raise exception 'REPOINT LEGACYHOME FAIL: the placeless transition fixture was not built (a fleet still answers)'; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = r2 and group_id = gR and berth_location_id is null;
+  if n <> 1 then
+    raise exception 'REPOINT LEGACYHOME FAIL: the placeless transition fixture was not built (shape)'; end if;
+  r := public.mainship_space_validate_context(r2);
+  if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'legacy_home' then
+    raise exception 'REPOINT LEGACYHOME FAIL: the placeless transition shape answered % (must stay legacy_home, as pre-repoint)', r; end if;
+  if public.mainship_space_assert_settled_safe(r2) is true then
+    raise exception 'REPOINT LEGACYHOME FAIL: a placeless transition ship passed the fit gate (it is nowhere — must stay settled-unsafe)'; end if;
+  r := pg_temp.call_as(uR, 'public.get_my_fleet_positions()');
+  select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = r2::text;
+  if e is null or (e->>'place') is distinct from 'hidden' then
+    raise exception 'REPOINT LEGACYHOME FAIL: the placeless transition ship drew % (fail-closed hidden broke)', e; end if;
+  raise notice 'REPOINT_PASS_LEGACYHOME_IDENTICAL: the placeless transition shape stays legacy_home / settled-unsafe / hidden, identically pre-vs-post';
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;

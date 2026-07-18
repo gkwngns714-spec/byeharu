@@ -50,6 +50,15 @@ MIGRATION_0002="$REPO_ROOT/supabase/migrations/20260616000002_world_map.sql"
 # now (10/12/8/NULL, all overlap-free); the 0217 greps below keep pinning the frozen 0217 file as
 # shipped history, the RUNTIME value pins aim at the deployed (retuned) state.
 MIGRATION_S2R="$REPO_ROOT/supabase/migrations/20260618000220_territory_radius_retune.sql"
+# MIGRATION_4C1 is 0221 — 4C-MIG-1, the MOVEMENT-SIGNAL REPOINT (zero drops, zero schema): the
+# seven live reads that still answered from the retired per-ship movement signals are re-created
+# from their TRUE heads onto fleet/berth truth. ⚠ HEAD REPOINTS: since 0221 the TRUE head of
+# mainship_space_validate_context (was 0210), mainship_space_assert_cross_domain_exclusion (was
+# 0056), get_my_fleet_positions (was 0216), exploration_scan + mining_extract (were 0172), and
+# process_exploration_securing / process_mining_securing (were 0100/0105) is 0221 — the
+# REPOINT-PARITY section below aims the LIVE-body pins at IT; every earlier section keeps pinning
+# its own frozen shipped-history file (the 0215/0211 rule, exactly as the S4 mover repoint did).
+MIGRATION_4C1="$REPO_ROOT/supabase/migrations/20260618000221_movement_signal_repoint.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -58,7 +67,7 @@ MIGRATION_S2R="$REPO_ROOT/supabase/migrations/20260618000220_territory_radius_re
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_NOOVERLAP TERRITORY_PASS_MAPREAD"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_RETIRED FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_NOOVERLAP TERRITORY_PASS_MAPREAD REPOINT_PASS_BERTHED_SETTLED REPOINT_PASS_FITGATE_BERTHED REPOINT_PASS_MAP_PARITY REPOINT_PASS_GROUPED_IDENTICAL REPOINT_PASS_SPACEPOS_FLEET REPOINT_PASS_LEGACYHOME_IDENTICAL"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -402,8 +411,15 @@ if [ "$MODE" = "selftest" ]; then
     || fail "MAPTRANSIT_GROUP does not re-assert the zero-per-ship-fleet vacuity guard"
   grep -q "only the FLEET could have answered" "$SQL" \
     || fail "MAPSPACE_GROUP does not guard that zero ships carry a position"
-  grep -q "did not reach in_space" "$SQL" \
-    || fail "MAPSPACE_DARKPARITY does not guard that the oracle answers in_space (vacuous otherwise)"
+  # MAPSPACE-RETIRED (rewritten by 4c-mig-1/0221 — the ship-coordinate fallback this section's
+  # 0212-file pins record as shipped history is RETIRED in the live 0221 head): the runtime block
+  # must prove a PRESENT retired coordinate is ignored, on a really-berthed, really-fleetless ship.
+  grep -q "the retired coordinate must be ignored" "$SQL" \
+    || fail "MAPSPACE_RETIRED does not assert the oracle ignores a PRESENT retired coordinate (the 4c-mig-1 point)"
+  grep -q "ignoring an absent signal is vacuous" "$SQL" \
+    || fail "MAPSPACE_RETIRED does not guard that the retired coordinate is really present (vacuous otherwise)"
+  grep -q "b1 is not berthed" "$SQL" \
+    || fail "MAPSPACE_RETIRED does not guard that the probe ship is berthed (berth truth could not answer — vacuous)"
 
   # ── step 4b-0 (0213): the PRE-FLIP assign guard. TWO re-creates ONLY (the 0204 assign head + the
   #    ONE new leaf), the guard hunk strictly BETWEEN the group lock and the ship write, the lit lock
@@ -1318,6 +1334,113 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "assert_ships_untouched('before_.*', 'after_.*', 'timed dock')" "$SQL" \
     || fail "the §2 ship-untouched assertion is not applied to: 'timed dock'"
   rm -f "$MIGS4_TMP"
+
+  # ── 4C-MIG-1 (0221): the MOVEMENT-SIGNAL REPOINT — REPOINT-PARITY static checks. 0221 is the ───
+  #    NEW TRUE HEAD of the seven repointed reads (see the MIGRATION_4C1 declaration); these pins
+  #    aim at the body that RUNS. mktemp-FILE pattern, never `printf | grep -q` (the S1 EPIPE
+  #    lesson — 0221 is another large stream).
+  [ -f "$MIGRATION_4C1" ] || fail "migration 0221 (4c-mig-1, the repoint TRUE HEAD) not found"
+  MIG4C1_TMP="$(mktemp)"
+  sql_code "$MIGRATION_4C1" > "$MIG4C1_TMP"
+  # ZERO DROPS / ZERO SCHEMA: 4c-mig-1 is READ repoints ONLY — any drop/alter belongs to 4c-mig-2.
+  grep -qE "^[[:space:]]*(alter table|drop function|drop table|drop index|drop trigger)" "$MIG4C1_TMP" \
+    && fail "0221 drops/alters an object — 4c-mig-1 must be dual-safe (repoints only; the drops are 4c-mig-2)" || true
+  # §2 stays law: no ship write, no per-ship mover composed.
+  grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIG4C1_TMP" \
+    && fail "0221 UPDATEs main_ship_instances — a READ repoint must never write a ship" || true
+  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+    grep -q "$banned" "$MIG4C1_TMP" \
+      && fail "0221 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
+  done
+  # exactly SEVEN re-creates, and they are the seven named heads (signature-exact).
+  [ "$(grep -c "create or replace function" "$MIG4C1_TMP")" = "7" ] \
+    || fail "0221 must contain exactly SEVEN re-creates (oracle / exclusion / map read / scan / extract / 2 securing processors)"
+  for fn in "mainship_space_validate_context(p_main_ship_id uuid)" \
+            "mainship_space_assert_cross_domain_exclusion(p_main_ship_id uuid)" \
+            "get_my_fleet_positions()" \
+            "process_exploration_securing()" \
+            "process_mining_securing()"; do
+    grep -qF "create or replace function public.$fn" "$MIG4C1_TMP" \
+      || fail "0221 does not re-create public.$fn with its head's exact signature"
+  done
+  grep -q "create or replace function public.exploration_scan(" "$MIG4C1_TMP" \
+    || fail "0221 does not re-create exploration_scan (its 0172 TRUE head)"
+  grep -q "create or replace function public.mining_extract(" "$MIG4C1_TMP" \
+    || fail "0221 does not re-create mining_extract (its 0172 TRUE head)"
+  # THE REPOINT ITSELF: no retired-signal read survives in the file's CODE — the movement table,
+  # the fleet's coordinate pointer, the ship's state-column decisions, the ship coordinate reads.
+  # The patterns below are the READ forms only: the §0 dual-safe gate's EXISTENCE probes
+  # (to_regclass / information_schema, undotted names) and the §8 self-assert's prosrc-probe
+  # string literals (which deliberately spell shorter substrings) must stay legal — the deployed-
+  # body prosrc bans inside §8 are the authoritative guard; these are the belt.
+  grep -qE "from (public\.)?main_ship_space_movements where" "$MIG4C1_TMP" \
+    && fail "0221 still READS main_ship_space_movements — the repoint did not land" || true
+  grep -q "main_ship_space_movements%rowtype" "$MIG4C1_TMP" \
+    && fail "0221 still declares a coordinate-movement rowtype — the repoint did not land" || true
+  grep -qE "\.active_space_movement_id" "$MIG4C1_TMP" \
+    && fail "0221 still reads the fleet's coordinate-movement pointer — the repoint did not land" || true
+  grep -qE "spatial_state in \(" "$MIG4C1_TMP" \
+    && fail "0221 still DECIDES on the ship's spatial_state — the repoint did not land" || true
+  grep -q "v_ship.spatial_state" "$MIG4C1_TMP" \
+    && fail "0221's oracle still captures the ship's spatial_state — the repoint did not land" || true
+  grep -q "coalesce(spatial_state" "$MIG4C1_TMP" \
+    && fail "0221's map read still filters on the legacy-destroyed spatial shape" || true
+  grep -q "select space_x, space_y" "$MIG4C1_TMP" \
+    && fail "0221's scan/extract still read the SHIP's coordinates — the R5 repoint did not land" || true
+  grep -q "elsif s.space_x is not null" "$MIG4C1_TMP" \
+    && fail "0221's map read still carries the ship-coordinate fallback arm — the R3 repoint did not land" || true
+  # the composes LANDED: the R5 position leaf (twice: scan + extract, code-form with the FROM
+  # prefix so the §8 probe literals cannot satisfy this count), the settled-safe leaf (twice:
+  # both processors), and the oracle's berth + fleet-docked branches.
+  [ "$(grep -c "from public.fleet_current_position(public.mainship_resolve_fleet(p_main_ship_id)) p" "$MIG4C1_TMP")" = "2" ] \
+    || fail "0221's scan+extract do not BOTH compose fleet_current_position over the ONE resolver"
+  [ "$(grep -c "mainship_space_assert_settled_safe(v_ship)" "$MIG4C1_TMP")" = "2" ] \
+    || fail "0221's securing processors do not BOTH compose the ONE settled-safe leaf (0121)"
+  grep -q "berth_location_id is not null and v_st in ('home', 'stationary')" "$MIG4C1_TMP" \
+    || fail "0221's oracle lost the berth branch — the root B1 fix (berthed -> 0114-accepted settled state) is gone"
+  # stale-head tripwires, retargeted at the NEW head: the retained 0210/0211/0212/0216 hunks.
+  grep -q "cfg_bool('fleet_movement_unified_enabled') and v_ship.group_id is not null" "$MIG4C1_TMP" \
+    || fail "0221's oracle lost the gated 0210 group branch — ten live surfaces regress"
+  grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and f.status = 'present'" "$MIG4C1_TMP" \
+    || fail "0221's map read lost 0211's docked hunk — rebuilt from a stale head"
+  grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and fm.status = 'moving'" "$MIG4C1_TMP" \
+    || fail "0221's map read lost 0212's transit hunk — rebuilt from a stale head"
+  grep -q "f.id = public.mainship_resolve_fleet(s.main_ship_id) and f.location_mode = 'space'" "$MIG4C1_TMP" \
+    || fail "0221's map read lost 0212's fleet-first in_space hunk — rebuilt from a stale head"
+  grep -q "if v_unified and v_place = 'hidden' and s.berth_location_id is not null" "$MIG4C1_TMP" \
+    || fail "0221's map read lost the S1 berthed branch (or its gate) — rebuilt from a stale head"
+  # the activation-script prosrc couplings survive (the 0172 file-header law: any re-create keeps
+  # these tokens or updates the activation scripts in the same change).
+  grep -q "pending_bundle_json, main_ship_id" "$MIG4C1_TMP" \
+    || fail "0221's exploration_scan lost the 0172 H1 insert column set (activate-exploration.sql prosrc pin breaks)"
+  grep -q "unique_violation" "$MIG4C1_TMP" \
+    || fail "0221's exploration_scan lost the 0146 unique_violation handler (activate-exploration.sql prosrc pin breaks)"
+  grep -q "pg_advisory_xact_lock" "$MIG4C1_TMP" \
+    || fail "0221's mining_extract lost the 0143 advisory lock (activate-mining.sql prosrc pin breaks)"
+  grep -q "worldstate_deplete_field" "$MIG4C1_TMP" \
+    || fail "0221's mining_extract lost the 0137 deplete call (activate-mining.sql prosrc pin breaks)"
+  # the dual-safe §0 gate + the in-file deploy self-assert + the true-head declaration exist.
+  grep -q "to_regclass('public.main_ship_space_movements')" "$MIG4C1_TMP" \
+    || fail "0221 lost its §0 dual-safe gate (must assert the legacy schema is INTACT at apply time)"
+  grep -q "settled-berthed ship(s) proven 0114-fit-eligible" "$MIGRATION_4C1" \
+    || fail "0221 lost its §8 real-data reconciliation (the B1 outcome must be proven on every live ship row at apply)"
+  grep -q "TRUE-HEAD DECLARATION" "$MIGRATION_4C1" \
+    || fail "0221 does not declare itself the repointed functions' true head — the 0136/0211 stale-head mistake repeats by default"
+  # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
+  # failed to reach the state its marker claims to pin).
+  grep -q "the berthed repoint fixture was not built" "$SQL" \
+    || fail "REPOINT BERTHED does not guard its fixture (ungrouped + berthed + resolver-fleetless)"
+  grep -q "the grouped repoint fixture was not built" "$SQL" \
+    || fail "REPOINT GROUPED does not guard its fixture (the docked unified fleet)"
+  grep -q "the in-flight grouped probe would be vacuous" "$SQL" \
+    || fail "REPOINT GROUPED does not guard that the fleet is really moving before the transit probe"
+  grep -q "the parked-space probe would be vacuous" "$SQL" \
+    || fail "REPOINT SPACEPOS does not guard that the fleet really parked with a coordinate"
+  grep -q "the placeless transition fixture was not built" "$SQL" \
+    || fail "REPOINT LEGACYHOME does not guard its fixture (grouped + fleetless + berthless)"
+  grep -q "the settled-safe contrast is broken" "$SQL" \
+    || fail "REPOINT FITGATE has no failing contrast (an in-flight member must FAIL the same leaf, else the gate probe is vacuous)"
+  rm -f "$MIG4C1_TMP"
 
   tp_assert_out_of_scope "$SQL"
 
