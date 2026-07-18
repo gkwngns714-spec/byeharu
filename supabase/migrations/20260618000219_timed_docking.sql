@@ -746,6 +746,7 @@ grant execute on function public.command_ship_group_go(uuid, uuid, double precis
 do $s4assert$
 declare
   v_dock   text;
+  v_code   text;
   v_mover  text;
   v_settle text;
   v_chk    text;
@@ -809,8 +810,15 @@ begin
   if position('make_interval(secs => v_secs)' in v_dock) = 0
      or position('where id = v_movement and status = ''moving''' in v_dock) = 0 then
     raise exception 'S4 self-assert FAIL: the 0149 transform idiom (flat-clock overwrite) lost its shape'; end if;
-  -- (the banned construct is CONCATENATED here so the file-wide static ban judges CODE, never this literal)
-  if position('update ' || 'main_ship_instances' in v_dock) > 0 or position('update public.' || 'main_ship_instances' in v_dock) > 0 then
+  -- Judged on comment-STRIPPED code: prosrc KEEPS comments, and the body's own §2 reader note
+  -- ("there is deliberately NO `update main_ship_instances` below") names the banned construct on
+  -- purpose — the exact sql_code() lesson from the .sh, re-learned at apply time: the first CI run
+  -- reddened THIS check on that comment. Strip first, then demand a real WRITE shape
+  -- (update / insert into … main_ship_instances) — never a bare table mention, so a legitimate
+  -- future READ (a select/join) would not false-positive either.
+  v_code := regexp_replace(v_dock, '--[^\n]*', '', 'g');
+  if v_code ~* 'update\s+(public\.)?main_ship_instances'
+     or v_code ~* 'insert\s+into\s+(public\.)?main_ship_instances' then
     raise exception 'S4 self-assert FAIL: the dock verb writes a ship — charter §2 says a ship does not move'; end if;
 
   -- (f) THE MOVER PARITY + THE HUNK: the S3 fold survives (movement_position_at composed, no
