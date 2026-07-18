@@ -78,6 +78,7 @@ const base = (over: Partial<FleetCommandModelInput> = {}): FleetCommandModelInpu
   target: null,
   movements: [],
   groups: [G1],
+  groupsLoaded: true, // the groups read succeeded (the normal world; the M2 review-fix spec flips it)
   unifiedEnabled: true,
   unifiedFleets: [],
   rollups: [],
@@ -308,6 +309,22 @@ test('M2 guidance: a point target guides the same way (any live destination coun
     }),
   )
   expect(m.sections).toEqual([{ kind: 'guidance' }])
+})
+
+test('M2 guidance REVIEW FIX: a FAILED groups read (groups=[] but groupsLoaded=false) shows NO "No fleet yet"', () => {
+  // fetchMyShipGroups collapses transport errors to [] — the same shape as "no fleets". A fleet-
+  // owning player on one flaky poll must NOT see the false no-fleet guidance: the claim requires an
+  // affirmative successful-and-empty read (groupsLoaded=true).
+  const m = buildFleetCommandModel(
+    base({
+      groups: [],
+      groupsLoaded: false,
+      ships: [{ main_ship_id: 's1', status: 'stationary' }],
+      target: { kind: 'port', locationId: 'port-1' },
+    }),
+  )
+  expect(m.mount).toBe(false)
+  expect(m.sections).toEqual([])
 })
 
 test('M2 guidance: fails closed without ships, or without a target (the panel stays out of the way)', () => {

@@ -14,7 +14,7 @@ import {
   type FleetPosition, type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
 import {
-  fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
+  fetchMyShipGroupsChecked, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
   type ShipGroupMapEntry, type UnifiedGroupFleetLite,
 } from '../command/teamApi'
 import { deriveDockedTeamRollups, excludeCombatSortieFleets, selectCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
@@ -71,6 +71,12 @@ export interface GalaxyMapData {
   // compile-time constant that mounts every other team surface (TEAM_COMMAND_ENABLED): while it is
   // false none of the team reads run and both stay empty — the map renders byte-identical to today.
   teamGroups: GroupRow[]
+  // MAP-INTEGRATION M2 review fix: whether the LAST groups read genuinely SUCCEEDED. The plain read
+  // normalizes any transport error to [] — indistinguishable from "no fleets" — so one flaky poll
+  // would flash the false "No fleet yet" guidance over a fleet-owning player's map. The guidance
+  // gates on THIS flag (an affirmative successful-and-empty read); on a failed read the hook also
+  // KEEPS the previous poll's groups (below), so fleets/stop rows never dissolve transiently either.
+  teamGroupsOk: boolean
   // S5 MAP-UX: the live membership map (main_ship_id → group/command flags) — already fetched for
   // the rollup fold every poll; exposed so the FleetCommandPanel's hunt arm is props-fed from the
   // shell instead of running its own reads (the deleted TeamMapSend fetched this itself).
@@ -128,6 +134,7 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainShipPresence: null,
   mainShipSpaceMovement: null,
   teamGroups: [],
+  teamGroupsOk: false, // fail closed: no "No fleet yet" until a groups read affirmatively succeeds
   teamGroupMap: {},
   dockedTeamRollups: [],
   fleetPositions: [],
@@ -150,6 +157,10 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     fleetControlEnabled: boolean
     timedDockingEnabled: boolean
   } | null>(null)
+  // M2 review fix: the last SUCCESSFULLY-read groups list. A failed poll re-serves this instead of
+  // [] so a transient ship_groups error never dissolves fleets (badges, rollups, stop rows) for a
+  // poll — the same keep-prior posture a player expects from any flaky read.
+  const lastGroupsRef = useRef<GroupRow[]>([])
 
   const load = useCallback(async () => {
     try {
@@ -211,7 +222,15 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
       // Poll-cost posture: the groups read goes FIRST; a team-less player (zero groups → zero
       // possible badges/rollups) skips the membership + present-fleet reads entirely, paying one
       // extra read per poll instead of three.
-      const teamGroups = TEAM_COMMAND_ENABLED ? await fetchMyShipGroups() : []
+      // M2 review fix: the CHECKED read distinguishes "genuinely zero groups" from "the read
+      // errored" (both used to arrive as []). Success → adopt + remember the answer; failure →
+      // KEEP the previous poll's groups (never transiently dissolve fleets/stop rows) and report
+      // teamGroupsOk=false so the no-fleet guidance can't false-fire.
+      const groupsRead = TEAM_COMMAND_ENABLED
+        ? await fetchMyShipGroupsChecked()
+        : { ok: true, groups: [] as GroupRow[] }
+      if (groupsRead.ok) lastGroupsRef.current = groupsRead.groups
+      const teamGroups = groupsRead.ok ? groupsRead.groups : lastGroupsRef.current
       const [groupMap, presentFleets] =
         teamGroups.length > 0
           ? await Promise.all([fetchMyShipGroupMap(), fetchMyPresentShipFleets()])
@@ -244,6 +263,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         mainShipPresence,
         mainShipSpaceMovement,
         teamGroups,
+        teamGroupsOk: groupsRead.ok,
         teamGroupMap: groupMap,
         dockedTeamRollups,
         fleetPositions,

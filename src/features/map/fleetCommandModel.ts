@@ -125,6 +125,11 @@ export interface FleetCommandModelInput {
   target: FleetCommandTarget
   movements: readonly FleetMovement[]
   groups: readonly GroupRow[]
+  /** M2 review fix: whether the groups read genuinely SUCCEEDED (the shell's teamGroupsOk). The
+   *  plain read collapses transport errors to [] — the same shape as "no fleets" — so the no-fleet
+   *  guidance MUST see an affirmative successful-and-empty read before claiming "No fleet yet";
+   *  a failed read (false) renders nothing rather than asserting a fleet-owner has no fleet. */
+  groupsLoaded: boolean
   /** The RUNTIME fleet_movement_unified_enabled flag (branches the stop verb + gates the go arms). */
   unifiedEnabled: boolean
   /** The group fleets, combat-sortie rows already excluded upstream (useGalaxyMapData's one filter). */
@@ -150,8 +155,10 @@ export function buildFleetCommandModel(input: FleetCommandModelInput): FleetComm
   // (the panel stays out of the way); but ships + a picked destination + no fleet now mounts ONE
   // guidance section pointing at Command, where TeamRosterPanel creates fleets. Deliberately NO
   // movement/composition controls here (charter §2a: composition is Command's) — guidance only.
+  // REVIEW FIX: `groupsLoaded` guards the claim — groups=[] from a FAILED read (the fetch collapses
+  // errors to []) must render nothing, never a false "No fleet yet" over a fleet-owning player.
   if (groups.length === 0) {
-    const guide = input.ships.length > 0 && target !== null
+    const guide = input.groupsLoaded && input.ships.length > 0 && target !== null
     return { mount: guide, sections: guide ? [{ kind: 'guidance' }] : [] }
   }
 

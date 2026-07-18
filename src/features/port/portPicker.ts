@@ -65,23 +65,31 @@ export function derivePortsWithShips(
   return [...byLoc.values()]
 }
 
-/** Every docked ship id across all ports, in port/ship order (the domain for validating a pick). */
+/** Every at-port ship id across all ports, in port/ship order (the domain for validating a pick). */
 export function dockedShipIds(ports: readonly PortWithShips[]): string[] {
   return ports.flatMap((p) => p.ships.map((s) => s.mainShipId))
 }
 
 /**
- * Resolve the effective acting ship: honor the caller's preferred ship IF it is actually docked
- * somewhere; otherwise default to the FIRST docked ship (one docked ship → it is auto-selected). Null
- * when nothing is docked (the empty state). The chosen id is what drives the dock read + action panels.
+ * Resolve the effective acting ship: honor the caller's preferred ship IF it is actually at a port
+ * (explicit picks + the shared selection are respected verbatim, berthed included); otherwise
+ * default to the first at-port ship. Null when nothing is at a port (the empty state). The chosen
+ * id is what drives the dock read + action panels.
+ *
+ * M3 review fix — the FALLBACK prefers a DOCKED ship over a berthed one: a berthed ship has no
+ * usable services until 4c, so defaulting to it (just because its projection row came first) would
+ * open the Port tab on the actionless "berthed, no services" state while a serviceable docked ship
+ * sits right there. Only when NO docked ship exists anywhere does the fallback take a berthed one
+ * (whose honest berthed state is then the correct answer).
  */
 export function resolveChosenShipId(
   ports: readonly PortWithShips[],
   preferredShipId: string | null,
 ): string | null {
-  const ids = dockedShipIds(ports)
-  if (preferredShipId && ids.includes(preferredShipId)) return preferredShipId
-  return ids[0] ?? null
+  const all = ports.flatMap((p) => p.ships)
+  if (preferredShipId && all.some((s) => s.mainShipId === preferredShipId)) return preferredShipId
+  const docked = all.find((s) => !s.berthed)
+  return docked?.mainShipId ?? all[0]?.mainShipId ?? null
 }
 
 /** The port entry that holds a given ship (used to highlight the chosen ship's port). Null if none. */

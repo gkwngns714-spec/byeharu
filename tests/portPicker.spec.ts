@@ -79,6 +79,44 @@ test('M3: a berthed row without a location_id is still skipped (fail-safe, same 
   expect(derivePortsWithShips([fp({ main_ship_id: 's1', place: 'berthed', location_id: null })], name)).toEqual([])
 })
 
+// ── M3 REVIEW FIX — the fallback prefers a serviceable DOCKED ship over a berthed one ────────────
+// A berthed ship has no usable dock services until 4c; defaulting to it (just because its projection
+// row came first) would open the Port tab on the actionless berthed state while a docked ship sits
+// right there. Explicit picks + the shared selection stay respected verbatim (berthed included).
+test('M3 review fix: the DEFAULT chosen ship skips an earlier BERTHED ship when a DOCKED one exists', () => {
+  const ports = derivePortsWithShips(
+    [
+      fp({ main_ship_id: 'b1', name: 'Moored', place: 'berthed', location_id: 'loc-haven' }), // earlier row
+      fp({ main_ship_id: 'd1', name: 'Kestrel', place: 'docked', location_id: 'loc-slag' }),
+    ],
+    name,
+  )
+  expect(resolveChosenShipId(ports, null)).toBe('d1') // docked preferred over the earlier berthed
+  expect(resolveChosenShipId(ports, 'ghost')).toBe('d1') // a stale preferred falls the same way
+})
+
+test('M3 review fix: an EXPLICIT pick of a berthed ship is still honored (only the fallback changed)', () => {
+  const ports = derivePortsWithShips(
+    [
+      fp({ main_ship_id: 'b1', name: 'Moored', place: 'berthed', location_id: 'loc-haven' }),
+      fp({ main_ship_id: 'd1', name: 'Kestrel', place: 'docked', location_id: 'loc-slag' }),
+    ],
+    name,
+  )
+  expect(resolveChosenShipId(ports, 'b1')).toBe('b1')
+})
+
+test('M3 review fix: with ONLY berthed ships, the first berthed ship is chosen (its honest state renders)', () => {
+  const ports = derivePortsWithShips(
+    [
+      fp({ main_ship_id: 'b1', name: 'Moored', place: 'berthed', location_id: 'loc-haven' }),
+      fp({ main_ship_id: 'b2', name: 'Skiff', place: 'berthed', location_id: 'loc-slag' }),
+    ],
+    name,
+  )
+  expect(resolveChosenShipId(ports, null)).toBe('b1')
+})
+
 test('derivePortsWithShips: only DOCKED ships count — transit / in_space / hidden are not port entries', () => {
   const ports = derivePortsWithShips(
     [
