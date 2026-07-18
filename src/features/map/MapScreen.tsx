@@ -10,9 +10,10 @@ import type { FleetCommandTarget } from './fleetCommandModel'
 import { teamDestinationKind } from '../command/teamDestination'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 import { MiningPanel } from '../mining/MiningPanel'
+import type { MiningField } from '../mining/miningTypes'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import type { WorldCoord } from './openSpaceTransform'
-import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
+import { Badge, Button, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
 // stays the hero; the location detail panel now speaks the shared design language (IDENTITY →
@@ -50,7 +51,8 @@ export function MapScreen() {
       loading, error, locations, meta, mainShip, movements,
       teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups,
       fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
-      launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, refresh,
+      launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
+      miningFields, miningExtractRadius, refresh,
     },
     selection,
   } = useShellState()
@@ -58,9 +60,14 @@ export function MapScreen() {
   // S5 MAP-UX: the fleet's tapped open-space destination (RAW world point — the wire value). The
   // ONLY point-target state; the port target derives from selectedId below (ONE selection source).
   const [pointTarget, setPointTarget] = useState<WorldCoord | null>(null)
+  // MINING-FIELD-MARKERS: a tapped field's OWN selection (a field is not a MapLocation, so it is not
+  // part of selectedId's id-space) — mutually exclusive with the location selection + the point
+  // target below, same "only one live selection" posture as the rest of this screen.
+  const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null)
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
+  const selectedField: MiningField | null = miningFields.find((f) => f.name === selectedFieldName) ?? null
 
   // Selecting a marker retires any live point target (never two live targets); a bare-space tap
   // already clears the selection on GalaxyMap's own svg click path — the two stay exclusive by
@@ -68,7 +75,14 @@ export function MapScreen() {
   // point target here is gated on an actual (non-null) marker selection.
   const handleSelect = (id: string | null) => {
     setSelectedId(id)
-    if (id !== null) setPointTarget(null)
+    if (id !== null) {
+      setPointTarget(null)
+      setSelectedFieldName(null)
+    }
+  }
+  const handleSelectMiningField = (name: string | null) => {
+    setSelectedFieldName(name)
+    if (name !== null) setSelectedId(null)
   }
 
   // The point target resolved ONCE (raw + canonical preview + bounds verdict); feeds both the
@@ -128,6 +142,10 @@ export function MapScreen() {
               onTargetPoint={setPointTarget}
               selectedId={selectedId}
               onSelect={handleSelect}
+              miningFields={miningFields}
+              miningExtractRadius={miningExtractRadius}
+              selectedMiningFieldName={selectedFieldName}
+              onSelectMiningField={handleSelectMiningField}
             />
             {/* top-left overlay rail: the server-lit feature panels ride ONE stacked, scrollable
                 slot so that WHEN a capability lights they read as coherent map overlays instead of
@@ -191,6 +209,58 @@ export function MapScreen() {
           </div>
         )}
       </div>
+
+      {/* MINING-FIELD-MARKERS — the field detail panel: name + a "send fleet here to mine" affordance
+          that REUSES the existing open-space go (sets the SAME pointTarget the GalaxyMap space-tap
+          path sets — no second command surface). Mutually exclusive with the location panel below
+          (handleSelect/handleSelectMiningField keep only one selection live). Gated on
+          TEAM_COMMAND_ENABLED like the FleetCommandPanel itself — setting a point target with no
+          command surface mounted to consume it would be a dead click. */}
+      {selectedField && (
+        <aside
+          data-testid="mining-field-detail-panel"
+          className="max-h-[45dvh] overflow-y-auto border-t border-edge bg-surface p-4 md:max-h-none md:w-80 md:border-l md:border-t-0"
+        >
+          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-edge md:hidden" aria-hidden="true" />
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-ink">{selectedField.name}</h2>
+              <p className="mt-0.5 text-xs text-ink-muted">Mining field</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Badge tone="warning">Resource</Badge>
+              <button
+                onClick={() => setSelectedFieldName(null)}
+                className="flex min-h-6 min-w-6 items-center justify-center text-ink-faint transition hover:text-ink"
+                aria-label="Close details"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <dl className="mt-4 space-y-1.5 text-sm">
+            <StatRow
+              label="Extraction range"
+              value={`${Math.round(miningExtractRadius)} units`}
+              hint="settle a fleet within range to extract"
+            />
+          </dl>
+          {TEAM_COMMAND_ENABLED && (
+            <Button
+              variant="warning"
+              size="sm"
+              data-testid="mining-field-send-fleet"
+              className="mt-4 w-full"
+              onClick={() => {
+                setPointTarget({ x: selectedField.space_x, y: selectedField.space_y })
+                setSelectedFieldName(null)
+              }}
+            >
+              Send fleet here to mine
+            </Button>
+          )}
+        </aside>
+      )}
 
       {/* Location detail panel — IDENTITY → DETAILS. READ-ONLY since S5 MAP-UX: every command verb
           lives in the bottom-center FleetCommandPanel (the port target derives from this selection).

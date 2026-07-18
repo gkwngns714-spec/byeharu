@@ -6,6 +6,9 @@ import { FleetMovementLine } from './FleetMovementLine'
 import { isMovementInFlight, interpolateMovementPoint } from './movementInterpolation'
 import { teamMarkersLayer } from './teamMarkers'
 import { territoryLayer } from './territoryLayer'
+import { miningFieldRangeLayer } from './miningFieldLayer'
+import { MiningFieldMarker } from './MiningFieldMarker'
+import type { MiningField } from '../mining/miningTypes'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
@@ -40,6 +43,10 @@ export function GalaxyMap({
   onTargetPoint,
   selectedId,
   onSelect,
+  miningFields,
+  miningExtractRadius,
+  selectedMiningFieldName,
+  onSelectMiningField,
 }: {
   locations: MapLocation[]
   movements: FleetMovement[]
@@ -68,6 +75,14 @@ export function GalaxyMap({
   onTargetPoint: (world: WorldCoord) => void
   selectedId: string | null
   onSelect: (id: string | null) => void
+  // MINING-FIELD-MARKERS: the active fields ([] while mining is disabled — 0226 fail-closed) + the
+  // world-unit extraction radius (game_config mining_extract_radius) for the range-ring layer.
+  // Selection is its OWN state (a field is not a MapLocation) — MapScreen owns it, mutually
+  // exclusive with `selectedId` the same way point-target vs. port-selection already are.
+  miningFields: MiningField[]
+  miningExtractRadius: number
+  selectedMiningFieldName: string | null
+  onSelectMiningField: (name: string | null) => void
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
@@ -240,7 +255,10 @@ export function GalaxyMap({
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerLeave}
         onPointerCancel={onPointerLeave}
-        onClick={() => onSelect(null)}
+        onClick={() => {
+          onSelect(null)
+          onSelectMiningField(null)
+        }}
       >
         {/* Static backdrop (NOT transformed): the map area always renders a deliberate background,
             even at the camera bounds. Visual safety layer only — not a map-layer framework.
@@ -311,6 +329,12 @@ export function GalaxyMap({
               nothing — the pre-0217 map is byte-identical. */}
           {territoryLayer({ locations, norm, k: view.k })}
 
+          {/* MINING-FIELD-MARKERS — the extraction-range ring per active field, same "world-true
+              region, under every marker" placement as the territory rings just above (pure,
+              hook-free `miningFieldRangeLayer`, unit-tested the SAME way). [] fields (mining
+              disabled) or a non-positive radius → renders nothing. */}
+          {miningFieldRangeLayer({ fields: miningFields, norm, k: view.k, radius: miningExtractRadius })}
+
           {/* Movement paths (under markers) — IN-FLIGHT ONLY.
               The rows arrive already filtered to status='moving', but that status is settled by the 30s
               `process_fleet_movements` cron, so a finished trip keeps its row for up to ~30s and used to
@@ -357,6 +381,27 @@ export function GalaxyMap({
                 // the selected marker is always labelled.
                 showLabel={loc.id === selectedId || labelVisible(loc, view.k)}
                 onSelect={onSelect}
+              />
+            )
+          })}
+
+          {/* MINING-FIELD-MARKERS — the interactive field glyphs (hexagon "gem", distinct from every
+              LocationMarker shape). Positioned through the SAME `norm` world→viewBox projection as
+              every other spatial object; a field is OPEN-SPACE world data (space_x/space_y), not a
+              MapLocation, so it is not part of the `locations` list above. Always labelled (a
+              handful of fields, world-wide — the whole point is to be found), unlike the zoom-tiered
+              LocationMarker declutter built for a much denser location set. */}
+          {miningFields.map((f) => {
+            const p = norm({ x: f.space_x, y: f.space_y })
+            return (
+              <MiningFieldMarker
+                key={f.name}
+                x={p.x}
+                y={p.y}
+                k={view.k}
+                field={f}
+                selected={f.name === selectedMiningFieldName}
+                onSelect={(field) => onSelectMiningField(field.name)}
               />
             )
           })}
@@ -443,6 +488,14 @@ export function GalaxyMap({
           </svg>
           Hostile
         </span>
+        {miningFields.length > 0 && (
+          <span className="flex items-center gap-1">
+            <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
+              <polygon points="9.7,5 6.7,10 3.3,10 0.3,5 3.3,0 6.7,0" fill="var(--color-warning)" />
+            </svg>
+            Mining field — settle within range to extract
+          </span>
+        )}
         <span className="basis-full">Tap a marker for details · drag to pan · scroll to zoom</span>
       </OverlayPanel>
     </div>

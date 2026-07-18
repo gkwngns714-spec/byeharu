@@ -3,6 +3,7 @@ import {
   miningExtractErrorMessage,
   type CommandMiningExtractResult,
   type GetMyMiningExtractionsResult,
+  type MiningField,
 } from './miningTypes'
 
 // MINING-P12 — typed client API for the dark mining surface: the extract command (0104) and the
@@ -29,4 +30,14 @@ export async function getMyMiningExtractions(): Promise<GetMyMiningExtractionsRe
   const { data, error } = await supabase.rpc('get_my_mining_extractions', {})
   if (error) return { ok: false, reason: 'unavailable' }
   return data as GetMyMiningExtractionsResult
+}
+
+/** MINING-FIELD-MARKERS — the active fields visible on the map (0226). A plain array, never an
+ *  ok/reason envelope: the server already fails closed to [] while mining_enabled is false, and a
+ *  transport/DB error collapses to the SAME empty result (the map's field layer just renders
+ *  nothing — never a thrown error into the render path, the mapApi.ts convention). */
+export async function getActiveMiningFields(): Promise<MiningField[]> {
+  const { data, error } = await supabase.rpc('get_active_mining_fields', {})
+  if (error) return []
+  return (data as MiningField[]) ?? []
 }

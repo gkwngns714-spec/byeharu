@@ -7,7 +7,10 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import {
   fetchMainshipSendEnabled, fetchFleetMovementUnifiedEnabled,
   fetchLaunchFromDockEnabled, fetchFleetControlEnabled, fetchTimedDockingEnabled,
+  fetchGameConfig,
 } from '../../lib/catalog'
+import { getActiveMiningFields } from '../mining/miningApi'
+import type { MiningField } from '../mining/miningTypes'
 import {
   fetchActiveMainShipFleet, fetchActiveMainShipPresence,
   fetchMyFleetPositions, resolveOwnedShip,
@@ -103,8 +106,20 @@ export interface GalaxyMapData {
   // threaded the same way. Lit, the FleetCommandPanel's dock row submits commandShipGroupDock
   // (the 45s leg); dark, it keeps submitting the instant commandShipGroupGo, byte-identical.
   timedDockingEnabled: boolean
+  // MINING-FIELD-MARKERS: the active fields visible on the map (get_active_mining_fields, 0226 —
+  // [] while mining_enabled is false, fail-closed) + the extraction radius (mining_extract_radius,
+  // game_config — already public-read, 0003; read via the SAME fetchGameConfig() every other
+  // numeric tunable uses, no new config surface). Fields are migration-seeded static world data
+  // (is_active can change, but rarely — an admin action, not a runtime gameplay event), so both are
+  // fetched ONCE per session alongside `locations`, not on the movement/ship poll.
+  miningFields: MiningField[]
+  miningExtractRadius: number
   refresh: () => Promise<void>
 }
+
+/** Mirrors the server's own coalesce(cfg_num('mining_extract_radius'), 750) fallback (0104) — used
+ *  only if the game_config row is somehow missing/unreadable, so the range ring still renders. */
+const DEFAULT_MINING_EXTRACT_RADIUS = 750
 
 async function fetchMainShip(mainShipId?: string | null): Promise<MainShipLite | null> {
   // Owner-read RLS returns only the caller's ship(s). Plural-safe: read ALL and resolve deterministically
@@ -140,6 +155,8 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   launchFromDockEnabled: false,
   fleetControlEnabled: false,
   timedDockingEnabled: false,
+  miningFields: [],
+  miningExtractRadius: DEFAULT_MINING_EXTRACT_RADIUS,
 }
 
 export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = null): GalaxyMapData {
@@ -152,6 +169,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     launchFromDockEnabled: boolean
     fleetControlEnabled: boolean
     timedDockingEnabled: boolean
+    miningFields: MiningField[]
+    miningExtractRadius: number
   } | null>(null)
   // M2 review fix: the last SUCCESSFULLY-read groups list. A failed poll re-serves this instead of
   // [] so a transient ship_groups error never dissolves fleets (badges, rollups, stop rows) for a
@@ -163,10 +182,14 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
       if (!staticRef.current) {
         // S5 MAP-UX: launch-from-dock + fleet-control ride the SAME once-per-session static batch as
         // the other runtime flags (they were per-mount reads in the deleted TeamMapSend).
-        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled] =
+        // MINING-FIELD-MARKERS: the active fields + the extract radius join the SAME batch — both
+        // are static reference reads (fields are migration-seeded; the radius is a game_config
+        // tunable), not per-poll dynamic state.
+        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled, launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, miningFields, gameConfig] =
           await Promise.all([
             fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetMovementUnifiedEnabled(),
             fetchLaunchFromDockEnabled(), fetchFleetControlEnabled(), fetchTimedDockingEnabled(),
+            getActiveMiningFields(), fetchGameConfig(),
           ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -178,9 +201,11 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
             }
           }
         }
+        const miningExtractRadius = gameConfig.mining_extract_radius ?? DEFAULT_MINING_EXTRACT_RADIUS
         staticRef.current = {
           locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled,
           launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled,
+          miningFields, miningExtractRadius,
         }
       }
 
@@ -264,6 +289,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         launchFromDockEnabled: staticRef.current.launchFromDockEnabled,
         fleetControlEnabled: staticRef.current.fleetControlEnabled,
         timedDockingEnabled: staticRef.current.timedDockingEnabled,
+        miningFields: staticRef.current.miningFields,
+        miningExtractRadius: staticRef.current.miningExtractRadius,
       })
     } catch (e) {
       setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }))
