@@ -3278,11 +3278,13 @@ begin
   raise notice 'BERTH_BACKFILL: world-wide after every mutation — ungrouped ⇒ berthed at a real port; grouped ⇒ berthless (the invariant the migration-time backfill establishes)';
 end $$;
 
--- ════════ BLOCK TERRITORY_PASS_SEEDED (0217): the CASE seed landed on the decided radius map ══════
--- trade_outpost → 25, pirate_hunt/pirate_den → 35, safe_zone/rally_point → 15, every other type
--- NULL — asserted on the WHOLE world, plus named probes (slag, an ACTIVE hunt site) so a red is
--- actionable. VACUITY: each probed class must exist or the sweep greens while proving nothing.
--- FAIL MODE: drop the migration's CASE seed → slag reads NULL → the 25-probe raises.
+-- ════════ BLOCK TERRITORY_PASS_SEEDED (0217+0220): the RETUNED radius map landed ══════════════════
+-- 0220 is the seed's TRUE HEAD (0217's 25/35/15 mutually engulfed the real map — min inter-location
+-- distance is 29.15): trade_outpost → 10, pirate_hunt/pirate_den → 12, safe_zone/rally_point → 8,
+-- every other type NULL — asserted on the WHOLE world, plus named probes (slag, an ACTIVE hunt
+-- site) so a red is actionable. VACUITY: each probed class must exist or the sweep greens while
+-- proving nothing. FAIL MODE: drop 0220's retune UPDATE → slag reads 0217's 25 → the 10-probe
+-- raises.
 do $$
 declare n int;
   slag uuid := (select v from fg where k='slag');
@@ -3295,28 +3297,59 @@ begin
   select count(*) into n from public.locations where location_type = 'safe_zone';
   if n = 0 then raise exception 'TERRITORY_SEEDED FAIL: no safe_zone exists — the safe probe would be vacuous'; end if;
 
-  -- named probes: the decided values, on real rows.
-  select count(*) into n from public.locations where id = slag and territory_radius = 25;
-  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not 25'; end if;
+  -- named probes: the retuned values, on real rows.
+  select count(*) into n from public.locations where id = slag and territory_radius = 10;
+  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not the retuned 10'; end if;
   select count(*) into n from public.locations
-   where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 35;
-  if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=35', n; end if;
+   where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 12;
+  if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=12', n; end if;
 
-  -- the world-wide sweep: every location on the map obeys the CASE map (25/35/15/NULL).
+  -- the world-wide sweep: every location on the map obeys the retuned CASE map (10/12/8/NULL).
   select count(*) into n from public.locations
-   where (location_type = 'trade_outpost' and territory_radius is distinct from 25)
-      or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 35)
-      or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 15)
+   where (location_type = 'trade_outpost' and territory_radius is distinct from 10)
+      or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 12)
+      or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 8)
       or (location_type in ('mining_site', 'derelict_station', 'event_site') and territory_radius is not null);
-  if n <> 0 then raise exception 'TERRITORY_PASS_SEEDED FAIL: % location(s) off the decided radius map', n; end if;
+  if n <> 0 then raise exception 'TERRITORY_PASS_SEEDED FAIL: % location(s) off the retuned radius map', n; end if;
 
-  raise notice 'TERRITORY_PASS_SEEDED: slag=25, every ACTIVE hunt site=35, world-wide sweep clean (trade 25 / hostile 35 / safe+rally 15 / else NULL)';
+  raise notice 'TERRITORY_PASS_SEEDED: slag=10, every ACTIVE hunt site=12, world-wide sweep clean (trade 10 / hostile 12 / safe+rally 8 / else NULL — the 0220 retune)';
+end $$;
+
+-- ════════ BLOCK TERRITORY_PASS_NOOVERLAP (0220): territories are pairwise DISJOINT ════════════════
+-- The audit's actual bug-class assert, GENERIC so it survives future retunes and world edits:
+-- containment is INCLUSIVE on both client and server, so two rings share a point iff
+-- r_i + r_j >= d — STRICT inequality is required for every territory-bearing pair, EVERY status
+-- (hidden sites go active later; their rings must already fit). Composes public.osn_distance
+-- (0099) — never a second distance formula. Also pins the S4-review hazard explicitly: no ring
+-- reaches another territory-bearing location's CENTER (a fleet parked AT a dockable port must
+-- never resolve to a different territory). VACUITY: at least two territory-bearing rows must
+-- exist. Runs BEFORE MAPREAD's fixture surgery — and is fixture-immune anyway (both sweeps filter
+-- on territory_radius not null; the fixture is a NULL-territory mining_site).
+do $$
+declare n int;
+begin
+  select count(*) into n from public.locations where territory_radius is not null;
+  if n < 2 then raise exception 'TERRITORY_NOOVERLAP FAIL: fewer than 2 territory-bearing locations — the pairwise sweep would be vacuous'; end if;
+  select count(*) into n
+    from public.locations a
+    join public.locations b on a.id < b.id
+   where a.territory_radius is not null and b.territory_radius is not null
+     and public.osn_distance(a.x, a.y, b.x, b.y) <= (a.territory_radius + b.territory_radius);
+  if n <> 0 then raise exception 'TERRITORY_NOOVERLAP FAIL: % overlapping territory pair(s) — two rings contain the same point', n; end if;
+  select count(*) into n
+    from public.locations a
+    join public.locations b on a.id <> b.id
+   where a.territory_radius is not null and b.territory_radius is not null
+     and public.osn_distance(a.x, a.y, b.x, b.y) <= a.territory_radius;
+  if n <> 0 then raise exception 'TERRITORY_NOOVERLAP FAIL: % ring(s) reach another location''s center — the dock guard could resolve the wrong port', n; end if;
+  raise notice 'TERRITORY_PASS_NOOVERLAP: every territory pair strictly disjoint (r_i + r_j < d); no ring reaches another territory-bearing location''s center';
 end $$;
 
 -- ════════ BLOCK TERRITORY_PASS_MAPREAD (0217): get_world_map carries territory_radius, ADDITIVELY ═
 -- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on status='active';
 -- the 0175 hidden-port pin ran BEFORE the 0217 re-create on this chain, so it cannot vouch for the
--- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 25.
+-- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 10 (the
+-- 0220 retune — the map read must serve the RETUNED value, not 0217's 25).
 -- (3) NULL-KEY — a NULL-territory ACTIVE location still returns the KEY (json null), never a
 -- conditionally-omitted field. SURGERY: the live seed has no NULL-territory ACTIVE location
 -- (mining/derelict/event sites are unseeded), so pin 3 inserts ONE active mining_site fixture —
@@ -3335,7 +3368,7 @@ begin
     raise exception 'TERRITORY_MAPREAD FAIL: the deployed get_world_map lost a status=''active'' filter — hidden ports would leak';
   end if;
 
-  -- (2) value: slag's location JSON carries the seeded 25. Vacuity: slag must be IN the read at all.
+  -- (2) value: slag's location JSON carries the retuned 10. Vacuity: slag must be IN the read at all.
   v_map := public.get_world_map();
   select count(*) into n
     from jsonb_array_elements(v_map->'sectors') as se(sec),
@@ -3347,8 +3380,8 @@ begin
     from jsonb_array_elements(v_map->'sectors') as se(sec),
          jsonb_array_elements(sec->'zones') as z(zn),
          jsonb_array_elements(zn->'locations') as l(lc)
-   where lc->>'id' = slag::text and (lc ? 'territory_radius') and (lc->>'territory_radius')::numeric = 25;
-  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag''s map JSON does not carry territory_radius=25'; end if;
+   where lc->>'id' = slag::text and (lc ? 'territory_radius') and (lc->>'territory_radius')::numeric = 10;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag''s map JSON does not carry the retuned territory_radius=10'; end if;
 
   -- (3) NULL-KEY: an active NULL-territory location returns the key as json null (additive, never
   -- conditional). SURGERY: the fixture insert (see header) — reverted by the txn ROLLBACK.
@@ -3376,7 +3409,7 @@ begin
    where not (lc ? 'territory_radius');
   if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: % map location(s) MISSING the territory_radius key — additive means every element', n; end if;
 
-  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries territory_radius=25; a NULL-territory location returns the key as json null; every map element carries the key';
+  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries the retuned territory_radius=10; a NULL-territory location returns the key as json null; every map element carries the key';
 end $$;
 
 -- ════════ BLOCK S3 POSLEAF (0218): the position leaves — MIDPOINT / AGREEMENT / PARKED / DOCKED ═══
@@ -3493,10 +3526,11 @@ end $$;
 
 -- ════════ BLOCK S3 TERRITORY (0218): fleet_in_territory — IN inside slag's ring, OUT in open space ═
 -- Composes fleet_current_position + osn_distance + S2's territory_radius (slag = trade_outpost =
--- radius 25, TERRITORY_PASS_SEEDED above). The fleet is parked by a REAL go + space settle at
--- (slag.x+10, slag.y) → d=10 ≤ 25 → containment answers slag; then at (slag.x+100, slag.y) →
--- d=100 from slag and outside EVERY seeded territory (nearest hostile ring is >100 away) → NULL.
--- VACUITY: refuses (never greens) if slag's radius is unseeded — an S3 run without S2 must be red.
+-- radius 10 since the 0220 retune, TERRITORY_PASS_SEEDED above). The fleet is parked by a REAL go
+-- + space settle at (slag.x+5, slag.y) → d=5 ≤ 10 → containment answers slag; then at
+-- (slag.x+100, slag.y) → d=100 from slag and outside EVERY seeded territory (the retuned rings are
+-- all ≤ 12) → NULL. VACUITY: refuses (never greens) if slag's radius is not the retuned value — an
+-- S3 run without S2 (0217) + the retune (0220) on the chain must be red.
 do $$
 declare r jsonb; n int; v_flag jsonb;
   uS uuid := (select v from fg where k='uS'); gS uuid := (select v from fg where k='gS');
@@ -3507,13 +3541,13 @@ begin
   select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
-  -- vacuity: S3 composes S2's column — refuse loudly if the radius is not seeded.
-  if (select territory_radius from public.locations where id = slag) is distinct from 25 then
-    raise exception 'S3 TERRITORY FAIL: slag''s territory_radius is not the seeded 25 — S2 (0217) is not on this chain; refusing a vacuous green'; end if;
+  -- vacuity: S3 composes S2's column — refuse loudly if the radius is not the retuned seed.
+  if (select territory_radius from public.locations where id = slag) is distinct from 10 then
+    raise exception 'S3 TERRITORY FAIL: slag''s territory_radius is not the retuned 10 — S2 (0217)/retune (0220) is not on this chain; refusing a vacuous green'; end if;
   select x, y into v_lx, v_ly from public.locations where id = slag;
 
-  -- ── IN: fly to (slag.x+10, slag.y) — INSIDE the radius-25 ring — and settle in open space. ──
-  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gS, v_lx + 10, v_ly));
+  -- ── IN: fly to (slag.x+5, slag.y) — INSIDE the radius-10 ring — and settle in open space. ──
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gS, v_lx + 5, v_ly));
   if (r->>'ok')::boolean is not true then raise exception 'S3 TERRITORY FAIL: go(in): %', r; end if;
   v_mv := (r->>'movement_id')::uuid;
   update public.fleet_movements
@@ -3522,12 +3556,12 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'outcome') is distinct from 'in_space' then raise exception 'S3 TERRITORY FAIL: settle(in): %', r; end if;
   select count(*) into n from public.fleets
-   where id = v_fleet and location_mode = 'space' and space_x = v_lx + 10 and space_y = v_ly;
+   where id = v_fleet and location_mode = 'space' and space_x = v_lx + 5 and space_y = v_ly;
   if n <> 1 then raise exception 'S3 TERRITORY FAIL: the fleet is not parked in space — the territory probe would be vacuous (in)'; end if;
   v_terr := public.fleet_in_territory(v_fleet);
   if v_terr is distinct from slag then
-    raise exception 'S3 TERRITORY FAIL: parked at d=10 inside slag''s 25-ring, fleet_in_territory answered % (expected slag)', v_terr; end if;
-  raise notice 'S3_PASS_TERRITORY_IN: parked 10 units from slag (radius 25) → fleet_in_territory = slag';
+    raise exception 'S3 TERRITORY FAIL: parked at d=5 inside slag''s 10-ring, fleet_in_territory answered % (expected slag)', v_terr; end if;
+  raise notice 'S3_PASS_TERRITORY_IN: parked 5 units from slag (radius 10) → fleet_in_territory = slag';
 
   -- ── OUT: fly to (slag.x+100, slag.y) — outside EVERY seeded territory — and settle there. ──
   r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gS, v_lx + 100, v_ly));

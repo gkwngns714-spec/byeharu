@@ -45,6 +45,11 @@ MIGRATION_S1="$REPO_ROOT/supabase/migrations/20260618000216_berth_model.sql"
 # parity diff below aims at 0002 because that IS the head being copied).
 MIGRATION_S2="$REPO_ROOT/supabase/migrations/20260618000217_territory_radius.sql"
 MIGRATION_0002="$REPO_ROOT/supabase/migrations/20260616000002_world_map.sql"
+# MIGRATION_S2R is 0220 — the TERRITORY RETUNE (cross-slice audit fix): 0217's 25/35/15 mutually
+# engulfed the real map (min inter-location distance 29.15) — 0220 is the seed-VALUE true head
+# now (10/12/8/NULL, all overlap-free); the 0217 greps below keep pinning the frozen 0217 file as
+# shipped history, the RUNTIME value pins aim at the deployed (retuned) state.
+MIGRATION_S2R="$REPO_ROOT/supabase/migrations/20260618000220_territory_radius_retune.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -53,7 +58,7 @@ MIGRATION_0002="$REPO_ROOT/supabase/migrations/20260616000002_world_map.sql"
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_MAPREAD"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_NOOVERLAP TERRITORY_PASS_MAPREAD"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -894,8 +899,9 @@ if [ "$MODE" = "selftest" ]; then
   # red, restore; the runtime reds are TRACED, CI-only — no local Docker):
   #   • drop the add-column          → the column grep reds; runtime: the seeding UPDATE (and the
   #                                    re-created read) error at deploy — nothing to trace.
-  #   • drop the CASE seed           → the seed greps red; runtime TERRITORY_PASS_SEEDED reds on
-  #                                    slag's NULL radius (and 0217's in-file assert raises first).
+  #   • drop the CASE seed           → the seed greps red; 0217's in-file assert raises at deploy.
+  #                                    (Runtime SEEDED now pins 0220's RETUNED values — the 0220
+  #                                    section below — since 0220 re-seeds over whatever 0217 left.)
   #   • drop a status='active' filter→ the filter grep + the parity diff red; 0217's in-file assert
   #                                    raises at deploy; runtime MAPREAD's structural re-pin reds
   #                                    (the 0175 pin ran against the PRE-0217 body — it cannot).
@@ -976,6 +982,69 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the NULL-key probe would be vacuous" "$SQL" \
     || fail "TERRITORY_MAPREAD does not guard that the NULL-territory fixture is IN the map read"
   rm -f "$MIGS2_TMP"
+
+  # ── S2-RETUNE (0220): the audit fix — overlap-free radii sized to the MEASURED world. ───────────
+  # 0217's 25/35/15 mutually engulfed the map (min inter-location distance 29.15, so 35-rings
+  # contained each other's CENTERS): wrong orbit badges, mush rings, and the S4-review LOW — the
+  # dock guard resolving a fleet parked AT a port to a different overlapping territory. 0220 is the
+  # seed-VALUE true head: 10/12/8/NULL, every value < nearest-neighbour/2 for every member of its
+  # type (tightest bound 14.58). MUTATIONS (each executed statically while building — strip the
+  # construct, watch the named check red, restore; runtime reds TRACED, CI-only):
+  #   • drop the retune CASE        → the value greps red; runtime TERRITORY_PASS_SEEDED reds on
+  #                                   slag carrying 0217's 25.
+  #   • widen a radius past a
+  #     neighbour (e.g. pirate 35)  → 0220's own deploy assert raises; runtime
+  #                                   TERRITORY_PASS_NOOVERLAP reds on the pair sweep.
+  #   • drop the self-assert sweep  → the osn_distance / pair-sweep greps red.
+  # Static checks READ THE mktemp FILE — never `printf | grep -q` (the S1 pipefail/EPIPE lesson).
+  [ -f "$MIGRATION_S2R" ] || fail "migration 0220 (territory retune) not found"
+  MIGS2R_TMP="$(mktemp)"
+  sql_code "$MIGRATION_S2R" > "$MIGS2R_TMP"
+  # the retuned CASE seed, per-type (the 0217 shape — one authority per concept, values superseded).
+  grep -q "set territory_radius = case location_type" "$MIGS2R_TMP" \
+    || fail "0220's retune is not a CASE on location_type"
+  grep -q "when 'trade_outpost' then 10" "$MIGS2R_TMP" || fail "0220's retune lost trade_outpost -> 10"
+  grep -q "when 'pirate_hunt' then 12"   "$MIGS2R_TMP" || fail "0220's retune lost pirate_hunt -> 12"
+  grep -q "when 'pirate_den' then 12"    "$MIGS2R_TMP" || fail "0220's retune lost pirate_den -> 12 (0 rows today; retuned for the day it gains one)"
+  grep -q "when 'safe_zone' then 8"      "$MIGS2R_TMP" || fail "0220's retune lost safe_zone -> 8"
+  grep -q "when 'rally_point' then 8"    "$MIGS2R_TMP" || fail "0220's retune lost rally_point -> 8"
+  # posture: ONE data UPDATE of locations and nothing else — no schema change, no function
+  # re-create, no drop, no flag, no ship write (additive data riding the existing read, dark-safe).
+  [ "$(grep -c "update public.locations" "$MIGS2R_TMP")" = "1" ] \
+    || fail "0220 must contain exactly ONE update of public.locations (the retune seed)"
+  [ "$(grep -c "create or replace function" "$MIGS2R_TMP")" = "0" ] \
+    || fail "0220 re-creates a function (the retune is data-only)"
+  [ "$(grep -c "alter table" "$MIGS2R_TMP")" = "0" ] \
+    || fail "0220 alters a table (the retune is data-only)"
+  grep -qE "drop (function|table|column|constraint)" "$MIGS2R_TMP" \
+    && fail "0220 drops an existing object (the retune is data-only)" || true
+  grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIGS2R_TMP" \
+    && fail "0220 UPDATEs main_ship_instances — territory is world data, never a ship write" || true
+  grep -qiE "(insert into|update)[[:space:]]+(public\.)?game_config" "$MIGS2R_TMP" \
+    && fail "0220 seeds or flips a flag (additive data needs no gate)" || true
+  # the deploy-time proof of the audit property: the pairwise disjointness sweep must compose the
+  # ONE distance authority (osn_distance, 0099 — never a second formula) and must cover EVERY
+  # status (hidden sites go active later).
+  grep -q "osn_distance" "$MIGS2R_TMP" \
+    || fail "0220's self-assert does not compose osn_distance (a second distance formula, or no overlap sweep)"
+  grep -q "overlapping territory pair" "$MIGS2R_TMP" \
+    || fail "0220's self-assert lost the pairwise-disjointness sweep"
+  grep -q "reach another location" "$MIGS2R_TMP" \
+    || fail "0220's self-assert lost the center-reach sweep (the S4-review wrong-port hazard)"
+  # the header must record the measured geometry the values derive from (prose — raw file): the
+  # minimum inter-location distance and the tightest nearest/2 bound.
+  grep -q "29.15" "$MIGRATION_S2R" \
+    || fail "0220's header does not record the measured minimum inter-location distance (29.15)"
+  grep -q "14.58" "$MIGRATION_S2R" \
+    || fail "0220's header does not record the tightest nearest-neighbour/2 bound (14.58)"
+  # the runtime NOOVERLAP block must be non-vacuous and generic (survives future retunes).
+  grep -q "the pairwise sweep would be vacuous" "$SQL" \
+    || fail "TERRITORY_NOOVERLAP does not guard that at least two territory-bearing locations exist"
+  grep -q "overlapping territory pair" "$SQL" \
+    || fail "TERRITORY_NOOVERLAP lost the generic pair sweep (r_i + r_j must stay strictly below d)"
+  grep -q "the dock guard could resolve the wrong port" "$SQL" \
+    || fail "TERRITORY_NOOVERLAP lost the center-reach sweep (the S4-review wrong-port hazard)"
+  rm -f "$MIGS2R_TMP"
 
   # ── S3 — POSITION + TERRITORY LEAVES (0218): the 3 leaves + the mover/brake PARITY fold. ────────
   # 0218 is the TRUE HEAD of BOTH the mover and the brake now (the brake checks above already aim
@@ -1076,8 +1145,8 @@ if [ "$MODE" = "selftest" ]; then
   # failed to reach the state its marker claims to pin).
   grep -q "the S3 leg is not status=''moving''" "$SQL" \
     || fail "S3 MIDPOINT does not guard that the seeded leg is really moving (t=0.5 asserted on nothing otherwise)"
-  grep -q "S2 (0217) is not on this chain" "$SQL" \
-    || fail "S3 TERRITORY does not refuse a NULL territory_radius on slag (an unmerged S2 would green vacuously)"
+  grep -q "S2 (0217)/retune (0220) is not on this chain" "$SQL" \
+    || fail "S3 TERRITORY does not refuse an un-retuned territory_radius on slag (a chain missing S2/0220 would green vacuously)"
   grep -q "not parked in space — the territory probe" "$SQL" \
     || fail "S3 TERRITORY does not guard that the fleet really settled in open space"
   grep -q "the docked-leaf pin would be vacuous" "$SQL" \
