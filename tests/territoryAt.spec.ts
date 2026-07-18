@@ -31,16 +31,27 @@ test('territoryAt: inside → the location; outside → null; boundary is INCLUS
   expect(territoryAt({ x: 25, y: 0 }, [t])).toBe(t) // dist 25 == 25 — exactly on the boundary
 })
 
-test('territoryAt: overlapping territories resolve to the SMALLEST containing radius', () => {
+test('territoryAt: overlapping territories resolve to the NEAREST CENTER', () => {
   const big = loc({ id: 'big', territory_radius: 35 })
-  const small = loc({ id: 'small', x: 5, y: 0, territory_radius: 15 })
-  expect(territoryAt({ x: 4, y: 0 }, [big, small])?.id).toBe('small')
-  expect(territoryAt({ x: 4, y: 0 }, [small, big])?.id).toBe('small') // order-independent
-  // outside the small ring but inside the big one → the big one
-  expect(territoryAt({ x: 30, y: 0 }, [big, small])?.id).toBe('big')
+  const small = loc({ id: 'small', x: 20, y: 0, territory_radius: 15 })
+  // (5,0) is inside BOTH (d(big)=5, d(small)=15 — on small's boundary): the NEAREST wins even
+  // though its radius is larger — the point the old smallest-radius rule got wrong (the S4-review
+  // LOW: a fleet parked AT a site must resolve to THAT site, never an overlapping neighbour).
+  expect(territoryAt({ x: 5, y: 0 }, [big, small])?.id).toBe('big')
+  expect(territoryAt({ x: 5, y: 0 }, [small, big])?.id).toBe('big') // order-independent
+  // (12,0) is inside both (d(big)=12, d(small)=8) → the small one is nearest
+  expect(territoryAt({ x: 12, y: 0 }, [big, small])?.id).toBe('small')
+  // (-30,0) is outside the small ring but inside the big one → the big one
+  expect(territoryAt({ x: -30, y: 0 }, [big, small])?.id).toBe('big')
 })
 
-test('territoryAt: equal radii tie-break deterministically to the lowest id', () => {
+test('territoryAt: equal distances tie-break to the smallest radius, then the lowest id', () => {
+  // equidistant (d=10 to both), different radii → the most specific (smallest radius) wins
+  const wide = loc({ id: 'wide', x: -10, y: 0, territory_radius: 30 })
+  const tight = loc({ id: 'tight', x: 10, y: 0, territory_radius: 12 })
+  expect(territoryAt({ x: 0, y: 0 }, [wide, tight])?.id).toBe('tight')
+  expect(territoryAt({ x: 0, y: 0 }, [tight, wide])?.id).toBe('tight')
+  // equidistant AND equal radii → deterministic lowest id, order-independent
   const a = loc({ id: 'aa', territory_radius: 25 })
   const b = loc({ id: 'bb', x: 1, y: 0, territory_radius: 25 })
   expect(territoryAt({ x: 0.5, y: 0 }, [b, a])?.id).toBe('aa')
