@@ -133,11 +133,16 @@ end $$;
 -- manifest, so it must not share fixtures for the same reason as uE..uH),
 -- uJ/uK (the S1-BERTH 0216 worlds: uJ runs the whole berth chain — commission → berthed map read →
 -- first-assign mint → unassign → delete; uK exists ONLY to exercise the SECOND ship creator,
--- ensure_main_ship_for_player, whose create branch needs a zero-ship player).
+-- ensure_main_ship_for_player, whose create branch needs a zero-ship player),
+-- uS (the S3-POSLEAF 0218 world — position/territory leaves: its own goes, brakes, redirects and
+-- space settles, isolated so no earlier world's manifests or fleets can poison the leaf pins),
+-- uT (the S4 timed-docking 0219 world — dark instant-dock parity, translate-park, the dock leg,
+-- its settle, and the parked/territory guards), uU (the S4 sortie-guard world — it launches a
+-- REAL hunt driven to mid-combat, so it must not share fixtures, the uE..uI reasoning).
 do $$
 declare u uuid; k text;
 begin
-  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK'] loop
+  foreach k in array array['uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU'] loop
     insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
       values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
               'fg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -185,7 +190,7 @@ update public.game_config set value='true'::jsonb where key='mainship_send_enabl
 -- player_wallet is lazy, so on_conflict covers a row a signup/ensure path may already have created.
 -- (The trade-market-1 / team-command proofs use this same direct-owner insert.)
 insert into public.player_wallet (player_id, balance)
-select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK')
+select v, 1000000 from fg where k in ('uA','uB','uC','uD','uE','uF','uG','uH','uI','uJ','uK','uS','uT','uU')
 on conflict (player_id) do update set balance = excluded.balance;
 
 -- ════════ PROVISION via the REAL commission RPCs ════════
@@ -3273,11 +3278,13 @@ begin
   raise notice 'BERTH_BACKFILL: world-wide after every mutation — ungrouped ⇒ berthed at a real port; grouped ⇒ berthless (the invariant the migration-time backfill establishes)';
 end $$;
 
--- ════════ BLOCK TERRITORY_PASS_SEEDED (0217): the CASE seed landed on the decided radius map ══════
--- trade_outpost → 25, pirate_hunt/pirate_den → 35, safe_zone/rally_point → 15, every other type
--- NULL — asserted on the WHOLE world, plus named probes (slag, an ACTIVE hunt site) so a red is
--- actionable. VACUITY: each probed class must exist or the sweep greens while proving nothing.
--- FAIL MODE: drop the migration's CASE seed → slag reads NULL → the 25-probe raises.
+-- ════════ BLOCK TERRITORY_PASS_SEEDED (0217+0220): the RETUNED radius map landed ══════════════════
+-- 0220 is the seed's TRUE HEAD (0217's 25/35/15 mutually engulfed the real map — min inter-location
+-- distance is 29.15): trade_outpost → 10, pirate_hunt/pirate_den → 12, safe_zone/rally_point → 8,
+-- every other type NULL — asserted on the WHOLE world, plus named probes (slag, an ACTIVE hunt
+-- site) so a red is actionable. VACUITY: each probed class must exist or the sweep greens while
+-- proving nothing. FAIL MODE: drop 0220's retune UPDATE → slag reads 0217's 25 → the 10-probe
+-- raises.
 do $$
 declare n int;
   slag uuid := (select v from fg where k='slag');
@@ -3290,28 +3297,59 @@ begin
   select count(*) into n from public.locations where location_type = 'safe_zone';
   if n = 0 then raise exception 'TERRITORY_SEEDED FAIL: no safe_zone exists — the safe probe would be vacuous'; end if;
 
-  -- named probes: the decided values, on real rows.
-  select count(*) into n from public.locations where id = slag and territory_radius = 25;
-  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not 25'; end if;
+  -- named probes: the retuned values, on real rows.
+  select count(*) into n from public.locations where id = slag and territory_radius = 10;
+  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not the retuned 10'; end if;
   select count(*) into n from public.locations
-   where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 35;
-  if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=35', n; end if;
+   where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 12;
+  if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=12', n; end if;
 
-  -- the world-wide sweep: every location on the map obeys the CASE map (25/35/15/NULL).
+  -- the world-wide sweep: every location on the map obeys the retuned CASE map (10/12/8/NULL).
   select count(*) into n from public.locations
-   where (location_type = 'trade_outpost' and territory_radius is distinct from 25)
-      or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 35)
-      or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 15)
+   where (location_type = 'trade_outpost' and territory_radius is distinct from 10)
+      or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 12)
+      or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 8)
       or (location_type in ('mining_site', 'derelict_station', 'event_site') and territory_radius is not null);
-  if n <> 0 then raise exception 'TERRITORY_PASS_SEEDED FAIL: % location(s) off the decided radius map', n; end if;
+  if n <> 0 then raise exception 'TERRITORY_PASS_SEEDED FAIL: % location(s) off the retuned radius map', n; end if;
 
-  raise notice 'TERRITORY_PASS_SEEDED: slag=25, every ACTIVE hunt site=35, world-wide sweep clean (trade 25 / hostile 35 / safe+rally 15 / else NULL)';
+  raise notice 'TERRITORY_PASS_SEEDED: slag=10, every ACTIVE hunt site=12, world-wide sweep clean (trade 10 / hostile 12 / safe+rally 8 / else NULL — the 0220 retune)';
+end $$;
+
+-- ════════ BLOCK TERRITORY_PASS_NOOVERLAP (0220): territories are pairwise DISJOINT ════════════════
+-- The audit's actual bug-class assert, GENERIC so it survives future retunes and world edits:
+-- containment is INCLUSIVE on both client and server, so two rings share a point iff
+-- r_i + r_j >= d — STRICT inequality is required for every territory-bearing pair, EVERY status
+-- (hidden sites go active later; their rings must already fit). Composes public.osn_distance
+-- (0099) — never a second distance formula. Also pins the S4-review hazard explicitly: no ring
+-- reaches another territory-bearing location's CENTER (a fleet parked AT a dockable port must
+-- never resolve to a different territory). VACUITY: at least two territory-bearing rows must
+-- exist. Runs BEFORE MAPREAD's fixture surgery — and is fixture-immune anyway (both sweeps filter
+-- on territory_radius not null; the fixture is a NULL-territory mining_site).
+do $$
+declare n int;
+begin
+  select count(*) into n from public.locations where territory_radius is not null;
+  if n < 2 then raise exception 'TERRITORY_NOOVERLAP FAIL: fewer than 2 territory-bearing locations — the pairwise sweep would be vacuous'; end if;
+  select count(*) into n
+    from public.locations a
+    join public.locations b on a.id < b.id
+   where a.territory_radius is not null and b.territory_radius is not null
+     and public.osn_distance(a.x, a.y, b.x, b.y) <= (a.territory_radius + b.territory_radius);
+  if n <> 0 then raise exception 'TERRITORY_NOOVERLAP FAIL: % overlapping territory pair(s) — two rings contain the same point', n; end if;
+  select count(*) into n
+    from public.locations a
+    join public.locations b on a.id <> b.id
+   where a.territory_radius is not null and b.territory_radius is not null
+     and public.osn_distance(a.x, a.y, b.x, b.y) <= a.territory_radius;
+  if n <> 0 then raise exception 'TERRITORY_NOOVERLAP FAIL: % ring(s) reach another location''s center — the dock guard could resolve the wrong port', n; end if;
+  raise notice 'TERRITORY_PASS_NOOVERLAP: every territory pair strictly disjoint (r_i + r_j < d); no ring reaches another territory-bearing location''s center';
 end $$;
 
 -- ════════ BLOCK TERRITORY_PASS_MAPREAD (0217): get_world_map carries territory_radius, ADDITIVELY ═
 -- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on status='active';
 -- the 0175 hidden-port pin ran BEFORE the 0217 re-create on this chain, so it cannot vouch for the
--- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 25.
+-- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 10 (the
+-- 0220 retune — the map read must serve the RETUNED value, not 0217's 25).
 -- (3) NULL-KEY — a NULL-territory ACTIVE location still returns the KEY (json null), never a
 -- conditionally-omitted field. SURGERY: the live seed has no NULL-territory ACTIVE location
 -- (mining/derelict/event sites are unseeded), so pin 3 inserts ONE active mining_site fixture —
@@ -3330,7 +3368,7 @@ begin
     raise exception 'TERRITORY_MAPREAD FAIL: the deployed get_world_map lost a status=''active'' filter — hidden ports would leak';
   end if;
 
-  -- (2) value: slag's location JSON carries the seeded 25. Vacuity: slag must be IN the read at all.
+  -- (2) value: slag's location JSON carries the retuned 10. Vacuity: slag must be IN the read at all.
   v_map := public.get_world_map();
   select count(*) into n
     from jsonb_array_elements(v_map->'sectors') as se(sec),
@@ -3342,8 +3380,8 @@ begin
     from jsonb_array_elements(v_map->'sectors') as se(sec),
          jsonb_array_elements(sec->'zones') as z(zn),
          jsonb_array_elements(zn->'locations') as l(lc)
-   where lc->>'id' = slag::text and (lc ? 'territory_radius') and (lc->>'territory_radius')::numeric = 25;
-  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag''s map JSON does not carry territory_radius=25'; end if;
+   where lc->>'id' = slag::text and (lc ? 'territory_radius') and (lc->>'territory_radius')::numeric = 10;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag''s map JSON does not carry the retuned territory_radius=10'; end if;
 
   -- (3) NULL-KEY: an active NULL-territory location returns the key as json null (additive, never
   -- conditional). SURGERY: the fixture insert (see header) — reverted by the txn ROLLBACK.
@@ -3371,7 +3409,479 @@ begin
    where not (lc ? 'territory_radius');
   if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: % map location(s) MISSING the territory_radius key — additive means every element', n; end if;
 
-  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries territory_radius=25; a NULL-territory location returns the key as json null; every map element carries the key';
+  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries the retuned territory_radius=10; a NULL-territory location returns the key as json null; every map element carries the key';
+end $$;
+
+-- ════════ BLOCK S3 POSLEAF (0218): the position leaves — MIDPOINT / AGREEMENT / PARKED / DOCKED ═══
+-- movement_position_at is the ONE interpolation authority and fleet_current_position the ONE state
+-- dispatch; the mover's redirect and the brake now COMPOSE the leaf instead of carrying inline
+-- copies. The fold is output-identical, so these pins prove the leaf agrees with (a) the exact
+-- (origin+target)/2 midpoint of a backdated t=0.5 leg, (b) the brake's parked point, (c) the
+-- redirect's new-leg origin, (d) a parked fleet's own space_x/space_y, and (e) a docked fleet's
+-- port coordinate — every equality EXACT via `is distinct from`, never an epsilon.
+-- NOTE: an output-identical re-inline of the lerp would still green every pin here — that mutation
+-- is caught STATICALLY (the selftest's body scan + 0218's deploy self-assert), not at runtime.
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uS uuid := (select v from fg where k='uS');
+  slag uuid := (select v from fg where k='slag'); drift uuid := (select v from fg where k='drift');
+  s1 uuid; gS uuid; v_fleet uuid; v_mv uuid; v_mv2 uuid;
+  v_mid_x double precision; v_mid_y double precision;
+  v_lx double precision; v_ly double precision;
+  v_px double precision; v_py double precision;
+  v_sx double precision; v_sy double precision;
+  v_m record;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- ── provision the S3 world (real RPCs; lit — the first assign MINTS the group fleet at Haven,
+  --    the 0216 behavior ASSIGN_CLEARS_BERTH pins; the mint is this world's known starting place).
+  r := pg_temp.call_as(uS, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'S3 SETUP FAIL: commission: %', r; end if;
+  select main_ship_id into s1 from public.main_ship_instances where player_id = uS;
+  r := pg_temp.call_as(uS, 'public.upsert_ship_group(1, ''Leafmen'')');
+  if (r->>'ok')::boolean is not true then raise exception 'S3 SETUP FAIL: group: %', r; end if;
+  gS := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uS, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s1, gS));
+  if (r->>'ok')::boolean is not true then raise exception 'S3 SETUP FAIL: assign: %', r; end if;
+
+  -- ── MIDPOINT: a REAL go, then SURGERY (no ship row touched): now() is txn-constant, so backdate
+  --    the leg to (now()-30s, now()+30s) → t is EXACTLY 0.5 → the leaf must answer the EXACT
+  --    (origin+target)/2 midpoint, from the scalars AND from the fleet id alone.
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gS, 80, -10));
+  if (r->>'ok')::boolean is not true then raise exception 'S3 MIDPOINT FAIL: go: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '30 seconds', arrive_at = now() + interval '30 seconds'
+   where id = v_mv;
+  select * into v_m from public.fleet_movements where id = v_mv;
+  -- vacuity: the leg must really be in flight, or every equality below pins nothing.
+  if v_m.status is distinct from 'moving' then
+    raise exception 'S3 MIDPOINT FAIL: the S3 leg is not status=''moving'' — the midpoint pin would be vacuous'; end if;
+  v_mid_x := (v_m.origin_x + v_m.target_x) / 2; v_mid_y := (v_m.origin_y + v_m.target_y) / 2;
+  -- (a) the PURE leaf, fed the leg's scalars directly:
+  select o_x, o_y into v_lx, v_ly from public.movement_position_at(
+    v_m.origin_x, v_m.origin_y, v_m.target_x, v_m.target_y, v_m.depart_at, v_m.arrive_at, now());
+  if v_lx is distinct from v_mid_x or v_ly is distinct from v_mid_y then
+    raise exception 'S3 MIDPOINT FAIL: movement_position_at (%,%) is not the exact midpoint (%,%)', v_lx, v_ly, v_mid_x, v_mid_y; end if;
+  -- (b) the DISPATCH, resolving the same point from the fleet id alone (the in-flight arm):
+  select o_x, o_y into v_px, v_py from public.fleet_current_position(v_fleet);
+  if v_px is distinct from v_mid_x or v_py is distinct from v_mid_y then
+    raise exception 'S3 MIDPOINT FAIL: fleet_current_position (%,%) is not the exact midpoint (%,%)', v_px, v_py, v_mid_x, v_mid_y; end if;
+  raise notice 'S3_PASS_POSLEAF_MIDPOINT: leaf and dispatch both answer the exact midpoint of a backdated t=0.5 leg';
+
+  -- ── AGREEMENT half 1: the BRAKE parks the fleet EXACTLY where the leaf said it was. ──
+  r := pg_temp.call_as(uS, format('public.command_ship_group_stop(%L::uuid)', gS));
+  if (r->>'ok')::boolean is not true or (r->>'stopped')::boolean is not true then
+    raise exception 'S3 AGREEMENT FAIL: brake: %', r; end if;
+  if (r->>'space_x')::double precision is distinct from v_lx
+     or (r->>'space_y')::double precision is distinct from v_ly then
+    raise exception 'S3 AGREEMENT FAIL: brake point (%,%) disagrees with the pre-brake leaf (%,%)',
+      r->>'space_x', r->>'space_y', v_lx, v_ly; end if;
+
+  -- ── PARKED: the dispatch now reads the fleet's OWN space_x/space_y (the parked arm). ──
+  select space_x, space_y into v_sx, v_sy from public.fleets where id = v_fleet;
+  if v_sx is null then raise exception 'S3 PARKED FAIL: the braked fleet carries no coordinate — the parked pin would be vacuous'; end if;
+  select o_x, o_y into v_px, v_py from public.fleet_current_position(v_fleet);
+  if v_px is distinct from v_sx or v_py is distinct from v_sy then
+    raise exception 'S3 PARKED FAIL: leaf (%,%) <> fleets.space_x/space_y (%,%)', v_px, v_py, v_sx, v_sy; end if;
+  raise notice 'S3_PASS_POSLEAF_PARKED: a parked fleet''s leaf position ≡ its own space_x/space_y';
+
+  -- ── AGREEMENT half 2: a REDIRECT departs from EXACTLY the leaf's answer (one authority). ──
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gS, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'S3 AGREEMENT FAIL: re-go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '30 seconds', arrive_at = now() + interval '30 seconds'
+   where id = v_mv;
+  select o_x, o_y into v_lx, v_ly from public.fleet_current_position(v_fleet);
+  if v_lx is null then raise exception 'S3 AGREEMENT FAIL: no leaf position mid-flight — the redirect pin would be vacuous'; end if;
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gS, drift));
+  if (r->>'ok')::boolean is not true or (r->>'redirected')::boolean is not true then
+    raise exception 'S3 AGREEMENT FAIL: redirect: %', r; end if;
+  v_mv2 := (r->>'movement_id')::uuid;
+  select origin_x, origin_y into v_px, v_py from public.fleet_movements where id = v_mv2;
+  if v_px is distinct from v_lx or v_py is distinct from v_ly then
+    raise exception 'S3 AGREEMENT FAIL: redirect origin (%,%) disagrees with the pre-redirect leaf (%,%)', v_px, v_py, v_lx, v_ly; end if;
+  raise notice 'S3_PASS_POSLEAF_AGREEMENT: brake point AND redirect origin ≡ the leaf''s answer — one interpolation authority';
+
+  -- ── DOCKED: settle the redirect leg at drift; the leaf answers the PORT's coordinate. ──
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv2;
+  r := public.movement_settle_arrival(v_mv2);
+  if (r->>'outcome') is distinct from 'present' then raise exception 'S3 DOCKED FAIL: settle: %', r; end if;
+  select count(*) into n from public.fleets where id = v_fleet and status = 'present' and current_location_id = drift;
+  if n <> 1 then raise exception 'S3 DOCKED FAIL: the fleet is not present at drift — the docked-leaf pin would be vacuous'; end if;
+  select l.x, l.y into v_sx, v_sy from public.locations l where l.id = drift;
+  select o_x, o_y into v_px, v_py from public.fleet_current_position(v_fleet);
+  if v_px is distinct from v_sx or v_py is distinct from v_sy then
+    raise exception 'S3 DOCKED FAIL: leaf (%,%) <> the port''s (%,%)', v_px, v_py, v_sx, v_sy; end if;
+  raise notice 'S3_PASS_POSLEAF_DOCKED: a docked fleet''s leaf position ≡ its port''s x/y';
+
+  insert into fg values ('uS_fleet', v_fleet), ('gS', gS);
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+end $$;
+
+-- ════════ BLOCK S3 TERRITORY (0218): fleet_in_territory — IN inside slag's ring, OUT in open space ═
+-- Composes fleet_current_position + osn_distance + S2's territory_radius (slag = trade_outpost =
+-- radius 10 since the 0220 retune, TERRITORY_PASS_SEEDED above). The fleet is parked by a REAL go
+-- + space settle at (slag.x+5, slag.y) → d=5 ≤ 10 → containment answers slag; then at
+-- (slag.x+100, slag.y) → d=100 from slag and outside EVERY seeded territory (the retuned rings are
+-- all ≤ 12) → NULL. VACUITY: refuses (never greens) if slag's radius is not the retuned value — an
+-- S3 run without S2 (0217) + the retune (0220) on the chain must be red.
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uS uuid := (select v from fg where k='uS'); gS uuid := (select v from fg where k='gS');
+  slag uuid := (select v from fg where k='slag');
+  v_fleet uuid := (select v from fg where k='uS_fleet');
+  v_mv uuid; v_terr uuid; v_lx double precision; v_ly double precision;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- vacuity: S3 composes S2's column — refuse loudly if the radius is not the retuned seed.
+  if (select territory_radius from public.locations where id = slag) is distinct from 10 then
+    raise exception 'S3 TERRITORY FAIL: slag''s territory_radius is not the retuned 10 — S2 (0217)/retune (0220) is not on this chain; refusing a vacuous green'; end if;
+  select x, y into v_lx, v_ly from public.locations where id = slag;
+
+  -- ── IN: fly to (slag.x+5, slag.y) — INSIDE the radius-10 ring — and settle in open space. ──
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gS, v_lx + 5, v_ly));
+  if (r->>'ok')::boolean is not true then raise exception 'S3 TERRITORY FAIL: go(in): %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'in_space' then raise exception 'S3 TERRITORY FAIL: settle(in): %', r; end if;
+  select count(*) into n from public.fleets
+   where id = v_fleet and location_mode = 'space' and space_x = v_lx + 5 and space_y = v_ly;
+  if n <> 1 then raise exception 'S3 TERRITORY FAIL: the fleet is not parked in space — the territory probe would be vacuous (in)'; end if;
+  v_terr := public.fleet_in_territory(v_fleet);
+  if v_terr is distinct from slag then
+    raise exception 'S3 TERRITORY FAIL: parked at d=5 inside slag''s 10-ring, fleet_in_territory answered % (expected slag)', v_terr; end if;
+  raise notice 'S3_PASS_TERRITORY_IN: parked 5 units from slag (radius 10) → fleet_in_territory = slag';
+
+  -- ── OUT: fly to (slag.x+100, slag.y) — outside EVERY seeded territory — and settle there. ──
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gS, v_lx + 100, v_ly));
+  if (r->>'ok')::boolean is not true then raise exception 'S3 TERRITORY FAIL: go(out): %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'in_space' then raise exception 'S3 TERRITORY FAIL: settle(out): %', r; end if;
+  select count(*) into n from public.fleets
+   where id = v_fleet and location_mode = 'space' and space_x = v_lx + 100 and space_y = v_ly;
+  if n <> 1 then raise exception 'S3 TERRITORY FAIL: the fleet is not parked in space — the territory probe would be vacuous (out)'; end if;
+  v_terr := public.fleet_in_territory(v_fleet);
+  if v_terr is not null then
+    raise exception 'S3 TERRITORY FAIL: parked at d=100 in open space, fleet_in_territory answered % (expected NULL)', v_terr; end if;
+  raise notice 'S3_PASS_TERRITORY_OUT: parked 100 units out → fleet_in_territory = NULL (open space)';
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+end $$;
+
+-- ════════ BLOCK S4 DARKPARITY (0219, dark): the seeded-false flag = TODAY'S instant dock ═════════
+-- timed_docking_enabled ships false. While false: the dock RPC rejects BEFORE any read (probed
+-- with a NONEXISTENT group id — a gate that read state first would answer group_not_found), and a
+-- go to a DOCKABLE port is byte-identically the 0208 instant dock: an UNTRANSLATED
+-- target_type='location' mission='rally' leg whose settle lands present + presence. VACUITY:
+-- refuses if the flag is not the seeded false, or if slag is not actually dockable (the translate
+-- contrast would then compare nothing).
+do $$
+declare r jsonb; n int; v_uflag jsonb;
+  uT uuid := (select v from fg where k='uT'); slag uuid := (select v from fg where k='slag');
+  t1 uuid; gT uuid; v_fleet uuid; v_mv uuid;
+begin
+  select value into v_uflag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  if (select value from public.game_config where key='timed_docking_enabled') is distinct from 'false'::jsonb then
+    raise exception 'S4 DARKPARITY FAIL: timed_docking_enabled is not the seeded false — the dark instant-dock contrast would be vacuous'; end if;
+  if (public.mainship_space_location_target_legal(slag)->>'ok')::boolean is not true then
+    raise exception 'S4 DARKPARITY FAIL: slag is not dockable — the dark instant-dock contrast would be vacuous'; end if;
+
+  -- ── provision the S4 world (real RPCs; lit — the first assign MINTS the group fleet at Haven).
+  r := pg_temp.call_as(uT, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'S4 SETUP FAIL: commission: %', r; end if;
+  select main_ship_id into t1 from public.main_ship_instances where player_id = uT;
+  r := pg_temp.call_as(uT, 'public.upsert_ship_group(1, ''Dockers'')');
+  if (r->>'ok')::boolean is not true then raise exception 'S4 SETUP FAIL: group: %', r; end if;
+  gT := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', t1, gT));
+  if (r->>'ok')::boolean is not true then raise exception 'S4 SETUP FAIL: assign: %', r; end if;
+
+  -- ── the dock verb rejects BEFORE ANY read while dark (nonexistent id — no existence oracle).
+  r := pg_temp.call_as(uT, 'public.command_ship_group_dock(gen_random_uuid())');
+  if (r->>'reason') is distinct from 'timed_docking_disabled' then
+    raise exception 'S4 DARKPARITY FAIL: dark dock (nonexistent group) answered %', r; end if;
+
+  -- ── the dark go to a DOCKABLE port is the UNTRANSLATED instant dock (the 0208 head, verbatim).
+  r := pg_temp.call_as(uT, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gT, slag));
+  if (r->>'ok')::boolean is not true then raise exception 'S4 DARKPARITY FAIL: dark go: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  select count(*) into n from public.fleet_movements
+   where id = v_mv and target_type = 'location' and target_location_id = slag and mission_type = 'rally';
+  if n <> 1 then raise exception 'S4 DARKPARITY FAIL: the dark leg is not an untranslated location/rally leg'; end if;
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'present' then raise exception 'S4 DARKPARITY FAIL: settle: %', r; end if;
+  select count(*) into n from public.fleets where id = v_fleet and status = 'present' and current_location_id = slag;
+  if n <> 1 then raise exception 'S4 DARKPARITY FAIL: the dark arrival did not INSTANT-dock the fleet at slag'; end if;
+  select count(*) into n from public.location_presence
+   where fleet_id = v_fleet and status = 'active' and location_id = slag;
+  if n <> 1 then raise exception 'S4 DARKPARITY FAIL: no active presence after the dark instant dock'; end if;
+
+  insert into fg values ('t1', t1), ('gT', gT), ('uT_fleet', v_fleet);
+  update public.game_config set value = v_uflag where key='fleet_movement_unified_enabled';
+  raise notice 'S4_PASS_DARKPARITY_INSTANTDOCK: seeded-false flag -> dock RPC rejects before read; go to a dockable port stays an untranslated location/rally leg that instant-docks on settle';
+end $$;
+
+-- ════════ BLOCK S4 TRANSLATE + DOCK LEG + SETTLE + NOT-PARKED (0219, lit) ════════
+-- The lit chain, end to end on ONE fleet: a go to a DOCKABLE port is TRANSLATED to its coordinate
+-- and PARKS in orbit inside the territory; the dock verb mints the mission='dock' leg with the
+-- EXACT flat 45s clock (ships untouched — §2 through the dock too); the leg settles through the
+-- BYTE-UNTOUCHED location branch into present + presence + dock services; and a DOCKED fleet is
+-- refused not_parked with zero writes.
+do $$
+declare r jsonb; n int; v_uflag jsonb; v_tflag jsonb;
+  uT uuid := (select v from fg where k='uT'); gT uuid := (select v from fg where k='gT');
+  t1 uuid := (select v from fg where k='t1'); drift uuid := (select v from fg where k='drift');
+  v_fleet uuid := (select v from fg where k='uT_fleet');
+  v_mv uuid; v_m record; v_dx double precision; v_dy double precision; n0 int;
+begin
+  select value into v_uflag from public.game_config where key='fleet_movement_unified_enabled';
+  select value into v_tflag from public.game_config where key='timed_docking_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='timed_docking_enabled';
+
+  if (public.mainship_space_location_target_legal(drift)->>'ok')::boolean is not true then
+    raise exception 'S4 TRANSLATE FAIL: drift is not dockable — the translate probe would be vacuous'; end if;
+  select x, y into v_dx, v_dy from public.locations where id = drift;
+
+  -- ── TRANSLATE: the lit go to the dockable port mints a COORDINATE leg to the port's x/y. ──
+  r := pg_temp.call_as(uT, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gT, drift));
+  if (r->>'ok')::boolean is not true then raise exception 'S4 TRANSLATE FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select count(*) into n from public.fleet_movements
+   where id = v_mv and target_type = 'space' and target_location_id is null
+     and target_x = v_dx and target_y = v_dy and mission_type = 'rally';
+  if n <> 1 then raise exception 'S4 TRANSLATE FAIL: the lit go to a dockable port was not translated to its coordinate'; end if;
+  -- ── PARK: the settle leaves the fleet IN ORBIT (open space) INSIDE the port's territory. ──
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'in_space' then raise exception 'S4 TRANSLATE FAIL: settle: %', r; end if;
+  select count(*) into n from public.fleets
+   where id = v_fleet and location_mode = 'space' and status = 'idle'
+     and space_x = v_dx and space_y = v_dy and active_movement_id is null;
+  if n <> 1 then raise exception 'S4 TRANSLATE FAIL: the fleet is not parked at the port''s coordinate'; end if;
+  if public.fleet_in_territory(v_fleet) is distinct from drift then
+    raise exception 'S4 TRANSLATE FAIL: the parked fleet is not inside drift''s territory'; end if;
+  raise notice 'S4_PASS_TRANSLATE_PARK: lit go to a dockable port -> a space leg to its coordinate; settled -> parked in orbit inside the territory (fleet_in_territory = the port)';
+
+  -- ── THE DOCK LEG: a NORMAL fleet_movements row, mission ''dock'', EXACT flat 45s, no ship write. ──
+  perform pg_temp.snap_ships('before_timeddock');
+  r := pg_temp.call_as(uT, format('public.command_ship_group_dock(%L::uuid)', gT));
+  if (r->>'ok')::boolean is not true then raise exception 'S4 DOCKLEG FAIL: dock: %', r; end if;
+  perform pg_temp.snap_ships('after_timeddock');
+  perform pg_temp.assert_ships_untouched('before_timeddock', 'after_timeddock', 'timed dock');
+  if (r->>'port_id')::uuid is distinct from drift then
+    raise exception 'S4 DOCKLEG FAIL: dock envelope port %', r->>'port_id'; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into v_m from public.fleet_movements where id = v_mv;
+  if v_m.status is distinct from 'moving' then
+    raise exception 'S4 DOCKLEG FAIL: the dock leg is not status=''moving'' — every clock pin below would be vacuous'; end if;
+  if v_m.mission_type is distinct from 'dock' or v_m.target_type is distinct from 'location'
+     or v_m.target_location_id is distinct from drift then
+    raise exception 'S4 DOCKLEG FAIL: the dock leg is not a mission=dock location leg at drift (%, %, %)',
+      v_m.mission_type, v_m.target_type, v_m.target_location_id; end if;
+  if v_m.travel_seconds is distinct from 45::double precision then
+    raise exception 'S4 DOCKLEG FAIL: travel_seconds % is not the flat 45', v_m.travel_seconds; end if;
+  if (v_m.arrive_at - v_m.depart_at) is distinct from interval '45 seconds' then
+    raise exception 'S4 DOCKLEG FAIL: arrive_at - depart_at (%) is not the EXACT flat 45s — the 0149 transform idiom broke', v_m.arrive_at - v_m.depart_at; end if;
+  select count(*) into n from public.fleets
+   where id = v_fleet and status = 'moving' and active_movement_id = v_mv;
+  if n <> 1 then raise exception 'S4 DOCKLEG FAIL: the fleet is not flying its dock leg'; end if;
+  raise notice 'S4_PASS_DOCKLEG_MINT: dock from orbit -> ONE mission=dock location leg, travel_seconds=45, arrive-depart EXACTLY 45s, ships untouched';
+
+  -- ── THE SETTLE: the BYTE-UNTOUCHED location branch docks the fleet like any other arrival. ──
+  update public.fleet_movements
+     set depart_at = now() - interval '46 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
+    raise exception 'S4 SETTLE FAIL: %', r; end if;
+  select count(*) into n from public.fleets where id = v_fleet and status = 'present' and current_location_id = drift;
+  if n <> 1 then raise exception 'S4 SETTLE FAIL: the dock leg''s settle did not dock the fleet at drift'; end if;
+  select count(*) into n from public.location_presence
+   where fleet_id = v_fleet and status = 'active' and location_id = drift and activity_type = 'none';
+  if n <> 1 then raise exception 'S4 SETTLE FAIL: expected exactly one active activity=none presence, got %', n; end if;
+  -- the byte-untouched dock CONSUMER answers through the same settled state (0211 host, unchanged).
+  r := pg_temp.call_as(uT, format('public.get_my_current_dock_services(%L::uuid)', t1));
+  if (r->>'state') is distinct from 'at_location' or (r->>'docked')::boolean is not true
+     or (r->>'location_id')::uuid is distinct from drift then
+    raise exception 'S4 SETTLE FAIL: dock services cannot see the timed dock: %', r; end if;
+  raise notice 'S4_PASS_DOCK_SETTLE: the dock leg settled through the untouched location branch -> present + one active none-presence + dock services at_location';
+
+  -- ── NOT-PARKED: a DOCKED fleet cannot dock again — refused with ZERO writes. ──
+  select count(*) into n from public.fleets where id = v_fleet and status = 'present';
+  if n <> 1 then raise exception 'S4 GUARD FAIL: the fleet is not docked — the not_parked probe would be vacuous'; end if;
+  select count(*) into n0 from public.fleet_movements where fleet_id = v_fleet;
+  r := pg_temp.call_as(uT, format('public.command_ship_group_dock(%L::uuid)', gT));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'not_parked' then
+    raise exception 'S4 GUARD FAIL: docking a DOCKED fleet answered %', r; end if;
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
+  if n <> n0 then raise exception 'S4 GUARD FAIL: the rejected dock minted a leg'; end if;
+  raise notice 'S4_PASS_GUARD_NOTPARKED: a docked (present) fleet -> not_parked, zero-write';
+
+  update public.game_config set value = v_uflag where key='fleet_movement_unified_enabled';
+  update public.game_config set value = v_tflag where key='timed_docking_enabled';
+end $$;
+
+-- ════════ BLOCK S4 NOT-IN-TERRITORY + RALLY-UNTRANSLATED (0219, lit) ════════
+-- Open space is not an orbit: a fleet parked outside EVERY territory ring is refused
+-- not_in_territory with zero writes. And the translate NEVER touches a NON-dockable 'none'
+-- destination — its leg stays a location/rally leg and its settle keeps creating the presence
+-- every reader feeds on (the mover's non-dockable posture, byte-kept while LIT).
+do $$
+declare r jsonb; n int; n0 int; v_uflag jsonb; v_tflag jsonb;
+  uT uuid := (select v from fg where k='uT'); gT uuid := (select v from fg where k='gT');
+  slag uuid := (select v from fg where k='slag');
+  v_fleet uuid := (select v from fg where k='uT_fleet');
+  v_mv uuid; v_lx double precision; v_ly double precision; v_nd uuid;
+begin
+  select value into v_uflag from public.game_config where key='fleet_movement_unified_enabled';
+  select value into v_tflag from public.game_config where key='timed_docking_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='timed_docking_enabled';
+
+  -- ── NOT-IN-TERRITORY: park at slag.x+100 (outside every seeded ring — the S3 OUT geometry). ──
+  select x, y into v_lx, v_ly from public.locations where id = slag;
+  r := pg_temp.call_as(uT, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gT, v_lx + 100, v_ly));
+  if (r->>'ok')::boolean is not true then raise exception 'S4 TERRGUARD FAIL: go(out): %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'in_space' then raise exception 'S4 TERRGUARD FAIL: settle(out): %', r; end if;
+  select count(*) into n from public.fleets
+   where id = v_fleet and location_mode = 'space' and space_x = v_lx + 100 and space_y = v_ly;
+  if n <> 1 or public.fleet_in_territory(v_fleet) is not null then
+    raise exception 'S4 TERRGUARD FAIL: the fleet is not parked in open space outside every ring — the not-in-territory probe would be vacuous'; end if;
+  select count(*) into n0 from public.fleet_movements where fleet_id = v_fleet;
+  r := pg_temp.call_as(uT, format('public.command_ship_group_dock(%L::uuid)', gT));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'not_in_territory' then
+    raise exception 'S4 TERRGUARD FAIL: docking from open space answered %', r; end if;
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
+  if n <> n0 then raise exception 'S4 TERRGUARD FAIL: the rejected dock minted a leg'; end if;
+  select count(*) into n from public.fleets
+   where id = v_fleet and status = 'idle' and location_mode = 'space' and space_x = v_lx + 100 and space_y = v_ly;
+  if n <> 1 then raise exception 'S4 TERRGUARD FAIL: the rejected dock moved the parked fleet'; end if;
+  raise notice 'S4_PASS_GUARD_NOTINTERRITORY: parked outside every territory -> not_in_territory, zero-write, fleet unmoved';
+
+  -- ── RALLY-UNTRANSLATED: a NON-dockable 'none' destination keeps its location/rally leg while LIT. ──
+  select l.id into v_nd from public.locations l
+   where l.status = 'active' and l.activity_type = 'none'
+     and (public.mainship_space_location_target_legal(l.id)->>'ok')::boolean is not true
+   order by l.id limit 1;
+  if v_nd is null then
+    raise exception 'S4 RALLY FAIL: no non-dockable ''none'' location exists — the untranslated probe would be vacuous'; end if;
+  r := pg_temp.call_as(uT, format('public.command_ship_group_go(%L::uuid, %L::uuid)', gT, v_nd));
+  if (r->>'ok')::boolean is not true then raise exception 'S4 RALLY FAIL: go(non-dockable): %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select count(*) into n from public.fleet_movements
+   where id = v_mv and target_type = 'location' and target_location_id = v_nd and mission_type = 'rally';
+  if n <> 1 then raise exception 'S4 RALLY FAIL: the non-dockable ''none'' target was translated — its presence feed would die'; end if;
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_mv;
+  r := public.movement_settle_arrival(v_mv);
+  if (r->>'outcome') is distinct from 'present' then raise exception 'S4 RALLY FAIL: settle: %', r; end if;
+  select count(*) into n from public.location_presence
+   where fleet_id = v_fleet and status = 'active' and location_id = v_nd;
+  if n <> 1 then raise exception 'S4 RALLY FAIL: no active presence at the non-dockable destination'; end if;
+  raise notice 'S4_PASS_RALLY_UNTRANSLATED: lit go to a non-dockable ''none'' location -> untranslated location/rally leg, settle creates its presence';
+
+  update public.game_config set value = v_uflag where key='fleet_movement_unified_enabled';
+  update public.game_config set value = v_tflag where key='timed_docking_enabled';
+end $$;
+
+-- ════════ BLOCK S4 GUARD-ONSORTIE (0219, lit): AN OPEN SORTIE IS NEVER DOCKABLE ════════
+-- The dock verb carries the mover/brake sortie guard VERBATIM, ordered BEFORE the fleet-state
+-- inspection (the brake's order) — so a MID-COMBAT sortie fleet ('present' at its hunt site with
+-- a live encounter) answers group_on_sortie, never a misleading not_parked, and with ZERO writes.
+-- Its own world (uU): the REAL hunt it launches poisons any shared fixture (the uE..uI rule).
+do $$
+declare r jsonb; n int; v_uflag jsonb; v_tflag jsonb; v_manifest_n int;
+  uU uuid := (select v from fg where k='uU');
+  u1 uuid; gU uuid; v_hunt uuid; v_huntfleet uuid; v_huntmv uuid;
+begin
+  select value into v_uflag from public.game_config where key='fleet_movement_unified_enabled';
+  select value into v_tflag from public.game_config where key='timed_docking_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='timed_docking_enabled';
+
+  -- live-RPC provisioning: u1 docked at haven → group → REAL lit hunt (the 0215-block fixture,
+  -- verbatim: the assign runs DARK so the hunt launches through the head's =0 docked arm).
+  r := pg_temp.call_as(uU, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'S4 ONSORTIE FAIL: commission u1: %', r; end if;
+  select main_ship_id into u1 from public.main_ship_instances where player_id = uU;
+  r := pg_temp.call_as(uU, 'public.upsert_ship_group(1, ''Dockguard'')');
+  if (r->>'ok')::boolean is not true then raise exception 'S4 ONSORTIE FAIL: group: %', r; end if;
+  gU := (r->>'group_id')::uuid;
+  update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
+  r := pg_temp.call_as(uU, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', u1, gU));
+  if (r->>'ok')::boolean is not true then raise exception 'S4 ONSORTIE FAIL: assign u1: %', r; end if;
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+  select id into v_hunt from public.locations
+   where status = 'active' and activity_type = 'hunt_pirates'
+   order by coalesce(min_power_required, 0) asc limit 1;
+  if v_hunt is null then raise exception 'S4 ONSORTIE FAIL: no active hunt site — the fixture cannot be built'; end if;
+  r := pg_temp.call_as(uU, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gU, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'S4 ONSORTIE FAIL: lit hunt rejected: %', r; end if;
+  v_huntfleet := (r->>'fleet_id')::uuid;
+  v_huntmv    := (r->>'movement_id')::uuid;
+
+  -- drive to MID-COMBAT through the real settle; vacuity — present AT the site, open manifest,
+  -- LIVE encounter, or the guard would be probed where it cannot hurt.
+  update public.fleet_movements
+     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
+   where id = v_huntmv;
+  perform public.movement_settle_arrival(v_huntmv);
+  select count(*) into n from public.fleets
+   where id = v_huntfleet and status = 'present' and current_location_id = v_hunt;
+  if n <> 1 then raise exception 'S4 ONSORTIE FAIL: the S4 mid-combat sortie state was not built (fleet not present at the hunt site)'; end if;
+  select count(*) into v_manifest_n from public.group_sortie_members where fleet_id = v_huntfleet;
+  if v_manifest_n = 0 then raise exception 'S4 ONSORTIE FAIL: the S4 mid-combat sortie state was not built (no manifest rows)'; end if;
+  select count(*) into n from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
+  if n <> 1 then raise exception 'S4 ONSORTIE FAIL: no live encounter under the dock probe — the mid-combat phase would be vacuous'; end if;
+
+  create temp table s4s_fleets as select * from public.fleets;
+  create temp table s4s_gsm    as select * from public.group_sortie_members;
+  r := pg_temp.call_as(uU, format('public.command_ship_group_dock(%L::uuid)', gU));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'group_on_sortie' then
+    raise exception 'S4 ONSORTIE FAIL: docking a MID-COMBAT sortie answered % — a sortie must be REFUSED as a sortie, never misread as unparked', r; end if;
+  select count(*) into n from (
+    (table s4s_fleets except select * from public.fleets)
+    union all (select * from public.fleets except table s4s_fleets)) d;
+  if n <> 0 then raise exception 'S4 ONSORTIE FAIL: the rejected dock wrote % fleets row(s)', n; end if;
+  select count(*) into n from (
+    (table s4s_gsm except select * from public.group_sortie_members)
+    union all (select * from public.group_sortie_members except table s4s_gsm)) d;
+  if n <> 0 then raise exception 'S4 ONSORTIE FAIL: the rejected dock wrote % group_sortie_members row(s)', n; end if;
+  select count(*) into n from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
+  if n <> 1 then raise exception 'S4 ONSORTIE FAIL: the live encounter did not survive the rejected dock'; end if;
+  drop table s4s_fleets; drop table s4s_gsm;
+
+  update public.game_config set value = v_uflag where key='fleet_movement_unified_enabled';
+  update public.game_config set value = v_tflag where key='timed_docking_enabled';
+  raise notice 'S4_PASS_GUARD_ONSORTIE: docking a mid-combat sortie -> group_on_sortie (refused AS a sortie), fleets + manifest byte-unchanged, encounter alive';
 end $$;
 
 select 'FLEET-GO PROOF PASSED' as result;

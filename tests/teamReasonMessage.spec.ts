@@ -44,6 +44,11 @@ test('every known team-RPC reject reason maps to specific player text (not the f
     'target_out_of_bounds',
     'invalid_target_shape',
     'invalid_coordinate',
+    // S4 TIMED DOCKING — the dock verb's vocabulary (command_ship_group_dock, 0219).
+    'timed_docking_disabled',
+    'not_parked',
+    'not_in_territory',
+    'not_dockable',
   ]
   for (const reason of known) {
     const msg = teamReasonMessage(reason)

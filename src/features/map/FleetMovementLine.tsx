@@ -4,6 +4,10 @@ import { formatCountdown } from '../../lib/time'
 // interpolated position and (x2,y2) the target, so the dashed line is the REMAINING path and
 // shrinks in real time as the fleet advances (the caller re-feeds x1,y1 each clock tick). Dashed
 // amber for outbound, sky for return-home. ETA at the midpoint. Purely visual — no state mutation.
+//
+// S4 TIMED DOCKING: `missionType` is OPTIONAL (every existing caller is unchanged) — a 'dock' leg
+// (command_ship_group_dock, 0219) labels "Docking m:ss" instead of the direction arrow, so the 45s
+// dock clock reads as what it is. Any other/absent mission keeps today's label byte-identically.
 
 export function FleetMovementLine({
   x1,
@@ -13,6 +17,7 @@ export function FleetMovementLine({
   k,
   isReturn,
   arriveAt,
+  missionType,
 }: {
   x1: number
   y1: number
@@ -21,6 +26,7 @@ export function FleetMovementLine({
   k: number
   isReturn: boolean
   arriveAt: string
+  missionType?: string
 }) {
   // Design-system tokens: outbound = warning (in-transit emphasis), return-home = accent.
   const color = isReturn ? 'var(--color-accent)' : 'var(--color-warning)'
@@ -46,8 +52,7 @@ export function FleetMovementLine({
           paintOrder="stroke"
           style={{ userSelect: 'none' }}
         >
-          {isReturn ? '↩ ' : '→ '}
-          {eta}
+          {missionType === 'dock' ? `Docking ${eta}` : `${isReturn ? '↩ ' : '→ '}${eta}`}
         </text>
       )}
     </g>

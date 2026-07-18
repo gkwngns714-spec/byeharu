@@ -12,10 +12,24 @@ tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/fleetgo-proof.sql"
 MIGRATION="$REPO_ROOT/supabase/migrations/20260618000207_fleetgo_unified_group_mover.sql"
 MIGRATION_3B="$REPO_ROOT/supabase/migrations/20260618000208_fleetgo_coordinate_targets.sql"
-# MIGRATION_STOP points at 0215, the brake's TRUE HEAD since the sortie guard — NOT at 0209. A
-# static ban aimed at a superseded head guards nothing (the 0211 failure class: a re-create in a
-# NEW file that the old-head-scoped checks never read). 0209's body is shipped history; 0215 runs.
-MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000215_fleetgo_brake_sortie.sql"
+# MIGRATION_STOP points at 0218, the brake's TRUE HEAD since the S3 position-leaf fold — NOT at
+# 0215 (and never 0209). A static ban aimed at a superseded head guards nothing (the 0211 failure
+# class: a re-create in a NEW file that the old-head-scoped checks never read). 0215's body is
+# shipped history; 0218 runs.
+MIGRATION_STOP="$REPO_ROOT/supabase/migrations/20260618000218_position_territory_leaves.sql"
+# MIGRATION_S3 is 0218 — S3 POSLEAF: the 3 position/territory leaves + the PARITY re-creates of
+# BOTH the mover (command_ship_group_go — its 0208 body is now superseded) and the brake.
+# ⚠ MOVER-HEAD REPOINT (S4): since 0219 the MOVER's TRUE HEAD is MIGRATION_S4 — 0219 re-creates
+# command_ship_group_go with the ONE translate hunk, so the S4 section below aims the LIVE
+# mover-body pins (and the byte-parity diff) at 0219. The S3 section's mover pins stay aimed at
+# the frozen 0218 file exactly as the 0208/0215 sections keep pinning their own shipped history.
+# The BRAKE's true head remains 0218 (S4 re-creates no brake).
+MIGRATION_S3="$REPO_ROOT/supabase/migrations/20260618000218_position_territory_leaves.sql"
+# MIGRATION_S4 is 0219 — S4 TIMED DOCKING: the mission_type CHECK widen (+ its only 'dock' writer,
+# command_ship_group_dock, in the SAME file), the mover PARITY re-create (ONE marked translate
+# hunk vs the 0218 head), the timed_docking_enabled/docking_seconds seeds, and the S3-review
+# territory_radius CHECK fold. The mover's TRUE HEAD since this file.
+MIGRATION_S4="$REPO_ROOT/supabase/migrations/20260618000219_timed_docking.sql"
 MIGRATION_3C="$REPO_ROOT/supabase/migrations/20260618000210_fleetgo_group_read_oracle.sql"
 MIGRATION_3C2="$REPO_ROOT/supabase/migrations/20260618000211_fleetgo_dock_dedup.sql"
 MIGRATION_3C3="$REPO_ROOT/supabase/migrations/20260618000212_fleetgo_map_read.sql"
@@ -31,6 +45,11 @@ MIGRATION_S1="$REPO_ROOT/supabase/migrations/20260618000216_berth_model.sql"
 # parity diff below aims at 0002 because that IS the head being copied).
 MIGRATION_S2="$REPO_ROOT/supabase/migrations/20260618000217_territory_radius.sql"
 MIGRATION_0002="$REPO_ROOT/supabase/migrations/20260616000002_world_map.sql"
+# MIGRATION_S2R is 0220 — the TERRITORY RETUNE (cross-slice audit fix): 0217's 25/35/15 mutually
+# engulfed the real map (min inter-location distance 29.15) — 0220 is the seed-VALUE true head
+# now (10/12/8/NULL, all overlap-free); the 0217 greps below keep pinning the frozen 0217 file as
+# shipped history, the RUNTIME value pins aim at the deployed (retuned) state.
+MIGRATION_S2R="$REPO_ROOT/supabase/migrations/20260618000220_territory_radius_retune.sql"
 
 # Strip PROSE from a migration so the static bans below judge CODE, not documentation. Two kinds of prose
 # name the banned constructs on purpose — the `--` header (explaining to the next reader WHY they are
@@ -39,14 +58,14 @@ MIGRATION_0002="$REPO_ROOT/supabase/migrations/20260616000002_world_map.sql"
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_MAPREAD"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_NOOVERLAP TERRITORY_PASS_MAPREAD"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
   tp_assert_self_rolling_back "$SQL"
-  tp_assert_flags_inside_txn "$SQL" fleet_movement_unified_enabled team_command_enabled mainship_additional_commission_enabled station_storage_enabled launch_from_dock_enabled mainship_send_enabled
+  tp_assert_flags_inside_txn "$SQL" fleet_movement_unified_enabled team_command_enabled mainship_additional_commission_enabled station_storage_enabled launch_from_dock_enabled mainship_send_enabled timed_docking_enabled
 
   # ── provisions via the REAL RPCs (no direct ship/group inserts as the primary path). ─────────────
   grep -q "public.commission_first_main_ship()"      "$SQL" || fail "harness does not provision via commission_first_main_ship"
@@ -148,36 +167,40 @@ if [ "$MODE" = "selftest" ]; then
       || fail "the §2 ship-untouched assertion is not applied to: $ctx"
   done
 
-  # ── the fleet-level BRAKE (0215, the TRUE HEAD — 0209 re-created with the sortie guard):
-  #    same §2 bans, it must not be the composed model, and the guard must be present, LIVE-scoped,
-  #    and ORDERED. These checks aim at 0215 because THAT is the body that runs — a ban pointed at
-  #    the superseded 0209 head would green while the live function drifted (the 0211 class).
-  [ -f "$MIGRATION_STOP" ] || fail "migration 0215 not found"
-  MIGSTOP_CODE="$(sql_code "$MIGRATION_STOP")"
-  printf '%s' "$MIGSTOP_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
-    && fail "0215 UPDATEs main_ship_instances — the legacy stop parks the SHIP; this must park the FLEET" || true
+  # ── the fleet-level BRAKE (TRUE HEAD 0218 since the S3 fold; before that 0215, before that
+  #    0209): same §2 bans, it must not be the composed model, and the guard must be present,
+  #    LIVE-scoped, and ORDERED. These checks aim at 0218 because THAT is the body that runs — a
+  #    ban pointed at a superseded head would green while the live function drifted (the 0211
+  #    class). Static checks READ a mktemp FILE — never `printf | grep -q` (the S1 pipefail/EPIPE
+  #    lesson): 0218 carries the whole mover + brake and is the largest stream in this arc.
+  [ -f "$MIGRATION_STOP" ] || fail "migration 0218 (the brake TRUE HEAD) not found"
+  MIGSTOP_TMP="$(mktemp)"
+  sql_code "$MIGRATION_STOP" > "$MIGSTOP_TMP"
+  grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIGSTOP_TMP" \
+    && fail "0218 UPDATEs main_ship_instances — the legacy stop parks the SHIP; this must park the FLEET" || true
   # it must NOT loop the per-ship stop — that is exactly what 0164 does and what §2 replaces.
   for banned in command_main_ship_stop_transit command_main_ship_space_stop stop_ship_group_transit; do
-    printf '%s' "$MIGSTOP_CODE" | grep -q "$banned" \
-      && fail "0215 composes the per-ship brake '$banned' — that is the composed model §2 retires" || true
+    grep -q "$banned" "$MIGSTOP_TMP" \
+      && fail "0218 composes the per-ship brake '$banned' — that is the composed model §2 retires" || true
   done
   # it must REUSE 3b's parking leaf, not invent a second parking mechanism.
-  printf '%s' "$MIGSTOP_CODE" | grep -q "fleet_set_in_space" \
-    || fail "0215 does not compose 0208's fleet_set_in_space leaf (second parking mechanism?)"
-  printf '%s' "$MIGSTOP_CODE" | grep -qE "^[[:space:]]*(alter table|drop function)" \
-    && fail "0215 alters/drops an existing object (the brake must be purely additive)" || true
-  # ── THE 0215 SORTIE GUARD, judged on the BODY's comment-stripped code (the 0213 lesson: a
-  #    file-wide grep is satisfied by the self-assert's own literals). Requires: the gsm join, the
-  #    reject token, the LIVE scope (bare EXISTS — the status set gone — bricks every post-hunt
-  #    stop: FLEETGO_PASS_STOP_SORTIE_LIVESCOPE is its runtime red), and the ORDER gate < group
-  #    lock < guard < fleet count (guard after the count answers no_fleet/ambiguous past a live
-  #    sortie; guard before the gate leaks the read into the dark world — DARKINERT's red).
+  grep -q "fleet_set_in_space" "$MIGSTOP_TMP" \
+    || fail "0218 does not compose 0208's fleet_set_in_space leaf (second parking mechanism?)"
+  grep -qE "^[[:space:]]*(alter table|drop function)" "$MIGSTOP_TMP" \
+    && fail "0218 alters/drops an existing object (the S3 re-creates must be purely additive)" || true
+  # ── THE 0215 SORTIE GUARD (now living in the 0218 body), judged on the BODY's comment-stripped
+  #    code (the 0213 lesson: a file-wide grep is satisfied by the self-assert's own literals).
+  #    Requires: the gsm join, the reject token, the LIVE scope (bare EXISTS — the status set gone
+  #    — bricks every post-hunt stop: FLEETGO_PASS_STOP_SORTIE_LIVESCOPE is its runtime red), and
+  #    the ORDER gate < group lock < guard < fleet count (guard after the count answers
+  #    no_fleet/ambiguous past a live sortie; guard before the gate leaks the read into the dark
+  #    world — DARKINERT's red).
   #    MUTATIONS (the static reds executed while building; the runtime reds traced, CI-only):
   #    strip the hunk → this check red + FLEETGO_PASS_STOP_REJECTS_SORTIE red; bare EXISTS (drop
   #    the status set) → the live-scope regex red + FLEETGO_PASS_STOP_SORTIE_LIVESCOPE red; move
-  #    the guard above the gate → the order chain red + FLEETGO_PASS_STOP_DARKINERT red. 0215's
+  #    the guard above the gate → the order chain red + FLEETGO_PASS_STOP_DARKINERT red. 0218's
   #    in-file self-assert reds the same three at deploy time.
-  printf '%s' "$MIGSTOP_CODE" | perl -0777 -ne '
+  perl -0777 -ne '
     my $i = index($_, "create or replace function public.command_ship_group_stop");
     exit 1 if $i < 0;
     my $j = index($_, "\$function\$;", $i);
@@ -192,8 +215,8 @@ if [ "$MODE" = "selftest" ]; then
     exit 1 unless $gate < $lock && $lock < $gsm && $gsm < $sort && $sort < $amb;
     my $guard = substr($body, $gsm, $sort - $gsm);
     exit 1 unless $guard =~ /f\.status in \(.moving., .present., .returning.\)/;
-    exit 0;' \
-    || fail "0215's brake body lost the sortie guard, its LIVE scope, or its order (gate -> group lock -> gsm guard -> fleet count) — an unguarded brake mid-hunt parks an immortal manifest-attached idle fleet and bricks the group"
+    exit 0;' "$MIGSTOP_TMP" \
+    || fail "0218's brake body lost the sortie guard, its LIVE scope, or its order (gate -> group lock -> gsm guard -> fleet count) — an unguarded brake mid-hunt parks an immortal manifest-attached idle fleet and bricks the group"
   # the runtime must pin that the brake and the redirect agree on where "here" is.
   grep -q "disagrees with the redirect interpolation" "$SQL" \
     || fail "no runtime pin that the brake and the redirect compute the SAME interpolated point"
@@ -876,8 +899,9 @@ if [ "$MODE" = "selftest" ]; then
   # red, restore; the runtime reds are TRACED, CI-only — no local Docker):
   #   • drop the add-column          → the column grep reds; runtime: the seeding UPDATE (and the
   #                                    re-created read) error at deploy — nothing to trace.
-  #   • drop the CASE seed           → the seed greps red; runtime TERRITORY_PASS_SEEDED reds on
-  #                                    slag's NULL radius (and 0217's in-file assert raises first).
+  #   • drop the CASE seed           → the seed greps red; 0217's in-file assert raises at deploy.
+  #                                    (Runtime SEEDED now pins 0220's RETUNED values — the 0220
+  #                                    section below — since 0220 re-seeds over whatever 0217 left.)
   #   • drop a status='active' filter→ the filter grep + the parity diff red; 0217's in-file assert
   #                                    raises at deploy; runtime MAPREAD's structural re-pin reds
   #                                    (the 0175 pin ran against the PRE-0217 body — it cannot).
@@ -958,6 +982,342 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the NULL-key probe would be vacuous" "$SQL" \
     || fail "TERRITORY_MAPREAD does not guard that the NULL-territory fixture is IN the map read"
   rm -f "$MIGS2_TMP"
+
+  # ── S2-RETUNE (0220): the audit fix — overlap-free radii sized to the MEASURED world. ───────────
+  # 0217's 25/35/15 mutually engulfed the map (min inter-location distance 29.15, so 35-rings
+  # contained each other's CENTERS): wrong orbit badges, mush rings, and the S4-review LOW — the
+  # dock guard resolving a fleet parked AT a port to a different overlapping territory. 0220 is the
+  # seed-VALUE true head: 10/12/8/NULL, every value < nearest-neighbour/2 for every member of its
+  # type (tightest bound 14.58). MUTATIONS (each executed statically while building — strip the
+  # construct, watch the named check red, restore; runtime reds TRACED, CI-only):
+  #   • drop the retune CASE        → the value greps red; runtime TERRITORY_PASS_SEEDED reds on
+  #                                   slag carrying 0217's 25.
+  #   • widen a radius past a
+  #     neighbour (e.g. pirate 35)  → 0220's own deploy assert raises; runtime
+  #                                   TERRITORY_PASS_NOOVERLAP reds on the pair sweep.
+  #   • drop the self-assert sweep  → the osn_distance / pair-sweep greps red.
+  # Static checks READ THE mktemp FILE — never `printf | grep -q` (the S1 pipefail/EPIPE lesson).
+  [ -f "$MIGRATION_S2R" ] || fail "migration 0220 (territory retune) not found"
+  MIGS2R_TMP="$(mktemp)"
+  sql_code "$MIGRATION_S2R" > "$MIGS2R_TMP"
+  # the retuned CASE seed, per-type (the 0217 shape — one authority per concept, values superseded).
+  grep -q "set territory_radius = case location_type" "$MIGS2R_TMP" \
+    || fail "0220's retune is not a CASE on location_type"
+  grep -q "when 'trade_outpost' then 10" "$MIGS2R_TMP" || fail "0220's retune lost trade_outpost -> 10"
+  grep -q "when 'pirate_hunt' then 12"   "$MIGS2R_TMP" || fail "0220's retune lost pirate_hunt -> 12"
+  grep -q "when 'pirate_den' then 12"    "$MIGS2R_TMP" || fail "0220's retune lost pirate_den -> 12 (0 rows today; retuned for the day it gains one)"
+  grep -q "when 'safe_zone' then 8"      "$MIGS2R_TMP" || fail "0220's retune lost safe_zone -> 8"
+  grep -q "when 'rally_point' then 8"    "$MIGS2R_TMP" || fail "0220's retune lost rally_point -> 8"
+  # posture: ONE data UPDATE of locations and nothing else — no schema change, no function
+  # re-create, no drop, no flag, no ship write (additive data riding the existing read, dark-safe).
+  [ "$(grep -c "update public.locations" "$MIGS2R_TMP")" = "1" ] \
+    || fail "0220 must contain exactly ONE update of public.locations (the retune seed)"
+  [ "$(grep -c "create or replace function" "$MIGS2R_TMP")" = "0" ] \
+    || fail "0220 re-creates a function (the retune is data-only)"
+  [ "$(grep -c "alter table" "$MIGS2R_TMP")" = "0" ] \
+    || fail "0220 alters a table (the retune is data-only)"
+  grep -qE "drop (function|table|column|constraint)" "$MIGS2R_TMP" \
+    && fail "0220 drops an existing object (the retune is data-only)" || true
+  grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIGS2R_TMP" \
+    && fail "0220 UPDATEs main_ship_instances — territory is world data, never a ship write" || true
+  grep -qiE "(insert into|update)[[:space:]]+(public\.)?game_config" "$MIGS2R_TMP" \
+    && fail "0220 seeds or flips a flag (additive data needs no gate)" || true
+  # the deploy-time proof of the audit property: the pairwise disjointness sweep must compose the
+  # ONE distance authority (osn_distance, 0099 — never a second formula) and must cover EVERY
+  # status (hidden sites go active later).
+  grep -q "osn_distance" "$MIGS2R_TMP" \
+    || fail "0220's self-assert does not compose osn_distance (a second distance formula, or no overlap sweep)"
+  grep -q "overlapping territory pair" "$MIGS2R_TMP" \
+    || fail "0220's self-assert lost the pairwise-disjointness sweep"
+  grep -q "reach another location" "$MIGS2R_TMP" \
+    || fail "0220's self-assert lost the center-reach sweep (the S4-review wrong-port hazard)"
+  # the header must record the measured geometry the values derive from (prose — raw file): the
+  # minimum inter-location distance and the tightest nearest/2 bound.
+  grep -q "29.15" "$MIGRATION_S2R" \
+    || fail "0220's header does not record the measured minimum inter-location distance (29.15)"
+  grep -q "14.58" "$MIGRATION_S2R" \
+    || fail "0220's header does not record the tightest nearest-neighbour/2 bound (14.58)"
+  # the runtime NOOVERLAP block must be non-vacuous and generic (survives future retunes).
+  grep -q "the pairwise sweep would be vacuous" "$SQL" \
+    || fail "TERRITORY_NOOVERLAP does not guard that at least two territory-bearing locations exist"
+  grep -q "overlapping territory pair" "$SQL" \
+    || fail "TERRITORY_NOOVERLAP lost the generic pair sweep (r_i + r_j must stay strictly below d)"
+  grep -q "the dock guard could resolve the wrong port" "$SQL" \
+    || fail "TERRITORY_NOOVERLAP lost the center-reach sweep (the S4-review wrong-port hazard)"
+  rm -f "$MIGS2R_TMP"
+
+  # ── S3 — POSITION + TERRITORY LEAVES (0218): the 3 leaves + the mover/brake PARITY fold. ────────
+  # 0218 is the TRUE HEAD of BOTH the mover and the brake now (the brake checks above already aim
+  # at it via MIGRATION_STOP; this section adds the leaf pins + the MOVER-body pins that used to be
+  # meaningful only against 0208 — the 0211 pointer-discipline rule). Checks READ the mktemp file
+  # already stripped for the brake section (same file — stripped once, judged twice).
+  # MUTATIONS (each executed statically while building — strip the construct, watch the named
+  # check red, restore; the runtime reds are TRACED, CI-only — no local Postgres):
+  #   • drop a leaf                  → the 5-re-creates count / the signature grep reds; runtime:
+  #                                    every S3_PASS_* block errors calling it.
+  #   • re-inline the lerp in a host → the lerp-ABSENT body scan reds (and 0218's own self-assert
+  #                                    raises at deploy); runtime MIDPOINT/AGREEMENT still green —
+  #                                    which is WHY the ban is static: output-identical drift is
+  #                                    invisible to output tests. That is the fold's whole point.
+  #   • drop the leaf compose        → the composed-in-body scan reds + deploy self-assert raises.
+  #   • make the leaf read a table   → the no-table-read scan reds (IMMUTABLE would be a lie).
+  #   • drop the dissolve/gate/
+  #     combat_destination hunk      → the retained-head greps red (the pins that used to live
+  #                                    only against the superseded 0208 file).
+  #   • drop the NOT-FOLDED ledger   → the header grep reds (the next reader "finishes the job").
+  [ -f "$MIGRATION_S3" ] || fail "migration 0218 not found"
+  # exactly FIVE re-creates: the 3 leaves + the mover + the brake.
+  [ "$(grep -c "create or replace function" "$MIGSTOP_TMP")" = "5" ] \
+    || fail "0218 must contain exactly FIVE re-creates (movement_position_at / fleet_current_position / fleet_in_territory / mover / brake)"
+  grep -q "create or replace function public.movement_position_at(" "$MIGRATION_S3" \
+    || fail "0218 does not mint movement_position_at (the ONE interpolation authority)"
+  grep -q "create or replace function public.fleet_current_position(" "$MIGRATION_S3" \
+    || fail "0218 does not mint fleet_current_position (the state dispatch)"
+  grep -q "create or replace function public.fleet_in_territory(" "$MIGRATION_S3" \
+    || fail "0218 does not mint fleet_in_territory (the S4 territory authority)"
+  grep -q "create or replace function public.command_ship_group_go(" "$MIGRATION_S3" \
+    || fail "0218 does not re-create the mover — the fold has no host"
+  # the interpolation leaf is pure: sql immutable strict, and its body reads NO table (the body
+  # sits between its signature and the first \$\$; a schema reference there means IMMUTABLE lies).
+  perl -0777 -ne '
+    my $i = index($_, "create or replace function public.movement_position_at");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$\$;", $i);
+    exit 1 if $j < 0;
+    my $leaf = substr($_, $i, $j - $i);
+    exit 1 unless $leaf =~ /language sql\s*\nimmutable\s*\nstrict/;
+    my $b = index($leaf, "as \$\$");
+    exit 1 if $b < 0;
+    exit 1 if index(substr($leaf, $b), "public.") >= 0;
+    exit 1 unless index($leaf, "nullif(extract(epoch from (p_arrive - p_depart)), 0)") >= 0;
+    exit 0;' "$MIGSTOP_TMP" \
+    || fail "0218's movement_position_at is not a pure sql IMMUTABLE STRICT leaf with the exact clamp/nullif math (or it reads a table)"
+  # the territory leaf COMPOSES osn_distance (0099) — never a third distance formula — and carries
+  # the client tiebreak (radius asc, id asc).
+  grep -q "public.osn_distance(pos.o_x, pos.o_y, l.x, l.y) <= l.territory_radius" "$MIGSTOP_TMP" \
+    || fail "0218's fleet_in_territory does not compose osn_distance against territory_radius (a third distance formula is the default outcome)"
+  grep -q "order by l.territory_radius asc, l.id asc" "$MIGSTOP_TMP" \
+    || fail "0218's fleet_in_territory lost the smallest-radius/lowest-id tiebreak (client territoryAt parity)"
+  grep -q "sqrt" "$MIGSTOP_TMP" \
+    && fail "0218 carries its own distance formula — compose public.osn_distance (0099), never a third copy" || true
+  # THE FOLD, judged on each HOST BODY (not file-wide — the self-assert quotes the banned string
+  # as a literal, the recurring grep-vacuity class): the leaf composed, the inline lerp ABSENT.
+  for host in command_ship_group_go command_ship_group_stop; do
+    perl -0777 -ne '
+      my $i = index($_, "create or replace function public.'"$host"'");
+      exit 1 if $i < 0;
+      my $j = index($_, "\$function\$;", $i);
+      exit 1 if $j < 0;
+      my $body = substr($_, $i, $j - $i);
+      exit 1 unless index($body, "movement_position_at") >= 0;
+      exit 1 if index($body, "origin_x + (") >= 0;
+      exit 0;' "$MIGSTOP_TMP" \
+      || fail "0218's $host body does not compose movement_position_at, or an inline 'origin_x + (' lerp copy survives — the fold did not land"
+  done
+  # the MOVER head survived the parity copy — the pins that used to guard only the superseded 0208
+  # file, retargeted at the body that runs: the in-body dark gate, the member-dock dissolve (the
+  # ghost-dock fix), the combat-destination refusal, and NO ship write / no per-ship mover.
+  perl -0777 -ne '
+    my $i = index($_, "create or replace function public.command_ship_group_go");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$function\$;", $i);
+    exit 1 if $j < 0;
+    my $body = substr($_, $i, $j - $i);
+    exit 1 unless index($body, "cfg_bool(\x27fleet_movement_unified_enabled\x27)") >= 0;
+    exit 1 unless index($body, "main_ship_id = any(v_members) and status = \x27present\x27") >= 0;
+    exit 1 unless index($body, "combat_destination") >= 0;
+    exit 1 unless index($body, "movement_create") >= 0;
+    exit 1 unless index($body, "fleet_set_moving") >= 0;
+    exit 0;' "$MIGSTOP_TMP" \
+    || fail "0218's mover body lost a 0208 head pin (dark gate / member-dock dissolve / combat_destination / movement_create / fleet_set_moving) — parity broke"
+  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+    grep -q "$banned" "$MIGSTOP_TMP" \
+      && fail "0218 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
+  done
+  grep -qiE "(insert into|update)[[:space:]]+(public\.)?game_config" "$MIGSTOP_TMP" \
+    && fail "0218 seeds or flips a flag — the fold is output-identical and needs NO flag" || true
+  # pointer discipline: the true-head declaration + the deliberately-NOT-folded ledger (prose).
+  grep -q "TRUE-HEAD DECLARATION" "$MIGRATION_S3" \
+    || fail "0218 does not declare itself the mover+brake true head — the 0136/0211 stale-head mistake repeats by default"
+  grep -q "DELIBERATELY NOT FOLDED" "$MIGRATION_S3" \
+    || fail "0218 does not name the deliberately-not-folded copies (0149/0152/0155 travel_seconds family; 0064/0067 OSN family) — someone will 'finish the job'"
+  # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
+  # failed to reach the state its marker claims to pin).
+  grep -q "the S3 leg is not status=''moving''" "$SQL" \
+    || fail "S3 MIDPOINT does not guard that the seeded leg is really moving (t=0.5 asserted on nothing otherwise)"
+  grep -q "S2 (0217)/retune (0220) is not on this chain" "$SQL" \
+    || fail "S3 TERRITORY does not refuse an un-retuned territory_radius on slag (a chain missing S2/0220 would green vacuously)"
+  grep -q "not parked in space — the territory probe" "$SQL" \
+    || fail "S3 TERRITORY does not guard that the fleet really settled in open space"
+  grep -q "the docked-leaf pin would be vacuous" "$SQL" \
+    || fail "S3 DOCKED does not guard that the fleet really settled present at the port"
+  rm -f "$MIGSTOP_TMP"
+
+  # ── S4 — TIMED DOCKING (0219): the CHECK widen + the dock verb + the mover translate PARITY. ────
+  # 0219 is the MOVER's TRUE HEAD now (the header repoint above) — the LIVE mover-body pins and the
+  # byte-parity diff aim HERE; the S3 section keeps pinning the frozen 0218 file as shipped history.
+  # MUTATIONS (each executed statically while building — strip the construct, watch the named check
+  # red, restore; the runtime reds are TRACED, CI-only — no local Postgres):
+  #   • drop 'dock' from the widen        → the widen-statement scan reds; 0219's self-assert (b)
+  #                                         raises at deploy; runtime DOCKLEG_MINT dies on the CHECK.
+  #   • split the widen from the dock RPC → the same-file greps red (widen + its ONLY writer land
+  #                                         together, or a chain state exists with an orphan CHECK).
+  #   • drop a dock-verb guard compose    → the body-scoped order chain reds; runtime GUARD_* red.
+  #   • re-create the settle / add cron   → the settle/cron bans red — the model IS "the clock is
+  #                                         arrive_at, the settle is the existing 30s cron".
+  #   • re-create any dock consumer       → the byte-untouched pledge greps red.
+  #   • drop or un-gate the translate hunk→ the gated-hunk scan reds; un-gated, runtime
+  #                                         DARKPARITY_INSTANTDOCK reds (a dark go stops docking).
+  #   • ANY other mover drift             → the byte-parity diff vs the 0218 head reds (the whole
+  #                                         point: 0219's mover == 0218's + EXACTLY the one hunk).
+  #   • drop a flag seed / radius CHECK   → the seed/CHECK greps red.
+  [ -f "$MIGRATION_S4" ] || fail "migration 0219 not found"
+  MIGS4_TMP="$(mktemp)"
+  sql_code "$MIGRATION_S4" > "$MIGS4_TMP"
+  # the widen: the re-stated CHECK carries every pre-existing mission PLUS 'dock' (a dropped legacy
+  # mission would fail every live writer; judged on the widen STATEMENT, not the whole file).
+  perl -0777 -ne '
+    my $i = index($_, "add constraint fleet_movements_mission_type_check");
+    exit 1 if $i < 0;
+    my $j = index($_, ";", $i);
+    exit 1 if $j < 0;
+    my $stmt = substr($_, $i, $j - $i);
+    for my $m (qw(hunt_pirates return_home scout reinforce mine explore trade rally dock)) {
+      exit 1 unless index($stmt, "\x27$m\x27") >= 0;
+    }
+    exit 0;' "$MIGS4_TMP" \
+    || fail "0219's mission_type widen is missing, lost a pre-existing mission, or does not add 'dock'"
+  # the widen and its ONLY writer land in the SAME migration.
+  grep -q "create or replace function public.command_ship_group_dock(p_group_id uuid)" "$MIGS4_TMP" \
+    || fail "0219 does not mint command_ship_group_dock — the widen would land without its only 'dock' writer"
+  # exactly TWO re-creates: the dock verb + the mover parity copy. NOTHING else is touched.
+  [ "$(grep -c "create or replace function" "$MIGS4_TMP")" = "2" ] \
+    || fail "0219 must contain exactly TWO re-creates (the dock verb + the mover parity copy)"
+  # NO second settle/timer authority: the clock IS arrive_at, the settle IS process_fleet_movements.
+  grep -q "cron.schedule" "$MIGS4_TMP" \
+    && fail "0219 schedules a cron — S4's model is NO new timer (the existing 30s settle cron is the clock)" || true
+  grep -q "create or replace function public.movement_settle_arrival" "$MIGS4_TMP" \
+    && fail "0219 re-creates movement_settle_arrival — the dock leg must settle through the BYTE-UNTOUCHED location branch" || true
+  # every dock consumer stays byte-untouched (the 0211/0216 heads keep running).
+  for host in get_my_current_dock_services get_my_docked_store commission_first_main_ship get_my_fleet_positions mainship_resolve_docked_location mainship_resolve_fleet mainship_space_validate_context command_ship_group_stop process_fleet_movements; do
+    grep -q "create or replace function public.$host" "$MIGS4_TMP" \
+      && fail "0219 re-creates dock consumer/settle-path '$host' — S4 pledges every one of them byte-untouched" || true
+  done
+  # §2 stays law: no ship write, no per-ship mover composed.
+  grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIGS4_TMP" \
+    && fail "0219 UPDATEs main_ship_instances — charter §2 says a ship does not move (the settle's dock hunk writes the ship, not the dock verb)" || true
+  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+    grep -q "$banned" "$MIGS4_TMP" \
+      && fail "0219 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
+  done
+  # the DOCK BODY: composes the four authorities (never re-derives one) in the brake's order —
+  # timed gate < unified gate < group lock < gsm join < sortie reject < 0213 leaf < parked <
+  # territory leaf < its reject < the ONE dockability rule < its reject < mint < the flat clock <
+  # fleet_set_moving — with the sortie guard LIVE-scoped and the 0149 transform shape intact.
+  perl -0777 -ne '
+    my $i = index($_, "create or replace function public.command_ship_group_dock");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$function\$;", $i);
+    exit 1 if $j < 0;
+    my $body = substr($_, $i, $j - $i);
+    my $tg   = index($body, "timed_docking_disabled");
+    my $ug   = index($body, "unified_movement_disabled");
+    my $lock = index($body, "from public.ship_groups where group_id = v_group and player_id = v_player for update");
+    my $gsm  = index($body, "join public.fleets f on f.id = gsm.fleet_id");
+    my $sort = index($body, "group_on_sortie");
+    my $leaf = index($body, "ship_group_resolve_fleet");
+    my $park = index($body, "not_parked");
+    my $terr = index($body, "fleet_in_territory");
+    my $nt   = index($body, "not_in_territory");
+    my $leg  = index($body, "mainship_space_location_target_legal");
+    my $nd   = index($body, "not_dockable");
+    my $mk   = index($body, "movement_create(");
+    my $sec  = index($body, "docking_seconds");
+    my $sm   = index($body, "fleet_set_moving(");
+    exit 1 unless $tg >= 0 && $ug >= 0 && $lock >= 0 && $gsm >= 0 && $sort >= 0 && $leaf >= 0
+               && $park >= 0 && $terr >= 0 && $nt >= 0 && $leg >= 0 && $nd >= 0
+               && $mk >= 0 && $sec >= 0 && $sm >= 0;
+    exit 1 unless $tg < $ug && $ug < $lock && $lock < $gsm && $gsm < $sort && $sort < $leaf
+               && $leaf < $park && $park < $terr && $terr < $nt && $nt < $leg && $leg < $nd
+               && $nd < $mk && $mk < $sec && $sec < $sm;
+    exit 1 unless $body =~ /f\.status in \(.moving., .present., .returning.\)/;
+    exit 1 unless index($body, "make_interval(secs => v_secs)") >= 0;
+    exit 1 unless index($body, "where id = v_movement and status = \x27moving\x27") >= 0;
+    exit 0;' "$MIGS4_TMP" \
+    || fail "0219's dock body lost a composed authority, its LIVE-scoped sortie guard, the 0149 flat-clock transform, or its order (timed gate -> unified gate -> group lock -> gsm guard -> leaf -> parked -> territory -> dockable -> mint -> clock -> set_moving)"
+  # THE TRANSLATE HUNK, judged on the GO body: present, GATED on timed_docking_enabled, composed of
+  # the ONE dockability rule, ordered inside the location branch (after combat_destination, before
+  # guard 7 / member_busy), and rewriting to a coordinate leg (v_t_type/v_t_loc).
+  perl -0777 -ne '
+    my $i = index($_, "create or replace function public.command_ship_group_go");
+    exit 1 if $i < 0;
+    my $j = index($_, "\$function\$;", $i);
+    exit 1 if $j < 0;
+    my $body = substr($_, $i, $j - $i);
+    my $cd = index($body, "combat_destination");
+    my $hk = index($body, "cfg_bool(\x27timed_docking_enabled\x27)");
+    my $mb = index($body, "member_busy");
+    exit 1 unless $cd >= 0 && $hk >= 0 && $mb >= 0;
+    exit 1 unless $cd < $hk && $hk < $mb;
+    exit 1 unless $body =~ /if public\.cfg_bool\(\x27timed_docking_enabled\x27\)\s*and \(public\.mainship_space_location_target_legal\(v_loc\.id\)->>\x27ok\x27\)::boolean is true then\s*v_t_type := \x27space\x27; v_t_loc := null;\s*end if;/;
+    exit 0;' "$MIGS4_TMP" \
+    || fail "0219's mover lost the gated translate hunk, its ONE-dockability-rule compose, or its place in the location branch (after combat_destination, before guard 7)"
+  # THE MOVER BYTE-PARITY DIFF (the crown of this section): the 0219 mover body must equal the 0218
+  # TRUE-head body EXACTLY — comment-stripped, whitespace-normalized — after removing EXACTLY ONE
+  # occurrence of the translate hunk. Any second delta (a reordered guard, a dropped dissolve, a
+  # silent "improvement") reds here. Judged on the RAW files, stripped in-perl.
+  perl -0777 -e '
+    sub codebody {
+      my ($f) = @_;
+      open my $h, "<", $f or exit 1; local $/; my $s = <$h>;
+      my $i = index($s, "create or replace function public.command_ship_group_go("); exit 1 if $i < 0;
+      my $j = index($s, "\$function\$;", $i); exit 1 if $j < 0;
+      my $b = substr($s, $i, $j - $i);
+      $b =~ s/--[^\n]*//g;
+      $b =~ s/\s+/ /g;
+      return $b;
+    }
+    my $old = codebody($ARGV[0]);
+    my $new = codebody($ARGV[1]);
+    my $hunk = "if public.cfg_bool(\x27timed_docking_enabled\x27) and (public.mainship_space_location_target_legal(v_loc.id)->>\x27ok\x27)::boolean is true then v_t_type := \x27space\x27; v_t_loc := null; end if; ";
+    exit 1 if index($new, $hunk) < 0;
+    my $c = ($new =~ s/\Q$hunk\E//g);
+    exit 1 unless $c == 1;
+    exit($new eq $old ? 0 : 1);' "$MIGRATION_S3" "$MIGRATION_S4" \
+    || fail "0219's mover is NOT the 0218 head plus exactly the ONE translate hunk — parity broke (a second delta, a lost hunk, or a rebuild from a stale head)"
+  # the dark gate + the flat clock are seeded (on-conflict-do-nothing), and the S3-review fold landed.
+  grep -q "'timed_docking_enabled'" "$MIGS4_TMP" || fail "0219 does not seed timed_docking_enabled"
+  grep -q "'docking_seconds'" "$MIGS4_TMP"       || fail "0219 does not seed docking_seconds"
+  grep -q "on conflict (key) do nothing" "$MIGS4_TMP" \
+    || fail "0219's flag seeds are not on-conflict-do-nothing (a re-run would clobber a lit env)"
+  grep -q "territory_radius is null or territory_radius > 0" "$MIGS4_TMP" \
+    || fail "0219 lost the S3-review territory_radius CHECK fold (NULL-or-positive)"
+  # pointer discipline: 0219 declares itself the mover's true head (prose — raw file).
+  grep -q "TRUE-HEAD DECLARATION" "$MIGRATION_S4" \
+    || fail "0219 does not declare itself the mover's true head — the 0136/0211 stale-head mistake repeats by default"
+  # the runtime fixtures must be non-vacuous (each string is a RAISE that fires when the fixture
+  # failed to reach the state its marker claims to pin) — and §2 must hold through the dock too.
+  grep -q "the dark instant-dock contrast would be vacuous" "$SQL" \
+    || fail "S4 DARKPARITY does not guard its fixture (seeded-false flag + a really-dockable port)"
+  grep -q "the translate probe would be vacuous" "$SQL" \
+    || fail "S4 TRANSLATE_PARK does not guard that the target port is really dockable"
+  grep -q "the dock leg is not status" "$SQL" \
+    || fail "S4 DOCKLEG_MINT does not guard that the minted dock leg is really moving"
+  grep -q "not the EXACT flat 45s" "$SQL" \
+    || fail "S4 DOCKLEG_MINT does not pin arrive_at - depart_at as the EXACT flat 45s (the 0149 transform's whole point)"
+  grep -q "the not-in-territory probe would be vacuous" "$SQL" \
+    || fail "S4 GUARD_NOTINTERRITORY does not guard that the fleet is really parked in open space outside every ring"
+  grep -q "the S4 mid-combat sortie state was not built" "$SQL" \
+    || fail "S4 GUARD_ONSORTIE does not guard that the sortie is really present-at-site with an open manifest"
+  grep -q "no live encounter under the dock probe" "$SQL" \
+    || fail "S4 GUARD_ONSORTIE does not guard that a LIVE encounter exists"
+  grep -q "the not_parked probe would be vacuous" "$SQL" \
+    || fail "S4 GUARD_NOTPARKED does not guard that the fleet is really docked (present) when the guard is probed"
+  grep -q "the untranslated probe would be vacuous" "$SQL" \
+    || fail "S4 RALLY_UNTRANSLATED does not guard that a non-dockable 'none' destination exists"
+  grep -q "assert_ships_untouched('before_.*', 'after_.*', 'timed dock')" "$SQL" \
+    || fail "the §2 ship-untouched assertion is not applied to: 'timed dock'"
+  rm -f "$MIGS4_TMP"
 
   tp_assert_out_of_scope "$SQL"
 

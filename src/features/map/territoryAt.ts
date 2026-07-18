@@ -20,10 +20,16 @@ export interface TerritoryLocation {
 /**
  * The territory containing `point`, or null. WORLD coordinates on both sides. Containment is
  * INCLUSIVE (dist <= radius — a fleet parked exactly on the boundary reads as inside). Overlaps
- * resolve to the SMALLEST containing radius (the most specific territory); equal radii tie-break
- * deterministically to the lowest location id (stable across re-renders). A NULL / non-positive /
- * non-finite radius never contains; a non-finite point is contained by nothing — fail closed,
- * never a guessed territory (the movementInterpolation law).
+ * resolve to the NEAREST CENTER (the location the point is actually closest to — the 0220 retune
+ * makes territories pairwise disjoint, so on the real map at most one ring ever contains a point
+ * and this rule is belt-and-braces for any future overlap); equal distances tie-break to the
+ * SMALLEST radius (the most specific territory), then deterministically to the lowest location id
+ * (stable across re-renders). A NULL / non-positive / non-finite radius never contains; a
+ * non-finite point is contained by nothing — fail closed, never a guessed territory (the
+ * movementInterpolation law).
+ * SERVER NOTE: fleet_in_territory (0218) keeps its smallest-radius-then-id order — with the
+ * disjoint 0220 radii both orders answer identically on every real point; nearest-center here only
+ * matters if an overlap ever returns, and then it names the site the fleet is actually at.
  */
 export function territoryAt<L extends TerritoryLocation>(
   point: { x: number; y: number },
@@ -31,14 +37,17 @@ export function territoryAt<L extends TerritoryLocation>(
 ): L | null {
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return null
   let best: L | null = null
+  let bestD = Infinity
   let bestR = Infinity
   for (const loc of locations) {
     const r = loc.territory_radius
     if (r == null || !Number.isFinite(r) || r <= 0) continue
     if (!Number.isFinite(loc.x) || !Number.isFinite(loc.y)) continue
-    if (distance(point.x, point.y, loc.x, loc.y) > r) continue
-    if (best === null || r < bestR || (r === bestR && loc.id < best.id)) {
+    const d = distance(point.x, point.y, loc.x, loc.y)
+    if (d > r) continue
+    if (best === null || d < bestD || (d === bestD && (r < bestR || (r === bestR && loc.id < best.id)))) {
       best = loc
+      bestD = d
       bestR = r
     }
   }

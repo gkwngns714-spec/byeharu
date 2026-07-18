@@ -67,6 +67,12 @@ export function groupStopAvailability(input: {
 // group_id tag), which would mis-classify a legacy expedition's way home as a sortie — but those
 // shapes matter only in the dark arm, and dark applies no classification at all.
 
+// S4 TIMED DOCKING (0219) — deliberately NO change here: classifySortieLeg('dock') = null, so a
+// DOCKING fleet still shows the Stop button. That is the intended affordance, not an omission —
+// the brake cancels the dock leg and parks the fleet at the interpolated point, which is still
+// inside the port's territory, so it is immediately re-dockable. A dock is a 45s errand, not a
+// combat commitment; only sortie legs are non-stoppable.
+
 export type SortieLeg = 'outbound' | 'returning'
 
 /** 'hunt_pirates' → outbound sortie leg; 'return_home' → the way back; anything else → not a sortie. */

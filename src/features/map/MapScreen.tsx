@@ -4,11 +4,14 @@ import { GalaxyMap } from './GalaxyMap'
 import type { MapLocation } from './mapTypes'
 import { TYPE_LABEL, dangerLabel, rewardLabel } from './locationDisplay'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
-import { TeamMapSend } from '../command/TeamMapSend'
-import { TeamMapStop } from '../command/TeamMapStop'
+import { FleetCommandPanel } from './FleetCommandPanel'
+import { fleetGoTargetView } from './fleetGoTarget'
+import type { FleetCommandTarget } from './fleetCommandModel'
+import { teamDestinationKind } from '../command/teamDestination'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 import { MiningPanel } from '../mining/MiningPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
+import type { WorldCoord } from './openSpaceTransform'
 import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
@@ -18,10 +21,13 @@ import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../com
 // server-lit feature panels ride ONE overlay rail instead of floating as raw flow cards. Shared
 // polled data comes from the shell; the arrival settle lives in AppShell — never here.
 //
-// 4A-POST: the per-ship movement client (MainShipCommand / PortNavPanel / the legacy + coordinate
-// stop CTAs) is DELETED — the unified fleet mover (TeamMapSend / FleetGoPanel / TeamMapStop) is the
-// only movement surface, and the server rejects the retired per-ship RPCs (flags verified OFF).
-// NO-SOFTLOCK is carried by TeamMapStop (mounted below, state-predicated) + the AppShell settle.
+// S5 MAP-UX: the three scattered fleet-command surfaces (FleetGoPanel top-right, TeamMapSend in
+// this aside, TeamMapStop in the top-left rail) are CONSOLIDATED into the ONE bottom-center
+// FleetCommandPanel mounted below. This screen owns the ONE selection source for it — the
+// FleetCommandTarget union: a space tap (GalaxyMap's onTargetPoint) yields the point target; the
+// existing marker selection (selectedId) DERIVES the port target — never a second selection state.
+// NO-SOFTLOCK is carried by the panel's model (Stop first, state-predicated only) + the AppShell
+// settle. The detail aside below is now READ-ONLY location info.
 
 // ── Player-facing location display ───────────────────────────────────────────────────────────────
 // Humanized: location_type → a plain kind; base_difficulty → a danger word; reward_tier → a reward
@@ -43,14 +49,39 @@ export function MapScreen() {
     map: {
       loading, error, locations, meta, mainShip, movements,
       mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement,
-      teamGroups, dockedTeamRollups, teamRepresentedShipIds, fleetPositions,
-      fleetMovementUnifiedEnabled, unifiedGroupFleets, refresh,
+      teamGroups, teamGroupMap, dockedTeamRollups,
+      fleetMovementUnifiedEnabled, unifiedGroupFleets,
+      launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, refresh,
     },
+    selection,
   } = useShellState()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // S5 MAP-UX: the fleet's tapped open-space destination (RAW world point — the wire value). The
+  // ONLY point-target state; the port target derives from selectedId below (ONE selection source).
+  const [pointTarget, setPointTarget] = useState<WorldCoord | null>(null)
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
+
+  // Selecting a marker retires any live point target (never two live targets); a bare-space tap
+  // already clears the selection on GalaxyMap's own svg click path — the two stay exclusive by
+  // construction. NB the svg click that FOLLOWS a space tap calls onSelect(null), so clearing the
+  // point target here is gated on an actual (non-null) marker selection.
+  const handleSelect = (id: string | null) => {
+    setSelectedId(id)
+    if (id !== null) setPointTarget(null)
+  }
+
+  // The point target resolved ONCE (raw + canonical preview + bounds verdict); feeds both the
+  // GalaxyMap crosshair marker and the command panel's target union.
+  const pointView = pointTarget ? fleetGoTargetView(pointTarget) : null
+  // THE FleetCommandTarget union — point (from the tap) XOR port (derived from the existing
+  // selectedId when the location is a legal fleet destination) XOR null. No second selection state.
+  const target: FleetCommandTarget = pointView
+    ? { kind: 'point', view: pointView }
+    : selected && teamDestinationKind(selected) !== null
+      ? { kind: 'port', locationId: selected.id }
+      : null
 
   const panelLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
 
@@ -94,35 +125,20 @@ export function MapScreen() {
               movements={movements}
               teamGroups={teamGroups}
               dockedTeamRollups={dockedTeamRollups}
-              teamRepresentedShipIds={teamRepresentedShipIds}
-              fleetPositions={fleetPositions}
               unifiedGroupFleets={unifiedGroupFleets}
               fleetMovementUnifiedEnabled={fleetMovementUnifiedEnabled}
-              onFleetGo={refresh}
+              fleetGoView={pointView}
+              onTargetPoint={setPointTarget}
               selectedId={selectedId}
-              onSelect={setSelectedId}
+              onSelect={handleSelect}
             />
-            {/* top-left overlay rail: the server-lit command/feature panels ride ONE stacked,
-                scrollable slot so that WHEN a capability lights they read as coherent map overlays
-                instead of colliding at hand-tuned offsets. All keep their server-lit `return null`
-                gates verbatim (dark today → the rail renders empty and, being pointer-transparent,
-                never intercepts map gestures). GalaxyMap owns top-right (zoom + coordinate move),
-                bottom-left (legend) and bottom-right (coordinate stop); WorldEvents takes top-center. */}
+            {/* top-left overlay rail: the server-lit feature panels ride ONE stacked, scrollable
+                slot so that WHEN a capability lights they read as coherent map overlays instead of
+                colliding at hand-tuned offsets. All keep their server-lit `return null` gates
+                verbatim (dark today → the rail renders empty and, being pointer-transparent, never
+                intercepts map gestures). GalaxyMap owns top-right (zoom), bottom-left (legend) and
+                bottom-right; WorldEvents takes top-center; the FleetCommandPanel takes bottom-center. */}
             <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
-              {/* MOVEMENT-ON-MAP step 2 — the fleet STOP (charter §2a). Mounted FIRST in the rail on
-                  purpose: a stop is a safety CTA (NO-SOFTLOCK) and must not sit below scrollable
-                  feature panels. It rides this rail rather than bottom-right because the two per-SHIP
-                  stops there are mutually exclusive only BY STATE — a fleet stop is a different
-                  movement owner and can be live alongside either, so it would collide; a rail stacks.
-                  Renders nothing unless an owned fleet is actually in flight. */}
-              {TEAM_COMMAND_ENABLED && (
-                <TeamMapStop
-                  movements={movements}
-                  groups={teamGroups}
-                  unifiedEnabled={fleetMovementUnifiedEnabled}
-                  onStopped={refresh}
-                />
-              )}
               {/* EXPLORATION-P11 — dark scan + discoveries; legal only settled in space. */}
               <ExplorationPanel
                 lifecycleKey={panelLifecycleKey}
@@ -140,11 +156,42 @@ export function MapScreen() {
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
+            {/* S5 MAP-UX — THE fleet-command surface (bottom-center): Stop (NO-SOFTLOCK, always
+                first, state-predicated only) + go/redirect + dock + hunt, all composed from the ONE
+                pure model. Mounted behind the same compile-time gate as every team surface; the
+                panel renders nothing unless a fleet is in flight, a target is live, or a fleet sits
+                in a dockable port's territory. onCommanded refreshes the map reads AND the shell's
+                ship statuses (the TeamMapSend post-command discipline, kept). */}
+            {TEAM_COMMAND_ENABLED && (
+              <FleetCommandPanel
+                target={target}
+                movements={movements}
+                groups={teamGroups}
+                unifiedEnabled={fleetMovementUnifiedEnabled}
+                unifiedFleets={unifiedGroupFleets}
+                rollups={dockedTeamRollups}
+                locations={locations}
+                ships={selection.ships}
+                membership={teamGroupMap}
+                launchFromDock={launchFromDockEnabled}
+                fleetControlEnabled={fleetControlEnabled}
+                timedDockingEnabled={timedDockingEnabled}
+                onCommanded={() => {
+                  void refresh()
+                  void selection.refresh()
+                }}
+                onClearTarget={() => {
+                  setPointTarget(null)
+                  setSelectedId(null)
+                }}
+              />
+            )}
           </div>
         )}
       </div>
 
-      {/* Location detail panel — IDENTITY → RIGHT NOW (the one send/travel CTA) → DETAILS.
+      {/* Location detail panel — IDENTITY → DETAILS. READ-ONLY since S5 MAP-UX: every command verb
+          lives in the bottom-center FleetCommandPanel (the port target derives from this selection).
           Bottom sheet on phones (capped height, scrollable), side panel on md+. */}
       {selected && (
         <aside
@@ -174,10 +221,7 @@ export function MapScreen() {
             </div>
           </div>
 
-          {/* 2 · RIGHT NOW — the send/travel flow is TeamMapSend below (the unified fleet mover);
-              the per-ship MainShipCommand surface was deleted in 4A-POST. */}
-
-          {/* 3 · DETAILS — humanized, decision-relevant facts only */}
+          {/* 2 · DETAILS — humanized, decision-relevant facts only */}
           <dl className="mt-4 space-y-1.5 text-sm">
             <StatRow
               label="Danger"
@@ -209,14 +253,6 @@ export function MapScreen() {
             )}
             {selMeta && <StatRow label="Region" value={selMeta.sectorName} />}
           </dl>
-
-          {/* TEAM-MAP-SEND — send a TEAM from the map (owner order). Mounted behind the same
-              compile-time gate as the roster (the CommandScreen idiom); the component itself
-              renders nothing unless this location is a legal team destination (the pure
-              teamDestinationKind reuse of the roster's predicates) AND the player has ≥1 team —
-              a team-less map sheet stays byte-identical. Submits via the SAME team wrappers,
-              non-optimistic; onSent refreshes the map reads (movements/fleets). */}
-          {TEAM_COMMAND_ENABLED && <TeamMapSend location={selected} onSent={refresh} />}
         </aside>
       )}
     </div>
