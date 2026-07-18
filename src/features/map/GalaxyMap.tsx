@@ -9,6 +9,7 @@ import { isMovementInFlight, interpolateMovementPoint } from './movementInterpol
 import { shipLayer } from './SpaceRouteLine'
 import { fleetShipsLayer } from './fleetShipsLayer'
 import { teamMarkersLayer } from './teamMarkers'
+import { territoryLayer } from './territoryLayer'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
@@ -339,6 +340,15 @@ export function GalaxyMap({
         <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-grid-major)" pointerEvents="none" />
         <rect x={0} y={0} width={VIEW} height={VIEW} fill="url(#bh-space-vignette)" pointerEvents="none" />
         <g transform={`translate(${view.tx} ${view.ty}) scale(${view.k})`}>
+          {/* S2 TERRITORY — world-true territory rings, composed by the pure, hook-free
+              `territoryLayer` element helper (the fleetShipsLayer/teamMarkersLayer convention; the
+              unit test calls the SAME function). FIRST child of the camera group: a territory is a
+              region of space, so it renders UNDER movement lines and every marker. World-true
+              radius (territory_radius * WORLD_TO_VIEWBOX_SCALE — scales with zoom, deliberately
+              NOT /k); every element pointer-transparent. Locations without territory_radius render
+              nothing — the pre-0217 map is byte-identical. */}
+          {territoryLayer({ locations, norm, k: view.k })}
+
           {/* Movement paths (under markers) — IN-FLIGHT ONLY.
               The rows arrive already filtered to status='moving', but that status is settled by the 30s
               `process_fleet_movements` cron, so a finished trip keeps its row for up to ~30s and used to
