@@ -1,16 +1,16 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 219,
-  "functions": 212,
-  "tables": 79,
-  "flags": 30,
+  "migrations": 226,
+  "functions": 217,
+  "tables": 80,
+  "flags": 33,
   "systems": 29,
   "phases": 24,
   "rungs": 9,
-  "jobs": 234,
-  "nodes": 602,
-  "edges": 1644
+  "jobs": 235,
+  "nodes": 618,
+  "edges": 1740
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -2485,6 +2485,89 @@
    "seedsFlag": []
   },
   {
+   "id": "mig:20260618000221",
+   "kind": "migration",
+   "label": "0221 movement_signal_repoint",
+   "stamp": "20260618000221",
+   "seq": "0221",
+   "addedAt": "2026-07-18T15:42:08+09:00",
+   "file": "supabase/migrations/20260618000221_movement_signal_repoint.sql",
+   "detail": "4C-MIG-1 — MOVEMENT-SIGNAL REPOINT (migration 0221): every LIVE read that still answered from the retired per-ship movement signals (main_ship_space_movements, fleets.active_space_movement_id, main_ship_instances.spatial_state/space_x/space_y) now answers from FLEET/BERTH truth instead. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2 (the FLEET is the only mover; membership IS position) + the leg",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000222",
+   "kind": "migration",
+   "label": "0222 movement_writer_repoint",
+   "stamp": "20260618000222",
+   "seq": "0222",
+   "addedAt": "2026-07-18T22:26:29+09:00",
+   "file": "supabase/migrations/20260618000222_movement_writer_repoint.sql",
+   "detail": "4C-MIG-2A — MOVEMENT-WRITER REPOINT (migration 0222): the DUAL-SAFE first stage of the writer retirement. The status literal 'stationary' is retired to 'home' everywhere a writer below still mints it, and send_ship_group_hunt's launch-ELIGIBILITY logic — which READ main_ship_instances.status/spatial_state to decide \"is this member docked at a port\" — is repointed onto FLEET TRUTH, mirroring 0221 R",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000226",
+   "kind": "migration",
+   "label": "mining_field_markers_read_surface",
+   "stamp": "20260618000226",
+   "seq": null,
+   "addedAt": "2026-07-18T23:16:15+09:00",
+   "file": "supabase/migrations/20260618000226_mining_field_markers_read_surface.sql",
+   "detail": "Byeharu — MINING-FIELD-MARKERS: the missing client read surface for ACTIVE mining_fields. WHY: mining_enabled was flipped true in prod (mining is live — MiningPanel's Extract action server-accepts calls today), but mining_fields (0103) is server-only by design — RLS enabled, NO anon/authenticated grant, no client read path. Players can extract but cannot SEE where any field is, so command_mining_e",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000227",
+   "kind": "migration",
+   "label": "world_geometry_rebalance",
+   "stamp": "20260618000227",
+   "seq": null,
+   "addedAt": "2026-07-18T23:27:16+09:00",
+   "file": "supabase/migrations/20260618000227_world_geometry_rebalance.sql",
+   "detail": "Byeharu — WORLD GEOMETRY REBALANCE: uniform 3x spread of the populated map + territory rings, and a coherent 0.25x pull-in of the mining fields — ONE world-layout data-fix, the 0220 (territory_radius_retune) precedent: guarded UPDATEs + a self-assert do-block, no schema/RPC/flag change, no client change. THE BUG (owner-observed): the whole populated map (0002 waypoints + 0066 starter ports, all",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000228",
+   "kind": "migration",
+   "label": "0228 combat_pership_damage",
+   "stamp": "20260618000228",
+   "seq": "0228",
+   "addedAt": "2026-07-18T23:00:30+09:00",
+   "file": "supabase/migrations/20260618000228_combat_pership_damage.sql",
+   "detail": "Byeharu — COMBAT SLICE 1: per-ship damage + command-ship protection. Migration 0228. DARK behind the new flag `per_ship_targeting_enabled` (seeded false). ── THE OWNER'S BUG (the #1 fix) ───────────────────────────────────────────────────────────────── \"A fleet takes damage and every ship is damaged EQUALLY; that must end; the command ship takes less damage, screened by escorts.\" combat_units is A",
+   "seedsFlag": [
+    "per_ship_targeting_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000229",
+   "kind": "migration",
+   "label": "module_combat_attributes",
+   "stamp": "20260618000229",
+   "seq": null,
+   "addedAt": "2026-07-18T23:27:20+09:00",
+   "file": "supabase/migrations/20260618000229_module_combat_attributes.sql",
+   "detail": "Byeharu — COMBAT SLICE 0: the MODULE-ATTRIBUTE FOUNDATION (range / projectile_speed / power / ammo per module) + migrate mining's radius onto the fitted mining module. A PURE FOUNDATION slice — additive columns, a backfill, ONE new read-leaf, and a byte-parity-except-one-hunk re-create of `mining_extract` gated behind a NEW dark flag. NO frontend, NO new RPC surface beyond the one read-leaf, NO ch",
+   "seedsFlag": [
+    "module_range_attributes_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000230",
+   "kind": "migration",
+   "label": "combat_telegraph",
+   "stamp": "20260618000230",
+   "seq": null,
+   "addedAt": "2026-07-18T23:27:33+09:00",
+   "file": "supabase/migrations/20260618000230_combat_telegraph.sql",
+   "detail": "Byeharu — COMBAT SLICE 2: the TELEGRAPH (a warning beat before a combat encounter). DARK. ── WHAT THIS IS ──────────────────────────────────────────────────────────────────────────────────── Today combat starts INSTANTLY on arrival at a hunt_pirates location: the settle chain (process_fleet_movements → movement_settle_arrival → fleet_set_present → presence_create → activity_start(presence,'hunt_pi",
+   "seedsFlag": [
+    "combat_telegraph_enabled"
+   ]
+  },
+  {
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
@@ -3757,6 +3840,36 @@
    "detail": "Postgres function"
   },
   {
+   "id": "fn:get_active_mining_fields",
+   "kind": "function",
+   "label": "get_active_mining_fields",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:ship_weapon_modules",
+   "kind": "function",
+   "label": "ship_weapon_modules",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:combat_flee_pending",
+   "kind": "function",
+   "label": "combat_flee_pending",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:get_my_pending_encounter",
+   "kind": "function",
+   "label": "get_my_pending_encounter",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:process_combat_telegraphs",
+   "kind": "function",
+   "label": "process_combat_telegraphs",
+   "detail": "Postgres function"
+  },
+  {
    "id": "table:profiles",
    "kind": "table",
    "label": "profiles",
@@ -4310,6 +4423,13 @@
    "detail": "sole writer: Reference/Config"
   },
   {
+   "id": "table:pending_encounters",
+   "kind": "table",
+   "label": "pending_encounters",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
    "id": "flag:runtime_cleanup_enabled",
    "kind": "flag",
    "label": "runtime_cleanup_enabled",
@@ -4487,6 +4607,24 @@
    "id": "flag:timed_docking_enabled",
    "kind": "flag",
    "label": "timed_docking_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:per_ship_targeting_enabled",
+   "kind": "flag",
+   "label": "per_ship_targeting_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:module_range_attributes_enabled",
+   "kind": "flag",
+   "label": "module_range_attributes_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:combat_telegraph_enabled",
+   "kind": "flag",
+   "label": "combat_telegraph_enabled",
    "detail": "game_config feature flag"
   },
   {
@@ -8793,6 +8931,221 @@
    "type": "gated-by"
   },
   {
+   "source": "mig:20260618000221",
+   "target": "fn:mainship_space_validate_context",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "fn:mainship_space_assert_cross_domain_exclusion",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "fn:get_my_fleet_positions",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "fn:exploration_scan",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "fn:mining_extract",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "fn:process_exploration_securing",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "fn:process_mining_securing",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "flag:exploration_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "flag:mining_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "flag:world_balance_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "fn:mainship_space_lock_context",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "fn:port_entry_commission_build",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "fn:repair_main_ship",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "fn:send_ship_group_hunt",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "flag:ship_traits_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "flag:launch_from_dock_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "flag:fleet_control_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "flag:team_command_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000226",
+   "target": "fn:get_active_mining_fields",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000226",
+   "target": "flag:mining_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000227",
+   "target": "fn:reveal_starter_ports",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000228",
+   "target": "fn:combat_create_group_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000228",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000228",
+   "target": "table:combat_units",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000228",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000228",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "fn:ship_weapon_modules",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "fn:mining_extract",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "fn:command_mining_extract",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "table:module_types",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "flag:module_range_attributes_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "flag:mining_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "flag:module_range_attributes_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "fn:activity_start",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "fn:combat_flee_pending",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "fn:get_my_pending_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "fn:process_combat_telegraphs",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "table:pending_encounters",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "table:pending_encounters",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "flag:combat_telegraph_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "flag:combat_telegraph_enabled",
+   "type": "gated-by"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -9753,6 +10106,108 @@
    "note": "command_ship_group_go"
   },
   {
+   "source": "mig:20260618000221",
+   "target": "mig:20260618000210",
+   "type": "supersedes",
+   "note": "mainship_space_validate_context"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "mig:20260618000056",
+   "type": "supersedes",
+   "note": "mainship_space_assert_cross_domain_exclusion"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "mig:20260618000216",
+   "type": "supersedes",
+   "note": "get_my_fleet_positions"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "mig:20260618000172",
+   "type": "supersedes",
+   "note": "exploration_scan"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "mig:20260618000172",
+   "type": "supersedes",
+   "note": "mining_extract"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "mig:20260618000100",
+   "type": "supersedes",
+   "note": "process_exploration_securing"
+  },
+  {
+   "source": "mig:20260618000221",
+   "target": "mig:20260618000105",
+   "type": "supersedes",
+   "note": "process_mining_securing"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "mig:20260618000056",
+   "type": "supersedes",
+   "note": "mainship_space_lock_context"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "mig:20260618000216",
+   "type": "supersedes",
+   "note": "port_entry_commission_build"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "mig:20260618000199",
+   "type": "supersedes",
+   "note": "repair_main_ship"
+  },
+  {
+   "source": "mig:20260618000222",
+   "target": "mig:20260618000214",
+   "type": "supersedes",
+   "note": "send_ship_group_hunt"
+  },
+  {
+   "source": "mig:20260618000227",
+   "target": "mig:20260618000068",
+   "type": "supersedes",
+   "note": "reveal_starter_ports"
+  },
+  {
+   "source": "mig:20260618000228",
+   "target": "mig:20260618000195",
+   "type": "supersedes",
+   "note": "combat_create_group_encounter"
+  },
+  {
+   "source": "mig:20260618000228",
+   "target": "mig:20260618000206",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "mig:20260618000221",
+   "type": "supersedes",
+   "note": "mining_extract"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "mig:20260618000104",
+   "type": "supersedes",
+   "note": "command_mining_extract"
+  },
+  {
+   "source": "mig:20260618000230",
+   "target": "mig:20260616000018",
+   "type": "supersedes",
+   "note": "activity_start"
+  },
+  {
    "source": "mig:20260616000007",
    "target": "mig:20260616000006",
    "type": "extends",
@@ -10045,6 +10500,18 @@
    "target": "mig:20260616000002",
    "type": "extends",
    "note": "locations"
+  },
+  {
+   "source": "mig:20260618000228",
+   "target": "mig:20260617000023",
+   "type": "extends",
+   "note": "combat_units"
+  },
+  {
+   "source": "mig:20260618000229",
+   "target": "mig:20260618000107",
+   "type": "extends",
+   "note": "module_types"
   },
   {
    "source": "fn:base_reserve_units",
@@ -12637,6 +13104,176 @@
    "type": "touches"
   },
   {
+   "source": "fn:mainship_space_assert_cross_domain_exclusion",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_space_assert_cross_domain_exclusion",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_space_assert_cross_domain_exclusion",
+   "target": "table:fleet_movements",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_space_assert_cross_domain_exclusion",
+   "target": "fn:mainship_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_space_assert_cross_domain_exclusion",
+   "target": "table:location_presence",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_fleet_positions",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:process_exploration_securing",
+   "target": "table:exploration_discoveries",
+   "type": "touches"
+  },
+  {
+   "source": "fn:process_exploration_securing",
+   "target": "fn:mainship_resolve_owned_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:process_exploration_securing",
+   "target": "fn:mainship_space_assert_settled_safe",
+   "type": "calls"
+  },
+  {
+   "source": "fn:process_exploration_securing",
+   "target": "table:bases",
+   "type": "touches"
+  },
+  {
+   "source": "fn:process_exploration_securing",
+   "target": "fn:reward_grant",
+   "type": "calls"
+  },
+  {
+   "source": "fn:repair_main_ship",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:repair_main_ship",
+   "target": "fn:mainship_resolve_owned_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:ship_weapon_modules",
+   "target": "table:ship_module_fittings",
+   "type": "touches"
+  },
+  {
+   "source": "fn:ship_weapon_modules",
+   "target": "table:module_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:ship_weapon_modules",
+   "target": "table:module_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:ship_weapon_modules",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:activity_start",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:activity_start",
+   "target": "table:pending_encounters",
+   "type": "touches"
+  },
+  {
+   "source": "fn:activity_start",
+   "target": "fn:cfg_num",
+   "type": "calls"
+  },
+  {
+   "source": "fn:activity_start",
+   "target": "table:location_presence",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "table:pending_encounters",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "table:location_presence",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "table:bases",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "fn:fleet_speed",
+   "type": "calls"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "fn:combat_fleet_return_speed",
+   "type": "calls"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "fn:presence_complete",
+   "type": "calls"
+  },
+  {
+   "source": "fn:combat_flee_pending",
+   "target": "fn:movement_create",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_pending_encounter",
+   "target": "table:pending_encounters",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_pending_encounter",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_pending_encounter",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
    "source": "table:profiles",
    "target": "system:Auth",
    "type": "owned-by"
@@ -14650,6 +15287,13 @@
    "date": "2026-07-15",
    "title": "SESSION WRAP: the FLEET RESHAPE + audit-fix batch is COMPLETE (all merged, all DARK) — pending state = owner-gated",
    "migs": []
+  },
+  {
+   "date": "2026-07-18",
+   "title": "COMBAT SLICE 0: the module-attribute foundation (mig 0229, DARK `module_range_attributes_enabled`)",
+   "migs": [
+    "20260618000229"
+   ]
   }
  ]
 }
