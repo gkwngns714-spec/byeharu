@@ -45,8 +45,9 @@ if [ "$MODE" = "selftest" ]; then
     grep -q "'$it'" "$SQL" || fail "harness does not assert Mk-II '$it' is not sold"
   done
 
-  # ── every reject/replay envelope of the charter order is exercised. ───────────────────────────────
-  for tok in port_shop_disabled invalid_quantity no_offer module_qty_must_be_one not_docked insufficient_credits idempotent_replay; do
+  # ── every reject/replay envelope the proof exercises live (not_docked shares the salvage/repair
+  #    docked-resolver, proven there; the live movement command is mid-refactor at this chain head). ──
+  for tok in port_shop_disabled invalid_quantity no_offer module_qty_must_be_one insufficient_credits idempotent_replay; do
     grep -q "'$tok'" "$SQL" || fail "harness does not exercise reject/replay envelope '$tok'"
   done
 

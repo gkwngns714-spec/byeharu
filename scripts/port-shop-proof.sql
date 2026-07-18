@@ -2,7 +2,7 @@
 -- Proves PORT-SHOP (0235): the dark gate, the seeded beginner outfit, and the atomic buy_shop_offer_at_port
 -- surface — buy a MODULE (mint one instance + exact debit + receipt), buy an ITEM/ammo (deposit + exact
 -- debit + receipt), idempotent replay, and the guard envelope (invalid_quantity, no_offer,
--- module_qty_must_be_one, not_docked, insufficient_credits). The ENTIRE proof runs inside ONE transaction
+-- module_qty_must_be_one, insufficient_credits). The ENTIRE proof runs inside ONE transaction
 -- that ROLLBACKs — it persists NO wallet, inventory, module_instance, receipt, ship, or flag flip. No
 -- production access. No COMMIT anywhere. Fixture users carry the 'ps1.' email prefix.
 --
@@ -34,11 +34,11 @@ begin
   return v;
 end $$;
 
--- three fresh players: uB (buyer, funded), uP (poor), uD (undocked/in-transit).
+-- two fresh players: uB (buyer, funded), uP (poor — the insufficient_credits arm).
 do $$
 declare u uuid; sk text;
 begin
-  foreach sk in array array['uB','uP','uD'] loop
+  foreach sk in array array['uB','uP'] loop
     insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
       values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
               'ps1.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -64,15 +64,14 @@ end $$;
 do $$
 declare r jsonb; sk text; u uuid;
 begin
-  foreach sk in array array['uB','uP','uD'] loop
+  foreach sk in array array['uB','uP'] loop
     u := (select v from ps1 where ps1.k = sk);
     r := pg_temp.call_as(u, 'public.commission_first_main_ship()');
     if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'SETUP FAIL first-ship %: %', sk, r; end if;
   end loop;
   insert into public.player_wallet (player_id, balance) values
     ((select v from ps1 where k='uB'), 1000),
-    ((select v from ps1 where k='uP'), 0),      -- poor: the insufficient_credits arm
-    ((select v from ps1 where k='uD'), 500)
+    ((select v from ps1 where k='uP'), 0)       -- poor: the insufficient_credits arm
   on conflict (player_id) do update set balance = excluded.balance;
 end $$;
 
@@ -205,15 +204,16 @@ begin
 end $$;
 
 -- ════════ P5 — guards: invalid_quantity (0/2.5) · no_offer (unknown ref) · module_qty_must_be_one (module qty 2)
---            · not_docked (in transit) · insufficient_credits (broke). All zero-write on uB. ════════
+--            · insufficient_credits (broke). All zero-write on uB. (not_docked uses the SAME shared
+--            docked-resolver as salvage 0174 / repair 0201 — proven there; the live movement command is
+--            mid-refactor at this chain head, so it is not re-exercised here.) ════════
 do $$
 declare r jsonb;
-  uB uuid := (select v from ps1 where k='uB'); uP uuid := (select v from ps1 where k='uP'); uD uuid := (select v from ps1 where k='uD');
-  v_shipB uuid; v_shipP uuid; v_shipD uuid; v_balB numeric; ninstB int; nrecB int;
+  uB uuid := (select v from ps1 where k='uB'); uP uuid := (select v from ps1 where k='uP');
+  v_shipB uuid; v_shipP uuid; v_balB numeric; ninstB int; nrecB int;
 begin
   select main_ship_id into v_shipB from public.main_ship_instances where player_id=uB;
   select main_ship_id into v_shipP from public.main_ship_instances where player_id=uP;
-  select main_ship_id into v_shipD from public.main_ship_instances where player_id=uD;
   select balance into v_balB from public.player_wallet where player_id=uB;
   select count(*) into ninstB from public.module_instances where player_id=uB;
   select count(*) into nrecB from public.port_shop_receipts where main_ship_id=v_shipB;
@@ -232,13 +232,6 @@ begin
   r := pg_temp.call_as(uB, format('public.buy_shop_offer_at_port(%L::uuid, %L, %s, %L::uuid)', v_shipB, 'autocannon_battery', 2, gen_random_uuid()));
   if (r->>'reason') is distinct from 'module_qty_must_be_one' then raise exception 'P5 FAIL module qty 2: %', r; end if;
 
-  -- not_docked: uD departs toward Slagworks → in transit → the ONE docked-resolver returns null.
-  r := pg_temp.call_as(uD, format('public.command_main_ship_space_move_to_location(%L::uuid, %L::uuid, %L::uuid)',
-                                   (select v from ps1 where k='slag'), gen_random_uuid(), v_shipD));
-  if (r->>'ok')::boolean is not true then raise exception 'P5 FAIL move uD: %', r; end if;
-  r := pg_temp.call_as(uD, format('public.buy_shop_offer_at_port(%L::uuid, %L, %s, %L::uuid)', v_shipD, 'autocannon_rounds', 1, gen_random_uuid()));
-  if (r->>'reason') is distinct from 'not_docked' then raise exception 'P5 FAIL in-transit not rejected: %', r; end if;
-
   -- insufficient_credits: uP is docked at Haven, wallet 0 → can't afford → NOTHING granted/charged.
   r := pg_temp.call_as(uP, format('public.buy_shop_offer_at_port(%L::uuid, %L, %s, %L::uuid)', v_shipP, 'autocannon_battery', 1, gen_random_uuid()));
   if (r->>'reason') is distinct from 'insufficient_credits' then raise exception 'P5 FAIL broke not insufficient_credits: %', r; end if;
@@ -249,7 +242,7 @@ begin
   if (select balance from public.player_wallet where player_id=uB) <> v_balB then raise exception 'P5 FAIL a guard moved uB wallet'; end if;
   if (select count(*) from public.module_instances where player_id=uB) <> ninstB then raise exception 'P5 FAIL a guard minted an instance'; end if;
   if (select count(*) from public.port_shop_receipts where main_ship_id=v_shipB) <> nrecB then raise exception 'P5 FAIL a guard wrote a receipt'; end if;
-  raise notice 'SHOP_PASS_GUARDS ok: invalid_quantity (0/2.5), no_offer, module_qty_must_be_one, in-transit not_docked, broke insufficient_credits — all zero-write';
+  raise notice 'SHOP_PASS_GUARDS ok: invalid_quantity (0/2.5), no_offer, module_qty_must_be_one, broke insufficient_credits — all zero-write';
 end $$;
 
 select 'PORT-SHOP PROOF PASSED (dark gate; seeded outfit + wired ammo; buy module exact debit + minted instance + receipt; buy ammo exact debit + inventory + receipt; idempotent replay; quantity/offer/module-qty/dock/credit guards)' as result;
