@@ -410,7 +410,7 @@ export function GalaxyMap({
 
       {/* ── UI R1 overlay slots: one positioned rail per corner; co-corner overlays stack instead of
           colliding at hand-tuned absolute offsets. MapScreen owns the remaining slots (top-left =
-          the feature rail, top-center = world events, bottom-center = the ONE FleetCommandPanel). ── */}
+          the feature rail, top-center = world events, bottom-right = the ONE FleetCommandPanel). ── */}
 
       {/* top-right: the zoom cluster. S5 MAP-UX: the fleet coordinate-go confirm panel that used to
           stack here moved into the ONE bottom-center FleetCommandPanel (MapScreen). */}

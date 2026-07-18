@@ -435,7 +435,9 @@ export function FleetCommandPanel({
   return (
     <OverlayPanel
       data-testid="fleet-command-panel"
-      slot="bottom-center"
+      // Play-test move: the location/destination surface lives in the bottom-RIGHT corner (out of
+      // the map's center, beside where a tapped location's info reads), not stacked over the middle.
+      slot="bottom-right"
       className="flex max-h-[45%] w-72 max-w-[calc(100vw-1.5rem)] flex-col"
     >
       {notice && (

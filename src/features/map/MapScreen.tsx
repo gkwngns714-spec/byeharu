@@ -133,8 +133,8 @@ export function MapScreen() {
                 slot so that WHEN a capability lights they read as coherent map overlays instead of
                 colliding at hand-tuned offsets. All keep their server-lit `return null` gates
                 verbatim (dark today → the rail renders empty and, being pointer-transparent, never
-                intercepts map gestures). GalaxyMap owns top-right (zoom), bottom-left (legend) and
-                bottom-right; WorldEvents takes top-center; the FleetCommandPanel takes bottom-center. */}
+                intercepts map gestures). GalaxyMap owns top-right (zoom) and bottom-left (legend);
+                WorldEvents takes top-center; the FleetCommandPanel takes bottom-right. */}
             <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
               {/* EXPLORATION-P11 / MINING-P12 — dark scan/extract; legal only settled in space.
                   4C-CLIENT: the ships' legacy spatial_state column is no longer read (4c-mig-2
@@ -157,7 +157,7 @@ export function MapScreen() {
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
-            {/* S5 MAP-UX — THE fleet-command surface (bottom-center): Stop (NO-SOFTLOCK, always
+            {/* S5 MAP-UX — THE fleet-command surface (bottom-right): Stop (NO-SOFTLOCK, always
                 first, state-predicated only) + go/redirect + dock + hunt, all composed from the ONE
                 pure model. Mounted behind the same compile-time gate as every team surface; the
                 panel renders nothing unless a fleet is in flight, a target is live, or a fleet sits
