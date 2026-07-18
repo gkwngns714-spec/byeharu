@@ -256,15 +256,21 @@
 -- chain lacks (reveal_starter_ports) — all reverted by ROLLBACK. No committed flag/state changes.
 --
 -- ── THE ONE NON-RPC-PURE STEP (fixture normalization; quarantined below) ──────────────────────────
--- Provisioning is 100% real-RPC (commission_first_main_ship + commission_additional_main_ship). But
--- commissioning docks ships CANONICALLY (status='stationary', spatial_state='at_location', plus a
--- 'present' commission fleet at Haven), while the legacy team-send path (0152/0163) requires
--- status='home' — and NO RPC cleanly transitions a stationary commissioned ship to 'home' under the
--- 0055 spatial CHECKs. So the harness fixture-normalizes the ships that must be legacy-sendable into
--- canonical home shape and retires their 'present' commission fleets (so they don't consume the
--- active-fleet cap). That single UPDATE pair — plus a created_at stagger for deterministic member
--- ordering (now() is txn-constant, so same-txn rows tie) — is the ONLY non-RPC state surgery here;
--- everything else goes through the real RPC surface.
+-- Provisioning is 100% real-RPC (commission_first_main_ship + commission_additional_main_ship).
+-- 4C-MIG-2A (0222) TOKEN UPDATE: commissioning USED to dock ships CANONICALLY (status='stationary',
+-- spatial_state='at_location', plus a 'present' commission fleet at Haven) — port_entry_commission_
+-- build's b1 hunk now mints status='home' with spatial NULL instead (the fleet+presence mint is
+-- UNCHANGED). The legacy team-send path (0152/0163) still requires status='home', so the FIVE ships
+-- that must be legacy-sendable (a1,a2,a3,b1,c1) no longer need a status/spatial rewrite for that —
+-- but they still carry a live 'present' commission fleet that must be retired (it would otherwise
+-- consume the active-fleet cap), so that half of the normalization survives. c2 is the DELIBERATE
+-- exception in BOTH directions: it is left OFF the home-normalization list (unchanged), AND it is
+-- surgically taken BACK to the pre-repoint commissioned-docked shape (status='stationary',
+-- spatial_state='at_location') — the one shape this proof still needs on demand (the all-or-nothing
+-- SEND block pins the legacy send's own error text for a stationary ship, 0152:106) that the real
+-- commission RPC no longer produces by itself. That surgery — plus a created_at stagger for
+-- deterministic member ordering (now() is txn-constant, so same-txn rows tie) — is the ONLY non-RPC
+-- state surgery here; everything else goes through the real RPC surface.
 
 \set ON_ERROR_STOP on
 
@@ -437,12 +443,11 @@ begin
   insert into tcmd values ('a1',a1),('a2',a2),('a3',a3),('b1',b1),('c1',c1),('c2',c2);
 
   -- ── FIXTURE NORMALIZATION — the ONE non-RPC-pure step in this proof (see header). ────────────────
-  -- Commissioning docks ships canonically (stationary / at_location + a 'present' commission fleet at
-  -- Haven), but the legacy send (0152) requires status='home', and NO RPC cleanly transitions a
-  -- stationary commissioned ship to 'home' under the 0055 spatial CHECKs. Normalize the ships that
-  -- must be legacy-sendable (a1,a2,a3,b1,c1) into canonical home shape, and retire their 'present'
-  -- commission fleets so they don't consume the active-fleet cap. c2 is DELIBERATELY LEFT in its
-  -- commissioned 'stationary' shape — it is the un-sendable member the all-or-nothing test needs.
+  -- 4C-MIG-2A (0222): commission now births status='home'/spatial NULL directly (b1), so the FIVE
+  -- legacy-sendable ships (a1,a2,a3,b1,c1) need only their 'present' commission fleet retired, not a
+  -- status/spatial rewrite. The UPDATE below is dark on the ship-column set for these five (already
+  -- 'home'/NULL from birth) but is kept — cheap, and future-proof if commission's default ever moves
+  -- again — and still does the load-bearing fleet-retirement work.
   update public.main_ship_instances
      set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
    where main_ship_id in (a1, a2, a3, b1, c1);
@@ -459,6 +464,17 @@ begin
    where fleet_id in (select id from public.fleets
                         where main_ship_id in (a1, a2, a3, b1, c1) and status = 'destroyed')
      and status = 'active';
+
+  -- c2 SURGERY (the one ADDITIVE fixture step 0222 requires): reconstruct the pre-repoint
+  -- commissioned-docked shape (status='stationary', spatial_state='at_location') that commission
+  -- itself no longer produces. c2's 'present' commission fleet + active presence are UNTOUCHED
+  -- (real-RPC, still minted exactly as before) — only the two ship columns move, together, to
+  -- satisfy the 0055 CHECK (main_ship_instances_stationary_spatial_state: status='stationary'
+  -- requires spatial_state in ('in_space','at_location')). This is the un-sendable member the
+  -- all-or-nothing SEND block needs (0152's own status<>'home' gate, pinned on its exact error text).
+  update public.main_ship_instances
+     set status = 'stationary', spatial_state = 'at_location'
+   where main_ship_id = c2;
 
   -- Deterministic member ordering: group-send/stop iterate members ORDER BY created_at, but now() is
   -- txn-constant so same-txn commissions tie. Stagger so a1<a2<a3 and c1<c2 — the all-or-nothing test
@@ -1076,7 +1092,11 @@ begin
 
   -- leaf smoke on a fixture team ship (a3: home, spatial_state NULL — undisturbed since BLOCK STOP;
   -- rolled back with everything): mainship_sync_combat_hp writes hp ONLY (status/spatial untouched);
-  -- mainship_mark_combat_destroyed writes the exact 0059 terminal (status/hp/spatial_state/coords).
+  -- mainship_mark_combat_destroyed writes status='destroyed'/hp=0 (the 0059 terminal's lifecycle
+  -- half). 4C-MIG-2A (0222) TOKEN UPDATE: the writer no longer NULLS spatial_state/space_x/space_y
+  -- itself (b3) — a3 already carries them NULL from birth (commission no longer mints them either,
+  -- b1), so the post-condition below still holds, now because the retired columns were never
+  -- touched rather than because this call cleared them.
   perform public.mainship_sync_combat_hp(a3, 123);
   select count(*) into n from public.main_ship_instances
     where main_ship_id = a3 and hp = 123 and status = 'home' and spatial_state is null;
@@ -1085,7 +1105,7 @@ begin
   select count(*) into n from public.main_ship_instances
     where main_ship_id = a3 and status = 'destroyed' and hp = 0
       and spatial_state is null and space_x is null and space_y is null;
-  if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_mark_combat_destroyed did not write the 0059 terminal'; end if;
+  if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_mark_combat_destroyed did not write the destroyed/hp=0 terminal'; end if;
 
   -- the no-second-engine pin: EXACTLY one combat cron job, and it is the 0026 tick schedule.
   select count(*) into n from cron.job where jobname like '%combat%';
