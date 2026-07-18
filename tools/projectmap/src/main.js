@@ -387,8 +387,29 @@ addEventListener('pointermove', (e) => {
     drag.x = e.clientX; drag.y = e.clientY
   } else if (e.pointerType === 'mouse') hover(e)
 })
+// zoom toward the cursor, not the pivot: find the world point under the mouse and scale the
+// camera+pivot about it, so that point stays put on screen (the standard "zoom to cursor").
+const _zW = new THREE.Vector3(), _zN = new THREE.Vector3(), _zPlane = new THREE.Plane()
 canvas.addEventListener('wheel', (e) => {
-  e.preventDefault(); dist = Math.max(40, Math.min(2200, dist * (1 + Math.sign(e.deltaY) * 0.11)))
+  e.preventDefault()
+  const newDist = Math.max(40, Math.min(2200, dist * (1 + Math.sign(e.deltaY) * 0.11)))
+  const f = newDist / dist                       // effective factor after clamping
+  if (f !== 1) {
+    ndc.x = (e.clientX / innerWidth) * 2 - 1
+    ndc.y = -(e.clientY / innerHeight) * 2 + 1
+    ray.setFromCamera(ndc, camera)
+    let w = null
+    for (const h of ray.intersectObject(mesh)) {
+      if (nodeVisible(positioned[h.instanceId])) { w = _zW.copy(h.point); break }
+    }
+    if (!w) {                                     // no node under cursor → plane through the pivot
+      camera.getWorldDirection(_zN)
+      _zPlane.setFromNormalAndCoplanarPoint(_zN, target)
+      w = ray.ray.intersectPlane(_zPlane, _zW)
+    }
+    if (w) target.lerp(w, 1 - f)                  // keep the cursor's world point fixed on screen
+  }
+  dist = newDist
 }, { passive: false })
 
 const ray = new THREE.Raycaster()
