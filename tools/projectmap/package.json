@@ -7,7 +7,8 @@
   "scripts": {
     "scan": "node scan/scan.mjs",
     "live": "node scan/live.mjs",
-    "refresh": "node scan/scan.mjs && node scan/live.mjs",
+    "wip": "node scan/wip.mjs",
+    "refresh": "node scan/scan.mjs && node scan/live.mjs && node scan/wip.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"

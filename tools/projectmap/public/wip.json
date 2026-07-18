@@ -1,0 +1,155 @@
+{
+  "generatedAt": "2026-07-18T14:55:24.948Z",
+  "source": "open pull requests on gkwngns714-spec/byeharu",
+  "count": 4,
+  "items": [
+    {
+      "pr": 203,
+      "title": "4b-drop (0224): drop the 20 dead legacy mover functions (stacked on 2b)",
+      "branch": "slice-4b-drop",
+      "stamp": "20260618000232",
+      "color": "#ff2d95",
+      "touches": {
+        "functions": [
+          "mainship_mark_combat_destroyed",
+          "repair_main_ship",
+          "send_ship_group_hunt",
+          "mainship_mark_docked_at_location",
+          "get_my_fleet_positions",
+          "fleet_set_in_space",
+          "mainship_mark_legacy_in_flight",
+          "send_main_ship_expedition",
+          "move_ship_group_to_location",
+          "move_main_ship_to_location",
+          "request_main_ship_return",
+          "command_main_ship_space_move",
+          "command_main_ship_space_move_to_location",
+          "command_main_ship_space_stop",
+          "mainship_space_begin_move",
+          "mainship_space_begin_move_core",
+          "mainship_space_stop",
+          "mainship_space_settle_space_arrival",
+          "mainship_space_dock_at_location",
+          "mainship_space_resolve_origin",
+          "command_main_ship_settle_arrival",
+          "command_main_ship_settle_arrival_legacy",
+          "process_mainship_space_arrivals",
+          "get_osn_movement_readiness",
+          "normalize_main_ship_dock",
+          "dev_set_main_ship_destroyed",
+          "send_ship_group_expedition"
+        ],
+        "tables": [
+          "main_ship_instances",
+          "fleets",
+          "main_ship_space_command_receipts",
+          "main_ship_space_movements"
+        ]
+      },
+      "nodes": [
+        "fn:mainship_mark_combat_destroyed",
+        "fn:repair_main_ship",
+        "fn:send_ship_group_hunt",
+        "fn:mainship_mark_docked_at_location",
+        "fn:get_my_fleet_positions",
+        "fn:fleet_set_in_space",
+        "fn:mainship_mark_legacy_in_flight",
+        "fn:send_main_ship_expedition",
+        "fn:move_ship_group_to_location",
+        "table:main_ship_instances",
+        "table:fleets",
+        "table:main_ship_space_command_receipts",
+        "table:main_ship_space_movements",
+        "fn:move_main_ship_to_location",
+        "fn:request_main_ship_return",
+        "fn:command_main_ship_space_move",
+        "fn:command_main_ship_space_move_to_location",
+        "fn:command_main_ship_space_stop",
+        "fn:mainship_space_begin_move",
+        "fn:mainship_space_begin_move_core",
+        "fn:mainship_space_stop",
+        "fn:mainship_space_settle_space_arrival",
+        "fn:mainship_space_dock_at_location",
+        "fn:mainship_space_resolve_origin",
+        "fn:command_main_ship_settle_arrival",
+        "fn:command_main_ship_settle_arrival_legacy",
+        "fn:process_mainship_space_arrivals",
+        "fn:get_osn_movement_readiness",
+        "fn:normalize_main_ship_dock",
+        "fn:dev_set_main_ship_destroyed",
+        "fn:send_ship_group_expedition"
+      ]
+    },
+    {
+      "pr": 198,
+      "title": "Pirate danger-zone prototype (0225): PostGIS polygon zones + intercept + waypoints (DARK)",
+      "branch": "slice-pirate-intercept",
+      "stamp": "20260618000225",
+      "color": "#00e5ff",
+      "touches": {
+        "functions": [
+          "command_ship_group_go"
+        ],
+        "tables": []
+      },
+      "nodes": [
+        "fn:command_ship_group_go"
+      ]
+    },
+    {
+      "pr": 196,
+      "title": "4c-mig-2b (0223): retirement schema drops — drop spatial cols/table + narrow status CHECK",
+      "branch": "slice-4c2b-schema-drop",
+      "stamp": "20260618000231",
+      "color": "#ffd400",
+      "touches": {
+        "functions": [
+          "mainship_mark_combat_destroyed",
+          "repair_main_ship",
+          "send_ship_group_hunt",
+          "mainship_mark_docked_at_location",
+          "get_my_fleet_positions",
+          "fleet_set_in_space",
+          "mainship_mark_legacy_in_flight",
+          "send_main_ship_expedition",
+          "move_ship_group_to_location"
+        ],
+        "tables": [
+          "main_ship_instances",
+          "fleets",
+          "main_ship_space_command_receipts",
+          "main_ship_space_movements"
+        ]
+      },
+      "nodes": [
+        "fn:mainship_mark_combat_destroyed",
+        "fn:repair_main_ship",
+        "fn:send_ship_group_hunt",
+        "fn:mainship_mark_docked_at_location",
+        "fn:get_my_fleet_positions",
+        "fn:fleet_set_in_space",
+        "fn:mainship_mark_legacy_in_flight",
+        "fn:send_main_ship_expedition",
+        "fn:move_ship_group_to_location",
+        "table:main_ship_instances",
+        "table:fleets",
+        "table:main_ship_space_command_receipts",
+        "table:main_ship_space_movements"
+      ]
+    },
+    {
+      "pr": 162,
+      "title": "CMDBUFF-ONE: one command buff per fleet — the first command ship's (amends 0205, still DARK)",
+      "branch": "slice-cmdbuff-one",
+      "stamp": null,
+      "color": "#ff7a00",
+      "touches": {
+        "functions": [],
+        "tables": []
+      },
+      "nodes": [
+        "system:Fleet"
+      ]
+    }
+  ]
+}

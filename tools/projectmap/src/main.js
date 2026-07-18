@@ -26,9 +26,10 @@ const EDGE_DESC = {
 }
 
 const base = import.meta.env.BASE_URL || '/'
-const [graph, live] = await Promise.all([
+const [graph, live, wip0] = await Promise.all([
   fetch(`${base}graph.json`).then((r) => r.json()),
   fetch(`${base}live.json`).then((r) => r.json()).catch(() => null),
+  fetch(`${base}wip.json`).then((r) => r.json()).catch(() => null),
 ])
 
 const { status, why, frontier } = deriveStatuses(graph, live)
@@ -94,6 +95,13 @@ const state = {
   selected: null,
 }
 
+// ── work-in-progress overlay ────────────────────────────────────────────────────
+// wipIds: node ids that an OPEN pull request is touching right now — those pulse.
+// wipTint: instanceIndex -> THREE.Color, the item colour to pulse toward.
+let wipItems = []
+let wipIds = new Set()
+const wipTint = new Map()
+
 const matchesQuery = (n) => !state.query || n.label.toLowerCase().includes(state.query)
   || (n.detail ?? '').toLowerCase().includes(state.query)
 
@@ -110,7 +118,7 @@ function apply() {
     const vis = nodeVisible(n)
     if (vis) shown++
     const dim = near && !near.has(n.id)
-    const s = vis ? KIND_SIZE[n.kind] * (n.id === focus ? 2.1 : 1) : 0
+    const s = vis ? KIND_SIZE[n.kind] * (n.id === focus ? 2.1 : 1) * (wipIds.has(n.id) ? 1.7 : 1) : 0
     dummy.position.set(n.x, n.y, n.z)
     dummy.scale.setScalar(vis ? (dim ? s * 0.55 : s) : 0)
     dummy.updateMatrix()
@@ -288,6 +296,59 @@ function select(id) {
   }
   apply()
 }
+
+// ── work-in-progress: pulse what open PRs are touching, refreshed live ──────────
+const wnEl = document.getElementById('workingNow')
+
+function setWip(payload) {
+  wipItems = payload?.items ?? []
+  wipIds = new Set(wipItems.flatMap((it) => it.nodes))
+  wipTint.clear()
+  for (const it of wipItems) {
+    const col = new THREE.Color(it.color || '#ff2d95')
+    for (const nid of it.nodes) { const i = idx.get(nid); if (i != null) wipTint.set(i, col) }
+  }
+  renderWorkingNow(payload)
+  apply()   // pick up the size bump
+}
+
+function renderWorkingNow(payload) {
+  if (!wipItems.length) {
+    wnEl.innerHTML = '<div class="wn-head"><span>Working now</span></div>'
+      + '<div class="wn-empty">No open pull requests — nothing in flight.</div>'
+    wnEl.classList.add('on'); return
+  }
+  const when = payload?.generatedAt ? new Date(payload.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+  const rows = wipItems.map((it) => {
+    const target = it.nodes[0]
+    const touchN = (it.touches?.functions?.length ?? 0) + (it.touches?.tables?.length ?? 0)
+    const meta = [
+      it.stamp ? it.stamp.slice(8) : null,           // the migration's mmss tail — enough to tell them apart
+      `#${it.pr}`,
+      touchN ? `${touchN} symbol${touchN === 1 ? '' : 's'}` : `${it.nodes.length} node${it.nodes.length === 1 ? '' : 's'}`,
+    ].filter(Boolean).join(' · ')
+    return `<div class="wn-item" data-node="${target}" title="Fly to it">
+      <span class="wn-dot" style="background:${it.color}"></span>
+      <span class="wn-body"><span class="wn-title">${it.title.replace(/</g, '&lt;')}</span>
+      <span class="wn-meta">${meta}</span></span></div>`
+  }).join('')
+  wnEl.innerHTML = `<div class="wn-head"><span class="wn-live"></span><span>Working now</span>`
+    + `<span class="wn-when">${when}</span></div>${rows}`
+  wnEl.classList.add('on')
+  wnEl.querySelectorAll('.wn-item').forEach((el) => el.addEventListener('click', () => {
+    const id = el.getAttribute('data-node'); if (byId.has(id)) select(id)
+  }))
+}
+
+setWip(wip0)
+// Poll for movement — a merge, a new PR, a force-push — so the map tracks the work
+// as it shifts without a reload. Cache-busted; failures leave the last overlay up.
+setInterval(async () => {
+  try {
+    const p = await fetch(`${base}wip.json?t=${Math.floor(performance.now())}`).then((r) => r.json())
+    setWip(p)
+  } catch { /* keep the last good overlay */ }
+}, 20000)
 
 // ── the drawer (small screens only) ───────────────────────────────────────────
 const menuBtn = document.getElementById('menuBtn')
@@ -568,5 +629,22 @@ apply()
     target.z + dist * Math.cos(pitch) * Math.cos(yaw),
   )
   camera.lookAt(target)
+
+  // ── pulse the work-in-progress nodes ──────────────────────────────────────
+  // Own their instanceColor each frame, easing base → a bright tint of the PR's
+  // hue and back, so they breathe against the static field. apply() set the rest.
+  if (wipTint.size) {
+    const k = 0.5 + 0.5 * Math.sin(performance.now() * 0.005)   // 0..1
+    const hi = 0.4 + 0.6 * k
+    const arr = mesh.instanceColor.array
+    for (const [i, col] of wipTint) {
+      const o = i * 3
+      arr[o]     = baseColor[o]     * (1 - hi) + Math.min(1, col.r * 1.5) * hi
+      arr[o + 1] = baseColor[o + 1] * (1 - hi) + Math.min(1, col.g * 1.5) * hi
+      arr[o + 2] = baseColor[o + 2] * (1 - hi) + Math.min(1, col.b * 1.5) * hi
+    }
+    mesh.instanceColor.needsUpdate = true
+  }
+
   renderer.render(scene, camera)
 })()

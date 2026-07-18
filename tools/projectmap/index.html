@@ -147,6 +147,30 @@
   #hud { bottom: 14px; left: 14px; padding: 9px 13px; font-size: 11.5px; color: var(--dim); }
   #hud b { color: var(--text); font-weight: 600; }
   #hud .warn { color: #ffb03a; }
+
+  /* Working now — the live WIP overlay. One row per open PR; the pulsing map
+     nodes are those same PRs' migrations under the knife right now. */
+  #workingNow { bottom: 14px; right: 14px; width: 288px; max-width: calc(100vw - 28px);
+    padding: 11px 13px 9px; display: none; z-index: 6; }
+  body.map #workingNow.on { display: block; }
+  #workingNow .wn-head { display: flex; align-items: center; gap: 7px; font-size: 10px;
+    text-transform: uppercase; letter-spacing: .12em; color: var(--dim); font-weight: 700; margin-bottom: 9px; }
+  #workingNow .wn-live { width: 7px; height: 7px; border-radius: 50%; background: #ff2d95;
+    box-shadow: 0 0 0 0 rgba(255,45,149,.6); animation: wnbeat 1.6s ease-out infinite; }
+  @keyframes wnbeat { 0% { box-shadow: 0 0 0 0 rgba(255,45,149,.55); } 70% { box-shadow: 0 0 0 7px rgba(255,45,149,0); } 100% { box-shadow: 0 0 0 0 rgba(255,45,149,0); } }
+  #workingNow .wn-when { margin-left: auto; font-size: 9.5px; letter-spacing: .04em; color: var(--dim); font-weight: 600; }
+  #workingNow .wn-item { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; cursor: pointer;
+    border-top: 1px solid var(--line); }
+  #workingNow .wn-item:first-of-type { border-top: 0; }
+  #workingNow .wn-item:hover .wn-title { color: var(--text); }
+  #workingNow .wn-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; margin-top: 3px;
+    animation: wnpulse 1.4s ease-in-out infinite; }
+  @keyframes wnpulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+  #workingNow .wn-body { min-width: 0; }
+  #workingNow .wn-title { font-size: 11.5px; color: var(--dim); line-height: 1.35; }
+  #workingNow .wn-meta { font-size: 10px; color: var(--dim); opacity: .8; margin-top: 1px; }
+  #workingNow .wn-empty { font-size: 11px; color: var(--dim); }
+  @media (prefers-reduced-motion: reduce) { #workingNow .wn-live, #workingNow .wn-dot { animation: none; } }
   #tip { position: fixed; pointer-events: none; padding: 5px 9px; border-radius: 7px;
     background: rgba(0,0,0,.9); border: 1px solid var(--line); font-size: 11.5px;
     display: none; z-index: 10; white-space: nowrap; }
@@ -281,6 +305,7 @@
   </aside>
 
   <aside class="panel" id="inspect"></aside>
+  <div class="panel" id="workingNow"></div>
   <div class="panel" id="hud">—</div>
   <div id="tip"></div>
 
