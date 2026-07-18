@@ -185,6 +185,14 @@ for (const t of EDGE_TYPES) {
   }))
 }
 
+// Off by default: the map should hold still unless you ask it to spin.
+let autoRotate = false
+document.getElementById('cameraOptions').append(checkbox({
+  label: 'Auto-rotate', count: '', checked: autoRotate,
+  title: 'Slowly orbit the map on its own while you are not dragging or flying',
+  onChange: (on) => { autoRotate = on },
+}))
+
 document.getElementById('search').addEventListener('input', (e) => {
   const v = e.target.value
   if (tab === 'tree') { tree?.setQuery(v); return }
@@ -197,10 +205,11 @@ document.getElementById('reset').addEventListener('click', () => {
   state.edge = new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by', 'delivers', 'flips', 'waits-on'])
   state.query = ''; state.selected = null
   document.getElementById('search').value = ''
-  document.querySelectorAll('#controls input[type=checkbox]').forEach((c, i) => {
-    const groups = [STATUS_ORDER.length, 7, EDGE_TYPES.length]
-    c.checked = i < groups[0] + groups[1] ? true : state.edge.has(EDGE_TYPES[i - groups[0] - groups[1]])
-  })
+  // Re-sync each filter group from its own container — no index arithmetic, so
+  // adding a control elsewhere in the rail can never silently shift these.
+  // Auto-rotate is a view preference, not a filter, and survives the reset.
+  document.querySelectorAll('#statusFilters input, #kindFilters input').forEach((c) => { c.checked = true })
+  document.querySelectorAll('#edgeFilters input').forEach((c, i) => { c.checked = state.edge.has(EDGE_TYPES[i]) })
   document.getElementById('inspect').classList.remove('on')
   target.set(0, 0, 0); dist = 520
   apply()
@@ -414,7 +423,7 @@ const TREE_HINT = {
   system: 'Who owns what. Systems come from the sole-writer matrix in SYSTEM_BOUNDARIES. Tables sit under their owner; a function sits under the system whose tables it touches, or — failing that — under the system whose functions it calls. Anything that fits neither is left unclassified rather than forced.',
   build: 'Every migration in the order it landed, grouped by the day git first recorded it — the filename stamps are synthetic and would pile all 205 into one bucket. Each migration lists what it created.',
   feature: 'Every feature gate, and the migrations that seed or read it. Sorted live first, unproven last.',
-  timeline: 'The whole arc in one view. Past — every shipped arc and the migration history behind it. Present — what production proves is live, plus the deploy frontier (merged, not yet deployed). Future — the activation ladder still owed and the planned queue.',
+  timeline: 'The whole arc in one view. Past — every shipped arc, the migration history behind it, and the complete build log from the dev log. Present — what production proves is live, plus the deploy frontier (merged, not yet deployed). Future — the activation ladder still owed and the planned queue.',
 }
 
 let tab = 'map'
@@ -501,6 +510,6 @@ apply()
     target.z + dist * Math.cos(pitch) * Math.cos(yaw),
   )
   camera.lookAt(target)
-  if (!drag && !held.size) yaw += 0.0004            // auto-orbit pauses while you fly
+  if (autoRotate && !drag && !held.size) yaw += 0.0004  // opt-in orbit; pauses while you fly
   renderer.render(scene, camera)
 })()

@@ -214,13 +214,19 @@ if (existsSync(planPath)) {
   // §C — development queue. Split on ### headings, keep the ones that look like
   // a queue slice (P<n>, or a named track like FLEET).
   const secs = md.split(/\n(?=### )/)
+  const usedKeys = new Set()
   for (const sec of secs) {
     const head = sec.split('\n')[0]
     // greedy to the LAST ')*' — plan headings nest parens, e.g.
     // "*(M — COMPLETE dark: SHIELD-0/1/2 ALL SHIPPED (migs 0191/0195/0197); …)*"
     const m = head.match(/^###\s+(P\d+|FLEET|[A-Z][A-Z0-9-]{2,})\s+—\s+([^*]+?)\s*(?:\*\((.*)\)\*)?\s*$/)
     if (!m) continue
-    const [, key, title, meta = ''] = m
+    let [, key, title, meta = ''] = m
+    // The plan reuses a track name for separate slices (### FLEET appears twice).
+    // Node ids are `phase:<key>` and MUST be unique — a duplicate id would merge
+    // two slices into one node and cross-wire their edges — so suffix repeats.
+    for (let i = 2; usedKeys.has(key); i++) key = `${m[1]}-${i}`
+    usedKeys.add(key)
     // A slice is only "built" if the heading says so. Anything else is a plan.
     const built = /SHIPPED|COMPLETE|STOCKED/i.test(meta)
     const { migs, flags } = refsIn(sec)
@@ -253,6 +259,36 @@ if (existsSync(planPath)) {
       detail: b.slice(0, 420).replace(/\s+/g, ' ').trim(),
     })
   }
+}
+
+// ── the build log ─────────────────────────────────────────────────────────────
+// docs/DEV_LOG.md is the project's curated job history — one `## YYYY-MM-DD — title`
+// entry per slice / fix / wave, newest first. It is the real "what has been built"
+// record: migrations only cover database work, so whole frontend arcs (the UI
+// rebuild, the renames, the fix batches) would otherwise be invisible to the map.
+// Parse every heading into a job, and wire each job to the migrations its title
+// names (seq refs like "mig 0206" / "migrations 0161–0164", ranges expanded) so
+// the timeline can colour them with real evidence.
+const jobs = []
+const devLogPath = join(DOCS, 'DEV_LOG.md')
+const devLogFound = existsSync(devLogPath)
+if (devLogFound) {
+  const md = readFileSync(devLogPath, 'utf8')
+  for (const h of md.matchAll(/^## (\d{4}-\d{2}-\d{2})\s+—\s+(.+)$/gm)) {
+    const [, date, title] = h
+    const migs = []
+    for (const g of title.matchAll(/\bmig(?:ration)?s?\.?\s+((?:\d{4})(?:\s*(?:[+/,–-]|and)\s*\d{4})*)/gi)) {
+      for (const p of g[1].matchAll(/(\d{4})(?:\s*[–-]\s*(\d{4}))?/g)) {
+        const a = parseInt(p[1], 10), b = p[2] ? parseInt(p[2], 10) : a
+        for (let s = a; s <= Math.min(b, a + 30); s++) {
+          const stamp = migBySeq.get(s)
+          if (stamp) migs.push(stamp)
+        }
+      }
+    }
+    jobs.push({ date, title: title.trim(), migs: [...new Set(migs)] })
+  }
+  jobs.reverse() // the log is newest-first; history reads oldest-first
 }
 
 // ── nodes ─────────────────────────────────────────────────────────────────────
@@ -399,6 +435,7 @@ const graph = {
     systems: new Set(ownership.values()).size,
     phases: plans.phases.length,
     rungs: plans.rungs.length,
+    jobs: jobs.length,
     nodes: nodes.length,
     edges: cleanEdges.length,
   },
@@ -406,6 +443,7 @@ const graph = {
   plansParsed: plans.phases.length > 0,
   nodes,
   edges: cleanEdges,
+  jobs,
 }
 
 // ── drift guard ───────────────────────────────────────────────────────────────
@@ -423,6 +461,8 @@ const warnings = []
 if (!boundariesFound) problems.push('SYSTEM_BOUNDARIES.md: parsed no table-owner rows — the 조직도 ownership view would be empty')
 if (!plans.phases.length) problems.push('FULL_CAPACITY_PLAN.md: parsed no §C phase headings — the roadmap view would lose the development queue')
 if (!plans.rungs.length) problems.push('FULL_CAPACITY_PLAN.md: parsed no §B rungs — the roadmap view would lose the activation ladder')
+if (devLogFound && !jobs.length) problems.push('docs/DEV_LOG.md: exists but parsed no `## YYYY-MM-DD — title` entries — the timeline build log would be empty')
+if (!devLogFound) warnings.push('docs/DEV_LOG.md: not found — the timeline shows no build log')
 if (!addDates.size) warnings.push('git: no migration add-dates — the build-order view degrades to file order')
 
 const rungsNoFlag = plans.rungs.filter((r) => !r.flags.length).map((r) => r.key)

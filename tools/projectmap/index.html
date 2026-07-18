@@ -59,6 +59,9 @@
     padding: 4px 8px; margin: 0 -8px; border-radius: 7px; cursor: pointer; }
   .tl-row:hover { background: rgba(255,255,255,.06); }
   .tl-row.sel { outline: 1px solid rgba(255,255,255,.7); }
+  /* log entries are records, not graph nodes — they must not pretend to be clickable */
+  .tl-row.static { cursor: default; }
+  .tl-row.static:hover { background: none; }
   .tl-date { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 11px; }
   .tl-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
   .tl-count { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 11px; text-align: right; min-width: 46px; }
@@ -237,6 +240,11 @@
     <div class="grp mapOnly">
       <h2>Connections</h2>
       <div id="edgeFilters"></div>
+    </div>
+
+    <div class="grp mapOnly">
+      <h2>Camera</h2>
+      <div id="cameraOptions"></div>
     </div>
 
     <div class="grp mapOnly">

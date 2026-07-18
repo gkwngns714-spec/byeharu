@@ -1,102 +1,179 @@
-// 3D force-directed layout — small, dependency-free, deterministic.
+// Deliberate 3D layout — assigned regions, not an emergent blob.
 //
-// 544 nodes / ~1450 edges is small enough for plain O(n^2) repulsion if we run a
-// fixed number of cooling ticks up front and then freeze. Deterministic seeding
-// means the map looks the same every time you open it, which matters when you
-// are trying to build a mental picture of your own codebase.
+// The force sim this file used to run produced an organic cloud: honest about
+// connectivity, mute about structure. This layout ASSIGNS every kind of node a
+// region, so the first glance reads like a diagram:
+//
+//   · SYSTEMS sit on a ring at y = 0. Each system anchor carries its owned
+//     tables on an inner shell and the functions that touch them on an outer
+//     shell, in a tight local cluster. Ring arc is allotted per cluster from
+//     its actual radius, so clusters can never collide. Tables and functions
+//     no doc assigns land in one honest "(unclassified)" cluster that takes a
+//     ring slot like everyone else.
+//   · MIGRATIONS run along a straight time axis below the ring (y = -190), in
+//     chain order — history reads left → right.
+//   · FLAGS float in a band at y = +95, each hanging at the bearing of the
+//     system its migrations touch, so a gate sits above the thing it gates.
+//   · The ROADMAP has its own region high above (y ≥ 205): the activation
+//     ladder as an ascending run of rungs, the phase queue as a grid over it.
+//
+// Fully deterministic — no randomness at all, same graph in → same map out —
+// and O(nodes + edges): 600 nodes place instantly, no cooling ticks needed.
 
-/** Mulberry32 — tiny seeded PRNG so the layout is reproducible. */
-function rng(seed) {
-  return () => {
-    seed |= 0; seed = (seed + 0x6d2b79f5) | 0
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
+const GOLDEN = Math.PI * (3 - Math.sqrt(5))
+
+/** k-th of n directions spread evenly over a unit sphere (Fibonacci lattice). */
+function sphereDir(k, n) {
+  const y = n === 1 ? 0 : 1 - (2 * (k + 0.5)) / n
+  const r = Math.sqrt(Math.max(0, 1 - y * y))
+  const a = k * GOLDEN
+  return [r * Math.cos(a), y, r * Math.sin(a)]
 }
 
-const KIND_MASS = { system: 6, flag: 3, migration: 1.4, table: 2.2, function: 1 }
+export function layout(nodes, edges) {
+  const pos = new Map() // id -> {x, y, z}
+  const put = (id, x, y, z) => pos.set(id, { x, y, z })
+  const byKind = (k) => nodes.filter((n) => n.kind === k)
+  const byLabel = (a, b) => String(a.label).localeCompare(String(b.label))
 
-export function layout(nodes, edges, { ticks = 320, seed = 1337 } = {}) {
-  const rand = rng(seed)
-  const n = nodes.length
-  const index = new Map(nodes.map((nd, i) => [nd.id, i]))
+  // ── cluster membership: who belongs with which system ──────────────────────
+  const UNOWNED = null
+  const tableSystem = new Map() // table id -> system label, or null
+  for (const n of byKind('table')) tableSystem.set(n.id, n.system ?? UNOWNED)
 
-  const x = new Float32Array(n), y = new Float32Array(n), z = new Float32Array(n)
-  const vx = new Float32Array(n), vy = new Float32Array(n), vz = new Float32Array(n)
-  const mass = new Float32Array(n)
-
-  // Seed on a sphere, grouped loosely by kind so the sim starts from structure.
-  const kinds = [...new Set(nodes.map((nd) => nd.kind))]
-  for (let i = 0; i < n; i++) {
-    const k = kinds.indexOf(nodes[i].kind)
-    const a = rand() * Math.PI * 2
-    const b = Math.acos(2 * rand() - 1)
-    const r = 60 + k * 22 + rand() * 30
-    x[i] = r * Math.sin(b) * Math.cos(a)
-    y[i] = r * Math.sin(b) * Math.sin(a)
-    z[i] = r * Math.cos(b)
-    mass[i] = KIND_MASS[nodes[i].kind] ?? 1
+  // Majority vote with a deterministic tie-break, so the result never depends
+  // on edge order.
+  const winner = (v) => (v && v.size)
+    ? [...v].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0][0]
+    : undefined
+  const addVote = (map, key, sys) => {
+    const v = map.get(key) ?? new Map()
+    v.set(sys, (v.get(sys) ?? 0) + 1)
+    map.set(key, v)
   }
 
-  // Edge list as flat index pairs, with per-type spring strength.
-  const TYPE_SPRING = {
-    creates: 0.055, seeds: 0.07, 'owned-by': 0.09, 'gated-by': 0.05,
-    supersedes: 0.035, extends: 0.03, calls: 0.02, touches: 0.016,
-    alters: 0.028, drops: 0.02,
-  }
-  const ea = [], eb = [], ek = []
+  // A function belongs with the system whose tables it touches most; failing
+  // that, with the system of the functions it calls; failing that, unclassified.
+  const touchVotes = new Map()
   for (const e of edges) {
-    const a = index.get(e.source), b = index.get(e.target)
-    if (a === undefined || b === undefined) continue
-    ea.push(a); eb.push(b); ek.push(TYPE_SPRING[e.type] ?? 0.02)
+    if (e.type !== 'touches') continue
+    const sys = tableSystem.get(e.target)
+    if (sys !== undefined) addVote(touchVotes, e.source, sys)
   }
-  const m = ea.length
+  const fnSystem = new Map()
+  for (const n of byKind('function')) fnSystem.set(n.id, winner(touchVotes.get(n.id)))
+  const callVotes = new Map()
+  for (const e of edges) {
+    if (e.type !== 'calls') continue
+    const a = fnSystem.get(e.source), b = fnSystem.get(e.target)
+    if (a === undefined && b !== undefined) addVote(callVotes, e.source, b)
+    if (b === undefined && a !== undefined) addVote(callVotes, e.target, a)
+  }
+  for (const [id, s] of fnSystem) if (s === undefined) fnSystem.set(id, winner(callVotes.get(id)) ?? UNOWNED)
 
-  const REPULSE = 260
-  const CENTER = 0.006
-  let temp = 1.0
+  const clusters = new Map() // system label (or UNOWNED) -> { node, tables, fns }
+  const clusterOf = (sys) => {
+    if (!clusters.has(sys)) clusters.set(sys, { node: null, tables: [], fns: [] })
+    return clusters.get(sys)
+  }
+  for (const n of byKind('system')) clusterOf(n.label).node = n
+  for (const n of byKind('table')) clusterOf(tableSystem.get(n.id)).tables.push(n)
+  for (const n of byKind('function')) clusterOf(fnSystem.get(n.id)).fns.push(n)
 
-  for (let t = 0; t < ticks; t++) {
-    // repulsion (all pairs)
-    for (let i = 0; i < n; i++) {
-      let fx = 0, fy = 0, fz = 0
-      const xi = x[i], yi = y[i], zi = z[i]
-      for (let j = 0; j < n; j++) {
-        if (i === j) continue
-        let dx = xi - x[j], dy = yi - y[j], dz = zi - z[j]
-        let d2 = dx * dx + dy * dy + dz * dz
-        if (d2 < 0.01) { dx = rand() - 0.5; dy = rand() - 0.5; dz = rand() - 0.5; d2 = 0.5 }
-        const f = (REPULSE * mass[j]) / d2
-        const d = Math.sqrt(d2)
-        fx += (dx / d) * f; fy += (dy / d) * f; fz += (dz / d) * f
-      }
-      vx[i] = (vx[i] + fx) * 0.82
-      vy[i] = (vy[i] + fy) * 0.82
-      vz[i] = (vz[i] + fz) * 0.82
-    }
-    // springs
-    for (let e = 0; e < m; e++) {
-      const i = ea[e], j = eb[e], k = ek[e]
-      const dx = x[j] - x[i], dy = y[j] - y[i], dz = z[j] - z[i]
-      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001
-      const rest = 34
-      const f = (d - rest) * k
-      const ux = (dx / d) * f, uy = (dy / d) * f, uz = (dz / d) * f
-      const mi = 1 / mass[i], mj = 1 / mass[j]
-      vx[i] += ux * mi; vy[i] += uy * mi; vz[i] += uz * mi
-      vx[j] -= ux * mj; vy[j] -= uy * mj; vz[j] -= uz * mj
-    }
-    // gravity to origin + integrate
-    for (let i = 0; i < n; i++) {
-      vx[i] -= x[i] * CENTER; vy[i] -= y[i] * CENTER; vz[i] -= z[i] * CENTER
-      const step = temp * 0.9
-      x[i] += Math.max(-8, Math.min(8, vx[i])) * step
-      y[i] += Math.max(-8, Math.min(8, vy[i])) * step
-      z[i] += Math.max(-8, Math.min(8, vz[i])) * step
-    }
-    temp *= 0.992
+  // ── the system ring ────────────────────────────────────────────────────────
+  // Alphabetical around the ring, unclassified last. Each cluster asks for arc
+  // equal to its own diameter plus a gap; the ring radius grows to fit, which
+  // is what makes collisions impossible by construction.
+  const keys = [...clusters.keys()]
+    .sort((a, b) => (a === UNOWNED) - (b === UNOWNED) || String(a).localeCompare(String(b)))
+  const rTables = (c) => 12 + 3.1 * Math.sqrt(c.tables.length)
+  const rFns = (c) => rTables(c) + 8 + 2.5 * Math.sqrt(c.fns.length)
+  const arcs = keys.map((k) => 2 * rFns(clusters.get(k)) + 15)
+  const total = arcs.reduce((a, b) => a + b, 0)
+  const R = Math.max(250, total / (2 * Math.PI))
+  const bearing = new Map() // system -> angle on the ring
+  let acc = 0
+  keys.forEach((k, i) => { bearing.set(k, ((acc + arcs[i] / 2) / total) * 2 * Math.PI); acc += arcs[i] })
+
+  for (const k of keys) {
+    const c = clusters.get(k)
+    const th = bearing.get(k)
+    const ax = R * Math.cos(th), az = R * Math.sin(th)
+    if (c.node) put(c.node.id, ax, 0, az)
+    const rT = rTables(c), rF = rFns(c)
+    c.tables.sort(byLabel).forEach((n, i) => {
+      const [dx, dy, dz] = sphereDir(i, c.tables.length)
+      put(n.id, ax + dx * rT, dy * rT, az + dz * rT)
+    })
+    c.fns.sort(byLabel).forEach((n, i) => {
+      const [dx, dy, dz] = sphereDir(i, c.fns.length)
+      put(n.id, ax + dx * rF, dy * rF, az + dz * rF)
+    })
   }
 
-  return nodes.map((nd, i) => ({ ...nd, x: x[i], y: y[i], z: z[i] }))
+  // ── the migration time axis ────────────────────────────────────────────────
+  const migs = byKind('migration').sort((a, b) => String(a.stamp).localeCompare(String(b.stamp)))
+  const W = Math.min(760, Math.max(300, migs.length * 4))
+  migs.forEach((n, i) => {
+    const t = migs.length === 1 ? 0.5 : i / (migs.length - 1)
+    put(n.id, -W / 2 + W * t, -190, 0)
+  })
+
+  // ── flags: above the system they gate ──────────────────────────────────────
+  // Bearing found through evidence: the migrations that seed/read the flag, to
+  // the tables those migrations create/alter, to the owning system. Flags with
+  // no such trail form a small ring at the centre rather than being hidden.
+  const migTables = new Map() // migration id -> [table ids]
+  for (const e of edges) {
+    if ((e.type === 'creates' || e.type === 'alters') && tableSystem.has(e.target)) {
+      if (!migTables.has(e.source)) migTables.set(e.source, [])
+      migTables.get(e.source).push(e.target)
+    }
+  }
+  const flagVotes = new Map()
+  for (const e of edges) {
+    if (e.type !== 'seeds' && e.type !== 'gated-by') continue
+    for (const t of migTables.get(e.source) ?? []) {
+      const sys = tableSystem.get(t)
+      if (sys !== UNOWNED && sys !== undefined) addVote(flagVotes, e.target, sys)
+    }
+  }
+  const gated = new Map() // system -> [flag nodes]
+  const homeless = []
+  for (const n of byKind('flag').sort(byLabel)) {
+    const sys = winner(flagVotes.get(n.id))
+    if (sys !== undefined && bearing.has(sys)) {
+      if (!gated.has(sys)) gated.set(sys, [])
+      gated.get(sys).push(n)
+    } else homeless.push(n)
+  }
+  for (const [sys, fs] of gated) {
+    const th = bearing.get(sys)
+    fs.forEach((n, i) => {
+      const a = th + (i - (fs.length - 1) / 2) * 0.055 // fan siblings along the ring
+      put(n.id, 0.74 * R * Math.cos(a), 95, 0.74 * R * Math.sin(a))
+    })
+  }
+  homeless.forEach((n, i) => {
+    const a = (i / Math.max(1, homeless.length)) * 2 * Math.PI
+    put(n.id, 42 * Math.cos(a), 95, 42 * Math.sin(a))
+  })
+
+  // ── the roadmap: ladder + queue, in their own region up top ────────────────
+  const rungs = byKind('rung').sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || byLabel(a, b))
+  rungs.forEach((n, i) => put(n.id, (i - (rungs.length - 1) / 2) * 46, 205 + i * 8, 0))
+
+  const phases = byKind('phase')
+    .sort((a, b) => (!!a.planned - !!b.planned) || byLabel(a, b)) // shipped first, then the queue
+  const COLS = 8
+  phases.forEach((n, i) => {
+    const row = Math.floor(i / COLS), col = i % COLS
+    const inRow = Math.min(COLS, phases.length - row * COLS)
+    put(n.id, (col - (inRow - 1) / 2) * 54, 300 + row * 30, 0)
+  })
+
+  // Anything a future scan invents is parked in plain sight, not lost at origin.
+  nodes.filter((n) => !pos.has(n.id)).forEach((n, i) => put(n.id, i * 20, -95, 0))
+
+  return nodes.map((n) => ({ ...n, ...pos.get(n.id) }))
 }

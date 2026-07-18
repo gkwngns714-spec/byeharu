@@ -8,8 +8,9 @@
   "systems": 29,
   "phases": 24,
   "rungs": 9,
+  "jobs": 234,
   "nodes": 594,
-  "edges": 1621
+  "edges": 1622
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -4607,9 +4608,9 @@
    "detail": "### FLEET — the fleet control-model *(S/M — SHIPPED dark as mig 0204; the OWNER'S FLEET-CONTROL RESHAPE)* After FLEET-RENAME (team→fleet copy) landed, this phase adds the MECHANICS of the owner's control-model, DARK behind a new flag `fleet_control_enabled` (seeded false) so the LIVE fleet-command game is byte-unchanged until the owner flips it. The three rules: **(1) caps** — max 3 fleets (already: `ship_group"
   },
   {
-   "id": "phase:FLEET",
+   "id": "phase:FLEET-2",
    "kind": "phase",
-   "label": "FLEET — command buffs: the FINALE of the fleet reshape",
+   "label": "FLEET-2 — command buffs: the FINALE of the fleet reshape",
    "planned": false,
    "size": "M — SHIPPED dark as mig 0205; the OWNER'S COMMAND-BUFF DESIGN",
    "file": "docs/FULL_CAPACITY_PLAN.md",
@@ -12831,13 +12832,18 @@
    "type": "delivers"
   },
   {
-   "source": "phase:FLEET",
+   "source": "phase:FLEET-2",
    "target": "mig:20260618000205",
    "type": "delivered-by"
   },
   {
-   "source": "phase:FLEET",
+   "source": "phase:FLEET-2",
    "target": "flag:command_buffs_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:FLEET-2",
+   "target": "flag:fleet_control_enabled",
    "type": "delivers"
   },
   {
@@ -13204,6 +13210,1266 @@
    "source": "rung:Rung 7",
    "target": "rung:Rung 6",
    "type": "waits-on"
+  }
+ ],
+ "jobs": [
+  {
+   "date": "2026-06-16",
+   "title": "Milestone 1: Scaffold + auth",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "Rename to Byeharu",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "Foundation architecture & milestone plan (no code)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "System boundaries approved; M2 (read-only world map)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "M2 verified live against real Supabase",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "M3 backend built, deployed, and verified live",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "M3 frontend (Command Center)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "✅ M3 COMPLETE",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "M4 backend: server-authoritative pirate combat (verified)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "M4 frontend (active combat UI, display-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-16",
+   "title": "M4 fixes from browser feedback (verified 26/26)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M4 combat overhaul: pacing + per-unit HP (verified 27/27)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M4 combat clarity pass (verified 28/28)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M4 final checklist audit (all pass)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M4 CLOSE (combined final pass; all verified)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M4 cleanup (loose ends; verified 40/40)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M5 Living World (built; pending deploy + verify)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "✅ M5 CLOSED (deployed + verified green in CI)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M6 Frontend Depth (implementation record — CLOSED above)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "✅ M6 CLOSED (frontend depth / player clarity)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M5 balance correction: pressure decay toward baseline (follow-up #3, Option A)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M7 Ship Training (implemented; pending deploy/verify + click-through)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "M4.5 Core UX + production queue law fix (CLOSED — see entry above)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "✅ M4.5 CLOSED (browser acceptance passed)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "Phase 1: roadmap / architecture reconciliation (docs only)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "Phase 2: Expedition Activity Architecture (design doc only)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "Phase 3: generic inventory foundation (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-17",
+   "title": "Phase 4: Pending Loot Bundle (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Phase 5: Multi-Item Pirate Loot (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Phase 6: Support Craft Reframe (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Phase 7: Main Ship Instance (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Phase 8: calculate_expedition_stats() (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Prevention Phase A: combat logging controls + DB visibility (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Prevention Phase B: safe retention cleanup (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Prevention Phase C: self-cleaning verify runs (DEPLOYED + VERIFIED ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Phase 9A: Read-only Visual Galaxy Map (BUILD + VERIFY GREEN ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Phase 9B: Map-based Expedition Send (BUILD + VERIFY + BROWSER GREEN ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Phase 9C: Expedition UI Reframe (BUILD + VERIFY + BROWSER GREEN ✅)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Follow-up: M4.5 browser test self-cleaning + orphan cleanup (test hygiene)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Phase 10B: read-only main-ship expedition preview (implemented; pending verify)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-18",
+   "title": "Design correction: deprecate support capacity / support craft (UI + docs)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-19",
+   "title": "Design correction: HIGH-STAKES ships (destructible) + emergency restart (docs)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-21",
+   "title": "OSN-1 / OSN-2a / OSN-2b (Open-Space Navigation, read side) — CLOSED",
+   "migs": []
+  },
+  {
+   "date": "2026-06-21",
+   "title": "OSN-3 S1: coordinate-domain schema + invariants + read-model — CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-21",
+   "title": "OSN-3 S2: internal transition boundary + validation core — CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-21",
+   "title": "OSN-3 S3: first internal coordinate-movement writer — CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-21",
+   "title": "Legacy main-ship send: controlled production activation (config-only, reversible)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-21",
+   "title": "OSN-3 S4: coordinate-arrival processor — CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-21",
+   "title": "OSN-3 S5: coordinate-complete trusted destruction primitive — CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-21",
+   "title": "OSN-3 S6A: public coordinate-command boundary (flag-dark) — CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-22",
+   "title": "OSN-3 S6B: fixed-space frontend coordinate foundation — CLOSED (flag OFF, read-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-22",
+   "title": "OSN-3 S6C: flag-dark empty-space coordinate command surface — CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-22",
+   "title": "OSN-ANCHOR-1A: truthful-origin guard (dark) — DEPLOYED & CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-23",
+   "title": "OSN-ANCHOR-1A: production catalog-parity verification — CLOSED",
+   "migs": []
+  },
+  {
+   "date": "2026-06-23",
+   "title": "OSN-ANCHOR-1B: empty canonical-anchor schema (`space_anchors`) — DEPLOYED & CLOSED (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-23",
+   "title": "MSP-0: Main Ship Progression ↔ Movement integration contract (design only)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-23",
+   "title": "ANCHOR-2 P0-A census closed + PORT-CENTRIC direction (durable handoff; design/ops only)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-26",
+   "title": "OSN-HUB-1A FORMALLY CLOSED — dark canonical location-target navigation, deployed + verified (flag OFF)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-26",
+   "title": "Session wrap-up + FORWARD PLAN (notes/design only; nothing started)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-27",
+   "title": "PORT-LAUNCH: public port launch (foundation → reveal → independent verification)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-29",
+   "title": "OSN enabled → Phase 9 docked-port surface → coordinate-gate hardening → Phase 10 Trading design (head `0068` → `0070`)",
+   "migs": []
+  },
+  {
+   "date": "2026-06-30",
+   "title": "OSN-COORD-ENABLE (dark) → PORT-ENTRY-1 first-ship commission/normalize → production verifier (head `0070` → `0072`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-02",
+   "title": "Trading V1 design record — FIXED product direction (volume-only per-ship cargo + multi-ship foundation) + TRADE-FLEET-0A read-only audit (DESIGN RECORD ONLY; nothing built)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "Repo/docs sync + PORT-ENTRY player UI landing recorded (no new build)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "TRADE-UI-1 landed DARK + PR-ready (ship-switcher + buy/sell + §2.5 sole-ship shim retirement)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "Trading V1 cleanup pass: SYSTEM_BOUNDARIES doc-sync (docs-only; no behavior/flag change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "Trading V1 cleanup: extract shared docked-location helper (migration 0092; behavior-identical)",
+   "migs": [
+    "20260618000092"
+   ]
+  },
+  {
+   "date": "2026-07-03",
+   "title": "Trading V1 cleanup: CI proof workflow `trade-v1-proof.yml` (disposable DB only; no production)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "Docs-only roadmap reconciliation: Phase-10 label + live migration head (no code/flag change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "TRADE-MARKET-1 seed capital: `starting_credits` tunable + single shared `wallet_ensure` (DARK)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "TRADE-MARKET-1 no-softlock floor: relief ledger + tunables + dark flag (schema slice; NO RPC)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "TRADE-MARKET-1 no-softlock floor: relief claim RPC `market_claim_relief` (DARK; server-rejected)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "TRADE-ECONOMY-BOOTSTRAP proof: disposable, self-rolling-back seed + relief exercise (no CI yet)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "TRADE-ECONOMY-BOOTSTRAP proof wired into existing `trade-v1-proof.yml` (disposable-only; no new workflow)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-03",
+   "title": "Trade-economy cleanup audit: ROADMAP Phase-10 doc-sync (docs-only; one stale figure fixed)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION-P11 SLICE A: activity-agnostic deposit-on-arrival carrier (`reward_source_type`; refactor only, combat behavior unchanged, everything dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION-P11 SLICE B: reward-item catalog entries + `exploration_enabled=false` dark flag (foundations only; nothing client-reachable, no behavior change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION-P11 SLICE C: hidden `exploration_sites` + per-player `exploration_discoveries` (tables + seed + RLS only; no RPC, no client path, fully dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION-P11 SLICE D: dark `command_exploration_scan` — OSN-proximity scan → pending discovery bundle (server-rejected while `exploration_enabled=false`; nothing deposits yet)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION-P11 SLICE E: dark securing/deposit path — `process_exploration_securing` cron → `reward_grant('exploration', …)` on safe settlement. ⚠ DESIGN RE-DECISION: corrects the Slice-C carrier law",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION-P11 SLICE F: dark read surface `get_my_exploration_discoveries()` (reveal-after-discovery) + ACTIVITIES.md as-built reconciliation",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION-P11 SLICE G: dark frontend surface `src/features/exploration/` (scan control + discoveries panel; renders nothing while the server says dark). Frontend only — no migration",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION-P11 SLICE H (final): `verify:exploration` dark-posture script + wiring. **Phase 11 Exploration: dark implementation complete (slices A–H)**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION CLEANUP step 2 — ARCHITECTURE.md doc-sync (docs-only; closes recon finding #1)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION CLEANUP step 3 — extract shared verify harness (`scripts/lib/verify-harness.mjs`); closes recon finding #2",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "EXPLORATION CLEANUP step 4 (final) — delete dead `EXPLORATION_DISABLED_REASON` export; closes recon finding #3. **Exploration cleanup complete (findings 1–3 all fixed)**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-P12 SLICE A — design decisions (self-approved) + dark config/flag migration `0102`",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-P12 SLICE B — mining schema migration `0103` (`mining_fields` + `mining_extractions`, dark, no writer exists)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-P12 SLICE C — the dark extraction command `0104` (`command_mining_extract` → private `mining_extract`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-P12 SLICE D — the securing processor `0105` (`process_mining_securing` + pg_cron; deposits via `reward_grant('mining', …)`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-P12 SLICE E — the dark read surface `0106` (`get_my_mining_extractions()`). **Server side of Phase 12 complete, fully dark**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-P12 SLICE F — dark frontend `src/features/mining/` + shared `src/lib/rewardBundle.ts`/`osnState.ts` extraction (exploration repointed same-step)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-P12 SLICE G (final) — `verify:mining` dark-posture script. **Phase 12 Mining — dark implementation complete (slices A–G)**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-CLEANUP SLICE 1 — panel guard scaffold extracted to `src/lib/useActivityPanelGuards.ts`; Exploration + Mining migrated",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MINING-CLEANUP SLICE 2 (final) — MarketPanel migrated onto `useActivityPanelGuards`. **Guard-hook extraction complete — no local copies remain**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MODULES-P13 SLICE A — locked design decisions + dark flag/catalog migration `0107` (`module_types` + `module_recipe_ingredients`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MODULES-P13 SLICE B — `module_instances` schema + the single Modules mint writer `0108` (`modules_mint_instance`; idempotent by `mint_key`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MODULES-P13 SLICE C — the dark craft command `0109` (`module_craft_receipts` + `craft_module` → private `production_craft_module`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MODULES-P13 SLICE D — the dark read surface `0110` (`get_my_module_instances()`). **Server side of Phase 13 complete, fully dark**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MODULES-P13 SLICE E — dark frontend `src/features/modules/` (catalog + craft + instances panel; renders nothing while the server says dark). Frontend only — no migration",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "MODULES-P13 SLICE F (final) — `verify:modules` dark-posture script. **Phase 13 Module crafting — dark implementation complete (slices A–F)**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "FITTING-P14 SLICE A — locked design decisions + dark flag/stats-catalog migration `0111` (`module_fitting_enabled` + `module_types.slot_cost`/`stats_json`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "FITTING-P14 SLICE B — `ship_module_fittings` + the single Fitting writer `0112` (`fitting_apply`; FIT and UNFIT through THE ONE writer)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "FITTING-P14 SLICE C — the dark two-layer fit/unfit command `0113` (`module_fitting_receipts` + `fit_module_to_ship`/`unfit_module_from_ship` → ONE private `fitting_execute_command`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "FITTING-P14 SLICE C2 — settled-SAFE ship-state rule `0114` (corrects the 0113 `'home'` literal; `ship_not_home` → `ship_not_settled`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "FITTING-P14 SLICE D — stats integration `0115` (fitted modules feed `calculate_expedition_stats` under the `module_slots` hard cap; re-create of the 0044 adapter)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "FITTING-P14 SLICE E — the dark read surface `0116` (`get_my_ship_fittings()`). **Server side of Phase 14 complete, fully dark**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "FITTING-P14 SLICE F — dark frontend: the fitting section EXTENDS `src/features/modules/` (fit/unfit controls inside ModulesPanel; renders nothing while either flag is dark). Frontend only — no migration",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "FITTING-P14 SLICE G (final) — `verify:fitting` dark-posture script. **Phase 14 Module fitting — dark implementation complete (slices A–G)**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CLEANUP SLICE 1 (docs-only) — module-fitting-milestone auto-cleanup part 1: `market_offers` law-doc sync",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CLEANUP SLICE 2 (docs-only) — auto-cleanup part 2: the `fleets` commission writes recorded as the sanctioned Main-Ship shim (with retirement condition)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CLEANUP SLICE 3 (frontend) — auto-cleanup part 3: the four-way duplicated guard body extracted into `runGuardedCommand`",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CLEANUP SLICE 4 (final, scripts-only) — auto-cleanup part 4: the trade proof scripts' five duplicated blocks extracted into the sourced `scripts/lib/trade-proof-lib.sh`",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P15 SLICE A — dark flag `captain_assignment_enabled` + the `captain_types` catalog (foundations only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P15 SLICE B — `captain_instances` schema + the single Captain mint writer (inert AND dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P15 SLICE C — `ship_captain_assignments` schema + the ONE assignment writer (inert AND dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P15 SLICE D — the dark assign/unassign command + `captain_assignment_receipts` (settled-SAFE rule deliberately deferred, the 0113→0114 split)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P15 SLICE E — the settled-SAFE rule for captain assignment + the `mainship_space_assert_settled_safe` shared-leaf extraction (fitting re-created behavior-identically)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P15 SLICE F — assigned captains feed `calculate_expedition_stats` (the 0115 analogue; third feed block, headcount-capped)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P15 SLICE G — the dark read surface: `get_my_captain_instances()` + `get_my_ship_captains(ship)` (the 0110/0116 analogues)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P15 SLICE I — the DARK-posture verifier `scripts/verify-captain.mjs` (the verify-fitting.mjs analogue; the sole remaining Phase-15 deliverable)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P16 SLICE 1 — the dark capability flag `captain_progression_enabled = 'false'` (flag-only, the 0107/0117 seed idiom) + the self-approved Phase-16 design decision",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P16 SLICE 2 — the recruitment recipe catalog `captain_recipe_ingredients` + seeds (the 0107 `module_recipe_ingredients` analogue)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P16 SLICE 3 — the dark recruit command: `captain_recruit_receipts` + private `production_recruit_captain` + two-layer `recruit_captain` (the 0109 `craft_module` analogue, point-for-point)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN-P16 SLICE 4 — the dark-posture verifier `scripts/verify-captain-progression.mjs` (the verify-captain.mjs analogue) + the self-approved \"no new read RPC\" decision",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "CAPTAIN cleanup audit — SYSTEM_BOUNDARIES §1-matrix doc-sync (rows `captain_types` / `captain_recipe_ingredients` / `ship_captain_assignments`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "RANKING-P17 SLICE 0 — dark flag `ranking_enabled` + the Ranking-owned root table `ranking_seasons` (migration `0127`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "RANKING-P17 SLICE 1 — the standings (leaderboard) schema `ranking_standings` (migration `0128`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "RANKING-P17 SLICE 2 — the season-management writer `ranking_season_open` (the SOLE writer of `ranking_seasons`; migration `0129`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "RANKING-P17 SLICE 3 — the core standings-scoring accrual `ranking_accrue_standings` (the SOLE writer of `ranking_standings`, reading `reward_grants` DOWNWARD; migration `0130`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "RANKING-P17 SLICE 4 — the dark read surface `get_ranking_seasons` + `get_ranking_leaderboard` (migration `0131`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "RANKING-P17 SLICE 5 — the dark-posture verifier `scripts/verify-ranking.mjs` + `verify:ranking` (FINAL Phase-17 slice)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "RANKING-P17 CLEANUP — correct two stale figures in the `verify-harness.mjs` header (docs-in-code only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "LOCATION-INVEST-P18 SLICE 0 — dark flag + the `location_investments` root table (foundations only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "LOCATION-INVEST-P18 SLICE 1 — the sole-writer invest command (`invest_in_location` → `location_investment_invest`) + min-amount tunable",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "LOCATION-INVEST-P18 SLICE 2 — the dark PUBLIC read surface (development vs seasonal score) + the ONE season-window helper",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "LOCATION-INVEST-P18 SLICE 3 (FINAL) — the dark-posture verifier `verify-location-investment.mjs` + `verify:location-investment`; **Phase 18 CLOSED**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "WORLD-BALANCE-P19 SLICE 1 — PIRATE PRESSURE (dark): wire the `defeat_pressure` seam in `worldstate_tick()` (`0135`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "WORLD-BALANCE-P19 SLICE 2 — PRICE DRIFT (dark): World-State price multiplier folded into `location_state`, composed into all three Trade Market prices (`0136`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "WORLD-BALANCE-P19 SLICE 3 (FINAL) — RESOURCE-FIELD DEPLETION (dark): World-State `mining_field_state` reserve, composed into `mining_extract`, regenerated by the tick (`0137`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "WORLD-BALANCE-P19 SLICE 4 (FINAL) — the dark-posture verifier `verify-world-balance.mjs` + `verify:world-balance`; **Phase 19 CLOSED**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "WORLD-BALANCE-P19 CLEANUP — restore the `0092` docked-resolve dedup that `0136` regressed; re-route all three Trade Market RPCs through `mainship_resolve_docked_location` (`0138`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "PHASE20-POLISH SLICE 1 — the Phase-20 dark master flag `phase20_polish_enabled` + the World Events schema `world_events` (`0139`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "PHASE20-POLISH SLICE 2 — the World Events sole-writer functions `world_events_publish` / `world_events_set_active` (service-role, idempotent) + the `dedup_key` idempotency column (`0140`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "PHASE20-POLISH SLICE 3 — the World Events flag-gated READ surface `get_world_events(...)` (fail-closed, authenticated-only) (`0141`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "PHASE20-POLISH SLICE 4 — the UI asset-key vocabulary `ui_asset_catalog` (static reference table + seed) + its flag-gated read surface `get_ui_asset_catalog(...)` (`0142`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "PHASE20-POLISH SLICE 5 — the World Events display feature (`src/features/events/`) wired into the galaxy map, fail-closed",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "PHASE20-POLISH SLICE 6 — icon resolver (`src/features/assets/`) + severity icons on the World Events panel, fail-closed",
+   "migs": []
+  },
+  {
+   "date": "2026-07-04",
+   "title": "PHASE20-POLISH SLICE 7 (FINAL) — the dark-posture verifier `verify-phase20-polish.mjs` + `verify:phase20-polish`; **Phase 20 CLOSED**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "PHASE20-POLISH CLEANUP — independent re-audit of the closed polish milestone; ALL THREE audits CLEAN, ZERO remediation (docs-only close-out)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "MINING-P12 POST-AUDIT FIX — add a per-(player, field) advisory lock to `mining_extract` as defense-in-depth for the double-extract race (migration 0143)",
+   "migs": [
+    "20260618000143"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "MINING-P12 POST-AUDIT RECONCILIATION — the 0143 double-extract race is NOT reachable today; honest reframing + deferred concurrency proof (no code/migration change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "RANKING-P17 POST-AUDIT FIX, SLICE A — the commit-safe consumption-ledger SCHEMA `ranking_counted_grants` (migration 0144; schema only, no writer)",
+   "migs": [
+    "20260618000144"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "RANKING-P17 POST-AUDIT FIX, SLICE B — `ranking_accrue_standings` made COMMIT-SAFE by folding through the `ranking_counted_grants` ledger (migration 0145)",
+   "migs": [
+    "20260618000145"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "RANKING-P17 POST-AUDIT FIX — the deferred commit-safety PROOF `scripts/ranking-p17-commit-safe-accrual-proof.sh` (no migration/flag change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "EXPLORATION-P11 POST-AUDIT FIX — convert the racing duplicate-scan insert into a clean `already_discovered` (migration 0146)",
+   "migs": [
+    "20260618000146"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "RANKING-P17 POST-AUDIT UI (panel 1 of 4) — the dark `src/features/ranking/` leaderboard screen (frontend-only; no server change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "LOCATION-INVEST-P18 POST-AUDIT UI (panel 2 of 4) — the dark `src/features/investment/` Port Investment screen (frontend-only; no server change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "CAPTAIN-P15 POST-AUDIT UI (panel 3 of 4) — the dark `src/features/captains/` assign/unassign screen (frontend-only; no server change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "CAPTAIN-P16 POST-AUDIT UI (panel 4 of 4) — the dark Captain Progression (recruit) screen, EXTENDING `src/features/captains/` (frontend-only; no server change)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "RANKING-P17 POST-AUDIT FIX (item 5) — schedule the ranking-accrual cron; world-tick already scheduled, no redundant cron (migration 0147)",
+   "migs": [
+    "20260618000147"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 1) — retire the legacy Train Ships / Training Queue / map ExpeditionCommand UI (frontend-only; backend RPCs intentionally untouched)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 4) — one-word location names (forward-only data migration 0148 + every caller updated same step)",
+   "migs": [
+    "20260618000148"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 2) — honest docking UX at non-dock waypoints (frontend-only; server eligibility untouched)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 3) — consistent in-transit \"stop\" for LEGACY main-ship moves (migration 0149 + shared stop UI reuse)",
+   "migs": [
+    "20260618000149"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 6, part A) — on-demand OSN arrival settlement (migration 0150 + client due-trigger)",
+   "migs": [
+    "20260618000150"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 6, part B) — on-demand LEGACY main-ship arrival settlement (migration 0151: helper extraction + RPC + unified client due-trigger)",
+   "migs": [
+    "20260618000151"
+   ]
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP — reconcile the stale `verify:m2` world-count pin (test-only; suite green again, 13/13)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 5, slice A) — the ONE shared design system + Command Center conversion (presentational-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 5, slice B) — Galaxy Map on the design system + map-look elevation (presentational-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 5, slice C) — dock/port surfaces on the design system (presentational-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP (item 5, slice D) — market surface on the design system (COMPLETES item 5's screen coverage; presentational-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-05",
+   "title": "UX CLEANUP PASS COMPLETE — final consolidation: full-suite check + PR-ready handoff (no product changes)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "VISUAL FOLLOW-ON item 1: AuthPage restyled onto the shared design system",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "VISUAL FOLLOW-ON item 2: legacy `/map` list view retired (fully superseded by `/galaxy`)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "VISUAL FOLLOW-ON item 3: CombatReportPage restyled onto the shared design system",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "VISUAL FOLLOW-ON item 4 (final sweep): palette-literal inventory; last live straggler converted",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "MAINSHIP LEGACY SPATIAL-STATE FIX, slice 1: departure/halt pair-writes (migration 0152)",
+   "migs": [
+    "20260618000152"
+   ]
+  },
+  {
+   "date": "2026-07-06",
+   "title": "MAINSHIP LEGACY SPATIAL-STATE FIX, slice 2: legacy arrival docks the ship (migration 0153)",
+   "migs": [
+    "20260618000153"
+   ]
+  },
+  {
+   "date": "2026-07-06",
+   "title": "MAINSHIP LEGACY SPATIAL-STATE FIX, slice 3: the end-to-end round-trip verifier",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "STOP/MOVE FIX, slice 1: consumed idempotency keys cleared on success (client-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "STOP/MOVE FIX, slice 2: the send→stop→send→stop verifier",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "MAP DECLUTTER: waypoint relocation (migration 0154, data-only)",
+   "migs": [
+    "20260618000154"
+   ]
+  },
+  {
+   "date": "2026-07-06",
+   "title": "UI REBUILD (2b): the persistent four-destination nav shell (structure + navigation)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "UI REBUILD (2b): Ship interior — the MainShipPreview + MainShipPanel MERGE",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "UI REBUILD (2b): Port interior — one docked-services surface, DockServicesPanel folded",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "UI REBUILD (2b): Command interior — home base in the shared design language",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "UI REBUILD (2b): Map interior — detail panel humanized, overlays organized, selector dedup",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "GOAL WRAP-UP: stop fix + UI rebuild + map declutter — final verification & the ONE apply-time checklist",
+   "migs": []
+  },
+  {
+   "date": "2026-07-06",
+   "title": "STOP = HOLD-IN-OPEN-SPACE (legacy), Slice A: stop settlement (migration 0155)",
+   "migs": [
+    "20260618000155"
+   ]
+  },
+  {
+   "date": "2026-07-06",
+   "title": "STOP = HOLD, Slice B: RESUME from the held point (migration 0156)",
+   "migs": [
+    "20260618000156"
+   ]
+  },
+  {
+   "date": "2026-07-06",
+   "title": "STOP = HOLD, Slice C: verifier proves the legacy hold round-trip",
+   "migs": []
+  },
+  {
+   "date": "2026-07-07",
+   "title": "STOP = HOLD, Slice D2: client copy/comments now match the hold semantics",
+   "migs": []
+  },
+  {
+   "date": "2026-07-08",
+   "title": "PORT-CENTRIC ACTIVATED on prod + station storage (migrations 0157/0158)",
+   "migs": [
+    "20260618000157",
+    "20260618000158"
+   ]
+  },
+  {
+   "date": "2026-07-09",
+   "title": "PR #75 merged: recall/return-home removed + stop-zoom fix; session handoff (#76)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-09",
+   "title": "A0 FOUNDATION FIXUP + TEAM-COMMAND Slice A: team model (migrations 0159, 0160)",
+   "migs": [
+    "20260618000159",
+    "20260618000160"
+   ]
+  },
+  {
+   "date": "2026-07-11",
+   "title": "TEAM-COMMAND Slice B complete: send/stop BY TEAM, dark (migrations 0161–0164 + UI + proof)",
+   "migs": [
+    "20260618000161",
+    "20260618000162",
+    "20260618000163",
+    "20260618000164"
+   ]
+  },
+  {
+   "date": "2026-07-12",
+   "title": "TEAM-COMMAND Slices C0 + C1: captains into teams, dark (migration 0165)",
+   "migs": [
+    "20260618000165"
+   ]
+  },
+  {
+   "date": "2026-07-12",
+   "title": "UI RENEWAL R0–R4: Mission Control (PRs #86, #87–#91; frontend-only)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "TEAM-COMMAND Slice D complete (D0–D4): team combat, dark (migrations 0166–0169)",
+   "migs": [
+    "20260618000166",
+    "20260618000167",
+    "20260618000168",
+    "20260618000169"
+   ]
+  },
+  {
+   "date": "2026-07-12",
+   "title": "DEPLOYS: prod migration head 0169; team-command roadmap merged (main @ 9a292ed)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "ACTIVATION PREP: exploration + mining flip scripts + the 0172 writer reconcile (Phases 11/12; no flip)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "ECON-SEED-1: differentiated three-port economy seed (migration 0173, DARK)",
+   "migs": [
+    "20260618000173"
+   ]
+  },
+  {
+   "date": "2026-07-12",
+   "title": "ACT-TRADE (queue #5): the trade-market activation script + the proof chain finally green",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "SALVAGE-0/1 (queue #6): the combat-loot → port-economy feed (dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "ZONES2-1+2 (queue #7+#8): \"Ember Reach\" content expansion — seeded HIDDEN + the reveal script",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "RANK-SEASON + ACT-RANKING (queue #9): the ranking activation script",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "HAUL-0/1 (queue #12): delivery-contracts foundation (dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "CAPXP-0/1 (queue #13): captain-XP foundation (dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "COORD-GUARD (queue #14.5): the A0-fix + the coordinate-travel flip script",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "HAUL-2: the contract accept/deliver RPCs (dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "C2-2: captain level → stats adapter fold (dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "ACT-HAUL: the delivery-contracts activation script",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "EV-1: the world-events producer — worldstate_tick narrates threshold events (dark)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-12",
+   "title": "MOD2-1: the shield line + mining rig module seeds (mig 0183, dark)",
+   "migs": [
+    "20260618000183"
+   ]
+  },
+  {
+   "date": "2026-07-12",
+   "title": "SHIPYARD-0: the ship-production foundation (mig 0185, dark)",
+   "migs": [
+    "20260618000185"
+   ]
+  },
+  {
+   "date": "2026-07-12",
+   "title": "SOUL-0: the per-ship traits foundation (mig 0186, doubly dark)",
+   "migs": [
+    "20260618000186"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "SHIPYARD-1: the hull-build ORDER command (mig 0188, dark)",
+   "migs": [
+    "20260618000188"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "SHIELD-0: the shield schema foundation (mig 0191, deploy-inert, data-gated)",
+   "migs": [
+    "20260618000191"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "TEAMMOVE-1: a docked team moves onward as one (mig 0190, LIVE gate)",
+   "migs": [
+    "20260618000190"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "SOUL-1: ship traits go functional — commission roll hook + adapter trait fold (mig 0193, dark)",
+   "migs": [
+    "20260618000193"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "SHIELD-1: the shield enters the live combat engine (mig 0195, inert while all pools are 0/NULL)",
+   "migs": [
+    "20260618000195"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "SHIPYARD-2: hull-build DELIVERY (mig 0194, dark) — all pre-flip seams closed",
+   "migs": [
+    "20260618000194"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "DECKS-3: station affinity bonuses — the adapter's knob-gated matched-station multiplier (mig 0196, inert)",
+   "migs": [
+    "20260618000196"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "SHIELD-2: out-of-combat regen + commission copy + the UI meter pair (mig 0197, inert — P13 complete dark)",
+   "migs": [
+    "20260618000197"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "NANGUARD: fix the inherited no-op NaN guards at all three knob sites (mig 0198, inert)",
+   "migs": [
+    "20260618000198"
+   ]
+  },
+  {
+   "date": "2026-07-13",
+   "title": "NO-HOME: launch-from-dock + dock-at-return (mig 0199, DARK behind `launch_from_dock_enabled`)",
+   "migs": [
+    "20260618000199"
+   ]
+  },
+  {
+   "date": "2026-07-14",
+   "title": "MOD2-2: the Mk-II module tier (mig 0202, DARK behind the EXISTING module gates)",
+   "migs": [
+    "20260618000202"
+   ]
+  },
+  {
+   "date": "2026-07-14",
+   "title": "REPAIR-ECON: paid hull-repair economy (mig 0201, DARK behind `repair_economy_enabled`)",
+   "migs": [
+    "20260618000201"
+   ]
+  },
+  {
+   "date": "2026-07-14",
+   "title": "FLEET-CONTROL: the fleet control-model (mig 0204, DARK behind `fleet_control_enabled`)",
+   "migs": [
+    "20260618000204"
+   ]
+  },
+  {
+   "date": "2026-07-14",
+   "title": "ROOMS-8: configurable ship rooms — 8 slots, a large room catalog, per-slot config (mig 0203, DARK behind `captain_assignment_enabled`)",
+   "migs": [
+    "20260618000203"
+   ]
+  },
+  {
+   "date": "2026-07-15",
+   "title": "COMMAND-BUFFS: the FINALE of the fleet reshape — fleet-wide command buffs (mig 0205, DARK behind `command_buffs_enabled`)",
+   "migs": [
+    "20260618000205"
+   ]
+  },
+  {
+   "date": "2026-07-15",
+   "title": "CRON-GUARD: per-row exception isolation for the two hottest legacy crons (mig 0206, pure hardening, NO flag)",
+   "migs": [
+    "20260618000206"
+   ]
+  },
+  {
+   "date": "2026-07-15",
+   "title": "SESSION WRAP: the FLEET RESHAPE + audit-fix batch is COMPLETE (all merged, all DARK) — pending state = owner-gated",
+   "migs": []
   }
  ]
 }

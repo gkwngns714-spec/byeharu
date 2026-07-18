@@ -1,8 +1,9 @@
 // Timeline — the whole arc: past → present → future.
 //
 // The roadmap mode of the 조직도 looks forward only. This view answers the
-// broader question in one screen: what has been BUILT (the shipped phases and
-// the migration history), what is LIVE right now plus the deploy frontier
+// broader question in one screen: what has been BUILT (the shipped phases, the
+// migration history, and the complete DEV_LOG build log — frontend slices and
+// fix batches included), what is LIVE right now plus the deploy frontier
 // (merged but not yet in prod), and what is PLANNED (the development queue and
 // the activation ladder). Every colour comes from STATUS — evidence, never
 // decoration.
@@ -20,6 +21,7 @@ export function createTimeline({ graph, status, mount, onSelect }) {
   let selected = null
 
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+  const jobs = graph.jobs ?? [] // the scanned DEV_LOG build log, oldest first
   const st = (id) => status.get(id) ?? STATUS.NEEDS_CHECK
   const rollup = (ids) => {
     const keys = ids.map((id) => st(id).key)
@@ -141,6 +143,20 @@ export function createTimeline({ graph, status, mount, onSelect }) {
     const pastRows = built.map(({ p, migCount, first }) =>
       row(p, { date: first ?? '—', count: migCount ? `${migCount} mig${migCount > 1 ? 's' : ''}` : '' })).join('')
 
+    // The build log — every job docs/DEV_LOG.md records, oldest first. These
+    // are log entries, not graph nodes, so the row itself does not navigate;
+    // the migration chips under a row are real nodes with real status colours.
+    const jobRows = jobs.map((j) => {
+      const chips = (j.migs ?? []).filter((s) => byId.has(`mig:${s}`))
+        .map((s) => nodeChip(`mig:${s}`)).join('')
+      return `<div class="tl-row static${dimCls(j.title)}">
+          <span class="tl-date">${esc(j.date)}</span>
+          <span class="tl-label" title="${esc(j.title)}">${esc(j.title)}</span>
+          <span></span><span class="tl-count"></span>
+        </div>
+        ${chips ? `<div class="tl-flips">${chips}</div>` : ''}`
+    }).join('')
+
     // present: counts that line up, the gates that are on, then the frontier
     const totLive = liveCounts.reduce((a, r) => a + r.live, 0)
     const totOn = liveCounts.reduce((a, r) => a + r.on, 0)
@@ -188,9 +204,14 @@ export function createTimeline({ graph, status, mount, onSelect }) {
         <h2>What has been built</h2>
         <div class="tl-desc">${migs.length} migrations across ${days.length} days of history —
           each tick is a day, its height how much landed, its colour rolled up from what that day is today.
-          Below, every shipped arc in the order it began; the chip is its proven production state.</div>
+          Below, every shipped arc in the order it began; the chip is its proven production state.
+          Then the complete build log from docs/DEV_LOG.md — every job, database or not.</div>
         ${spine}
+        <div class="tl-subhead">shipped arcs (${built.length})</div>
         ${pastRows}
+        ${jobs.length ? `
+          <div class="tl-subhead">build log — every job in docs/DEV_LOG.md (${jobs.length})</div>
+          ${jobRows}` : ''}
       </section>
       <section class="tl-sec">
         <div class="tl-era">현재 · present</div>
