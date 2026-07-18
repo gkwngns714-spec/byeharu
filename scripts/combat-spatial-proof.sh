@@ -36,6 +36,13 @@ if [ "$MODE" = "selftest" ]; then
   tp_assert_flags_inside_txn "$SQL" team_command_enabled mainship_additional_commission_enabled \
     module_crafting_enabled module_fitting_enabled spatial_combat_enabled
 
+  # ── the readiness precondition: every freshly commissioned ship carries a real 'present' commission
+  #    fleet + active presence at Haven (the "corpse dock"), which send_ship_group_hunt's dark-path
+  #    readiness gate deliberately treats as NOT ready (member_not_ready) — without retiring it, every
+  #    send would reject. The team-command-proof.sql PROVISION-block precedent, lifted verbatim. ──────
+  grep -q "status = 'destroyed', location_mode = 'destroyed'" "$SQL" || fail "harness does not retire the commission 'present' fleet (send_ship_group_hunt would reject member_not_ready)"
+  grep -q "and status = 'present';" "$SQL" || fail "harness's fleet-retirement UPDATE is missing its status='present' scope"
+
   # ── the commission precondition: a fresh disposable chain seeds the starter ports INACTIVE, and
   #    port_entry_commission_build hard-requires Haven to be dockable — without this call every
   #    commission fails closed (commission_unavailable). The team-command-proof.sql precedent's own

@@ -142,6 +142,30 @@ begin
 
   insert into cspatial values ('s_cmd', s_cmd), ('s_arm', s_arm), ('s_bare', s_bare);
 
+  -- ── FIXTURE NORMALIZATION — the ONE non-RPC-pure step in this proof (the team-command-proof.sql
+  --    PROVISION-block precedent, lifted verbatim). port_entry_commission_build (0222) docks every
+  --    freshly commissioned ship at Haven Reach via a REAL 'present' fleet + active location_presence
+  --    (the "corpse dock" — a transitional dual-representation alongside main_ship_instances.status
+  --    ='home'). send_ship_group_hunt's dark-path readiness check (the 4C-MIG-2B GATE FIX, migration
+  --    0231/movement_schema_drop) DELIBERATELY treats a fleet-truth-docked member as NOT ready while
+  --    dark (launch_from_dock_enabled unflipped here) — minting a team fleet on top of a live dock
+  --    fleet would be a phantom second fleet. Retire each ship's commission fleet (status→'destroyed')
+  --    and complete its now-orphaned presence — the SAME two-statement retirement every real sender
+  --    of a freshly-commissioned ship performs before its first send, never a bespoke skip.
+  update public.main_ship_instances
+     set status = 'home', updated_at = now()
+   where main_ship_id in (s_cmd, s_arm, s_bare);
+  update public.fleets
+     set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
+         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
+         updated_at = now()
+   where main_ship_id in (s_cmd, s_arm, s_bare) and status = 'present';
+  update public.location_presence
+     set status = 'completed', updated_at = now()
+   where fleet_id in (select id from public.fleets
+                        where main_ship_id in (s_cmd, s_arm, s_bare) and status = 'destroyed')
+     and status = 'active';
+
   -- grant EXACTLY the autocannon_battery recipe TWICE over (weapon_parts x4, pirate_alloy x2, scrap x6
   -- per unit — the S0/0107 seed) via the real Reward sole writer.
   perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
