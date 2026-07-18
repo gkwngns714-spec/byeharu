@@ -6,11 +6,10 @@ import {
   commandShipGroupGo,
   commandShipGroupStop,
   sendShipGroupHunt,
-  stopShipGroup,
   type TeamRpcResult,
 } from '../command/teamApi'
 import { teamReasonMessage } from '../command/teamReasonMessage'
-import { stopOutcomeMessage, unifiedStopOutcomeMessage } from '../command/teamStop'
+import { unifiedStopOutcomeMessage } from '../command/teamStop'
 import { fleetGoSuccessMessage, formatWorldPoint } from './fleetGoTarget'
 import {
   buildFleetCommandModel,
@@ -169,11 +168,10 @@ export function FleetCommandPanel({
                       onClick={() =>
                         void runStop(
                           `stop:${f.groupId}`,
-                          // LIT → the ONE unified brake (0209); DARK → the legacy per-member loop (0164).
-                          () => (inputs.unifiedEnabled ? commandShipGroupStop(f.groupId) : stopShipGroup(f.groupId)),
-                          // Each arm parses ITS OWN envelope: 0209's `stopped` is a boolean, 0164's a
-                          // count — the parsers stay TWO (spec-pinned in teamStop.spec).
-                          (res) => (inputs.unifiedEnabled ? unifiedStopOutcomeMessage(f.name, res) : stopOutcomeMessage(f.name, res)),
+                          // The ONE unified brake (0209) — fleet_movement_unified_enabled is on in prod
+                          // and the legacy per-member stop (0164) was retired with the signal cleanup.
+                          () => commandShipGroupStop(f.groupId),
+                          (res) => unifiedStopOutcomeMessage(f.name, res),
                         )
                       }
                     >
