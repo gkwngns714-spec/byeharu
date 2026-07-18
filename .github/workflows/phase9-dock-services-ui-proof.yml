@@ -2,9 +2,10 @@ name: PHASE 9 — dock-services UI + regression (no production)
 
 # Frontend proof for the Phase-9 docked-port surface, no production access:
 #   1. typecheck/build the whole app (regression — Phase-9 changes must not break OSN/expedition compile);
-#   2. rendered UI proof: drive the REAL <DockServicesPanel> (and the existing OSN PortNav panel) via the
-#      tests/harness Vite server — ok[8] docked shows port+services, ok[9] non-docked shows nothing;
-#   3. OSN pure unit-spec regression (ok[11]) — the existing osn readiness/command/resolver specs stay green.
+#   2. rendered UI proof: drive the REAL <DockServicesPanel> via the tests/harness Vite server —
+#      ok[8] docked shows port+services, ok[9] non-docked shows nothing (4A-POST: the PortNav panel
+#      + its readiness/port-move specs were deleted with the per-ship movement client);
+#   3. OSN pure unit-spec regression (ok[11]) — the resolver spec stays green.
 
 on:
   push:
@@ -35,9 +36,7 @@ jobs:
         run: npm run build
       - name: Install Playwright chromium
         run: npx playwright install --with-deps chromium
-      - name: Rendered UI proof — dock-services + OSN PortNav panels (ok[8], ok[9])
+      - name: Rendered UI proof — dock-services panel (ok[8], ok[9])
         run: npx playwright test --config playwright.osnui.config.ts
       - name: OSN/map pure unit-spec regression (ok[11])
-        run: |
-          npm run verify:osn:port
-          npm run verify:osn:resolver
+        run: npm run verify:osn:resolver

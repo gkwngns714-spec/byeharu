@@ -1,11 +1,6 @@
 import { useState } from 'react'
 import { useShellState } from '../../app/shellState'
 import { GalaxyMap } from './GalaxyMap'
-import { PortNavPanel } from './PortNavPanel'
-import { SpaceStopControls } from './SpaceStopControls'
-import { isActiveLegacyOutboundTransit, selectActiveLegacyMovement } from './spaceStopCommand'
-import { useLegacyStopTransitCommand } from './useSpaceStopCommand'
-import { MainShipCommand } from './MainShipCommand'
 import type { MapLocation } from './mapTypes'
 import { TYPE_LABEL, dangerLabel, rewardLabel } from './locationDisplay'
 import { ExplorationPanel } from '../exploration/ExplorationPanel'
@@ -23,10 +18,10 @@ import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../com
 // server-lit feature panels ride ONE overlay rail instead of floating as raw flow cards. Shared
 // polled data comes from the shell; the arrival settle lives in AppShell — never here.
 //
-// NO-SOFTLOCK: every stop/recovery surface stays on this always-reachable destination — the
-// legacy transit stop CTA below, PortNavPanel's own OSN stop + the held-in-space re-departure
-// surface, and GalaxyMap's coordinate-transit stop CTA — all mounted independent of feature flags
-// (their own state predicates decide, exactly as before).
+// 4A-POST: the per-ship movement client (MainShipCommand / PortNavPanel / the legacy + coordinate
+// stop CTAs) is DELETED — the unified fleet mover (TeamMapSend / FleetGoPanel / TeamMapStop) is the
+// only movement surface, and the server rejects the retired per-ship RPCs (flags verified OFF).
+// NO-SOFTLOCK is carried by TeamMapStop (mounted below, state-predicated) + the AppShell settle.
 
 // ── Player-facing location display ───────────────────────────────────────────────────────────────
 // Humanized: location_type → a plain kind; base_difficulty → a danger word; reward_tier → a reward
@@ -47,8 +42,8 @@ export function MapScreen() {
   const {
     map: {
       loading, error, locations, meta, mainShip, movements,
-      mainshipSendEnabled, mainShipFleet, mainShipHeldFleet, mainShipPresence, mainShipSpaceMovement,
-      teamGroups, dockedTeamRollups, teamRepresentedShipIds, fleetPositions, fleetControlEnabled, mainShipInFleet,
+      mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement,
+      teamGroups, dockedTeamRollups, teamRepresentedShipIds, fleetPositions,
       fleetMovementUnifiedEnabled, unifiedGroupFleets, refresh,
     },
   } = useShellState()
@@ -56,20 +51,6 @@ export function MapScreen() {
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
-
-  // UX-CLEANUP item 3 — stop for a LEGACY in-transit main-ship move (MainShipCommand sends create
-  // fleet_movements, invisible to the OSN stop mounts). Reuses the ONE stop controller/CTA, wired to
-  // command_main_ship_stop_transit (0155: halt an in-transit legacy move and HOLD the ship in open space
-  // at the interpolated point — no return home; the player re-departs to a new leg from the held position
-  // via MainShipCommand, Slice B/D1). Server-gated on mainship_send_enabled, idempotent by state. Renders
-  // only for an OUTBOUND transit of the main-ship fleet — a return leg has nothing to stop. The moving-row
-  // derivation is the shared selector (selectActiveLegacyMovement — AppShell's settle wiring uses the same one).
-  const legacyMove = selectActiveLegacyMovement(mainShipFleet, movements)
-  const inLegacyOutboundTransit = isActiveLegacyOutboundTransit({
-    fleetStatus: mainShipFleet?.status,
-    missionType: legacyMove?.mission_type,
-  })
-  const legacyStop = useLegacyStopTransitCommand(inLegacyOutboundTransit ? (mainShipFleet?.id ?? null) : null)
 
   const panelLifecycleKey = `${mainShip?.status ?? 'n'}|${mainShip?.spatial_state ?? 'n'}|${mainShipSpaceMovement?.id ?? 'none'}|${mainShipSpaceMovement?.status ?? 'none'}`
 
@@ -142,17 +123,6 @@ export function MapScreen() {
                   onStopped={refresh}
                 />
               )}
-              {/* PORT-LAUNCH-1B — dark port-to-port navigation. Server-gated (osn_available +
-                  anchored): renders nothing while dark. */}
-              <PortNavPanel
-                visibleLocations={locations}
-                shipStatus={mainShip?.status}
-                shipSpatialState={mainShip?.spatial_state}
-                spaceMovement={mainShipSpaceMovement}
-                currentDockedLocationId={mainShipPresence?.location_id}
-                mainShipId={mainShip?.main_ship_id ?? null}
-                onCommitted={refresh}
-              />
               {/* EXPLORATION-P11 — dark scan + discoveries; legal only settled in space. */}
               <ExplorationPanel
                 lifecycleKey={panelLifecycleKey}
@@ -170,22 +140,6 @@ export function MapScreen() {
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
-            {/* UX-CLEANUP item 3 — the legacy in-transit stop CTA (bottom-right slot; see the hook
-                block above). Same component/controller as the OSN stops; mutually exclusive with
-                them by state (one active movement owner per ship), so the shared bottom-right slot
-                can never double-book. */}
-            {inLegacyOutboundTransit && (
-              <SpaceStopControls
-                slot="bottom-right"
-                phase={legacyStop.state.phase}
-                errorMessage={legacyStop.state.errorMessage}
-                outcome={legacyStop.state.outcome}
-                onStop={() => void legacyStop.submit().finally(() => void refresh())}
-                title="Ship in transit"
-                stopLabel="Stop — hold here"
-                stoppedMessage="Holding position in open space."
-              />
-            )}
           </div>
         )}
       </div>
@@ -220,21 +174,8 @@ export function MapScreen() {
             </div>
           </div>
 
-          {/* 2 · RIGHT NOW — THE send/travel flow (pick a destination on the map → send). Renders
-              its own can't-send reasons; flag-dark → omitted entirely (no dead placeholder). */}
-          {mainshipSendEnabled && (
-            <MainShipCommand
-              key={`ms-${selected.id}`}
-              location={selected}
-              mainShip={mainShip}
-              fleet={mainShipFleet}
-              heldFleet={mainShipHeldFleet}
-              onSent={refresh}
-              fleetControlEnabled={fleetControlEnabled}
-              shipInFleet={mainShipInFleet}
-              unifiedEnabled={fleetMovementUnifiedEnabled}
-            />
-          )}
+          {/* 2 · RIGHT NOW — the send/travel flow is TeamMapSend below (the unified fleet mover);
+              the per-ship MainShipCommand surface was deleted in 4A-POST. */}
 
           {/* 3 · DETAILS — humanized, decision-relevant facts only */}
           <dl className="mt-4 space-y-1.5 text-sm">

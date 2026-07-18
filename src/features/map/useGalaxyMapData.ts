@@ -4,9 +4,9 @@ import { fetchWorldMap, fetchLocationStates } from './mapApi'
 import type { LocationState, MapLocation } from './mapTypes'
 import { fetchActiveMovements } from '../fleets/fleetApi'
 import type { FleetMovement } from '../fleets/fleetTypes'
-import { fetchMainshipSendEnabled, fetchFleetControlEnabled, fetchFleetMovementUnifiedEnabled } from '../../lib/catalog'
+import { fetchMainshipSendEnabled, fetchFleetMovementUnifiedEnabled } from '../../lib/catalog'
 import {
-  fetchActiveMainShipFleet, fetchHeldMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
+  fetchActiveMainShipFleet, fetchActiveMainShipPresence, fetchActiveMainShipSpaceMovement,
   fetchMyFleetPositions, resolveOwnedShip,
   type FleetPosition, type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
@@ -58,10 +58,6 @@ export interface GalaxyMapData {
   // Phase 10D: feature flag (read once) + the ship's active linked fleet (polled, for status).
   mainshipSendEnabled: boolean
   mainShipFleet: MainShipFleet | null
-  // Slice D1: the HELD ship's current fleet (its most-recent 'completed' fleet), read only while the
-  // ship is held (spatial_state='in_space'). Addresses move_main_ship_to_location's held-departure
-  // branch so a held ship can Send again. Null unless the ship is genuinely held.
-  mainShipHeldFleet: MainShipFleet | null
   // OSN-2b: the active location-presence for the main-ship fleet (polled), used by the resolver to
   // validate a named-location marker. Null unless the fleet is genuinely present at a location.
   mainShipPresence: MainShipPresence | null
@@ -82,12 +78,6 @@ export interface GalaxyMapData {
   // owned non-destroyed ship, polled with the rest of the map. The fleet layer draws a marker per ship, so a
   // player owning 2+ ships is no longer invisible on the map (the single-ship resolver goes null at N≥2). [].
   fleetPositions: FleetPosition[]
-  // FLEET-CONTROL (0204): the runtime gate (read once, like mainshipSendEnabled) + whether the resolved
-  // main ship is in a fleet. When the flag is lit, MapScreen hides MainShipCommand's per-ship Move
-  // affordance and routes movement through fleets; a ship not in a fleet gets guidance. Both are
-  // dark-inert: fleetControlEnabled false → MainShipCommand is byte-identical to today.
-  fleetControlEnabled: boolean
-  mainShipInFleet: boolean
   // FLEET-GO 4a-1: the RUNTIME unified-movement gate (0207's fleet_movement_unified_enabled, OFF in
   // prod; read once like the other static flags) + the group's own fleets (the §2 movers). While the
   // flag is dark the fleet read never runs and this stays [] — the map is byte-identical to today.
@@ -119,15 +109,12 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   locationStates: {},
   mainshipSendEnabled: false,
   mainShipFleet: null,
-  mainShipHeldFleet: null,
   mainShipPresence: null,
   mainShipSpaceMovement: null,
   teamGroups: [],
   dockedTeamRollups: [],
   teamRepresentedShipIds: [],
   fleetPositions: [],
-  fleetControlEnabled: false,
-  mainShipInFleet: false,
   fleetMovementUnifiedEnabled: false,
   unifiedGroupFleets: [],
 }
@@ -138,15 +125,14 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     locations: MapLocation[]
     meta: Record<string, LocationMeta>
     mainshipSendEnabled: boolean
-    fleetControlEnabled: boolean
     fleetMovementUnifiedEnabled: boolean
   } | null>(null)
 
   const load = useCallback(async () => {
     try {
       if (!staticRef.current) {
-        const [world, mainshipSendEnabled, fleetControlEnabled, fleetMovementUnifiedEnabled] = await Promise.all([
-          fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetControlEnabled(), fetchFleetMovementUnifiedEnabled(),
+        const [world, mainshipSendEnabled, fleetMovementUnifiedEnabled] = await Promise.all([
+          fetchWorldMap(), fetchMainshipSendEnabled(), fetchFleetMovementUnifiedEnabled(),
         ])
         const locations: MapLocation[] = []
         const meta: Record<string, LocationMeta> = {}
@@ -158,7 +144,7 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
             }
           }
         }
-        staticRef.current = { locations, meta, mainshipSendEnabled, fleetControlEnabled, fleetMovementUnifiedEnabled }
+        staticRef.current = { locations, meta, mainshipSendEnabled, fleetMovementUnifiedEnabled }
       }
 
       const [movements, locationStates, mainShip, fleetPositions] = await Promise.all([
@@ -179,12 +165,6 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
       // The active linked fleet (zero units) drives the live main-ship status. Only read it
       // when a ship exists; absent ship or no in-flight fleet → null (home).
       const mainShipFleet = mainShip ? await fetchActiveMainShipFleet(mainShip.main_ship_id) : null
-      // Slice D1: only a HELD ship (spatial_state='in_space') has a held fleet to re-send — fetch its
-      // current 'completed' fleet then (and only then), mirroring the present→presence conditional below.
-      const mainShipHeldFleet =
-        mainShip && mainShip.spatial_state === 'in_space'
-          ? await fetchHeldMainShipFleet(mainShip.main_ship_id)
-          : null
       // OSN-2b: only a PRESENT fleet can validate a named-location marker — fetch its active
       // presence then (and only then). Any other state needs no presence read.
       const mainShipPresence =
@@ -229,13 +209,6 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
           unifiedFleets: unifiedGroupFleets,
         }),
       ]
-      // FLEET-CONTROL (0204): is the resolved main ship in a fleet? groupMap is the SAME owner-RLS
-      // membership read the roster uses (fetched only when the player has ≥1 team). A ship not in a
-      // fleet → MainShipCommand shows "add this ship to a fleet to move it" when the flag is lit.
-      const mainShipInFleet =
-        mainShip != null &&
-        ((groupMap as Record<string, { group_id: string | null }>)[mainShip.main_ship_id]?.group_id ?? null) != null
-
       setState({
         loading: false,
         error: null,
@@ -246,15 +219,12 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         locationStates,
         mainshipSendEnabled: staticRef.current.mainshipSendEnabled,
         mainShipFleet,
-        mainShipHeldFleet,
         mainShipPresence,
         mainShipSpaceMovement,
         teamGroups,
         dockedTeamRollups,
         teamRepresentedShipIds,
         fleetPositions,
-        fleetControlEnabled: staticRef.current.fleetControlEnabled,
-        mainShipInFleet,
         fleetMovementUnifiedEnabled: staticRef.current.fleetMovementUnifiedEnabled,
         unifiedGroupFleets,
       })
