@@ -1053,44 +1053,47 @@ begin
   select prosrc into v_src from pg_proc where oid = 'public.assign_ship_to_group(uuid, uuid)'::regprocedure;
   if not has_function_privilege('authenticated', 'public.assign_ship_to_group(uuid, uuid)', 'execute') then
     raise exception 'S1-BERTH self-assert FAIL: assign_ship_to_group not authenticated-executable'; end if;
+  -- EVERY token below is pinned in its REASON-FORM ('reason', '<token>') — the exact text of the
+  -- arm's return line, which no comment carries. The CI apply caught the bare-word form matching
+  -- PROSE (the same-group comment names group_fleet_elsewhere, so its position() landed between
+  -- ambiguous and crossgroup and the order chain raised on a correctly-ordered body — the
+  -- grep-vacuity class, third strike this slice). prosrc keeps comments; probes must not.
   if position('v_fleet_control boolean := public.cfg_bool(''fleet_control_enabled'')' in v_src) = 0
-     or position('fleet_full' in v_src) = 0
+     or position('''reason'', ''fleet_full''' in v_src) = 0
      or position('mainship_resolve_owned_group' in v_src) = 0
      or position('is_command_ship = case when group_id is distinct from v_group' in v_src) = 0
-     or position('fleet_ambiguous' in v_src) = 0
-     or position('group_fleet_in_flight' in v_src) = 0
-     or position('group_fleet_elsewhere' in v_src) = 0
-     or position('group_on_sortie' in v_src) = 0
+     or position('''reason'', ''fleet_ambiguous''' in v_src) = 0
+     or position('''reason'', ''group_fleet_in_flight''' in v_src) = 0
+     or position('''reason'', ''group_fleet_elsewhere''' in v_src) = 0
+     or position('''reason'', ''group_on_sortie''' in v_src) = 0
      or position('ship_group_resolve_fleet' in v_src) = 0 then
     raise exception 'S1-BERTH self-assert FAIL: the 0213 head did not survive in assign_ship_to_group'; end if;
-  -- NOTE the reason-form: 'fleet_in_flight' alone is a SUBSTRING of the 0213 token
-  -- 'group_fleet_in_flight' and would be vacuously satisfied by the head.
+  -- NOTE the reason-form is ALSO load-bearing for fleet_in_flight specifically: the bare token is
+  -- a SUBSTRING of the 0213 token 'group_fleet_in_flight' and would be vacuously satisfied.
   if position('''reason'', ''fleet_in_flight''' in v_src) = 0
      or position('berth_location_id = case when v_group is not null then null else v_berth end' in v_src) = 0
      or position('v_ship_berth = v_gf.current_location_id' in v_src) = 0
      or position('presence_create(v_player, v_mint' in v_src) = 0
-     or position('''must_unassign_first''' in v_src) = 0
+     or position('''reason'', ''must_unassign_first''' in v_src) = 0
      or position('main_ship_id = v_ship and player_id = v_player for update' in v_src) = 0
      or position('mainship_space_location_target_legal(v_ship_berth)' in v_src) = 0 then
     raise exception 'S1-BERTH self-assert FAIL: an S1 assign hunk is missing (unassign refusal / XOR update clause / berth co-location read / mint / cross-group arm / ship-row lock / mint legality gate)'; end if;
-  a := position('from public.ship_groups' in v_src);            -- the (first) group lock
+  a := position('from public.ship_groups' in v_src);            -- the (first) group lock (code-only literal)
   h := position('main_ship_id = v_ship and player_id = v_player for update' in v_src);  -- the SHIP lock (MAJOR-4)
-  b := position('fleet_ambiguous' in v_src);
+  b := position('''reason'', ''fleet_ambiguous''' in v_src);
   i := position('if v_cur_group = v_group then' in v_src);      -- same-group short-circuit (MINOR-5)
-  -- the QUOTED code token, not the bare word — the ship-lock hunk's comment names the token
-  -- earlier in the body and a bare-word position would land in prose (the grep-vacuity class).
-  d := position('''must_unassign_first''' in v_src);            -- cross-group refusal (MAJOR-1)
-  c := position('group_fleet_elsewhere' in v_src);
-  e := position('fleet_full' in v_src);
-  f := position('update public.main_ship_instances' in v_src);  -- the ONE ship write
-  g := position('insert into public.fleets' in v_src);          -- the mint (post-write)
+  d := position('''reason'', ''must_unassign_first''' in v_src);  -- cross-group refusal (MAJOR-1)
+  c := position('''reason'', ''group_fleet_elsewhere''' in v_src);
+  e := position('''reason'', ''fleet_full''' in v_src);
+  f := position('update public.main_ship_instances' in v_src);  -- the ONE ship write (code-only literal)
+  g := position('insert into public.fleets' in v_src);          -- the mint (post-write; code-only literal)
   -- ORDER: group lock → SHIP lock (before any berth/group read the mint trusts) → ambiguous →
   -- same-group ok (fail-closed beats idempotence on a broken invariant) → cross-group refusal →
   -- the =1 arms (elsewhere/sortie ride the existing chain) → cap → write → mint.
   if not (a > 0 and a < h and h < b and b < i and i < d and d < c
           and c < e and e < f and f < g) then
     raise exception 'S1-BERTH self-assert FAIL: assign hunk order broken (lock=%, shiplock=%, ambiguous=%, samegroup=%, crossgroup=%, elsewhere=%, cap=%, update=%, mint=%)', a, h, b, i, d, c, e, f, g; end if;
-  d := position('group_on_sortie' in v_src);
+  d := position('''reason'', ''group_on_sortie''' in v_src);
   if not (c < d and d < e) then
     raise exception 'S1-BERTH self-assert FAIL: the sortie arm left its place (elsewhere=%, sortie=%, cap=%)', c, d, e; end if;
 
@@ -1105,11 +1108,13 @@ begin
     raise exception 'S1-BERTH self-assert FAIL: delete_ship_group not authenticated-executable'; end if;
   if position('ship_group_resolve_fleet' in v_src) = 0
      or position('''reason'', ''fleet_in_flight''' in v_src) = 0
-     or position('group_on_sortie' in v_src) = 0
-     or position('presence_complete' in v_src) = 0 then
+     or position('''reason'', ''group_on_sortie''' in v_src) = 0
+     or position('perform public.presence_complete' in v_src) = 0 then
     raise exception 'S1-BERTH self-assert FAIL: a delete hunk is missing (leaf compose / refusal arms / consume)'; end if;
+  -- code-only literals throughout (the CI-caught rule: prosrc keeps comments; probes must not) —
+  -- 'perform public.presence_complete' is the consume CALL; the hunk comment says the bare name.
   a := position('for update' in v_src);
-  b := position('presence_complete' in v_src);
+  b := position('perform public.presence_complete' in v_src);
   c := position('update public.main_ship_instances' in v_src);
   d := position('delete from public.ship_groups' in v_src);
   if not (a > 0 and a < b and b < c and c < d) then
