@@ -203,10 +203,7 @@ const pos = (over: Partial<FleetPosition> & Pick<FleetPosition, 'main_ship_id' |
   name: 'Ship',
   class: 'sloop',
   status: 'stationary',
-  spatial_state: null,
   location_id: null,
-  space_x: null,
-  space_y: null,
   segment: null,
   ...over,
 })
@@ -234,7 +231,7 @@ test('fleetPositionLocationLabel: docked at a HIDDEN port → generic "Docked", 
 })
 
 test('fleetPositionLocationLabel: in_space → "In deep space"', () => {
-  expect(fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'in_space', space_x: 5, space_y: 5 }), world)).toBe(
+  expect(fleetPositionLocationLabel(pos({ main_ship_id: 's1', place: 'in_space' }), world)).toBe(
     'In deep space',
   )
 })

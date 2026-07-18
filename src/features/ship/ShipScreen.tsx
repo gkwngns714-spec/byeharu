@@ -71,7 +71,8 @@ import {
 
 export function ShipScreen() {
   const { game, map, selection } = useShellState()
-  const lifecycleKey = `${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
+  // (4C-CLIENT: the legacy spatial_state / space-movement fields left the key with the schema they read.)
+  const lifecycleKey = `${map.mainShip?.status ?? 'n'}`
   // Bumped by any panel after a successful loadout-changing command (captain assign/recruit on the
   // aside, fit/unfit in the detail) so the read surfaces re-read the state the command just changed
   // (non-optimistic: the command's own refetch ran first, then pinged us).

@@ -10,12 +10,11 @@ import { territoryAt } from './territoryAt'
 // TEAMMAP-2 — the team's OWN map marker (owner directive: "The team should have a marker of its own
 // and be shown on map"). Read-only display layer over server-committed rows; additive beside the
 // existing marker/line layers — it changes NO existing marker resolution and duplicates NO pipeline:
-//   • position math   → the ONE shared interpolateMovementPoint (extracted from resolveMainShipMarker)
+//   • position math   → the ONE shared interpolateMovementPoint (movementInterpolation)
 //   • fleet team tag  → movements' flattened fleets.group_id (0168/0187, informational/display-only)
 //   • docked teams    → the pure deriveDockedTeamRollups fold (command/teamRollup)
 //   • wiring          → the pure, hook-free `teamMarkersLayer` element-descriptor helper (the
-//                       SpaceRouteLine `shipLayer` element-tree convention; GalaxyMap and the unit
-//                       tests call the SAME function).
+//                       element-tree convention; GalaxyMap and the unit tests call the SAME function).
 //
 // Cluster semantics (pure, unit-tested in tests/teamMarkers.spec.ts):
 //   • multi-fleet group (expedition send, N member fleets) → ONE badge at the LEAD (earliest-ETA)
@@ -205,40 +204,8 @@ export function resolveFleetCombatBadges(
   return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
 }
 
-// ── FLEETMAP de-dup — the set of owned ship ids ALREADY represented by a TEAM marker ─────────────────
-// A docked-together team draws a dock badge ("Fleet X n/n") and an in-flight team draws a moving badge;
-// the whole-fleet chevron layer (fleetShipsLayer) would otherwise ALSO draw each member as an individual
-// chevron at the same coordinates — the team badge stacked over redundant chevrons. This returns the ship
-// ids the team layer already covers so the chevron layer can skip them, the SAME exclusion posture the
-// selected ship already uses.
-//
-// It reuses the SAME two derivations the team layer renders — resolveTeamDockBadges (complete docked
-// rollups) + resolveTeamMarkers (in-flight moving groups) — so there is NO second docked-team fold, then
-// intersects the marked GROUP ids with the LIVE membership map (main_ship_instances.group_id). A group
-// with no marker contributes nothing; a ship in no marked group keeps its own chevron (solo/ungrouped
-// ships still draw). Pure; the nowMs only picks which groups are in flight (that set is time-stable).
-export function deriveTeamRepresentedShipIds(args: {
-  membership: Readonly<Record<string, { group_id: string | null }>>
-  rollups: readonly DockedTeamRollup[]
-  movements: readonly FleetMovement[]
-  groups: readonly GroupRow[]
-  nowMs: number
-  /** FLEET-GO 4a-1: unified group fleets — an IN-SPACE fleet badge also represents its members.
-   *  Optional, default [] → every existing caller/spec byte-identical (dark-inert; see the badge). */
-  unifiedFleets?: readonly UnifiedGroupFleetLite[]
-}): Set<string> {
-  const markedGroups = new Set<string>()
-  for (const b of resolveTeamDockBadges(args.rollups)) markedGroups.add(b.groupId)
-  for (const m of resolveTeamMarkers(args.movements, args.groups, args.nowMs)) markedGroups.add(m.groupId)
-  for (const s of resolveFleetSpaceBadges(args.unifiedFleets ?? [], args.groups, args.rollups)) markedGroups.add(s.groupId)
-  const ids = new Set<string>()
-  if (markedGroups.size === 0) return ids
-  for (const shipId of Object.keys(args.membership)) {
-    const gid = args.membership[shipId].group_id
-    if (gid !== null && markedGroups.has(gid)) ids.add(shipId)
-  }
-  return ids
-}
+// (4C-CLIENT: deriveTeamRepresentedShipIds — the fleetShipsLayer de-dup set — DELETED. Its only
+// consumer, the per-ship chevron layer, was removed in S5; nothing draws per-ship chevrons now.)
 
 // ── Presentation ────────────────────────────────────────────────────────────────────────────────────
 
@@ -378,7 +345,7 @@ export function TeamCombatBadge({
   )
 }
 
-/** In-flight team badges with the MainShipMarker 1s visual tick (only while any team is moving). */
+/** In-flight team badges with a 1s visual tick (only while any team is moving). */
 export function TeamMovingMarkers({
   movements,
   groups,
@@ -390,8 +357,8 @@ export function TeamMovingMarkers({
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
 }) {
-  // `now` in state (lazy init), advanced by the tick ONLY while a team badge exists — the exact
-  // MainShipMarker idiom (Date.now() stays out of render; the interval clears when static).
+  // `now` in state (lazy init), advanced by the tick ONLY while a team badge exists
+  // (Date.now() stays out of render; the interval clears when static).
   const [now, setNow] = useState(() => Date.now())
   const markers = resolveTeamMarkers(movements, groups, now)
   const active = markers.length > 0

@@ -1,27 +1,28 @@
 // PORT-ENTRY player UI — PURE, framework-free core.
 //
 // No React/DOM/fetch/writes here. This module owns:
-//   (1) the typed results of the two authenticated PORT-ENTRY RPCs (commission_first_main_ship /
-//       normalize_main_ship_dock) and STRICT fail-closed parsers of their raw jsonb (migration 0072);
+//   (1) the typed result of the authenticated PORT-ENTRY RPC (commission_first_main_ship) and a
+//       STRICT fail-closed parser of its raw jsonb (migration 0072);
 //   (2) a pure classifier that maps the caller's OWN main-ship state to the single affordance the UI
 //       should offer — the SERVER is always the final authority, so this only decides which control to
 //       show; it never performs or fabricates a state transition;
 //   (3) stable player-facing copy for every server outcome / reason.
 //
-// HARD BOUNDARY: commission_first_main_ship is zero-arg; normalize_main_ship_dock takes the explicit
-// selected/sole main-ship id (TRADE-FLEET-0C §2.5: p_main_ship_id, null → server sole-ship shim, ownership
-// server-asserted). Both are auth.uid()-scoped — aside from that ship id the client sends NO player/port id,
-// coordinates, status, or lifecycle data. Nothing here touches coordinate travel, its dark flag/gate, the
-// coordinate command, port-to-port travel, migrations, or production data. Server-authoritative only.
+// 4C-CLIENT: the normalize arm (normalize_main_ship_dock — "Finish Docking") is DELETED. It served
+// exactly one state — legacy_present (spatial_state NULL + present fleet at a port) — which is
+// extinct (prod: zero such ships) and unmintable (its only writer was the retired per-ship legacy
+// send family). The classifier now reads the ship's get_my_fleet_positions `place` (the ONE
+// placement projection; its server head deliberately answers 'docked' for legacy_present too), so
+// the legacy main_ship_instances.spatial_state column is no longer read anywhere client-side.
+// normalize_main_ship_dock has NO client caller after this — droppable in 4b-DROP.
+//
+// HARD BOUNDARY: commission_first_main_ship is zero-arg and auth.uid()-scoped — the client sends NO
+// player/port id, coordinates, status, or lifecycle data. Server-authoritative only.
 
-import type { SpatialState } from '../map/mainshipApi'
-import { isDockablePortForDisplay, type LocationType } from '../map/mapTypes'
-
-// ── The RPC name literals (single source shared with the API layer and the tests) ──────────────────────
+// ── The RPC name literal (single source shared with the API layer and the tests) ───────────────────────
 export const COMMISSION_RPC = 'commission_first_main_ship' as const
-export const NORMALIZE_RPC = 'normalize_main_ship_dock' as const
 
-// ── Parsed RPC results ─────────────────────────────────────────────────────────────────────────────────
+// ── Parsed RPC result ──────────────────────────────────────────────────────────────────────────────────
 // commission_first_main_ship() outcome matrix (migration 0072, §B): a first-ship claim that is idempotent
 // server-side (player_id UNIQUE + state-branch). We normalize every documented shape into a discriminated
 // result; ANY malformed/unexpected jsonb collapses to a safe failure (never throws, never invents success).
@@ -32,21 +33,9 @@ export type CommissionResult =
 export type CommissionReason =
   | 'not_authenticated'
   | 'commission_unavailable'
-  | 'needs_normalization' // ship is legacy_present → route the player to Finish Docking
+  | 'needs_normalization' // legacy_present (extinct; kept for the server contract — see the copy below)
   | 'needs_compat_route' // ship is home / legacy_home → no player docking path yet
   | 'not_provisionable' // destroyed / in_space / in_transit / contradictory / not-found
-  | 'malformed'
-
-// normalize_main_ship_dock() (migration 0072, §C): legacy_present → at_location IN PLACE, idempotent.
-export type NormalizeResult =
-  | { ok: true; normalized: boolean; locationId: string | null } // normalized=true (did work) / false (already canonical)
-  | { ok: false; reason: NormalizeReason; state?: string | null }
-
-export type NormalizeReason =
-  | 'not_authenticated'
-  | 'no_ship'
-  | 'not_normalizable' // not legacy_present (e.g. home / legacy_home / in-flight)
-  | 'ineligible_port' // the current port is no longer a legal dock
   | 'malformed'
 
 const asStr = (v: unknown): string | null =>
@@ -73,131 +62,57 @@ export function parseCommissionResult(raw: unknown): CommissionResult {
   return { ok: false, reason: reason as CommissionReason, state: asStr(o.state) }
 }
 
-/**
- * Strict validator for the raw normalize_main_ship_dock() jsonb. Same fail-closed discipline as above.
- */
-export function parseNormalizeResult(raw: unknown): NormalizeResult {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'malformed' }
-  const o = raw as Record<string, unknown>
-  if (typeof o.ok !== 'boolean') return { ok: false, reason: 'malformed' }
-  if (o.ok === true) {
-    return { ok: true, normalized: asBool(o.normalized), locationId: asStr(o.location_id) }
-  }
-  const reason = asStr(o.reason)
-  const known: NormalizeReason[] = ['not_authenticated', 'no_ship', 'not_normalizable', 'ineligible_port']
-  if (!reason || !(known as string[]).includes(reason)) return { ok: false, reason: 'malformed' }
-  return { ok: false, reason: reason as NormalizeReason, state: asStr(o.state) }
-}
-
 // ── The player's own main-ship state signals (owner-read; the input to affordance selection) ───────────
 // A DISPLAY-only summary; every field is server-sourced. `null` for the whole object means "not loaded yet".
+// 4C-CLIENT: the legacy spatial_state / linked-fleet-shape fields are REPLACED by the ship's
+// get_my_fleet_positions `place` — the same placement truth every other surface reads (SHIPLOC, Port hub).
 export interface PortEntryShipState {
   hasShip: boolean
-  main_ship_id?: string | null // TRADE-FLEET-0C §2.5: the caller's ship id, threaded to normalize (null when no ship)
-  spatialState: SpatialState | null // NULL ⇒ legacy ship (position from fleet/presence)
   shipStatus: string | null // main_ship_instances.status
-  fleetStatus: string | null // active linked fleet: 'present' | 'moving' | 'returning' | null
-  fleetLocationMode: string | null // 'location' when present at a named port
-  hasActivePresence: boolean // an active location_presence for the linked fleet
-  presentLocationId: string | null // fleets.current_location_id when legacy-present (already on the fetched row)
-}
-
-// ── Present-location display info (drives the waypoint-vs-port affordance split) ───────────────────────
-// A minimal view of a world-map location: enough to name it and classify it for DISPLAY. Structurally
-// satisfied by the map feature's MapLocation, so callers thread the already-polled get_world_map list.
-export interface PortEntryKnownLocation {
-  id: string
-  name: string
-  location_type: LocationType
-}
-
-export interface PresentLocationDisplay {
-  name: string
-  isDockablePort: boolean
-}
-
-/**
- * Resolve the legacy-present ship's location from the already-polled world map (NO new read). Returns null
- * when unknown (state not loaded, not present anywhere, no locations threaded, or the id isn't in the
- * visible map) — and unknown deliberately falls back to the pre-existing 'normalize' affordance below, so
- * a classification gap can only ever show the old button, never hide docking at a real port; the server
- * (target_legal) still rejects any wrong guess.
- */
-export function resolvePresentLocation(
-  state: PortEntryShipState | null,
-  locations: readonly PortEntryKnownLocation[] | undefined,
-): PresentLocationDisplay | null {
-  const id = state?.presentLocationId
-  if (!id || !locations) return null
-  const loc = locations.find((l) => l.id === id)
-  if (!loc) return null
-  return { name: loc.name, isDockablePort: isDockablePortForDisplay(loc.location_type) }
+  /** The ship's fleet-positions `place` ('docked' | 'berthed' | 'transit' | 'in_space' | 'hidden'), or
+   *  null when the projection has no row / could not be read → fail closed to 'indeterminate'. */
+  place: string | null
 }
 
 // ── Affordance: the SINGLE control (or safe explanation) the UI should present ─────────────────────────
-// Only 'commission' and 'normalize' carry an action; every other kind is a read-only explanatory state.
+// Only 'commission' carries an action; every other kind is a read-only explanatory state.
 export type PortEntryAffordance =
   | { kind: 'loading' }
   | { kind: 'commission' } // no ship → Claim First Ship (commission_first_main_ship)
-  | { kind: 'normalize' } // legacy_present at a dockable port → Finish Docking (normalize_main_ship_dock)
-  | { kind: 'at_waypoint'; locationName: string } // legacy_present at a NON-dock waypoint → honest read-only explanation
-  | { kind: 'docked' } // canonical at_location → no action; ordinary dock experience
-  | { kind: 'at_home' } // home / legacy_home → explain; no in-place docking path exists yet
-  | { kind: 'in_transit' } // traveling / returning → explain; act only from a stable state
+  | { kind: 'docked' } // at a port (docked with a fleet, or berthed) → no action; ordinary dock experience
+  | { kind: 'at_home' } // hidden (idle/undeployed) → explain; travel to a port
+  | { kind: 'in_transit' } // traveling → explain; act only from a stable state
   | { kind: 'unavailable'; detail: 'destroyed' | 'in_space' | 'indeterminate' } // explain; no action
 
 /**
  * Pure classifier: caller's own main-ship state → the one affordance to show. This decides ONLY which
  * control renders; the authoritative accept/reject is the server RPC. It never mutates or predicts success.
  *
- * "Finish Docking" (normalize) is offered ONLY for a coherent legacy_present ship — the exact state the
- * server normalizes IN PLACE. home / legacy_home ships DO NOT get a normalize button (the server would
- * reject them with needs_compat_route); they are shown a safe 'at_home' explanation instead, so the UI
- * never offers an action that structurally cannot succeed. (See the PORT-ENTRY-UI scope note.)
- *
- * UX-CLEANUP item 2: when `presentLocation` classifies the legacy-present location as a NON-dock waypoint
- * (isDockablePortForDisplay — display heuristic; server target_legal stays the authority), the doomed
- * Finish-Docking button is replaced by the honest read-only 'at_waypoint' explanation. An UNKNOWN location
- * (null) keeps the pre-existing 'normalize' behavior — the server still rejects a wrong guess.
+ * 4C-CLIENT semantics (place-based, replacing the retired spatial_state branch):
+ *   docked/berthed → 'docked' (at a port — berth-truth agrees with the Fitting/Port tabs' "Docked at …");
+ *   transit → 'in_transit'; in_space → 'unavailable'; hidden → 'at_home' (idle/undeployed);
+ *   null/unknown place (projection unreadable) → fail-closed 'unavailable'/'indeterminate' — never a
+ *   wrong action, never a wrong "travel to a port" claim over a ship that may be docked.
  */
-export function derivePortEntryAffordance(
-  state: PortEntryShipState | null,
-  presentLocation?: PresentLocationDisplay | null,
-): PortEntryAffordance {
+export function derivePortEntryAffordance(state: PortEntryShipState | null): PortEntryAffordance {
   if (state === null) return { kind: 'loading' }
   if (!state.hasShip) return { kind: 'commission' }
 
   // A disabled/destroyed ship is never provisionable/dockable — repair is its own separate path.
-  if (state.shipStatus === 'destroyed' || state.spatialState === 'destroyed') {
-    return { kind: 'unavailable', detail: 'destroyed' }
-  }
+  // (Destroyed ships are also excluded from the fleet-positions projection, so this check must
+  // come BEFORE the place switch — a destroyed ship has no `place` row by construction.)
+  if (state.shipStatus === 'destroyed') return { kind: 'unavailable', detail: 'destroyed' }
 
-  switch (state.spatialState) {
-    case 'at_location':
+  switch (state.place) {
+    case 'docked':
+    case 'berthed':
       return { kind: 'docked' }
-    case 'in_transit':
+    case 'transit':
       return { kind: 'in_transit' }
     case 'in_space':
       return { kind: 'unavailable', detail: 'in_space' }
-    case 'home':
+    case 'hidden':
       return { kind: 'at_home' }
-    case null: {
-      // Legacy ship (spatial_state IS NULL): classify from the linked-fleet shape.
-      if (state.fleetStatus === 'present') {
-        // Only a COHERENT present-at-named-port shape is the normalizable legacy_present state.
-        if (state.fleetLocationMode === 'location' && state.hasActivePresence) {
-          // Known NON-dock waypoint → honest explanation instead of a doomed Finish-Docking button.
-          if (presentLocation && !presentLocation.isDockablePort) {
-            return { kind: 'at_waypoint', locationName: presentLocation.name }
-          }
-          return { kind: 'normalize' }
-        }
-        return { kind: 'unavailable', detail: 'indeterminate' }
-      }
-      if (state.fleetStatus === 'moving' || state.fleetStatus === 'returning') return { kind: 'in_transit' }
-      if (state.fleetStatus === null) return { kind: 'at_home' } // legacy_home: idle at base
-      return { kind: 'unavailable', detail: 'indeterminate' }
-    }
     default:
       return { kind: 'unavailable', detail: 'indeterminate' }
   }
@@ -207,24 +122,14 @@ export function derivePortEntryAffordance(
 export const COMMISSION_REASON_COPY: Record<CommissionReason, string> = {
   not_authenticated: 'You must be signed in to claim a ship.',
   commission_unavailable: 'Could not commission your ship right now. Please try again in a moment.',
-  needs_normalization: 'Your ship is at a port but not fully docked yet — use Finish Docking.',
+  // 4C-CLIENT: the "Finish Docking" button this copy used to point at is deleted (the legacy state
+  // it served is extinct); the reason stays parsed for the server contract, with honest copy.
+  needs_normalization: 'Your ship is already at a port but its docking is incomplete. Please try again later.',
   needs_compat_route: 'Your ship has not docked yet. Travel to a port before it can be docked.',
   not_provisionable: 'Your ship is not in a state where it can be commissioned.',
   malformed: 'Received an unexpected response. Please try again.',
 }
 
-export const NORMALIZE_REASON_COPY: Record<NormalizeReason, string> = {
-  not_authenticated: 'You must be signed in to finish docking.',
-  no_ship: 'You do not have a ship to dock yet.',
-  not_normalizable: 'This ship cannot be docked from its current state.',
-  // Fail-closed fallback for a display/server disagreement — must never claim the location is a "port".
-  ineligible_port: "You can't dock here — this location has no docking service.",
-  malformed: 'Received an unexpected response. Please try again.',
-}
-
 export function commissionReasonMessage(reason: CommissionReason): string {
   return COMMISSION_REASON_COPY[reason] ?? COMMISSION_REASON_COPY.malformed
-}
-export function normalizeReasonMessage(reason: NormalizeReason): string {
-  return NORMALIZE_REASON_COPY[reason] ?? NORMALIZE_REASON_COPY.malformed
 }

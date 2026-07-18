@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import type { MapLocation } from './mapTypes'
 import type { FleetMovement } from '../fleets/fleetTypes'
-import type { MainShipLite } from './useGalaxyMapData'
-import type { MainShipFleet, MainShipPresence, MainShipSpaceMovement } from './mainshipApi'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { isMovementInFlight, interpolateMovementPoint } from './movementInterpolation'
-import { shipLayer } from './SpaceRouteLine'
 import { teamMarkersLayer } from './teamMarkers'
 import { territoryLayer } from './territoryLayer'
 import type { GroupRow } from '../command/teamRoster'
@@ -33,11 +30,6 @@ const norm = (p: { x: number; y: number }): { x: number; y: number } => worldToV
 
 export function GalaxyMap({
   locations,
-  mainShip,
-  mainShipFleet,
-  mainShipPresence,
-  mainShipSpaceMovement,
-  mainshipSendEnabled,
   movements,
   teamGroups,
   dockedTeamRollups,
@@ -50,11 +42,6 @@ export function GalaxyMap({
   onSelect,
 }: {
   locations: MapLocation[]
-  mainShip: MainShipLite | null
-  mainShipFleet: MainShipFleet | null
-  mainShipPresence: MainShipPresence | null
-  mainShipSpaceMovement: MainShipSpaceMovement | null
-  mainshipSendEnabled: boolean
   movements: FleetMovement[]
   // TEAMMAP-2: the owner's teams + the pure docked-team rollup (both empty while TEAM_COMMAND is
   // dark — the additive team layer then renders nothing and the map is byte-identical to today).
@@ -86,7 +73,7 @@ export function GalaxyMap({
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
 
-  // 1s clock for the in-flight path filter below. Same idiom as SpaceRouteLine/MainShipMarker: Date.now()
+  // 1s clock for the in-flight path filter below. Same idiom as TeamMovingMarkers: Date.now()
   // stays OUT of render (it is impure and would re-read unpredictably on any re-render), and the interval
   // runs ONLY while there is a movement to time — with none, no timer exists and the map is idle as before.
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -117,40 +104,21 @@ export function GalaxyMap({
   const pointers = useRef<Set<number>>(new Set())
 
   // ── S6B-PRES content-fit camera (presentation only; never alters world/marker coordinates) ──
-  // Deterministic focus: open-space / in-transit ships and their active movement segment take focus
-  // priority so the player is always visible. Derived PURELY from ship state (no clock / interpolation),
-  // so it is render-pure and the focus signature stays stable per move (not per animation frame).
-  const focusInputs: FocusInputs = useMemo(() => {
-    const sx = mainShip?.space_x
-    const sy = mainShip?.space_y
-    const shipWorld: WorldCoord | null =
-      mainShip?.spatial_state === 'in_space' && typeof sx === 'number' && Number.isFinite(sx) && typeof sy === 'number' && Number.isFinite(sy)
-        ? { x: sx, y: sy }
-        : null
-    const seg: readonly [WorldCoord, WorldCoord] | null =
-      mainShipSpaceMovement && mainShipSpaceMovement.status === 'moving'
-        ? [
-            { x: mainShipSpaceMovement.origin_x, y: mainShipSpaceMovement.origin_y },
-            { x: mainShipSpaceMovement.target_x, y: mainShipSpaceMovement.target_y },
-          ]
-        : null
-    return {
-      shipWorld,
-      movementSegment: seg,
+  // 4C-CLIENT: the per-ship open-space focus arm (spatial_state='in_space' point / legacy coordinate
+  // movement segment) is DELETED with the per-ship movement client — those states can no longer
+  // exist. Focus derives from the named world content; the FocusInputs ship/segment slots stay null.
+  const focusInputs: FocusInputs = useMemo(
+    () => ({
+      shipWorld: null,
+      movementSegment: null,
       locations: locations.map((l) => ({ x: l.x, y: l.y })),
-    }
-  }, [mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations])
+    }),
+    [locations],
+  )
 
-  // Stable focus signature: changes only on a MEANINGFUL focus change (open-space mode / active
-  // movement id / parked point / named-content set), never per animation frame — so the fit is applied
-  // once per context. Uses the static space_x/space_y + movement id, never the live interpolated point.
-  const focusSignature = useMemo(() => {
-    if (focusInputs.shipWorld || focusInputs.movementSegment) {
-      const seg = mainShipSpaceMovement?.status === 'moving' ? mainShipSpaceMovement.id : 'noseg'
-      return `os:${mainShip?.spatial_state ?? 'n'}:${seg}:${mainShip?.space_x ?? 'n'},${mainShip?.space_y ?? 'n'}`
-    }
-    return `named:${locations.map((l) => l.id).join(',')}`
-  }, [focusInputs, mainShip?.spatial_state, mainShip?.space_x, mainShip?.space_y, mainShipSpaceMovement, locations])
+  // Stable focus signature: changes only on a MEANINGFUL focus change (the named-content set),
+  // never per animation frame — so the fit is applied once per context.
+  const focusSignature = useMemo(() => `named:${locations.map((l) => l.id).join(',')}`, [locations])
 
   // Apply the content-fit camera for the INITIAL view (once per focus change), never after the player
   // has interacted. Explicit reset re-enables it.
@@ -412,22 +380,10 @@ export function GalaxyMap({
             combatFleets: combatSortieFleets,
           })}
 
-          {/* S5 MAP-UX: the redundant per-ship chevron layer (fleetShipsLayer) is DELETED — S1's
-              fleeted-XOR-berthed invariant means the team badges above + the single shipLayer below
-              already cover every owned marker (charter cleanup; the audit's redundancy finding). */}
-
-          {/* OSN-1 + OSN-3 S6B-ROUTE: the local player's own ship overlay layer, composed by the pure,
-              hook-free `shipLayer` helper (route UNDER the main-ship marker, in that order). Gated by the
-              existing `mainshipSendEnabled` data-dark gate — NOT the space-movement flag; both children are
-              naturally empty in production (no coherent active coordinate route can exist while
-              mainship_space_movement_enabled = false). Read-only; coherence comes solely from the resolvers.
-              The single helper is what the GalaxyMap-wiring unit test exercises (no duplicated wiring). */}
-          {shipLayer({
-            mainshipSendEnabled,
-            inputs: { mainShip, mainShipFleet, presence: mainShipPresence, spaceMovement: mainShipSpaceMovement, movements, locations },
-            norm,
-            k: view.k,
-          })}
+          {/* 4C-CLIENT: the per-ship overlay layer (shipLayer — route + MainShipMarker) is DELETED
+              with the per-ship movement client (S5 already deleted the redundant fleetShipsLayer).
+              Owned ships are represented by the team badges above (fleeted) or as INFO surfaces
+              (berthed — roster/Port labels); the legacy per-ship spatial states can no longer exist. */}
 
           {/* FLEET-GO 4a-2 — the FLEET's coordinate-go target (the same crosshair geometry, reused
               under its own testid + accent tone). Shows the CANONICAL point — the integer-grid

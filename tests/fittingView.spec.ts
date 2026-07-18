@@ -20,11 +20,8 @@ const pos = (over: Partial<FleetPosition> = {}): FleetPosition => ({
   name: 'Byeharu',
   class: 'starter_frigate',
   status: 'stationary',
-  spatial_state: 'at_location',
   place: 'docked',
   location_id: 'loc-haven',
-  space_x: null,
-  space_y: null,
   segment: null,
   ...over,
 })
