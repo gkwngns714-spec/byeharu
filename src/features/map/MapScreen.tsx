@@ -49,8 +49,8 @@ export function MapScreen() {
     map: {
       loading, error, locations, meta, mainShip, movements,
       mainshipSendEnabled, mainShipFleet, mainShipPresence, mainShipSpaceMovement,
-      teamGroups, teamGroupMap, dockedTeamRollups,
-      fleetMovementUnifiedEnabled, unifiedGroupFleets,
+      teamGroups, teamGroupsOk, teamGroupMap, dockedTeamRollups,
+      fleetMovementUnifiedEnabled, unifiedGroupFleets, combatSortieFleets,
       launchFromDockEnabled, fleetControlEnabled, timedDockingEnabled, refresh,
     },
     selection,
@@ -126,6 +126,7 @@ export function MapScreen() {
               teamGroups={teamGroups}
               dockedTeamRollups={dockedTeamRollups}
               unifiedGroupFleets={unifiedGroupFleets}
+              combatSortieFleets={combatSortieFleets}
               fleetMovementUnifiedEnabled={fleetMovementUnifiedEnabled}
               fleetGoView={pointView}
               onTargetPoint={setPointTarget}
@@ -167,6 +168,7 @@ export function MapScreen() {
                 target={target}
                 movements={movements}
                 groups={teamGroups}
+                groupsLoaded={teamGroupsOk}
                 unifiedEnabled={fleetMovementUnifiedEnabled}
                 unifiedFleets={unifiedGroupFleets}
                 rollups={dockedTeamRollups}

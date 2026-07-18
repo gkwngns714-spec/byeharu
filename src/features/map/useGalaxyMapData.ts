@@ -14,10 +14,10 @@ import {
   type FleetPosition, type MainShipFleet, type MainShipPresence, type MainShipSpaceMovement, type SpatialState,
 } from './mainshipApi'
 import {
-  fetchMyShipGroups, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
+  fetchMyShipGroupsChecked, fetchMyShipGroupMap, fetchMyPresentShipFleets, fetchMyUnifiedGroupFleets,
   type ShipGroupMapEntry, type UnifiedGroupFleetLite,
 } from '../command/teamApi'
-import { deriveDockedTeamRollups, excludeCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
+import { deriveDockedTeamRollups, excludeCombatSortieFleets, selectCombatSortieFleets, type DockedTeamRollup } from '../command/teamRollup'
 import type { GroupRow } from '../command/teamRoster'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 
@@ -71,6 +71,12 @@ export interface GalaxyMapData {
   // compile-time constant that mounts every other team surface (TEAM_COMMAND_ENABLED): while it is
   // false none of the team reads run and both stay empty — the map renders byte-identical to today.
   teamGroups: GroupRow[]
+  // MAP-INTEGRATION M2 review fix: whether the LAST groups read genuinely SUCCEEDED. The plain read
+  // normalizes any transport error to [] — indistinguishable from "no fleets" — so one flaky poll
+  // would flash the false "No fleet yet" guidance over a fleet-owning player's map. The guidance
+  // gates on THIS flag (an affirmative successful-and-empty read); on a failed read the hook also
+  // KEEPS the previous poll's groups (below), so fleets/stop rows never dissolve transiently either.
+  teamGroupsOk: boolean
   // S5 MAP-UX: the live membership map (main_ship_id → group/command flags) — already fetched for
   // the rollup fold every poll; exposed so the FleetCommandPanel's hunt arm is props-fed from the
   // shell instead of running its own reads (the deleted TeamMapSend fetched this itself).
@@ -86,6 +92,12 @@ export interface GalaxyMapData {
   // When 4b flips the flag, the already-deployed client switches arms with no further deploy.
   fleetMovementUnifiedEnabled: boolean
   unifiedGroupFleets: UnifiedGroupFleetLite[]
+  // MAP-INTEGRATION M1: the COMBAT-PRESENT group fleets — the exact complement of the
+  // excludeCombatSortieFleets filter applied to unifiedGroupFleets above (one raw read, one shared
+  // classification, partitioned once here). Feeds the map's "in combat at X" team badge so a fleet
+  // mid-hunt-combat keeps a marker (it is stripped from the dock fold by design, has no movement,
+  // and the per-ship chevron fallback was deleted in S5). [] while the unified fetch is dark.
+  combatSortieFleets: UnifiedGroupFleetLite[]
   // S5 MAP-UX: the NO-HOME + fleet-control runtime gates (read once with the other static flags —
   // previously fetched per-mount by the deleted TeamMapSend). Feed the panel's hunt arm.
   launchFromDockEnabled: boolean
@@ -122,11 +134,13 @@ const EMPTY: Omit<GalaxyMapData, 'refresh'> = {
   mainShipPresence: null,
   mainShipSpaceMovement: null,
   teamGroups: [],
+  teamGroupsOk: false, // fail closed: no "No fleet yet" until a groups read affirmatively succeeds
   teamGroupMap: {},
   dockedTeamRollups: [],
   fleetPositions: [],
   fleetMovementUnifiedEnabled: false,
   unifiedGroupFleets: [],
+  combatSortieFleets: [],
   launchFromDockEnabled: false,
   fleetControlEnabled: false,
   timedDockingEnabled: false,
@@ -143,6 +157,10 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
     fleetControlEnabled: boolean
     timedDockingEnabled: boolean
   } | null>(null)
+  // M2 review fix: the last SUCCESSFULLY-read groups list. A failed poll re-serves this instead of
+  // [] so a transient ship_groups error never dissolves fleets (badges, rollups, stop rows) for a
+  // poll — the same keep-prior posture a player expects from any flaky read.
+  const lastGroupsRef = useRef<GroupRow[]>([])
 
   const load = useCallback(async () => {
     try {
@@ -204,7 +222,15 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
       // Poll-cost posture: the groups read goes FIRST; a team-less player (zero groups → zero
       // possible badges/rollups) skips the membership + present-fleet reads entirely, paying one
       // extra read per poll instead of three.
-      const teamGroups = TEAM_COMMAND_ENABLED ? await fetchMyShipGroups() : []
+      // M2 review fix: the CHECKED read distinguishes "genuinely zero groups" from "the read
+      // errored" (both used to arrive as []). Success → adopt + remember the answer; failure →
+      // KEEP the previous poll's groups (never transiently dissolve fleets/stop rows) and report
+      // teamGroupsOk=false so the no-fleet guidance can't false-fire.
+      const groupsRead = TEAM_COMMAND_ENABLED
+        ? await fetchMyShipGroupsChecked()
+        : { ok: true, groups: [] as GroupRow[] }
+      if (groupsRead.ok) lastGroupsRef.current = groupsRead.groups
+      const teamGroups = groupsRead.ok ? groupsRead.groups : lastGroupsRef.current
       const [groupMap, presentFleets] =
         teamGroups.length > 0
           ? await Promise.all([fetchMyShipGroupMap(), fetchMyPresentShipFleets()])
@@ -221,6 +247,8 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
           ? await fetchMyUnifiedGroupFleets()
           : []
       const unifiedGroupFleets = excludeCombatSortieFleets(rawUnifiedFleets, staticRef.current.locations)
+      // M1: the complement — combat-present sorties, kept visible via the map's in-combat badge.
+      const combatSortieFleets = selectCombatSortieFleets(rawUnifiedFleets, staticRef.current.locations)
       const dockedTeamRollups = deriveDockedTeamRollups(teamGroups, groupMap, presentFleets, unifiedGroupFleets)
       setState({
         loading: false,
@@ -235,11 +263,13 @@ export function useGalaxyMapData(pollMs = 4000, selectedShipId: string | null = 
         mainShipPresence,
         mainShipSpaceMovement,
         teamGroups,
+        teamGroupsOk: groupsRead.ok,
         teamGroupMap: groupMap,
         dockedTeamRollups,
         fleetPositions,
         fleetMovementUnifiedEnabled: staticRef.current.fleetMovementUnifiedEnabled,
         unifiedGroupFleets,
+        combatSortieFleets,
         launchFromDockEnabled: staticRef.current.launchFromDockEnabled,
         fleetControlEnabled: staticRef.current.fleetControlEnabled,
         timedDockingEnabled: staticRef.current.timedDockingEnabled,

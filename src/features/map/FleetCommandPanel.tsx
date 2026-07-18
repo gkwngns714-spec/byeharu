@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Badge, Button, Notice, OverlayPanel, SectionLabel } from '../../components/ui'
+import { Link } from 'react-router-dom'
+import { Badge, Button, Notice, OverlayPanel, SectionLabel, buttonClasses } from '../../components/ui'
 import {
   commandShipGroupDock,
   commandShipGroupGo,
@@ -118,6 +119,25 @@ export function FleetCommandPanel({
 
   const section = (s: FleetCommandSection) => {
     switch (s.kind) {
+      case 'guidance':
+        // MAP-INTEGRATION M2 — the groupless-player guidance (model-decided: ships + a live target +
+        // zero fleets). Read-only pointer to Command (charter §2a: composition is Command's — this
+        // panel gains NO create/assign controls); the link is the only affordance.
+        return (
+          <div key="guidance" data-testid="fleet-command-guidance">
+            <SectionLabel>No fleet yet</SectionLabel>
+            <p className="mt-1 text-xs text-ink-muted">
+              Ships travel as fleets — yours stay berthed until they join one.
+            </p>
+            <p className="mt-1 text-xs text-ink-muted">
+              Create a fleet in <span className="text-ink">Command</span> and add your ships, then pick a
+              destination here to send it.
+            </p>
+            <Link to="/command" className={`${buttonClasses('secondary', 'sm')} mt-2 w-full`}>
+              Create a fleet in Command
+            </Link>
+          </div>
+        )
       case 'stop':
         // NO-SOFTLOCK: one click, no confirm; sortie rows get a non-actionable hint (server brake law).
         return (

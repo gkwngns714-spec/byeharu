@@ -83,6 +83,7 @@ export interface FleetCommandHuntRow {
 }
 
 export type FleetCommandSection =
+  | { kind: 'guidance' } // MAP-INTEGRATION M2: ships but NO fleet + a live target → point at Command
   | { kind: 'stop'; rows: FleetCommandStopRow[] }
   | { kind: 'context'; target: { kind: 'point'; view: FleetGoTargetView } | { kind: 'port'; locationId: string; locationName: string } }
   | { kind: 'go'; destination: { kind: 'point'; view: FleetGoTargetView } | { kind: 'port'; locationId: string; locationName: string }; rows: FleetCommandGoRow[] }
@@ -90,7 +91,8 @@ export type FleetCommandSection =
   | { kind: 'hunt'; locationId: string; locationName: string; rows: FleetCommandHuntRow[] }
 
 export interface FleetCommandModel {
-  /** `stop rows ∨ target ∨ dockable parked fleets` — the panel renders nothing when false. */
+  /** `stop rows ∨ target ∨ dockable parked fleets` (with groups), or the M2 groupless-guidance leg
+   *  (`ships ∧ target` with zero groups) — the panel renders nothing when false. */
   mount: boolean
   /** Render IN ORDER. Stop (when present) is ALWAYS index 0 — the NO-SOFTLOCK pin. */
   sections: FleetCommandSection[]
@@ -123,6 +125,11 @@ export interface FleetCommandModelInput {
   target: FleetCommandTarget
   movements: readonly FleetMovement[]
   groups: readonly GroupRow[]
+  /** M2 review fix: whether the groups read genuinely SUCCEEDED (the shell's teamGroupsOk). The
+   *  plain read collapses transport errors to [] — the same shape as "no fleets" — so the no-fleet
+   *  guidance MUST see an affirmative successful-and-empty read before claiming "No fleet yet";
+   *  a failed read (false) renders nothing rather than asserting a fleet-owner has no fleet. */
+  groupsLoaded: boolean
   /** The RUNTIME fleet_movement_unified_enabled flag (branches the stop verb + gates the go arms). */
   unifiedEnabled: boolean
   /** The group fleets, combat-sortie rows already excluded upstream (useGalaxyMapData's one filter). */
@@ -138,10 +145,22 @@ export interface FleetCommandModelInput {
 }
 
 export function buildFleetCommandModel(input: FleetCommandModelInput): FleetCommandModel {
-  const { groups, locations, unifiedEnabled } = input
-  // A team-less player has no fleet to command — every leg below derives empty and the panel never
-  // mounts (the TeamMapSend "groups.length === 0 → render nothing" posture, kept).
-  const target = groups.length > 0 ? input.target : null
+  const { groups, locations, unifiedEnabled, target } = input
+
+  // ── MAP-INTEGRATION M2 — the GROUPLESS-player guidance (the prod-majority dead end) ─────────────
+  // A player whose ships are all berthed (no fleet) had ZERO movement affordance: this panel needs a
+  // group for every verb, so selecting a port produced NOTHING, while PortScreen's empty state sent
+  // them back to the Map — a circular dead end. The old posture ("groups.length === 0 → render
+  // nothing") is kept for a player with no ships at all (nothing to guide) and for no live target
+  // (the panel stays out of the way); but ships + a picked destination + no fleet now mounts ONE
+  // guidance section pointing at Command, where TeamRosterPanel creates fleets. Deliberately NO
+  // movement/composition controls here (charter §2a: composition is Command's) — guidance only.
+  // REVIEW FIX: `groupsLoaded` guards the claim — groups=[] from a FAILED read (the fetch collapses
+  // errors to []) must render nothing, never a false "No fleet yet" over a fleet-owning player.
+  if (groups.length === 0) {
+    const guide = input.groupsLoaded && input.ships.length > 0 && target !== null
+    return { mount: guide, sections: guide ? [{ kind: 'guidance' }] : [] }
+  }
 
   // 1 · STOP — state-predicated ONLY (NO-SOFTLOCK): never touches `target`.
   const stopRows: FleetCommandStopRow[] = resolveStoppableFleets(input.movements, groups, {

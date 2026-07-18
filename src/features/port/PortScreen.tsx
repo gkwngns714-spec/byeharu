@@ -7,7 +7,7 @@ import { SalvageMarketPanel } from './SalvageMarketPanel'
 import { RepairPanel } from './RepairPanel'
 import { ShipyardPanel } from './ShipyardPanel'
 import { StationHangar } from './StationHangar'
-import { derivePortsWithShips, resolveChosenShipId } from './portPicker'
+import { derivePortsWithShips, portOfShip, resolveChosenShipId } from './portPicker'
 import { InvestmentPanel } from '../investment/InvestmentPanel'
 import { MarketPanel } from '../map/MarketPanel'
 import { ModulesPanel } from '../modules/ModulesPanel'
@@ -58,6 +58,14 @@ export function PortScreen() {
   // status/movement transition still ticks a refetch as before.
   const lifecycleKey = `${chosenShipId ?? 'none'}|${map.mainShip?.status ?? 'n'}|${map.mainShip?.spatial_state ?? 'n'}|${map.mainShipPresence?.location_id ?? 'none'}|${map.mainShipSpaceMovement?.id ?? 'none'}|${map.mainShipSpaceMovement?.status ?? 'none'}`
   const dock = useDockServices(lifecycleKey, { mainShipId: chosenShipId })
+  // MAP-INTEGRATION M3 — the chosen ship's BERTHED read (from the same fleet-positions row the port
+  // list derives from). A berthed ship is AT its port (so it lists above, consistent with the
+  // Fitting tab's "Docked at <port>") but is not at_location server-side until 4c — every paid dock
+  // service answers not-docked. The berthed branch below says so honestly (the fitgate-honesty
+  // posture: never offer an action that will 100%-fail) instead of the misleading "No docked ships".
+  const chosenPos = map.fleetPositions.find((p) => p.main_ship_id === chosenShipId)
+  const chosenBerthPort = chosenPos?.place === 'berthed' ? portOfShip(ports, chosenShipId) : null
+  const chosenBerthShipName = chosenBerthPort?.ships.find((s) => s.mainShipId === chosenShipId)?.name ?? 'This ship'
   // STATION-STORAGE — the docked port's own hangar (dark by default; server returns empty while the flag is off).
   const store = useDockStore(lifecycleKey)
   // TRADE-UI-1 — selected-ship model for the DARK MarketPanel, now the ONE shell instance (A0 lifted it; Ship
@@ -78,23 +86,53 @@ export function PortScreen() {
           The chosen (port, ship) drives the dock context + every action panel below. */}
       <PortPickerPanel ports={ports} chosenShipId={chosenShipId} onPick={setPickedShipId} />
       {!isDocked(dock) ? (
-        // Honest empty state: none of your ships are at a port to act from (or the chosen ship isn't
-        // docked). The Port has nothing to offer until a ship is berthed somewhere.
-        <EmptyState
-          data-testid="port-not-docked"
-          className="mx-auto w-full max-w-3xl"
-          icon={<Icon name="anchor" size={28} />}
-          title="No docked ships"
-          body={
-            <>
-              <p>None of your ships are docked at a port right now.</p>
-              <p className="mt-2 text-xs text-ink-faint">
-                Send a ship to a port on the <span className="text-ink">Map</span> — this screen opens
-                up with its trade, build, and other services once a ship is berthed there.
-              </p>
-            </>
-          }
-        />
+        chosenBerthPort ? (
+          // M3 — the chosen ship is BERTHED here (listed above, consistent with the Fitting tab),
+          // but berthed ships can't use paid dock services until 4c makes them at_location
+          // server-side. Say so honestly (the fitgate-honesty posture) — never "No docked ships"
+          // over a ship the picker just listed, and never a service button that 100%-fails.
+          <EmptyState
+            data-testid="port-berthed-ship"
+            className="mx-auto w-full max-w-3xl"
+            icon={<Icon name="anchor" size={28} />}
+            title={`Berthed at ${chosenBerthPort.locationName}`}
+            body={
+              <>
+                <p>
+                  {chosenBerthShipName} is berthed at {chosenBerthPort.locationName} — moored on its own,
+                  not docked with a fleet.
+                </p>
+                <p className="mt-2 text-xs text-ink-faint">
+                  Berthed ships can't use paid dock services yet. Assign the ship to a fleet in{' '}
+                  <span className="text-ink">Command</span>, or dock a fleet at this port, to put its
+                  services to work.
+                </p>
+              </>
+            }
+          />
+        ) : (
+          // Honest empty state: none of your ships are at a port to act from (or the chosen ship
+          // isn't docked). M2 copy reconcile: ships move as FLEETS (the unified mover) — a player
+          // with no fleet cannot "send a ship from the Map", so the guidance names the real order
+          // of operations (Command → fleet → Map) instead of pointing them in a circle.
+          <EmptyState
+            data-testid="port-not-docked"
+            className="mx-auto w-full max-w-3xl"
+            icon={<Icon name="anchor" size={28} />}
+            title="No docked ships"
+            body={
+              <>
+                <p>None of your ships are docked at a port right now.</p>
+                <p className="mt-2 text-xs text-ink-faint">
+                  Ships travel as fleets: send a fleet to a port from the{' '}
+                  <span className="text-ink">Map</span> and this screen opens up with its trade, build,
+                  and other services. No fleet yet? Create one in{' '}
+                  <span className="text-ink">Command</span> and add your ships to it first.
+                </p>
+              </>
+            }
+          />
+        )
       ) : (
         <div className={screenSplitClass()}>
           <div className={screenRailClass('main')}>

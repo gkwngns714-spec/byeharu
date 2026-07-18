@@ -278,6 +278,12 @@ export async function fetchActiveMainShipPresence(fleetId: string): Promise<Main
  * Display status derived from the active linked fleet (the main ship's own status row stays
  * 'traveling' while the fleet is 'present', so the fleet is the source of truth here):
  *   no fleet → home · moving → traveling · present → present · returning → returning
+ *
+ * ORPHANED (MAP-INTEGRATION n2, recorded not deleted): its last consumers (ShipStatusCard, then
+ * MainShipCommand) are both retired/deleted — S6 rehomed every location read onto fleetPositions and
+ * 4a-post deleted the per-ship mover. Only shipLocation.ts's documented internal mirror
+ * (fleetDisplayStatus) carries the mapping now. Delete this (and MainShipDisplayStatus) on the next
+ * mainshipApi cleanup pass; do NOT wire new consumers to it.
  */
 export function deriveMainShipStatus(fleet: { status: string } | null): MainShipDisplayStatus {
   if (!fleet) return 'home'

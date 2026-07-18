@@ -159,6 +159,14 @@ export function ShipScreen() {
     is_command_ship: groupMap[s.main_ship_id]?.is_command_ship ?? false,
   }))
   const { teams, ungrouped } = buildTeamRoster(groups, rosterShips)
+  // MAP-INTEGRATION n3 GUARD — buildTeamRoster (correctly) folds a DANGLING group_id into
+  // `ungrouped`, but labeling such a ship "Berthed — not in a fleet" is a LIE when the dangle is a
+  // transient groups-read failure (fetchMyShipGroups collapses errors to []): every fleeted ship
+  // would briefly claim to be berthed. Partition for display only: `berthedShips` (group_id null —
+  // the true 0216 berth XOR) keep the Berthed heading; `fleetUnresolved` (a non-null group_id whose
+  // fleet didn't resolve) render under an honest "fleet unavailable" heading, never a berth claim.
+  const berthedShips = ungrouped.filter((s) => s.group_id === null)
+  const fleetUnresolved = ungrouped.filter((s) => s.group_id !== null)
   const posByShip = new Map(map.fleetPositions.map((p) => [p.main_ship_id, p]))
   const shipRowById = new Map((ships ?? []).map((r) => [r.main_ship_id, r]))
   const litFittingRows = isServerLit(fittingsRes) ? (fittingsRes.fittings ?? []) : null
@@ -331,14 +339,23 @@ export function ShipScreen() {
                     )}
                   </div>
                 ))}
-                {/* THE BERTHED BUCKET — buildTeamRoster's `ungrouped`, which post-S1 is exactly
-                    the berthed ships (group_id NULL ⇔ berthed at a port, the 0216 XOR). Rows
+                {/* n3 GUARD — ships whose fleet did NOT resolve (a dangling group_id, e.g. a
+                    transient groups-read failure). Rendered under an honest heading — NEVER in the
+                    Berthed bucket below, which would mislabel a fleeted ship. Normally empty. */}
+                {fleetUnresolved.length > 0 && (
+                  <div data-testid="fitting-fleet-unresolved">
+                    <SectionLabel>In a fleet — fleet details unavailable</SectionLabel>
+                    <div className="mt-1.5 space-y-1.5">{fleetUnresolved.map(shipRow)}</div>
+                  </div>
+                )}
+                {/* THE BERTHED BUCKET — the truly-unfleeted ships (group_id NULL ⇔ berthed at a
+                    port, the 0216 XOR; the n3 partition keeps dangling-fleet ships OUT). Rows
                     resolve their berth port through the SAME location fold ('berthed' place →
                     "Docked at <port>"). */}
                 <div data-testid="fitting-berthed">
                   <SectionLabel>Berthed — not in a fleet</SectionLabel>
-                  {ungrouped.length > 0 ? (
-                    <div className="mt-1.5 space-y-1.5">{ungrouped.map(shipRow)}</div>
+                  {berthedShips.length > 0 ? (
+                    <div className="mt-1.5 space-y-1.5">{berthedShips.map(shipRow)}</div>
                   ) : (
                     <p data-testid="fitting-berthed-empty" className="mt-1.5 text-xs text-ink-faint">
                       Every ship is with a fleet.
