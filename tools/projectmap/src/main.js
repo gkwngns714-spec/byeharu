@@ -2,6 +2,7 @@
 import * as THREE from 'three'
 import { layout } from './layout.js'
 import { createTree } from './tree.js'
+import { createTimeline } from './timeline.js'
 import { deriveStatuses, STATUS, STATUS_ORDER } from './status.js'
 
 const KIND_SIZE = { system: 5.2, rung: 4.6, phase: 4.2, flag: 3.4, table: 2.4, migration: 1.7, function: 1.3 }
@@ -187,6 +188,7 @@ for (const t of EDGE_TYPES) {
 document.getElementById('search').addEventListener('input', (e) => {
   const v = e.target.value
   if (tab === 'tree') { tree?.setQuery(v); return }
+  if (tab === 'timeline') { timeline?.setQuery(v); return }
   state.query = v.trim().toLowerCase(); apply()
 })
 document.getElementById('reset').addEventListener('click', () => {
@@ -382,20 +384,23 @@ const TREE_HINT = {
   system: 'Who owns what. Systems come from the sole-writer matrix in SYSTEM_BOUNDARIES. Tables sit under their owner; a function sits under the system whose tables it touches, or — failing that — under the system whose functions it calls. Anything that fits neither is left unclassified rather than forced.',
   build: 'Every migration in the order it landed, grouped by the day git first recorded it — the filename stamps are synthetic and would pile all 205 into one bucket. Each migration lists what it created.',
   feature: 'Every feature gate, and the migrations that seed or read it. Sorted live first, unproven last.',
+  timeline: 'The whole arc in one view. Past — every shipped arc and the migration history behind it. Present — what production proves is live, plus the deploy frontier (merged, not yet deployed). Future — the activation ladder still owed and the planned queue.',
 }
 
 let tab = 'map'
 let tree = null
+let timeline = null
 
 function setTab(next) {
   tab = next
   document.body.className = next
   document.getElementById('treeWrap').classList.toggle('on', next === 'tree')
+  document.getElementById('timelineWrap').classList.toggle('on', next === 'timeline')
   document.getElementById('scene').style.display = next === 'map' ? 'block' : 'none'
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === next))
   const search = document.getElementById('search')
   search.value = ''
-  search.placeholder = next === 'tree' ? 'Search the tree…' : 'Search nodes…'
+  search.placeholder = next === 'tree' ? 'Search the tree…' : next === 'timeline' ? 'Search the timeline…' : 'Search nodes…'
   if (next === 'tree') {
     const firstOpen = !tree
     tree ??= createTree({
@@ -417,10 +422,17 @@ function setTab(next) {
     // rather than quietly rendering a different arrangement than it advertises.
     if (firstOpen) tree.setMode(document.getElementById('treeMode').value)
     else tree.setQuery('')
+  } else if (next === 'timeline') {
+    timeline ??= createTimeline({
+      graph, status, mount: document.getElementById('timeline'),
+      onSelect: (nodeId) => select(nodeId),
+    })
+    timeline.setQuery('')
   } else {
     state.query = ''; apply()
   }
   document.getElementById('treeHint').textContent = TREE_HINT[document.getElementById('treeMode').value]
+  document.getElementById('timelineHint').textContent = TREE_HINT.timeline
 }
 
 document.querySelectorAll('#tabs button').forEach((b) => {

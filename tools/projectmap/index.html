@@ -37,6 +37,47 @@
   #tree .tn:hover rect { stroke-opacity: 1; }
   .treeOnly, .mapOnly { display: block; }
   body.tree .mapOnly, body.map .treeOnly { display: none; }
+  body.timeline .treeOnly, body.timeline .mapOnly { display: none; }
+  .timelineOnly { display: none; }
+  body.timeline .timelineOnly { display: block; }
+
+  /* timeline view */
+  #timelineWrap { position: fixed; inset: 0; overflow: auto; display: none; padding: 66px 340px 70px 282px; }
+  #timelineWrap.on { display: block; }
+  #timeline { max-width: 920px; margin: 0 auto; }
+  .tl-sec { position: relative; margin-bottom: 26px; padding: 16px 18px 14px; background: var(--panel);
+    backdrop-filter: blur(14px); border: 1px solid var(--line); border-radius: 12px; }
+  .tl-sec + .tl-sec::before { content: ""; position: absolute; top: -27px; left: 30px; width: 2px; height: 27px;
+    background: var(--line); }
+  .tl-era { font-size: 10px; text-transform: uppercase; letter-spacing: .14em; color: var(--dim); font-weight: 600; }
+  .tl-sec h2 { margin: 2px 0; font-size: 15px; }
+  .tl-desc { color: var(--dim); font-size: 11px; margin-bottom: 12px; line-height: 1.5; }
+  .tl-spine { overflow-x: auto; margin-bottom: 10px; }
+  .tl-subhead { font-size: 10px; text-transform: uppercase; letter-spacing: .09em; color: var(--dim);
+    font-weight: 600; margin: 14px 0 6px; }
+  .tl-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+    padding: 4px 8px; margin: 0 -8px; border-radius: 7px; cursor: pointer; }
+  .tl-row:hover { background: rgba(255,255,255,.06); }
+  .tl-row.sel { outline: 1px solid rgba(255,255,255,.7); }
+  .tl-date { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 11px; }
+  .tl-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+  .tl-count { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 11px; text-align: right; min-width: 46px; }
+  .tl-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; flex: none; }
+  .tl-fchip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
+    font-size: 10.5px; cursor: pointer; }
+  .tl-fchip:hover { filter: brightness(1.25); }
+  .tl-fchip.sel { outline: 1px solid rgba(255,255,255,.7); }
+  .tl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+  .tl-flips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px 96px; }
+  .tl-note { color: var(--dim); font-size: 11.5px; margin: 4px 0; }
+  .tl-table { border-collapse: collapse; margin-bottom: 4px; }
+  .tl-table th, .tl-table td { padding: 2px 18px 2px 0; text-align: right; font-size: 11.5px;
+    font-variant-numeric: tabular-nums; }
+  .tl-table th { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; color: var(--dim); }
+  .tl-table td:first-child, .tl-table th:first-child { text-align: left; color: var(--dim); }
+  .tl-table tr.tot td { border-top: 1px solid var(--line); color: var(--text); }
+  .tl-row.dm, .tl-fchip.dm { opacity: .35; }
   select.act { width: 100%; padding: 7px; border-radius: 8px; border: 1px solid var(--line);
     background: rgba(0,0,0,.35); color: var(--text); font: inherit; cursor: pointer; }
   .hint { color: var(--dim); font-size: 10.5px; margin-top: 7px; line-height: 1.45; }
@@ -123,6 +164,11 @@
       padding: 7px 10px; max-height: 4.4em; overflow: hidden; }
 
     #treeWrap { padding: 58px 14px 86px 14px; }
+    #timelineWrap { padding: 58px 14px 86px 14px; }
+    .tl-row { grid-template-columns: 56px minmax(0, 1fr) auto; gap: 8px; }
+    .tl-row .tl-count { display: none; }
+    .tl-chip .ct { display: none; }  /* the swatch alone carries the status on a phone */
+    .tl-flips { margin-left: 20px; }
     #tip { display: none !important; }  /* no hover on touch — the sheet does this job */
   }
 
@@ -137,6 +183,7 @@
   <div id="loading">building the map…</div>
   <canvas id="scene"></canvas>
   <div id="treeWrap"><svg id="tree"></svg></div>
+  <div id="timelineWrap"><div id="timeline"></div></div>
 
   <button id="menuBtn" aria-label="Filters and options" aria-expanded="false" aria-controls="controls">☰</button>
   <div id="scrim"></div>
@@ -144,6 +191,7 @@
   <nav class="panel" id="tabs">
     <button data-tab="map" class="on">3D Map</button>
     <button data-tab="tree">조직도 Tree</button>
+    <button data-tab="timeline">연혁 Timeline</button>
   </nav>
 
   <aside class="panel" id="controls">
@@ -169,6 +217,11 @@
       <h2>Tree</h2>
       <label class="row"><button class="act" id="expandAll">Expand all</button></label>
       <label class="row"><button class="act" id="collapseAll">Collapse all</button></label>
+    </div>
+
+    <div class="grp timelineOnly">
+      <h2>Timeline</h2>
+      <div class="hint" id="timelineHint"></div>
     </div>
 
     <div class="grp">
