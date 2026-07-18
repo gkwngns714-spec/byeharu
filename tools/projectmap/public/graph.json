@@ -1,15 +1,15 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 205,
-  "functions": 203,
+  "migrations": 214,
+  "functions": 208,
   "tables": 79,
-  "flags": 28,
+  "flags": 29,
   "systems": 29,
-  "phases": 16,
+  "phases": 18,
   "rungs": 9,
-  "nodes": 569,
-  "edges": 1518
+  "nodes": 586,
+  "edges": 1590
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -2326,6 +2326,107 @@
    "seedsFlag": []
   },
   {
+   "id": "mig:20260618000207",
+   "kind": "migration",
+   "label": "fleetgo_unified_group_mover",
+   "stamp": "20260618000207",
+   "seq": null,
+   "addedAt": "2026-07-16T21:39:36+09:00",
+   "file": "supabase/migrations/20260618000207_fleetgo_unified_group_mover.sql",
+   "detail": "FLEET-GO (step 3a of the movement unification) — THE ONE FLEET-LEVEL MOVER. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2 (the model) + §3 (rewritten 2026-07-16 on the owner's decision \"§2 wins, rewrite §3\"). §2: THE FLEET IS THE ONLY UNIT OF MOVEMENT. A SHIP DOES NOT MOVE. One moving thing, one position,",
+   "seedsFlag": [
+    "fleet_movement_unified_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000208",
+   "kind": "migration",
+   "label": "fleetgo_coordinate_targets",
+   "stamp": "20260618000208",
+   "seq": null,
+   "addedAt": "2026-07-16T22:39:30+09:00",
+   "file": "supabase/migrations/20260618000208_fleetgo_coordinate_targets.sql",
+   "detail": "FLEET-GO COORDINATES (step 3b of the movement unification) — the fleet gets a POSITION. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2 (\"One command: 'fleet, go there.' Target is a port OR a world coordinate\") + §3 step 2. Follows 0207 (step 3a, the port-target mover). WHAT THIS ACTUALLY IS. The charter framed 3b as \"widen target_type + a settle branch\". That was",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000209",
+   "kind": "migration",
+   "label": "fleetgo_unified_stop",
+   "stamp": "20260618000209",
+   "seq": null,
+   "addedAt": "2026-07-16T23:04:26+09:00",
+   "file": "supabase/migrations/20260618000209_fleetgo_unified_stop.sql",
+   "detail": "FLEET-STOP (step 3c/1 of the movement unification) — the fleet-level BRAKE. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2. Follows 0207 (the mover) + 0208 (the fleet's position). WHY THIS EXISTS. The live group stop, stop_ship_group_transit (0164), LOOPS the per-ship stop (command_main_ship_stop_transit) once per member fleet. That is the COMPOSED model — N brakes for one",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000210",
+   "kind": "migration",
+   "label": "fleetgo_group_read_oracle",
+   "stamp": "20260618000210",
+   "seq": null,
+   "addedAt": "2026-07-17T01:43:23+09:00",
+   "file": "supabase/migrations/20260618000210_fleetgo_group_read_oracle.sql",
+   "detail": "FLEET-GO 3c-1 — THE READ ORACLE LEARNS THAT A SHIP'S PLACE IS ITS FLEET'S PLACE. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2 + §3 step 3c (rewritten 2026-07-16 after the recon). Follows 0207 (the mover), 0208 (the fleet's position + coordinate targets), 0209 (the brake). THE GAP THIS CLOSES. §2 says a ship's location IS its fleet's location. But every read that answers",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000211",
+   "kind": "migration",
+   "label": "fleetgo_dock_dedup",
+   "stamp": "20260618000211",
+   "seq": null,
+   "addedAt": "2026-07-17T04:53:36+09:00",
+   "file": "supabase/migrations/20260618000211_fleetgo_dock_dedup.sql",
+   "detail": "FLEET-GO 3c-2 — DOCK-DEDUP: finish 0092's job. The last inlined copies of the dock read collapse onto the ONE resolver pair (mainship_resolve_docked_location / mainship_resolve_fleet, both 0210). Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2 + §3 step 3c-2. Follows 0210 (the read oracle). WHY THIS MIGRATION EXISTS. The \"read the ship's present fleet's location\" block was copy-pasted",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000212",
+   "kind": "migration",
+   "label": "fleetgo_map_read",
+   "stamp": "20260618000212",
+   "seq": null,
+   "addedAt": "2026-07-17T23:19:25+09:00",
+   "file": "supabase/migrations/20260618000212_fleetgo_map_read.sql",
+   "detail": "FLEET-GO 3c-3 — MAP-READ: the map projects the GROUP's fleet in transit and in open space. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2 + §3 step 3c-3. Follows 0211 (the dock dedup). WHY THIS MIGRATION EXISTS. Two blind spots remained in get_my_fleet_positions after 0211 (its own header deliberately deferred the first one to this step):",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000213",
+   "kind": "migration",
+   "label": "0213 fleetgo_assign_guard",
+   "stamp": "20260618000213",
+   "seq": "0213",
+   "addedAt": "2026-07-18T00:11:50+09:00",
+   "file": "supabase/migrations/20260618000213_fleetgo_assign_guard.sql",
+   "detail": "FLEET-GO 4b-0 — THE PRE-FLIP OBLIGATION: ASSIGNMENT LEARNS THE GROUP HAS A FLEET. Migration 0213. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §0 (the recorded bug class), §2 (membership IS position), §4 (compose, never hand-roll), and step 4b's ⚠ PRE-FLIP OBLIGATION block — this migration IS that obligation's guard half. Companion reading: 0210's LESSON THREE (header + resolver comment 0210:77-8",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000214",
+   "kind": "migration",
+   "label": "0214 fleetgo_hunt_unified",
+   "stamp": "20260618000214",
+   "seq": "0214",
+   "addedAt": "2026-07-18T01:22:18+09:00",
+   "file": "supabase/migrations/20260618000214_fleetgo_hunt_unified.sql",
+   "detail": "FLEET-GO 4b-1 — THE THIRD PRE-FLIP OBLIGATION: THE HUNT LEARNS THE FLEET. Migration 0214. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §0 (the recorded bug class), §2 (the FLEET is the only mover), §4 (compose primitives, never hand-roll), and step 4b's SECOND ⚠ PRE-FLIP OBLIGATION block (\"hunt-vs-unified-fleet minting\", recorded 2026-07-17 by the 3c-3 review) — this migration IS that obligation.",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000215",
+   "kind": "migration",
+   "label": "fleetgo_brake_sortie",
+   "stamp": "20260618000215",
+   "seq": null,
+   "addedAt": "2026-07-18T02:15:56+09:00",
+   "file": "supabase/migrations/20260618000215_fleetgo_brake_sortie.sql",
+   "detail": "0215 — BRAKE-SORTIE GUARD (charter §2; the LAST pre-flip blocker of the movement-unification arc). TRUE-HEAD DECLARATION: this file re-creates command_ship_group_stop and is now its TRUE HEAD. The 0209 body is superseded — edit and copy from HERE (the 0211 lesson: a guard pointed at a superseded head guards nothing; scripts/fleetgo-proof.sh's MIGRATION_STOP points here now).",
+   "seedsFlag": []
+  },
+  {
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
@@ -3544,6 +3645,36 @@
    "detail": "Postgres function"
   },
   {
+   "id": "fn:command_ship_group_go",
+   "kind": "function",
+   "label": "command_ship_group_go",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:fleet_set_in_space",
+   "kind": "function",
+   "label": "fleet_set_in_space",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:command_ship_group_stop",
+   "kind": "function",
+   "label": "command_ship_group_stop",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:mainship_resolve_fleet",
+   "kind": "function",
+   "label": "mainship_resolve_fleet",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:ship_group_resolve_fleet",
+   "kind": "function",
+   "label": "ship_group_resolve_fleet",
+   "detail": "Postgres function"
+  },
+  {
    "id": "table:profiles",
    "kind": "table",
    "label": "profiles",
@@ -4265,6 +4396,12 @@
    "detail": "game_config feature flag"
   },
   {
+   "id": "flag:fleet_movement_unified_enabled",
+   "kind": "flag",
+   "label": "fleet_movement_unified_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
    "id": "system:Auth",
    "kind": "system",
    "label": "Auth",
@@ -4455,6 +4592,24 @@
    "size": "M — SHIPPED dark as mig 0205; the OWNER'S COMMAND-BUFF DESIGN",
    "file": "docs/FULL_CAPACITY_PLAN.md",
    "detail": "### FLEET — command buffs: the FINALE of the fleet reshape *(M — SHIPPED dark as mig 0205; the OWNER'S COMMAND-BUFF DESIGN)* The finale of the fleet reshape, DARK behind a new flag `command_buffs_enabled` (seeded false). Owner's words: \"each tier will have ~10 buffs, assigned RANDOMLY when bought or manufactured … command ship will provide those buffs … a buff slot, activated only when the ship is set on command"
+  },
+  {
+   "id": "phase:MOVEMENT",
+   "kind": "phase",
+   "label": "MOVEMENT — unified fleet movement: fleets move, not ships",
+   "planned": false,
+   "size": "L — SHIPPED & FLIPPED LIVE 2026-07-18 as migs 0207/0208/0209/0210/0211/0212/0213/0214/0215; flag `fleet_movement_unified_enabled` ON in prod",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### MOVEMENT — unified fleet movement: fleets move, not ships *(L — SHIPPED & FLIPPED LIVE 2026-07-18 as migs 0207/0208/0209/0210/0211/0212/0213/0214/0215; flag `fleet_movement_unified_enabled` ON in prod)* The movement-unification arc, now LIVE in production. A FLEET — never an individual ship — is the unit of movement: it travels to a port OR an open-space coordinate, is redirectable in flight, and everything h"
+  },
+  {
+   "id": "phase:BERTH",
+   "kind": "phase",
+   "label": "BERTH — the berth model: a ship is fleeted XOR berthed",
+   "planned": true,
+   "size": "M — S1 in review as mig 0216; S2–S6 + cleanup planned",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### BERTH — the berth model: a ship is fleeted XOR berthed *(M — S1 in review as mig 0216; S2–S6 + cleanup planned)* The next arc, built on MOVEMENT. A ship's location becomes a schema-level fact: FLEETED (moves with a fleet, IS a map marker) **XOR** BERTHED (docked at a port, shown as info only). S1 (mig 0216) adds `berth_location_id` + a XOR CHECK `(group_id is null) = (berth_location_id is not null)` + one re"
   },
   {
    "id": "phase:P0",
@@ -8201,6 +8356,176 @@
    "type": "creates"
   },
   {
+   "source": "mig:20260618000207",
+   "target": "fn:command_ship_group_go",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000207",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000207",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "fn:fleet_set_in_space",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "fn:movement_settle_arrival",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "fn:command_ship_group_go",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "table:fleets",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "table:fleet_movements",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "fn:command_ship_group_go",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000209",
+   "target": "fn:command_ship_group_stop",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000209",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000210",
+   "target": "fn:mainship_resolve_fleet",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000210",
+   "target": "fn:mainship_space_validate_context",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000210",
+   "target": "fn:mainship_resolve_docked_location",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000210",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "fn:get_my_current_dock_services",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "fn:get_my_docked_store",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "fn:get_my_fleet_positions",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "fn:commission_first_main_ship",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "flag:station_storage_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000212",
+   "target": "fn:get_my_fleet_positions",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000213",
+   "target": "fn:ship_group_resolve_fleet",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000213",
+   "target": "fn:assign_ship_to_group",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000213",
+   "target": "flag:fleet_control_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000213",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000213",
+   "target": "flag:team_command_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000214",
+   "target": "fn:send_ship_group_hunt",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000214",
+   "target": "flag:launch_from_dock_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000214",
+   "target": "flag:fleet_control_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000214",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000214",
+   "target": "flag:team_command_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000215",
+   "target": "fn:command_ship_group_stop",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000215",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -9035,6 +9360,78 @@
    "note": "process_combat_ticks"
   },
   {
+   "source": "mig:20260618000208",
+   "target": "mig:20260618000153",
+   "type": "supersedes",
+   "note": "movement_settle_arrival"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "mig:20260618000207",
+   "type": "supersedes",
+   "note": "command_ship_group_go"
+  },
+  {
+   "source": "mig:20260618000210",
+   "target": "mig:20260618000056",
+   "type": "supersedes",
+   "note": "mainship_space_validate_context"
+  },
+  {
+   "source": "mig:20260618000210",
+   "target": "mig:20260618000092",
+   "type": "supersedes",
+   "note": "mainship_resolve_docked_location"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "mig:20260618000082",
+   "type": "supersedes",
+   "note": "get_my_current_dock_services"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "mig:20260618000159",
+   "type": "supersedes",
+   "note": "get_my_docked_store"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "mig:20260618000200",
+   "type": "supersedes",
+   "note": "get_my_fleet_positions"
+  },
+  {
+   "source": "mig:20260618000211",
+   "target": "mig:20260618000072",
+   "type": "supersedes",
+   "note": "commission_first_main_ship"
+  },
+  {
+   "source": "mig:20260618000212",
+   "target": "mig:20260618000211",
+   "type": "supersedes",
+   "note": "get_my_fleet_positions"
+  },
+  {
+   "source": "mig:20260618000213",
+   "target": "mig:20260618000204",
+   "type": "supersedes",
+   "note": "assign_ship_to_group"
+  },
+  {
+   "source": "mig:20260618000214",
+   "target": "mig:20260618000204",
+   "type": "supersedes",
+   "note": "send_ship_group_hunt"
+  },
+  {
+   "source": "mig:20260618000215",
+   "target": "mig:20260618000209",
+   "type": "supersedes",
+   "note": "command_ship_group_stop"
+  },
+  {
    "source": "mig:20260616000007",
    "target": "mig:20260616000006",
    "type": "extends",
@@ -9291,6 +9688,18 @@
    "target": "mig:20260617000043",
    "type": "extends",
    "note": "main_ship_instances"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "mig:20260616000006",
+   "type": "extends",
+   "note": "fleets"
+  },
+  {
+   "source": "mig:20260618000208",
+   "target": "mig:20260616000007",
+   "type": "extends",
+   "note": "fleet_movements"
   },
   {
    "source": "fn:base_reserve_units",
@@ -11763,6 +12172,76 @@
    "type": "touches"
   },
   {
+   "source": "fn:fleet_set_in_space",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_resolve_fleet",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_resolve_fleet",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_resolve_fleet",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_space_validate_context",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_current_dock_services",
+   "target": "fn:mainship_resolve_docked_location",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_docked_store",
+   "target": "fn:mainship_resolve_docked_location",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_fleet_positions",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_fleet_positions",
+   "target": "fn:mainship_space_validate_context",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_fleet_positions",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_fleet_positions",
+   "target": "fn:mainship_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:get_my_fleet_positions",
+   "target": "table:main_ship_space_movements",
+   "type": "touches"
+  },
+  {
+   "source": "fn:get_my_fleet_positions",
+   "target": "table:fleet_movements",
+   "type": "touches"
+  },
+  {
+   "source": "fn:ship_group_resolve_fleet",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
    "source": "table:profiles",
    "target": "system:Auth",
    "type": "owned-by"
@@ -12130,6 +12609,56 @@
   {
    "source": "phase:FLEET",
    "target": "flag:command_buffs_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000207",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000208",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000209",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000210",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000211",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000212",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000213",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000214",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "mig:20260618000215",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:MOVEMENT",
+   "target": "flag:fleet_movement_unified_enabled",
    "type": "delivers"
   },
   {

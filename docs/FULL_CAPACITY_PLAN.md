@@ -174,6 +174,31 @@ parity + lit fleet-wide fold exactness + no-command-no-buff + the group_id gate)
 (`scripts/activate-command-buffs.{sql,sh}`) flips the flag — FLAG-ONLY, with a catalog-freeze +
 buff-slot-coverage precondition and the FLEET-CONTROL dependency; NO client PR needed (runtime-flag-gated).
 
+### MOVEMENT — unified fleet movement: fleets move, not ships *(L — SHIPPED & FLIPPED LIVE 2026-07-18 as migs 0207/0208/0209/0210/0211/0212/0213/0214/0215; flag `fleet_movement_unified_enabled` ON in prod)*
+
+The movement-unification arc, now LIVE in production. A FLEET — never an individual ship — is the unit of
+movement: it travels to a port OR an open-space coordinate, is redirectable in flight, and everything happens
+on the map. The mover `command_ship_group_go` (migs 0207/0208), the brake with the sortie guard
+`command_ship_group_stop` (migs 0209/0215), the group-fleet resolver `mainship_resolve_fleet` (0210), the
+dock-read dedup (0211), the ONE map/location read `get_my_fleet_positions` (0212), the assign co-location
+guard (0213), and the hunt-learns-the-fleet minting fix (0214). The flip (step 4b, reversible) turned
+`fleet_movement_unified_enabled` ON and the three legacy per-ship movement flags OFF. Deps: the FLEET
+control-model (0204/0205). Guard: ONE movement authority — the legacy per-ship movers are retired as their
+own slices (4a-post client delete, 4c signal retirement, 4b-drop server drop).
+
+### BERTH — the berth model: a ship is fleeted XOR berthed *(M — S1 in review as mig 0216; S2–S6 + cleanup planned)*
+
+The next arc, built on MOVEMENT. A ship's location becomes a schema-level fact: FLEETED (moves with a fleet,
+IS a map marker) **XOR** BERTHED (docked at a port, shown as info only). S1 (mig 0216) adds
+`berth_location_id` + a XOR CHECK `(group_id is null) = (berth_location_id is not null)` + one resolver, so
+ghost-dock becomes structurally impossible; it is built and in adversarial review. Then S2 territory radius
+(a `locations.territory_radius` column + a map ring, the ground for future enemy spawns in hostile
+territory), S3 the position/territory server leaves (fold the interpolation math inlined across the mover
+and brake into one leaf), S4 timed docking (dark behind a new `timed_docking_enabled` flag; docking takes
+time, shown as a live map countdown), S5 the map-UX consolidation (ONE fleet-command panel), and S6 the
+ship→fitting tab (fleet-grouped + a Berthed section). Deps: MOVEMENT. Guard: ONE location authority — the
+fleeted-xor-berthed law is enforced by the CHECK, not by convention.
+
 ### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)*
 
 There is NO home base; ports are the only base; a ship acts from WHEREVER it is docked. The bug: SEND
