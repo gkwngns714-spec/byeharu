@@ -38,8 +38,10 @@
   .treeOnly, .mapOnly { display: block; }
   body.tree .mapOnly, body.map .treeOnly { display: none; }
   body.timeline .treeOnly, body.timeline .mapOnly { display: none; }
-  .timelineOnly { display: none; }
+  body.method .treeOnly, body.method .mapOnly { display: none; }
+  .timelineOnly, .methodOnly { display: none; }
   body.timeline .timelineOnly { display: block; }
+  body.method .methodOnly { display: block; }
 
   /* timeline view */
   #timelineWrap { position: fixed; inset: 0; overflow: auto; display: none; padding: 66px 340px 70px 282px; }
@@ -84,6 +86,24 @@
   select.act { width: 100%; padding: 7px; border-radius: 8px; border: 1px solid var(--line);
     background: rgba(0,0,0,.35); color: var(--text); font: inherit; cursor: pointer; }
   .hint { color: var(--dim); font-size: 10.5px; margin-top: 7px; line-height: 1.45; }
+
+  /* method view — a readable doc, same idiom as the timeline (.tl-sec cards) plus
+     prose-specific bits: a paragraph, a numbered arc, an inert (missing-node) citation,
+     and the closing source list. */
+  #methodWrap { position: fixed; inset: 0; overflow: auto; display: none; padding: 66px 340px 70px 282px; }
+  #methodWrap.on { display: block; }
+  #method { max-width: 860px; margin: 0 auto; }
+  .mth-p { color: #b9c2d6; font-size: 12.5px; line-height: 1.65; margin: 0 0 12px; }
+  .mth-p code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11.5px;
+    color: var(--accent); background: rgba(255,255,255,.06); padding: 1px 5px; border-radius: 4px; }
+  .mth-p b { color: var(--text); }
+  .mth-arc { color: #b9c2d6; font-size: 12.5px; line-height: 1.7; margin: 0 0 12px; padding-left: 20px; }
+  .mth-arc li { margin-bottom: 8px; }
+  .mth-arc b { color: var(--text); }
+  .mth-missing { color: var(--dim); font-style: italic; }
+  .mth-src { color: var(--dim); font-size: 11px; line-height: 1.6; border-top: 1px solid var(--line);
+    padding-top: 10px; margin-top: 6px; }
+  .mth-src code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 
   /* left rail */
   #controls { top: 14px; left: 14px; width: 252px; max-height: calc(100vh - 28px);
@@ -168,6 +188,7 @@
 
     #treeWrap { padding: 58px 14px 86px 14px; }
     #timelineWrap { padding: 58px 14px 86px 14px; }
+    #methodWrap { padding: 58px 14px 86px 14px; }
     .tl-row { grid-template-columns: 56px minmax(0, 1fr) auto; gap: 8px; }
     .tl-row .tl-count { display: none; }
     .tl-chip .ct { display: none; }  /* the swatch alone carries the status on a phone */
@@ -187,6 +208,7 @@
   <canvas id="scene"></canvas>
   <div id="treeWrap"><svg id="tree"></svg></div>
   <div id="timelineWrap"><div id="timeline"></div></div>
+  <div id="methodWrap"><div id="method"></div></div>
 
   <button id="menuBtn" aria-label="Filters and options" aria-expanded="false" aria-controls="controls">☰</button>
   <div id="scrim"></div>
@@ -195,6 +217,7 @@
     <button data-tab="map" class="on">3D Map</button>
     <button data-tab="tree">조직도 Tree</button>
     <button data-tab="timeline">연혁 Timeline</button>
+    <button data-tab="method">⚙ Method</button>
   </nav>
 
   <aside class="panel" id="controls">
@@ -225,6 +248,11 @@
     <div class="grp timelineOnly">
       <h2>Timeline</h2>
       <div class="hint" id="timelineHint"></div>
+    </div>
+
+    <div class="grp methodOnly">
+      <h2>Method</h2>
+      <div class="hint" id="methodHint"></div>
     </div>
 
     <div class="grp">

@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { layout } from './layout.js'
 import { createTree } from './tree.js'
 import { createTimeline } from './timeline.js'
+import { createMethod } from './method.js'
 import { deriveStatuses, STATUS, STATUS_ORDER } from './status.js'
 
 const KIND_SIZE = { system: 5.2, rung: 4.6, phase: 4.2, flag: 3.4, table: 2.4, migration: 1.7, function: 1.3 }
@@ -197,6 +198,7 @@ document.getElementById('search').addEventListener('input', (e) => {
   const v = e.target.value
   if (tab === 'tree') { tree?.setQuery(v); return }
   if (tab === 'timeline') { timeline?.setQuery(v); return }
+  if (tab === 'method') { method?.setQuery(v); return }
   state.query = v.trim().toLowerCase(); apply()
 })
 document.getElementById('reset').addEventListener('click', () => {
@@ -461,22 +463,26 @@ const TREE_HINT = {
   build: 'Every migration in the order it landed, grouped by the day git first recorded it — the filename stamps are synthetic and would pile all 205 into one bucket. Each migration lists what it created.',
   feature: 'Every feature gate, and the migrations that seed or read it. Sorted live first, unproven last.',
   timeline: 'The whole arc in one view. Past — every shipped arc, the migration history behind it, and the complete build log from the dev log. Present — what production proves is live, plus the deploy frontier (merged, not yet deployed). Future — the activation ladder still owed and the planned queue.',
+  method: 'How this codebase is actually built — the no-spaghetti law, the per-slice build loop (architect → implementer → adversarial reviewer → real-Postgres proof → owner-gated deploy), the verification discipline, and the server-authoritative stance. Every citation is a real node — click one to jump to it on the map. Grounded in docs/HOW_ITS_BUILT.md.',
 }
 
 let tab = 'map'
 let tree = null
 let timeline = null
+let method = null
 
 function setTab(next) {
   tab = next
   document.body.className = next
   document.getElementById('treeWrap').classList.toggle('on', next === 'tree')
   document.getElementById('timelineWrap').classList.toggle('on', next === 'timeline')
+  document.getElementById('methodWrap').classList.toggle('on', next === 'method')
   document.getElementById('scene').style.display = next === 'map' ? 'block' : 'none'
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === next))
   const search = document.getElementById('search')
   search.value = ''
-  search.placeholder = next === 'tree' ? 'Search the tree…' : next === 'timeline' ? 'Search the timeline…' : 'Search nodes…'
+  search.placeholder = next === 'tree' ? 'Search the tree…' : next === 'timeline' ? 'Search the timeline…'
+    : next === 'method' ? 'Search the method…' : 'Search nodes…'
   if (next === 'tree') {
     const firstOpen = !tree
     tree ??= createTree({
@@ -504,11 +510,18 @@ function setTab(next) {
       onSelect: (nodeId) => select(nodeId),
     })
     timeline.setQuery('')
+  } else if (next === 'method') {
+    method ??= createMethod({
+      graph, status, mount: document.getElementById('method'),
+      onSelect: (nodeId) => select(nodeId),
+    })
+    method.setQuery('')
   } else {
     state.query = ''; apply()
   }
   document.getElementById('treeHint').textContent = TREE_HINT[document.getElementById('treeMode').value]
   document.getElementById('timelineHint').textContent = TREE_HINT.timeline
+  document.getElementById('methodHint').textContent = TREE_HINT.method
 }
 
 document.querySelectorAll('#tabs button').forEach((b) => {
