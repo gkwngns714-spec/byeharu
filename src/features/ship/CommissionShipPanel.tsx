@@ -13,15 +13,14 @@ import {
   type CommissionContext,
 } from './commissionShip'
 
-// TEAM-ACTIVATION PREP — the DARK commission-ship affordance (the in-client path to ship #2+).
+// TEAM-ACTIVATION PREP — the commission-ship affordance (the in-client path to ship #2+).
 //
-// Mounted by ShipScreen ONLY behind the compile-time MAINSHIP_ADDITIONAL_ENABLED gate (false — a
-// human flips it in the activation follow-up PR), and the server independently rejects
-// commission_additional_main_ship while mainship_additional_commission_enabled is false — double
-// fail-closed, so production is byte-unchanged today. Lives on the Ship screen's aside rail next
-// to the (equally dark) ShipSwitcher: ship ACQUISITION beside ship SELECTION — the fleet grows
-// where the fleet is managed, and it works whether or not the teams UI is mounted (independent
-// gates; the packet flips both in one window, but neither surface depends on the other).
+// Mounted by CommandScreen ONLY (S6 re-home: ship ACQUISITION lives with fleet COMPOSITION —
+// the Fitting tab's no-ship empty state points here; ShipSwitcher retired, superseded by
+// roster-row selection) behind the compile-time MAINSHIP_ADDITIONAL_ENABLED gate, and the server
+// independently rejects commission_additional_main_ship while
+// mainship_additional_commission_enabled is false — double fail-closed. Both layers were flipped
+// LIVE by the 2026-07-12 team-command activation.
 //
 // Availability is the EXISTING pure mirror commissionAvailability (teamRoster.ts — dark gate
 // BEFORE cap BEFORE credits, the exact server order), fed from SERVER data only: ship count from

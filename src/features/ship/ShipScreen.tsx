@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useShellState } from '../../app/shellState'
-import { fetchMyMainShips, repairMainShip, type MainShipRow } from '../map/mainshipApi'
+import { fetchHullTypes, fetchMyMainShips, repairMainShip, type HullRow, type MainShipRow } from '../map/mainshipApi'
 import { getMyShipFittings } from '../modules/modulesApi'
 import type { GetMyShipFittingsResult } from '../modules/modulesTypes'
 import { getMyCaptainInstances } from '../captains/captainsApi'
@@ -86,6 +86,11 @@ export function ShipScreen() {
   const [captainsRes, setCaptainsRes] = useState<GetMyCaptainInstancesResult | null>(null)
   const [repairNote, setRepairNote] = useState<Record<string, string | null>>({})
   const [repairPending, setRepairPending] = useState<Record<string, boolean>>({})
+  // The hull catalog (public-read Reference/Config) — fetched ONCE per mount (static data), so
+  // every ship's class name resolves from ITS OWN hull_type_id. REVIEW FIX (S6 major 1): the
+  // first cut read game.mainShip.hull — the NO-ID sole-ship view, which at N≥2 fail-closes to the
+  // starter-frigate teaser and would wear the WRONG class on every non-starter ship.
+  const [hullTypes, setHullTypes] = useState<HullRow[]>([])
 
   const guards = useActivityPanelGuards()
   const { activeRef } = guards
@@ -110,6 +115,18 @@ export function ShipScreen() {
   useEffect(() => {
     void refreshShared()
   }, [refreshShared, readRefreshKey])
+
+  // Static hull catalog — once per mount (inline .then so setState lands async, the
+  // TeamRosterPanel effect idiom). [] on error → rows fall back to the raw class id.
+  useEffect(() => {
+    let active = true
+    void fetchHullTypes().then((rows) => {
+      if (active) setHullTypes(rows)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   // NO-SOFTLOCK — the row-level free repair (see header). Throw-style wrapper → try/catch, the
   // ShipStatusCard doRepair shape, keyed per ship so rows never share pending state.
@@ -149,12 +166,13 @@ export function ShipScreen() {
 
   const selectedShip = selection.selectedShip
   const selectedPos = selectedShip ? posByShip.get(selectedShip.main_ship_id) : undefined
-  // The hull class display name — only when the shell's single-ship read resolved THIS ship
-  // (map.mainShip is fetchMainShip(selectedShipId)); otherwise the detail falls back to the id.
-  const selectedHullName =
-    selectedShip && map.mainShip?.main_ship_id === selectedShip.main_ship_id
-      ? (game.mainShip?.hull?.name ?? null)
-      : null
+  // The hull class display name — resolved from the SELECTED SHIP'S OWN hull_type_id against the
+  // catalog (per-ship-correct at any N; never the sole-ship-resolved polled view). Catalog miss /
+  // read error → null → the detail falls back to the raw class id.
+  const selectedShipRow = selectedShip ? (shipRowById.get(selectedShip.main_ship_id) ?? null) : null
+  const selectedHullName = selectedShipRow
+    ? (hullTypes.find((h) => h.hull_type_id === selectedShipRow.hull_type_id)?.name ?? null)
+    : null
 
   // One roster row (the TeamRosterPanel role="button" selected-row idiom — READ-ONLY here: no
   // membership/movement controls; the only action a row ever carries is the destroyed-ship Repair).
@@ -248,7 +266,11 @@ export function ShipScreen() {
   }
 
   // No commissioned ship yet → EmptyState pointing at Command (acquisition = composition; the
-  // CommissionShipPanel lives there).
+  // CommissionShipPanel lives there). REVIEW FIX (S6 minor 3, NO-SOFTLOCK-adjacent): the shell
+  // ship-list read collapses a transient error to [] and never re-polls, so this state could
+  // stick for a ship-OWNING player (hiding a destroyed ship's repair CTA) with no way back but a
+  // reload — the "Check again" retry re-runs selection.refresh() so one bad read never strands
+  // the roster.
   if (!selection.loading && selection.ships.length === 0) {
     return (
       <Screen wide>
@@ -259,9 +281,18 @@ export function ShipScreen() {
           title="No ship yet"
           body="Commission your first ship from Command — its fitting, captains, and cargo appear here."
           action={
-            <Link to="/command" className={buttonClasses('primary', 'md')}>
-              Go to Command
-            </Link>
+            <span className="inline-flex items-center gap-2">
+              <Link to="/command" className={buttonClasses('primary', 'md')}>
+                Go to Command
+              </Link>
+              <Button
+                variant="ghost"
+                data-testid="fitting-no-ship-retry"
+                onClick={() => void selection.refresh()}
+              >
+                Check again
+              </Button>
+            </span>
           }
         />
       </Screen>
@@ -324,7 +355,7 @@ export function ShipScreen() {
             <FittingDetail
               key={selectedShip.main_ship_id}
               ship={selectedShip}
-              shipRow={shipRowById.get(selectedShip.main_ship_id) ?? null}
+              shipRow={selectedShipRow}
               hullName={selectedHullName}
               position={selectedPos}
               locations={game.locations}
@@ -342,10 +373,13 @@ export function ShipScreen() {
           {/* The player's item inventory — live data, always lit (feeds RecruitCaptainPanel here
               and the Port Workshop's recipes). */}
           <InventoryPanel refreshKey={readRefreshKey} />
-          {/* CAPTAIN-P15 (dark, server-lit only): assign/unassign captains to the resolved ship. */}
+          {/* CAPTAIN-P15 (dark, server-lit only): assign/unassign captains to the SELECTED ship.
+              REVIEW FIX (S6 major 2): the target is the shell selection DIRECTLY — the same source
+              the detail uses — never the polled map.mainShip, which lags a roster click and would
+              briefly show/mutate the PREVIOUS ship's captains (wrong-target once captains light). */}
           <CaptainsPanel
             lifecycleKey={lifecycleKey}
-            mainShipId={map.mainShip?.main_ship_id ?? null}
+            mainShipId={selection.selectedShipId}
             onChanged={bumpLoadoutRev}
           />
           {/* CAPTAIN-P16 (dark, server-lit only): captain recruitment (progression). */}
