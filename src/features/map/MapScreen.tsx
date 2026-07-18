@@ -11,6 +11,7 @@ import { teamDestinationKind } from '../command/teamDestination'
 import { TEAM_COMMAND_ENABLED } from './osnReleaseGates'
 import { MiningPanel } from '../mining/MiningPanel'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
+import { TelegraphBanner } from '../combat/TelegraphBanner'
 import type { WorldCoord } from './openSpaceTransform'
 import { Badge, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 
@@ -157,6 +158,16 @@ export function MapScreen() {
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
+            {/* COMBAT-S2 TELEGRAPH — the pre-combat warning beat (top-center, urgent). Renders nothing
+                unless the caller has a telegraphed encounter; while combat_telegraph_enabled is dark the
+                pending table is empty so this is invisible (fail-closed by data). Flee withdraws the
+                fleet home, then re-polls the map + ship reads. */}
+            <TelegraphBanner
+              onChange={() => {
+                void refresh()
+                void selection.refresh()
+              }}
+            />
             {/* S5 MAP-UX — THE fleet-command surface (bottom-right): Stop (NO-SOFTLOCK, always
                 first, state-predicated only) + go/redirect + dock + hunt, all composed from the ONE
                 pure model. Mounted behind the same compile-time gate as every team surface; the
