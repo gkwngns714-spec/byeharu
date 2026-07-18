@@ -211,7 +211,7 @@ document.getElementById('reset').addEventListener('click', () => {
   document.querySelectorAll('#statusFilters input, #kindFilters input').forEach((c) => { c.checked = true })
   document.querySelectorAll('#edgeFilters input').forEach((c, i) => { c.checked = state.edge.has(EDGE_TYPES[i]) })
   document.getElementById('inspect').classList.remove('on')
-  target.set(0, 0, 0); dist = 520
+  targetG.set(0, 0, 0); distG = 520; yawG = 0.7; pitchG = 0.35   // glide back to the home view
   apply()
 })
 
@@ -278,11 +278,11 @@ function select(id) {
   inspect(id)
   if (id) {
     const n = byId.get(id)
-    target.set(n.x, n.y, n.z)
+    targetG.set(n.x, n.y, n.z)          // glide the camera to it (eased in tick)
     // Also frame it. Re-centring alone is not enough: from far out the node is
     // a couple of pixels and its neighbours are dimmed, so selecting something
     // looks like nothing happened — especially after a pinch-out on a phone.
-    dist = Math.min(dist, 340)
+    distG = Math.min(distG, 340)
   }
   apply()
 }
@@ -299,9 +299,15 @@ menuBtn.addEventListener('click', () => drawer(!document.getElementById('control
 scrim.addEventListener('click', () => drawer(false))
 addEventListener('keydown', (e) => { if (e.key === 'Escape') drawer(false) })
 
-// ── camera: orbit + zoom ──────────────────────────────────────────────────────
-const target = new THREE.Vector3(0, 0, 0)
+// ── camera: orbit + zoom, DAMPED ──────────────────────────────────────────────
+// Every control writes a GOAL (…G); the live values ease toward it each frame in tick(). That one
+// indirection is what makes the whole thing feel friendly instead of jerky: a drag/zoom/keypress
+// nudges the goal and the camera glides there with weight, and clicking a node smoothly flies to it.
+const target = new THREE.Vector3(0, 0, 0)       // live — what the camera frames THIS frame
+const targetG = new THREE.Vector3(0, 0, 0)      // goal — where it's heading
 let dist = 520, yaw = 0.7, pitch = 0.35, drag = null
+let distG = 520, yawG = 0.7, pitchG = 0.35
+const EASE = 0.16                                // per-frame catch-up (higher = snappier, lower = floatier)
 
 // ── free movement: fly the pivot through the scene (WASD / arrows), drag-pan to slide it ──
 // The camera always frames `target`; moving `target` moves you through the graph. Keys fly it
@@ -347,7 +353,7 @@ const spread = () => {
 canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture?.(e.pointerId)
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
-  if (pointers.size === 2) { pinchFrom = { d: spread(), dist }; drag = null }
+  if (pointers.size === 2) { pinchFrom = { d: spread(), dist: distG }; drag = null }
   else if (pointers.size === 1) drag = { x: e.clientX, y: e.clientY, moved: false, pan: e.button === 2 || e.shiftKey }
 })
 
@@ -372,21 +378,21 @@ addEventListener('pointermove', (e) => {
   if (pointers.size === 2 && pinchFrom) {
     const now = spread()
     if (now > 0 && pinchFrom.d > 0) {
-      dist = Math.max(40, Math.min(2200, pinchFrom.dist * (pinchFrom.d / now)))
+      distG = Math.max(40, Math.min(2200, pinchFrom.dist * (pinchFrom.d / now)))
     }
     return
   }
   if (drag) {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y
-    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true
+    if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true
     if (drag.pan) {
       // slide the pivot in true screen space (grab-and-drag), scaled by zoom distance
       camera.matrixWorld.extractBasis(_r, _u, _f)
-      const k = dist * 0.0016
-      target.addScaledVector(_r, -dx * k)
-      target.addScaledVector(_u, dy * k)
+      const k = distG * 0.0016
+      targetG.addScaledVector(_r, -dx * k)
+      targetG.addScaledVector(_u, dy * k)
     } else {
-      yaw -= dx * 0.005; pitch = Math.max(-1.5, Math.min(1.5, pitch - dy * 0.005))
+      yawG -= dx * 0.005; pitchG = Math.max(-1.5, Math.min(1.5, pitchG - dy * 0.005))
     }
     drag.x = e.clientX; drag.y = e.clientY
   } else if (e.pointerType === 'mouse') hover(e)
@@ -396,12 +402,18 @@ addEventListener('pointermove', (e) => {
 const _zW = new THREE.Vector3(), _zN = new THREE.Vector3(), _zPlane = new THREE.Plane()
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault()
-  const newDist = Math.max(40, Math.min(2200, dist * (1 + Math.sign(e.deltaY) * 0.11)))
-  const f = newDist / dist                       // effective factor after clamping
+  // Normalise across input kinds so a mouse notch and a trackpad swipe zoom by comparable, gentle
+  // amounts (deltaMode: 0=pixels/trackpad, 1=lines/wheel, 2=pages), then clamp a momentum fling.
+  let d = e.deltaY
+  if (e.deltaMode === 1) d *= 16
+  else if (e.deltaMode === 2) d *= 400
+  const step = Math.max(-0.2, Math.min(0.2, d * 0.0022))
+  const newDist = Math.max(40, Math.min(2200, distG * (1 + step)))
+  const f = newDist / distG                       // effective factor after clamping
   if (f !== 1) {
     ndc.x = (e.clientX / innerWidth) * 2 - 1
     ndc.y = -(e.clientY / innerHeight) * 2 + 1
-    ray.setFromCamera(ndc, camera)
+    ray.setFromCamera(ndc, camera)                // raycast the LIVE view the user sees
     let w = null
     for (const h of ray.intersectObject(mesh)) {
       if (nodeVisible(positioned[h.instanceId])) { w = _zW.copy(h.point); break }
@@ -411,9 +423,9 @@ canvas.addEventListener('wheel', (e) => {
       _zPlane.setFromNormalAndCoplanarPoint(_zN, target)
       w = ray.ray.intersectPlane(_zPlane, _zW)
     }
-    if (w) target.lerp(w, 1 - f)                  // keep the cursor's world point fixed on screen
+    if (w) targetG.lerp(w, 1 - f)                 // steer the goal so the cursor point stays put
   }
-  dist = newDist
+  distG = newDist
 }, { passive: false })
 
 const ray = new THREE.Raycaster()
@@ -519,22 +531,29 @@ apply()
 ;(function tick() {
   requestAnimationFrame(tick)
   if (held.size) {
-    const sp = dist * 0.02                          // fly speed scales with zoom
-    _f.set(-Math.sin(yaw), 0, -Math.cos(yaw))       // horizontal forward
-    _r.set(Math.cos(yaw), 0, -Math.sin(yaw))        // strafe right
-    if (held.has('w') || held.has('arrowup')) target.addScaledVector(_f, sp)
-    if (held.has('s') || held.has('arrowdown')) target.addScaledVector(_f, -sp)
-    if (held.has('d') || held.has('arrowright')) target.addScaledVector(_r, sp)
-    if (held.has('a') || held.has('arrowleft')) target.addScaledVector(_r, -sp)
-    if (held.has('e') || held.has(' ')) target.y += sp
-    if (held.has('q')) target.y -= sp
+    const sp = distG * 0.02                          // fly speed scales with zoom
+    _f.set(-Math.sin(yawG), 0, -Math.cos(yawG))      // horizontal forward
+    _r.set(Math.cos(yawG), 0, -Math.sin(yawG))       // strafe right
+    if (held.has('w') || held.has('arrowup')) targetG.addScaledVector(_f, sp)
+    if (held.has('s') || held.has('arrowdown')) targetG.addScaledVector(_f, -sp)
+    if (held.has('d') || held.has('arrowright')) targetG.addScaledVector(_r, sp)
+    if (held.has('a') || held.has('arrowleft')) targetG.addScaledVector(_r, -sp)
+    if (held.has('e') || held.has(' ')) targetG.y += sp
+    if (held.has('q')) targetG.y -= sp
   }
+  if (autoRotate && !drag && !held.size) yawG += 0.0004  // opt-in orbit; pauses while you fly
+
+  // ── ease the live camera toward its goal — the friendliness lives here ──
+  yaw += (yawG - yaw) * EASE
+  pitch += (pitchG - pitch) * EASE
+  dist += (distG - dist) * EASE
+  target.lerp(targetG, EASE)
+
   camera.position.set(
     target.x + dist * Math.cos(pitch) * Math.sin(yaw),
     target.y + dist * Math.sin(pitch),
     target.z + dist * Math.cos(pitch) * Math.cos(yaw),
   )
   camera.lookAt(target)
-  if (autoRotate && !drag && !held.size) yaw += 0.0004  // opt-in orbit; pauses while you fly
   renderer.render(scene, camera)
 })()
