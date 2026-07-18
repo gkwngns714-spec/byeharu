@@ -194,7 +194,7 @@ A ship's location is a schema-level fact: FLEETED (moves with a fleet, IS a map 
 not null)`, so ghost-dock is structurally impossible. One resolver; `get_my_fleet_positions` gains a
 `berthed` branch. Deps: MOVEMENT. Everything below is built ON this foundation.
 
-### TERRITORY — S2: each location's radius is its territory *(S/M — planned)*
+### TERRITORY — S2: each location's radius is its territory *(S/M — SHIPPED LIVE 2026-07-18 as mig 0217)*
 
 Berth arc S2. A `locations.territory_radius` column drawn as a ring on the map; a fleet entering the radius
 gets options (dock now, combat later). The ground for future enemy-fleet spawns in hostile territory like a
@@ -217,7 +217,7 @@ flag. Deps: POSLEAF.
 Berth arc S5. Consolidate the scattered map panels (destination / stop / dock) into ONE fleet-command
 surface owning Go / Redirect / Stop / Dock — deletes three panels instead of adding a fourth. Deps: RETIRE.
 
-### FITTING — S6: the ship tab becomes a fitting tab *(M — planned)*
+### FITTING — S6: the ship tab becomes a fitting tab *(M — SHIPPED, merged to main 2026-07-18)*
 
 Berth arc S6. Ships grouped by fleet plus a Berthed section — condition, stats, buffs, and fitting when
 docked; the Command tab owns fleet composition, the Fitting tab owns per-ship equipment. Deps: BERTH.

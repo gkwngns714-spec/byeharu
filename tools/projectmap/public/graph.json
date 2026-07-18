@@ -1,15 +1,15 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 214,
+  "migrations": 216,
   "functions": 208,
   "tables": 79,
   "flags": 29,
   "systems": 29,
   "phases": 24,
   "rungs": 9,
-  "nodes": 592,
-  "edges": 1590
+  "nodes": 594,
+  "edges": 1621
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -2427,6 +2427,28 @@
    "seedsFlag": []
   },
   {
+   "id": "mig:20260618000216",
+   "kind": "migration",
+   "label": "0216 berth_model",
+   "stamp": "20260618000216",
+   "seq": "0216",
+   "addedAt": "2026-07-18T11:36:20+09:00",
+   "file": "supabase/migrations/20260618000216_berth_model.sql",
+   "detail": "S1 — THE BERTH MODEL: a ship is FLEETED xor BERTHED, as a SCHEMA FACT. Migration 0216. Charter: docs/MOVEMENT_UNIFICATION_CHARTER.md §2 (the FLEET is the only mover; membership IS position), the ⭐ FLIPPED-LIVE block (unified movement is ON in prod; the legacy per-ship movers are dark), and the NO-HOME law (ports are the only base — a ship that is not with its fleet is AT A PORT, never \"home\"). Fir",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000217",
+   "kind": "migration",
+   "label": "territory_radius",
+   "stamp": "20260618000217",
+   "seq": null,
+   "addedAt": "2026-07-18T12:41:58+09:00",
+   "file": "supabase/migrations/20260618000217_territory_radius.sql",
+   "detail": "Byeharu — S2 TERRITORY: location-centered territory radius (additive data, always-on). WHAT: `locations.territory_radius numeric` (nullable) — the WORLD-UNIT radius of the zone of influence a named location projects into open space. Seeded once here by CASE on location_type (trade_outpost → 25; pirate_hunt AND pirate_den → 35 — all live hostiles are pirate_hunt, pirate_den has 0 rows today and is ",
+   "seedsFlag": []
+  },
+  {
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
@@ -4615,10 +4637,10 @@
    "id": "phase:TERRITORY",
    "kind": "phase",
    "label": "TERRITORY — S2: each location's radius is its territory",
-   "planned": true,
-   "size": "S/M — planned",
+   "planned": false,
+   "size": "S/M — SHIPPED LIVE 2026-07-18 as mig 0217",
    "file": "docs/FULL_CAPACITY_PLAN.md",
-   "detail": "### TERRITORY — S2: each location's radius is its territory *(S/M — planned)* Berth arc S2. A `locations.territory_radius` column drawn as a ring on the map; a fleet entering the radius gets options (dock now, combat later). The ground for future enemy-fleet spawns in hostile territory like a pirate den. One column, one map ring — no parallel system. Deps: BERTH."
+   "detail": "### TERRITORY — S2: each location's radius is its territory *(S/M — SHIPPED LIVE 2026-07-18 as mig 0217)* Berth arc S2. A `locations.territory_radius` column drawn as a ring on the map; a fleet entering the radius gets options (dock now, combat later). The ground for future enemy-fleet spawns in hostile territory like a pirate den. One column, one map ring — no parallel system. Deps: BERTH."
   },
   {
    "id": "phase:POSLEAF",
@@ -4651,10 +4673,10 @@
    "id": "phase:FITTING",
    "kind": "phase",
    "label": "FITTING — S6: the ship tab becomes a fitting tab",
-   "planned": true,
-   "size": "M — planned",
+   "planned": false,
+   "size": "M — SHIPPED, merged to main 2026-07-18",
    "file": "docs/FULL_CAPACITY_PLAN.md",
-   "detail": "### FITTING — S6: the ship tab becomes a fitting tab *(M — planned)* Berth arc S6. Ships grouped by fleet plus a Berthed section — condition, stats, buffs, and fitting when docked; the Command tab owns fleet composition, the Fitting tab owns per-ship equipment. Deps: BERTH."
+   "detail": "### FITTING — S6: the ship tab becomes a fitting tab *(M — SHIPPED, merged to main 2026-07-18)* Berth arc S6. Ships grouped by fleet plus a Berthed section — condition, stats, buffs, and fitting when docked; the Command tab owns fleet composition, the Fitting tab owns per-ship equipment. Deps: BERTH."
   },
   {
    "id": "phase:RETIRE",
@@ -8580,6 +8602,66 @@
    "type": "gated-by"
   },
   {
+   "source": "mig:20260618000216",
+   "target": "fn:assign_ship_to_group",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "fn:delete_ship_group",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "fn:port_entry_commission_build",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "fn:ensure_main_ship_for_player",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "fn:get_my_fleet_positions",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "table:main_ship_instances",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "flag:fleet_control_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "flag:team_command_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "flag:ship_traits_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000217",
+   "target": "fn:get_world_map",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000217",
+   "target": "table:locations",
+   "type": "alters"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -9486,6 +9568,42 @@
    "note": "command_ship_group_stop"
   },
   {
+   "source": "mig:20260618000216",
+   "target": "mig:20260618000213",
+   "type": "supersedes",
+   "note": "assign_ship_to_group"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "mig:20260618000162",
+   "type": "supersedes",
+   "note": "delete_ship_group"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "mig:20260618000197",
+   "type": "supersedes",
+   "note": "port_entry_commission_build"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "mig:20260618000197",
+   "type": "supersedes",
+   "note": "ensure_main_ship_for_player"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "mig:20260618000212",
+   "type": "supersedes",
+   "note": "get_my_fleet_positions"
+  },
+  {
+   "source": "mig:20260618000217",
+   "target": "mig:20260616000002",
+   "type": "supersedes",
+   "note": "get_world_map"
+  },
+  {
    "source": "mig:20260616000007",
    "target": "mig:20260616000006",
    "type": "extends",
@@ -9754,6 +9872,18 @@
    "target": "mig:20260616000007",
    "type": "extends",
    "note": "fleet_movements"
+  },
+  {
+   "source": "mig:20260618000216",
+   "target": "mig:20260617000043",
+   "type": "extends",
+   "note": "main_ship_instances"
+  },
+  {
+   "source": "mig:20260618000217",
+   "target": "mig:20260616000002",
+   "type": "extends",
+   "note": "locations"
   },
   {
    "source": "fn:base_reserve_units",
@@ -12296,6 +12426,51 @@
    "type": "touches"
   },
   {
+   "source": "fn:assign_ship_to_group",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:delete_ship_group",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:delete_ship_group",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:delete_ship_group",
+   "target": "fn:mainship_resolve_owned_group",
+   "type": "calls"
+  },
+  {
+   "source": "fn:delete_ship_group",
+   "target": "table:ship_groups",
+   "type": "touches"
+  },
+  {
+   "source": "fn:delete_ship_group",
+   "target": "fn:ship_group_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:delete_ship_group",
+   "target": "table:group_sortie_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:delete_ship_group",
+   "target": "fn:presence_complete",
+   "type": "calls"
+  },
+  {
+   "source": "fn:delete_ship_group",
+   "target": "table:location_presence",
+   "type": "touches"
+  },
+  {
    "source": "table:profiles",
    "target": "system:Auth",
    "type": "owned-by"
@@ -12714,6 +12889,16 @@
    "source": "phase:MOVEMENT",
    "target": "flag:fleet_movement_unified_enabled",
    "type": "delivers"
+  },
+  {
+   "source": "phase:BERTH",
+   "target": "mig:20260618000216",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:TERRITORY",
+   "target": "mig:20260618000217",
+   "type": "delivered-by"
   },
   {
    "source": "phase:P0",
