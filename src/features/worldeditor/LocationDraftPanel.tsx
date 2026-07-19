@@ -1,38 +1,19 @@
-// WORLD EDITOR — V1B-1 LOCATION DRAFT PANEL (side rail). The draft form for the ACTIVE draft plus the
-// local draft list. CLIENT-SIDE ONLY: every edit goes through the draft store (localStorage) — there
-// is NO save-to-server, NO publish button here; publish/enable/disable/archive remain EXPLICITLY
-// DISABLED in the shell's deferred-operations block. Banners surface the three honest states: dirty
-// (unsaved local change), stale (live source changed/vanished — mandatory rehydrate re-validation),
-// and out-of-bounds (FLAGGED via the shared predicate; never clamped, never thrown).
+// WORLD EDITOR — V1B-1/V1B-2 LOCATION DRAFT PANEL (side rail). The draft form for the ACTIVE draft
+// plus the local draft list. CLIENT-SIDE ONLY: every edit goes through the draft store (localStorage)
+// — there is NO save-to-server, NO publish button here; publish/enable/disable/archive remain
+// EXPLICITLY DISABLED in the shell's deferred-operations block. V1B-2: the active draft surfaces its
+// FULL advisory validation report (locationValidation via the store's reportById) as notices —
+// error → danger, warning → warning. Values are only ever FLAGGED, never clamped, never thrown.
+// Enum option lists come from locationEnums — the ONE runtime CHECK-enum authority (no local copies).
 import { useState, type ReactNode } from 'react'
 import type { ActivityType, LocationType } from '../map/mapTypes'
 import { WORLD_MAX, WORLD_MIN } from '../map/openSpaceTransform'
 import { Button, Notice } from '../../components/ui'
-import { isDirty, validateDraftBounds } from './locationDraftModel'
+import { isDirty } from './locationDraftModel'
+import { ACTIVITY_TYPES, LOCATION_TYPES } from './locationEnums'
 import { useLocationDrafts } from './useLocationDrafts'
+import type { ValidationReport } from './locationValidation'
 import type { LocationDraft, LocationDraftPayload } from './locationDraftTypes'
-
-// UI option lists for the payload's union fields — pinned to the REAL mapTypes unions via `satisfies`
-// (a union change breaks this build line, never silently drifts).
-const LOCATION_TYPE_OPTIONS = [
-  'pirate_hunt',
-  'pirate_den',
-  'mining_site',
-  'derelict_station',
-  'trade_outpost',
-  'rally_point',
-  'safe_zone',
-  'event_site',
-] as const satisfies readonly LocationType[]
-
-const ACTIVITY_TYPE_OPTIONS = [
-  'hunt_pirates',
-  'mine_resource',
-  'explore_derelict',
-  'trade_visit',
-  'rally',
-  'none',
-] as const satisfies readonly ActivityType[]
 
 const INPUT = 'w-full rounded-lg border border-edge bg-surface-2 px-2 py-1 text-sm text-ink'
 const FIELD_LABEL = 'text-xs text-ink-muted'
@@ -48,9 +29,35 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 const num = (v: string): number => (v.trim() === '' ? Number.NaN : Number(v))
 
+/** The active draft's advisory validation report as notices: error → danger, warning → warning.
+ *  Pure presentation of locationValidation output — no rule logic lives in the panel. */
+function ValidationNotices({ report }: { report: ValidationReport }) {
+  if (report.issues.length === 0) return null
+  return (
+    <div className="flex flex-col gap-1">
+      {report.issues.map((issue, i) => (
+        <Notice
+          key={`${issue.code}:${issue.field ?? ''}:${i}`}
+          tone={issue.severity === 'error' ? 'danger' : 'warning'}
+        >
+          {issue.message}
+        </Notice>
+      ))}
+    </div>
+  )
+}
+
 export function LocationDraftPanel() {
-  const { drafts, activeDraft, statusById, beginCreateDraft, patchDraft, discardDraft, selectDraft } =
-    useLocationDrafts()
+  const {
+    drafts,
+    activeDraft,
+    statusById,
+    reportById,
+    beginCreateDraft,
+    patchDraft,
+    discardDraft,
+    selectDraft,
+  } = useLocationDrafts()
   const [confirmingDiscardId, setConfirmingDiscardId] = useState<string | null>(null)
 
   const set = (partial: Partial<LocationDraftPayload>) => {
@@ -68,9 +75,7 @@ export function LocationDraftPanel() {
   }
 
   const p = activeDraft?.payload
-  const status = activeDraft ? statusById.get(activeDraft.draftId) ?? 'current' : 'current'
-  const dirty = activeDraft ? isDirty(activeDraft) : false
-  const inBounds = p ? validateDraftBounds(p) : true
+  const report = activeDraft ? reportById.get(activeDraft.draftId) : undefined
 
   return (
     <section className="rounded-card border border-edge bg-surface p-3">
@@ -128,26 +133,7 @@ export function LocationDraftPanel() {
       {/* ── active draft form ── */}
       {activeDraft && p && (
         <div className="mt-2 flex flex-col gap-2 border-t border-edge/50 pt-2">
-          {dirty && (
-            <Notice tone="accent">Unsaved local draft — changes live only in this browser.</Notice>
-          )}
-          {status === 'source_changed' && (
-            <Notice tone="warning">
-              Stale: the live location changed since this draft was forked. Review before any future
-              publish.
-            </Notice>
-          )}
-          {status === 'source_missing' && (
-            <Notice tone="danger">
-              Orphaned: the live location this draft was forked off no longer exists.
-            </Notice>
-          )}
-          {!inBounds && (
-            <Notice tone="danger">
-              Out of bounds: coordinates must be finite and within ±10000 on both axes. Values are
-              flagged, never auto-clamped.
-            </Notice>
-          )}
+          {report && <ValidationNotices report={report} />}
 
           <Field label="Name">
             <input
@@ -166,7 +152,7 @@ export function LocationDraftPanel() {
                 value={p.location_type}
                 onChange={(e) => set({ location_type: e.target.value as LocationType })}
               >
-                {LOCATION_TYPE_OPTIONS.map((t) => (
+                {LOCATION_TYPES.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
@@ -179,7 +165,7 @@ export function LocationDraftPanel() {
                 value={p.activity_type}
                 onChange={(e) => set({ activity_type: e.target.value as ActivityType })}
               >
-                {ACTIVITY_TYPE_OPTIONS.map((t) => (
+                {ACTIVITY_TYPES.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>

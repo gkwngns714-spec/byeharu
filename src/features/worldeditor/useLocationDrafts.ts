@@ -33,6 +33,7 @@ import {
   parseStoredDraft,
   patch,
 } from './locationDraftModel'
+import { validateLocationDraft, type ValidationReport } from './locationValidation'
 
 // ── localStorage persistence (keyed PER DRAFT, versioned — the firstOrdersDismissKey idiom) ─────────
 const KEY_PREFIX = 'byeharu.worldEditor.locationDraft.v1:'
@@ -122,6 +123,9 @@ export interface LocationDraftsStore {
   readonly activeDraft: LocationDraft | null
   /** Per-draft source status vs CURRENT live rows (recomputed every render — never stored). */
   readonly statusById: ReadonlyMap<string, DraftSourceStatus>
+  /** Per-draft ADVISORY validation report (V1B-2) — recomputed from CURRENT live data + the other
+   *  local drafts on every change, never stored. Flag-only: publish stays deferred and disabled. */
+  readonly reportById: ReadonlyMap<string, ValidationReport>
   beginCreateDraft(): void
   forkEditDraft(loc: MapLocation): void
   patchDraft(draftId: string, partial: Partial<LocationDraftPayload>): void
@@ -191,6 +195,25 @@ export function useLocationDraftsStore(
     return m
   }, [state.drafts, liveLocations])
 
+  // V1B-2 ADVISORY validation (parallel to statusById; pure + derived, never stored): each draft is
+  // validated against the CURRENT live rows, its own recomputed source status, and every OTHER draft.
+  const reportById = useMemo(() => {
+    const live = liveLocations ?? []
+    const m = new Map<string, ValidationReport>()
+    for (const d of state.drafts) {
+      m.set(
+        d.draftId,
+        validateLocationDraft(d.payload, {
+          liveLocations: live,
+          sourceStatus: statusById.get(d.draftId) ?? 'current',
+          draftMode: d.mode,
+          otherDrafts: state.drafts.filter((o) => o.draftId !== d.draftId),
+        }),
+      )
+    }
+    return m
+  }, [state.drafts, liveLocations, statusById])
+
   const activeDraft = state.drafts.find((d) => d.draftId === state.activeDraftId) ?? null
 
   return useMemo(
@@ -198,13 +221,14 @@ export function useLocationDraftsStore(
       drafts: state.drafts,
       activeDraft,
       statusById,
+      reportById,
       beginCreateDraft,
       forkEditDraft,
       patchDraft,
       discardDraft,
       selectDraft,
     }),
-    [state.drafts, activeDraft, statusById, beginCreateDraft, forkEditDraft, patchDraft, discardDraft, selectDraft],
+    [state.drafts, activeDraft, statusById, reportById, beginCreateDraft, forkEditDraft, patchDraft, discardDraft, selectDraft],
   )
 }
 
