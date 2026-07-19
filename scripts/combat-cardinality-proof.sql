@@ -27,8 +27,8 @@
 --
 -- Self-rolling-back (begin;…rollback;, no COMMIT) → ZERO persisted state. Read/write is all transient.
 -- Every constraint-rejection assertion runs inside a BEGIN…EXCEPTION subtransaction (savepoint), so a
--- caught unique_violation/check_violation never aborts the outer proof txn. No random() (0041 law):
--- gen_random_uuid() (fixture identity only) is the sole randomness; combat math is never exercised.
+-- caught unique_violation/check_violation never aborts the outer proof txn. No session RNG draw (the
+-- 0041 law): gen_random_uuid() (fixture identity only) is the sole randomness; combat math never runs.
 
 \set ON_ERROR_STOP on
 
