@@ -25,6 +25,10 @@ import {
 import { LocationDraftsContext, useLocationDraftsStore } from './useLocationDrafts'
 import { LocationDraftPanel } from './LocationDraftPanel'
 import { DraftPreview } from './DraftPreview'
+import { MiningDraftsContext, useMiningDraftsStore } from './useMiningDrafts'
+import { MiningDraftPanel } from './MiningDraftPanel'
+import { MINING_DRAFT_DESCRIPTOR } from './miningDraftModel'
+import { DraftPreviewOverlay } from './DraftPreviewOverlay'
 import { Button } from '../../components/ui'
 
 // WORLD EDITOR — Foundation V1 shell + V1B-1 "Location Drafts & Preview". ONE owner-only surface on
@@ -38,6 +42,11 @@ import { Button } from '../../components/ui'
 // layers. NOTHING here writes to the live world: no RPC write, no game_config write, no mutation —
 // publish/enable/disable/archive remain EXPLICITLY DISABLED (§WE.2), never faked.
 //
+// V2A-2: a SECOND authoring domain — mining-field drafts — beside the location domain, both bound
+// to the SAME generic draft core through their one descriptor each. A domain toggle selects which
+// panel + which draft preview overlay is active; the location domain's behavior is unchanged.
+// Mining drafts are equally local-only: zero mining_fields writes, zero mining gameplay RPCs.
+//
 // Gate: identical to ZoneEditor — renders null unless game_config.dev_zone_editor_enabled is exactly
 // jsonb `true` (fetchDevZoneEditorEnabled, fail-closed). Reached only by navigating to /dev/world.
 
@@ -45,6 +54,10 @@ interface Selection {
   readonly layer: LayerId
   readonly id: string
 }
+
+/** The two live draft-authoring domains (V2A-2). The toggle picks which panel/preview is active —
+ *  both stores stay mounted (drafts persist per-domain either way). */
+type AuthoringDomain = 'locations' | 'mining'
 
 /** V1B-1: create/edit are LIVE (they open a local draft); the rest of DEFERRED_OPERATIONS stays
  *  rendered disabled-with-reason. The constant itself is untouched (worldEditorTypes is the boundary
@@ -78,10 +91,15 @@ export function WorldEditor() {
   const [visible, setVisible] = useState<Set<LayerId>>(() => defaultVisibleLayerIds())
   const [selected, setSelected] = useState<Selection | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
+  const [authoringDomain, setAuthoringDomain] = useState<AuthoringDomain>('locations')
 
   // V1B-1 draft store — a SEPARATE structure (localStorage-backed); live locations are passed ONLY
   // for the mandatory staleness re-validation. Never merged into the read snapshot.
   const draftStore = useLocationDraftsStore(data?.locations ?? null)
+
+  // V2A-2 mining draft store — same law, bound to the mining descriptor; data.miningFields is the
+  // live-row slice for staleness re-validation (exactly as data.locations feeds the location store).
+  const miningDraftStore = useMiningDraftsStore(data?.miningFields ?? null)
 
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
@@ -213,6 +231,15 @@ export function WorldEditor() {
     [data, selected],
   )
 
+  // V2A-2: the selected LIVE mining field (mining edit-draft fork source; name is the natural key).
+  const selectedMiningField = useMemo(
+    () =>
+      data && selected?.layer === 'mining'
+        ? data.miningFields.find((f) => f.name === selected.id) ?? null
+        : null,
+    [data, selected],
+  )
+
   // DARK by default — render nothing while loading the gate or when the flag is off (fail-closed).
   if (enabled !== true) return null
 
@@ -220,12 +247,14 @@ export function WorldEditor() {
 
   return (
     <LocationDraftsContext.Provider value={draftStore}>
+    <MiningDraftsContext.Provider value={miningDraftStore}>
     <div className="flex min-h-screen flex-col gap-3 bg-app p-4 text-ink">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">World Editor</h1>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-ink-muted">dev · owner-only</span>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">Foundation V1 · read-only live</span>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V1B-1 · local drafts (no publish)</span>
+        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V2A-2 · mining drafts (no publish)</span>
       </header>
 
       <div className="flex flex-1 flex-wrap items-start gap-4">
@@ -320,8 +349,21 @@ export function WorldEditor() {
                 )
               })}
 
-              {/* V1B-1: the active draft's preview overlay — ABOVE every read-only layer item. */}
-              <DraftPreview k={k} />
+              {/* V1B-1/V2A-2: the ACTIVE authoring domain's draft preview overlay — ABOVE every
+                  read-only layer item. Locations keep their bound DraftPreview unchanged; mining
+                  renders the generic overlay through the ONE mining descriptor binding. */}
+              {authoringDomain === 'locations' ? (
+                <DraftPreview k={k} />
+              ) : (
+                miningDraftStore.activeDraft && (
+                  <DraftPreviewOverlay
+                    activeDraft={miningDraftStore.activeDraft}
+                    toLayerItem={MINING_DRAFT_DESCRIPTOR.toLayerItem}
+                    withinBounds={MINING_DRAFT_DESCRIPTOR.withinBounds}
+                    k={k}
+                  />
+                )
+              )}
             </g>
           </svg>
 
@@ -373,26 +415,51 @@ export function WorldEditor() {
                   ))}
                 </dl>
 
-                {/* Authoring — V1B-1: create/edit are LIVE and open a LOCAL draft (zero live
-                    mutation). publish/enable/disable/archive stay EXPLICITLY DISABLED (§WE.2). */}
+                {/* Authoring — V1B-1/V2A-2: create/edit are LIVE and open a LOCAL draft in the
+                    ACTIVE authoring domain (zero live mutation). publish/enable/disable/archive
+                    stay EXPLICITLY DISABLED (§WE.2). */}
                 <div className="mt-2">
                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Authoring</div>
                   <div className="flex flex-wrap gap-1.5">
-                    <Button size="sm" onClick={() => draftStore.beginCreateDraft()}>
-                      Create draft
-                    </Button>
                     <Button
                       size="sm"
-                      disabled={!selectedLocation}
-                      title={
-                        selectedLocation
-                          ? 'Fork this location into a local edit draft.'
-                          : 'Edit drafts fork off a selected LOCATION in this slice.'
+                      onClick={() =>
+                        authoringDomain === 'locations'
+                          ? draftStore.beginCreateDraft()
+                          : miningDraftStore.beginCreateDraft()
                       }
-                      onClick={() => selectedLocation && draftStore.forkEditDraft(selectedLocation)}
                     >
-                      Edit as draft
+                      Create draft
                     </Button>
+                    {authoringDomain === 'locations' ? (
+                      <Button
+                        size="sm"
+                        disabled={!selectedLocation}
+                        title={
+                          selectedLocation
+                            ? 'Fork this location into a local edit draft.'
+                            : 'Edit drafts fork off a selected LOCATION in this slice.'
+                        }
+                        onClick={() => selectedLocation && draftStore.forkEditDraft(selectedLocation)}
+                      >
+                        Edit as draft
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        disabled={!selectedMiningField}
+                        title={
+                          selectedMiningField
+                            ? 'Fork this mining field into a local edit draft.'
+                            : 'Edit drafts fork off a selected MINING FIELD in this domain.'
+                        }
+                        onClick={() =>
+                          selectedMiningField && miningDraftStore.forkEditDraft(selectedMiningField)
+                        }
+                      >
+                        Edit as draft
+                      </Button>
+                    )}
                     {DEFERRED_OPERATIONS.filter((op) => !LIVE_DRAFT_OPERATIONS.includes(op)).map((op) => (
                       <button
                         key={op}
@@ -413,11 +480,34 @@ export function WorldEditor() {
             )}
           </section>
 
-          {/* V1B-1: the local draft list + form (client-side only; see LocationDraftPanel). */}
-          <LocationDraftPanel />
+          {/* V2A-2: the authoring-domain toggle — picks which draft panel + preview is active.
+              Both stores stay mounted; switching never discards the other domain's drafts. */}
+          <section className="rounded-card border border-edge bg-surface p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Authoring domain</div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(['locations', 'mining'] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setAuthoringDomain(d)}
+                  className={`rounded-md border px-3 py-2 text-sm ${
+                    authoringDomain === d
+                      ? 'border-accent/60 bg-accent-soft text-ink'
+                      : 'border-edge bg-surface-2 text-ink-muted'
+                  }`}
+                  aria-pressed={authoringDomain === d}
+                >
+                  {d === 'locations' ? 'Locations' : 'Mining fields'}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* V1B-1/V2A-2: the ACTIVE domain's local draft list + form (client-side only). */}
+          {authoringDomain === 'locations' ? <LocationDraftPanel /> : <MiningDraftPanel />}
         </aside>
       </div>
     </div>
+    </MiningDraftsContext.Provider>
     </LocationDraftsContext.Provider>
   )
 }
