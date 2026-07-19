@@ -1,0 +1,57 @@
+name: DANGER-ZONE COMBAT — intercept→spatial disposable proof (no production)
+
+# Proves the owner's #1 chain on a throwaway local Supabase — NEVER production:
+#   1. DB-free selftest: the harness is well-formed, self-rolling-back, toggles every dark flag ONLY
+#      inside the txn, provisions + sends through the REAL RPCs (group_sortie_members/combat_units are
+#      never hand-written), risk knobs = 1.0 for a certain hit, and every property is asserted.
+#   2. a disposable local Supabase (the full chain incl. migrations 0233/0234/0236) running the real
+#      scenario: commission + arm a ship → form a team → draw a danger zone on the departure leg →
+#      command_ship_group_go THROUGH it → assert intercepted + a SPATIAL encounter opened (positioned
+#      combat_units) → one process_combat_ticks() → assert a spawned + firing synthetic pirate + damage.
+#      The same `supabase start` also APPLIES migration 0236's own self-assert (the reliable-ambush risk
+#      floor) against the real chain — the CI apply-proof net.
+# HOST DECISION: a NEW, standalone workflow (the combat-spatial-proof.yml / decks-proof.yml precedent) —
+# no `environment:` on any job, so none can read production secrets. Flips NO committed flag.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-danger-combat**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: danger-combat-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/danger-combat-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0233/0234/0236)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: DANGER-ZONE COMBAT real-chain scenario
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/danger-combat-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
