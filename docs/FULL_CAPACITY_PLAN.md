@@ -222,11 +222,42 @@ surface owning Go / Redirect / Stop / Dock — deletes three panels instead of a
 Berth arc S6. Ships grouped by fleet plus a Berthed section — condition, stats, buffs, and fitting when
 docked; the Command tab owns fleet composition, the Fitting tab owns per-ship equipment. Deps: BERTH.
 
-### RETIRE — legacy movement retirement *(S/M — 4a-post SHIPPED; 4c-mig-1 repoints in progress; 4c-mig-2 + 4b-drop planned)*
+### RETIRE — legacy movement retirement *(S/M — COMPLETE: 4a-post + 4c repoints SHIPPED; 4b-drop server drops SHIPPED as migs 0231/0232)*
 
 Retire the replaced per-ship movement system as its own slices: 4a-post deletes the dead per-ship client,
-4c retires the legacy movement signals, 4b-drop drops the legacy server movers (drain-asserted). Deps:
-MOVEMENT live + soaked.
+4c retires the legacy movement signals, 4b-drop drops the legacy server movers (drain-asserted:
+`movement_schema_drop` mig 0231 + `movement_function_drop` mig 0232). Deps: MOVEMENT live + soaked.
+
+### PIRATES — pirate intercept + danger zones *(M — SHIPPED dark as migs 0233/0236/0237, behind `pirate_intercept_enabled`)*
+
+Polygon danger zones on the map with intercept rolls when a fleet's route crosses one: zone geometry +
+draw/read RPCs + waypoint route advancing (mig 0233), reliable-ambush intercept tuning (mig 0236), and
+slime-tier danger zones (mig 0237). Every server arm rejects on the dark gate BEFORE any other read —
+flag off means movement/combat is byte-identical to before. Deps: MOVEMENT, POSLEAF.
+
+### COMBAT-SPATIAL — per-ship spatial group combat *(L — SHIPPED as migs 0234/0240/0241/0242, behind `spatial_combat_enabled`)*
+
+Group combat gains real space: per-ship positions, movement, and targeting inside the encounter
+(`combat_spatial_tick`, mig 0234), synthetic pirate units capped and tuned by knobs, aggregate-bucket
+uniqueness so multi-pirate waves cannot stall (mig 0240), the `next_wave_incoming` tick result admitted
+to the CHECK (mig 0241), and sticky spatial mode so a mid-fight de-spatialization cannot happen
+(mig 0242). Deps: COMBAT S0-S2 (migs 0229/0230), PIRATES.
+
+### PORTSHOP — the port outfitter *(M — SHIPPED dark as mig 0235, behind `port_shop_enabled`)*
+
+Buy entry-level modules at a port: a server-authoritative `port_shop_buy` with catalog pricing, plus the
+docked ShopPanel client. Dark behind `port_shop_enabled`. Deps: P1 ECON-SEED, BERTH.
+
+### WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it *(L — V1 read-only foundation + V1B-0 owner spine + V1B-1 location drafts SHIPPED, merged 2026-07-19 as migs 0238/0243; spine 0243 UNDEPLOYED by design; publish pipeline planned)*
+
+The owner's in-game world-authoring surface (`src/features/worldeditor/`, arch: `docs/ZONE_TEMPLATES_ARCH.md`).
+V1: read-only unified map layers — locations, mining, exploration, zones — behind the client dev route
+gated by `dev_zone_editor_enabled` (mig 0238; UX gating, never authorization). V1B-0: the ONE
+server-authoritative owner security spine — `app_owners` + `is_owner()` + audit/idempotency command
+contracts every future editor command calls FIRST (mig 0243; fail-closed, ZERO world mutation,
+deliberately undeployed pending review). V1B-1: client-side location drafts + preview (draft model,
+guards, DraftPreview — no publish path exists yet). Next: the draft→publish command pipeline riding the
+0243 spine. Deps: none on game loops — fully editor-side.
 
 ### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)*
 

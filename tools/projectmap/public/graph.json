@@ -1,16 +1,16 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 226,
-  "functions": 217,
-  "tables": 80,
-  "flags": 33,
+  "migrations": 239,
+  "functions": 232,
+  "tables": 87,
+  "flags": 37,
   "systems": 29,
-  "phases": 24,
+  "phases": 28,
   "rungs": 9,
   "jobs": 235,
-  "nodes": 618,
-  "edges": 1740
+  "nodes": 661,
+  "edges": 1909
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -2568,6 +2568,157 @@
    ]
   },
   {
+   "id": "mig:20260618000231",
+   "kind": "migration",
+   "label": "0231 movement_schema_drop",
+   "stamp": "20260618000231",
+   "seq": "0231",
+   "addedAt": "2026-07-19T00:13:06+09:00",
+   "file": "supabase/migrations/20260618000231_movement_schema_drop.sql",
+   "detail": "4C-MIG-2B — MOVEMENT SCHEMA DROP (migration 0231): the IRREVERSIBLE stage of the legacy-movement retirement. In ONE all-or-nothing transaction this migration: (1) reconciles orphan legacy data, (2) stops the LAST live writers from touching the doomed columns, (3) drops the 0054/0055 spatial CHECK constraints, (4) narrows the status CHECK (retires 'stationary'), (5) drops main_ship_instances.spatia",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000232",
+   "kind": "migration",
+   "label": "0232 movement_function_drop",
+   "stamp": "20260618000232",
+   "seq": "0232",
+   "addedAt": "2026-07-19T00:15:21+09:00",
+   "file": "supabase/migrations/20260618000232_movement_function_drop.sql",
+   "detail": "4B-DROP — LEGACY MOVEMENT FUNCTION DROP (migration 0232): the FINAL, IRREVERSIBLE stage of the legacy-movement retirement. Drops the DEAD legacy mover FUNCTIONS left behind after 4c-mig-1 (0221, READ repoint), 4c-mig-2a (0222, WRITE repoint), and 4c-mig-2b (0231, SCHEMA drop) — all three already landed in this chain. No table, column, or CHECK is touched here (that was 0231's job); this file is fu",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000233",
+   "kind": "migration",
+   "label": "pirate_intercept_danger_zones",
+   "stamp": "20260618000233",
+   "seq": null,
+   "addedAt": "2026-07-19T01:29:22+09:00",
+   "file": "supabase/migrations/20260618000233_pirate_intercept_danger_zones.sql",
+   "detail": "Byeharu — PIRATE INTERCEPT + DANGER ZONES (prototype slice; DARK by default). ═══════════════════════════════════════════════════════════════════════════════════════════════ THE FEATURE (owner's words): \"pirate territory intercept + waypoint routing. I want there to be a danger zone, and ships with lower stats should be aware of this and go around the spot. When entering a zone there is always a r",
+   "seedsFlag": [
+    "pirate_intercept_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000234",
+   "kind": "migration",
+   "label": "0234 combat_spatial_tick",
+   "stamp": "20260618000234",
+   "seq": "0234",
+   "addedAt": "2026-07-19T02:32:10+09:00",
+   "file": "supabase/migrations/20260618000234_combat_spatial_tick.sql",
+   "detail": "Byeharu — COMBAT SLICE 3: SPATIAL combat. Migration 0234. DARK behind the new flag `spatial_combat_enabled` (seeded false). Depends on S0 (0229, module range/projectile_speed/ power/ammo on module_types + ship_weapon_modules), S1 (0228, combat_units.aggro_priority + process_combat_ticks' per-ship aggro targeting), S2 (0230, the telegraph — untouched by this slice) — all on main.",
+   "seedsFlag": [
+    "spatial_combat_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000235",
+   "kind": "migration",
+   "label": "port_shop_buy",
+   "stamp": "20260618000235",
+   "seq": null,
+   "addedAt": "2026-07-19T02:49:47+09:00",
+   "file": "supabase/migrations/20260618000235_port_shop_buy.sql",
+   "detail": "Byeharu — PORT-SHOP (0235): the port outfitter — buy cheap ENTRY-LEVEL fitting modules + ammo at a port, for credits. The BUY-side mirror of SALVAGE (0174 sell_item_at_port) and the credit-debit twin of REPAIR (0201). DARK behind the NEW `port_shop_enabled` flag, seeded 'false'. ── WHY (owner playtest directive) ─────────────────────────────────────────────────────────────── A new player docks and",
+   "seedsFlag": [
+    "port_shop_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000236",
+   "kind": "migration",
+   "label": "0236 pirate_intercept_reliable_ambush",
+   "stamp": "20260618000236",
+   "seq": "0236",
+   "addedAt": "2026-07-19T09:52:54+09:00",
+   "file": "supabase/migrations/20260618000236_pirate_intercept_reliable_ambush.sql",
+   "detail": "Byeharu — PIRATE INTERCEPT: RELIABLE AMBUSH ON ZONE ENTRY. Migration 0236. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE PROBLEM (owner, 2026-07-19, furious): \"send a fleet into a danger zone → you visibly get jumped by pirates. Right now sending a fleet to a danger zone appears to do NOTHING.\"",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000237",
+   "kind": "migration",
+   "label": "slime_danger_zones",
+   "stamp": "20260618000237",
+   "seq": null,
+   "addedAt": "2026-07-19T09:32:29+09:00",
+   "file": "supabase/migrations/20260618000237_slime_danger_zones.sql",
+   "detail": "Byeharu — SLIME DANGER ZONES: reshape the auto-seeded circle zones into IRREGULAR organic blobs. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE OWNER'S ASK (repeated, still unmet before this slice): danger zones must be able to be \"any shape I decide\" / \"slime-like\", NOT perfect circles. Today the live pirate danger zones (Reaver / Snare / Black",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000238",
+   "kind": "migration",
+   "label": "dev_zone_editor_flag",
+   "stamp": "20260618000238",
+   "seq": null,
+   "addedAt": "2026-07-19T09:55:28+09:00",
+   "file": "supabase/migrations/20260618000238_dev_zone_editor_flag.sql",
+   "detail": "Byeharu — DEV ZONE EDITOR gate flag (owner-only authoring surface; DARK by default). ═══════════════════════════════════════════════════════════════════════════════════════════════ THE FEATURE: the OWNER wants to DRAW danger-zone polygons by hand (define pirate territory geometry) instead of me auto-generating them. That authoring surface is a dev-only client route (src/features/dev/ZoneEditor.tsx",
+   "seedsFlag": [
+    "dev_zone_editor_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000239",
+   "kind": "migration",
+   "label": "0233 pirate_zone_grant_lockdown",
+   "stamp": "20260618000239",
+   "seq": "0233",
+   "addedAt": "2026-07-19T14:19:24+09:00",
+   "file": "supabase/migrations/20260618000239_pirate_zone_grant_lockdown.sql",
+   "detail": "Byeharu — PIRATE-ZONE GRANT LOCKDOWN (reproducible privilege containment; no behavior change). ═══════════════════════════════════════════════════════════════════════════════════════════════ THE EXPOSURE: migration 0233 (20260618000233_pirate_intercept_danger_zones.sql) minted the zone authoring RPCs pirate_zone_create(text,jsonb,uuid) and pirate_zone_delete(uuid) and — by its own header's admissi",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000240",
+   "kind": "migration",
+   "label": "0023 combat_units_aggregate_bucket_uniqueness",
+   "stamp": "20260618000240",
+   "seq": "0023",
+   "addedAt": "2026-07-19T15:01:05+09:00",
+   "file": "supabase/migrations/20260618000240_combat_units_aggregate_bucket_uniqueness.sql",
+   "detail": "Byeharu — COMBAT CARDINALITY FIX: scope combat_units uniqueness to the aggregate player bucket. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE BUG: migration 0023 (20260617000023_combat_per_unit_and_pacing.sql) created combat_units with a BLANKET table constraint `unique (encounter_id, unit_type_id)` — auto-named `combat_units_encounter_id_unit_",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000241",
+   "kind": "migration",
+   "label": "0014 combat_ticks_result_next_wave",
+   "stamp": "20260618000241",
+   "seq": "0014",
+   "addedAt": "2026-07-19T16:53:40+09:00",
+   "file": "supabase/migrations/20260618000241_combat_ticks_result_next_wave.sql",
+   "detail": "Byeharu — COMBAT-TICKS RESULT VOCABULARY FIX: admit 'next_wave_incoming' to combat_ticks.result. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE BUG (latent, dormant behind a dark flag): migration 0014 (20260616000014_combat_tables.sql:54-56) created combat_ticks with an inline column CHECK — Postgres auto-named `combat_ticks_result_check` — perm",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000242",
+   "kind": "migration",
+   "label": "0242 combat_sticky_spatial_mode",
+   "stamp": "20260618000242",
+   "seq": "0242",
+   "addedAt": "2026-07-19T21:22:04+09:00",
+   "file": "supabase/migrations/20260618000242_combat_sticky_spatial_mode.sql",
+   "detail": "Byeharu - COMBAT: STICKY SPATIAL ENCOUNTER MODE. Migration 0242. Fixes mid-fight de-spatialization. -- THE DEFECT (pre-0242, live head 0234 process_combat_ticks) ----------------------------------------- process_combat_ticks re-read the global flag EVERY 3s tick: v_spatial_combat_enabled := cfg_bool('spatial_combat_enabled');   -- once per invocation v_is_spatial := v_spatial_combat_enabled",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000243",
+   "kind": "migration",
+   "label": "world_editor_owner_security_spine",
+   "stamp": "20260618000243",
+   "seq": null,
+   "addedAt": "2026-07-19T23:16:12+09:00",
+   "file": "supabase/migrations/20260618000243_world_editor_owner_security_spine.sql",
+   "detail": "Byeharu — WORLD EDITOR V1B-0: OWNER SECURITY SPINE (mutation-READINESS only; ZERO world mutation). ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the ONE reusable server-authoritative owner boundary + audit/idempotency/command contracts that EVERY future World Editor command will call FIRST, built once as prerequisite #1 (docs/ZONE_TEM",
+   "seedsFlag": []
+  },
+  {
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
@@ -3870,6 +4021,96 @@
    "detail": "Postgres function"
   },
   {
+   "id": "fn:pirate_intercept_leg_zone_hits",
+   "kind": "function",
+   "label": "pirate_intercept_leg_zone_hits",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_intercept_compute_risk",
+   "kind": "function",
+   "label": "pirate_intercept_compute_risk",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_intercept_evaluate_leg",
+   "kind": "function",
+   "label": "pirate_intercept_evaluate_leg",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:command_ship_group_cancel_route",
+   "kind": "function",
+   "label": "command_ship_group_cancel_route",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:command_ship_group_go_route",
+   "kind": "function",
+   "label": "command_ship_group_go_route",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:process_pirate_route_legs",
+   "kind": "function",
+   "label": "process_pirate_route_legs",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_intercept_preview_route",
+   "kind": "function",
+   "label": "pirate_intercept_preview_route",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:get_danger_zones",
+   "kind": "function",
+   "label": "get_danger_zones",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_zone_create",
+   "kind": "function",
+   "label": "pirate_zone_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_zone_delete",
+   "kind": "function",
+   "label": "pirate_zone_delete",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:combat_unit_decide_move",
+   "kind": "function",
+   "label": "combat_unit_decide_move",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:buy_shop_offer_at_port",
+   "kind": "function",
+   "label": "buy_shop_offer_at_port",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:get_port_shop",
+   "kind": "function",
+   "label": "get_port_shop",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:is_owner",
+   "kind": "function",
+   "label": "is_owner",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:world_editor_ping",
+   "kind": "function",
+   "label": "world_editor_ping",
+   "detail": "Postgres function"
+  },
+  {
    "id": "table:profiles",
    "kind": "table",
    "label": "profiles",
@@ -4430,6 +4671,55 @@
    "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
   },
   {
+   "id": "table:danger_zones",
+   "kind": "table",
+   "label": "danger_zones",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:pirate_intercepts",
+   "kind": "table",
+   "label": "pirate_intercepts",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:fleet_route_legs",
+   "kind": "table",
+   "label": "fleet_route_legs",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:port_shop_offers",
+   "kind": "table",
+   "label": "port_shop_offers",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:port_shop_receipts",
+   "kind": "table",
+   "label": "port_shop_receipts",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:app_owners",
+   "kind": "table",
+   "label": "app_owners",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:world_editor_audit",
+   "kind": "table",
+   "label": "world_editor_audit",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
    "id": "flag:runtime_cleanup_enabled",
    "kind": "flag",
    "label": "runtime_cleanup_enabled",
@@ -4625,6 +4915,30 @@
    "id": "flag:combat_telegraph_enabled",
    "kind": "flag",
    "label": "combat_telegraph_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:pirate_intercept_enabled",
+   "kind": "flag",
+   "label": "pirate_intercept_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:spatial_combat_enabled",
+   "kind": "flag",
+   "label": "spatial_combat_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:port_shop_enabled",
+   "kind": "flag",
+   "label": "port_shop_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:dev_zone_editor_enabled",
+   "kind": "flag",
+   "label": "dev_zone_editor_enabled",
    "detail": "game_config feature flag"
   },
   {
@@ -4887,9 +5201,45 @@
    "kind": "phase",
    "label": "RETIRE — legacy movement retirement",
    "planned": false,
-   "size": "S/M — 4a-post SHIPPED; 4c-mig-1 repoints in progress; 4c-mig-2 + 4b-drop planned",
+   "size": "S/M — COMPLETE: 4a-post + 4c repoints SHIPPED; 4b-drop server drops SHIPPED as migs 0231/0232",
    "file": "docs/FULL_CAPACITY_PLAN.md",
-   "detail": "### RETIRE — legacy movement retirement *(S/M — 4a-post SHIPPED; 4c-mig-1 repoints in progress; 4c-mig-2 + 4b-drop planned)* Retire the replaced per-ship movement system as its own slices: 4a-post deletes the dead per-ship client, 4c retires the legacy movement signals, 4b-drop drops the legacy server movers (drain-asserted). Deps: MOVEMENT live + soaked."
+   "detail": "### RETIRE — legacy movement retirement *(S/M — COMPLETE: 4a-post + 4c repoints SHIPPED; 4b-drop server drops SHIPPED as migs 0231/0232)* Retire the replaced per-ship movement system as its own slices: 4a-post deletes the dead per-ship client, 4c retires the legacy movement signals, 4b-drop drops the legacy server movers (drain-asserted: `movement_schema_drop` mig 0231 + `movement_function_drop` mig 0232). Deps:"
+  },
+  {
+   "id": "phase:PIRATES",
+   "kind": "phase",
+   "label": "PIRATES — pirate intercept + danger zones",
+   "planned": false,
+   "size": "M — SHIPPED dark as migs 0233/0236/0237, behind `pirate_intercept_enabled`",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### PIRATES — pirate intercept + danger zones *(M — SHIPPED dark as migs 0233/0236/0237, behind `pirate_intercept_enabled`)* Polygon danger zones on the map with intercept rolls when a fleet's route crosses one: zone geometry + draw/read RPCs + waypoint route advancing (mig 0233), reliable-ambush intercept tuning (mig 0236), and slime-tier danger zones (mig 0237). Every server arm rejects on the dark gate BEFORE"
+  },
+  {
+   "id": "phase:COMBAT-SPATIAL",
+   "kind": "phase",
+   "label": "COMBAT-SPATIAL — per-ship spatial group combat",
+   "planned": false,
+   "size": "L — SHIPPED as migs 0234/0240/0241/0242, behind `spatial_combat_enabled`",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### COMBAT-SPATIAL — per-ship spatial group combat *(L — SHIPPED as migs 0234/0240/0241/0242, behind `spatial_combat_enabled`)* Group combat gains real space: per-ship positions, movement, and targeting inside the encounter (`combat_spatial_tick`, mig 0234), synthetic pirate units capped and tuned by knobs, aggregate-bucket uniqueness so multi-pirate waves cannot stall (mig 0240), the `next_wave_incoming` tick r"
+  },
+  {
+   "id": "phase:PORTSHOP",
+   "kind": "phase",
+   "label": "PORTSHOP — the port outfitter",
+   "planned": false,
+   "size": "M — SHIPPED dark as mig 0235, behind `port_shop_enabled`",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### PORTSHOP — the port outfitter *(M — SHIPPED dark as mig 0235, behind `port_shop_enabled`)* Buy entry-level modules at a port: a server-authoritative `port_shop_buy` with catalog pricing, plus the docked ShopPanel client. Dark behind `port_shop_enabled`. Deps: P1 ECON-SEED, BERTH."
+  },
+  {
+   "id": "phase:WORLDEDIT",
+   "kind": "phase",
+   "label": "WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it",
+   "planned": false,
+   "size": "L — V1 read-only foundation + V1B-0 owner spine + V1B-1 location drafts SHIPPED, merged 2026-07-19 as migs 0238/0243; spine 0243 UNDEPLOYED by design; publish pipeline planned",
+   "file": "docs/FULL_CAPACITY_PLAN.md",
+   "detail": "### WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it *(L — V1 read-only foundation + V1B-0 owner spine + V1B-1 location drafts SHIPPED, merged 2026-07-19 as migs 0238/0243; spine 0243 UNDEPLOYED by design; publish pipeline planned)* The owner's in-game world-authoring surface (`src/features/worldeditor/`, arch: `docs/ZONE_TEMPLATES_ARCH.md`). V1: read-only unified map layers — locations, min"
   },
   {
    "id": "phase:P0",
@@ -9146,6 +9496,461 @@
    "type": "gated-by"
   },
   {
+   "source": "mig:20260618000231",
+   "target": "fn:mainship_mark_combat_destroyed",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "fn:repair_main_ship",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "fn:send_ship_group_hunt",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "fn:mainship_mark_docked_at_location",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "fn:get_my_fleet_positions",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "fn:fleet_set_in_space",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "fn:mainship_mark_legacy_in_flight",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "fn:send_main_ship_expedition",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "fn:move_ship_group_to_location",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "table:main_ship_instances",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "table:fleets",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "table:main_ship_space_command_receipts",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "flag:mainship_space_movement_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "flag:mainship_coordinate_travel_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "flag:launch_from_dock_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "flag:fleet_control_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "flag:team_command_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "flag:mainship_send_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:send_main_ship_expedition",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:move_main_ship_to_location",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:request_main_ship_return",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:command_main_ship_space_move",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:command_main_ship_space_move_to_location",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:command_main_ship_space_stop",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:mainship_space_begin_move",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:mainship_space_begin_move_core",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:mainship_space_stop",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:mainship_space_settle_space_arrival",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:mainship_space_dock_at_location",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:mainship_space_resolve_origin",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:command_main_ship_settle_arrival",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:command_main_ship_settle_arrival_legacy",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:process_mainship_space_arrivals",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:get_osn_movement_readiness",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:normalize_main_ship_dock",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:dev_set_main_ship_destroyed",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:send_ship_group_expedition",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "fn:move_ship_group_to_location",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "flag:mainship_space_movement_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000232",
+   "target": "flag:mainship_coordinate_travel_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:pirate_intercept_leg_zone_hits",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:pirate_intercept_compute_risk",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:pirate_intercept_evaluate_leg",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:command_ship_group_cancel_route",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:command_ship_group_go",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:command_ship_group_go_route",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:process_pirate_route_legs",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:pirate_intercept_preview_route",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:get_danger_zones",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:pirate_zone_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "fn:pirate_zone_delete",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "table:danger_zones",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "table:pirate_intercepts",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "table:fleet_route_legs",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "table:danger_zones",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "table:pirate_intercepts",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "table:fleet_route_legs",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "flag:timed_docking_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "fn:combat_unit_decide_move",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "fn:combat_create_group_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "fn:report_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "table:combat_units",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "flag:spatial_combat_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000235",
+   "target": "fn:buy_shop_offer_at_port",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000235",
+   "target": "fn:get_port_shop",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000235",
+   "target": "table:port_shop_offers",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000235",
+   "target": "table:port_shop_receipts",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000235",
+   "target": "table:port_shop_offers",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000235",
+   "target": "table:port_shop_receipts",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000235",
+   "target": "flag:port_shop_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000235",
+   "target": "flag:port_shop_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000238",
+   "target": "flag:dev_zone_editor_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000238",
+   "target": "flag:dev_zone_editor_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000240",
+   "target": "table:combat_units",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000241",
+   "target": "table:combat_ticks",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000242",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000242",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000242",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000243",
+   "target": "fn:is_owner",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000243",
+   "target": "fn:world_editor_ping",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000243",
+   "target": "table:app_owners",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000243",
+   "target": "table:world_editor_audit",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000243",
+   "target": "table:app_owners",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000243",
+   "target": "table:world_editor_audit",
+   "type": "alters"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -10208,6 +11013,90 @@
    "note": "activity_start"
   },
   {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000167",
+   "type": "supersedes",
+   "note": "mainship_mark_combat_destroyed"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000222",
+   "type": "supersedes",
+   "note": "repair_main_ship"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000222",
+   "type": "supersedes",
+   "note": "send_ship_group_hunt"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000153",
+   "type": "supersedes",
+   "note": "mainship_mark_docked_at_location"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000221",
+   "type": "supersedes",
+   "note": "get_my_fleet_positions"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000208",
+   "type": "supersedes",
+   "note": "fleet_set_in_space"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000152",
+   "type": "supersedes",
+   "note": "mainship_mark_legacy_in_flight"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000199",
+   "type": "supersedes",
+   "note": "send_main_ship_expedition"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000204",
+   "type": "supersedes",
+   "note": "move_ship_group_to_location"
+  },
+  {
+   "source": "mig:20260618000233",
+   "target": "mig:20260618000219",
+   "type": "supersedes",
+   "note": "command_ship_group_go"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "mig:20260618000228",
+   "type": "supersedes",
+   "note": "combat_create_group_encounter"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "mig:20260618000228",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "mig:20260618000167",
+   "type": "supersedes",
+   "note": "report_create"
+  },
+  {
+   "source": "mig:20260618000242",
+   "target": "mig:20260618000234",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
    "source": "mig:20260616000007",
    "target": "mig:20260616000006",
    "type": "extends",
@@ -10512,6 +11401,42 @@
    "target": "mig:20260618000107",
    "type": "extends",
    "note": "module_types"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260617000043",
+   "type": "extends",
+   "note": "main_ship_instances"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260616000006",
+   "type": "extends",
+   "note": "fleets"
+  },
+  {
+   "source": "mig:20260618000231",
+   "target": "mig:20260618000055",
+   "type": "extends",
+   "note": "main_ship_space_command_receipts"
+  },
+  {
+   "source": "mig:20260618000234",
+   "target": "mig:20260617000023",
+   "type": "extends",
+   "note": "combat_units"
+  },
+  {
+   "source": "mig:20260618000240",
+   "target": "mig:20260617000023",
+   "type": "extends",
+   "note": "combat_units"
+  },
+  {
+   "source": "mig:20260618000241",
+   "target": "mig:20260616000014",
+   "type": "extends",
+   "note": "combat_ticks"
   },
   {
    "source": "fn:base_reserve_units",
@@ -13274,6 +14199,206 @@
    "type": "touches"
   },
   {
+   "source": "fn:pirate_intercept_compute_risk",
+   "target": "fn:cfg_num",
+   "type": "calls"
+  },
+  {
+   "source": "fn:command_ship_group_cancel_route",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:command_ship_group_cancel_route",
+   "target": "fn:mainship_resolve_owned_group",
+   "type": "calls"
+  },
+  {
+   "source": "fn:command_ship_group_cancel_route",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:command_ship_group_cancel_route",
+   "target": "table:fleet_route_legs",
+   "type": "touches"
+  },
+  {
+   "source": "fn:command_ship_group_go_route",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:command_ship_group_go_route",
+   "target": "fn:cfg_num",
+   "type": "calls"
+  },
+  {
+   "source": "fn:command_ship_group_go_route",
+   "target": "fn:command_ship_group_go",
+   "type": "calls"
+  },
+  {
+   "source": "fn:command_ship_group_go_route",
+   "target": "table:fleet_route_legs",
+   "type": "touches"
+  },
+  {
+   "source": "fn:process_pirate_route_legs",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:process_pirate_route_legs",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:process_pirate_route_legs",
+   "target": "table:fleet_route_legs",
+   "type": "touches"
+  },
+  {
+   "source": "fn:process_pirate_route_legs",
+   "target": "fn:calculate_group_expedition_stats",
+   "type": "calls"
+  },
+  {
+   "source": "fn:pirate_intercept_preview_route",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:pirate_intercept_preview_route",
+   "target": "fn:mainship_resolve_owned_group",
+   "type": "calls"
+  },
+  {
+   "source": "fn:pirate_intercept_preview_route",
+   "target": "fn:calculate_group_expedition_stats",
+   "type": "calls"
+  },
+  {
+   "source": "fn:pirate_intercept_preview_route",
+   "target": "fn:cfg_num",
+   "type": "calls"
+  },
+  {
+   "source": "fn:pirate_intercept_preview_route",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:pirate_intercept_preview_route",
+   "target": "fn:fleet_current_position",
+   "type": "calls"
+  },
+  {
+   "source": "fn:pirate_intercept_preview_route",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:pirate_zone_create",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:pirate_zone_create",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_unit_decide_move",
+   "target": "fn:osn_distance",
+   "type": "calls"
+  },
+  {
+   "source": "fn:combat_create_group_encounter",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:combat_create_group_encounter",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_create_group_encounter",
+   "target": "fn:cfg_num",
+   "type": "calls"
+  },
+  {
+   "source": "fn:combat_create_group_encounter",
+   "target": "table:ship_module_fittings",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_create_group_encounter",
+   "target": "table:module_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_create_group_encounter",
+   "target": "table:module_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "table:port_shop_offers",
+   "type": "touches"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "table:port_shop_receipts",
+   "type": "touches"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "fn:mainship_resolve_owned_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "fn:mainship_space_lock_context",
+   "type": "calls"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "fn:mainship_resolve_docked_location",
+   "type": "calls"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "fn:wallet_debit",
+   "type": "calls"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "fn:modules_mint_instance",
+   "type": "calls"
+  },
+  {
+   "source": "fn:buy_shop_offer_at_port",
+   "target": "fn:inventory_deposit",
+   "type": "calls"
+  },
+  {
+   "source": "fn:is_owner",
+   "target": "table:app_owners",
+   "type": "touches"
+  },
+  {
+   "source": "fn:is_owner",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
    "source": "table:profiles",
    "target": "system:Auth",
    "type": "owned-by"
@@ -13721,6 +14846,96 @@
   {
    "source": "phase:TIMEDOCK",
    "target": "flag:timed_docking_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:RETIRE",
+   "target": "mig:20260618000231",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:RETIRE",
+   "target": "mig:20260618000232",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:PIRATES",
+   "target": "mig:20260618000233",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:PIRATES",
+   "target": "mig:20260618000236",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:PIRATES",
+   "target": "mig:20260618000237",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:PIRATES",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:COMBAT-SPATIAL",
+   "target": "mig:20260618000234",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:COMBAT-SPATIAL",
+   "target": "mig:20260618000240",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:COMBAT-SPATIAL",
+   "target": "mig:20260618000241",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:COMBAT-SPATIAL",
+   "target": "mig:20260618000242",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:COMBAT-SPATIAL",
+   "target": "mig:20260618000229",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:COMBAT-SPATIAL",
+   "target": "mig:20260618000230",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:COMBAT-SPATIAL",
+   "target": "flag:spatial_combat_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:PORTSHOP",
+   "target": "mig:20260618000235",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:PORTSHOP",
+   "target": "flag:port_shop_enabled",
+   "type": "delivers"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000238",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000243",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "flag:dev_zone_editor_enabled",
    "type": "delivers"
   },
   {
