@@ -72,10 +72,11 @@ export function MapScreen() {
   // part of selectedId's id-space) — mutually exclusive with the location selection + the point
   // target below, same "only one live selection" posture as the rest of this screen.
   const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null)
-  // PIRATE INTERCEPT (prototype): the route-planner / zone-drawing tap mode + its accumulated points.
-  // 'off' by default — the map's tap handling is byte-identical to today until the player arms one of
-  // the two modes via PirateInterceptPanel (mounted inside the command hub while the flag is lit).
-  const [pirateMode, setPirateMode] = useState<'off' | 'route' | 'draw'>('off')
+  // PIRATE INTERCEPT: the route-planner tap mode + its accumulated waypoints. 'off' by default — the
+  // map's tap handling is byte-identical to today until the player arms route plotting via
+  // PirateInterceptPanel (mounted inside the command hub while the flag is lit). Zone-DRAWING is a
+  // dev/admin authoring tool and has no player UI here, so 'draw' is not a player mode.
+  const [pirateMode, setPirateMode] = useState<'off' | 'route'>('off')
   const [pirateDraftPoints, setPirateDraftPoints] = useState<WorldCoord[]>([])
   // CLEAN-MAP COMMAND HUB — the ONE authority (ONE hub, TWO stages):
   //   stage 1 (hubView='menu') — a double-tap on empty space opens a COMPACT ACTION MENU at that
@@ -148,13 +149,11 @@ export function MapScreen() {
     if (name !== null) setSelectedId(null)
   }
 
-  // PIRATE INTERCEPT (prototype): appends a tapped point to the active draft, capped per mode (route:
-  // 3 waypoints + 1 final = 4; draw: the server's pirate_zone_create vertex ceiling is 64, capped lower
-  // here for a usable tap-to-add UX). Only fires while pirateMode is 'route'/'draw' — with the mode
-  // 'off' a single tap does nothing and a double-tap summons the hub, so this never runs then.
+  // PIRATE INTERCEPT: appends a tapped point to the route draft, capped at 3 waypoints + 1 final = 4.
+  // Only fires while pirateMode is 'route' — with the mode 'off' a single tap does nothing and a
+  // double-tap summons the hub, so this never runs then.
   const handlePirateTap = (world: WorldCoord) => {
-    const cap = pirateMode === 'route' ? 4 : 24
-    setPirateDraftPoints((pts) => (pts.length >= cap ? pts : [...pts, world]))
+    setPirateDraftPoints((pts) => (pts.length >= 4 ? pts : [...pts, world]))
   }
 
   // The point target resolved ONCE (raw + canonical preview + bounds verdict); feeds both the
@@ -391,12 +390,11 @@ export function MapScreen() {
                       />
                     )}
 
-                    {/* PIRATE INTERCEPT — plot an ambush route / draw a danger zone. Reused as-is; the
+                    {/* PIRATE INTERCEPT — plot a route around danger zones. Reused as-is; the
                         header owns dismissal, so no per-panel close here. */}
                     {hubView === 'pirate' && pirateInterceptEnabled && (
                       <PirateInterceptPanel
                         groupId={teamGroups[0]?.group_id ?? null}
-                        locations={locations}
                         mode={pirateMode}
                         onModeChange={setPirateMode}
                         draftPoints={pirateDraftPoints}
