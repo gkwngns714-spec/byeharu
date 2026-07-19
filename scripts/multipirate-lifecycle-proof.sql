@@ -368,18 +368,23 @@ begin
     where e.id = v_enc and f2.status in ('active','retreating');
   if n_active <> 1 then raise exception 'D FAIL: % active encounters for team A fleet (want exactly 1)', n_active; end if;
 
-  -- ── WAVE 1 (danger 1 → 1 pirate) — drive to completion; assert monotonic tick/last_resolved. ────────
-  select tick_number, last_resolved_at into tk_prev, lr_prev from public.combat_encounters where id = v_enc;
+  -- ── WAVE 1 (danger 1 → 1 pirate) — drive to completion; assert tick_number strictly advances AND
+  --    every tick REFRESHES last_resolved_at to now(). (now() is frozen at txn start, so last_resolved_at
+  --    cannot strictly INCREASE across ticks — the meaningful anti-stall invariant is that each tick
+  --    RE-RESOLVES it to now(): the helper rewinds it to now()-1min and a live tick must reset it to
+  --    now(); a stalled/rolled-back tick — as section F proved — leaves it at the stale rewound value.) ─
+  select tick_number into tk_prev from public.combat_encounters where id = v_enc;
   guard := 0;
   loop
+    -- last_resolved_at is now()-1min immediately before the tick (rewound inside pg_temp.tick).
     perform pg_temp.tick(v_enc);
     select tick_number, last_resolved_at, waves_cleared into tk, lr, wc from public.combat_encounters where id = v_enc;
     if tk <= tk_prev then raise exception 'C FAIL: tick_number did not strictly advance (%->%) — a stall/roll-back loop', tk_prev, tk; end if;
-    if lr <= lr_prev then raise exception 'C FAIL: last_resolved_at did not strictly advance'; end if;
+    if lr is distinct from now() then raise exception 'C FAIL: last_resolved_at not refreshed to now() after the tick (left at % — a stall)', lr; end if;
     -- exactly one enemy row exists for a danger-1 wave (initialised once, no double-spawn).
     select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
     if n <> 1 then raise exception 'C FAIL: danger-1 wave has % enemy rows (want exactly 1)', n; end if;
-    tk_prev := tk; lr_prev := lr;
+    tk_prev := tk;
     exit when wc >= 1;
     guard := guard + 1; if guard > 30 then raise exception 'C FAIL: wave 1 did not clear within 30 ticks'; end if;
   end loop;
@@ -467,7 +472,7 @@ begin
     guard := guard + 1; if guard > 40 then raise exception 'C FAIL: wave 3 did not clear within 40 ticks'; end if;
   end loop;
   if wc <> 3 then raise exception 'C FAIL: waves_cleared=% after wave 3 (want 3)', wc; end if;
-  raise notice 'MPLIFE_PASS_WAVE_LIFECYCLE ok: waves 1(1)→2(2)→3(3) each spawned once and completed; waves_cleared advanced 1→2→3; tick_number/last_resolved_at strictly advanced throughout (no stall); delete-then-respawn kept exactly N enemy rows per wave';
+  raise notice 'MPLIFE_PASS_WAVE_LIFECYCLE ok: waves 1(1)→2(2)→3(3) each spawned once and completed; waves_cleared advanced 1→2→3; tick_number strictly advanced and every tick re-resolved last_resolved_at to now() (no stall/roll-back loop); delete-then-respawn kept exactly N enemy rows per wave';
 
   -- ── D: exactly one reward per cleared wave; no double-count. ─────────────────────────────────────────
   select count(*) into n_wave_cleared from public.combat_ticks where encounter_id = v_enc and result='wave_cleared';
