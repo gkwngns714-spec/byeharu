@@ -549,7 +549,7 @@ export function GalaxyMap({
       {/* bottom-left: collapsible marker key — a small "Map key" chip by default so it never
           covers the map; expands to a readable vertical list (was a tiny wrapping block that
           sprawled across the bottom on narrow screens). */}
-      <OverlayPanel slot="bottom-left" className="pointer-events-auto max-w-[calc(100vw-1.5rem)] text-xs text-ink-muted">
+      <OverlayPanel slot="bottom-left" className="pointer-events-auto max-w-[calc(100vw-1.5rem)] text-sm text-ink-muted">
         <details>
           <summary className="cursor-pointer select-none list-none font-medium">Map key</summary>
           <div className="mt-2 flex flex-col gap-1.5 text-ink-faint">

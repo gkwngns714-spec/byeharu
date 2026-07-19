@@ -97,7 +97,7 @@ export function PirateInterceptPanel({
   }
 
   return (
-    <OverlayPanel className="pointer-events-auto flex w-64 flex-col gap-2 text-xs">
+    <OverlayPanel className="pointer-events-auto flex w-64 max-w-[calc(100vw-1.5rem)] flex-col gap-2 text-sm">
       <div className="flex items-center justify-between">
         <span className="font-semibold text-ink">Pirate Intercept</span>
         {onClose && (
@@ -112,12 +112,14 @@ export function PirateInterceptPanel({
           </button>
         )}
       </div>
-      <div className="flex gap-2">
-        <Button size="sm" variant={mode === 'route' ? 'primary' : 'secondary'} onClick={() => toggle('route')}>
-          Plot route
+      {/* The two capabilities as full-width, plainly-labelled picks so neither is buried — the active
+          one lights primary. "Draw danger zone" stays first-class beside route planning. */}
+      <div className="flex flex-col gap-1.5">
+        <Button size="sm" variant={mode === 'route' ? 'primary' : 'secondary'} className="w-full" onClick={() => toggle('route')}>
+          Plot ambush route
         </Button>
-        <Button size="sm" variant={mode === 'draw' ? 'primary' : 'secondary'} onClick={() => toggle('draw')}>
-          Draw zone
+        <Button size="sm" variant={mode === 'draw' ? 'primary' : 'secondary'} className="w-full" onClick={() => toggle('draw')}>
+          Draw danger zone
         </Button>
       </div>
 
@@ -143,24 +145,38 @@ export function PirateInterceptPanel({
 
       {mode === 'draw' && (
         <div className="flex flex-col gap-2">
-          <p className="text-ink-muted">Tap the map to add zone corners (3+). Smoothed automatically.</p>
-          <p className="text-ink">{draftPoints.length} corners</p>
+          <p className="text-ink-muted">Tap the map to drop corners (3 or more). The shape is smoothed automatically.</p>
+          <p className="text-ink">{draftPoints.length} corners placed</p>
+          <label className="text-xs font-medium text-ink-muted" htmlFor="pirate-zone-name">Zone name</label>
           <input
+            id="pirate-zone-name"
             className="rounded border border-edge bg-app px-2 py-1 text-ink"
             value={zoneName}
             onChange={(e) => setZoneName(e.target.value)}
             placeholder="Zone name"
           />
+          {/* THE ATTACH DISTINCTION, in plain words: linking the zone to a pirate site is what makes it
+              actually fight — a standalone zone is only a drawn hazard warning. Both the option copy
+              and the helper line below say so, so the player can deliberately make a zone that attacks. */}
+          <label className="text-xs font-medium text-ink-muted" htmlFor="pirate-zone-attach">What should this zone do?</label>
           <select
+            id="pirate-zone-attach"
             className="rounded border border-edge bg-app px-2 py-1 text-ink"
             value={attachLocationId}
             onChange={(e) => setAttachLocationId(e.target.value)}
           >
-            <option value="">Standalone (no combat — geometry/warning only)</option>
+            <option value="">Warning only — marks danger, never attacks</option>
             {hostileLocations.map((l) => (
-              <option key={l.id} value={l.id}>Attach to: {l.name}</option>
+              <option key={l.id} value={l.id}>Attacks ships — linked to {l.name}</option>
             ))}
           </select>
+          <p className="text-xs text-ink-faint">
+            {attachLocationId
+              ? 'Ships that cross this zone get intercepted for combat.'
+              : hostileLocations.length === 0
+                ? 'No pirate site to link yet — this can only be a warning marker for now.'
+                : 'Warning-only: drawn as a hazard but never fights. Link it to a pirate site above to make it attack.'}
+          </p>
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={onUndoDraft} disabled={draftPoints.length === 0}>Undo</Button>
             <Button size="sm" variant="secondary" onClick={onClearDraft} disabled={draftPoints.length === 0}>Clear</Button>

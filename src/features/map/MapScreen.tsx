@@ -77,24 +77,52 @@ export function MapScreen() {
   // the two modes via PirateInterceptPanel (mounted inside the command hub while the flag is lit).
   const [pirateMode, setPirateMode] = useState<'off' | 'route' | 'draw'>('off')
   const [pirateDraftPoints, setPirateDraftPoints] = useState<WorldCoord[]>([])
-  // CLEAN-MAP COMMAND HUB — the ONE authority: a single boolean controls whether the summoned command
-  // surface is on screen; WHAT it contains is derived (the fleet command panel + pirate panel always;
-  // the mining panel only when the summon point lies inside a mining field's extraction range —
-  // `tapFieldInRange` below). Default false → the map is unobstructed. A double-tap on empty space
-  // opens it AT the tapped point (reusing the existing pointTarget flow); the hub's ✕ returns to clean.
+  // CLEAN-MAP COMMAND HUB — the ONE authority (ONE hub, TWO stages):
+  //   stage 1 (hubView='menu') — a double-tap on empty space opens a COMPACT ACTION MENU at that
+  //     point: just a few plain-word buttons (Send fleet here / Pirate intercept / Mine here — the
+  //     mining button only when the point is inside a field's range). NO header label, NO crosshair
+  //     yet — the double-tap places nothing on the map, it only asks "what do you want to do here?".
+  //   stage 2 (hubView='fleet'|'pirate'|'mining') — pressing a button opens THAT one detailed panel,
+  //     with a back arrow (→ menu) + a ✕ (→ clean map). Choosing "Send fleet here" is what PLACES the
+  //     go-destination crosshair (pointTarget) — the destination is a consequence of choosing to send,
+  //     never of the double-tap itself. Pirate/Mine open with NO crosshair.
+  // hubOpen is presence (the ONE on/off); hubView is the stage; hubPoint is the double-tapped world
+  // point the menu was summoned at (drives the in-range mining check + becomes the send destination).
   const [hubOpen, setHubOpen] = useState(false)
-  // The double-tap summon (GalaxyMap.onDoubleTapPoint): set the go-target here (the SAME pointTarget the
-  // fleet command consumes), drop any marker/field selection, and open the hub.
+  const [hubView, setHubView] = useState<'menu' | 'fleet' | 'pirate' | 'mining'>('menu')
+  const [hubPoint, setHubPoint] = useState<WorldCoord | null>(null)
+  // The double-tap summon (GalaxyMap.onDoubleTapPoint): remember WHERE, drop any marker/field
+  // selection, open the hub on its MENU stage. Deliberately does NOT set pointTarget — no crosshair is
+  // placed until the player actually chooses to send (openFleetPanel below).
   const openHubAt = (world: WorldCoord) => {
-    setPointTarget(world)
+    setHubPoint(world)
+    setHubView('menu')
     setSelectedId(null)
     setSelectedFieldName(null)
     setHubOpen(true)
   }
-  // The ONE dismissal: close the hub AND return the map to plain navigation (clear the target/crosshair
-  // and disarm any pirate tap mode + draft).
+  // Stage-2 openers. "Send fleet here" is the ONLY one that places the go-destination: it sets the SAME
+  // pointTarget the fleet command + crosshair consume, from the remembered double-tap point.
+  const openFleetPanel = () => {
+    if (hubPoint) setPointTarget(hubPoint)
+    setHubView('fleet')
+  }
+  const openPiratePanel = () => setHubView('pirate')
+  const openMiningPanel = () => setHubView('mining')
+  // Back arrow → the button menu: drop the crosshair/target and disarm any pirate draft so the menu is
+  // a clean slate again (re-choosing Send re-places the destination).
+  const backToMenu = () => {
+    setHubView('menu')
+    setPointTarget(null)
+    setPirateMode('off')
+    setPirateDraftPoints([])
+  }
+  // The ONE dismissal: ✕ closes the hub AND returns the map to plain navigation (clear the point/
+  // crosshair and disarm any pirate tap mode + draft).
   const closeHub = () => {
     setHubOpen(false)
+    setHubView('menu')
+    setHubPoint(null)
     setPointTarget(null)
     setPirateMode('off')
     setPirateDraftPoints([])
@@ -140,13 +168,14 @@ export function MapScreen() {
       ? { kind: 'port', locationId: selected.id }
       : null
 
-  // MINING FOLD: the field (if any) whose extraction range contains the summon point — SAME geometry
-  // as the map's range ring (miningFieldRangeLayer: within `miningExtractRadius` world-units of the
-  // field centre, the shared `distance` helper, never a second formula). When non-null, the hub folds
-  // in the mining surface so the player can extract there — replacing the old persistent top-left panel.
+  // MINING FOLD: the field (if any) whose extraction range contains the DOUBLE-TAPPED point — SAME
+  // geometry as the map's range ring (miningFieldRangeLayer: within `miningExtractRadius` world-units
+  // of the field centre, the shared `distance` helper, never a second formula). Non-null → the menu
+  // offers a "Mine here" button; pressing it opens the mining surface. Keyed on hubPoint (not
+  // pointTarget) so the button is decided by WHERE the player double-tapped, before any crosshair.
   const tapFieldInRange: MiningField | null =
-    pointTarget && Number.isFinite(miningExtractRadius) && miningExtractRadius > 0
-      ? (miningFields.find((f) => distance(pointTarget.x, pointTarget.y, f.space_x, f.space_y) <= miningExtractRadius) ?? null)
+    hubPoint && Number.isFinite(miningExtractRadius) && miningExtractRadius > 0
+      ? (miningFields.find((f) => distance(hubPoint.x, hubPoint.y, f.space_x, f.space_y) <= miningExtractRadius) ?? null)
       : null
 
   // 4C-CLIENT: the legacy spatial_state / space-movement fields left the key with the schema they
@@ -235,90 +264,148 @@ export function MapScreen() {
                 void selection.refresh()
               }}
             />
-            {/* CLEAN-MAP COMMAND HUB (bottom-right) — summoned by a double-tap, dismissed by its own ✕.
-                ONE header owns the dismissal; below it ride the EXISTING command surfaces, reused as-is
-                and gated only on WHEN they appear: the fleet command panel (send/stop/dock/hunt), the
-                mining extract surface (only inside a field's range), and the pirate-intercept panel.
-                Bottom-right, never the map's center (play-test rule). While `hubOpen` is false the map
-                is unobstructed — the whole rail is unmounted. */}
+            {/* CLEAN-MAP COMMAND HUB (bottom-right) — TWO stages, ONE authority (hubOpen presence +
+                hubView stage). Bottom-right, never the map's center (play-test rule). While `hubOpen`
+                is false the map is unobstructed — the whole rail is unmounted. */}
             {hubOpen && (
               <OverlayRail slot="bottom-right" className="max-h-[85%] max-w-[calc(100vw-1.5rem)] overflow-y-auto">
-                <OverlayPanel data-testid="map-command-hub-header" className="flex w-72 max-w-full items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-ink">Commands</p>
-                    {tapFieldInRange ? (
-                      <p className="truncate text-[10px] text-warning">In range of {tapFieldInRange.name}</p>
-                    ) : (
-                      <p className="text-[10px] text-ink-faint">Double-tapped point</p>
+                {hubView === 'menu' ? (
+                  /* STAGE 1 — the compact ACTION MENU. Just plain-word buttons for what the player can
+                     do at this spot: NO "Commands" header, NO coordinate readout, NO crosshair (the
+                     double-tap placed nothing on the map). Each action is gated the SAME way its panel
+                     is, so a dark capability shows no button. A lone ✕ returns to a clean map. */
+                  <OverlayPanel data-testid="map-command-menu" className="flex w-56 max-w-full flex-col gap-1.5">
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={closeHub}
+                        aria-label="Close"
+                        title="Close"
+                        data-testid="map-command-menu-close"
+                        className="-mr-1 -mt-1 flex h-7 w-7 items-center justify-center rounded text-ink-faint transition hover:bg-edge/40 hover:text-ink"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {TEAM_COMMAND_ENABLED && (
+                      <Button
+                        variant="secondary"
+                        size="md"
+                        data-testid="map-action-send"
+                        className="w-full"
+                        onClick={openFleetPanel}
+                      >
+                        Send fleet here
+                      </Button>
                     )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={closeHub}
-                    aria-label="Close commands"
-                    title="Close"
-                    data-testid="map-command-hub-close"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-edge/40 hover:text-ink"
-                  >
-                    ✕
-                  </button>
-                </OverlayPanel>
+                    {tapFieldInRange && (
+                      <Button
+                        variant="warning"
+                        size="md"
+                        data-testid="map-action-mine"
+                        className="w-full"
+                        onClick={openMiningPanel}
+                      >
+                        Mine here
+                      </Button>
+                    )}
+                    {pirateInterceptEnabled && (
+                      <Button
+                        variant="secondary"
+                        size="md"
+                        data-testid="map-action-pirate"
+                        className="w-full"
+                        onClick={openPiratePanel}
+                      >
+                        Pirate intercept
+                      </Button>
+                    )}
+                    {!TEAM_COMMAND_ENABLED && !pirateInterceptEnabled && !tapFieldInRange && (
+                      <p className="px-1 py-0.5 text-sm text-ink-muted">Nothing to do at this spot.</p>
+                    )}
+                  </OverlayPanel>
+                ) : (
+                  /* STAGE 2 — the one chosen detailed panel, under a slim header: a back arrow (← the
+                     menu) and a ✕ (clean map). The title NAMES the action (never a bare "Commands"). */
+                  <>
+                    <OverlayPanel data-testid="map-command-panel-header" className="flex w-72 max-w-full items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={backToMenu}
+                        aria-label="Back to actions"
+                        title="Back"
+                        data-testid="map-command-back"
+                        className="-ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-edge/40 hover:text-ink"
+                      >
+                        ←
+                      </button>
+                      <p className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
+                        {hubView === 'fleet' ? 'Send fleet' : hubView === 'mining' ? 'Mine here' : 'Pirate intercept'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={closeHub}
+                        aria-label="Close"
+                        title="Close"
+                        data-testid="map-command-panel-close"
+                        className="-mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-edge/40 hover:text-ink"
+                      >
+                        ✕
+                      </button>
+                    </OverlayPanel>
 
-                {/* THE fleet-command surface: Stop (NO-SOFTLOCK, first, state-predicated) + go/redirect +
-                    dock + hunt, from the ONE pure model. Renders nothing unless a fleet is in flight, a
-                    target is live, or a fleet sits in a dockable port — so an empty double-tap shows only
-                    the header + whatever else is relevant. onCommanded refreshes the map + ship reads. */}
-                {TEAM_COMMAND_ENABLED && (
-                  <FleetCommandPanel
-                    target={target}
-                    movements={movements}
-                    groups={teamGroups}
-                    groupsLoaded={teamGroupsOk}
-                    unifiedEnabled={fleetMovementUnifiedEnabled}
-                    unifiedFleets={unifiedGroupFleets}
-                    rollups={dockedTeamRollups}
-                    locations={locations}
-                    ships={selection.ships}
-                    membership={teamGroupMap}
-                    launchFromDock={launchFromDockEnabled}
-                    fleetControlEnabled={fleetControlEnabled}
-                    timedDockingEnabled={timedDockingEnabled}
-                    onCommanded={() => {
-                      void refresh()
-                      void selection.refresh()
-                    }}
-                    onClearTarget={() => {
-                      setPointTarget(null)
-                      setSelectedId(null)
-                    }}
-                  />
-                )}
+                    {/* THE fleet-command surface: Stop (NO-SOFTLOCK, first, state-predicated) + go/
+                        redirect + dock + hunt, from the ONE pure model. onCommanded refreshes the map +
+                        ship reads; Clear drops the destination and returns to the menu (a clean slate). */}
+                    {hubView === 'fleet' && TEAM_COMMAND_ENABLED && (
+                      <FleetCommandPanel
+                        target={target}
+                        movements={movements}
+                        groups={teamGroups}
+                        groupsLoaded={teamGroupsOk}
+                        unifiedEnabled={fleetMovementUnifiedEnabled}
+                        unifiedFleets={unifiedGroupFleets}
+                        rollups={dockedTeamRollups}
+                        locations={locations}
+                        ships={selection.ships}
+                        membership={teamGroupMap}
+                        launchFromDock={launchFromDockEnabled}
+                        fleetControlEnabled={fleetControlEnabled}
+                        timedDockingEnabled={timedDockingEnabled}
+                        onCommanded={() => {
+                          void refresh()
+                          void selection.refresh()
+                        }}
+                        onClearTarget={backToMenu}
+                      />
+                    )}
 
-                {/* MINING FOLD — the extract surface, only when the summon point is inside a field's
-                    range (the ex-top-left panel, reused verbatim). Send a fleet here to mine via the
-                    fleet panel above; extract once a ship is settled in range. */}
-                {tapFieldInRange && (
-                  <MiningPanel
-                    lifecycleKey={panelLifecycleKey}
-                    mainShipId={mainShip?.main_ship_id ?? null}
-                    shipStatus={mainShip?.status}
-                    shipSpatialState={null}
-                  />
-                )}
+                    {/* MINING FOLD — the extract surface (the ex-top-left panel, reused verbatim).
+                        Extract once a ship is settled in the field's range. */}
+                    {hubView === 'mining' && tapFieldInRange && (
+                      <MiningPanel
+                        lifecycleKey={panelLifecycleKey}
+                        mainShipId={mainShip?.main_ship_id ?? null}
+                        shipStatus={mainShip?.status}
+                        shipSpatialState={null}
+                      />
+                    )}
 
-                {/* PIRATE INTERCEPT — plot an ambush route / draw a danger zone. Reused as-is; the hub
-                    header owns dismissal, so no per-panel close here. */}
-                {pirateInterceptEnabled && (
-                  <PirateInterceptPanel
-                    groupId={teamGroups[0]?.group_id ?? null}
-                    locations={locations}
-                    mode={pirateMode}
-                    onModeChange={setPirateMode}
-                    draftPoints={pirateDraftPoints}
-                    onUndoDraft={() => setPirateDraftPoints((pts) => pts.slice(0, -1))}
-                    onClearDraft={() => setPirateDraftPoints([])}
-                    onCommanded={() => void refresh()}
-                  />
+                    {/* PIRATE INTERCEPT — plot an ambush route / draw a danger zone. Reused as-is; the
+                        header owns dismissal, so no per-panel close here. */}
+                    {hubView === 'pirate' && pirateInterceptEnabled && (
+                      <PirateInterceptPanel
+                        groupId={teamGroups[0]?.group_id ?? null}
+                        locations={locations}
+                        mode={pirateMode}
+                        onModeChange={setPirateMode}
+                        draftPoints={pirateDraftPoints}
+                        onUndoDraft={() => setPirateDraftPoints((pts) => pts.slice(0, -1))}
+                        onClearDraft={() => setPirateDraftPoints([])}
+                        onCommanded={() => void refresh()}
+                      />
+                    )}
+                  </>
                 )}
               </OverlayRail>
             )}
