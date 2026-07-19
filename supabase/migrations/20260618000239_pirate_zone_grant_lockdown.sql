@@ -18,6 +18,12 @@
 -- (movement/combat compose the internal pirate_intercept_evaluate_leg leaf, never the authoring RPCs).
 -- So removing the authenticated grant costs the game nothing and closes the prototype hole.
 --
+-- VERIFIED — NOT ASSUMED: 0233 did `revoke all ... from public` then granted EXECUTE to `authenticated`
+-- ONLY. It never granted `service_role`; the owner-tooling path relied on the `postgres` owner's
+-- implicit execute. So this migration EXPLICITLY grants `service_role` (the trusted server-side role
+-- the ZoneEditor/owner tooling drives) to make the intended state {postgres owner, service_role}
+-- REPRODUCIBLE and self-asserted, instead of leaving service_role executing only by owner accident.
+--
 -- WHY A NEW MIGRATION (not an edit to 0233): applied migrations are IMMUTABLE — 0233 already ran on
 -- prod and on every disposable DB, so its text is frozen. Corrective privilege state is expressed as a
 -- forward migration, the house idiom. 0233's own deploy-time self-assert (0233:1552) asserts
@@ -40,12 +46,19 @@ begin
   end if;
 end $lockdep$;
 
--- ── 1. revoke the prototype client grant — reproducibly (idempotent; owner+service_role untouched) ─
--- service_role's grant is NEVER touched here, so owner tooling / the dark dev ZoneEditor keep working.
+-- ── 1. revoke the prototype client grant + pin the owner-tooling grant — reproducibly (idempotent) ─
+-- (revokes are no-ops if already absent; grants are no-ops if already present — the whole block is
+--  safe to re-run and safe against a prod that is already partway into this state.)
 revoke execute on function public.pirate_zone_create(text, jsonb, uuid) from authenticated;
 revoke execute on function public.pirate_zone_create(text, jsonb, uuid) from anon;
 revoke execute on function public.pirate_zone_delete(uuid) from authenticated;
 revoke execute on function public.pirate_zone_delete(uuid) from anon;
+
+-- service_role is the trusted SERVER-SIDE role (the service key, never shipped to a browser) that the
+-- dark dev ZoneEditor / owner tooling drives these RPCs through. 0233 never granted it — pin it now so
+-- {postgres owner, service_role} is the reproducible intended state, not an owner-only accident.
+grant execute on function public.pirate_zone_create(text, jsonb, uuid) to service_role;
+grant execute on function public.pirate_zone_delete(uuid) to service_role;
 
 comment on function public.pirate_zone_create(text, jsonb, uuid) is
   'PIRATE INTERCEPT: the draw-editor''s save RPC. p_vertices is an ordered [[x,y],...] ring (3-64 '
