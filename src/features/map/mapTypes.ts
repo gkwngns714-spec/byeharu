@@ -79,6 +79,16 @@ export interface WorldMap {
   sectors: MapSector[]
 }
 
+/** Flatten the nested get_world_map() tree (sector → zone → locations) to the flat MapLocation list
+ *  every map surface actually consumes. PURE — the single authority for this flatten so consumers
+ *  (the World Editor location layer, etc.) never re-walk the tree by hand. Tolerant of missing arms. */
+export function flattenWorldMapLocations(world: WorldMap): MapLocation[] {
+  const out: MapLocation[] = []
+  for (const sector of world.sectors ?? [])
+    for (const zone of sector.zones ?? []) for (const loc of zone.locations ?? []) out.push(loc)
+  return out
+}
+
 /**
  * M5: World State (dynamic). Read-only mirror of the location_state table. The
  * client never writes these — worldstate_tick() (server cron) owns them.
