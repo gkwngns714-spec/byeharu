@@ -11,12 +11,15 @@
  *  exploration_site_create is the FIRST live-world-write publish command (0244, owner-gated);
  *  mining_field_create is its mining twin — the SECOND publish command (0246, owner-gated);
  *  exploration_site_update is the FIRST UPDATE publish command (0247, owner-gated, optimistic
- *  concurrency: payload carries target_id + the fork-time `expected` snapshot). */
+ *  concurrency: payload carries target_id + the fork-time `expected` snapshot);
+ *  mining_field_update is its mining twin — the SECOND UPDATE publish command (0248, same
+ *  owner-gated optimistic-concurrency contract over mining_fields). */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
   | 'exploration_site_create'
   | 'mining_field_create'
   | 'exploration_site_update'
+  | 'mining_field_update'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -101,6 +104,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'mining_field_create'
     case 'exploration_site_update':
       return 'exploration_site_update'
+    case 'mining_field_update':
+      return 'mining_field_update'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)
