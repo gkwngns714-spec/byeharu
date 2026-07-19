@@ -13,8 +13,9 @@ import { MiningPanel } from '../mining/MiningPanel'
 import type { MiningField } from '../mining/miningTypes'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { TelegraphBanner } from '../combat/TelegraphBanner'
+import { distance } from '../../game/movement/travelPreview'
 import type { WorldCoord } from './openSpaceTransform'
-import { Badge, Button, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
+import { Badge, Button, OverlayPanel, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 import { PirateInterceptPanel } from './PirateInterceptPanel'
 
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
@@ -27,7 +28,7 @@ import { PirateInterceptPanel } from './PirateInterceptPanel'
 // S5 MAP-UX: the three scattered fleet-command surfaces (FleetGoPanel top-right, TeamMapSend in
 // this aside, TeamMapStop in the top-left rail) are CONSOLIDATED into the ONE bottom-center
 // FleetCommandPanel mounted below. This screen owns the ONE selection source for it — the
-// FleetCommandTarget union: a space tap (GalaxyMap's onTargetPoint) yields the point target; the
+// FleetCommandTarget union: a double-tap (GalaxyMap's onDoubleTapPoint) yields the point target; the
 // existing marker selection (selectedId) DERIVES the port target — never a second selection state.
 // NO-SOFTLOCK is carried by the panel's model (Stop first, state-predicated only) + the AppShell
 // settle. The detail aside below is now READ-ONLY location info.
@@ -73,13 +74,31 @@ export function MapScreen() {
   const [selectedFieldName, setSelectedFieldName] = useState<string | null>(null)
   // PIRATE INTERCEPT (prototype): the route-planner / zone-drawing tap mode + its accumulated points.
   // 'off' by default — the map's tap handling is byte-identical to today until the player arms one of
-  // the two modes via PirateInterceptPanel (itself mounted only while pirateInterceptEnabled is lit).
+  // the two modes via PirateInterceptPanel (mounted inside the command hub while the flag is lit).
   const [pirateMode, setPirateMode] = useState<'off' | 'route' | 'draw'>('off')
   const [pirateDraftPoints, setPirateDraftPoints] = useState<WorldCoord[]>([])
-  // The panel is dismissible — a launcher chip re-opens it. Closing also disarms
-  // any tap mode + clears the draft so the map returns to plain navigation.
-  const [piratePanelOpen, setPiratePanelOpen] = useState(true)
-  const closePiratePanel = () => { setPiratePanelOpen(false); setPirateMode('off'); setPirateDraftPoints([]) }
+  // CLEAN-MAP COMMAND HUB — the ONE authority: a single boolean controls whether the summoned command
+  // surface is on screen; WHAT it contains is derived (the fleet command panel + pirate panel always;
+  // the mining panel only when the summon point lies inside a mining field's extraction range —
+  // `tapFieldInRange` below). Default false → the map is unobstructed. A double-tap on empty space
+  // opens it AT the tapped point (reusing the existing pointTarget flow); the hub's ✕ returns to clean.
+  const [hubOpen, setHubOpen] = useState(false)
+  // The double-tap summon (GalaxyMap.onDoubleTapPoint): set the go-target here (the SAME pointTarget the
+  // fleet command consumes), drop any marker/field selection, and open the hub.
+  const openHubAt = (world: WorldCoord) => {
+    setPointTarget(world)
+    setSelectedId(null)
+    setSelectedFieldName(null)
+    setHubOpen(true)
+  }
+  // The ONE dismissal: close the hub AND return the map to plain navigation (clear the target/crosshair
+  // and disarm any pirate tap mode + draft).
+  const closeHub = () => {
+    setHubOpen(false)
+    setPointTarget(null)
+    setPirateMode('off')
+    setPirateDraftPoints([])
+  }
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
@@ -103,8 +122,8 @@ export function MapScreen() {
 
   // PIRATE INTERCEPT (prototype): appends a tapped point to the active draft, capped per mode (route:
   // 3 waypoints + 1 final = 4; draw: the server's pirate_zone_create vertex ceiling is 64, capped lower
-  // here for a usable tap-to-add UX). Ignored while pirateMode is 'off' (GalaxyMap itself already
-  // routes taps to onTargetPoint in that case — this handler only ever fires for 'route'/'draw').
+  // here for a usable tap-to-add UX). Only fires while pirateMode is 'route'/'draw' — with the mode
+  // 'off' a single tap does nothing and a double-tap summons the hub, so this never runs then.
   const handlePirateTap = (world: WorldCoord) => {
     const cap = pirateMode === 'route' ? 4 : 24
     setPirateDraftPoints((pts) => (pts.length >= cap ? pts : [...pts, world]))
@@ -119,6 +138,15 @@ export function MapScreen() {
     ? { kind: 'point', view: pointView }
     : selected && teamDestinationKind(selected) !== null
       ? { kind: 'port', locationId: selected.id }
+      : null
+
+  // MINING FOLD: the field (if any) whose extraction range contains the summon point — SAME geometry
+  // as the map's range ring (miningFieldRangeLayer: within `miningExtractRadius` world-units of the
+  // field centre, the shared `distance` helper, never a second formula). When non-null, the hub folds
+  // in the mining surface so the player can extract there — replacing the old persistent top-left panel.
+  const tapFieldInRange: MiningField | null =
+    pointTarget && Number.isFinite(miningExtractRadius) && miningExtractRadius > 0
+      ? (miningFields.find((f) => distance(pointTarget.x, pointTarget.y, f.space_x, f.space_y) <= miningExtractRadius) ?? null)
       : null
 
   // 4C-CLIENT: the legacy spatial_state / space-movement fields left the key with the schema they
@@ -162,9 +190,8 @@ export function MapScreen() {
               dockedTeamRollups={dockedTeamRollups}
               unifiedGroupFleets={unifiedGroupFleets}
               combatSortieFleets={combatSortieFleets}
-              fleetMovementUnifiedEnabled={fleetMovementUnifiedEnabled}
               fleetGoView={pointView}
-              onTargetPoint={setPointTarget}
+              onDoubleTapPoint={openHubAt}
               selectedId={selectedId}
               onSelect={handleSelect}
               miningFields={miningFields}
@@ -185,19 +212,11 @@ export function MapScreen() {
                 intercepts map gestures). GalaxyMap owns top-right (zoom) and bottom-left (legend);
                 WorldEvents takes top-center; the FleetCommandPanel takes bottom-right. */}
             <OverlayRail slot="top-left" className="max-h-[60%] w-72 max-w-[calc(100vw-5rem)] overflow-y-auto">
-              {/* EXPLORATION-P11 / MINING-P12 — dark scan/extract; legal only settled in space.
-                  4C-CLIENT: the ships' legacy spatial_state column is no longer read (4c-mig-2
-                  drops it) and no reachable state satisfies the panels' in_space gate, so the
-                  gate input is a hard null — fail closed, byte-identical to before. When
-                  4c-mig-1 R5 repoints scan/extract legality to fleet-truth, these gates should
-                  be repointed to the fleet position ('in_space' place) in the same slice. */}
+              {/* EXPLORATION-P11 — dark scan; legal only settled in space (server-lit, renders nothing
+                  in prod). MINING-P12's persistent panel was REMOVED from this rail in the clean-map
+                  redesign — the extract surface now folds into the double-tap command hub, appearing
+                  only when the summon point sits inside a mining field's range (see the hub below). */}
               <ExplorationPanel
-                lifecycleKey={panelLifecycleKey}
-                mainShipId={mainShip?.main_ship_id ?? null}
-                shipStatus={mainShip?.status}
-                shipSpatialState={null}
-              />
-              <MiningPanel
                 lifecycleKey={panelLifecycleKey}
                 mainShipId={mainShip?.main_ship_id ?? null}
                 shipStatus={mainShip?.status}
@@ -216,65 +235,93 @@ export function MapScreen() {
                 void selection.refresh()
               }}
             />
-            {/* S5 MAP-UX — THE fleet-command surface (bottom-right): Stop (NO-SOFTLOCK, always
-                first, state-predicated only) + go/redirect + dock + hunt, all composed from the ONE
-                pure model. Mounted behind the same compile-time gate as every team surface; the
-                panel renders nothing unless a fleet is in flight, a target is live, or a fleet sits
-                in a dockable port's territory. onCommanded refreshes the map reads AND the shell's
-                ship statuses (the TeamMapSend post-command discipline, kept). */}
-            {/* BOTTOM-RIGHT COMMAND RAIL — the fleet-command ("send a fleet") surface, with the
-                pirate-intercept panel stacked ABOVE it when open. Both live out of the map's center
-                (play-test rule: command panels go bottom-right, never bottom-center). The pirate
-                panel is dismissible; a launcher chip re-opens it. */}
-            <OverlayRail slot="bottom-right" className="max-w-[calc(100vw-1.5rem)]">
-              {pirateInterceptEnabled && piratePanelOpen && (
-                <PirateInterceptPanel
-                  groupId={teamGroups[0]?.group_id ?? null}
-                  locations={locations}
-                  mode={pirateMode}
-                  onModeChange={setPirateMode}
-                  draftPoints={pirateDraftPoints}
-                  onUndoDraft={() => setPirateDraftPoints((pts) => pts.slice(0, -1))}
-                  onClearDraft={() => setPirateDraftPoints([])}
-                  onCommanded={() => void refresh()}
-                  onClose={closePiratePanel}
-                />
-              )}
-              {pirateInterceptEnabled && !piratePanelOpen && (
-                <button
-                  type="button"
-                  onClick={() => setPiratePanelOpen(true)}
-                  className="pointer-events-auto rounded-lg border bg-surface/90 px-3 py-1.5 text-xs font-semibold text-ink shadow-overlay backdrop-blur hover:bg-surface"
-                >
-                  ☠ Pirate Intercept
-                </button>
-              )}
-              {TEAM_COMMAND_ENABLED && (
-                <FleetCommandPanel
-                  target={target}
-                  movements={movements}
-                  groups={teamGroups}
-                  groupsLoaded={teamGroupsOk}
-                  unifiedEnabled={fleetMovementUnifiedEnabled}
-                  unifiedFleets={unifiedGroupFleets}
-                  rollups={dockedTeamRollups}
-                  locations={locations}
-                  ships={selection.ships}
-                  membership={teamGroupMap}
-                  launchFromDock={launchFromDockEnabled}
-                  fleetControlEnabled={fleetControlEnabled}
-                  timedDockingEnabled={timedDockingEnabled}
-                  onCommanded={() => {
-                    void refresh()
-                    void selection.refresh()
-                  }}
-                  onClearTarget={() => {
-                    setPointTarget(null)
-                    setSelectedId(null)
-                  }}
-                />
-              )}
-            </OverlayRail>
+            {/* CLEAN-MAP COMMAND HUB (bottom-right) — summoned by a double-tap, dismissed by its own ✕.
+                ONE header owns the dismissal; below it ride the EXISTING command surfaces, reused as-is
+                and gated only on WHEN they appear: the fleet command panel (send/stop/dock/hunt), the
+                mining extract surface (only inside a field's range), and the pirate-intercept panel.
+                Bottom-right, never the map's center (play-test rule). While `hubOpen` is false the map
+                is unobstructed — the whole rail is unmounted. */}
+            {hubOpen && (
+              <OverlayRail slot="bottom-right" className="max-h-[85%] max-w-[calc(100vw-1.5rem)] overflow-y-auto">
+                <OverlayPanel data-testid="map-command-hub-header" className="flex w-72 max-w-full items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-ink">Commands</p>
+                    {tapFieldInRange ? (
+                      <p className="truncate text-[10px] text-warning">In range of {tapFieldInRange.name}</p>
+                    ) : (
+                      <p className="text-[10px] text-ink-faint">Double-tapped point</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeHub}
+                    aria-label="Close commands"
+                    title="Close"
+                    data-testid="map-command-hub-close"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-edge/40 hover:text-ink"
+                  >
+                    ✕
+                  </button>
+                </OverlayPanel>
+
+                {/* THE fleet-command surface: Stop (NO-SOFTLOCK, first, state-predicated) + go/redirect +
+                    dock + hunt, from the ONE pure model. Renders nothing unless a fleet is in flight, a
+                    target is live, or a fleet sits in a dockable port — so an empty double-tap shows only
+                    the header + whatever else is relevant. onCommanded refreshes the map + ship reads. */}
+                {TEAM_COMMAND_ENABLED && (
+                  <FleetCommandPanel
+                    target={target}
+                    movements={movements}
+                    groups={teamGroups}
+                    groupsLoaded={teamGroupsOk}
+                    unifiedEnabled={fleetMovementUnifiedEnabled}
+                    unifiedFleets={unifiedGroupFleets}
+                    rollups={dockedTeamRollups}
+                    locations={locations}
+                    ships={selection.ships}
+                    membership={teamGroupMap}
+                    launchFromDock={launchFromDockEnabled}
+                    fleetControlEnabled={fleetControlEnabled}
+                    timedDockingEnabled={timedDockingEnabled}
+                    onCommanded={() => {
+                      void refresh()
+                      void selection.refresh()
+                    }}
+                    onClearTarget={() => {
+                      setPointTarget(null)
+                      setSelectedId(null)
+                    }}
+                  />
+                )}
+
+                {/* MINING FOLD — the extract surface, only when the summon point is inside a field's
+                    range (the ex-top-left panel, reused verbatim). Send a fleet here to mine via the
+                    fleet panel above; extract once a ship is settled in range. */}
+                {tapFieldInRange && (
+                  <MiningPanel
+                    lifecycleKey={panelLifecycleKey}
+                    mainShipId={mainShip?.main_ship_id ?? null}
+                    shipStatus={mainShip?.status}
+                    shipSpatialState={null}
+                  />
+                )}
+
+                {/* PIRATE INTERCEPT — plot an ambush route / draw a danger zone. Reused as-is; the hub
+                    header owns dismissal, so no per-panel close here. */}
+                {pirateInterceptEnabled && (
+                  <PirateInterceptPanel
+                    groupId={teamGroups[0]?.group_id ?? null}
+                    locations={locations}
+                    mode={pirateMode}
+                    onModeChange={setPirateMode}
+                    draftPoints={pirateDraftPoints}
+                    onUndoDraft={() => setPirateDraftPoints((pts) => pts.slice(0, -1))}
+                    onClearDraft={() => setPirateDraftPoints([])}
+                    onCommanded={() => void refresh()}
+                  />
+                )}
+              </OverlayRail>
+            )}
           </div>
         )}
       </div>

@@ -1,10 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { MapLocation } from './mapTypes'
 import type { WorldCoord } from './openSpaceTransform'
-import {
-  commandShipGroupCancelRoute, commandShipGroupGoRoute, pirateZoneCreate,
-  previewPirateRoute, type RoutePreviewResult,
-} from './pirateApi'
+import { commandShipGroupCancelRoute, commandShipGroupGoRoute, pirateZoneCreate } from './pirateApi'
 import { Badge, Button, OverlayPanel } from '../../components/ui'
 
 // PIRATE INTERCEPT (prototype) — the ONE UI surface for the two new player/owner-facing capabilities:
@@ -39,34 +36,16 @@ export function PirateInterceptPanel({
   onUndoDraft: () => void
   onClearDraft: () => void
   onCommanded: () => void
-  onClose: () => void
+  /** Optional self-dismiss. When the panel rides inside the command hub the hub header owns the ✕, so
+   *  this is omitted and no per-panel close renders. */
+  onClose?: () => void
 }) {
-  const [preview, setPreview] = useState<RoutePreviewResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [zoneName, setZoneName] = useState('New Danger Zone')
   const [attachLocationId, setAttachLocationId] = useState<string>('')
 
   const hostileLocations = locations.filter((l) => l.location_type === 'pirate_hunt' || l.location_type === 'pirate_den')
-
-  // Route mode: re-preview whenever the plotted points change (the last point is the final target;
-  // everything before it is a waypoint). A single-point draft still previews (waypoints=[], the plain
-  // direct-go leg) so the warning is visible even before a second point is added.
-  useEffect(() => {
-    let cancelled = false
-    const run = async () => {
-      if (mode !== 'route' || !groupId || draftPoints.length === 0) {
-        if (!cancelled) setPreview(null)
-        return
-      }
-      const waypoints = draftPoints.slice(0, -1)
-      const last = draftPoints[draftPoints.length - 1]
-      const r = await previewPirateRoute(groupId, { waypoints, targetX: last.x, targetY: last.y })
-      if (!cancelled) setPreview(r)
-    }
-    void run()
-    return () => { cancelled = true }
-  }, [mode, groupId, draftPoints])
 
   const sendRoute = async () => {
     if (!groupId || draftPoints.length === 0) return
@@ -113,7 +92,6 @@ export function PirateInterceptPanel({
 
   const toggle = (next: 'route' | 'draw') => {
     onClearDraft()
-    setPreview(null)
     setMessage(null)
     onModeChange(mode === next ? 'off' : next)
   }
@@ -121,55 +99,43 @@ export function PirateInterceptPanel({
   return (
     <OverlayPanel className="pointer-events-auto flex w-64 flex-col gap-2 text-xs">
       <div className="flex items-center justify-between">
-        <span className="font-semibold text-ink">Pirate Intercept (prototype)</span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close pirate intercept"
-          className="-mr-1 flex h-6 w-6 items-center justify-center rounded text-base leading-none text-ink-muted hover:bg-edge/40 hover:text-ink"
-        >
-          ×
-        </button>
+        <span className="font-semibold text-ink">Pirate Intercept</span>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close pirate intercept"
+            title="Close"
+            className="-mr-1 flex h-6 w-6 items-center justify-center rounded text-base leading-none text-ink-muted hover:bg-edge/40 hover:text-ink"
+          >
+            ×
+          </button>
+        )}
       </div>
       <div className="flex gap-2">
         <Button size="sm" variant={mode === 'route' ? 'primary' : 'secondary'} onClick={() => toggle('route')}>
-          Plot Route
+          Plot route
         </Button>
         <Button size="sm" variant={mode === 'draw' ? 'primary' : 'secondary'} onClick={() => toggle('draw')}>
-          Draw Zone
+          Draw zone
         </Button>
       </div>
 
       {mode === 'route' && (
         <div className="flex flex-col gap-2">
-          {!groupId && <p className="text-ink-muted">No ship group yet — assign a ship to a team first.</p>}
-          <p className="text-ink-muted">
-            Tap up to 4 points on the map: the first ones are waypoints, the last is the destination.
-          </p>
-          <p className="text-ink">{draftPoints.length} point(s) plotted</p>
-          {preview?.ok && preview.crosses_danger && (
-            <div className="rounded border border-danger/50 bg-danger/10 p-2 text-danger">
-              This route crosses pirate territory — risk of ambush.
-              {preview.weak_fleet && ' Your fleet is weak here — consider routing around.'}
-              <ul className="mt-1 list-disc pl-4">
-                {preview.legs.filter((l) => l.crosses).map((l) => (
-                  <li key={l.leg_index}>
-                    Leg {l.leg_index + 1}: ~{Math.round((l.risk ?? 0) * 100)}% risk
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {!groupId && <p className="text-ink-muted">No fleet yet — add a ship to a team first.</p>}
+          <p className="text-ink-muted">Tap the map to plot up to 4 points — the last is the destination.</p>
+          <p className="text-ink">{draftPoints.length} plotted</p>
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={onUndoDraft} disabled={draftPoints.length === 0}>Undo</Button>
             <Button size="sm" variant="secondary" onClick={onClearDraft} disabled={draftPoints.length === 0}>Clear</Button>
           </div>
           <div className="flex gap-2">
             <Button size="sm" onClick={() => void sendRoute()} disabled={busy || !groupId || draftPoints.length === 0}>
-              Send Route
+              Send
             </Button>
             <Button size="sm" variant="secondary" onClick={() => void cancelQueuedRoute()} disabled={busy || !groupId}>
-              Cancel Queued Route
+              Cancel queued
             </Button>
           </div>
         </div>
@@ -177,10 +143,8 @@ export function PirateInterceptPanel({
 
       {mode === 'draw' && (
         <div className="flex flex-col gap-2">
-          <p className="text-ink-muted">
-            Tap the map to add vertices (3-64). The shape is smoothed automatically when rendered.
-          </p>
-          <p className="text-ink">{draftPoints.length} vertex/vertices</p>
+          <p className="text-ink-muted">Tap the map to add zone corners (3+). Smoothed automatically.</p>
+          <p className="text-ink">{draftPoints.length} corners</p>
           <input
             className="rounded border border-edge bg-app px-2 py-1 text-ink"
             value={zoneName}
@@ -202,7 +166,7 @@ export function PirateInterceptPanel({
             <Button size="sm" variant="secondary" onClick={onClearDraft} disabled={draftPoints.length === 0}>Clear</Button>
           </div>
           <Button size="sm" onClick={() => void saveZone()} disabled={busy || draftPoints.length < 3}>
-            Save Zone
+            Save zone
           </Button>
         </div>
       )}

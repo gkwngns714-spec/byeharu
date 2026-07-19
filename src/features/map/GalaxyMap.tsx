@@ -19,7 +19,7 @@ import type { UnifiedGroupFleetLite } from '../command/teamApi'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { SpaceMoveTargetMarker } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
-import { resolveSpaceTapOwner, type FleetGoTargetView } from './fleetGoTarget'
+import { type FleetGoTargetView } from './fleetGoTarget'
 import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
 import { labelVisible } from './markerStyle'
@@ -35,6 +35,11 @@ import { Button, OverlayPanel, OverlayRail } from '../../components/ui'
 // The UNIFIED spatial transform: world → viewBox. Replaces the old dynamic `norm`. Pure; never clamps.
 const norm = (p: { x: number; y: number }): { x: number; y: number } => worldToViewBox(p)
 
+// CLEAN-MAP DOUBLE-TAP thresholds: a second empty-space tap within this window + radius of the first
+// is a double-tap (matches native double-click timing; generous enough for touch double-tap).
+const DOUBLE_TAP_MS = 350
+const DOUBLE_TAP_MAX_GAP_PX = 30
+
 export function GalaxyMap({
   locations,
   movements,
@@ -42,9 +47,8 @@ export function GalaxyMap({
   dockedTeamRollups,
   unifiedGroupFleets,
   combatSortieFleets,
-  fleetMovementUnifiedEnabled,
   fleetGoView,
-  onTargetPoint,
+  onDoubleTapPoint,
   selectedId,
   onSelect,
   miningFields,
@@ -71,18 +75,13 @@ export function GalaxyMap({
   // once in useGalaxyMapData). Feeds the team layer's "in combat at X" badge so a fleet mid-hunt-combat
   // never vanishes from the map. [] while the unified fetch is dark → byte-identical.
   combatSortieFleets: UnifiedGroupFleetLite[]
-  // FLEET-GO 4a-2: the RUNTIME unified flag (useGalaxyMapData's one read) — with ≥1 owned group it
-  // hands every open-space tap to the FLEET (resolveSpaceTapOwner) and suppresses the per-ship
-  // coordinate surface. False (prod today) → the tap path + tree are byte-identical to 4a-1.
-  // ⚠ Deliberately NOT mainship_send_enabled: that flag gates the fleet-positions READ — using it as
-  // a hide-lever would blank the whole marker layer (the mainshipCommandMode lesson, restated).
-  fleetMovementUnifiedEnabled: boolean
-  // S5 MAP-UX: the ONE selection source lives in MapScreen (the FleetCommandTarget union). This map
-  // no longer owns a fleet-go target: a fleet-owned space tap reports the RAW world point up via
-  // onTargetPoint, and the crosshair marker below renders whatever view MapScreen derived (null →
-  // no marker). The confirm surface is MapScreen's bottom-center FleetCommandPanel.
+  // CLEAN-MAP HUB: the map is unobstructed by default. The ONE gesture that summons commands is a
+  // DOUBLE-TAP on empty space (mouse double-click OR touch double-tap — both flow through pointer
+  // events). MapScreen's handler sets the go-target (the crosshair the fleetGoView prop drives) AND
+  // opens the command hub. A single tap on empty space does nothing (the map stays clean); a marker
+  // tap still selects; pirate route/draw modes still consume single taps (onPirateTap, below).
   fleetGoView: FleetGoTargetView | null
-  onTargetPoint: (world: WorldCoord) => void
+  onDoubleTapPoint: (world: WorldCoord) => void
   selectedId: string | null
   onSelect: (id: string | null) => void
   // MINING-FIELD-MARKERS: the active fields ([] while mining is disabled — 0226 fail-closed) + the
@@ -138,19 +137,14 @@ export function GalaxyMap({
   const userMovedRef = useRef(false)
   const lastFitSig = useRef<string | null>(null)
 
-  // ── FLEET-GO 4a-2 — WHO owns an open-space tap (charter §2/§2a: ALL movement on the MAP; the
-  // FLEET is the only mover). Unified lit + ≥1 owned group → the fleet coordinate-go surface owns
-  // every tap. 4A-POST: the per-ship coordinate arm (useSpaceMoveCommand / readiness / eligibility)
-  // is DELETED — `perShipCanTarget` is hard false, so the owner is only ever 'fleet' or 'none'.
-  const tapOwner = resolveSpaceTapOwner({
-    unifiedEnabled: fleetMovementUnifiedEnabled,
-    hasGroups: teamGroups.length > 0,
-    perShipCanTarget: false,
-  })
-  // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a target tap; drags
-  // and multi-touch stay map pan. Tracked alongside (never replacing) the existing pan snapshot.
+  // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a candidate tap;
+  // drags and multi-touch stay map pan. Tracked alongside (never replacing) the existing pan snapshot.
   const tap = useRef<{ x: number; y: number; t: number; maxPointers: number } | null>(null)
   const pointers = useRef<Set<number>>(new Set())
+  // CLEAN-MAP DOUBLE-TAP: the last committed empty-space tap (screen px + timestamp). A second tap
+  // close in time + space is a double-tap → summon. Pointer events fire for BOTH mouse and touch, so
+  // this ONE mechanism covers mouse double-click and touch double-tap without a separate onDoubleClick.
+  const lastTap = useRef<{ x: number; y: number; t: number } | null>(null)
 
   // ── S6B-PRES content-fit camera (presentation only; never alters world/marker coordinates) ──
   // 4C-CLIENT: the per-ship open-space focus arm (spatial_state='in_space' point / legacy coordinate
@@ -214,10 +208,8 @@ export function GalaxyMap({
     pointers.current.delete(e.pointerId)
     drag.current = null
     tap.current = null
-    // S6C gesture rules kept: a single short near-stationary tap on EMPTY space (the <svg> itself —
-    // markers/backdrop don't hit here) selects a coordinate target. FLEET-GO 4a-2: the tap's OWNER is
-    // resolved by the ONE pure precedence (resolveSpaceTapOwner) — 'fleet' (unified lit + ≥1 group)
-    // targets the fleet coordinate-go; 'none' ignores the tap (4A-POST deleted the per-ship arm).
+    // A single short near-stationary tap on EMPTY space (the <svg> itself — markers/backdrop don't hit
+    // here) is the gesture candidate. Drags/multi-touch already returned as pan.
     const svg = svgRef.current
     if (!t || !svg || e.target !== svg) return
     const travelPx = Math.hypot(e.clientX - t.x, e.clientY - t.y)
@@ -229,19 +221,26 @@ export function GalaxyMap({
       { k: view.k, tx: view.tx, ty: view.ty },
       { width: rect.width, height: rect.height },
     )
-    // PIRATE INTERCEPT (prototype): route-planning / zone-drawing TAKES OVER the entire tap surface —
-    // mutually exclusive with the fleet-go tap below (never both for the same tap). 'off' (the flag's
-    // dark default) falls straight through to the untouched fleet-go path.
+    // PIRATE INTERCEPT: route-planning / zone-drawing TAKES OVER the tap surface — each SINGLE tap
+    // appends a point. Double-tap detection is suspended in these modes so a plotted point is never
+    // swallowed as the first half of a "double". 'off' (the default) falls through to the summon path.
     if (pirateMode !== 'off') {
+      lastTap.current = null
       onPirateTap?.(world)
       return
     }
-    if (tapOwner === 'none') return
-    // Owner is 'fleet' here (the only non-'none' owner). S5 MAP-UX: the RAW world point goes UP to
-    // MapScreen (the ONE FleetCommandTarget owner) — canonicalization stays PREVIEW-only there.
-    // Redirect = re-tap a new point, then click the row again (the §2a deviation argued in
-    // FleetCommandPanel's header: accidental-redirect hazard + N-group disambiguation).
-    onTargetPoint(world)
+    // CLEAN-MAP: a lone single tap does NOTHING (the map stays unobstructed). A second tap close in
+    // time + space is a DOUBLE-TAP → set the go-target here and summon the command hub (MapScreen).
+    // This one pointer-driven path serves mouse double-click and touch double-tap alike.
+    const prev = lastTap.current
+    const gapMs = e.timeStamp - (prev?.t ?? -Infinity)
+    const gapPx = prev ? Math.hypot(e.clientX - prev.x, e.clientY - prev.y) : Infinity
+    if (prev && gapMs <= DOUBLE_TAP_MS && gapPx <= DOUBLE_TAP_MAX_GAP_PX) {
+      lastTap.current = null
+      onDoubleTapPoint(world)
+      return
+    }
+    lastTap.current = { x: e.clientX, y: e.clientY, t: e.timeStamp }
   }
   // pointerleave/cancel: end the pan and abandon any tap candidate (never a selection).
   const onPointerLeave = (e: RPointerEvent) => {
@@ -580,7 +579,7 @@ export function GalaxyMap({
                 Mining field — settle within range to extract
               </span>
             )}
-            <span className="mt-1">Tap a marker for details · drag to pan · scroll to zoom</span>
+            <span className="mt-1">Double-tap the map to command · tap a marker for details · drag to pan · scroll to zoom</span>
           </div>
         </details>
       </OverlayPanel>

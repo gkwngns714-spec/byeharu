@@ -38,7 +38,7 @@ import { territoryAt } from './territoryAt'
 import { isDockablePortForDisplay, type MapLocation } from './mapTypes'
 
 // ── THE ONE selection source (charter: kill the two-selection-source spaghetti) ───────────────────
-// MapScreen owns this union: a space tap yields 'point' (GalaxyMap's onTargetPoint → the RAW world
+// MapScreen owns this union: a double-tap yields 'point' (GalaxyMap's onDoubleTapPoint → the RAW world
 // point resolved once through fleetGoTargetView); the existing marker selection (selectedId) DERIVES
 // 'port' when the location is a legal fleet destination. Never two live targets: selecting a marker
 // clears the point (MapScreen), and a bare-space tap clears the selection (GalaxyMap's svg onClick).
