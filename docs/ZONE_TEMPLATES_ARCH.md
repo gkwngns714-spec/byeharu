@@ -884,6 +884,356 @@ Implementation proceeds on the defaults below without blocking; the owner can ov
 
 ---
 
+## 11. World Editor (Locations + Zones) — Proposed Architecture
+
+**Status:** PROPOSED design extension (DOC ONLY — no game code, no migration, no flag, no grant, no prod change
+in this PR). This section **builds on §1–§10 and does not restructure them.** The zone half of the World Editor
+is *exactly* the blueprint + behavior-module + placement system defined in §2–§6; this section adds the **second
+first-class world entity — `locations`** — and unifies both under one owner-only editor. Everything here is
+**PROPOSED**; every **CURRENT** claim is cited at `origin/main` file:line. The World Editor's writes sit BEHIND
+the **same security spine (prerequisite #1, §7)** and do not proceed before it; the `combat_units` cardinality
+fix (prerequisite #2, §5.5) still gates any multi-pirate gameplay a location authoring flow might reach.
+
+**One-line frame:** the §2–§6 editor authors **zones (geometry + behavior)**; §11 adds a peer **locations**
+authoring layer over the REAL `public.locations` table, then a **combined** layer that composes the two — one
+map, one owner spine, one audit path. NO-SPAGHETTI: not a second world model, not a second map, not a second
+owner check.
+
+### 11.1 Product model (PROPOSED) — one owner-only editor, two layers, on the real map
+
+The World Editor is a single owner-only surface (the §4 `MapCanvas`) exposing **two composable layers/modes**
+over ONE shared game map — never a mock, never a second projection:
+
+| Layer | Entity it authors | Backing table (CURRENT) | Relationship to this doc |
+|---|---|---|---|
+| **Zones layer** | zone placements + blueprints/revisions/behaviors | `danger_zones` → `zone_placements` (§2.4) | **Already fully specified** in §2–§6; unchanged |
+| **Locations layer** | world `locations` (identity, coords, capabilities, lifecycle) | `public.locations` (`20260616000002_world_map.sql:48-72`) | **NEW — this section** |
+| **Combined layer** | cross-entity operations (generate a zone around a location, corridor between two, association, inspection) | both, via `zone_placement_locations` (§2.5) | **NEW — §11.12** |
+
+Both layers render on the **same real map foundation** extracted in §4 (`openSpaceTransform.worldToViewBox` +
+`galaxyCamera` + `markerStyle`/`LocationMarker` + `dangerZoneLayer` + `territoryLayer`), mounted as the headless
+`<MapCanvas>` (§4.2). The Locations layer reuses the SAME shared read-only layers the player map and the Zones
+layer use; it adds only an **owner-only location edit overlay** (peer to §4.5's zone edit overlay). There is NO
+new mock map and NO second bespoke transform: the retirement of `ZoneEditor`'s `makeFit` (§4.1, Slice B) is a
+hard precondition of the World Editor — one map authority for player map, zone authoring, AND location
+authoring. The unlinked `/dev/zones` route (`src/app/App.tsx`) is renamed/rehomed to a World Editor role
+(non-blocking; §4.5 note) but remains UX-only, never authz (§11.7).
+
+### 11.2 Reality vs. the unified-world mental model (PROPOSED reconciliation of audited facts A–G)
+
+The owner's mental model is a single "world" of places-with-zones. **CURRENT reality is not unified** — it is
+several independent tables with split authority. This subsection states each tension honestly and names the
+reconciliation the design commits to. **The design conforms to reality; it does not pretend the unified model
+already exists.**
+
+| # | CURRENT reality (cited) | Tension with the unified model | PROPOSED reconciliation |
+|---|---|---|---|
+| **A** | `locations` and `danger_zones` are TWO independent tables; `zones` is a THIRD unrelated world-hierarchy table (`20260616000002_world_map.sql:48-72`; `..0233..:182-198`; `..0002..:27`, see §1) | There is no single "world entity" | Keep them **separate first-class entities** (§11.3); the editor composes them via the junction (§2.5), it does NOT merge them. Never name anything `zones`/`world_locations` (§1, §11.4) |
+| **B** | Coordinate authority is SPLIT: `locations.x/y` are "legacy display-only"; main-ship MOVEMENT trusts `space_anchors` (`..0063..:28-46`), whose `location_id` is **ON DELETE RESTRICT** + an **immutability trigger** (`..0063..:78-93`); client world bounds ±10000 (`src/features/map/openSpaceTransform.ts:36-38`) | "Move a location" is not one write | A **dedicated owner-gated dual-write RPC** atomically updates `locations.x/y` AND the `kind='location'` anchor, OR a named **coordinate-unification prerequisite**. Detailed in §11.8. Never mutate one and leave the other |
+| **C** | Mining/exploration "sites" are NOT locations — separate point tables `mining_fields`/`exploration_sites` with their own `space_x/space_y` + `reward_bundle_json`, no FK to `locations` (§1.3–1.4). `location_type in ('mining_site','derelict_station')` are inert markers | Authoring a "mining location" would create a row with no runtime | **V1 scope guardrail (§11.14):** the Locations layer authors ONLY types with real on-row runtime — `pirate_hunt`, `pirate_den`, `trade_outpost`. Mining/exploration authoring is OUT (a separate future editor over their own tables) |
+| **D** | NO owner/developer authorization spine server-side; `pirate_zone_create` is granted to plain `authenticated` with "PROTOTYPE: no admin-role gate" (`..0233..` §1.5); the only "owner gate" is client-side (`dev_zone_editor_enabled` + `/dev/zones` render check) | "Owner-only editor" has nothing to stand on | **Build the first true server-side owner spine = prerequisite #1 (§7).** Location authoring reuses the SAME `app_owners`/`is_owner()` spine and `zone_authoring_audit` (generalized, §11.7). Both options (allow-list table vs service_role scripts) presented; allow-list-table recommended |
+| **E** | NO draft/published lifecycle: `locations.status ∈ {active,locked,hidden}` (visibility only); enablement is per-service via `location_services.status ∈ {active,disabled}`; no `created_by`/`updated_at`/`archived_at`/draft on `locations` (§11.6) | "Draft a location, publish later" is unrepresentable | **NEW `location_drafts` staging table + NEW lifecycle/authorship columns** so editing a draft never touches the live row — consistent with the immutable-published-revision philosophy (§2.2). Detailed in §11.6 |
+| **F** | Location move/delete is heavily referrer-constrained: RESTRICT from `space_anchors`, `player_home_port`, `bases`; CASCADE into `location_state`/`location_services`/`danger_zones`/`world_events`/`combat_telegraph`; ~two dozen referrers (§11.9) | "Just move/disable a location" can break live gameplay | **Dependency validation (§11.9)** before publish/move/disable/archive; NEVER hard-delete a referenced published location — prefer disable/archive |
+| **G** | Two maps exist: the real play map (`GalaxyMap.tsx` + `openSpaceTransform`/`galaxyCamera`/`markerStyle`) vs `ZoneEditor.tsx`'s bespoke `makeFit` re-roll (§4, §1) | An owner editor on a second map = spaghetti + drift | **Retire the bespoke map (Slice B, §4.1).** The World Editor (both layers) renders on the shared `MapCanvas`. One map authority |
+
+**Net:** the World Editor presents a *unified experience* over a *deliberately non-unified substrate*. The
+reconciliation is: compose-don't-merge, dual-write the split coordinates, scope V1 to runtime-backed types,
+build the owner spine first, stage drafts off the live row, validate dependencies, and stand on one map.
+
+### 11.3 Locations and zones as separate first-class entities (PROPOSED — deliverable #2)
+
+The editor treats **location** and **zone (placement)** as two independent world entities with a **contextual
+association**, NEVER a containment or an authority relationship. Grounded in CURRENT reality — `danger_zones`
+has a *nullable* `location_id` and `zone_kind='pirate'`-only (`..0233..:182-198`, verified above), and
+`locations` has no zone-authoring column:
+
+| Combination | Meaning | CURRENT support |
+|---|---|---|
+| **Location without a zone** | A port/den/hunt site with no danger polygon over it | Native — most `locations` rows have no `danger_zones` row |
+| **Zone without a location** | A freeform/`drawn` placement with no attach | Native — `danger_zones.location_id` is nullable for `source='drawn'` (`..0233..:187,195`); a `circle` zone must have one |
+| **Zone associating 0/1/many locations** | One placement over several hostile locations, or none | 0/1 today (`danger_zones` single nullable FK); **0..N is PROPOSED via `zone_placement_locations` (§2.5)** |
+
+**Association ≠ geometry authority (load-bearing, restated from §2.5 and §4.5):** a `zone_placement_locations`
+row is a *contextual link* for eligibility and inspection. It does NOT let a location's coordinates drive,
+move, or regenerate a placement's `boundary`. Geometry authority is the placement's materialized polygon and
+nothing else (§1.1 quartet, §4.5). This is precisely why a source-location move triggers an **explicit
+per-placement choice** rather than an automatic geometry edit (§11.11).
+
+### 11.4 Mapping onto the EXISTING real `locations` schema (PROPOSED — deliverable #3)
+
+**Do NOT invent a parallel `world_locations` system.** The Locations layer authors the REAL
+`public.locations` table (`20260616000002_world_map.sql:48-72`, verified above), extended additively. CURRENT
+authoritative columns and where the editor sits on each:
+
+| `locations` column (CURRENT, cited) | Meaning | Editor treatment (PROPOSED) |
+|---|---|---|
+| `id`, `zone_id` (FK→`zones` ON DELETE CASCADE), `name` (unique per `zone_id`) | identity within the world hierarchy | shown; `name` uniqueness respected per `zone_id`; `zone_id` is the world-hierarchy parent (NOT a danger zone) |
+| `location_type` CHECK ∈ 8 values (`:52-56`) | gameplay class | **editable only within the V1-allowed subset** (`pirate_hunt`/`pirate_den`/`trade_outpost`, §11.14) |
+| `x`, `y` `double precision` (float, NO PostGIS) (`:57-58`) | legacy display coords | edited via the **dual-write move RPC** (§11.8), never in isolation |
+| `base_difficulty`, `reward_tier` (`:59-60`) | combat inputs read by `process_combat_ticks` (§1.2) | editable for hostile types; drive pirate combat |
+| `activity_type` CHECK ∈ 6 values (`:61-64`) | activity binding | constrained to match `location_type` |
+| `min_power_required`, `max_presence_seconds`, `is_public` | gates | editable typed fields |
+| `status` CHECK ∈ {active,locked,hidden} (`:68-69`) | **visibility** (reveal), NOT lifecycle | maps to REVEALED/hidden only (§11.6) |
+| `physical_role` CHECK ∈ {unclassified,city,port,station,landmark,activity_site} (`..0065..:27-29`, verified) | durable physical identity, orthogonal to `location_type` | first-class editable field (a `trade_outpost` port = `physical_role` city/port) |
+| `territory_radius numeric` nullable (`..0217..:33`, verified) | world-unit territory ring radius (rendered by `territoryLayer`) | editable; feeds the `generated_circle` default radius (§11.12) |
+
+RLS on `locations` is **public SELECT only, no client write grant ever** (§1, house posture) — so, exactly like
+zones, all location mutation is **RPC-only, owner-gated** (§11.7). No new table shadows `locations`; the only
+NEW persistent structures are the lifecycle staging + columns (§11.6) and audit (§11.7).
+
+### 11.5 Typed location-capability strategy (PROPOSED — deliverable #4)
+
+A location's "capabilities" (what a player can DO there) are **typed, grounded in the real capability tables —
+NOT an unrestricted arbitrary-JSON authoritative model** (the same owner mandate that drove §2.3's typed
+behavior tables). CURRENT capability substrate:
+
+- **`location_type` + `activity_type`** — CHECK-bounded enums on the row itself (`..0002..:52-64`, verified);
+  the coarse "what kind of place / what activity" typing. The editor edits these as constrained pickers, never
+  free text.
+- **`physical_role`** — CHECK-bounded durable physical identity (`..0065..:27-29`, verified), orthogonal to
+  `location_type`.
+- **`location_services`** — per-(location, service) enablement rows, `status ∈ {active,disabled}`
+  (`..0065..:35-43`), the CURRENT authority for "is this service turned on here" (e.g. a port's shop/dock
+  services). This is the **typed capability catalog** the editor authors against — one row per capability, each
+  a known service key, each independently enable/disable-able. It is NOT a JSON blob.
+- **`location_state`** — CASCADE-linked per-location runtime state (§11.9 referrer list).
+
+**PROPOSED strategy:** the editor's "capabilities" panel is a **typed form over `location_services` rows +
+the CHECK-bounded enum fields**, mirroring §2.3's philosophy: DB-CHECK-validated + catalog-keyed, `schema_version`
+for evolution, NO authoritative arbitrary jsonb. If a future capability needs structured config, it gets its
+OWN typed table (as behaviors do in §2.3), never a sparse JSON bag on `locations`. A location type with no
+authoritative runtime capability is **rejected at authoring** (§11.14 guardrail).
+
+### 11.6 Location lifecycle (PROPOSED — deliverable #5): draft → published → enabled → revealed → disabled → archived
+
+**Visibility is separate from enablement** (an explicit owner requirement). CURRENT reality has NEITHER a draft
+nor a publish nor an archive state; it has only *visibility* and *per-service enablement*:
+
+| Owner lifecycle state (PROPOSED) | CURRENT mechanism it maps onto (cited) | New structure required |
+|---|---|---|
+| **draft** | *nothing* — `locations` has no draft; editing a row is immediately live | **NEW `location_drafts` staging table** (below) |
+| **published** | *nothing* — no publish concept | **NEW** `lifecycle_state` column + explicit publish RPC (promotes a draft into a live `locations` row) |
+| **enabled / disabled** | **per-service** `location_services.status ∈ {active,disabled}` (`..0065..:35-43`) — NOT a single location bool | reuse `location_services`; the editor makes explicit that enablement is **per-service**, not one location switch |
+| **revealed** (visibility) | `locations.status`: `active` = revealed, `hidden` = concealed; reveal today is a **one-way** `hidden→active` via **service_role-only** `reveal_starter_ports()` (`..0068..`) | reuse `status`; generalize reveal into an owner-gated RPC (keep it explicit + auditable) |
+| **disabled** | per-service `location_services.status='disabled'` (runtime off) and/or `status='locked'/'hidden'` (visibility off) | reuse existing; validated by §11.9 dependency check first |
+| **archived** | *nothing* — no `archived_at`, no soft-retire on `locations` | **NEW `archived_at` column** (prefer archive over delete; §11.9) |
+
+**CURRENT `locations` has NO `created_by`, NO `updated_at`, NO `archived_at`, NO draft state, NO lifecycle
+column, and NO authorship/audit** (the only authorship attribution anywhere is `danger_zones.created_by`;
+`locations` has none — §1.5, §7). Therefore the following are **ALL NEW**:
+
+**PROPOSED — recommended shape (staging table, so a draft NEVER touches the live world):**
+- **NEW table `location_drafts`** — a staging row carrying the full editable payload (proposed `location_type`,
+  coords, difficulty/reward, `physical_role`, `territory_radius`, capability set), `draft_state ∈
+  {draft,proposed,published,archived}`, `target_location_id` (nullable — set when the draft proposes a change to
+  an existing published location, §11.10), `created_by`, `created_at`, `updated_at`, `archived_at`. Editing a
+  draft mutates ONLY this table. **Publishing is the explicit promotion** that writes/updates the live
+  `locations` row (and its `space_anchors` via §11.8) inside one owner-gated transaction after dependency
+  validation (§11.9).
+- **NEW columns on `locations`** (minimal, additive): `created_by uuid`, `updated_at timestamptz`,
+  `archived_at timestamptz`, and `lifecycle_state text CHECK ∈ {published,archived}` (a live `locations` row is,
+  by definition, published; `draft` lives only in the staging table). Reveal stays on `status`; enablement stays
+  on `location_services`.
+
+This is the **direct analogue of the zone model's immutable-published-revision philosophy (§2.2):** editing a
+draft can never change the live world; publishing is the one explicit promotion; archive is soft-retire, not
+delete. Recommending the **staging-table approach over in-place draft columns** because it *structurally*
+guarantees "editing a draft never changes the live `locations` row" — the live row is not even touched until
+publish. Authorship + audit are NEW and specified in §11.7.
+
+### 11.7 Owner-only mutation boundary inside the server/DB (PROPOSED — deliverable #6)
+
+**A hidden route + a client role check is NOT security** (§1.5: `/dev/zones` + `dev_zone_editor_enabled` gate
+only the client surface; "no server function reads it"). Location authoring reuses the **SAME authorization
+spine built for zone authoring** — there is exactly ONE owner authority in the whole system:
+
+- **Reuse `app_owners` + `is_owner()` (§7, prerequisite #1)** — every location-mutation RPC re-checks
+  `auth.uid()` AND `is_owner()` at its own `SECURITY DEFINER` boundary, returns `{ok:false,reason:'not_owner'}`
+  on failure, keeps `grant execute to authenticated` (deny in-body, house pattern). NO new owner check, NO
+  owner-uuid literal, NO per-RPC ad-hoc gate.
+- **New owner-gated RPCs (all behind `is_owner()`):** `location_draft_save`, `location_draft_publish`,
+  `location_propose_move`, `location_move_publish` (the §11.8 dual-write), `location_reveal`, `location_disable`
+  (per-service), `location_archive`. RLS on `locations` stays SELECT-only, no client write grant (§11.4). The
+  service_role operational-script path (`reveal_starter_ports()` / `activate-*.mjs`, both service_role-only) is
+  the alternative — **presented but not recommended** as the durable authoring surface (it can't express
+  interactive owner editing); the **owner-allow-list table (`app_owners`) is the recommended durable spine**,
+  exactly as §7/§D concludes.
+- **Audit is NEW.** `locations` has no authorship/audit today. **Generalize `zone_authoring_audit` (§7.6) into
+  one world-authoring audit** (add nullable `location_id`/`draft_id` columns, extend the `action` CHECK with
+  `reveal`/`move`) — OR a peer `location_authoring_audit` of identical shape. Recommend **generalizing the
+  existing table** (one audit authority, NO-SPAGHETTI). Every location create/update/publish/move/reveal/
+  disable/archive writes one owner-attributed audit row; the audit table stays owner-select-only, no client
+  write grant, sole writers = the location RPCs.
+
+**Deploy order is identical to §7:** the owner spine (Slice A) ships FIRST and UNCONDITIONALLY; no location
+authoring RPC exists or is callable before it. With no owner seeded, `is_owner()` fails closed — nobody writes.
+
+### 11.8 Coordinate-authority reconciliation for location writes (PROPOSED — fact B, enables deliverable #8)
+
+**The single most important location-specific constraint.** CURRENT: `locations.x/y` are "legacy display-only";
+the OSN main-ship movement system trusts `space_anchors` (`..0063..:28-46`, verified), and a location's anchor
+is `kind='location'`, `location_id` **ON DELETE RESTRICT** (`..0063..:33`, verified) with an **immutability
+trigger** (`..0063..:78-93`). A location's anchor mirrors its `x/y` at creation. Client world bounds are
+±10000 (`src/features/map/openSpaceTransform.ts:36-38`).
+
+**Consequence:** "move a location" is a **dual write** — `locations.x/y` AND the `space_anchors` row — and the
+anchor is immutability-triggered + RESTRICT-protected, so a naive `UPDATE` fails. The design commits to one of
+two named reconciliations, **recommending (1):**
+
+1. **PROPOSED dedicated dual-write RPC (recommended).** A single owner-gated `SECURITY DEFINER`
+   `location_move_publish(location_id, new_x, new_y)` that, in ONE transaction: validates bounds (±10000,
+   matching `openSpaceTransform`), runs dependency validation (§11.9), updates `locations.x/y`, and reconciles
+   the `kind='location'` anchor — either by a controlled path the immutability trigger explicitly permits for
+   the owner RPC, or by retire-and-reinsert of the anchor within the same transaction (respecting RESTRICT
+   ordering). Both `locations` and `space_anchors` move atomically or neither does. Audited (§11.7).
+2. **PROPOSED named prerequisite: coordinate-authority unification.** Collapse display coords and movement
+   anchor into ONE authority so a move is a single write. Larger, sequenced as an explicit prerequisite; until
+   done, (1) is the mechanism.
+
+**Non-negotiable:** the editor NEVER updates `locations.x/y` without reconciling `space_anchors` in the same
+transaction — a split write would desync display from movement and is exactly the spaghetti this doc forbids.
+
+### 11.9 Location dependency validation before publish/move/disable/archive (PROPOSED — deliverable #7)
+
+Grounded in the real referrer set (fact F). **Hard blockers (ON DELETE RESTRICT):** `space_anchors.location_id`
+(`..0063..:33`, verified), `player_home_port.location_id` (`..0065..:60`), `bases.location_id` station storage
+(`..0157..:33`). **CASCADE dependents:** `location_state`, `location_services`, `danger_zones`, `world_events`,
+`combat_telegraph`. **Full referrer list to check (table.column):**
+
+`fleets.current_location_id`/`return_location_id`, `fleet_movements.origin_location_id`/`target_location_id`,
+`location_presence.location_id` (a ship present NOW), `combat_encounters.location_id`,
+`combat_reports.location_id`, `main_ship_space_movements.target_location_id` (active transit),
+`space_anchors.location_id` (RESTRICT), `location_services.location_id`, `player_home_port.location_id`
+(RESTRICT), `market_offers.location_id`, `wallet_receipts.location_id`, `location_investments.location_id`,
+`world_events.location_id`, `bases.location_id` (RESTRICT), `haul_contracts.origin_location_id`/
+`dest_location_id`, `main_ship_instances.berth_location_id` (docking state), `danger_zones.location_id`,
+`pirate_intercepts.location_id`, `port_shop_*.location_id`, `fleet_route_legs.target_location_id`.
+
+**Movement/transit RPCs that assume a live location row** (must not be broken out from under a player):
+`send_main_ship_expedition`, `send_ship_group_hunt`, `move_ship_group_to_location`,
+`command_ship_group_go_route`, `mainship_space_location_target_legal`, `mainship_space_dock_at_location`.
+
+**PROPOSED validation (server-side, inside the owner RPC, before ANY mutation):**
+- **Before move / disable / archive:** assert NO **active presence** (`location_presence`), NO **active
+  transit** (`main_ship_space_movements`/`fleet_movements` targeting it), NO **docking** (`main_ship_instances.
+  berth_location_id`), NO **home-port** (`player_home_port`, RESTRICT), NO **station storage** (`bases`,
+  RESTRICT). Any hit → return a typed `{ok:false, reason:'referenced', by:[…]}`; no silent break.
+- **NEVER hard-delete a referenced published location.** Prefer disable/archive. `DELETE` is permitted ONLY for
+  a location that was never published and never referenced (i.e. a draft in `location_drafts`, which cascades
+  nothing live). CASCADE dependents (`location_state`, `location_services`, `danger_zones`, `world_events`,
+  `combat_telegraph`) are surfaced to the owner as "these will be affected" BEFORE archive, never silently
+  cascaded on a live delete.
+
+### 11.10 Location movement semantics (PROPOSED — deliverable #8)
+
+Movement forks by lifecycle state — **no silent live change ever:**
+
+- **Moving a DRAFT location** (a `location_drafts` row not yet published, §11.6): the coords live only in the
+  staging row; moving edits the draft freely, touches NOTHING live, needs NO dependency validation and NO
+  anchor write (there is no live row / anchor yet). The move materializes only at publish (§11.8).
+- **Proposing movement of a PUBLISHED location:** never an in-place edit. The owner creates a **move proposal**
+  (a `location_drafts` row with `target_location_id` set, `draft_state='proposed'`), which is reviewed, then
+  **explicitly published** via `location_move_publish` — which runs **dependency validation (§11.9)** and the
+  **atomic dual-write (§11.8)** in one owner-gated transaction. Until publish, the live location and its anchor
+  are untouched; players see no change.
+- **No silent live change:** editing/moving is always staged; publishing is the single explicit, validated,
+  audited promotion. This mirrors the zone model's "a draft edit CANNOT touch live gameplay" (§2.7).
+
+### 11.11 Generated-zone behavior when a source location moves (PROPOSED — deliverable #9)
+
+When a published location that a `generated_circle`/`generated_corridor` placement was generated *from* (via
+its `zone_placement_locations` association, §2.5) moves, geometry is **NEVER auto-moved or auto-regenerated**
+(§4.5's "no silent regeneration," restated). Instead the move-publish flow **flags each affected placement as
+"source drifted" and forces a per-placement explicit owner choice** — the location move does not complete its
+geometric consequences until the owner decides, per placement:
+
+| Choice | Effect on the placement |
+|---|---|
+| **Regenerate** | Re-run the generator from `gen_metadata` at the location's NEW coords; DISCARD the old materialized polygon; re-materialize `boundary`. Stays `generated_*` (§4.5 "Regenerate from source rule") |
+| **Preserve materialized polygon** | Keep the existing `boundary` exactly where it is; the association becomes purely contextual. (Optionally flip `geometry_mode`→`freeform` if the source rule no longer governs — see Detach) |
+| **Detach to freeform** | Keep the current polygon, set `geometry_mode='freeform'`, DROP the now-stale `gen_metadata` (§4.5 "Detach to freeform") |
+| **Cancel publication** | Abandon the location move entirely; nothing changes, live world untouched |
+
+**Never auto-move geometry.** Association is not geometry authority (§11.3, §2.5); the materialized `boundary`
+is the single runtime geometry authority (§1.1, §4.5). This is the location-move counterpart to §4.5's
+manual-vertex-edit choice, and it composes with §11.10: the location move and its per-placement geometry
+decisions are resolved together in the explicit publish step, or the whole thing cancels.
+
+### 11.12 Combined operations (PROPOSED)
+
+The combined layer composes the two entities through owner-gated RPCs — each is a composition of §11 location
+ops and §2–§6 zone ops, never a new authority:
+
+- **Create a location, then generate a zone around it:** author + publish the location (§11.6, §11.8), then
+  create a `generated_circle` placement (§4.5) seeded from that location + its `territory_radius`
+  (`..0217..`, default radius), auto-adding the `zone_placement_locations` association (§2.5). Two explicit
+  publishes, one flow.
+- **Corridor between two locations:** pick two published locations + a width → a `generated_corridor` placement
+  (§4.5) whose materialized capsule spans both, associating BOTH via the junction.
+- **Attach a placement to multiple locations:** add N `zone_placement_locations` rows (§2.5) — the 0..N
+  association that replaces `danger_zones`' single nullable FK. Coherence guard (§2.5): a pirate-behavior
+  placement must retain ≥1 hostile location.
+- **Inspect all zones affecting a location:** read all placements whose junction references the location (plus
+  spatial `ST_Intersects` for unassociated overlaps) — an editor inspection panel, read-only.
+- **Inspect all locations for a placement:** read the placement's `zone_placement_locations` rows — the inverse
+  inspection.
+
+### 11.13 Editor capability lists (PROPOSED)
+
+**Location layer:** create draft location (allowed types only, §11.14); edit typed fields (`location_type` in
+subset, `physical_role`, `base_difficulty`/`reward_tier`, `activity_type`, `min_power_required`,
+`max_presence_seconds`, `territory_radius`, `is_public`); edit capabilities via typed `location_services`
+(§11.5); propose move (§11.10); publish draft / publish move (dual-write, §11.8); reveal / conceal (visibility,
+§11.6); enable / disable per-service; archive (never live-delete a referenced published location); inspect
+dependencies (§11.9) and associated zones (§11.12).
+
+**Zone layer (unchanged — see §4.5):** freeform/generated_circle/generated_corridor authoring that MATERIALIZES
+one polygon; explicit regen/detach/cancel on manual edit; right-click menu (move/resize/duplicate/
+change-blueprint/edit-overrides/disable/archive/inspect/revision-history); server-resolver preview;
+draft→publish→enable→disable lifecycle.
+
+**Combined layer:** the §11.12 operations — create-location-then-zone; corridor-between-locations; multi-location
+attach; bidirectional inspection; and the §11.11 source-drift resolution when a move affects generated zones.
+
+### 11.14 V1 scope-control guardrail (PROPOSED — fact C)
+
+**The editor must NOT create a location type that has no authoritative runtime implementation.** From fact C
+(verified §11.1 table above: `location_type` has 8 CHECK values, but `mining_site`/`derelict_station` are inert
+markers — mining/exploration runtime lives in `mining_fields`/`exploration_sites` with NO FK to `locations`),
+the V1 Locations layer authors **only the three types with real on-row runtime:**
+
+- **`pirate_hunt`, `pirate_den`** — combat/danger, read by `process_combat_ticks` via `base_difficulty`/
+  `reward_tier` (§1.2). Real runtime on the location row.
+- **`trade_outpost`** — the port type (the 3 starter ports are `trade_outpost` + `physical_role` city/port).
+  Real port/dock/market runtime.
+
+**Explicitly OUT of the Locations layer V1:** `mining_site`, `derelict_station` (their runtime is in separate
+point tables — a *different future editor* over `mining_fields`/`exploration_sites`, sequenced like §8 Slices
+H/I), and `rally_point`/`safe_zone`/`event_site` unless/until a runtime is proven on the location row. The
+editor's type picker is restricted to the runtime-backed subset; attempting an unbacked type fails validation.
+This is the location-layer analogue of §2.8's v1 invariant (one pirate behavior, nothing dark).
+
+### 11.15 Bounded phased roadmap (PROPOSED — deliverable #10)
+
+**No phase below is built until BOTH prod prerequisites are resolved — the security spine (prerequisite #1, §7)
+and the `combat_units` cardinality fix (prerequisite #2, §5.5) — AND each slice is separately approved** (its
+own migration approval, apply-proof, read-only prod verify, owner-gated enable; precise-state language per §8).
+These slices sequence AFTER §8 Slice A (security spine) and Slice B (shared-map extraction), on which the whole
+World Editor stands.
+
+| Phase | Scope | Explicitly NOT in this phase |
+|---|---|---|
+| **V1A** | Read-only display of the REAL `locations` on the shared `MapCanvas` (§4) + owner-only **DRAFT** creation into `location_drafts` (§11.6), for **currently-supported types only** (`pirate_hunt`/`pirate_den`/`trade_outpost`, §11.14). No live promotion. | NO live enablement/publish; NO new gameplay location type; NO auto zone-gen; NO move of a live location |
+| **V1B** | Publish/enable supported locations (draft→published, §11.6, incl. the §11.8 dual-write on publish); **dependency validation** (§11.9); **audit history** (§11.7); **location↔zone association** (`zone_placement_locations`, §2.5, §11.12). | NO circle/corridor generation yet; still only supported types |
+| **V1C** | **Circle-around-location** gen; **corridor-between-locations** gen (§11.12); **materialized-polygon preview**; explicit **regenerate/detach** workflow on manual edit AND on source-location drift (§4.5, §11.11). | NO mining/exploration authoring (separate future editor); NO multi-behavior zones (that's zone §6 v2); NO density/trigger volumes (§10 D11) |
+
+**Gate restated:** the Locations layer sits behind the SAME security spine as zone authoring (prerequisite #1)
+and does not proceed before it; multi-pirate gameplay any hostile location reaches is still gated on
+prerequisite #2. Each phase is a separately-approved, apply-proof-backed, owner-gated slice — no phase is
+"done" until Production-verified per §8's state language.
+
+---
+
 ## Appendix — reconciliation with prior documents
 
 **Kept from the rigid single-kind draft (verified correct, carried forward unchanged):** the entire §1 grounded
