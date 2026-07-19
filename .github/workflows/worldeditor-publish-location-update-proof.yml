@@ -1,0 +1,77 @@
+name: WORLD-EDITOR PUBLISH-LOCATION-UPDATE — third-domain UPDATE command disposable proof (no production)
+
+# Proves migration 0249 (worldeditor_publish_location_update) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0249. 0249's own in-migration self-assert
+#     runs here against real Postgres (0243 spine + snapshot columns present, command SECURITY DEFINER
+#     + authenticated-only, no client write grant on locations with SELECT intact, get_world_map
+#     intact, 0239 lockdown intact) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the UPDATE command end to end against the running
+#     disposable DB: owner update APPLIED across all 11 draft fields (incl. a null→value
+#     territory_radius write; audit row with BOTH before_snapshot AND after_snapshot; zone_id never
+#     moved); non-owner REJECTED (not_authorized, no write); anon REJECTED (not_authenticated);
+#     request_id idempotent (one apply, one audit row, identical replay); a STALE `expected`
+#     REJECTED (optimistic concurrency → stale_revision + source_changed naming the drifted field,
+#     null-safe on territory_radius, nothing written); bad new fields REJECTED server-side
+#     (validation_failed + details); a bad ENUM a TYPED detail (never a raw check_violation); a
+#     vanished target a typed not_found/source_missing (and a non-uuid target invalid_request); a
+#     zone-scoped rename collision a typed conflict/duplicate_name via unique(zone_id,name);
+#     pirate-zone lockdown intact; the world READ (get_world_map + locations SELECT) intact.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-publish-exploration-update-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-publish-location-update**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-publish-location-update-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0249 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR PUBLISH-LOCATION-UPDATE real-chain proof (owner update / rejections / idempotent / stale / validation / enum / not_found / conflict / read-intact)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-publish-location-update-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            PUBLISH_LOC_UPD_PASS_OWNER_UPDATES \
+            PUBLISH_LOC_UPD_PASS_NONOWNER_REJECTED \
+            PUBLISH_LOC_UPD_PASS_ANON_REJECTED \
+            PUBLISH_LOC_UPD_PASS_IDEMPOTENT \
+            PUBLISH_LOC_UPD_PASS_STALE_REVISION_REJECTED \
+            PUBLISH_LOC_UPD_PASS_VALIDATION_REJECTED \
+            PUBLISH_LOC_UPD_PASS_INVALID_ENUM_REJECTED \
+            PUBLISH_LOC_UPD_PASS_NOT_FOUND \
+            PUBLISH_LOC_UPD_PASS_CONFLICT_DUPLICATE_NAME \
+            PUBLISH_LOC_UPD_PASS_AUDIT_BEFORE_AFTER \
+            PUBLISH_LOC_UPD_PASS_ZONE_LOCKDOWN_INTACT \
+            PUBLISH_LOC_UPD_PASS_GET_WORLD_MAP_INTACT \
+            'WORLD-EDITOR PUBLISH-LOCATION-UPDATE PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL PUBLISH-LOCATION-UPDATE PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

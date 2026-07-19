@@ -13,13 +13,17 @@
  *  exploration_site_update is the FIRST UPDATE publish command (0247, owner-gated, optimistic
  *  concurrency: payload carries target_id + the fork-time `expected` snapshot);
  *  mining_field_update is its mining twin — the SECOND UPDATE publish command (0248, same
- *  owner-gated optimistic-concurrency contract over mining_fields). */
+ *  owner-gated optimistic-concurrency contract over mining_fields);
+ *  location_update is the THIRD publish DOMAIN (0249, owner-gated): the location UPDATE command —
+ *  uuid-addressed (target_id = the MapLocation id the edit fork pinned) with the same
+ *  optimistic-concurrency contract over all 11 location draft fields. */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
   | 'exploration_site_create'
   | 'mining_field_create'
   | 'exploration_site_update'
   | 'mining_field_update'
+  | 'location_update'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -42,7 +46,7 @@ export type WorldEditorErrorCode =
   | 'validation_failed' // the authoritative payload subset failed server-side re-validation (0244)
   | 'stale_revision' // the live row drifted from the draft's fork-time `expected` snapshot (0247 optimistic concurrency)
   | 'not_found' // the update target no longer exists (0247; details carry source_missing)
-  | 'conflict' // a unique natural key (e.g. exploration_sites.name / mining_fields.name) is already taken (0244/0246)
+  | 'conflict' // a unique natural key (exploration_sites.name / mining_fields.name / locations unique(zone_id,name)) is already taken (0244/0246/0249)
   | 'transport_error' // client-side: the RPC call itself failed (network / permission)
 
 /** One structured issue inside a failure envelope (the 0244 details[] vocabulary — e.g. a
@@ -106,6 +110,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'exploration_site_update'
     case 'mining_field_update':
       return 'mining_field_update'
+    case 'location_update':
+      return 'location_update'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)

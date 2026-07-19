@@ -6,10 +6,10 @@ import { fileURLToPath } from 'node:url'
 // WORLD EDITOR V1B-1 — STRUCTURAL GUARDS (source-text proofs of the slice's hard exclusions):
 //   1. PURITY — the draft model + store perform ZERO network/database IO and can express no write.
 //   2. ONE COMMAND PATH — the command client (commandClient.ts + its pure contract) and the
-//      sanctioned publish surfaces (ExplorationDraftPanel.tsx, the 0244 exploration_site_create
-//      slice; MiningDraftPanel.tsx, the 0246 mining_field_create slice) are the ONLY places a
-//      world-editor command may be referenced; every other module in src/features/worldeditor
-//      stays command-free (location publish remains unwired).
+//      sanctioned publish surfaces (ExplorationDraftPanel.tsx, the 0244/0247 exploration slices;
+//      MiningDraftPanel.tsx, the 0246/0248 mining slices; LocationDraftPanel.tsx, the 0249
+//      location_update slice) are the ONLY places a world-editor command may be referenced; every
+//      other module in src/features/worldeditor stays command-free.
 //   3. READ-SNAPSHOT INTEGRITY — worldEditorData.ts is byte-identical on its import surface: the
 //      draft store is a SEPARATE structure and never enters the unified read snapshot.
 // Run: `npx playwright test locationDraftGuards.spec.ts`.
@@ -31,16 +31,17 @@ test('locationDraftModel.ts and useLocationDrafts.ts contain no supabase/fetch/r
 
 // ── 2. one-command-path guard ───────────────────────────────────────────────────────────────────────
 // commandClient.ts (the transport binding) + commandContract.ts (its pure contract) are the ONE
-// legitimate definition site, and ExplorationDraftPanel.tsx (0244 exploration_site_create) +
-// MiningDraftPanel.tsx (0246 mining_field_create) are the sanctioned publish surfaces (owner-gated
-// SERVER-side; the client grants nothing). The guard's law is that no OTHER world-editor module
-// references the command client, so the location publish path stays structurally unwired until its
-// own slice lands.
+// legitimate definition site, and ExplorationDraftPanel.tsx (0244/0247) + MiningDraftPanel.tsx
+// (0246/0248) + LocationDraftPanel.tsx (0249 location_update — the same narrowing the exploration
+// and mining panels made when their publish slices landed) are the sanctioned publish surfaces
+// (owner-gated SERVER-side; the client grants nothing). The guard's law is that no OTHER
+// world-editor module references the command client.
 const COMMAND_PATH_FILES = [
   'commandClient.ts',
   'commandContract.ts',
   'ExplorationDraftPanel.tsx',
   'MiningDraftPanel.tsx',
+  'LocationDraftPanel.tsx',
 ]
 test('no file in src/features/worldeditor outside the sanctioned command path references a command client', () => {
   for (const name of readdirSync(WE_DIR)) {
