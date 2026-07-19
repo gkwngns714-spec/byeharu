@@ -8,6 +8,7 @@ import { WORLD_TO_VIEWBOX_SCALE } from '../src/features/map/openSpaceTransform'
 // No hooks run, no DB, no fabricated backend.
 
 const norm = (p: { x: number; y: number }) => p // identity stub; positions pass through unchanged
+const NO_ZONES: ReadonlySet<string> = new Set() // no location owns a danger_zone (default)
 
 const loc = (o: Partial<TerritoryRingLocation> = {}): TerritoryRingLocation => ({
   id: 'loc-1',
@@ -24,11 +25,13 @@ const loc = (o: Partial<TerritoryRingLocation> = {}): TerritoryRingLocation => (
 type RingProps = { cx: number; cy: number; r: number; fill?: string; stroke?: string; strokeWidth?: number }
 const ringCircles = (g: ReactElement): RingProps[] =>
   ((g.props as { children: ReactElement[] }).children ?? []).map((c) => c.props as RingProps)
+const testIds = (layer: ReactElement[]): unknown[] =>
+  layer.map((g) => (g.props as Record<string, unknown>)['data-testid'])
 
 test('layer: one WORLD-TRUE ring per non-hostile location — r = radius * WORLD_TO_VIEWBOX_SCALE, NOT /k', () => {
   const l = loc()
   for (const k of [1, 4]) {
-    const layer = territoryLayer({ locations: [l], norm, k })
+    const layer = territoryLayer({ locations: [l], norm, k, zonedLocationIds: NO_ZONES })
     expect(layer).toHaveLength(1)
     const circles = ringCircles(layer[0])
     expect(circles).toHaveLength(2) // fill disc + dashed boundary
@@ -41,38 +44,50 @@ test('layer: one WORLD-TRUE ring per non-hostile location — r = radius * WORLD
   }
 })
 
-test('layer: ports/safe/resource locations keep their ring (no suppression)', () => {
+test('layer: ports/safe/resource locations keep their ring (never gated by zones)', () => {
   const port = loc({ id: 'port', location_type: 'trade_outpost' })
   const safe = loc({ id: 'safe', location_type: 'safe_zone' })
   const mine = loc({ id: 'mine', location_type: 'mining_site' })
-  const layer = territoryLayer({ locations: [port, safe, mine], norm, k: 1 })
-  expect(layer).toHaveLength(3)
-  expect(layer.map((g) => (g.props as Record<string, unknown>)['data-testid'])).toEqual([
-    'territory-ring-port',
-    'territory-ring-safe',
-    'territory-ring-mine',
-  ])
+  // even if a zone were bound to one, a non-hostile location is never suppressed:
+  const layer = territoryLayer({ locations: [port, safe, mine], norm, k: 1, zonedLocationIds: new Set(['port', 'safe', 'mine']) })
+  expect(testIds(layer)).toEqual(['territory-ring-port', 'territory-ring-safe', 'territory-ring-mine'])
 })
 
-test('layer: hostile locations render NO ring — the danger-zone polygon represents them instead', () => {
+test('layer: hostile location WITH its own danger_zone renders NO ring — the polygon represents it', () => {
   // pirate_hunt / pirate_den by type, and any location running the hunt_pirates activity: all hostile.
   const hunt = loc({ id: 'hunt', location_type: 'pirate_hunt' })
   const den = loc({ id: 'den', location_type: 'pirate_den' })
   const activityHostile = loc({ id: 'act', location_type: 'safe_zone', activity_type: 'hunt_pirates' })
   for (const hostile of [hunt, den, activityHostile]) {
-    expect(territoryLayer({ locations: [hostile], norm, k: 1 })).toEqual([])
+    const zoned = new Set([hostile.id]) // this pirate site owns a danger_zone → ring suppressed
+    expect(territoryLayer({ locations: [hostile], norm, k: 1, zonedLocationIds: zoned })).toEqual([])
   }
 })
 
-test('layer: mixed set — hostile suppressed, the rest keep their rings in input order', () => {
+test('layer: hostile location WITHOUT a danger_zone KEEPS its ring — never zero regions on a pirate site', () => {
+  // The #217 regression: a hostile site with no bound zone was suppressed AND had no polygon → nothing
+  // drawn. Now the ring survives so the site still shows exactly one region.
+  const hunt = loc({ id: 'hunt', location_type: 'pirate_hunt' })
+  const den = loc({ id: 'den', location_type: 'pirate_den' })
+  const activityHostile = loc({ id: 'act', location_type: 'safe_zone', activity_type: 'hunt_pirates' })
+  for (const hostile of [hunt, den, activityHostile]) {
+    const layer = territoryLayer({ locations: [hostile], norm, k: 1, zonedLocationIds: NO_ZONES })
+    expect(testIds(layer)).toEqual([`territory-ring-${hostile.id}`])
+  }
+})
+
+test('layer: mixed set — only hostile sites that OWN a zone are suppressed; the rest keep rings, in order', () => {
   const port = loc({ id: 'port', location_type: 'trade_outpost' })
-  const pirate = loc({ id: 'pirate', location_type: 'pirate_den' })
+  const pirateZoned = loc({ id: 'pirate-zoned', location_type: 'pirate_den' }) // has a zone → suppressed
+  const pirateBare = loc({ id: 'pirate-bare', location_type: 'pirate_hunt' }) // no zone → keeps ring
   const safe = loc({ id: 'safe', location_type: 'safe_zone' })
-  const layer = territoryLayer({ locations: [port, pirate, safe], norm, k: 1 })
-  expect(layer.map((g) => (g.props as Record<string, unknown>)['data-testid'])).toEqual([
-    'territory-ring-port',
-    'territory-ring-safe',
-  ])
+  const layer = territoryLayer({
+    locations: [port, pirateZoned, pirateBare, safe],
+    norm,
+    k: 1,
+    zonedLocationIds: new Set(['pirate-zoned']),
+  })
+  expect(testIds(layer)).toEqual(['territory-ring-port', 'territory-ring-pirate-bare', 'territory-ring-safe'])
 })
 
 test('layer: rings project through the map norm and stay pointer-transparent', () => {
@@ -80,6 +95,7 @@ test('layer: rings project through the map norm and stay pointer-transparent', (
     locations: [loc({ x: 10, y: 20 })],
     norm: (p) => ({ x: p.x + 1, y: p.y + 1 }), // non-identity: proves projection happens
     k: 1,
+    zonedLocationIds: NO_ZONES,
   })
   const g = layer[0]
   expect((g.props as { style: { pointerEvents: string } }).style.pointerEvents).toBe('none')
@@ -88,9 +104,10 @@ test('layer: rings project through the map norm and stay pointer-transparent', (
 })
 
 test('layer: fail closed — null/non-positive/non-finite radius or no locations renders nothing', () => {
-  expect(territoryLayer({ locations: [loc({ territory_radius: null })], norm, k: 1 })).toEqual([])
-  expect(territoryLayer({ locations: [loc({ territory_radius: 0 })], norm, k: 1 })).toEqual([])
-  expect(territoryLayer({ locations: [loc({ territory_radius: -5 })], norm, k: 1 })).toEqual([])
-  expect(territoryLayer({ locations: [loc({ territory_radius: Number.NaN })], norm, k: 1 })).toEqual([])
-  expect(territoryLayer({ locations: [], norm, k: 1 })).toEqual([])
+  const z = NO_ZONES
+  expect(territoryLayer({ locations: [loc({ territory_radius: null })], norm, k: 1, zonedLocationIds: z })).toEqual([])
+  expect(territoryLayer({ locations: [loc({ territory_radius: 0 })], norm, k: 1, zonedLocationIds: z })).toEqual([])
+  expect(territoryLayer({ locations: [loc({ territory_radius: -5 })], norm, k: 1, zonedLocationIds: z })).toEqual([])
+  expect(territoryLayer({ locations: [loc({ territory_radius: Number.NaN })], norm, k: 1, zonedLocationIds: z })).toEqual([])
+  expect(territoryLayer({ locations: [], norm, k: 1, zonedLocationIds: z })).toEqual([])
 })

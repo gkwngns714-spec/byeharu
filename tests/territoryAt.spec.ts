@@ -10,6 +10,7 @@ import { WORLD_TO_VIEWBOX_SCALE } from '../src/features/map/openSpaceTransform'
 // galaxyShipLayer.spec.ts convention). No hooks run, no DB, no fabricated backend.
 
 const norm = (p: { x: number; y: number }) => p // identity stub; positions pass through unchanged
+const NO_ZONES: ReadonlySet<string> = new Set() // no location owns a danger_zone → no ring suppression
 
 const loc = (o: Partial<TerritoryRingLocation> = {}): TerritoryRingLocation => ({
   id: 'loc-1',
@@ -74,7 +75,7 @@ const ringCircles = (g: ReactElement): RingProps[] =>
 test('layer: one WORLD-TRUE ring per territory — r = territory_radius * WORLD_TO_VIEWBOX_SCALE, NOT /k', () => {
   const t = loc({ x: 100, y: 200, territory_radius: 25 })
   for (const k of [1, 4]) {
-    const layer = territoryLayer({ locations: [t], norm, k })
+    const layer = territoryLayer({ locations: [t], norm, k, zonedLocationIds: NO_ZONES })
     expect(layer).toHaveLength(1)
     const circles = ringCircles(layer[0])
     expect(circles).toHaveLength(2) // fill disc + dashed boundary
@@ -93,6 +94,7 @@ test('layer: rings project through the map norm and stay pointer-transparent', (
     locations: [loc({ x: 10, y: 20 })],
     norm: (p) => ({ x: p.x + 1, y: p.y + 1 }), // non-identity: proves projection happens
     k: 1,
+    zonedLocationIds: NO_ZONES,
   })
   const g = layer[0]
   expect((g.props as { style: { pointerEvents: string } }).style.pointerEvents).toBe('none')
@@ -103,13 +105,14 @@ test('layer: rings project through the map norm and stay pointer-transparent', (
 test('layer: tone composes markerStyle — hostile ring is the danger token; port ring the accent token', () => {
   const hostile = loc({ id: 'h', location_type: 'pirate_hunt', activity_type: 'hunt_pirates', territory_radius: 35 })
   const port = loc({ id: 'p', territory_radius: 25 })
-  const [hg, pg] = territoryLayer({ locations: [hostile, port], norm, k: 1 })
+  // neither hostile nor port owns a danger_zone here → hostile keeps its ring, so its tone is asserted
+  const [hg, pg] = territoryLayer({ locations: [hostile, port], norm, k: 1, zonedLocationIds: NO_ZONES })
   expect(ringCircles(hg)[0].fill).toBe('var(--color-danger)')
   expect(ringCircles(pg)[0].fill).toBe('var(--color-accent)')
 })
 
 test('layer: NULL/non-positive territory renders nothing — the pre-0217 map is byte-identical', () => {
-  expect(territoryLayer({ locations: [loc({ territory_radius: null })], norm, k: 1 })).toEqual([])
-  expect(territoryLayer({ locations: [loc({ territory_radius: 0 })], norm, k: 1 })).toEqual([])
-  expect(territoryLayer({ locations: [], norm, k: 1 })).toEqual([])
+  expect(territoryLayer({ locations: [loc({ territory_radius: null })], norm, k: 1, zonedLocationIds: NO_ZONES })).toEqual([])
+  expect(territoryLayer({ locations: [loc({ territory_radius: 0 })], norm, k: 1, zonedLocationIds: NO_ZONES })).toEqual([])
+  expect(territoryLayer({ locations: [], norm, k: 1, zonedLocationIds: NO_ZONES })).toEqual([])
 })
