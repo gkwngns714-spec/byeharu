@@ -8,8 +8,12 @@
 // grants no authority.
 
 /** Command kinds. world_editor_ping is the guarded no-op contract proof (0243);
- *  exploration_site_create is the FIRST live-world-write publish command (0244, owner-gated). */
-export type WorldEditorCommandType = 'world_editor_ping' | 'exploration_site_create'
+ *  exploration_site_create is the FIRST live-world-write publish command (0244, owner-gated);
+ *  mining_field_create is its mining twin — the SECOND publish command (0246, owner-gated). */
+export type WorldEditorCommandType =
+  | 'world_editor_ping'
+  | 'exploration_site_create'
+  | 'mining_field_create'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -31,7 +35,7 @@ export type WorldEditorErrorCode =
   | 'duplicate_request' // idempotent replay (surfaced on a successful replay envelope)
   | 'validation_failed' // the authoritative payload subset failed server-side re-validation (0244)
   | 'stale_revision' // the draft's forked source revision no longer matches the live row (reserved)
-  | 'conflict' // a unique natural key (e.g. exploration_sites.name) is already taken (0244)
+  | 'conflict' // a unique natural key (e.g. exploration_sites.name / mining_fields.name) is already taken (0244/0246)
   | 'transport_error' // client-side: the RPC call itself failed (network / permission)
 
 /** One structured issue inside a failure envelope (the 0244 details[] vocabulary — e.g. a
@@ -89,6 +93,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'world_editor_ping'
     case 'exploration_site_create':
       return 'exploration_site_create'
+    case 'mining_field_create':
+      return 'mining_field_create'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)
@@ -137,7 +143,7 @@ export function describeWorldEditorError(code: WorldEditorErrorCode): string {
     case 'stale_revision':
       return 'The live row changed since this draft was forked — review the draft before retrying.'
     case 'conflict':
-      return 'The name is already taken by a live site.'
+      return 'The name is already taken in the live world.'
     case 'transport_error':
       return 'The command could not reach the server.'
     default:
