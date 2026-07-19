@@ -24,36 +24,15 @@ export async function fetchDangerZones(): Promise<DangerZoneLite[]> {
   return data as DangerZoneLite[]
 }
 
-// ── pirate_intercept_preview_route (read-only advisory) ──────────────────────────────────────────────
-export interface RoutePreviewLeg {
-  leg_index: number
-  crosses: boolean
-  zone_id?: string
-  location_id?: string | null
-  exposure_fraction?: number
-  risk?: number
-}
-export type RoutePreviewResult =
-  | { ok: true; group_id: string; crosses_danger: boolean; weak_fleet: boolean; combined_stats: number; legs: RoutePreviewLeg[] }
-  | { ok: false; reason: string }
-
+// The route target shape shared by the route write wrappers below. (The read-only advisory
+// `previewPirateRoute` + its RoutePreviewResult/RoutePreviewLeg types were removed with the
+// clean-map redesign — the client no longer shows a route risk-preview; the server RPC
+// `pirate_intercept_preview_route` still exists but has no client caller.)
 export interface RouteTarget {
   waypoints: { x: number; y: number }[]
   targetLocationId?: string | null
   targetX?: number | null
   targetY?: number | null
-}
-
-export async function previewPirateRoute(groupId: string, route: RouteTarget): Promise<RoutePreviewResult> {
-  const { data, error } = await supabase.rpc('pirate_intercept_preview_route', {
-    p_group_id: groupId,
-    p_waypoints: route.waypoints,
-    p_target_location_id: route.targetLocationId ?? null,
-    p_target_x: route.targetX ?? null,
-    p_target_y: route.targetY ?? null,
-  })
-  if (error) return { ok: false, reason: 'unavailable' }
-  return data as RoutePreviewResult
 }
 
 // ── command_ship_group_go_route (write) — composes command_ship_group_go for leg 1, queues the rest. ──
