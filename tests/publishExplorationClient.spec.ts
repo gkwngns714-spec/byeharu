@@ -9,11 +9,13 @@ import {
   type WorldEditorErrorCode,
 } from '../src/features/worldeditor/commandContract'
 
-// WORLD EDITOR PUBLISH SLICE (0244) — client contract unit tests: the exploration_site_create
-// command union member, the extended error vocabulary (validation_failed / stale_revision /
-// conflict), and details[]-carrying envelope normalization. PURE: commandContract.ts performs no
-// network IO — no live RPC is touched here (the server behavior is proven by the disposable-matrix
-// CI proof, scripts/worldeditor-publish-exploration-proof.sql).
+// WORLD EDITOR PUBLISH SLICES (0244 + 0247) — client contract unit tests: the
+// exploration_site_create and exploration_site_update command union members, the extended error
+// vocabulary (validation_failed / stale_revision / not_found / conflict), and details[]-carrying
+// envelope normalization. PURE: commandContract.ts performs no network IO — no live RPC is touched
+// here (the server behavior is proven by the disposable-matrix CI proofs,
+// scripts/worldeditor-publish-exploration-proof.sql and
+// scripts/worldeditor-publish-exploration-update-proof.sql).
 // Run: `npx playwright test publishExplorationClient.spec.ts`.
 
 const ENVELOPE: WorldEditorCommandEnvelope = {
@@ -26,10 +28,11 @@ const ENVELOPE: WorldEditorCommandEnvelope = {
 test('commandRpcName maps every command kind to its server entrypoint', () => {
   expect(commandRpcName('world_editor_ping')).toBe('world_editor_ping')
   expect(commandRpcName('exploration_site_create')).toBe('exploration_site_create')
+  expect(commandRpcName('exploration_site_update')).toBe('exploration_site_update')
 })
 
 // ── extended error vocabulary ───────────────────────────────────────────────────────────────────────
-test('describeWorldEditorError covers the 0244 codes with distinct, non-empty copy', () => {
+test('describeWorldEditorError covers the 0244/0247 codes with distinct, non-empty copy', () => {
   const codes: WorldEditorErrorCode[] = [
     'not_authenticated',
     'not_authorized',
@@ -37,6 +40,7 @@ test('describeWorldEditorError covers the 0244 codes with distinct, non-empty co
     'duplicate_request',
     'validation_failed',
     'stale_revision',
+    'not_found',
     'conflict',
     'transport_error',
   ]
@@ -122,6 +126,56 @@ test('normalizeEnvelope: a null/shapeless server response is a typed transport_e
     expect(r.error).toBe('transport_error')
     expect(r.requestId).toBe('req-1')
   }
+})
+
+// ── the 0247 UPDATE command envelope ────────────────────────────────────────────────────────────────
+const UPDATE_ENVELOPE: WorldEditorCommandEnvelope = {
+  requestId: 'req-upd-1',
+  commandType: 'exploration_site_update',
+  payload: {
+    target_id: 'Site A',
+    expected: { name: 'Site A', space_x: 1, space_y: 2, reward_bundle_json: null },
+    fields: { name: 'Site B', space_x: 3, space_y: 4, reward_bundle_json: null },
+    source_revision: 'abc123',
+  },
+}
+
+test('normalizeEnvelope: an update success carries {updated,id,name} + command_type through', () => {
+  const raw: RawServerEnvelope = {
+    ok: true,
+    request_id: 'req-upd-1',
+    command_type: 'exploration_site_update',
+    result: { updated: true, id: 'abc', name: 'Site B' },
+  }
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, raw)
+  expect(r.ok).toBe(true)
+  if (!r.ok) throw new Error('unreachable')
+  expect(r.commandType).toBe('exploration_site_update')
+  expect(r.result).toEqual({ updated: true, id: 'abc', name: 'Site B' })
+})
+
+test('normalizeEnvelope: a stale_revision envelope carries the per-field source_changed details through', () => {
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-upd-1',
+    error: 'stale_revision',
+    details: [{ code: 'source_changed', field: 'space_x' }],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('stale_revision')
+  expect(r.details?.[0]).toEqual({ code: 'source_changed', field: 'space_x' })
+})
+
+test('normalizeEnvelope: a not_found envelope carries the source_missing detail through', () => {
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-upd-1',
+    error: 'not_found',
+    details: [{ code: 'source_missing', field: null }],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('not_found')
+  expect(r.details?.[0]?.code).toBe('source_missing')
 })
 
 // ── request-id minting ──────────────────────────────────────────────────────────────────────────────
