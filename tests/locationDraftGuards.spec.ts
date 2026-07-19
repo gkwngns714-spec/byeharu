@@ -27,8 +27,12 @@ test('locationDraftModel.ts and useLocationDrafts.ts contain no supabase/fetch/r
 })
 
 // ── 2. no-command guard ─────────────────────────────────────────────────────────────────────────────
+// commandClient.ts ITSELF (the V1B-0 owner-security command envelope, merged as contained DIRECTION)
+// is the one legitimate definition site and is excluded from the scan — the guard's law is that no
+// OTHER world-editor module references it, so publish/mutation stays structurally unwired.
 test('no file in src/features/worldeditor references a command client (publish stays unwired)', () => {
   for (const name of readdirSync(WE_DIR)) {
+    if (name === 'commandClient.ts') continue
     const src = read(name)
     expect(src, `${name} must not import commandClient`).not.toContain('commandClient')
     expect(src, `${name} must not invoke a world-editor command`).not.toContain('invokeWorldEditorCommand')
