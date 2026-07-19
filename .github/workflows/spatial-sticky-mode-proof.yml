@@ -1,0 +1,140 @@
+name: STICKY SPATIAL MODE — 0242 mid-fight de-spatialization fix disposable proof (no production)
+
+# Proves migration 0242 (sticky spatial encounter mode) on a THROWAWAY local Supabase — NEVER production:
+#   1. selftest — a DB-free static check that scripts/spatial-sticky-mode-proof.sql is well-formed:
+#      self-rolling-back (opens a txn, ends in ROLLBACK, no COMMIT), toggles spatial_combat_enabled ONLY
+#      inside the txn, obeys the sole-writer law (never hand-writes group_sortie_members / combat_units
+#      rows), drives the real RPC/engine chain, carries every SSPASS marker + the determinism guards
+#      (variance 0, no random(), manual process_combat_ticks — no cron/sleep).
+#   2. disposable-matrix — `supabase start` applies the FULL migration chain (incl. 0234 spatial tick +
+#      0242 sticky-mode fix); the proof then runs the four sticky-mode scenarios end to end and asserts
+#      every one. THE GREEN RUN OF THIS JOB IS THE EXECUTION OF THE PROOF.
+# The proof flips NO committed flag and writes nothing durable (self-rolling-back). No `environment:` on any
+# job, so none can read production secrets. Modeled on multipirate-lifecycle-proof.yml.
+#
+# SCOPE NOTE (recorded): this validates the runtime LOGIC of the sticky-mode decision under controlled
+# MANUAL process_combat_ticks() invocation with clock-rewind — NOT live production cron cadence (interval
+# pacing / concurrency), which is out of scope for a disposable proof.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-spatial-sticky-mode**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spatial-sticky-mode-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static harness checks (DB-free)
+        run: |
+          set -euo pipefail
+          SQL=scripts/spatial-sticky-mode-proof.sql
+          [ -f "$SQL" ] || { echo "proof sql not found"; exit 1; }
+
+          # self-rolling-back: opens a txn, ends in ROLLBACK, never COMMITs.
+          grep -qiE '^\s*begin\s*;' "$SQL"    || { echo "harness does not open a txn (begin;)"; exit 1; }
+          grep -qiE '^\s*rollback\s*;' "$SQL" || { echo "harness does not end in ROLLBACK"; exit 1; }
+          if grep -qiE '^\s*commit\s*;' "$SQL"; then echo "harness COMMITs — must be self-rolling-back"; exit 1; fi
+          # ROLLBACK must be the LAST SQL statement (only comments/blank may follow).
+          last="$(grep -niE '^\s*rollback\s*;' "$SQL" | tail -1 | cut -d: -f1)"
+          tail -n +"$((last + 1))" "$SQL" | sed -E 's/--.*//' | tr -d '[:space:]' | grep -q . \
+            && { echo "SQL follows the final ROLLBACK (would autocommit)"; exit 1; } || true
+
+          # every SSPASS marker present + the final PASS line.
+          for m in SSPASS_1_SPATIAL_STAYS_SPATIAL_AFTER_DARK SSPASS_2_AGGREGATE_STAYS_AGGREGATE_AFTER_ENABLE \
+                   SSPASS_3_NEW_ENCOUNTER_AFTER_DARK SSPASS_4_SAFE_EMERGENCY_DARKENING; do
+            grep -q "$m" "$SQL" || { echo "missing PASS marker: $m"; exit 1; }
+          done
+          grep -q 'STICKY SPATIAL MODE PROOF PASSED' "$SQL" || { echo "missing final PASS line"; exit 1; }
+
+          # spatial_combat_enabled is toggled ONLY inside the txn (no COMMIT above guarantees the committed
+          # dark value is never written); the other dark flags the chain needs are lit only inside the txn.
+          for f in team_command_enabled mainship_additional_commission_enabled module_crafting_enabled \
+                   module_fitting_enabled spatial_combat_enabled; do
+            grep -qE "update public\.game_config set value='true'::jsonb where key='$f';" "$SQL" \
+              || { echo "harness does not enable dark flag '$f' inside the txn"; exit 1; }
+          done
+          # the fix is actually EXERCISED: the flag is darkened mid-txn (the core scenario).
+          grep -qE "update public\.game_config set value='false'::jsonb where key='spatial_combat_enabled';" "$SQL" \
+            || { echo "harness never DARKENS spatial_combat_enabled mid-fight (the scenario under test)"; exit 1; }
+
+          # DETERMINISM GUARDS: variance zeroed, no session RNG, no cron/sleep dependence, manual tick.
+          grep -q "set_game_config('combat_damage_variance_pct', '0'::jsonb)" "$SQL" \
+            || { echo "harness does not zero combat_damage_variance_pct (determinism)"; exit 1; }
+          if grep -qE 'random\(' "$SQL"; then echo "harness uses random() (0041 determinism law)"; exit 1; fi
+          if grep -qiE 'cron\.schedule|pg_sleep|pg_cron|select[[:space:]]+pg_sleep'  "$SQL"; then
+            echo "harness depends on cron/sleep (must be manual, deterministic)"; exit 1; fi
+          grep -q 'process_combat_ticks()' "$SQL" || { echo "harness never invokes process_combat_ticks() manually"; exit 1; }
+
+          # SOLE-WRITER LAW: group_sortie_members + combat_units are NEVER hand-written.
+          grep -qiE 'insert[[:space:]]+into[[:space:]]+(public\.)?group_sortie_members' "$SQL" \
+            && { echo "harness inserts group_sortie_members directly (send_ship_group_hunt is sole writer)"; exit 1; } || true
+          grep -qiE 'insert[[:space:]]+into[[:space:]]+(public\.)?combat_units' "$SQL" \
+            && { echo "harness inserts combat_units directly (engine is sole writer)"; exit 1; } || true
+          grep -qiE 'update[[:space:]]+(public\.)?combat_units' "$SQL" \
+            && { echo "harness UPDATEs combat_units directly"; exit 1; } || true
+          grep -qiE 'delete[[:space:]]+from[[:space:]]+(public\.)?combat_units' "$SQL" \
+            && { echo "harness DELETEs combat_units directly"; exit 1; } || true
+
+          # the real RPC/engine chain is exercised (not a hand-rolled shortcut).
+          for fn in reveal_starter_ports commission_first_main_ship commission_additional_main_ship \
+                    reward_grant craft_module fit_module_to_ship upsert_ship_group assign_ship_to_group \
+                    set_fleet_command_ship send_ship_group_hunt movement_settle_arrival request_retreat; do
+            grep -q "public.$fn(" "$SQL" || { echo "harness does not use real RPC public.$fn"; exit 1; }
+          done
+
+          # migration 0242 is present in the chain and re-creates process_combat_ticks.
+          M=supabase/migrations/20260618000242_combat_sticky_spatial_mode.sql
+          [ -f "$M" ] || { echo "migration 0242 not found"; exit 1; }
+          grep -q 'create or replace function public.process_combat_ticks()' "$M" \
+            || { echo "0242 does not re-create process_combat_ticks"; exit 1; }
+          grep -qF 'v_is_spatial := exists (select 1 from combat_units where encounter_id = e.id and pos_x is not null)' "$M" \
+            || { echo "0242 missing the sticky position-only v_is_spatial form"; exit 1; }
+
+          echo "STICKY SPATIAL MODE SELFTEST: ALL PASSED (self-rolling-back; 4 SSPASS markers + final PASS; spatial_combat_enabled toggled only inside the txn and darkened mid-fight; determinism guards — variance 0, no random(), no cron/sleep, manual process_combat_ticks; sole-writer law for group_sortie_members + combat_units; full real-RPC/engine chain; migration 0242 present with the sticky v_is_spatial form)"
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0234 + 0242)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: STICKY SPATIAL MODE proof (the green run IS the execution)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/spatial-sticky-mode-proof.sql > /tmp/ssout.txt 2>&1
+          rc=$?
+          set -e
+          echo "----- proof output (rc=$rc) -----"
+          cat /tmp/ssout.txt
+          echo "---------------------------------"
+          [ "$rc" -eq 0 ] || { echo "psql exited $rc — the proof aborted"; exit 1; }
+          for m in SSPASS_1_SPATIAL_STAYS_SPATIAL_AFTER_DARK SSPASS_2_AGGREGATE_STAYS_AGGREGATE_AFTER_ENABLE \
+                   SSPASS_3_NEW_ENCOUNTER_AFTER_DARK SSPASS_4_SAFE_EMERGENCY_DARKENING; do
+            grep -q "$m" /tmp/ssout.txt || { echo "PROOF DID NOT EMIT MARKER: $m"; exit 1; }
+          done
+          grep -q 'STICKY SPATIAL MODE PROOF PASSED' /tmp/ssout.txt \
+            || { echo 'PROOF DID NOT REACH THE FINAL PASS MARKER'; exit 1; }
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
