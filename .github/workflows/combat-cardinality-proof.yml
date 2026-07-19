@@ -89,14 +89,21 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           : "${DB_URL:?DB_URL (disposable stack) required}"
-          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/combat-cardinality-proof.sql 2>&1)"
-          echo "$out"
+          # capture rc WITHOUT letting bash -e kill the step before we print the psql output.
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/combat-cardinality-proof.sql > /tmp/ccardout.txt 2>&1
+          rc=$?
+          set -e
+          echo "----- proof output (rc=$rc) -----"
+          cat /tmp/ccardout.txt
+          echo "---------------------------------"
+          [ "$rc" -eq 0 ] || { echo "psql exited $rc — the proof aborted"; exit 1; }
           for m in CARDINALITY_PASS_PRODSHAPE CARDINALITY_PASS_MULTIENEMY CARDINALITY_PASS_MANYENEMY \
                    CARDINALITY_PASS_MEMBERS CARDINALITY_PASS_AGGREGATE_UNIQUE CARDINALITY_PASS_MIXED \
                    CARDINALITY_PASS_XOR CARDINALITY_PASS_NOWEAKEN CARDINALITY_PASS_DETERMINISTIC; do
-            echo "$out" | grep -q "$m" || { echo "PROOF DID NOT EMIT MARKER: $m"; exit 1; }
+            grep -q "$m" /tmp/ccardout.txt || { echo "PROOF DID NOT EMIT MARKER: $m"; exit 1; }
           done
-          echo "$out" | grep -q 'COMBAT-CARDINALITY PROOF PASSED' \
+          grep -q 'COMBAT-CARDINALITY PROOF PASSED' /tmp/ccardout.txt \
             || { echo 'PROOF DID NOT REACH THE PASS MARKER'; exit 1; }
       - name: Stop disposable stack (always)
         if: always()

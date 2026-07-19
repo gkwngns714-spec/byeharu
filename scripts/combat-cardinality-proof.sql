@@ -52,11 +52,14 @@ begin
             'ccard.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
     returning id into uP2;
 
-  -- two main_ship_instances — the member identities (hull 'starter_frigate', seeded 0043).
-  insert into public.main_ship_instances (player_id, hull_type_id, hp, max_hp, cargo_capacity, support_capacity, captain_slots, module_slots)
-    values (uP1, 'starter_frigate', 500, 500, 50, 10, 2, 3) returning main_ship_id into msi1;
-  insert into public.main_ship_instances (player_id, hull_type_id, hp, max_hp, cargo_capacity, support_capacity, captain_slots, module_slots)
-    values (uP2, 'starter_frigate', 500, 500, 50, 10, 2, 3) returning main_ship_id into msi2;
+  -- two main_ship_instances — the member identities — via the REAL idempotent creator
+  -- ensure_main_ship_for_player (0216; SECURITY DEFINER, no flag gate). Using the sanctioned writer
+  -- (not a hand insert) keeps the fixture correct against schema drift: it copies every hull column
+  -- including the NOT-NULL cargo_capacity_m3 the 0C trade slice (0077) added to this table.
+  perform public.ensure_main_ship_for_player(uP1);
+  perform public.ensure_main_ship_for_player(uP2);
+  select main_ship_id into msi1 from public.main_ship_instances where player_id = uP1;
+  select main_ship_id into msi2 from public.main_ship_instances where player_id = uP2;
 
   -- one fleet + one presence + one encounter (the combat_encounters FK chain: player/fleet/presence).
   insert into public.fleets (player_id, status, location_mode)
