@@ -187,3 +187,35 @@ last-known coordinate, Home-vs-station/colony repair, server-authoritative durat
 emergency-vs-normal recovery, cargo/activity/movement consequences, open-space destruction, and a
 non-breaking migration of the existing `destroyed`/`repair_main_ship()` safelock) lives in
 `docs/MAINSHIP_TRANSITION.md` **§13. Main Ship Repair & Recovery**.
+
+## Cross-cutting initiative: World Editor
+
+A **cross-cutting initiative — NOT a numbered Phase.** An owner-only authoring tool on the REAL game map
+(never a bespoke second map), replacing the retired standalone `ZoneEditor`. Full architecture —
+the unified shell + typed layer adapters, the shared owner security + draft/audit framework, and the
+bounded phased roadmap — lives in `docs/ZONE_TEMPLATES_ARCH.md` **§WE (World Editor — Proposed
+Architecture)**; slice records in `docs/WORLD_EDITOR_V1B0_OWNERSPINE.md` and `DEV_LOG.md` (session
+2026-07-19→20).
+
+**Status (2026-07-20):**
+- **V1 Foundation** ✅ shipped, merged (PR #228) — read-only unified editor shell on the real map + 4
+  typed read-only layer adapters (locations/mining/exploration/zones) + inspectors, reusing the shared
+  map primitives (`openSpaceTransform`/`galaxyCamera`/marker styling); no migration, no mutation, no flag.
+- **V1B-0 Owner Security Spine** ✅ shipped, merged (PR #229) **and DEPLOYED LIVE** (mig `0243`) — the
+  reusable `app_owners`/`is_owner()`/`world_editor_audit`/`world_editor_ping` guard + idempotency + audit
+  contracts every future write command routes through. Verified live: head `0243`, owner seeded,
+  `0239` pirate-zone lockdown intact, combat unaffected.
+- **V1B-1 Location Drafts & Preview** ✅ shipped, merged (PR #230) — client-side location draft model
+  (draft/preview only, FNV-1a fingerprint, localStorage-backed), dark behind `dev_zone_editor_enabled`;
+  zero live `locations` write, no publish path yet.
+- **V1B-2 Location Validation** ⏳ **in progress** — typed validation ruleset over V1B-1 drafts, single
+  enum source-of-truth; still no publish.
+- **V1C Canonical `space_anchors` coordinate authority** ⏳ **next** — inventory complete: two
+  incompatible coordinate scales coexist today (map-seed frame ~±300 unbounded vs. OSN frame ±10000 used
+  by `space_anchors`/mining/exploration/fleets). Staged normalize-then-cutover migration (approach A:
+  normalize `locations` into the ±10000 frame, make `space_anchors` the single authority) is in design —
+  **world-affecting, deferred behind separate deploy approval**, not yet a migration.
+
+**Sequencing note:** publish/mutation (the eventual point of the editor) is intentionally the LAST piece —
+every slice before V1C stays read-only or client-local-draft-only, so the owner security spine (V1B-0) and
+the coordinate-authority cutover (V1C) are both settled before any command can touch a live world row.

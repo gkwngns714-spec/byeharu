@@ -5,6 +5,71 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-20 — SESSION WRAP: World Editor V1A (merged) + V1B-0 Owner Security Spine (merged, mig 0243 — **DEPLOYED LIVE**) + V1B-1 Location Drafts (merged); V1B-2 validation in progress; V1C coordinate-authority inventory open
+
+**What this entry is.** A consolidated close-out for the overnight 2026-07-19→20 World Editor program
+(design doc: `docs/ZONE_TEMPLATES_ARCH.md` §WE), plus the combat-prerequisite track that closed first the
+same session. Three slices merged to `main`, one of them (the owner security spine) additionally
+**deployed live**; one slice is in progress; one is inventory-only (no code yet).
+
+**Combat-prerequisite track closed first (migrations 0239–0242, deployed).** Before the World Editor work
+started: `pirate_zone_create`/`pirate_zone_delete` EXECUTE-grant lockdown (#223, mig 0239); `combat_units`
+uniqueness re-scoped to aggregate player rows, fixing a multi-pirate stall (#224, mig 0240); `combat_ticks`
+result-check widened to admit `next_wave_incoming` (#226, mig 0241); sticky spatial encounter mode so a
+fight no longer de-spatializes mid-combat (#227, mig 0242).
+
+**PR #228 — World Editor Foundation V1 (merged, `main`).** The ONE owner-only World Editor shell on the
+REAL game map, built strictly READ-ONLY: `worldEditorTypes.ts` (typed read/resolve/inspect contract only —
+create/edit/publish/enable/disable/archive are declared for explicit-disable UI, never adapter methods),
+`worldEditorGeometry.ts` (the one map-representation resolver over the shared `openSpaceTransform`),
+`worldEditorAdapters.ts` (4 typed read-only layer adapters — `LocationLayerAdapter` /
+`MiningLayerAdapter` / `ExplorationLayerAdapter` / `ZoneLayerAdapter` — each grounded in its real read
+source), `worldEditorData.ts` (read-only snapshot over `get_world_map` / `get_active_mining_fields` /
+`exploration_sites` SELECT / `get_danger_zones`, fail-closed), `worldEditorRegistry.ts` + `WorldEditor.tsx`
+(layer registry/toggles, shared `galaxyCamera` map, typed inspectors). Reuses the shared map primitives
+(`openSpaceTransform`/`galaxyCamera`/marker styling) and the existing `dev_zone_editor_enabled` /
+hidden-`/dev/world` / `RequireAuth` gate — no new flag, no migration, no write RPC, no mutation.
+
+**PR #229 — V1B-0 Owner Security Spine (merged commit `ec4e71e`; migration `0243`
+`20260618000243_world_editor_owner_security_spine.sql` — DEPLOYED LIVE).** The reusable,
+server-authoritative owner boundary every future World Editor command reuses: `app_owners` (deny-all
+allow-list, RLS on, no client grant), `is_owner()` (`SECURITY DEFINER STABLE`, keyed off `auth.uid()`,
+pinned `search_path=''` as defense-in-depth hardening — commit `15d0928`), `world_editor_audit`
+(`request_id` **UNIQUE** idempotency + audit ledger), `world_editor_ping(text, jsonb)` (the guarded
+**no-op** command entrypoint template — authn → authz → idempotent → audit → typed envelope, ZERO world
+mutation). Frontend `commandClient.ts` ships typed-client-only, not wired to any write control. Docs:
+`docs/WORLD_EDITOR_V1B0_OWNERSPINE.md`. Independently verified **no hole** by the lead plus an adversarial
+Opus review across 8 vectors before merge. **Deploy verified live on prod:** migration head = `0243`,
+owner seeded into `app_owners` (`is_owner()` = true for the owner), the `0239` pirate-zone lockdown still
+intact, combat unchanged (`spatial_combat_enabled=true`, `combat_tick_logging=false`).
+
+**PR #230 — V1B-1 Location Drafts & Preview (merged commit `1a0d4d3`).** Client-side location draft
+model, wired into `WorldEditor.tsx`: `locationDraftTypes.ts` / `locationDraftModel.ts` (pure, FNV-1a
+source fingerprint) / `useLocationDrafts.ts` (reducer + localStorage, rehydrate re-validation) /
+`LocationDraftPanel.tsx` / `DraftPreview.tsx`. Dark behind `dev_zone_editor_enabled`; **zero** live
+`locations` write, no migration, no publish. Guard tests (`tests/locationDraftGuards.spec.ts`,
+`tests/locationDraftModel.spec.ts`) prove there is no mutation surface.
+
+**V1B-2 Location Validation — IN PROGRESS.** Client-side typed validation ruleset over the drafts from
+V1B-1, backed by a single enum source-of-truth; still no publish path.
+
+**V1C Canonical `space_anchors` coordinate authority — inventory complete, no code yet.** Key finding:
+two incompatible coordinate scales coexist — the map-seed frame (sectors/zones/locations, roughly ±300
+after the `0227` ×3 world-rebalance, **no bounds**) versus the OSN frame (±10000, used by `space_anchors`
+/ mining / exploration / fleets). A staged normalize-then-cutover migration is in design (approach A:
+uniform-scalar normalize `locations` into the ±10000 frame, then make `space_anchors` the single
+coordinate authority — the same "no third authority" law already stated in `ZONE_TEMPLATES_ARCH.md`
+§WE.4/§WE.14). This is **world-affecting** and deferred behind a separate deploy approval — not part of
+this session's merges.
+
+**Open follow-ups**
+- V1B-2 (validation ruleset) — continue in progress.
+- V1C — turn the inventory into a concrete staged migration plan for owner review; nothing merged yet.
+- Every future World Editor write command must route through the `0243` owner spine
+  (`is_owner()` + `world_editor_audit` + idempotent `request_id`) — no parallel authorization path.
+
+---
+
 ## 2026-07-18 — COMBAT SLICE 0: the module-attribute foundation (mig 0229, DARK `module_range_attributes_enabled`)
 
 **Request.** Owner intent: "each module (mining laser, missile launcher) has its own range, ammo speed,
