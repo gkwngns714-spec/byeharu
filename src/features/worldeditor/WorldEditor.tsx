@@ -15,20 +15,28 @@ import { representationWorldPoints, resolveToViewBox } from './worldEditorGeomet
 import {
   DEFERRED_OPERATIONS,
   DEFERRED_OPERATION_REASON,
+  type DeferredOperation,
   type InspectorField,
   type LayerId,
   type LayerItem,
   type PointGlyph,
   type WorldPoint,
 } from './worldEditorTypes'
+import { LocationDraftsContext, useLocationDraftsStore } from './useLocationDrafts'
+import { LocationDraftPanel } from './LocationDraftPanel'
+import { DraftPreview } from './DraftPreview'
 import { Button } from '../../components/ui'
 
-// WORLD EDITOR — Foundation V1 shell (READ-ONLY). ONE owner-only surface on the REAL game map: it
-// renders on the SHARED map primitives — the fixed `worldToViewBox` projection (via
-// worldEditorGeometry) and `galaxyCamera` camera math — NEVER a bespoke fit-to-content transform (the
-// ZoneEditor `makeFit` spaghetti this replaces, §WE.11). It toggles the four typed content layers,
-// selects any item, and inspects its typed fields. NOTHING here writes: no RPC write, no game_config
-// write, no mutation. Authoring controls are rendered EXPLICITLY DISABLED (§WE.2), never faked.
+// WORLD EDITOR — Foundation V1 shell + V1B-1 "Location Drafts & Preview". ONE owner-only surface on
+// the REAL game map: it renders on the SHARED map primitives — the fixed `worldToViewBox` projection
+// (via worldEditorGeometry) and `galaxyCamera` camera math — NEVER a bespoke fit-to-content transform
+// (the ZoneEditor `makeFit` spaghetti this replaces, §WE.11). It toggles the four typed content
+// layers, selects any item, and inspects its typed fields.
+//
+// V1B-1: create/edit open a LOCAL LocationDraft (useLocationDrafts store — localStorage only, a
+// SEPARATE structure never merged into WorldEditorData) previewed as an overlay ABOVE the read-only
+// layers. NOTHING here writes to the live world: no RPC write, no game_config write, no mutation —
+// publish/enable/disable/archive remain EXPLICITLY DISABLED (§WE.2), never faked.
 //
 // Gate: identical to ZoneEditor — renders null unless game_config.dev_zone_editor_enabled is exactly
 // jsonb `true` (fetchDevZoneEditorEnabled, fail-closed). Reached only by navigating to /dev/world.
@@ -38,9 +46,15 @@ interface Selection {
   readonly id: string
 }
 
+/** V1B-1: create/edit are LIVE (they open a local draft); the rest of DEFERRED_OPERATIONS stays
+ *  rendered disabled-with-reason. The constant itself is untouched (worldEditorTypes is the boundary
+ *  authority) — this is a shell-side split, pinned by tests/locationDraftGuards.spec.ts. */
+const LIVE_DRAFT_OPERATIONS: readonly DeferredOperation[] = ['create', 'edit']
+
 /** A point glyph as SVG, counter-scaled so it holds a constant on-screen size (the LocationMarker
- *  `r / k` idiom). Presentation-only — the parent <g> owns the click. */
-function Glyph({ x, y, r, glyph, tone }: { x: number; y: number; r: number; glyph: PointGlyph; tone: string }) {
+ *  `r / k` idiom). Presentation-only — the parent <g> owns the click. Exported for DraftPreview so
+ *  the draft overlay reuses the exact same glyph renderer (one visual language). */
+export function Glyph({ x, y, r, glyph, tone }: { x: number; y: number; r: number; glyph: PointGlyph; tone: string }) {
   const stroke = { stroke: 'var(--color-app)', strokeWidth: 1.5, vectorEffect: 'non-scaling-stroke' as const }
   if (glyph === 'diamond')
     return <polygon points={`${x},${y - r} ${x + r},${y} ${x},${y + r} ${x - r},${y}`} fill={tone} {...stroke} />
@@ -64,6 +78,10 @@ export function WorldEditor() {
   const [visible, setVisible] = useState<Set<LayerId>>(() => defaultVisibleLayerIds())
   const [selected, setSelected] = useState<Selection | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
+
+  // V1B-1 draft store — a SEPARATE structure (localStorage-backed); live locations are passed ONLY
+  // for the mandatory staleness re-validation. Never merged into the read snapshot.
+  const draftStore = useLocationDraftsStore(data?.locations ?? null)
 
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
@@ -186,17 +204,28 @@ export function WorldEditor() {
     ? WORLD_EDITOR_LAYERS.find((e) => e.adapter.id === selected.layer)?.adapter.title ?? selected.layer
     : null
 
+  // The selected LIVE location row (edit-draft fork source). Drafts fork off locations only in V1B-1.
+  const selectedLocation = useMemo(
+    () =>
+      data && selected?.layer === 'locations'
+        ? data.locations.find((l) => l.id === selected.id) ?? null
+        : null,
+    [data, selected],
+  )
+
   // DARK by default — render nothing while loading the gate or when the flag is off (fail-closed).
   if (enabled !== true) return null
 
   const k = view.k
 
   return (
+    <LocationDraftsContext.Provider value={draftStore}>
     <div className="flex min-h-screen flex-col gap-3 bg-app p-4 text-ink">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">World Editor</h1>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-ink-muted">dev · owner-only</span>
-        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">Foundation V1 · read-only</span>
+        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">Foundation V1 · read-only live</span>
+        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V1B-1 · local drafts (no publish)</span>
       </header>
 
       <div className="flex flex-1 flex-wrap items-start gap-4">
@@ -290,6 +319,9 @@ export function WorldEditor() {
                   </g>
                 )
               })}
+
+              {/* V1B-1: the active draft's preview overlay — ABOVE every read-only layer item. */}
+              <DraftPreview k={k} />
             </g>
           </svg>
 
@@ -341,11 +373,27 @@ export function WorldEditor() {
                   ))}
                 </dl>
 
-                {/* Authoring is DEFERRED (§WE.2): shown EXPLICITLY DISABLED, never simulated. */}
+                {/* Authoring — V1B-1: create/edit are LIVE and open a LOCAL draft (zero live
+                    mutation). publish/enable/disable/archive stay EXPLICITLY DISABLED (§WE.2). */}
                 <div className="mt-2">
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Authoring (deferred)</div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Authoring</div>
                   <div className="flex flex-wrap gap-1.5">
-                    {DEFERRED_OPERATIONS.map((op) => (
+                    <Button size="sm" onClick={() => draftStore.beginCreateDraft()}>
+                      Create draft
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={!selectedLocation}
+                      title={
+                        selectedLocation
+                          ? 'Fork this location into a local edit draft.'
+                          : 'Edit drafts fork off a selected LOCATION in this slice.'
+                      }
+                      onClick={() => selectedLocation && draftStore.forkEditDraft(selectedLocation)}
+                    >
+                      Edit as draft
+                    </Button>
+                    {DEFERRED_OPERATIONS.filter((op) => !LIVE_DRAFT_OPERATIONS.includes(op)).map((op) => (
                       <button
                         key={op}
                         disabled
@@ -356,13 +404,20 @@ export function WorldEditor() {
                       </button>
                     ))}
                   </div>
-                  <p className="mt-1.5 text-xs text-ink-faint">{DEFERRED_OPERATION_REASON}</p>
+                  <p className="mt-1.5 text-xs text-ink-faint">
+                    Create/edit open a LOCAL draft (browser-only, never written to the live world).{' '}
+                    {DEFERRED_OPERATION_REASON}
+                  </p>
                 </div>
               </div>
             )}
           </section>
+
+          {/* V1B-1: the local draft list + form (client-side only; see LocationDraftPanel). */}
+          <LocationDraftPanel />
         </aside>
       </div>
     </div>
+    </LocationDraftsContext.Provider>
   )
 }
