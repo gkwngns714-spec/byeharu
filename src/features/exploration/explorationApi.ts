@@ -2,8 +2,14 @@ import { supabase } from '../../lib/supabase'
 import {
   explorationScanErrorMessage,
   type CommandExplorationScanResult,
+  type ExplorationSiteLite,
   type GetMyExplorationDiscoveriesResult,
 } from './explorationTypes'
+
+// The read-contract row type lives in the PURE types module (explorationTypes.ts — the
+// MiningField-in-miningTypes layout); re-exported here so read-path callers keep importing the
+// function and its row type from ONE module (worldEditorData.ts's pinned import surface).
+export type { ExplorationSiteLite } from './explorationTypes'
 
 // EXPLORATION-P11 — typed client API for the dark exploration surface: the scan command (0099/0100)
 // and the reveal-after-discovery read (0101). Mirrors tradeApi.ts conventions: thin supabase.rpc
@@ -29,14 +35,6 @@ export async function getMyExplorationDiscoveries(): Promise<GetMyExplorationDis
   const { data, error } = await supabase.rpc('get_my_exploration_discoveries', {})
   if (error) return { ok: false, reason: 'unavailable' }
   return data as GetMyExplorationDiscoveriesResult
-}
-
-/** WORLD EDITOR (read-only) — one visible exploration_sites row: position + name ONLY (never the
- *  reward_bundle_json composition). Mirrors mining's MiningField marker shape (§WE.8 twin-of-mining). */
-export interface ExplorationSiteLite {
-  name: string
-  space_x: number
-  space_y: number
 }
 
 /** WORLD EDITOR (read-only) — SELECT-only read of exploration_sites for the editor's Exploration
