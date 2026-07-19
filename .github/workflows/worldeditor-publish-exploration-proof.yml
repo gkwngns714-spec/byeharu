@@ -1,0 +1,67 @@
+name: WORLD-EDITOR PUBLISH-EXPLORATION — first live-world-write command disposable proof (no production)
+
+# Proves migration 0244 (worldeditor_publish_exploration_create) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0244. 0244's own in-migration self-assert
+#     runs here against real Postgres (0243 spine present, audit snapshot columns added, command
+#     SECURITY DEFINER + authenticated-only, no client write grant on exploration_sites, 0239 lockdown
+#     intact) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the write command end to end against the running
+#     disposable DB: owner create APPLIED (row + audit + after_snapshot); non-owner REJECTED
+#     (not_authorized, no row); anon REJECTED (not_authenticated); request_id idempotent (one row, one
+#     audit row, identical replay); bad payload REJECTED server-side (validation_failed + details);
+#     duplicate name a typed conflict; pirate-zone lockdown intact.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-ownerspine-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-publish-exploration-create**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-publish-exploration-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0244 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR PUBLISH-EXPLORATION real-chain proof (owner create / rejections / idempotent / validation / conflict)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-publish-exploration-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            PUBLISH_PASS_OWNER_CREATES \
+            PUBLISH_PASS_NONOWNER_REJECTED \
+            PUBLISH_PASS_ANON_REJECTED \
+            PUBLISH_PASS_IDEMPOTENT \
+            PUBLISH_PASS_VALIDATION_REJECTED \
+            PUBLISH_PASS_CONFLICT \
+            PUBLISH_PASS_AUDIT_SNAPSHOT \
+            PUBLISH_PASS_ZONE_LOCKDOWN_INTACT \
+            'WORLD-EDITOR PUBLISH-EXPLORATION PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL PUBLISH-EXPLORATION PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
