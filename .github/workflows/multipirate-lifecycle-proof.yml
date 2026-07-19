@@ -1,0 +1,142 @@
+name: MULTI-PIRATE LIFECYCLE — post-0240 multi-pirate spatial-combat disposable proof (no production)
+
+# Proves the multi-wave / multi-pirate spatial-combat lifecycle on a THROWAWAY local Supabase — NEVER
+# production:
+#   1. selftest — a DB-free static check that scripts/multipirate-lifecycle-proof.sql is well-formed:
+#      self-rolling-back (opens a txn, ends in ROLLBACK, no COMMIT), lights every dark flag ONLY inside
+#      the txn, obeys the sole-writer law (never hand-writes group_sortie_members / combat_units rows),
+#      drives the real RPC/engine chain, carries every MPLIFE_PASS marker + the determinism guards
+#      (variance 0, no random(), manual process_combat_ticks — no cron/sleep).
+#   2. disposable-matrix — `supabase start` applies the FULL migration chain (incl. 0234 spatial tick +
+#      0239 + 0240 aggregate-bucket uniqueness); the proof then runs the multi-pirate lifecycle end to
+#      end and asserts every section (A schema/identity, B pirate-independence, C wave lifecycle,
+#      D rewards/idempotency, E retreat/cleanup, F pre-0240 constraint control experiment, G non-spatial
+#      parity). THE GREEN RUN OF THIS JOB IS THE EXECUTION OF THE PROOF.
+# The proof flips NO committed flag and writes nothing durable (self-rolling-back). No `environment:` on
+# any job, so none can read production secrets. Modeled on combat-cardinality-proof.yml /
+# combat-spatial-proof.yml.
+#
+# SCOPE NOTE (recorded): this validates the runtime LOGIC of the wave/multi-pirate engine under
+# controlled MANUAL process_combat_ticks() invocation with clock-rewind — NOT live production cron
+# cadence (interval pacing / concurrency), which is out of scope for a disposable proof.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-multipirate-lifecycle**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: multipirate-lifecycle-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static harness checks (DB-free)
+        run: |
+          set -euo pipefail
+          SQL=scripts/multipirate-lifecycle-proof.sql
+          [ -f "$SQL" ] || { echo "proof sql not found"; exit 1; }
+
+          # self-rolling-back: opens a txn, ends in ROLLBACK, never COMMITs.
+          grep -qiE '^\s*begin\s*;' "$SQL"    || { echo "harness does not open a txn (begin;)"; exit 1; }
+          grep -qiE '^\s*rollback\s*;' "$SQL" || { echo "harness does not end in ROLLBACK"; exit 1; }
+          if grep -qiE '^\s*commit\s*;' "$SQL"; then echo "harness COMMITs — must be self-rolling-back"; exit 1; fi
+          # ROLLBACK must be the LAST SQL statement (only comments/blank may follow).
+          last="$(grep -niE '^\s*rollback\s*;' "$SQL" | tail -1 | cut -d: -f1)"
+          tail -n +"$((last + 1))" "$SQL" | sed -E 's/--.*//' | tr -d '[:space:]' | grep -q . \
+            && { echo "SQL follows the final ROLLBACK (would autocommit)"; exit 1; } || true
+
+          # every MPLIFE_PASS marker present (in assert-form) + the final PASS line.
+          for m in MPLIFE_PASS_SCHEMA_IDENTITY MPLIFE_PASS_INDEPENDENCE MPLIFE_PASS_WAVE_LIFECYCLE \
+                   MPLIFE_PASS_REWARDS_IDEMPOTENCY MPLIFE_PASS_RETREAT_CLEANUP MPLIFE_PASS_CONTROL \
+                   MPLIFE_PASS_NONSPATIAL_PARITY; do
+            grep -q "$m" "$SQL" || { echo "missing PASS marker: $m"; exit 1; }
+          done
+          grep -q 'MULTI-PIRATE LIFECYCLE PROOF PASSED' "$SQL" || { echo "missing final PASS line"; exit 1; }
+
+          # every dark flag is enabled ONLY inside the txn (value='true' toggle present; no COMMIT above
+          # guarantees the committed value is never written).
+          for f in team_command_enabled mainship_additional_commission_enabled module_crafting_enabled \
+                   module_fitting_enabled spatial_combat_enabled; do
+            grep -qE "update public\.game_config set value='true'::jsonb where key='$f';" "$SQL" \
+              || { echo "harness does not enable dark flag '$f' inside the txn"; exit 1; }
+          done
+
+          # DETERMINISM GUARDS: variance zeroed, no session RNG, no cron/sleep dependence, manual tick.
+          grep -q "set_game_config('combat_damage_variance_pct', '0'::jsonb)" "$SQL" \
+            || { echo "harness does not zero combat_damage_variance_pct (determinism)"; exit 1; }
+          if grep -qE 'random\(' "$SQL"; then echo "harness uses random() (0041 determinism law)"; exit 1; fi
+          if grep -qiE 'cron\.schedule|pg_sleep|pg_cron|select[[:space:]]+pg_sleep'  "$SQL"; then
+            echo "harness depends on cron/sleep (must be manual, deterministic)"; exit 1; fi
+          grep -q 'process_combat_ticks()' "$SQL" || { echo "harness never invokes process_combat_ticks() manually"; exit 1; }
+
+          # SOLE-WRITER LAW: group_sortie_members + combat_units are NEVER hand-written (only the real
+          # engine writers touch them). Section F re-adds/drops a table CONSTRAINT (DDL) — not a row write.
+          grep -qiE 'insert[[:space:]]+into[[:space:]]+(public\.)?group_sortie_members' "$SQL" \
+            && { echo "harness inserts group_sortie_members directly (send_ship_group_hunt is sole writer)"; exit 1; } || true
+          grep -qiE 'insert[[:space:]]+into[[:space:]]+(public\.)?combat_units' "$SQL" \
+            && { echo "harness inserts combat_units directly (engine is sole writer)"; exit 1; } || true
+          grep -qiE 'update[[:space:]]+(public\.)?combat_units' "$SQL" \
+            && { echo "harness UPDATEs combat_units directly"; exit 1; } || true
+          grep -qiE 'delete[[:space:]]+from[[:space:]]+(public\.)?combat_units' "$SQL" \
+            && { echo "harness DELETEs combat_units directly"; exit 1; } || true
+
+          # the real RPC/engine chain is exercised (not a hand-rolled shortcut).
+          for fn in reveal_starter_ports commission_first_main_ship commission_additional_main_ship \
+                    reward_grant craft_module fit_module_to_ship upsert_ship_group assign_ship_to_group \
+                    set_fleet_command_ship send_ship_group_hunt movement_settle_arrival request_retreat; do
+            grep -q "public.$fn(" "$SQL" || { echo "harness does not use real RPC public.$fn"; exit 1; }
+          done
+
+          # the section-F control experiment re-adds AND drops the pre-0240 blanket constraint (DDL only).
+          grep -q "add constraint combat_units_encounter_id_unit_type_id_key unique" "$SQL" \
+            || { echo "harness lacks the F control-experiment blanket-constraint re-add"; exit 1; }
+          grep -q "drop constraint combat_units_encounter_id_unit_type_id_key" "$SQL" \
+            || { echo "harness lacks the F control-experiment blanket-constraint drop"; exit 1; }
+
+          echo "MULTI-PIRATE LIFECYCLE SELFTEST: ALL PASSED (self-rolling-back; 7 MPLIFE_PASS markers + final PASS in assert-form; all 5 dark flags lit only inside the txn; determinism guards — variance 0, no random(), no cron/sleep, manual process_combat_ticks; sole-writer law for group_sortie_members + combat_units; full real-RPC/engine chain; F control experiment re-adds+drops the pre-0240 blanket constraint)"
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0234 + 0239 + 0240)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: MULTI-PIRATE LIFECYCLE proof (the green run IS the execution)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/multipirate-lifecycle-proof.sql > /tmp/mplifeout.txt 2>&1
+          rc=$?
+          set -e
+          echo "----- proof output (rc=$rc) -----"
+          cat /tmp/mplifeout.txt
+          echo "---------------------------------"
+          [ "$rc" -eq 0 ] || { echo "psql exited $rc — the proof aborted"; exit 1; }
+          for m in MPLIFE_PASS_SCHEMA_IDENTITY MPLIFE_PASS_INDEPENDENCE MPLIFE_PASS_WAVE_LIFECYCLE \
+                   MPLIFE_PASS_REWARDS_IDEMPOTENCY MPLIFE_PASS_RETREAT_CLEANUP MPLIFE_PASS_CONTROL \
+                   MPLIFE_PASS_NONSPATIAL_PARITY; do
+            grep -q "$m" /tmp/mplifeout.txt || { echo "PROOF DID NOT EMIT MARKER: $m"; exit 1; }
+          done
+          grep -q 'MULTI-PIRATE LIFECYCLE PROOF PASSED' /tmp/mplifeout.txt \
+            || { echo 'PROOF DID NOT REACH THE FINAL PASS MARKER'; exit 1; }
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
