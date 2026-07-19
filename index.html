@@ -5,6 +5,26 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Byeharu</title>
+    <script type="text/javascript">
+      // GitHub Pages SPA deep-link fallback (rafgraph/spa-github-pages, MIT) —
+      // the decode half of public/404.html. When 404.html redirects a deep-link
+      // here as /byeharu/?/dev/zones, restore the real path (/byeharu/dev/zones)
+      // via replaceState BEFORE the app's module script runs, so BrowserRouter
+      // sees the true pathname and renders the deep-linked route. No query of the
+      // /?/ form => this is a no-op and normal navigation is untouched.
+      (function (l) {
+        if (l.search[1] === '/') {
+          var decoded = l.search
+            .slice(1)
+            .split('&')
+            .map(function (s) {
+              return s.replace(/~and~/g, '&');
+            })
+            .join('?');
+          window.history.replaceState(null, null, l.pathname.slice(0, -1) + decoded + l.hash);
+        }
+      })(window.location);
+    </script>
   </head>
   <body>
     <div id="root"></div>

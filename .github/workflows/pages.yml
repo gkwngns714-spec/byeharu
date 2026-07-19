@@ -50,9 +50,10 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npx vite build
 
-      # SPA deep-link fallback: Pages serves 404.html for unknown paths; make it the app.
-      - name: SPA 404 fallback
-        run: cp dist/index.html dist/404.html
+      # SPA deep-link fallback lives in public/404.html (rafgraph pattern) and is
+      # copied verbatim into dist/ by Vite's publicDir, paired with the decode
+      # snippet in index.html. No build-time cp step needed — public/404.html is
+      # the single source of truth for the fallback.
 
       - uses: actions/upload-pages-artifact@v3
         with:
