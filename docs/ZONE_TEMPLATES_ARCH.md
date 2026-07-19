@@ -951,6 +951,13 @@ knows nothing domain-specific; each adapter teaches the shell how to read, draw,
 real tables. Adding a domain = adding an adapter, never forking the editor (NO SPAGHETTI: one editor authority,
 compose don't fork).
 
+**Scope of merging this document:** Merging PR #222 approves the **architectural direction only.** It does NOT
+authorize code implementation, database migrations, production reads or writes, grant changes, RLS changes,
+feature-flag changes, or runtime activation. The two production prerequisites — the security exposure (§1.5) and
+the `combat_units` cardinality fix (§5.5) — and the owner-security spine (§7) remain **separate,
+separately-approved** work items. This document is PROPOSED architecture; nothing in it is implemented by being
+merged.
+
 ### WE.1 Layer tree
 
 ```
@@ -1361,8 +1368,9 @@ An honest statement of the CURRENT tensions and how this unified design reconcil
 
 ### WE.15 Scope of approval
 
-This document is **architecture only.** **Merging PR #222 approves the ARCHITECTURAL DIRECTION ONLY** — it does
-**NOT** approve or authorize any code, any migration, any production write, any grant, any flag change, or any
-activation. Every implementation slice (§8) remains subject to its own separate review, its own apply-proof, its
-own migration approval on the protected `production` environment, and its own owner-gated enable. Nothing in this
-section is built, deployed, or lit by accepting it.
+The authoritative statement of what merging this document does and does not approve is the **Scope of merging this
+document** callout at the top of this section (before §WE.1) — one scope authority, not two. In short: merging
+PR #222 approves the **architectural direction only** and authorizes no code, migration, production write, grant,
+RLS change, flag change, or activation. Every implementation slice (§8) remains subject to its own separate
+review, apply-proof, protected-`production` migration approval, and owner-gated enable. Nothing in this section is
+built, deployed, or lit by being merged.
