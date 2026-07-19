@@ -163,6 +163,14 @@ export function GalaxyMap({
   // never per animation frame — so the fit is applied once per context.
   const focusSignature = useMemo(() => `named:${locations.map((l) => l.id).join(',')}`, [locations])
 
+  // location_ids that own an active danger_zone polygon — the gate for territory-ring suppression
+  // (a hostile site shows its polygon INSTEAD of a ring only when it actually has one; otherwise it
+  // keeps its ring, so every pirate site shows exactly one region, never zero). See territoryLayer.
+  const zonedLocationIds = useMemo(
+    () => new Set(dangerZones.flatMap((z) => (z.location_id ? [z.location_id] : []))),
+    [dangerZones],
+  )
+
   // Apply the content-fit camera for the INITIAL view (once per focus change), never after the player
   // has interacted. Explicit reset re-enables it.
   useEffect(() => {
@@ -368,7 +376,7 @@ export function GalaxyMap({
               radius (territory_radius * WORLD_TO_VIEWBOX_SCALE — scales with zoom, deliberately
               NOT /k); every element pointer-transparent. Locations without territory_radius render
               nothing — the pre-0217 map is byte-identical. */}
-          {territoryLayer({ locations, norm, k: view.k })}
+          {territoryLayer({ locations, norm, k: view.k, zonedLocationIds })}
 
           {/* MINING-FIELD-MARKERS — the extraction-range ring per active field, same "world-true
               region, under every marker" placement as the territory rings just above (pure,
