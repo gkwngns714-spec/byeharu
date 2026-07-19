@@ -77,11 +77,14 @@ export function GalaxyMap({
   combatSortieFleets: UnifiedGroupFleetLite[]
   // CLEAN-MAP HUB: the map is unobstructed by default. The ONE gesture that summons commands is a
   // DOUBLE-TAP on empty space (mouse double-click OR touch double-tap — both flow through pointer
-  // events). MapScreen's handler sets the go-target (the crosshair the fleetGoView prop drives) AND
-  // opens the command hub. A single tap on empty space does nothing (the map stays clean); a marker
-  // tap still selects; the pirate route mode still consumes single taps (onPirateTap, below).
+  // events). MapScreen's handler opens the command hub — a compact ICON CLUSTER anchored AT the
+  // double-tapped point — so the tap reports BOTH the RAW world point (drives the eventual go-target
+  // crosshair + the in-range mining check) AND the SCREEN px of the tap (relative to this map's box)
+  // so the caller can float the icons exactly where the player double-tapped. A single tap on empty
+  // space does nothing (the map stays clean); a marker tap still selects; the pirate route mode still
+  // consumes single taps (onPirateTap, below).
   fleetGoView: FleetGoTargetView | null
-  onDoubleTapPoint: (world: WorldCoord) => void
+  onDoubleTapPoint: (world: WorldCoord, screen: { x: number; y: number }) => void
   selectedId: string | null
   onSelect: (id: string | null) => void
   // MINING-FIELD-MARKERS: the active fields ([] while mining is disabled — 0226 fail-closed) + the
@@ -238,14 +241,16 @@ export function GalaxyMap({
       return
     }
     // CLEAN-MAP: a lone single tap does NOTHING (the map stays unobstructed). A second tap close in
-    // time + space is a DOUBLE-TAP → set the go-target here and summon the command hub (MapScreen).
-    // This one pointer-driven path serves mouse double-click and touch double-tap alike.
+    // time + space is a DOUBLE-TAP → summon the command hub (MapScreen) AT this point. This one
+    // pointer-driven path serves mouse double-click and touch double-tap alike. Report the world
+    // point AND the screen px (relative to this map's box, the SAME rect screenToWorld used) so the
+    // caller floats the action icons exactly where the player double-tapped.
     const prev = lastTap.current
     const gapMs = e.timeStamp - (prev?.t ?? -Infinity)
     const gapPx = prev ? Math.hypot(e.clientX - prev.x, e.clientY - prev.y) : Infinity
     if (prev && gapMs <= DOUBLE_TAP_MS && gapPx <= DOUBLE_TAP_MAX_GAP_PX) {
       lastTap.current = null
-      onDoubleTapPoint(world)
+      onDoubleTapPoint(world, { x: e.clientX - rect.left, y: e.clientY - rect.top })
       return
     }
     lastTap.current = { x: e.clientX, y: e.clientY, t: e.timeStamp }

@@ -79,24 +79,27 @@ export function MapScreen() {
   const [pirateMode, setPirateMode] = useState<'off' | 'route'>('off')
   const [pirateDraftPoints, setPirateDraftPoints] = useState<WorldCoord[]>([])
   // CLEAN-MAP COMMAND HUB — the ONE authority (ONE hub, TWO stages):
-  //   stage 1 (hubView='menu') — a double-tap on empty space opens a COMPACT ACTION MENU at that
-  //     point: just a few plain-word buttons (Send fleet here / Pirate intercept / Mine here — the
-  //     mining button only when the point is inside a field's range). NO header label, NO crosshair
+  //   stage 1 (hubView='menu') — a double-tap on empty space floats a COMPACT ICON CLUSTER AT the
+  //     double-tapped point ON THE MAP: a couple of small tappable icons (Send fleet + Pirate
+  //     intercept — plus a Mining icon ONLY when the point is inside a field's range). NO crosshair
   //     yet — the double-tap places nothing on the map, it only asks "what do you want to do here?".
-  //   stage 2 (hubView='fleet'|'pirate'|'mining') — pressing a button opens THAT one detailed panel,
-  //     with a back arrow (→ menu) + a ✕ (→ clean map). Choosing "Send fleet here" is what PLACES the
+  //   stage 2 (hubView='fleet'|'pirate'|'mining') — tapping an icon opens THAT one detailed panel,
+  //     with a back arrow (→ icons) + a ✕ (→ clean map). Choosing the Send icon is what PLACES the
   //     go-destination crosshair (pointTarget) — the destination is a consequence of choosing to send,
   //     never of the double-tap itself. Pirate/Mine open with NO crosshair.
-  // hubOpen is presence (the ONE on/off); hubView is the stage; hubPoint is the double-tapped world
-  // point the menu was summoned at (drives the in-range mining check + becomes the send destination).
+  // hubOpen is presence (the ONE on/off); hubView is the stage; hubPoint is the double-tapped WORLD
+  // point (drives the in-range mining check + becomes the send destination); hubScreen is the SCREEN
+  // px of the tap (relative to the map box) that anchors the stage-1 icon cluster over that point.
   const [hubOpen, setHubOpen] = useState(false)
   const [hubView, setHubView] = useState<'menu' | 'fleet' | 'pirate' | 'mining'>('menu')
   const [hubPoint, setHubPoint] = useState<WorldCoord | null>(null)
-  // The double-tap summon (GalaxyMap.onDoubleTapPoint): remember WHERE, drop any marker/field
-  // selection, open the hub on its MENU stage. Deliberately does NOT set pointTarget — no crosshair is
-  // placed until the player actually chooses to send (openFleetPanel below).
-  const openHubAt = (world: WorldCoord) => {
+  const [hubScreen, setHubScreen] = useState<{ x: number; y: number } | null>(null)
+  // The double-tap summon (GalaxyMap.onDoubleTapPoint): remember WHERE (world + screen px), drop any
+  // marker/field selection, open the hub on its MENU stage. Deliberately does NOT set pointTarget — no
+  // crosshair is placed until the player actually taps the Send icon (openFleetPanel below).
+  const openHubAt = (world: WorldCoord, screen: { x: number; y: number }) => {
     setHubPoint(world)
+    setHubScreen(screen)
     setHubView('menu')
     setSelectedId(null)
     setSelectedFieldName(null)
@@ -124,6 +127,7 @@ export function MapScreen() {
     setHubOpen(false)
     setHubView('menu')
     setHubPoint(null)
+    setHubScreen(null)
     setPointTarget(null)
     setPirateMode('off')
     setPirateDraftPoints([])
@@ -263,69 +267,98 @@ export function MapScreen() {
                 void selection.refresh()
               }}
             />
-            {/* CLEAN-MAP COMMAND HUB (bottom-right) — TWO stages, ONE authority (hubOpen presence +
-                hubView stage). Bottom-right, never the map's center (play-test rule). While `hubOpen`
-                is false the map is unobstructed — the whole rail is unmounted. */}
-            {hubOpen && (
+            {/* CLEAN-MAP COMMAND HUB — TWO stages, ONE authority (hubOpen presence + hubView stage).
+                While `hubOpen` is false the map is unobstructed — nothing below mounts. */}
+
+            {/* STAGE 1 — the compact ICON CLUSTER, floated AT the double-tapped point ON THE MAP (not a
+                corner menu): a small row of tappable icons for what the player can do at this spot. NO
+                crosshair yet (the double-tap placed nothing on the map). Each icon is gated the SAME
+                way its panel is, so a dark capability shows no icon; the Mine icon shows only when the
+                point sits inside a field's range. Anchored by hubScreen (the tap px, relative to this
+                map box) and centered ON the point via the -50%/-50% pill transform. The outer wrapper
+                is pointer-transparent (its empty margin never blocks map gestures); the pill re-enables
+                pointer events. A lone ✕ returns to a clean map. */}
+            {hubOpen && hubView === 'menu' && hubScreen && (
+              <div
+                data-testid="map-command-icons"
+                className="pointer-events-none absolute z-20"
+                style={{ left: hubScreen.x, top: hubScreen.y }}
+              >
+                <div className="pointer-events-auto flex -translate-x-1/2 -translate-y-1/2 items-center gap-1 rounded-full border border-edge bg-surface/95 p-1 shadow-overlay backdrop-blur">
+                  {TEAM_COMMAND_ENABLED && (
+                    <button
+                      type="button"
+                      onClick={openFleetPanel}
+                      data-testid="map-action-send"
+                      aria-label="Send fleet here"
+                      title="Send fleet here"
+                      className="flex h-11 w-11 items-center justify-center rounded-full text-accent transition hover:bg-accent/15 active:bg-accent/25"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                        {/* paper-plane / send */}
+                        <path d="M2.5 21.5 22 12 2.5 2.5v7L16 12 2.5 14.5z" fill="currentColor" />
+                      </svg>
+                    </button>
+                  )}
+                  {tapFieldInRange && (
+                    <button
+                      type="button"
+                      onClick={openMiningPanel}
+                      data-testid="map-action-mine"
+                      aria-label="Mine here"
+                      title="Mine here"
+                      className="flex h-11 w-11 items-center justify-center rounded-full text-warning transition hover:bg-warning/15 active:bg-warning/25"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                        {/* gem hexagon — mirrors the mining-field glyph */}
+                        <polygon points="23.3,12 16.1,24 8,24 0.7,12 8,0 16.1,0" fill="currentColor" />
+                      </svg>
+                    </button>
+                  )}
+                  {pirateInterceptEnabled && (
+                    <button
+                      type="button"
+                      onClick={openPiratePanel}
+                      data-testid="map-action-pirate"
+                      aria-label="Pirate intercept"
+                      title="Pirate intercept"
+                      className="flex h-11 w-11 items-center justify-center rounded-full text-danger transition hover:bg-danger/15 active:bg-danger/25"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                        {/* crosshair — intercept target */}
+                        <circle cx="12" cy="12" r="7" />
+                        <line x1="12" y1="1.5" x2="12" y2="5.5" />
+                        <line x1="12" y1="18.5" x2="12" y2="22.5" />
+                        <line x1="1.5" y1="12" x2="5.5" y2="12" />
+                        <line x1="18.5" y1="12" x2="22.5" y2="12" />
+                        <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+                      </svg>
+                    </button>
+                  )}
+                  {!TEAM_COMMAND_ENABLED && !pirateInterceptEnabled && !tapFieldInRange && (
+                    <span className="px-2 text-xs text-ink-muted">Nothing to do here</span>
+                  )}
+                  {/* dismiss — return to a clean map */}
+                  <button
+                    type="button"
+                    onClick={closeHub}
+                    data-testid="map-command-icons-close"
+                    aria-label="Close"
+                    title="Close"
+                    className="flex h-9 w-9 items-center justify-center rounded-full text-ink-faint transition hover:bg-edge/40 hover:text-ink active:bg-edge/60"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* STAGE 2 — the one chosen detailed panel (bottom-right, never the map's center — the
+                play-test rule), under a slim header: a back arrow (← the icons) and a ✕ (clean map).
+                The title NAMES the action. Reuses the existing FleetCommand/Mining/PirateIntercept
+                panels verbatim. */}
+            {hubOpen && hubView !== 'menu' && (
               <OverlayRail slot="bottom-right" className="max-h-[85%] max-w-[calc(100vw-1.5rem)] overflow-y-auto">
-                {hubView === 'menu' ? (
-                  /* STAGE 1 — the compact ACTION MENU. Just plain-word buttons for what the player can
-                     do at this spot: NO "Commands" header, NO coordinate readout, NO crosshair (the
-                     double-tap placed nothing on the map). Each action is gated the SAME way its panel
-                     is, so a dark capability shows no button. A lone ✕ returns to a clean map. */
-                  <OverlayPanel data-testid="map-command-menu" className="flex w-56 max-w-full flex-col gap-1.5">
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={closeHub}
-                        aria-label="Close"
-                        title="Close"
-                        data-testid="map-command-menu-close"
-                        className="-mr-1 -mt-1 flex h-7 w-7 items-center justify-center rounded text-ink-faint transition hover:bg-edge/40 hover:text-ink"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    {TEAM_COMMAND_ENABLED && (
-                      <Button
-                        variant="secondary"
-                        size="md"
-                        data-testid="map-action-send"
-                        className="w-full"
-                        onClick={openFleetPanel}
-                      >
-                        Send fleet here
-                      </Button>
-                    )}
-                    {tapFieldInRange && (
-                      <Button
-                        variant="warning"
-                        size="md"
-                        data-testid="map-action-mine"
-                        className="w-full"
-                        onClick={openMiningPanel}
-                      >
-                        Mine here
-                      </Button>
-                    )}
-                    {pirateInterceptEnabled && (
-                      <Button
-                        variant="secondary"
-                        size="md"
-                        data-testid="map-action-pirate"
-                        className="w-full"
-                        onClick={openPiratePanel}
-                      >
-                        Pirate intercept
-                      </Button>
-                    )}
-                    {!TEAM_COMMAND_ENABLED && !pirateInterceptEnabled && !tapFieldInRange && (
-                      <p className="px-1 py-0.5 text-sm text-ink-muted">Nothing to do at this spot.</p>
-                    )}
-                  </OverlayPanel>
-                ) : (
-                  /* STAGE 2 — the one chosen detailed panel, under a slim header: a back arrow (← the
-                     menu) and a ✕ (clean map). The title NAMES the action (never a bare "Commands"). */
                   <>
                     <OverlayPanel data-testid="map-command-panel-header" className="flex w-72 max-w-full items-center gap-2">
                       <button
@@ -404,7 +437,6 @@ export function MapScreen() {
                       />
                     )}
                   </>
-                )}
               </OverlayRail>
             )}
           </div>
