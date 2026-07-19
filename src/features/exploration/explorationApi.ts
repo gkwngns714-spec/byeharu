@@ -30,3 +30,24 @@ export async function getMyExplorationDiscoveries(): Promise<GetMyExplorationDis
   if (error) return { ok: false, reason: 'unavailable' }
   return data as GetMyExplorationDiscoveriesResult
 }
+
+/** WORLD EDITOR (read-only) — one visible exploration_sites row: position + name ONLY (never the
+ *  reward_bundle_json composition). Mirrors mining's MiningField marker shape (§WE.8 twin-of-mining). */
+export interface ExplorationSiteLite {
+  name: string
+  space_x: number
+  space_y: number
+}
+
+/** WORLD EDITOR (read-only) — SELECT-only read of exploration_sites for the editor's Exploration
+ *  layer. exploration_sites is RLS server-only (hidden until discovered, 0098), so this fails CLOSED
+ *  to [] for a normal client — honest with §WE.8's "built LAST, dark and unproven" reality. NEVER a
+ *  write: a plain `.select(...)`, and any transport/RLS error collapses to [] (the mapApi.ts
+ *  never-throw-into-render convention). No new RPC, no migration — read-only foundation only. */
+export async function getVisibleExplorationSites(): Promise<ExplorationSiteLite[]> {
+  const { data, error } = await supabase
+    .from('exploration_sites')
+    .select('name, space_x, space_y')
+  if (error || !Array.isArray(data)) return []
+  return data as ExplorationSiteLite[]
+}

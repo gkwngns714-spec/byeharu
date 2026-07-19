@@ -6,6 +6,7 @@ import {
   type FittingCommandResult,
   type GetMyModuleInstancesResult,
   type GetMyShipFittingsResult,
+  type ItemTypeRow,
   type ModuleCatalogEntry,
   type ModuleRecipeIngredientRow,
   type ModuleTypeRow,
@@ -45,7 +46,12 @@ export async function getMyModuleInstances(): Promise<GetMyModuleInstancesResult
  */
 export async function fetchModuleCatalog(): Promise<ModuleCatalogEntry[] | null> {
   const [types, recipes] = await Promise.all([
-    supabase.from('module_types').select('id, name, slot_type, description').order('name'),
+    supabase
+      .from('module_types')
+      .select(
+        'id, name, slot_type, description, slot_cost, stats_json, range, projectile_speed, power, ammo_type, ammo_per_shot, cooldown_seconds',
+      )
+      .order('name'),
     supabase.from('module_recipe_ingredients').select('module_type_id, item_id, qty').order('item_id'),
   ])
   if (types.error || recipes.error) return null
@@ -56,6 +62,22 @@ export async function fetchModuleCatalog(): Promise<ModuleCatalogEntry[] | null>
       .filter((r) => r.module_type_id === t.id)
       .map((r) => ({ item_id: r.item_id, qty: r.qty })),
   }))
+}
+
+/**
+ * Read the public item_types catalog display fields (0039; Reference/Config public read — the SAME
+ * direct-select convention fetchModuleCatalog uses). Powers inventory item-info (name, category,
+ * rarity, description, stackable). No existing reader exposes these display fields — captainsApi's
+ * item_types select pulls only item_id/name for recipe labels — so this is a new, additive reader.
+ * Returns null on a transport/DB error (the caller degrades gracefully; never throws).
+ */
+export async function fetchItemCatalog(): Promise<ItemTypeRow[] | null> {
+  const { data, error } = await supabase
+    .from('item_types')
+    .select('item_id, name, category, rarity, description, stackable, icon_key')
+    .order('name')
+  if (error) return null
+  return (data ?? []) as ItemTypeRow[]
 }
 
 // ── FITTING-P14 — the dark module-fitting surface (0113/0114 commands + 0116 read) ──────────────

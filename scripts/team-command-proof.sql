@@ -7,7 +7,7 @@
 -- ── SCOPE ─────────────────────────────────────────────────────────────────────────────────────────
 -- Proves, against the real chain:
 --   DARK   — ALL FIVE team RPCs (upsert_ship_group / assign_ship_to_group / delete_ship_group /
---            send_ship_group_expedition / stop_ship_group_transit) reject-BEFORE-read with
+--            the legacy group send (retired 0232) / stop_ship_group_transit) reject-BEFORE-read with
 --            team_command_disabled while team_command_enabled=false. Called with RANDOM nonexistent
 --            ids by a real authenticated sub: a reject-AFTER-read regression would surface
 --            group_not_found / ship_not_found (or even write a group) and fail these checks.
@@ -148,7 +148,7 @@
 --            byte-untouched; and a second roll is an idempotent replay (inserted 0, same traits,
 --            max_hp never re-raised). The roll fn is service-only with NO caller in the product
 --            (doubly dark); the harness never writes a Ship-Soul table directly (negative-grepped).
---   TEAMMAP (TEAMMAP-1, 0187) — the group-tag hunk on send_ship_group_expedition (re-created from
+--   TEAMMAP (TEAMMAP-1, 0187) — the group-tag hunk on the legacy group send (retired 0232) (re-created from
 --            its 0163 head): a 2-ship team send to Slagworks (starter port) tags BOTH member
 --            fleets with the team's group_id — exactly the envelope's sent[] fleet ids, no stray
 --            tags — and settling each arrival through movement_settle_arrival (the SAME
@@ -172,7 +172,7 @@
 --            leaf's prosrc + service-role-only ACL pinned. No caller exists until SHIELD-1.
 --   TEAMMOVE (TEAMMOVE-1, 0190) — a DOCKED team moves onward as one, reusing TEAMMAP's docked
 --            end-state (the MapWing team, both members docked at Slagworks): the new
---            move_ship_group_to_location rejects dark (gate-first, asserted in BLOCK DARK);
+--            the legacy group move (retired 0232) rejects dark (gate-first, asserted in BLOCK DARK);
 --            empty_group; foreign group fails closed; ONE MEMBER MID-FLIGHT (re-departed alone via
 --            the real per-ship move) → member_not_ready with ZERO departures; a SPLIT team (the two
 --            members docked at DIFFERENT ports) → member_not_ready with zero departures;
@@ -181,7 +181,7 @@
 --            technique) → member_send_failed pinned to the presence raise, with BOTH fleets still
 --            'present' at the port and both ships still in the docked pair (the succeeded member
 --            was rolled back); the HAPPY PATH moves the whole docked team Slagworks → Driftmarch
---            through per-member delegation to the UNCHANGED live move_main_ship_to_location (0156
+--            through per-member delegation to the UNCHANGED live the legacy single-ship move (retired 0232) (0156
 --            head — its 'present' departure branch): 2 present-departure envelopes (from='present',
 --            from Slagworks, to Driftmarch), the departed fleets are the members' OWN docked fleets
 --            re-departed (never re-created), both moving + group-tagged (the 0187 idiom, no
@@ -264,14 +264,21 @@
 -- UNCHANGED). The legacy team-send path (0152/0163) still requires status='home', so the FIVE ships
 -- that must be legacy-sendable (a1,a2,a3,b1,c1) no longer need a status/spatial rewrite for that —
 -- but they still carry a live 'present' commission fleet that must be retired (it would otherwise
--- consume the active-fleet cap), so that half of the normalization survives. c2 is the DELIBERATE
--- exception in BOTH directions: it is left OFF the home-normalization list (unchanged), AND it is
--- surgically taken BACK to the pre-repoint commissioned-docked shape (status='stationary',
--- spatial_state='at_location') — the one shape this proof still needs on demand (the all-or-nothing
--- SEND block pins the legacy send's own error text for a stationary ship, 0152:106) that the real
--- commission RPC no longer produces by itself. That surgery — plus a created_at stagger for
--- deterministic member ordering (now() is txn-constant, so same-txn rows tie) — is the ONLY non-RPC
--- state surgery here; everything else goes through the real RPC surface.
+-- consume the active-fleet cap), so that half of the normalization survives.
+-- 4C-MIG-2B TOKEN UPDATE: 'stationary' and spatial_state/space_x/space_y are GONE (migration 0231) —
+-- the all-or-nothing SEND block no longer needs (and cannot construct) the pre-repoint
+-- commissioned-docked shape. c2 is still the DELIBERATE exception, left OFF the home-normalization
+-- list, but the un-sendable shape is now simply status='hunting' (the send RPC's OWN gate is a flat
+-- `status <> 'home'` check on main_ship_instances.status alone — verified against the live
+-- the legacy single-ship send (retired 0232) body, which never reads spatial_state for this decision; 'hunting' is
+-- the SAME non-'home' status this proof's own TEAMSETTLE block already relies on elsewhere as an
+-- established "not sendable" witness). c2's real 'present' commission fleet + active presence are
+-- left exactly as the real RPC minted them (this incoherence — status='hunting' beside a live
+-- 'present' fleet — is invisible to the flat status gate under test and is corrected by the SAME
+-- home-normalization idiom before c2 is reused later in TEAMHUNT). The created_at stagger for
+-- deterministic member ordering (now() is txn-constant, so same-txn rows tie) is unchanged — that,
+-- plus the c2 status surgery, is the ONLY non-RPC state surgery here; everything else goes through
+-- the real RPC surface.
 
 \set ON_ERROR_STOP on
 
@@ -345,8 +352,6 @@ begin
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL assign: %', r; end if;
   r := pg_temp.call_as(uA, 'public.delete_ship_group(gen_random_uuid())');
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL delete: %', r; end if;
-  r := pg_temp.call_as(uA, format('public.send_ship_group_expedition(gen_random_uuid(), %L::uuid)', slag));
-  if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL send: %', r; end if;
   r := pg_temp.call_as(uA, 'public.stop_ship_group_transit(gen_random_uuid())');
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL stop: %', r; end if;
   -- Slice C0 (0165): the group preview rejects dark too — asserted BEFORE the team-flag flip below,
@@ -362,18 +367,12 @@ begin
   -- would surface group_not_found instead).
   r := pg_temp.call_as(uA, 'public.send_ship_group_hunt(gen_random_uuid(), gen_random_uuid())');
   if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL hunt send: %', r; end if;
-  -- TEAMMOVE (0190): the docked-team group move rejects dark too — asserted BEFORE the team-flag
-  -- flip below, with random uuids, so only the gate can be what answers (a reject-after-read
-  -- regression would surface group_not_found instead).
-  r := pg_temp.call_as(uA, 'public.move_ship_group_to_location(gen_random_uuid(), gen_random_uuid())');
-  if (r->>'reason') is distinct from 'team_command_disabled' then raise exception 'DARK FAIL group move: %', r; end if;
-
   select count(*) into n from public.ship_groups;
   if n <> 0 then raise exception 'DARK FAIL: % ship_groups rows written while dark (want 0)', n; end if;
   select count(*) into n from public.group_sortie_members;
   if n <> 0 then raise exception 'DARK FAIL: % group_sortie_members rows written while dark (want 0)', n; end if;
 
-  raise notice 'TEAMCMD_PASS_DARK ok: all 8 team RPCs reject-before-read with team_command_disabled; 0 rows written';
+  raise notice 'TEAMCMD_PASS_DARK ok: all 7 surviving team RPCs reject-before-read with team_command_disabled; 0 rows written';
 end $$;
 
 -- enable the dark capabilities ONLY inside this rolled-back txn (committed/production values stay false).
@@ -450,7 +449,7 @@ begin
   -- 'home'/NULL from birth) but is kept — cheap, and future-proof if commission's default ever moves
   -- again — and still does the load-bearing fleet-retirement work.
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id in (a1, a2, a3, b1, c1);
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -466,15 +465,18 @@ begin
                         where main_ship_id in (a1, a2, a3, b1, c1) and status = 'destroyed')
      and status = 'active';
 
-  -- c2 SURGERY (the one ADDITIVE fixture step 0222 requires): reconstruct the pre-repoint
-  -- commissioned-docked shape (status='stationary', spatial_state='at_location') that commission
-  -- itself no longer produces. c2's 'present' commission fleet + active presence are UNTOUCHED
-  -- (real-RPC, still minted exactly as before) — only the two ship columns move, together, to
-  -- satisfy the 0055 CHECK (main_ship_instances_stationary_spatial_state: status='stationary'
-  -- requires spatial_state in ('in_space','at_location')). This is the un-sendable member the
-  -- all-or-nothing SEND block needs (0152's own status<>'home' gate, pinned on its exact error text).
+  -- c2 SURGERY (4C-MIG-2B rework — 'stationary'/spatial_state are GONE, migration 0231): the
+  -- un-sendable member no longer needs the pre-repoint commissioned-docked shape at all. The live
+  -- the legacy single-ship send (retired 0232) gate (grep-verified) is a FLAT `if v_ship.status <> 'home'` check on
+  -- main_ship_instances.status alone — it never reads spatial_state for this decision — so ANY
+  -- non-'home', non-fleet-truth-docked status makes c2 un-sendable. 'hunting' is used (the SAME
+  -- established "not sendable" witness this proof's own TEAMSETTLE block relies on elsewhere).
+  -- c2's real 'present' commission fleet + active presence are left UNTOUCHED (real-RPC, still
+  -- minted exactly as before) — the resulting status='hunting'-beside-a-present-fleet incoherence
+  -- is invisible to the flat status gate under test here, and c2 is re-normalized to a coherent
+  -- home shape before its next use (TEAMHUNT's happy-path fixture, below).
   update public.main_ship_instances
-     set status = 'stationary', spatial_state = 'at_location'
+     set status = 'hunting'
    where main_ship_id = c2;
 
   -- Deterministic member ordering: group-send/stop iterate members ORDER BY created_at, but now() is
@@ -484,17 +486,17 @@ begin
   update public.main_ship_instances set created_at = created_at - interval '2 seconds' where main_ship_id = a2;
   update public.main_ship_instances set created_at = created_at - interval '1 second'  where main_ship_id = a3;
 
-  -- post-normalization coherence: 5 home ships with zero active fleets; c2 stationary with its 1 'present'.
+  -- post-normalization coherence: 5 home ships with zero active fleets; c2 hunting with its 1 'present'.
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (a1,a2,a3,b1,c1) and status = 'home' and spatial_state is null;
+    where main_ship_id in (a1,a2,a3,b1,c1) and status = 'home';
   if n <> 5 then raise exception 'PROVISION FAIL: % of 5 normalized home ships', n; end if;
   select count(*) into n from public.fleets
     where main_ship_id in (a1,a2,a3,b1,c1) and status in ('moving','present','returning');
   if n <> 0 then raise exception 'PROVISION FAIL: % active fleets survive normalization (want 0)', n; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and status = 'stationary';
-  if n <> 1 then raise exception 'PROVISION FAIL: c2 is not stationary'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and status = 'hunting';
+  if n <> 1 then raise exception 'PROVISION FAIL: c2 is not hunting'; end if;
 
-  raise notice 'provision ok: uA=3 uB=1 uC=2 ships via real RPCs; 5 normalized to home; c2 left stationary';
+  raise notice 'provision ok: uA=3 uB=1 uC=2 ships via real RPCs; 5 normalized to home; c2 left hunting (un-sendable)';
 end $$;
 
 -- ════════ BLOCK HULLSTATS (activation prep, 0170): hull base combat stats seeded + adapter-folded ════════
@@ -777,45 +779,31 @@ begin
   raise notice 'TEAMCMD_PASS_TEAMSTATS ok: rejects (invalid_activity/group_not_found×2/empty_group), totals = independent per-member adapter sums with speed=min, strict opaque stats_invalid vs preview valid:false, fixtures restored';
 end $$;
 
--- ════════ BLOCK SEND: empty group, foreign group, real 2-ship send, and ALL-OR-NOTHING ════════
+-- ════════ BLOCK SEND (legacy group send RETIRED by 0232 → group PROVISIONING) ════════
+-- 4B-DROP RETIRE: the legacy group send (retired 0232) (the legacy per-member group send) was DROPPED by
+-- migration 0232. Its behavior (empty_group / foreign fail-closed / all-or-nothing per-member rollback)
+-- and its per-member-fleet movement model are retired; the unified group send (command_ship_group_go)
+-- is the ONE authority for group movement now and is proven end-to-end in fleetgo-proof.sql (against the
+-- docked/no-home fleet model command_ship_group_go requires). This block keeps ONLY the group
+-- provisioning that the surviving BLOCK STOP (gA1) and BLOCK DELETE (gC1) consume — via the live team
+-- RPCs (upsert_ship_group / assign_ship_to_group), on the legacy-home fixtures the rest of this proof
+-- shares.
 do $$
 declare r jsonb; n int; gC1 uuid;
   uA uuid := (select v from tcmd where k='uA'); uC uuid := (select v from tcmd where k='uC');
-  slag uuid := (select v from tcmd where k='slag'); gA1 uuid := (select v from tcmd where k='gA1');
-  gB1 uuid := (select v from tcmd where k='gB1');
+  gA1 uuid := (select v from tcmd where k='gA1');
   a1 uuid := (select v from tcmd where k='a1'); a2 uuid := (select v from tcmd where k='a2');
   c1 uuid := (select v from tcmd where k='c1'); c2 uuid := (select v from tcmd where k='c2');
 begin
-  -- empty_group: a created-but-memberless slot.
-  r := pg_temp.call_as(uA, 'public.upsert_ship_group(3, ''Empty'')');
-  if (r->>'ok')::boolean is not true then raise exception 'SEND FAIL empty-slot create: %', r; end if;
-  r := pg_temp.call_as(uA, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', (r->>'group_id')::uuid, slag));
-  if (r->>'reason') is distinct from 'empty_group' then raise exception 'SEND FAIL empty_group: %', r; end if;
-
-  -- foreign group fails closed.
-  r := pg_temp.call_as(uA, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gB1, slag));
-  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'SEND FAIL foreign group: %', r; end if;
-
-  -- SUCCESS: a 2-home-ship team (a1,a2) → ok, sent length 2, each with a movement_id, 2 moving fleets,
-  -- 2 traveling ships. Every movement write is the live send's — this RPC only orchestrates.
+  -- gA1 ← a1,a2 (home members) — the group BLOCK STOP exercises.
   r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a1, gA1));
   if (r->>'ok')::boolean is not true then raise exception 'SEND FAIL assign a1: %', r; end if;
   r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a2, gA1));
   if (r->>'ok')::boolean is not true then raise exception 'SEND FAIL assign a2: %', r; end if;
-  r := pg_temp.call_as(uA, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gA1, slag));
-  if (r->>'ok')::boolean is not true then raise exception 'SEND FAIL team send: %', r; end if;
-  if jsonb_array_length(r->'sent') <> 2 then raise exception 'SEND FAIL: sent length % (want 2)', jsonb_array_length(r->'sent'); end if;
-  select count(*) into n from jsonb_array_elements(r->'sent') as t(elem) where t.elem->>'movement_id' is not null;
-  if n <> 2 then raise exception 'SEND FAIL: % sent members carry a movement_id (want 2)', n; end if;
-  select count(*) into n from public.fleets
-    where main_ship_id in (a1, a2) and status = 'moving' and active_movement_id is not null;
-  if n <> 2 then raise exception 'SEND FAIL: % moving fleets (want 2)', n; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id in (a1, a2) and status = 'traveling';
-  if n <> 2 then raise exception 'SEND FAIL: % traveling ships (want 2)', n; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id in (a1, a2) and group_id = gA1;
+  if n <> 2 then raise exception 'SEND FAIL: gA1 does not hold a1,a2 (got %)', n; end if;
 
-  -- ALL-OR-NOTHING: team {c1 home (ordered FIRST), c2 stationary}. c1's member-send SUCCEEDS inside the
-  -- subtransaction, then c2's raises (not 'home') → the whole loop rolls back → member_send_failed AND
-  -- c1 keeps ZERO active fleets and is still 'home' — the already-succeeded member was rolled back.
+  -- gC1 ← c1,c2 — the group BLOCK DELETE un-groups.
   r := pg_temp.call_as(uC, 'public.upsert_ship_group(1, ''Charlie'')');
   if (r->>'ok')::boolean is not true then raise exception 'SEND FAIL uC group: %', r; end if;
   gC1 := (r->>'group_id')::uuid;
@@ -824,25 +812,23 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'SEND FAIL assign c1: %', r; end if;
   r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', c2, gC1));
   if (r->>'ok')::boolean is not true then raise exception 'SEND FAIL assign c2: %', r; end if;
-  r := pg_temp.call_as(uC, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gC1, slag));
-  if (r->>'reason') is distinct from 'member_send_failed' then raise exception 'SEND FAIL all-or-nothing reason: %', r; end if;
-  -- the abort must be pinned to c2 specifically: the live send raises this exact message for a stationary
-  -- ship (0152:106). Its presence in `detail` proves the loop reached (and failed on) c2 AFTER c1's
-  -- member-send had already succeeded inside the subtransaction — i.e. c1 was rolled back, not never-sent.
-  if (r->>'detail') not like '%not available (status stationary)%' then
-    raise exception 'SEND FAIL all-or-nothing detail not pinned to stationary c2: %', r; end if;
-  select count(*) into n from public.fleets
-    where main_ship_id = c1 and status in ('moving','present','returning');
-  if n <> 0 then raise exception 'SEND FAIL all-or-nothing: c1 kept % active fleets (want 0 — the succeeded member must be rolled back)', n; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id = c1 and status = 'home';
-  if n <> 1 then raise exception 'SEND FAIL all-or-nothing: c1 is no longer home'; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id = c2 and status = 'stationary';
-  if n <> 1 then raise exception 'SEND FAIL all-or-nothing: c2 is no longer stationary'; end if;
+  select count(*) into n from public.main_ship_instances where main_ship_id in (c1, c2) and group_id = gC1;
+  if n <> 2 then raise exception 'SEND FAIL: gC1 does not hold c1,c2 (got %)', n; end if;
 
-  raise notice 'TEAMCMD_PASS_SEND ok: empty_group, foreign fail-closed, 2-ship send (2 movements/fleets/traveling), all-or-nothing rollback';
+  raise notice 'TEAMCMD_PASS_SEND ok: legacy group send retired (0232); gA1<-{a1,a2} + gC1<-{c1,c2} provisioned via the live team RPCs for STOP/DELETE (unified group send proven in fleetgo-proof)';
 end $$;
 
--- ════════ BLOCK STOP: foreign group, EXACT mixed aggregate + held-in-space shape, idempotent re-stop ════════
+-- ════════ BLOCK STOP: foreign fail-closed + best-effort all-skip aggregate ════════
+-- stop_ship_group_transit (0164) is the DEFERRED team stop RPC — UNTOUCHED by 0232 (pending client
+-- PR #189). It resolves the group's members and, per member, halts that member's OWN in-flight per-ship
+-- fleet inside its own exception-catching subtransaction (BEST-EFFORT: one member's failure never
+-- aborts the team op). 4B-DROP RETIRE: the per-ship movers that could put a member into per-ship transit
+-- (the legacy single-ship send (retired 0232) + the legacy group send) were DROPPED by 0232, so a member can no longer be
+-- given per-ship in-flight state to halt — the reachable behavior now is the graceful SKIP path: every
+-- docked member with no active fleet is skipped ('no_active_fleet'), never a crash. This block proves
+-- foreign fail-closed + the all-skip aggregate over gA1's fully-docked members, and that no member is
+-- disturbed. (Unified group-fleet braking — command_ship_group_stop over a command_ship_group_go leg —
+-- is the live "stop a group in transit" authority and is proven in fleetgo-proof.sql.)
 do $$
 declare r jsonb; n int;
   uA uuid := (select v from tcmd where k='uA');
@@ -850,53 +836,36 @@ declare r jsonb; n int;
   a1 uuid := (select v from tcmd where k='a1'); a2 uuid := (select v from tcmd where k='a2');
   a3 uuid := (select v from tcmd where k='a3');
 begin
-  -- foreign group fails closed.
+  -- foreign group fails closed (gB1 was created + deleted in BLOCK WRITE).
   r := pg_temp.call_as(uA, format('public.stop_ship_group_transit(%L::uuid)', gB1));
   if (r->>'reason') is distinct from 'group_not_found' then raise exception 'STOP FAIL foreign group: %', r; end if;
 
-  -- MIXED aggregate: a1,a2 traveling (from BLOCK SEND) + a3 home, all in gA1 → exactly {2,1,0}.
+  -- gA1 = {a1,a2 (from BLOCK SEND) + a3}, all docked/home with NO in-flight per-ship fleet → every
+  -- member is a graceful SKIP: {stopped:0, skipped:3, failed:0}.
   r := pg_temp.call_as(uA, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', a3, gA1));
   if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL assign a3: %', r; end if;
   r := pg_temp.call_as(uA, format('public.stop_ship_group_transit(%L::uuid)', gA1));
-  if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL mixed stop: %', r; end if;
-  if (r->>'stopped')::int is distinct from 2 or (r->>'skipped')::int is distinct from 1 or (r->>'failed')::int is distinct from 0 then
-    raise exception 'STOP FAIL mixed aggregate: stopped=% skipped=% failed=% (want 2/1/0)', r->>'stopped', r->>'skipped', r->>'failed';
-  end if;
-  -- per-member results payload (not just the aggregate): a3 (home, no in-flight fleet) is the skip, tagged
-  -- with the exact outcome/reason token the RPC emits for a member with nothing to halt.
-  select count(*) into n from jsonb_array_elements(r->'results') e
-    where e->>'main_ship_id' = a3::text and e->>'outcome' = 'skipped' and e->>'reason' = 'no_active_fleet';
-  if n <> 1 then raise exception 'STOP FAIL mixed results: a3 not skipped/no_active_fleet: %', r->'results'; end if;
-
-  -- physical hold shape (0155): a1,a2 HELD in open space; their fleets settled movement-less; a3 untouched.
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id in (a1, a2) and status = 'stationary' and spatial_state = 'in_space'
-      and space_x is not null and space_y is not null;
-  if n <> 2 then raise exception 'STOP FAIL: % ships held stationary/in_space with coords (want 2)', n; end if;
-  select count(*) into n from public.fleets
-    where main_ship_id in (a1, a2) and status = 'completed' and active_movement_id is null;
-  if n <> 2 then raise exception 'STOP FAIL: % settled (completed, pointer-cleared) fleets (want 2)', n; end if;
-  -- movement-row terminal: each stopped fleet's fleet_movements row reached the 'cancelled' terminal with
-  -- resolved_at set. A regression that skipped the movement cancel would leave a 'moving' row for the cron
-  -- to later settle (un-holding the ship) yet still pass the ship/fleet shape checks above.
-  select count(*) into n from public.fleet_movements
-    where fleet_id in (select id from public.fleets where main_ship_id in (a1, a2))
-      and status = 'cancelled' and resolved_at is not null;
-  if n <> 2 then raise exception 'STOP FAIL: % cancelled/resolved movement rows for the stopped fleets (want 2)', n; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id = a3 and status = 'home';
-  if n <> 1 then raise exception 'STOP FAIL: a3 was disturbed (not home)'; end if;
-
-  -- idempotent double-stop: nothing left to halt → {0,3,0} (every member is a legitimate skip).
-  r := pg_temp.call_as(uA, format('public.stop_ship_group_transit(%L::uuid)', gA1));
-  if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL double stop: %', r; end if;
+  if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL group stop: %', r; end if;
   if (r->>'stopped')::int is distinct from 0 or (r->>'skipped')::int is distinct from 3 or (r->>'failed')::int is distinct from 0 then
-    raise exception 'STOP FAIL double-stop aggregate: stopped=% skipped=% failed=% (want 0/3/0)', r->>'stopped', r->>'skipped', r->>'failed';
+    raise exception 'STOP FAIL aggregate: stopped=% skipped=% failed=% (want 0/3/0 — all members docked, nothing to halt)', r->>'stopped', r->>'skipped', r->>'failed';
   end if;
-  -- every one of the three members must carry outcome='skipped' in the payload (no silent failed/stopped).
-  select count(*) into n from jsonb_array_elements(r->'results') e where e->>'outcome' = 'skipped';
-  if n <> 3 then raise exception 'STOP FAIL double-stop results: % of 3 entries skipped: %', n, r->'results'; end if;
+  -- per-member results payload: each of a1/a2/a3 is skipped with the RPC's no-active-fleet token.
+  select count(*) into n from jsonb_array_elements(r->'results') e
+    where e->>'main_ship_id' in (a1::text, a2::text, a3::text) and e->>'outcome' = 'skipped' and e->>'reason' = 'no_active_fleet';
+  if n <> 3 then raise exception 'STOP FAIL results: % of a1/a2/a3 skipped/no_active_fleet (want 3): %', n, r->'results'; end if;
 
-  raise notice 'TEAMCMD_PASS_STOP ok: foreign fail-closed, mixed {2,1,0} with held-in-space shape, idempotent {0,3,0}';
+  -- NOT CORRUPTION: the no-op stop disturbs no member — all three stay home.
+  select count(*) into n from public.main_ship_instances where main_ship_id in (a1, a2, a3) and status = 'home';
+  if n <> 3 then raise exception 'STOP FAIL: % of a1/a2/a3 still home (want 3 — the skip must touch nothing)', n; end if;
+
+  -- deterministic repeat: a SECOND call reaches the SAME graceful {0,3,0} — repeatable, not a one-off.
+  r := pg_temp.call_as(uA, format('public.stop_ship_group_transit(%L::uuid)', gA1));
+  if (r->>'ok')::boolean is not true then raise exception 'STOP FAIL second stop: %', r; end if;
+  if (r->>'stopped')::int is distinct from 0 or (r->>'skipped')::int is distinct from 3 or (r->>'failed')::int is distinct from 0 then
+    raise exception 'STOP FAIL second-stop aggregate: stopped=% skipped=% failed=% (want 0/3/0, same as the first call)', r->>'stopped', r->>'skipped', r->>'failed';
+  end if;
+
+  raise notice 'TEAMCMD_PASS_STOP ok: foreign fail-closed; over a fully-docked team stop_ship_group_transit is the graceful all-skip {0,3,0} (no member has per-ship transit to halt post-0232 — the per-ship movers are retired), members undisturbed, repeatable';
 end $$;
 
 -- ════════ BLOCK DELETE: member SET-NULL un-grouping (ships survive), double-delete fails closed ════════
@@ -1091,21 +1060,18 @@ begin
   exception when check_violation then null; end;
   if v_bad <> 0 then raise exception 'COMBATPARITY FAIL: % illegal identity inserts were ACCEPTED (want 0)', v_bad; end if;
 
-  -- leaf smoke on a fixture team ship (a3: home, spatial_state NULL — undisturbed since BLOCK STOP;
-  -- rolled back with everything): mainship_sync_combat_hp writes hp ONLY (status/spatial untouched);
-  -- mainship_mark_combat_destroyed writes status='destroyed'/hp=0 (the 0059 terminal's lifecycle
-  -- half). 4C-MIG-2A (0222) TOKEN UPDATE: the writer no longer NULLS spatial_state/space_x/space_y
-  -- itself (b3) — a3 already carries them NULL from birth (commission no longer mints them either,
-  -- b1), so the post-condition below still holds, now because the retired columns were never
-  -- touched rather than because this call cleared them.
+  -- leaf smoke on a fixture team ship (a3: home, undisturbed since BLOCK STOP; rolled back with
+  -- everything): mainship_sync_combat_hp writes hp ONLY (status untouched); mainship_mark_combat_
+  -- destroyed writes status='destroyed'/hp=0 (the 0059 terminal's lifecycle half).
+  -- 4C-MIG-2B TOKEN UPDATE: spatial_state/space_x/space_y are GONE (migration 0231, finding F1) —
+  -- both writers' CHECK-required clears retired WITH the columns; only status/hp are checked below.
   perform public.mainship_sync_combat_hp(a3, 123);
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = a3 and hp = 123 and status = 'home' and spatial_state is null;
+    where main_ship_id = a3 and hp = 123 and status = 'home';
   if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_sync_combat_hp did not write hp-only'; end if;
   perform public.mainship_mark_combat_destroyed(a3);
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = a3 and status = 'destroyed' and hp = 0
-      and spatial_state is null and space_x is null and space_y is null;
+    where main_ship_id = a3 and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'COMBATPARITY FAIL: mainship_mark_combat_destroyed did not write the destroyed/hp=0 terminal'; end if;
 
   -- the no-second-ENGINE pin: EXACTLY one combat cron job RUNS the tick engine (process_combat_ticks),
@@ -1193,8 +1159,9 @@ begin
   r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB1, v_hunt));
   if (r->>'reason') is distinct from 'empty_group' then raise exception 'TEAMHUNT FAIL empty_group: %', r; end if;
   -- invalid_location — a SAFE (activity none) destination MUST reject, and it must answer BEFORE the
-  -- member-readiness check: gA1's members (a1,a2 held stationary since BLOCK STOP; a3 destroyed in
-  -- COMBATPARITY) are all unready, yet the answer is the location's (the reject-order pin).
+  -- member-readiness check: gA1's members (a1,a2 still traveling — BLOCK STOP's halt attempt now
+  -- fails gracefully, see its 4C-MIG-2B rework; a3 destroyed in COMBATPARITY) are all unready either
+  -- way (non-'home', non-fleet-truth-docked), yet the answer is the location's (the reject-order pin).
   r := pg_temp.call_as(uA, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gA1, slag));
   if (r->>'reason') is distinct from 'invalid_location' then raise exception 'TEAMHUNT FAIL invalid_location: %', r; end if;
   -- member_not_ready — the same unready team against the REAL hunt destination.
@@ -1204,7 +1171,7 @@ begin
   -- ── happy-path fixture: uC's pair {c1 (home), c2} — normalize c2 to home (the SAME quarantined
   -- provisioning idiom: home shape + retire its 'present' commission fleet + settle its presence).
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id = c2;
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -1276,7 +1243,7 @@ begin
   if n <> 2 then raise exception 'TEAMHUNT FAIL: % manifest rows (want 2)', n; end if;
   -- both ships out hunting (the 0043 status that only the D3 return path will clear).
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (c1, c2) and status = 'hunting' and spatial_state is null;
+    where main_ship_id in (c1, c2) and status = 'hunting';
   if n <> 2 then raise exception 'TEAMHUNT FAIL: % ships hunting (want 2)', n; end if;
   -- movement speed == the INDEPENDENT D0 totals.speed (min member speed), mission = hunt_pirates.
   select count(*) into n from public.fleet_movements
@@ -1288,17 +1255,9 @@ begin
   if n <> 1 then raise exception 'TEAMHUNT FAIL: movement speed_used <> min member adapter speed'; end if;
 
   -- ── RACES while the sortie is live ────────────────────────────────────────────────────────────────
-  -- the live single send must reject a hunting member (status='hunting' is not 'home')…
-  begin
-    r := pg_temp.call_as(uC, format('public.send_main_ship_expedition(%L::jsonb, %L::uuid)',
-          jsonb_build_array(c1), slag));
-    raise exception 'TEAMHUNT FAIL: live single send ACCEPTED a hunting member: %', r;
-  exception when others then
-    v_err := sqlerrm;
-    if v_err not like '%not available (status hunting)%' then
-      raise exception 'TEAMHUNT FAIL: single-send race raised the wrong error: %', v_err; end if;
-  end;
-  -- …and a second team hunt-send on the same group rejects member_not_ready (double-send close).
+  -- (the legacy single-send race — the legacy single-ship send (retired 0232) rejecting a hunting member — is retired
+  --  with that RPC by 0232; the live-authority race below stands.)
+  -- a second team hunt-send on the same group rejects member_not_ready (double-send close).
   r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
   if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMHUNT FAIL double send: %', r; end if;
 
@@ -1439,7 +1398,7 @@ begin
   select count(*) into n from public.combat_encounters where id = v_enc2 and status = 'defeat' and ended_at is not null;
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: zero-hp encounter did not settle defeat'; end if;
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = b1 and status = 'destroyed' and hp = 0 and spatial_state is null;
+    where main_ship_id = b1 and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: b1 not marked combat-destroyed by the D1 member loop'; end if;
   select count(*) into n from public.fleets where id = v_fleet2 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: sortie fleet not destroyed on defeat'; end if;
@@ -1651,7 +1610,7 @@ begin
 
   -- THE D3 DELTA: surviving members are 'returning' (pair-shape) with combat damage persisted.
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (c1, c2) and status = 'returning' and spatial_state is null;
+    where main_ship_id in (c1, c2) and status = 'returning';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members returning after escape (want 2 — the D3 tick delta)', n; end if;
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
@@ -1702,7 +1661,7 @@ begin
   select hp into v_hp2 from public.main_ship_instances where main_ship_id = c2;
   perform public.process_mainship_expeditions();
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (c1, c2) and status = 'home' and spatial_state is null;
+    where main_ship_id in (c1, c2) and status = 'home';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members re-homed (want 2 home/legacy-shape after the reconciler)', n; end if;
   select count(*) into n from public.main_ship_instances
     where (main_ship_id = c1 and hp = v_hp1) or (main_ship_id = c2 and hp = v_hp2);
@@ -1735,58 +1694,39 @@ begin
   select count(*) into n from public.fleets where id = v_fleet3 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: sortie fleet not destroyed'; end if;
   select count(*) into n from public.main_ship_instances
-    where main_ship_id in (c1, c2) and status = 'destroyed' and hp = 0 and spatial_state is null;
+    where main_ship_id in (c1, c2) and status = 'destroyed' and hp = 0;
   if n <> 2 then raise exception 'TEAMSETTLE FAIL loss: members not combat-destroyed by the D1 loop'; end if;
   select count(*) into n from public.combat_reports where encounter_id = v_enc3 and result = 'defeat';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: no defeat report'; end if;
   -- RECOVERY PIN: the 0081 ship-addressed repair revives a combat-destroyed member.
   r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c1));
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = c1 and status = 'home' and hp = max_hp and spatial_state is null;
+    where main_ship_id = c1 and status = 'home' and hp = max_hp;
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: repair did not revive the destroyed member (want home @ max_hp)'; end if;
 
-  -- ── M1 GUARD PIN: interleaving is untestable in one session — pin the guard's contract instead:
-  -- a 'hunting' ship rejects through the send's own not-available raise (never a lost update), and
-  -- a legal single send afterwards still works (parity for non-racing callers).
-  update public.main_ship_instances
-     set status = 'hunting', spatial_state = null, space_x = null, space_y = null, updated_at = now()
-   where main_ship_id = c1;
-  begin
-    r := pg_temp.call_as(uC, format('public.send_main_ship_expedition(%L::jsonb, %L::uuid)', jsonb_build_array(c1), slag));
-    raise exception 'TEAMSETTLE FAIL: live single send ACCEPTED a hunting ship (M1): %', r;
-  exception when others then
-    v_err := sqlerrm;
-    if v_err not like '%not available (status hunting)%' then
-      raise exception 'TEAMSETTLE FAIL: M1 hunting-reject raised the wrong error: %', v_err; end if;
-  end;
-  select count(*) into n from public.main_ship_instances where main_ship_id = c1 and status = 'hunting';
-  if n <> 1 then raise exception 'TEAMSETTLE FAIL: the rejected single send moved the hunting ship (lost update)'; end if;
-  update public.main_ship_instances set status = 'home', updated_at = now() where main_ship_id = c1;
-  r := pg_temp.call_as(uC, format('public.send_main_ship_expedition(%L::jsonb, %L::uuid)', jsonb_build_array(c1), slag));
-  if (r->>'movement_id') is null then raise exception 'TEAMSETTLE FAIL: legal single send broken by the M1 fix: %', r; end if;
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id = c1 and status = 'traveling' and spatial_state is null;
-  if n <> 1 then raise exception 'TEAMSETTLE FAIL: legal single send did not put the ship in flight'; end if;
+  -- (M1 GUARD PIN retired: it pinned the legacy single-ship send (retired 0232)'s hunting-reject / lost-update contract,
+  --  but that RPC was DROPPED by 0232 — the single-send race is gone with it. The unified movers carry
+  --  their own member-busy guards, proven against the live authority in fleetgo-proof.sql.)
 
   -- ── SELF-HEAL PIN: manufactured partial states (fixture surgery) whose manifest fleets are ALL
   -- finished (v_fleet completed / v_fleet3 destroyed) → the reconciler re-homes; never destroys.
   r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c2));
   update public.main_ship_instances
-     set status = 'returning', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'returning', updated_at = now()
    where main_ship_id = c2;
   perform public.process_mainship_expeditions();
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = c2 and status = 'home' and spatial_state is null;
+    where main_ship_id = c2 and status = 'home';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned returning member'; end if;
   update public.main_ship_instances
-     set status = 'hunting', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'hunting', updated_at = now()
    where main_ship_id = c2;
   perform public.process_mainship_expeditions();
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = c2 and status = 'home' and spatial_state is null;
+    where main_ship_id = c2 and status = 'home';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL: self-heal did not re-home the orphaned hunting member'; end if;
 
-  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, M1 hunting-reject without a lost update + legal single-send parity, and both self-heal re-homes';
+  raise notice 'TEAMCMD_PASS_TEAMSETTLE ok: mid-combat + in-transit reconciler race guards, verbatim team retreat, escape marks survivors returning (member hull speed, member-keyed report, damage persisted), return settle deposits the bundle (metal + the 0171 wave-2 shard into player_inventory), reconciler re-homes in the legacy shape with the manifest retained, real-member defeat + repair revival, and both self-heal re-homes';
 end $$;
 
 -- ════════ BLOCK CAPXP (CAPXP-0/1, 0177): captain-XP foundation — dark no-op, exact accrual, ledger ════════
@@ -2623,113 +2563,6 @@ end $$;
 -- again on exit. ROLLBACK reverts everything regardless.
 update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
 
--- ════════ BLOCK TEAMMAP (TEAMMAP-1, 0187): group-send tags member fleets; arrival docks the team ════════
--- Migration 0187 re-created send_ship_group_expedition (from its TRUE 0163 head) with ONE marked hunk:
--- after the all-or-nothing member loop succeeds, the just-created member fleets are tagged with the
--- team's group_id — the 0168 INFORMATIONAL, display-only column (ROUTING NEVER reads it; accordingly
--- this block makes no routing assertion on the tag either — it pins the tag itself and that the
--- pre-existing dock settle is untouched by it). Runs on a FRESH fixture user (the MOD2 idiom — the
--- earlier fixtures sit in deep post-settle shapes):
---   TAG  — a 2-ship team send to Slagworks (starter port) leaves BOTH member fleets carrying
---          group_id = the team, the tagged set is exactly the envelope's sent[] fleet ids, and the
---          owner has NO stray tagged fleet beyond those two.
---   DOCK — rewinding arrive_at (the sanctioned clock surgery) and settling each movement through
---          movement_settle_arrival (the SAME per-movement settle the cron calls) DOCKS both members
---          at the port (0153: status 'stationary' / spatial_state 'at_location'), their fleets
---          'present' at Slagworks — and the informational tag SURVIVES the settle (the map's
---          docked-team badge read).
-do $$
-declare r jsonb; n int; uT uuid; t1 uuid; t2 uuid; gT uuid; v_mv uuid;
-  slag uuid := (select v from tcmd where k='slag');
-  v_sent_fleets uuid[];
-begin
-  -- fresh fixture user (the MOD2 idiom): the on-signup triggers auto-create the active Home Base;
-  -- fund the wallet for the additional commission (the same direct owner insert as the funding step
-  -- above — B-verify makes no balance assertion).
-  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
-    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
-            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
-    returning id into uT;
-  insert into public.player_wallet (player_id, balance) values (uT, 1000000)
-    on conflict (player_id) do update set balance = excluded.balance;
-
-  -- two ships via the REAL commission RPCs, then the ONE sanctioned fixture normalization to legacy
-  -- 'home' (the provisioning idiom verbatim: home pair-shape + retire the 'present' commission
-  -- fleets + complete their presence rows + a created_at stagger for deterministic member order).
-  r := pg_temp.call_as(uT, 'public.commission_first_main_ship()');
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL provision first: %', r; end if;
-  select main_ship_id into t1 from public.main_ship_instances where player_id = uT;
-  r := pg_temp.call_as(uT, 'public.commission_additional_main_ship()');
-  if (r->>'ok')::boolean is not true or (r->>'created')::boolean is not true then raise exception 'TEAMMAP FAIL provision 2nd: %', r; end if;
-  t2 := (r->>'main_ship_id')::uuid;
-  update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
-   where main_ship_id in (t1, t2);
-  update public.fleets
-     set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
-         current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
-         updated_at = now()
-   where main_ship_id in (t1, t2) and status = 'present';
-  update public.location_presence
-     set status = 'completed', updated_at = now()
-   where fleet_id in (select id from public.fleets where main_ship_id in (t1, t2) and status = 'destroyed')
-     and status = 'active';
-  update public.main_ship_instances set created_at = created_at - interval '2 seconds' where main_ship_id = t1;
-  update public.main_ship_instances set created_at = created_at - interval '1 second'  where main_ship_id = t2;
-
-  -- a team of two, via the real RPCs.
-  r := pg_temp.call_as(uT, 'public.upsert_ship_group(1, ''MapWing'')');
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL group create: %', r; end if;
-  gT := (r->>'group_id')::uuid;
-  r := pg_temp.call_as(uT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', t1, gT));
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL assign t1: %', r; end if;
-  r := pg_temp.call_as(uT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', t2, gT));
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL assign t2: %', r; end if;
-
-  -- TAG: group-send to the port; both member fleets carry the informational group_id, the tagged
-  -- set is exactly the envelope's sent[] fleet ids (the hunk updates what the loop just created),
-  -- and the owner has no stray tagged fleet.
-  r := pg_temp.call_as(uT, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gT, slag));
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMMAP FAIL team send: %', r; end if;
-  if jsonb_array_length(r->'sent') <> 2 then raise exception 'TEAMMAP FAIL: sent length % (want 2)', jsonb_array_length(r->'sent'); end if;
-  select array_agg((e->>'fleet_id')::uuid) into v_sent_fleets from jsonb_array_elements(r->'sent') e;
-  select count(*) into n from public.fleets
-    where main_ship_id in (t1, t2) and status = 'moving' and group_id = gT;
-  if n <> 2 then raise exception 'TEAMMAP FAIL: % member fleets carry group_id = the team (want 2 — the 0187 tag hunk)', n; end if;
-  select count(*) into n from public.fleets where id = any(v_sent_fleets) and group_id = gT;
-  if n <> 2 then raise exception 'TEAMMAP FAIL: tagged fleets are not exactly the envelope''s sent[] ids (% of 2)', n; end if;
-  select count(*) into n from public.fleets where player_id = uT and group_id is not null;
-  if n <> 2 then raise exception 'TEAMMAP FAIL: % tagged fleets for the owner (want exactly the 2 member fleets — no strays)', n; end if;
-
-  -- DOCK: settle both arrivals through the cron's own per-movement settle (clock rewind first — the
-  -- sanctioned surgery; now() is txn-constant so no real interval can elapse). Slagworks is a legal
-  -- dockable port (0065/0066 role + docking service + anchor seeds, revealed in setup), so the 0153
-  -- location branch docks each main ship; the informational tag must survive the settle.
-  for v_mv in
-    select fm.id from public.fleet_movements fm
-      join public.fleets f on f.id = fm.fleet_id
-     where f.main_ship_id in (t1, t2) and fm.status = 'moving'
-  loop
-    -- shift BOTH timestamps (the established rewind idiom of every earlier block): moving only
-    -- arrive_at back would land arrive_at <= depart_at on a just-sent movement and violate the
-    -- 0007 fleet_movements check (arrive_at > depart_at).
-    update public.fleet_movements
-       set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
-     where id = v_mv;
-    r := public.movement_settle_arrival(v_mv);
-    if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
-      raise exception 'TEAMMAP FAIL settle: %', r; end if;
-  end loop;
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
-  if n <> 2 then raise exception 'TEAMMAP FAIL: % members docked at arrival (want 2 — the 0153 dock write)', n; end if;
-  select count(*) into n from public.fleets
-    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag and group_id = gT;
-  if n <> 2 then raise exception 'TEAMMAP FAIL: % present member fleets at the port still tagged (want 2 — the docked-team badge read)', n; end if;
-
-  raise notice 'TEAMCMD_PASS_TEAMMAP ok: 2-ship team send tags both member fleets with group_id (= the envelope''s sent[] ids, no strays); arrival settles dock both members at the port (stationary/at_location, fleets present at Slagworks) with the informational tag surviving the settle';
-end $$;
-
 -- ════════ BLOCK SHIELD0 (SHIELD-0, 0191): the shield foundation is deploy-inert + the leaf clamps ════════
 -- Migration 0191 is schema + one leaf + two knobs, ZERO engine edits (SHIELD-1 owns the tick
 -- re-creates, SHIELD-2 the regen home). This block proves the whole slice is INERT as deployed —
@@ -2851,172 +2684,6 @@ begin
       v_hp_before, v_maxhp_before, v_hp_after, v_maxhp_after; end if;
 
   raise notice 'TEAMCMD_PASS_SHIELD0 ok: committed regen knobs ''0'' (never touched, even in-txn); 3 default-0 columns + 2 NULL snapshot columns + 5 CHECKs + regen index pinned; leaf service-only with clamp/shield-only/no-RNG prosrc; every hull 0, every instance 0/0, every combat row shield-NULL, regen predicate empty; leaf smoke exact (floor 0 / ceiling 50 / in-range 30, missing ship zero rows, shield_le_max trips, hp/max_hp byte-untouched)';
-end $$;
-
--- ════════ BLOCK TEAMMOVE (TEAMMOVE-1, 0190): a DOCKED team moves onward as one ════════
--- Migration 0190 added move_ship_group_to_location — the 0163-shaped wrapper composing the UNCHANGED
--- live per-ship move_main_ship_to_location (0156 head, 'present' departure branch) once per member,
--- all-or-nothing, closing gap G-B (a docked team could arrive together but never leave together).
--- Fixture reuse: TEAMMAP's docked end-state persists inside this one txn — the MapWing team (2 ships,
--- both docked at Slagworks, fleets 'present' + tagged) — re-derived here by the team's unique name.
---   REJECTS — empty group; foreign group fails closed; one member re-departed alone (via the REAL
---             per-ship move — no fixture surgery) → member_not_ready with ZERO departures; the two
---             members docked at DIFFERENT ports (t2 settled at Driftmarch — a real split team) →
---             member_not_ready with zero departures.
---   ALL-OR-NOTHING — with the team re-united at Slagworks, t2's active presence row is
---             fixture-completed (the manufactured-state technique; captured by id and restored
---             after): t1's per-ship move SUCCEEDS inside the subtransaction, then t2's raises
---             ('no active presence') → member_send_failed pinned to that raise, and BOTH fleets are
---             still 'present' at Slagworks with both ships still in the docked pair — the succeeded
---             member was rolled back, never half-moved.
---   MOVE —    the happy path: the whole docked team moves Slagworks → Driftmarch — 2
---             present-departure envelopes (from='present', from_location Slagworks, to Driftmarch,
---             each with a movement_id), the departed fleets are the members' OWN docked fleets
---             re-departed (the wrapper composes, never re-creates), both 'moving' + group-tagged
---             (the 0187 idiom; no stray tags for the owner), ships in the legacy in-flight pair
---             (traveling / spatial_state NULL, 0152).
---   ARRIVE —  rewinding BOTH timestamps (the established two-timestamp idiom — arrive_at alone would
---             violate the 0007 arrive_at > depart_at CHECK) and settling through
---             movement_settle_arrival docks the team at Driftmarch (0153 pair) with the
---             informational tag surviving — the whole-team onward hop, end to end.
-do $$
-declare r jsonb; n int; uT uuid; t1 uuid; t2 uuid; gT uuid; gE uuid; v_mv uuid;
-  v_f1 uuid; v_f2 uuid; v_pres uuid;
-  uA uuid := (select v from tcmd where k='uA');
-  slag uuid := (select v from tcmd where k='slag');
-  drift uuid := (select v from tcmd where k='drift');
-  v_sent_fleets uuid[];
-begin
-  -- re-derive the TEAMMAP fixture (same txn; the team name is unique to that block) + preconditions.
-  select group_id, player_id into gT, uT from public.ship_groups where name = 'MapWing';
-  if gT is null then raise exception 'TEAMMOVE FAIL precondition: the TEAMMAP MapWing team is missing'; end if;
-  select main_ship_id into t1 from public.main_ship_instances where group_id = gT order by created_at asc  limit 1;
-  select main_ship_id into t2 from public.main_ship_instances where group_id = gT order by created_at desc limit 1;
-  if t1 is null or t2 is null or t1 = t2 then raise exception 'TEAMMOVE FAIL precondition: want 2 distinct members'; end if;
-  select count(*) into n from public.fleets
-    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL precondition: % member fleets present at Slagworks (want 2 — the TEAMMAP docked end-state)', n; end if;
-
-  -- empty_group: a created-but-memberless slot (the BLOCK SEND idiom).
-  r := pg_temp.call_as(uT, 'public.upsert_ship_group(2, ''MoveEmpty'')');
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMMOVE FAIL empty-slot create: %', r; end if;
-  gE := (r->>'group_id')::uuid;
-  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gE, drift));
-  if (r->>'reason') is distinct from 'empty_group' then raise exception 'TEAMMOVE FAIL empty_group: %', r; end if;
-
-  -- foreign group fails closed (uA on uT's team → group_not_found, never an oracle).
-  r := pg_temp.call_as(uA, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
-  if (r->>'reason') is distinct from 'group_not_found' then raise exception 'TEAMMOVE FAIL foreign group: %', r; end if;
-
-  -- MEMBER NOT DOCKED: t2 re-departs ALONE via the REAL live per-ship move (real state, no surgery) —
-  -- the team is now {t1 docked, t2 mid-flight} and the group move must reject member_not_ready.
-  select id into v_f2 from public.fleets where main_ship_id = t2 and player_id = uT and status = 'present';
-  r := pg_temp.call_as(uT, format('public.move_main_ship_to_location(%L::uuid, %L::uuid)', v_f2, drift));
-  v_mv := (r->>'movement_id')::uuid;
-  if v_mv is null or (r->>'from') is distinct from 'present' then raise exception 'TEAMMOVE FAIL t2 solo re-depart: %', r; end if;
-  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
-  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMMOVE FAIL not-docked reject: %', r; end if;
-  -- …and the reject moved NOTHING: t1 has zero moving fleets (reject-before-write).
-  select count(*) into n from public.fleets where main_ship_id = t1 and status = 'moving';
-  if n <> 0 then raise exception 'TEAMMOVE FAIL: the not-docked reject departed t1 (% moving fleets, want 0)', n; end if;
-
-  -- settle t2 at Driftmarch → a real SPLIT team (t1@Slagworks, t2@Driftmarch), both fully docked.
-  update public.fleet_movements
-     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
-   where id = v_mv;
-  r := public.movement_settle_arrival(v_mv);
-  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
-    raise exception 'TEAMMOVE FAIL t2 drift settle: %', r; end if;
-
-  -- MIXED-LOCATION TEAM: every member docked, but NOT at the same port → member_not_ready, zero moves.
-  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
-  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMMOVE FAIL mixed-location reject: %', r; end if;
-  select count(*) into n from public.fleets where main_ship_id in (t1, t2) and status = 'moving';
-  if n <> 0 then raise exception 'TEAMMOVE FAIL: the mixed-location reject departed a member (% moving fleets, want 0)', n; end if;
-
-  -- re-unite: t2 back to Slagworks via the live per-ship move + settle → both docked at Slagworks.
-  r := pg_temp.call_as(uT, format('public.move_main_ship_to_location(%L::uuid, %L::uuid)', v_f2, slag));
-  v_mv := (r->>'movement_id')::uuid;
-  if v_mv is null then raise exception 'TEAMMOVE FAIL t2 return re-depart: %', r; end if;
-  update public.fleet_movements
-     set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
-   where id = v_mv;
-  r := public.movement_settle_arrival(v_mv);
-  if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
-    raise exception 'TEAMMOVE FAIL t2 slag settle: %', r; end if;
-  select count(*) into n from public.fleets
-    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL re-unite: % member fleets present at Slagworks (want 2)', n; end if;
-
-  -- ALL-OR-NOTHING: t1 (ordered FIRST) departs inside the subtransaction, then t2's per-ship move
-  -- raises — its active presence row is fixture-completed (captured by id; restored below). The
-  -- wrapper's own gates still pass (fleet 'present' at Slagworks, ship in the docked pair), so the
-  -- loop is REACHED and fails on member 2 AFTER member 1 already departed → the raise's presence in
-  -- `detail` proves t1 was rolled back, not never-sent (the BLOCK SEND pinning technique).
-  select id into v_pres from public.location_presence where fleet_id = v_f2 and status = 'active';
-  if v_pres is null then raise exception 'TEAMMOVE FAIL: no active presence to manufacture the mid-loop failure from'; end if;
-  update public.location_presence set status = 'completed', updated_at = now() where id = v_pres;
-  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
-  if (r->>'reason') is distinct from 'member_send_failed' then raise exception 'TEAMMOVE FAIL all-or-nothing reason: %', r; end if;
-  if (r->>'detail') not like '%no active presence%' then
-    raise exception 'TEAMMOVE FAIL all-or-nothing detail not pinned to t2''s presence raise: %', r; end if;
-  select count(*) into n from public.fleets where main_ship_id in (t1, t2) and status = 'moving';
-  if n <> 0 then raise exception 'TEAMMOVE FAIL: % moving member fleets after the aborted move (want 0 — the TEAMMOVE all-or-nothing rollback)', n; end if;
-  select count(*) into n from public.fleets
-    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = slag;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % member fleets still present at the port (want 2 — the departed member must be rolled back)', n; end if;
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
-  if n <> 2 then raise exception 'TEAMMOVE FAIL all-or-nothing: % ships still in the docked pair (want 2)', n; end if;
-  update public.location_presence set status = 'active', updated_at = now() where id = v_pres;
-
-  -- MOVE (the happy path): the whole docked team moves onward Slagworks → Driftmarch as one.
-  select id into v_f1 from public.fleets where main_ship_id = t1 and player_id = uT and status = 'present';
-  r := pg_temp.call_as(uT, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gT, drift));
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMMOVE FAIL team move: %', r; end if;
-  if jsonb_array_length(r->'sent') <> 2 then raise exception 'TEAMMOVE FAIL: sent length % (want 2)', jsonb_array_length(r->'sent'); end if;
-  -- every member envelope is the 0156 present-departure shape: from Slagworks, to Driftmarch.
-  select count(*) into n from jsonb_array_elements(r->'sent') e
-    where e->>'from' = 'present' and (e->>'from_location_id')::uuid = slag
-      and (e->>'to_location_id')::uuid = drift and e->>'movement_id' is not null;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL: % present-departure envelopes from Slagworks to Driftmarch (want 2)', n; end if;
-  -- the departed fleets are the members' OWN docked fleets re-departed — the wrapper composes the
-  -- per-ship move over existing fleets, it never re-creates them.
-  select array_agg((e->>'fleet_id')::uuid) into v_sent_fleets from jsonb_array_elements(r->'sent') e;
-  if not (v_sent_fleets @> array[v_f1, v_f2] and array_length(v_sent_fleets, 1) = 2) then
-    raise exception 'TEAMMOVE FAIL: departed fleets % are not the members'' own docked fleets (%, %)', v_sent_fleets, v_f1, v_f2; end if;
-  -- all members traveling with tagged fleets (the 0187 tag idiom applied by the wrapper).
-  select count(*) into n from public.fleets
-    where id = any(v_sent_fleets) and status = 'moving' and active_movement_id is not null and group_id = gT;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL: % moving group-tagged member fleets (want 2 — the TEAMMOVE group departure)', n; end if;
-  select count(*) into n from public.fleets where player_id = uT and group_id is not null;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL: % tagged fleets for the owner (want exactly the 2 member fleets — no strays)', n; end if;
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id in (t1, t2) and status = 'traveling' and spatial_state is null;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL: % ships in the legacy in-flight pair (want 2 — traveling / spatial_state NULL)', n; end if;
-
-  -- ARRIVE: settle both arrivals through the cron's own per-movement settle (rewind BOTH timestamps —
-  -- the established two-timestamp idiom; arrive_at alone would violate arrive_at > depart_at).
-  for v_mv in
-    select fm.id from public.fleet_movements fm
-      join public.fleets f on f.id = fm.fleet_id
-     where f.main_ship_id in (t1, t2) and fm.status = 'moving'
-  loop
-    update public.fleet_movements
-       set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute'
-     where id = v_mv;
-    r := public.movement_settle_arrival(v_mv);
-    if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
-      raise exception 'TEAMMOVE FAIL arrival settle: %', r; end if;
-  end loop;
-  select count(*) into n from public.main_ship_instances
-    where main_ship_id in (t1, t2) and status = 'stationary' and spatial_state = 'at_location';
-  if n <> 2 then raise exception 'TEAMMOVE FAIL: % members docked after the hop (want 2 — the team docked at Driftmarch)', n; end if;
-  select count(*) into n from public.fleets
-    where main_ship_id in (t1, t2) and status = 'present' and current_location_id = drift and group_id = gT;
-  if n <> 2 then raise exception 'TEAMMOVE FAIL: % present member fleets at Driftmarch still tagged (want 2 — the moved team present at Driftmarch, tag surviving)', n; end if;
-
-  raise notice 'TEAMCMD_PASS_TEAMMOVE ok: empty_group + foreign fail-closed; mid-flight member and split-port team both reject member_not_ready with zero departures; all-or-nothing rolls back the departed member (member_send_failed pinned to the presence raise, both fleets still docked); the whole docked team then moves Slagworks → Driftmarch as one (2 present-departure envelopes over the members'' own fleets, moving + tagged, no strays) and docks at Driftmarch with the tag surviving';
 end $$;
 
 -- ════════ BLOCK SOUL1 (SOUL-1, 0193): commission roll hook + adapter trait fold — parity + exactness ════════
@@ -3300,7 +2967,7 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL provision: %', r; end if;
   select main_ship_id into sV from public.main_ship_instances where player_id = uV;
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id = sV;
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -3438,7 +3105,7 @@ begin
   if n <> 1 then
     raise exception 'SHIELD1 FAIL defeat: a shielded ship at hull 0 must be dead (defeat is hull-only; encounter did not settle defeat with integrity 0)'; end if;
   select count(*) into n from public.main_ship_instances
-    where main_ship_id = sV and status = 'destroyed' and hp = 0 and spatial_state is null;
+    where main_ship_id = sV and status = 'destroyed' and hp = 0;
   if n <> 1 then raise exception 'SHIELD1 FAIL defeat: the D1 destroyed terminal did not fire on the shielded member'; end if;
   perform public.set_game_config('enemy_attack_base', '1'::jsonb);          -- restore the engine default
   perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);    -- restore the dark seed in-txn
@@ -3727,7 +3394,7 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL provision B: %', r; end if;
   select main_ship_id into sB from public.main_ship_instances where player_id = uB;
   update public.main_ship_instances
-     set status = 'home', spatial_state = null, space_x = null, space_y = null, updated_at = now()
+     set status = 'home', updated_at = now()
    where main_ship_id = sB;
   update public.fleets
      set status = 'destroyed', location_mode = 'destroyed', active_movement_id = null,
@@ -3928,7 +3595,7 @@ begin
     where player_id=uF and status='present';
   update public.location_presence set status='completed', updated_at=now()
     where fleet_id in (select id from public.fleets where player_id=uF and status='destroyed') and status='active';
-  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now()
+  update public.main_ship_instances set status='home', updated_at=now()
     where player_id=uF;
   select array_agg(main_ship_id order by created_at) into f from public.main_ship_instances where player_id=uF;
   if array_length(f,1) <> 11 then raise exception 'FLEETCTRL FAIL: expected 11 fixture ships, got %', array_length(f,1); end if;
@@ -3946,27 +3613,24 @@ begin
   select count(*) into n from public.main_ship_instances where group_id=gCap;
   if n <> 9 then raise exception 'FLEETCTRL FAIL: gCap holds % (want 9 — no 8-cap while dark)', n; end if;
 
-  -- D2 no-command-requirement: assign f[1],f[2] to gCmd (NO command ship) and SEND while dark → succeeds;
-  -- fleet_inactive_no_command must NEVER appear while dark (byte-identical to today's group send).
+  -- D2 no-command-requirement: assign f[1],f[2] to gCmd (NO command ship) and HUNT while dark → succeeds;
+  -- fleet_inactive_no_command must NEVER appear while dark (the gate is dark-inert on the live authority).
   r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f[1], gCmd));
   if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL dark assign f1: %', r; end if;
   r := pg_temp.call_as(uF, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', f[2], gCmd));
   if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL dark assign f2: %', r; end if;
-  r := pg_temp.call_as(uF, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gCmd, slag));
+  r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gCmd, v_hunt));
   if (r->>'reason') is not distinct from 'fleet_inactive_no_command' then
-    raise exception 'FLEETCTRL FAIL: a no-command fleet was blocked while dark (want no command requirement): %', r; end if;
-  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL: dark no-command send did not succeed: %', r; end if;
+    raise exception 'FLEETCTRL FAIL: a no-command fleet hit the command gate while dark (want no command requirement): %', r; end if;
+  if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL: dark no-command hunt did not succeed: %', r; end if;
 
   -- ── LIT arm: flip fleet_control_enabled (raw update — the gate convention) ───────────────────────────
   update public.game_config set value='true'::jsonb where key='fleet_control_enabled';
 
-  -- L1 inactive fleet rejects on ALL THREE movement RPCs (gCap: 9 ships, ZERO command ships). The command
-  -- gate fires BEFORE the destination/readiness reads, so a home-ship send, a non-docked move, and a VALID
-  -- hunt destination all surface fleet_inactive_no_command (never member_not_ready / invalid_location).
-  r := pg_temp.call_as(uF, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gCap, slag));
-  if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL lit send inactive: %', r; end if;
-  r := pg_temp.call_as(uF, format('public.move_ship_group_to_location(%L::uuid, %L::uuid)', gCap, drift));
-  if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL lit move inactive: %', r; end if;
+  -- L1 inactive fleet rejects on the group hunt RPC (gCap: 9 ships, ZERO command ships). The command
+  -- gate fires BEFORE the destination/readiness reads, so even a VALID hunt destination surfaces
+  -- fleet_inactive_no_command (never member_not_ready / invalid_location). (The legacy send/move gate
+  -- probes were retired with those RPCs by 0232; send_ship_group_hunt carries the identical gate.)
   r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gCap, v_hunt));
   if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL lit hunt inactive: %', r; end if;
 
@@ -3976,7 +3640,10 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL set command: %', r; end if;
   select is_command_ship into v_cmd from public.main_ship_instances where main_ship_id=f[5];
   if v_cmd is not true then raise exception 'FLEETCTRL FAIL: is_command_ship did not persist on the designated ship'; end if;
-  r := pg_temp.call_as(uF, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gCap, slag));
+  -- gate cleared: probe with a deliberately INVALID hunt destination so the (now-active) fleet passes
+  -- the command gate and rejects on the LATER location read (invalid_location) — proving the gate cleared
+  -- WITHOUT mutating gCap (a successful hunt would put its members on a sortie and break the 8-cap test).
+  r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gCap, gen_random_uuid()));
   if (r->>'reason') is not distinct from 'fleet_inactive_no_command' then
     raise exception 'FLEETCTRL FAIL: the fleet is still inactive after designating a command ship: %', r; end if;
 
@@ -4014,120 +3681,47 @@ begin
   if (r->>'reason') is distinct from 'ship_not_in_fleet' then raise exception 'FLEETCTRL FAIL: designating an ungrouped ship was not rejected ship_not_in_fleet: %', r; end if;
   r := pg_temp.call_as(uF, format('public.set_fleet_command_ship(%L::uuid, false)', f[5]));  -- stand down
   if (r->>'ok')::boolean is not true then raise exception 'FLEETCTRL FAIL: clearing a command ship was rejected: %', r; end if;
-  r := pg_temp.call_as(uF, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gCap, slag));
+  r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gCap, v_hunt));
   if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL: standing down the last command ship did not re-inactivate the fleet: %', r; end if;
 
   -- restore the flag to the committed dark seed (rolled back regardless — the honesty loop checks it).
   update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
 
-  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: flag committed dark; DARK a zero-command fleet SENDS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on send/move/hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
+  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: flag committed dark; DARK a zero-command fleet HUNTS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on the group hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
 end $$;
 
--- ════════ BLOCK NOHOME (NO-HOME, 0199): launch-from-dock + dock-at-return, DARK then in-txn LIT ════════
--- Migration 0199 makes send/hunt ACCEPT a docked ship as a launch state IN ADDITION to home (the
--- 0100/0105/0114/0121 settled-safe rule), launch from the docked port (the 0156 present-fleet origin),
--- and dock the returning ship at a chosen/origin return port (the 0153 helper) instead of re-homing —
--- ALL gated on launch_from_dock_enabled (seeded false). This block proves both arms on FRESH fixture
--- users (the MOD2/TEAMMAP idiom). DARK arm: with the flag committed-false a DOCKED ship's send RAISES
--- home-only (the byte-identical witness; every earlier block also ran with the flag committed-dark).
--- LIT arm (flag flipped in-txn via set_game_config, restored + rolled back): a docked ship launches
--- from its port (its OWN present fleet re-departs, origin_type='location'=the dock, NOT the base),
--- records the return port, arrives + docks at the destination; and a docked team hunt launches from
--- the port + the reconciler docks the returning member at the recorded return port (never home).
+-- ════════ BLOCK NOHOME (NO-HOME, 0199): TEAM launch-from-dock + reconciler dock-at-return ════════
+-- Migration 0199 makes the group hunt ACCEPT a docked ship as a launch state IN ADDITION to home,
+-- launch from the docked port (the 0156 present-fleet origin), and dock the returning member at the
+-- recorded return port (the 0153 helper) instead of re-homing — gated on launch_from_dock_enabled
+-- (seeded false). 4B-DROP RETIRE: the SINGLE-ship arm (the legacy single-ship send (retired 0232) launch-from-dock and
+-- its DARK home-only witness) is retired with that RPC by 0232; the surviving TEAM path
+-- (send_ship_group_hunt launch-from-dock + the dock-at-return reconciler) is proven here. The docked
+-- fixture is now placed by fixture surgery (the dropped single send previously produced the
+-- docked-at-port state via send→settle).
 do $$
 declare
-  r jsonb; n int; v_ok boolean;
-  uN uuid; sN uuid; v_fleet uuid; v_mv uuid; v_prev_fleet uuid;
+  r jsonb; n int;
   uNT uuid; sNT uuid; gNT uuid; v_team_fleet uuid; v_team_mv uuid;
   slag  uuid := (select v from tcmd where k='slag');
-  drift uuid := (select v from tcmd where k='drift');
   v_hunt uuid;
 begin
   -- ── (0) structural: the 0199 surface is deployed and the flag is committed DARK ──────────────────
   if coalesce((select value #>> '{}' from public.game_config where key='launch_from_dock_enabled'),'false') <> 'false' then
     raise exception 'NOHOME FAIL: launch_from_dock_enabled is not committed false (dark)'; end if;
-  if to_regprocedure('public.send_main_ship_expedition(jsonb, uuid, uuid)') is null
-     or to_regprocedure('public.send_ship_group_hunt(uuid, uuid, uuid)') is null
+  if to_regprocedure('public.send_ship_group_hunt(uuid, uuid, uuid)') is null
      or to_regprocedure('public.nohome_dock_returning_ship(uuid)') is null then
-    raise exception 'NOHOME FAIL: the 0199 widened send/hunt or dock-at-return leaf is missing'; end if;
+    raise exception 'NOHOME FAIL: the 0199 widened hunt or dock-at-return leaf is missing'; end if;
   if not exists (select 1 from information_schema.columns
       where table_schema='public' and table_name='fleets' and column_name='return_location_id') then
     raise exception 'NOHOME FAIL: fleets.return_location_id missing'; end if;
 
-  -- the live send needs its own gate lit (committed dark; flipped in-txn via the RAW update — gates
-  -- ride the raw form, never set_game_config; restored below + rolled back regardless).
-  update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
-
-  -- ── (1) fixture: a fresh user + one ship, docked at Slagworks (home send → settle → dock) ─────────
-  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
-    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
-            'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
-    returning id into uN;
-  insert into public.player_wallet (player_id, balance) values (uN, 1000000)
-    on conflict (player_id) do update set balance = excluded.balance;
-  r := pg_temp.call_as(uN, 'public.commission_first_main_ship()');
-  if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision: %', r; end if;
-  select main_ship_id into sN from public.main_ship_instances where player_id = uN;
-  -- normalize the commission to legacy home (the TEAMMAP idiom): home pair + retire the present fleet.
-  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now()
-    where main_ship_id = sN;
-  update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
-      current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
-    where main_ship_id = sN and status='present';
-  update public.location_presence set status='completed', updated_at=now()
-    where fleet_id in (select id from public.fleets where main_ship_id = sN and status='destroyed') and status='active';
-  -- home → Slagworks, settle → docked (flag still DARK: the ordinary home launch).
-  r := pg_temp.call_as(uN, format('public.send_main_ship_expedition(jsonb_build_array(%L::uuid), %L::uuid)', sN, slag));
-  v_mv := (r->>'movement_id')::uuid;
-  update public.fleet_movements set depart_at=now()-interval '2 minutes', arrive_at=now()-interval '1 minute' where id=v_mv;
-  r := public.movement_settle_arrival(v_mv);
-  if (r->>'outcome') is distinct from 'present' then raise exception 'NOHOME FAIL: dock settle %', r; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='stationary' and spatial_state='at_location';
-  if n <> 1 then raise exception 'NOHOME FAIL: fixture ship not docked at Slagworks'; end if;
-  select id into v_prev_fleet from public.fleets where main_ship_id=sN and status='present' and current_location_id=slag;
-
-  -- ── (2) DARK WITNESS: flag committed-false → a DOCKED ship's send RAISES home-only ───────────────
-  v_ok := false;
-  begin
-    perform pg_temp.call_as(uN, format('public.send_main_ship_expedition(jsonb_build_array(%L::uuid), %L::uuid)', sN, drift));
-    v_ok := true;
-  exception when others then
-    if position('not available' in sqlerrm) = 0 then
-      raise exception 'NOHOME FAIL: docked-dark send raised unexpectedly: %', sqlerrm; end if;
-  end;
-  if v_ok then raise exception 'NOHOME FAIL: a docked ship SENT while launch_from_dock_enabled dark (want home-only raise)'; end if;
-
-  -- ── (3) LIT: flip the flag (raw update — the gate convention); the docked ship launches from its
-  --         OWN present fleet, from the port ─────────────────────────────────────────────────────────
-  update public.game_config set value='true'::jsonb where key='launch_from_dock_enabled';
-  r := pg_temp.call_as(uN, format('public.send_main_ship_expedition(jsonb_build_array(%L::uuid), %L::uuid)', sN, drift));
-  v_fleet := (r->>'fleet_id')::uuid;
-  v_mv    := (r->>'movement_id')::uuid;
-  if v_fleet is distinct from v_prev_fleet then
-    raise exception 'NOHOME FAIL: docked launch created a NEW fleet (want the ship''s OWN present fleet re-departed)'; end if;
-  if (r->>'return_location_id')::uuid is distinct from slag then
-    raise exception 'NOHOME FAIL: return port not recorded as the docked origin (want Slagworks)'; end if;
-  -- launched FROM the dock (origin_type='location'=Slagworks), NOT from the (0,0) base:
-  select count(*) into n from public.fleet_movements
-    where id=v_mv and origin_type='location' and origin_location_id=slag and target_type='location' and target_location_id=drift;
-  if n <> 1 then raise exception 'NOHOME FAIL: outbound movement did not depart from the docked port (Slagworks)'; end if;
-  select count(*) into n from public.fleets where id=v_fleet and status='moving' and return_location_id=slag;
-  if n <> 1 then raise exception 'NOHOME FAIL: the re-departed fleet is not moving with the return port recorded'; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='traveling' and spatial_state is null;
-  if n <> 1 then raise exception 'NOHOME FAIL: ship not in-flight after the docked launch (home was never required)'; end if;
-  -- arrives + docks at the destination (movement_settle_arrival, 0153 — the send-to-port dock).
-  update public.fleet_movements set depart_at=now()-interval '2 minutes', arrive_at=now()-interval '1 minute' where id=v_mv;
-  r := public.movement_settle_arrival(v_mv);
-  if (r->>'outcome') is distinct from 'present' then raise exception 'NOHOME FAIL: destination dock settle %', r; end if;
-  select count(*) into n from public.main_ship_instances where main_ship_id=sN and status='stationary' and spatial_state='at_location';
-  if n <> 1 then raise exception 'NOHOME FAIL: ship not docked at the destination after the launch-from-dock trip'; end if;
-
-  -- ── (4) LIT team hunt from dock + reconciler dock-at-return (no combat drive needed) ─────────────
   select id into v_hunt from public.locations where activity_type='hunt_pirates' and status='active'
     order by coalesce(min_power_required,0) asc limit 1;
   if v_hunt is null then raise exception 'NOHOME FAIL: no active hunt_pirates location'; end if;
   update public.game_config set value='true'::jsonb where key='team_command_enabled';
-  -- fresh user + one docked ship + a 1-ship team.
+
+  -- ── (1) fixture: a fresh user + one ship, docked at Slagworks (a 1-ship team) ─────────────────────
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
             'tcmd.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
@@ -4136,26 +3730,37 @@ begin
   r := pg_temp.call_as(uNT, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL provision team: %', r; end if;
   select main_ship_id into sNT from public.main_ship_instances where player_id = uNT;
-  update public.main_ship_instances set status='home', spatial_state=null, space_x=null, space_y=null, updated_at=now() where main_ship_id=sNT;
-  update public.fleets set status='destroyed', location_mode='destroyed', active_movement_id=null,
-      current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
-    where main_ship_id=sNT and status='present';
-  update public.location_presence set status='completed', updated_at=now()
-    where fleet_id in (select id from public.fleets where main_ship_id=sNT and status='destroyed') and status='active';
-  r := pg_temp.call_as(uNT, format('public.send_main_ship_expedition(jsonb_build_array(%L::uuid), %L::uuid)', sNT, slag));
-  v_mv := (r->>'movement_id')::uuid;
-  update public.fleet_movements set depart_at=now()-interval '2 minutes', arrive_at=now()-interval '1 minute' where id=v_mv;
-  perform public.movement_settle_arrival(v_mv);   -- docked at Slagworks
+
+  -- FIXTURE SURGERY (replaces the dropped the legacy single-ship send (retired 0232) relocation): place sNT's commission
+  -- present fleet at Slagworks so it is DOCKED at the launch-from-dock port. "Docked" = status='home'
+  -- (the lifecycle signal only, 0221) PLUS a real 'present' fleet at the port (fleet truth).
+  update public.main_ship_instances set status='home', updated_at=now() where main_ship_id=sNT;
+  update public.fleets
+     set current_location_id=slag, location_mode='location', current_base_id=null,
+         active_movement_id=null, updated_at=now()
+   where main_ship_id=sNT and status='present';
+  update public.location_presence set location_id=slag, status='active', updated_at=now()
+   where fleet_id in (select id from public.fleets where main_ship_id=sNT and status='present');
+  select count(*) into n from public.main_ship_instances s
+    where s.main_ship_id=sNT and s.status='home'
+      and exists (select 1 from public.fleets f where f.main_ship_id=s.main_ship_id and f.status='present' and f.current_location_id=slag);
+  if n <> 1 then raise exception 'NOHOME FAIL: docked fixture not placed at Slagworks'; end if;
+
   r := pg_temp.call_as(uNT, 'public.upsert_ship_group(1, ''DockWing'')');
   gNT := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uNT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sNT, gNT));
-  -- LIT hunt: launch the docked team from the port, return port = Slagworks (the dock).
+  if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: assign team member: %', r; end if;
+
+  -- ── (2) LIT: flip launch_from_dock_enabled (raw update — the gate convention); the docked TEAM hunt
+  --         launches ONE fleet FROM the port ─────────────────────────────────────────────────────────
+  update public.game_config set value='true'::jsonb where key='launch_from_dock_enabled';
   r := pg_temp.call_as(uNT, format('public.send_ship_group_hunt(%L::uuid, %L::uuid, %L::uuid)', gNT, v_hunt, slag));
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: docked team hunt rejected: %', r; end if;
   v_team_fleet := (r->>'fleet_id')::uuid;
   v_team_mv    := (r->>'movement_id')::uuid;
   if (r->>'return_location_id')::uuid is distinct from slag then
     raise exception 'NOHOME FAIL: team hunt return port not recorded (want Slagworks)'; end if;
+  -- launched FROM the docked port (origin_type='location'=Slagworks), not the (0,0) base:
   select count(*) into n from public.fleet_movements where id=v_team_mv and origin_type='location' and origin_location_id=slag;
   if n <> 1 then raise exception 'NOHOME FAIL: team hunt did not depart from the docked port'; end if;
   select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='hunting';
@@ -4164,34 +3769,30 @@ begin
   select count(*) into n from public.fleets where main_ship_id=sNT and status='present';
   if n <> 0 then raise exception 'NOHOME FAIL: the member''s docked present fleet was not dissolved'; end if;
 
-  -- simulate post-combat return: the team fleet completes back home + the member goes 'returning',
-  -- then the LIT reconciler DOCKS the member at the recorded return port (Slagworks), never home —
-  -- SPLITTING the shared team fleet back into the member's OWN tagged present fleet (review H1).
+  -- ── (3) reconciler dock-at-return: the team fleet completes + the member goes 'returning', then the
+  --         LIT reconciler DOCKS the member at the recorded return port (Slagworks), never home,
+  --         SPLITTING the shared team fleet back into the member's OWN present fleet (review H1). ──────
   update public.fleets set status='completed', location_mode='base', active_movement_id=null, updated_at=now() where id=v_team_fleet;
-  update public.main_ship_instances set status='returning', spatial_state=null, space_x=null, space_y=null, updated_at=now() where main_ship_id=sNT;
+  update public.main_ship_instances set status='returning', updated_at=now() where main_ship_id=sNT;
   perform public.process_mainship_expeditions();
-  select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='stationary' and spatial_state='at_location';
-  if n <> 1 then raise exception 'NOHOME FAIL: the reconciler did not dock the returning member (want stationary/at_location at the return port)'; end if;
-  -- H1: the returned member owns its OWN main_ship_id-tagged present fleet at the port (NOT a shared
-  -- untagged team fleet) — the per-ship handle every re-launch path (send/move/re-hunt) keys on.
+  -- 4C-MIG-2B REWORK: status='home' is now the reconciler's own dock-write literal; "docked, not
+  -- re-homed to the legacy base" is proven by FLEET TRUTH (the present fleet at the return port) below.
+  select count(*) into n from public.main_ship_instances where main_ship_id=sNT and status='home';
+  if n <> 1 then raise exception 'NOHOME FAIL: the reconciler did not settle the returning member (want status=home)'; end if;
   select count(*) into n from public.fleets where main_ship_id=sNT and status='present' and current_location_id=slag;
-  if n <> 1 then raise exception 'NOHOME FAIL: the returned member has no per-ship tagged present fleet at the return port (H1 wedge)'; end if;
-  if exists (select 1 from public.main_ship_instances where main_ship_id=sNT and status='home') then
-    raise exception 'NOHOME FAIL: the returning member was re-homed under the lit flag (the NO-HOME law is violated)'; end if;
-  -- H1 REGRESSION WITNESS (the fix's teeth): the returned docked team can LAUNCH AGAIN — a SECOND hunt
-  -- from the port SUCCEEDS. Before the per-ship split fix this dead-ended (member_not_ready / no present
-  -- fleet), the exact wedge the current-before-fix dock left behind.
+  if n <> 1 then raise exception 'NOHOME FAIL: the returned member has no per-ship present fleet at the return port (H1 wedge, or the NO-HOME law was violated by a re-home)'; end if;
+
+  -- H1 REGRESSION WITNESS: the returned docked team can LAUNCH AGAIN — a SECOND hunt from the port
+  -- SUCCEEDS with a fresh sortie (before the per-ship split fix this dead-ended at member_not_ready).
   r := pg_temp.call_as(uNT, format('public.send_ship_group_hunt(%L::uuid, %L::uuid, %L::uuid)', gNT, v_hunt, slag));
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: a returned docked team could not launch again (H1 second-launch wedge): %', r; end if;
   if (r->>'fleet_id')::uuid = v_team_fleet then raise exception 'NOHOME FAIL: the second hunt reused the OLD team fleet (want a fresh sortie)'; end if;
 
-  -- restore the flipped gates in-txn via the raw update (ROLLBACK reverts regardless — the .sh honesty
-  -- check re-confirms each committed flag is still false post-run).
+  -- restore the flipped gates in-txn (ROLLBACK reverts regardless — the .sh honesty check re-confirms).
   update public.game_config set value='false'::jsonb where key='launch_from_dock_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
-  update public.game_config set value='false'::jsonb where key='mainship_send_enabled';
 
-  raise notice 'TEAMCMD_PASS_NOHOME ok: flag committed dark; DARK a docked ship''s send RAISES home-only (byte-identical witness); LIT a docked ship re-departs its OWN present fleet FROM the port (origin_type=location=Slagworks, not the base), records the return port, and docks at the destination; a docked TEAM hunt launches ONE fleet from the port (member hunting, its docked fleet dissolved, return port recorded); the reconciler DOCKS the returning member at the recorded return port (stationary/at_location) NEVER home, SPLITTING the shared team fleet back into the member''s OWN tagged present fleet (H1) so the team LAUNCHES AGAIN — a second hunt from the port SUCCEEDS with a fresh sortie (the H1 regression witness); flags restored in-txn';
+  raise notice 'TEAMCMD_PASS_NOHOME ok: the SINGLE-ship launch-from-dock arm is retired with the legacy single-ship send (retired 0232) (0232); the surviving TEAM path holds — a docked team hunt launches ONE fleet FROM the port (origin_type=location=Slagworks, member hunting, docked present fleet dissolved, return port recorded), the reconciler DOCKS the returning member at the recorded return port (never re-homed) splitting the shared fleet back into the member''s OWN present fleet (H1), and the returned team LAUNCHES AGAIN with a fresh sortie; flags restored in-txn';
 end $$;
 
 -- ════════ BLOCK CMDBUFF (COMMAND-BUFFS, 0205): fleet-wide command-buff fold, DARK then in-txn LIT ══

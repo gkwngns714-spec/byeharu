@@ -43,7 +43,12 @@ export function ItemGlyph({
   )
 }
 
-/** Grid-density tablet: tinted glyph square + name + mono qty (+ optional hint line). */
+/** Grid-density tablet: tinted glyph square + name + mono qty (+ optional hint line).
+ *
+ *  Interactivity is OPT-IN: pass `onSelect` to turn the tile into an accessible tap target (a real
+ *  role="button" with Enter/Space activation + aria-expanded) for tap-to-info surfaces; every
+ *  existing call site omits it and renders the exact non-interactive div as before. `expanded`
+ *  drives aria-expanded, `selected` the open/active ring. */
 export function ItemTile({
   id,
   kind,
@@ -51,6 +56,9 @@ export function ItemTile({
   label,
   hint,
   className = '',
+  onSelect,
+  expanded,
+  selected = false,
   ...rest
 }: Omit<HTMLAttributes<HTMLDivElement>, 'id'> & {
   id: string
@@ -59,14 +67,41 @@ export function ItemTile({
   /** Display-name override (e.g. a server-provided name); defaults to itemLabel(id, kind). */
   label?: string
   hint?: ReactNode
+  /** When set, the tile becomes an accessible button (tap/Enter/Space) firing this. */
+  onSelect?: () => void
+  /** aria-expanded state for a tile that toggles an info panel (only meaningful with onSelect). */
+  expanded?: boolean
+  /** Draws the open/active accent ring (only meaningful with onSelect). */
+  selected?: boolean
 }) {
   const { category } = getItemGlyph(id, kind)
+  const interactive = onSelect != null
   return (
     <div
       data-testid={`item-tile-${id}`}
       data-item-id={id}
       data-qty={qty}
-      className={`flex items-center gap-2.5 rounded-lg border border-edge/60 bg-surface-2/40 px-2.5 py-2 ${className}`}
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-expanded={interactive ? !!expanded : undefined}
+      onClick={interactive ? () => onSelect() : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onSelect()
+              }
+            }
+          : undefined
+      }
+      className={`flex items-center gap-2.5 rounded-lg border bg-surface-2/40 px-2.5 py-2 ${
+        interactive
+          ? `cursor-pointer transition-colors hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+              selected ? 'border-accent/60' : 'border-edge/60'
+            }`
+          : 'border-edge/60'
+      } ${className}`}
       {...rest}
     >
       <span

@@ -117,3 +117,27 @@ export async function fetchMainshipSpaceMovementEnabled(): Promise<boolean> {
   if (error) return false
   return (data?.value as unknown) === true
 }
+
+// PIRATE INTERCEPT (prototype) — the runtime gate for the WHOLE danger-zone/intercept/waypoint-route
+// slice (pirate_intercept_enabled, seeded false). Same strict jsonb-true fold + MUST-stay-runtime
+// reasoning as fetchFleetMovementUnifiedEnabled/fetchTimedDockingEnabled above: the server gates every
+// new arm on this SAME flag via cfg_bool FIRST, so a runtime read lets a later flip switch the
+// already-deployed client atomically. Absent / unreadable / any non-true shape → OFF (fail-closed):
+// no danger-zone read, no route planner, no draw editor — the map is byte-identical to today.
+export async function fetchPirateInterceptEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('game_config').select('key, value')
+  if (error) return false
+  return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'pirate_intercept_enabled')
+}
+
+// DEV ZONE EDITOR (owner-only authoring) — the runtime gate for the hidden /dev/zones draw surface
+// (dev_zone_editor_enabled, seeded false in 0238). Same strict jsonb-true fold as the flags above.
+// This flag governs a CLIENT SURFACE ONLY: while it is not exactly jsonb `true` the ZoneEditor route
+// renders null (fail-closed), so a normal player never reaches the authoring tool. Distinct from
+// pirate_intercept_enabled — the editor's SAVE/DELETE additionally require that slice flag at the
+// server boundary (0233); this one only decides whether the owner can OPEN the editor.
+export async function fetchDevZoneEditorEnabled(): Promise<boolean> {
+  const { data, error } = await supabase.from('game_config').select('key, value')
+  if (error) return false
+  return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'dev_zone_editor_enabled')
+}

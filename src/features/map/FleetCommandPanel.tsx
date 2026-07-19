@@ -10,7 +10,7 @@ import {
 } from '../command/teamApi'
 import { teamReasonMessage } from '../command/teamReasonMessage'
 import { unifiedStopOutcomeMessage } from '../command/teamStop'
-import { fleetGoSuccessMessage, formatWorldPoint } from './fleetGoTarget'
+import { fleetGoSuccessMessage } from './fleetGoTarget'
 import {
   buildFleetCommandModel,
   fleetCommandLocks,
@@ -125,10 +125,10 @@ export function FleetCommandPanel({
         return (
           <div key="guidance" data-testid="fleet-command-guidance">
             <SectionLabel>No fleet yet</SectionLabel>
-            <p className="mt-1 text-xs text-ink-muted">
-              Ships travel as fleets — yours stay berthed until they join one.
+            <p className="mt-1 text-sm text-ink-muted">
+              Ships travel as fleets — yours wait at port until they join one.
             </p>
-            <p className="mt-1 text-xs text-ink-muted">
+            <p className="mt-1 text-sm text-ink-muted">
               Create a fleet in <span className="text-ink">Command</span> and add your ships, then pick a
               destination here to send it.
             </p>
@@ -143,9 +143,8 @@ export function FleetCommandPanel({
         return (
           <div key="prompt" data-testid="fleet-command-prompt">
             <SectionLabel>Send a fleet</SectionLabel>
-            <p className="mt-1 text-xs text-ink-muted">
-              Tap a <span className="text-ink">port</span> to send a fleet there, or tap{' '}
-              <span className="text-ink">open space</span> to set a destination point.
+            <p className="mt-1 text-sm text-ink-muted">
+              Double-tap the map to set a destination, then send a fleet there.
             </p>
           </div>
         )
@@ -158,22 +157,24 @@ export function FleetCommandPanel({
               {s.rows.map((f) => (
                 <div key={f.groupId} className="flex items-center justify-between gap-2">
                   <span className="min-w-0">
-                    <span className="block truncate text-xs text-ink">{f.name}</span>
-                    <span className="text-[10px] text-ink-faint">
-                      {f.fleetCount} ship{f.fleetCount === 1 ? '' : 's'} in flight
-                    </span>
+                    <span className="block truncate text-sm text-ink">{f.name}</span>
+                    <span className="text-xs text-ink-faint">{f.fleetCount} in flight</span>
                   </span>
                   {f.sortie !== null ? (
-                    <span data-testid={`team-sortie-hint-${f.groupId}`} className="shrink-0 text-right text-[10px] text-ink-faint">
-                      {f.sortie === 'outbound' ? 'On a hunt — committed until arrival' : 'Returning from a hunt'}
+                    <span data-testid={`team-sortie-hint-${f.groupId}`} className="shrink-0 text-right text-xs text-ink-faint">
+                      {f.sortie === 'outbound' ? 'On a hunt' : 'Returning'}
                     </span>
                   ) : (
+                    // Word-economy: Stop is a compact icon button (■). aria-label + title keep it
+                    // accessible and unambiguous. Still the safety brake — see BRAKE DECOUPLING below.
                     <Button
-                      size="sm"
+                      size="icon"
                       variant="warning"
                       data-testid={`team-stop-${f.groupId}`}
                       busy={stopBusy === `stop:${f.groupId}`}
-                      busyLabel="Stopping…"
+                      busyLabel="…"
+                      aria-label={`Stop ${f.name}`}
+                      title="Stop — hold the fleet here"
                       // BRAKE DECOUPLING: the safety CTA answers ONLY to its own in-flight stop —
                       // never to `busy` (a pending go/dock/hunt must not disable the brake).
                       disabled={locks.stopDisabled || !f.canStop}
@@ -187,7 +188,7 @@ export function FleetCommandPanel({
                         )
                       }
                     >
-                      Stop — hold here
+                      ■
                     </Button>
                   )}
                 </div>
@@ -198,18 +199,14 @@ export function FleetCommandPanel({
       case 'context':
         return (
           <div key="context" className="border-t border-edge/60 pt-2 first:border-t-0 first:pt-0">
-            <SectionLabel>Send fleet to</SectionLabel>
+            <SectionLabel>Destination</SectionLabel>
             {s.target.kind === 'point' ? (
               s.target.view.withinBounds ? (
-                <>
-                  <p data-testid="fleet-go-target-readout" className="mt-1 text-xs text-ink">
-                    <span className="font-medium">Open space</span>{' '}
-                    <span className="font-mono text-[11px] text-ink-faint">{formatWorldPoint(s.target.view.canonical)}</span>
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-ink-faint">
-                    The whole fleet travels here from wherever it is.
-                  </p>
-                </>
+                // Word-economy: the raw-coordinate preview is dropped — the on-map crosshair already
+                // shows WHERE. "Open space" is the only label a player needs here.
+                <p data-testid="fleet-go-target-readout" className="mt-1 text-sm font-medium text-ink">
+                  Open space
+                </p>
               ) : (
                 // OOB mirror of 0208's RAW-point bound check — saves the doomed round-trip.
                 <Notice tone="danger" data-testid="fleet-go-oob" className="mt-1">
@@ -229,7 +226,7 @@ export function FleetCommandPanel({
               onClick={onClearTarget}
               className="mt-1.5 w-full"
             >
-              Clear target
+              Clear
             </Button>
           </div>
         )
@@ -239,7 +236,7 @@ export function FleetCommandPanel({
             {s.rows.map((r) => (
               <div key={r.groupId} className="flex items-center justify-between gap-2">
                 <span className="min-w-0">
-                  <span className="block truncate text-xs text-ink">{r.name}</span>
+                  <span className="block truncate text-sm text-ink">{r.name}</span>
                 </span>
                 {r.wire === null ? (
                   // Badge takes no DOM attrs — the testid rides a wrapper span (Badge stays pure).
@@ -294,8 +291,8 @@ export function FleetCommandPanel({
               {s.rows.map((r) => (
                 <div key={r.groupId} className="flex items-center justify-between gap-2">
                   <span className="min-w-0">
-                    <span className="block truncate text-xs text-ink">{r.name}</span>
-                    <span className="text-[10px] text-ink-faint">in orbit of {r.portName}</span>
+                    <span className="block truncate text-sm text-ink">{r.name}</span>
+                    <span className="text-xs text-ink-faint">in orbit of {r.portName}</span>
                   </span>
                   <Button
                     size="sm"
@@ -341,8 +338,8 @@ export function FleetCommandPanel({
                   <div key={r.groupId} className="rounded-lg border border-edge bg-surface-2/50 px-2.5 py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="min-w-0">
-                        <span className="block truncate text-xs text-ink">{r.name}</span>
-                        <span className="text-[10px] text-ink-faint">
+                        <span className="block truncate text-sm text-ink">{r.name}</span>
+                        <span className="text-xs text-ink-faint">
                           {r.memberCount} ship{r.memberCount === 1 ? '' : 's'}
                         </span>
                       </span>
@@ -357,16 +354,16 @@ export function FleetCommandPanel({
                     </div>
                     {/* FLEET-CONTROL (0204): dark → cmdActive is always true and this never renders. */}
                     {r.memberCount > 0 && !r.cmdActive && (
-                      <p className="mt-1 text-[10px] text-warning/90" data-testid={`team-inactive-${r.groupId}`}>
+                      <p className="mt-1 text-xs text-warning/90" data-testid={`team-inactive-${r.groupId}`}>
                         This fleet has no command ship — set one in the Fleets panel to move, send, or hunt.
                       </p>
                     )}
-                    {r.readyHint && <p className="mt-1 text-[10px] text-ink-faint">{r.readyHint}</p>}
+                    {r.readyHint && <p className="mt-1 text-xs text-ink-faint">{r.readyHint}</p>}
                     {/* RETURN-PORT (NO-HOME 0199): never forced back to origin — the launch port is
                         only the pre-selected convenience. */}
                     {picker && (
                       <div className="mt-1.5" data-testid={`team-hunt-return-${r.groupId}`}>
-                        <label className="block text-[10px] text-ink-faint" htmlFor={`return-port-${r.groupId}`}>
+                        <label className="block text-xs text-ink-faint" htmlFor={`return-port-${r.groupId}`}>
                           Dock the fleet after the hunt at
                         </label>
                         <select
@@ -433,9 +430,9 @@ export function FleetCommandPanel({
   return (
     <OverlayPanel
       data-testid="fleet-command-panel"
-      // Play-test move: the location/destination surface lives in the bottom-RIGHT corner (out of
-      // the map's center, beside where a tapped location's info reads), not stacked over the middle.
-      slot="bottom-right"
+      // Play-test move: the command surfaces live in the bottom-RIGHT corner, out of the map's
+      // center. Rides MapScreen's bottom-right OverlayRail (shared with the pirate-intercept panel,
+      // which stacks above it) — no self-positioning, so it omits `slot`.
       className="flex max-h-[45%] w-72 max-w-[calc(100vw-1.5rem)] flex-col"
     >
       {notice && (

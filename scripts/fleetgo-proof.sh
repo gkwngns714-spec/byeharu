@@ -118,10 +118,18 @@ if [ "$MODE" = "selftest" ]; then
   done
   # the snapshot must actually cover every column that could carry movement — S1-BERTH (0216) adds
   # berth_location_id: under the berth model the unfleeted ship's LOCATION lives there, so a mover
-  # that wrote it would be a ship write the old snapshot was blind to.
-  for col in status spatial_state space_x space_y berth_location_id updated_at; do
+  # that wrote it would be a ship write the old snapshot was blind to. 4C-MIG-2B (migration 0231)
+  # DROPPED spatial_state/space_x/space_y from main_ship_instances outright — a column that no
+  # longer exists cannot be tracked, so the covered set narrows to what's left.
+  grep -qF "select p_tag, main_ship_id, status, berth_location_id, updated_at" "$SQL" \
+    || fail "ship snapshot's SELECT list drifted from the post-2b tracked column set (status, berth_location_id, updated_at)"
+  for col in status berth_location_id updated_at; do
     grep -q "$col" "$SQL" || fail "ship snapshot does not cover the '$col' column"
   done
+  # negative: the dropped columns must NOT still be tracked (that would be a hard "column does not
+  # exist" error on snap_ships' very first INSERT, every single time this proof runs).
+  grep -qF "select p_tag, main_ship_id, status, spatial_state" "$SQL" \
+    && fail "ship snapshot still selects the dropped spatial_state/space_x/space_y columns — every apply would error" || true
 
   # ── the redirect proof must be non-vacuous: now() is txn-constant, so without backdating t=0 and the
   #    "interpolated" point trivially equals the origin. The harness must backdate and assert a midpoint.
@@ -145,7 +153,7 @@ if [ "$MODE" = "selftest" ]; then
   printf '%s' "$MIG_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
     && fail "migration UPDATEs main_ship_instances — charter §2 says a ship does not move" || true
   # and it must not compose any per-ship mover (the §0 mistake / the old §3).
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     printf '%s' "$MIG_CODE" | grep -q "$banned" \
       && fail "migration composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -162,7 +170,7 @@ if [ "$MODE" = "selftest" ]; then
   MIG3B_CODE="$(sql_code "$MIGRATION_3B")"
   printf '%s' "$MIG3B_CODE" | grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" \
     && fail "0208 UPDATEs main_ship_instances — charter §2 says a ship does not move" || true
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     printf '%s' "$MIG3B_CODE" | grep -q "$banned" \
       && fail "0208 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -426,12 +434,13 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "only the FLEET could have answered" "$SQL" \
     || fail "MAPSPACE_GROUP does not guard that zero ships carry a position"
   # MAPSPACE-RETIRED (rewritten by 4c-mig-1/0221 — the ship-coordinate fallback this section's
-  # 0212-file pins record as shipped history is RETIRED in the live 0221 head): the runtime block
-  # must prove a PRESENT retired coordinate is ignored, on a really-berthed, really-fleetless ship.
-  grep -q "the retired coordinate must be ignored" "$SQL" \
-    || fail "MAPSPACE_RETIRED does not assert the oracle ignores a PRESENT retired coordinate (the 4c-mig-1 point)"
-  grep -q "ignoring an absent signal is vacuous" "$SQL" \
-    || fail "MAPSPACE_RETIRED does not guard that the retired coordinate is really present (vacuous otherwise)"
+  # 0212-file pins record as shipped history is RETIRED in the live 0221 head; retired FURTHER by
+  # 4c-mig-2b/0231, which DROPPED spatial_state/space_x/space_y outright — there is no column left to
+  # surgically write a "present retired signal" into, so that specific proof is now impossible and
+  # was removed rather than kept as a dead assertion). The runtime block must still prove a
+  # fleetless, really-berthed ship settles via BERTH TRUTH ('home'), not some other path.
+  grep -q "the berth is the truth" "$SQL" \
+    || fail "MAPSPACE_RETIRED does not assert the fleetless ship settles via berth truth (the post-2b point)"
   grep -q "b1 is not berthed" "$SQL" \
     || fail "MAPSPACE_RETIRED does not guard that the probe ship is berthed (berth truth could not answer — vacuous)"
 
@@ -580,7 +589,7 @@ if [ "$MODE" = "selftest" ]; then
   printf '%s' "$MIG4B1_CODE" | grep -q "ship_group_resolve_fleet(v_player, v_group)" \
     || fail "0214 does not compose the 0213 leaf (a fifth inline copy of the group-fleet shape is the default outcome)"
   # per-ship movers stay uncomposed (§2 retires them; the §0 mistake).
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     printf '%s' "$MIG4B1_CODE" | grep -q "$banned" \
       && fail "0214 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -675,8 +684,8 @@ if [ "$MODE" = "selftest" ]; then
     || fail "HUNTUNI_PASS_BOOTSTRAP does not guard that the leaf really returns zero rows"
   grep -q "the from-space state was not built" "$SQL" \
     || fail "HUNTUNI_PASS_FROMSPACE does not guard that the fleet is really parked idle in space"
-  grep -q "the origin could come from the retired layer" "$SQL" \
-    || fail "HUNTUNI_PASS_FROMSPACE does not guard that zero ships carry a position"
+  grep -qF "HUNTUNI-FROMSPACE FAIL: main_ship_instances still carries space_x/space_y" "$SQL" \
+    || fail "HUNTUNI_PASS_FROMSPACE does not guard that zero ships carry a position (post-2b: a schema-fact check, the runtime count is gone with the columns)"
 
   # ── THE TREE-WIDE DOCK-COPY BAN. 0072 proved an alias-free copy evades exact-substring greps, and
   # the recorded 0136 failure mode is a NEW file re-inlining the block — a file a 0211-only grep never
@@ -802,7 +811,7 @@ if [ "$MODE" = "selftest" ]; then
       && fail "0216 re-creates the md5-PINNED port-entry body '$pinned' — the pins would be invalidated silently" || true
   done
   # §2 stays law: no per-ship mover composed anywhere in 0216.
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     grep -q "$banned" "$MIGS1_TMP" \
       && fail "0216 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -1160,7 +1169,7 @@ if [ "$MODE" = "selftest" ]; then
     exit 1 unless index($body, "fleet_set_moving") >= 0;
     exit 0;' "$MIGSTOP_TMP" \
     || fail "0218's mover body lost a 0208 head pin (dark gate / member-dock dissolve / combat_destination / movement_create / fleet_set_moving) — parity broke"
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     grep -q "$banned" "$MIGSTOP_TMP" \
       && fail "0218 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -1236,7 +1245,7 @@ if [ "$MODE" = "selftest" ]; then
   # §2 stays law: no ship write, no per-ship mover composed.
   grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIGS4_TMP" \
     && fail "0219 UPDATEs main_ship_instances — charter §2 says a ship does not move (the settle's dock hunk writes the ship, not the dock verb)" || true
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     grep -q "$banned" "$MIGS4_TMP" \
       && fail "0219 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done
@@ -1362,7 +1371,7 @@ if [ "$MODE" = "selftest" ]; then
   # §2 stays law: no ship write, no per-ship mover composed.
   grep -qiE "update[[:space:]]+(public\.)?main_ship_instances" "$MIG4C1_TMP" \
     && fail "0221 UPDATEs main_ship_instances — a READ repoint must never write a ship" || true
-  for banned in command_main_ship_space_move mainship_space_begin_move move_main_ship_to_location command_main_ship_space_stop; do
+  for banned in command_main_ship_space_move mainship_space_begin_move command_main_ship_space_stop; do
     grep -q "$banned" "$MIG4C1_TMP" \
       && fail "0221 composes the per-ship mover '$banned' — §2 retires them, never composes them" || true
   done

@@ -13,9 +13,21 @@
 // layer adds the region read for the same rows — no parallel location system. Ring tone composes
 // markerStyle's ONE type→token decision (danger hostile / success safe / accent port) — no second
 // color table.
+//
+// PIRATE-RING SUPPRESSION (conditional — 0239): a hostile location (markerStyle's `isCombatMarker` —
+// pirate_hunt/pirate_den or the hunt_pirates activity) is represented by its OWN dangerZoneLayer
+// "slime" polygon INSTEAD of this plain circle — but ONLY when such a zone actually exists for that
+// location. #217 suppressed the ring for EVERY hostile location unconditionally, which left the
+// pirate sites that have NO bound danger_zone showing NOTHING at all (zero regions). The suppression
+// is therefore gated on `zonedLocationIds` — the set of location_ids that own an active danger_zone
+// (built by the caller from get_danger_zones' location_id). A hostile site WITH its own zone shows
+// only the polygon; a hostile site WITHOUT one keeps its territory ring. Result: exactly ONE region
+// per pirate site, never two, never zero. Non-hostile locations are never gated — their rings are
+// byte-identical to before. This reuses markerStyle's ONE hostile classifier and the danger_zones the
+// map already fetched — no second table, no client-side geometry, no data change.
 import { createElement, type ReactElement } from 'react'
 import type { MapLocation } from './mapTypes'
-import { markerStyle, type MarkerStyleInputs } from './markerStyle'
+import { isCombatMarker, markerStyle, type MarkerStyleInputs } from './markerStyle'
 import { WORLD_TO_VIEWBOX_SCALE } from './openSpaceTransform'
 
 /** What a ring needs: position + radius + the markerStyle tone inputs (any MapLocation satisfies). */
@@ -25,9 +37,16 @@ export function territoryLayer(args: {
   locations: readonly TerritoryRingLocation[]
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
+  /** location_ids that already own an active danger_zone polygon (get_danger_zones.location_id).
+   *  A hostile location in this set is drawn by its polygon and its ring is suppressed; a hostile
+   *  location NOT in it keeps its ring so every pirate site shows exactly one region (never zero). */
+  zonedLocationIds: ReadonlySet<string>
 }): ReactElement[] {
   const out: ReactElement[] = []
   for (const loc of args.locations) {
+    // hostile → shown by its OWN danger-zone polygon, but ONLY when one exists for this location;
+    // a hostile site with no bound zone keeps its ring (never zero regions on a pirate site).
+    if (isCombatMarker(loc) && args.zonedLocationIds.has(loc.id)) continue
     const r = loc.territory_radius
     if (r == null || !Number.isFinite(r) || r <= 0) continue // null radius = no territory, no ring
     const p = args.norm({ x: loc.x, y: loc.y })

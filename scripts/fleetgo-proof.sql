@@ -7,10 +7,11 @@
 --
 -- THE CROWN-JEWEL PROPERTY IS FLEETGO_PASS_NOSHIPWRITE.
 -- Charter §2 says "THE FLEET IS THE ONLY UNIT OF MOVEMENT. A SHIP DOES NOT MOVE." Every OTHER mover
--- in this codebase writes ship-level movement state (move_main_ship_to_location → 'traveling';
+-- in this codebase writes ship-level movement state (the legacy single-ship move (retired 0232) → 'traveling';
 -- mainship_space_begin_move_core → 'in_transit'; send_ship_group_hunt → 'hunting'). The unified
 -- mover must write NONE. That is not a nice-to-have — it IS the model. So this proof snapshots every
--- ship column that could carry movement (status, spatial_state, space_x, space_y, updated_at) into a
+-- ship column that could carry movement (status, berth_location_id, updated_at — spatial_state/
+-- space_x/space_y tracked here too until 4C-MIG-2B/migration 0231 dropped them outright) into a
 -- temp table BEFORE the command and diffs it AFTER, asserting byte-equality via a full EXCEPT both
 -- ways. If a future edit adds an `update main_ship_instances` to the mover, this fails loudly.
 -- It is asserted after the FIRST go, after a REDIRECT, and after the guards — a ship must never be
@@ -49,16 +50,19 @@ end $$;
 -- S1-BERTH (0216): the snapshot now covers berth_location_id too — under the berth model a ship's
 -- LOCATION for the unfleeted case lives in that column, so the §2 law ("a mover never writes a
 -- ship") must cover it: a go/redirect/brake/settle that moved a berth would be a ship write.
+-- 4C-MIG-2B (migration 0231) DROPPED spatial_state/space_x/space_y from main_ship_instances outright
+-- — there is nothing left in those columns for a mover to write, so they are removed from the
+-- tracked column set (a column that no longer exists cannot be diffed). status/berth_location_id/
+-- updated_at remain the full set of "could carry movement" columns post-drop.
 create or replace function pg_temp.snap_ships(p_tag text) returns void language plpgsql as $$
 begin
   insert into pg_temp.ship_snap
-    select p_tag, main_ship_id, status, spatial_state, space_x, space_y, berth_location_id, updated_at
+    select p_tag, main_ship_id, status, berth_location_id, updated_at
       from public.main_ship_instances;
 end $$;
 
 create temp table ship_snap(
-  tag text, main_ship_id uuid, status text, spatial_state text,
-  space_x double precision, space_y double precision, berth_location_id uuid, updated_at timestamptz
+  tag text, main_ship_id uuid, status text, berth_location_id uuid, updated_at timestamptz
 ) on commit preserve rows;
 
 -- ★ THE GHOST-DOCK ASSERTION ★ — the property NOSHIPWRITE is structurally blind to.
@@ -94,13 +98,13 @@ returns void language plpgsql as $$
 declare n int;
 begin
   select count(*) into n from (
-    (select main_ship_id,status,spatial_state,space_x,space_y,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_before
+    (select main_ship_id,status,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_before
      except
-     select main_ship_id,status,spatial_state,space_x,space_y,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_after)
+     select main_ship_id,status,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_after)
     union all
-    (select main_ship_id,status,spatial_state,space_x,space_y,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_after
+    (select main_ship_id,status,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_after
      except
-     select main_ship_id,status,spatial_state,space_x,space_y,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_before)
+     select main_ship_id,status,berth_location_id,updated_at from pg_temp.ship_snap where tag=p_before)
   ) d;
   if n <> 0 then
     raise exception 'SHIP-WRITE FAIL (%): the unified mover touched % ship row(s) — charter §2 says a ship does not move', p_ctx, n;
@@ -179,8 +183,8 @@ update public.game_config set value='true'::jsonb where key='mainship_additional
 -- HUNTOVERLAP block launches a REAL docked hunt, which needs launch_from_dock_enabled (also ON in prod).
 update public.game_config set value='true'::jsonb where key='station_storage_enabled';
 update public.game_config set value='true'::jsonb where key='launch_from_dock_enabled';
--- 4b-0 (0213): the PERMEMBER-TAG block launches a REAL legacy expedition (send_ship_group_expedition
--- → send_main_ship_expedition), which is gated on mainship_send_enabled (ON in prod, seeded false on
+-- 4b-0 (0213): the PERMEMBER-TAG block launches a REAL legacy expedition (the legacy group send (retired 0232)
+-- → the legacy single-ship send (retired 0232)), which is gated on mainship_send_enabled (ON in prod, seeded false on
 -- a fresh chain — 0050).
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 
@@ -737,8 +741,12 @@ begin
    where id = v_mv;
   r := public.movement_settle_arrival(v_mv);
   if (r->>'outcome') is distinct from 'present' then raise exception 'PARITY FAIL mainship outcome: %', r; end if;
-  select count(*) into n from public.main_ship_instances
-   where main_ship_id = b1 and status='stationary' and spatial_state='at_location';
+  -- 4C-MIG-2B REWORK: 'stationary'/spatial_state are GONE — F2's mainship_mark_docked_at_location
+  -- repoint now writes status='home' on dock (the same swap 2a made for every other retiring
+  -- 'stationary' writer); fleet truth (a real 'present' fleet at the port) is the dock proof.
+  select count(*) into n from public.main_ship_instances s
+   where s.main_ship_id = b1 and s.status='home'
+     and exists (select 1 from public.fleets f where f.main_ship_id = s.main_ship_id and f.status = 'present' and f.current_location_id = slag);
   if v_legal and n <> 1 then
     raise exception 'PARITY FAIL: dockable target did NOT dock the ship — the 0153 hunk regressed'; end if;
   if not v_legal and n <> 0 then
@@ -853,9 +861,15 @@ begin
   -- read), with zero ship coords in existence — asserted below — every member reads 'hidden' here.
   -- Red-before/green-after by construction.
   -- vacuity guard: ZERO ships carry any position, so only the FLEET could have answered these coords.
-  select count(*) into n from public.main_ship_instances where space_x is not null or space_y is not null;
-  if n <> 0 then
-    raise exception 'MAPSPACE-GROUP FAIL: % ship(s) carry a position — only the FLEET could have answered is unprovable', n; end if;
+  -- 4C-MIG-2B (migration 0231) DROPPED main_ship_instances.space_x/space_y outright — no ship can
+  -- carry a position any more BY CONSTRUCTION, so the runtime count is now permanently, trivially
+  -- satisfied; kept as a one-time schema-fact check instead of a vacuous always-pass count (the same
+  -- rework as BLOCK ISOLATION above).
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'main_ship_instances'
+                and column_name in ('space_x', 'space_y')) then
+    raise exception 'MAPSPACE-GROUP FAIL: main_ship_instances still carries space_x/space_y — 4c-mig-2b did not drop them';
+  end if;
   r := pg_temp.call_as(uA, 'public.get_my_fleet_positions()');
   foreach s in array array[a1, a2] loop
     e := null;
@@ -1042,16 +1056,28 @@ begin
   if n <> 0 then raise exception 'ISOLATION FAIL: the mover wrote % sortie manifest row(s)', n; end if;
 
   -- No OSN coordinate movements: the unified mover lives in the fleet domain ONLY.
-  select count(*) into n from public.main_ship_space_movements;
-  if n <> 0 then raise exception 'ISOLATION FAIL: the mover created % OSN space movement(s) — wrong domain', n; end if;
+  -- 4C-MIG-2B (migration 0231) DROPPED main_ship_space_movements outright — the domain-isolation
+  -- claim this count used to prove ("the mover never touches the OSN coordinate table") is now
+  -- PERMANENTLY, trivially true by construction (there is no table left to touch), so the runtime
+  -- count is removed rather than kept as a vacuous always-pass. to_regclass confirms the schema
+  -- fact once per apply instead (belt: the migration's own §9/§10 already assert this at DDL time).
+  if to_regclass('public.main_ship_space_movements') is not null then
+    raise exception 'ISOLATION FAIL: main_ship_space_movements still exists — 4c-mig-2b did not drop it';
+  end if;
 
   -- ★ THE 3b PAYOFF, stated as one assertion ★
   -- NOT ONE ship in the whole DB carries a coordinate or an in-transit spatial state — even though a
   -- fleet has now flown to a raw coordinate, parked there, and set off again from it. The position
   -- exists; it just lives on the FLEET. That is §2 in a single query.
-  select count(*) into n from public.main_ship_instances
-   where space_x is not null or space_y is not null or spatial_state in ('in_space','in_transit');
-  if n <> 0 then raise exception 'ISOLATION FAIL: % ship(s) carry a position/transit state — §2 says ships have neither', n; end if;
+  -- 4C-MIG-2B DROPPED main_ship_instances.spatial_state/space_x/space_y outright (migration 0231) —
+  -- the claim this count used to prove is now PERMANENTLY, trivially true (there are no columns left
+  -- for a ship to carry a coordinate or spatial state IN), so the runtime count is removed rather
+  -- than kept as a vacuous always-pass; the schema fact is confirmed once instead.
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'main_ship_instances'
+                and column_name in ('spatial_state', 'space_x', 'space_y')) then
+    raise exception 'ISOLATION FAIL: a main_ship_instances spatial column still exists — 4c-mig-2b did not drop it';
+  end if;
   -- ...and the converse: the FLEET layer really did carry the position. Without this, the ship-free
   -- assertion above is satisfied by a system where nothing ever moved at all.
   -- NOT asserted on fleets.space_x: by now the fleet has departed again and CORRECTLY cleared its
@@ -1215,10 +1241,10 @@ begin
   -- SURGERY (marked): manufacture the diagnosed prod shape on b1 — spatial_state NULL + status
   -- 'traveling' with NOTHING behind it, while its own fleet sits honestly 'present' at a port.
   -- This is fixture shaping for a state prod already contains; the live RPCs cannot mint it on demand.
-  select status, spatial_state into v_old_status, v_old_ss
+  select status into v_old_status
     from public.main_ship_instances where main_ship_id = b1;
   update public.main_ship_instances
-     set status = 'traveling', spatial_state = null where main_ship_id = b1;
+     set status = 'traveling' where main_ship_id = b1;
 
   -- vacuity guards: exactly ONE active per-ship fleet, 'present' at a real port, with a matching ACTIVE
   -- presence — otherwise the oracle answers for some other reason and the block proves nothing.
@@ -1246,7 +1272,7 @@ begin
 
   -- restore the fixture shape (surgery must undo itself — the member_busy lesson), then the flag.
   update public.main_ship_instances
-     set status = v_old_status, spatial_state = v_old_ss where main_ship_id = b1;
+     set status = v_old_status where main_ship_id = b1;
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
   raise notice 'FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT: a legacy-present ship (prod''s stuck shape) still draws place=docked at its fleet''s port';
@@ -1291,9 +1317,9 @@ begin
   -- (0055:159-161, IS TRUE deliberate) REJECTS status='stationary' + spatial_state NULL — nulling
   -- spatial_state alone on a commission-born (stationary/at_location) ship red the CI run for real
   -- (run 29587517266). A partial write of a CHECK-coupled column set is a constraint violation.
-  select status, spatial_state into v_old_status, v_old_ss
+  select status into v_old_status
     from public.main_ship_instances where main_ship_id = a1;
-  update public.main_ship_instances set status = 'traveling', spatial_state = null where main_ship_id = a1;
+  update public.main_ship_instances set status = 'traveling' where main_ship_id = a1;
   select b.id, b.x, b.y into v_base from public.bases b where b.player_id = uA and b.status='active' order by b.created_at limit 1;
   if v_base.id is null then raise exception 'MAPTRANSIT-DARKPARITY FAIL: uA has no base — fixture cannot be built'; end if;
   insert into public.fleets (player_id, origin_base_id, status, location_mode, current_base_id, main_ship_id)
@@ -1322,9 +1348,9 @@ begin
   -- terminal, BOTH ship columns back in ONE update — then PROVE the rewind instead of trusting it.
   update public.fleet_movements set status='cancelled', resolved_at=now() where id = v_mv;
   update public.fleets set status='completed', location_mode='movement', active_movement_id=null where id = v_f;
-  update public.main_ship_instances set status = v_old_status, spatial_state = v_old_ss where main_ship_id = a1;
+  update public.main_ship_instances set status = v_old_status where main_ship_id = a1;
   select count(*) into n from public.main_ship_instances
-   where main_ship_id = a1 and status is not distinct from v_old_status and spatial_state is not distinct from v_old_ss;
+   where main_ship_id = a1 and status is not distinct from v_old_status;
   if n <> 1 then raise exception 'MAPTRANSIT-DARKPARITY FAIL: a1 ship restore did not put the row back'; end if;
   select count(*) into n from public.fleets
    where main_ship_id = a1 and status in ('idle','moving','present','returning');
@@ -1351,9 +1377,9 @@ begin
     from public.fleets f
    where f.main_ship_id = b1 and f.status in ('idle','moving','present','returning');
   v_had_pres := exists (select 1 from public.location_presence lp where lp.fleet_id = v_frow.id and lp.status = 'active');
-  select status, spatial_state into v_old_status, v_old_ss
+  select status into v_old_status
     from public.main_ship_instances where main_ship_id = b1;
-  update public.main_ship_instances set status = 'traveling', spatial_state = null where main_ship_id = b1;
+  update public.main_ship_instances set status = 'traveling' where main_ship_id = b1;
   perform public.presence_complete(lp.id) from public.location_presence lp
    where lp.fleet_id = v_frow.id and lp.status = 'active';
   -- release the fleet to idle (the mover's own release shape, 0208) so fleet_set_moving's frozen
@@ -1395,7 +1421,7 @@ begin
     perform public.presence_create(uB, v_frow.id, v_frow.current_sector_id, v_frow.current_zone_id,
                                    v_frow.current_location_id, v_act);
   end if;
-  update public.main_ship_instances set status = v_old_status, spatial_state = v_old_ss where main_ship_id = b1;
+  update public.main_ship_instances set status = v_old_status where main_ship_id = b1;
   r_after := public.mainship_space_validate_context(b1);
   if r_after is distinct from r_before then
     raise exception 'MAPTRANSIT-DARKPARITY FAIL: b1 was not restored to what it was (oracle % -> %)', r_before, r_after; end if;
@@ -1404,25 +1430,26 @@ begin
   raise notice 'FLEETGO_PASS_MAPTRANSIT_DARKPARITY: a legacy in-transit ship (grouped AND ungrouped) still draws its OWN fleet''s leg while dark';
 end $$;
 
--- ════════ BLOCK MAPSPACE-RETIRED (was 3c-3 DARKPARITY; rewritten by 4c-mig-1/0221): the retired ════════
--- ship coordinate is IGNORED — an OSN-held ship reads its BERTH, never its per-ship columns ════════
+-- ════════ BLOCK MAPSPACE-RETIRED (was 3c-3 DARKPARITY; rewritten by 4c-mig-1/0221, retired further ════
+-- by 4c-mig-2b/0231): a fleetless, berthed ship reads its BERTH, never a per-ship coordinate ═══════
 -- HISTORY: until 0221 this block pinned the OPPOSITE — the 0212/0216 ship-coordinate elsif (the dark
--- parity path, explicitly "load-bearing until step 4c retires the ship columns"). Step 4c-mig-1 IS
--- that retirement: 0221's R1 deleted the oracle's per-ship spatial branches and R3 deleted the map's
--- ship-coordinate fallback arm, so the OSN-held shape (zero fleets + a ship coordinate the retired
--- layer wrote) now answers from BERTH truth: the oracle says settled-'home' (the XOR guarantees the
--- unfleeted ship carries a berth), and the map draws 'berthed' at the berth (lit) / fail-closed
--- 'hidden' (dark — the berthed place is gated). ZERO prod ships hold this shape and its writers are
--- dark, so this is a historical-shape pin: it proves a PRESENT retired signal no longer answers.
--- PLACEMENT IS LOAD-BEARING: this writes a ship coordinate, which ISOLATION rightly asserts the unified
--- flow never produces — it must stay AFTER the ISOLATION block (the HUNTOVERLAP placement rule).
--- HOW THIS FAILS IF THE CODE WERE WRONG: resurrect the ship-column read anywhere in the oracle/map
--- chain and this ship answers 'in_space' / draws the retired 555,-444 — red below; drop the berth
--- branch instead and the oracle answers ok:false — red below.
+-- parity path). 4c-mig-1 (0221) retired the oracle's/map's per-ship spatial READS; this block then
+-- proved a PRESENT retired coordinate (surgically written to the still-existing column) was ignored
+-- regardless. 4C-MIG-2B (migration 0231) DROPPED spatial_state/space_x/space_y outright — there is
+-- no column left to surgically write a "present retired signal" into, so that specific proof is now
+-- IMPOSSIBLE TO CONSTRUCT and therefore moot (the ISOLATION block's to_regclass/information_schema
+-- checks already confirm the columns are gone, once, for the whole file). What SURVIVES and is still
+-- real: a fleetless-but-berthed ship (the XOR shape) settles at its berth via BERTH TRUTH — the
+-- oracle says 'home' (0221 R1-h) and the map draws 'berthed'/'hidden' correctly. Proved below WITHOUT
+-- any ship-column surgery (there is none left to do).
+-- PLACEMENT IS LOAD-BEARING: this dissolves a ship's fleet, which ISOLATION rightly asserts the
+-- unified flow never produces on its own — it must stay AFTER the ISOLATION block (the HUNTOVERLAP
+-- placement rule).
+-- HOW THIS FAILS IF THE CODE WERE WRONG: drop the berth branch and the oracle answers ok:false — red
+-- below; the map fails to gate the berthed place dark, or fails to draw it lit — red below.
 do $$
 declare r jsonb; e jsonb; n int; v_flag jsonb; r_before jsonb; r_after jsonb;
   uB uuid := (select v from fg where k='uB'); b1 uuid := (select v from fg where k='b1');
-  v_old_status text; v_old_ss text; v_old_x double precision; v_old_y double precision;
   v_frow record; v_had_pres boolean; v_act text; v_berth uuid;
 begin
   -- self-contained DARK: save the flag's ACTUAL prior value and restore IT at the end.
@@ -1431,7 +1458,7 @@ begin
 
   -- SELF-SUFFICIENT fixture — no cross-block coupling: b1 arrives here docked at its port (every
   -- earlier block restores what it found). This block dissolves b1's own fleet ITSELF to build the
-  -- zero-fleet OSN-held shape and rewinds everything at the end, so a future reorder cannot change
+  -- zero-fleet berthed shape and rewinds everything at the end, so a future reorder cannot change
   -- what it tests — the shape is built and torn down entirely in-block.
   select count(*) into n from public.fleets
    where main_ship_id = b1 and status in ('idle','moving','present','returning');
@@ -1445,64 +1472,48 @@ begin
   v_had_pres := exists (select 1 from public.location_presence lp where lp.fleet_id = v_frow.id and lp.status = 'active');
 
   -- SURGERY (restored + read-back-verified below): dissolve the fleet (the mover's own dissolve
-  -- shape, 0208), then the OSN-held ship shape — what the retired per-ship stop/settle writes; the
-  -- live RPCs cannot mint it on a fixture on demand.
-  -- ⚠ ALL FOUR ship columns move in ONE update: the 0054 space_coords CHECK ties coords to
-  -- spatial_state='in_space' EXACTLY (both null everywhere else) and the 0055 stationary CHECK ties
-  -- status to spatial_state — a partial write of a CHECK-coupled column set is a constraint
-  -- violation (the CI lesson, run 29587517266).
+  -- shape, 0208) to build the zero-fleet berthed shape. No ship-column write — there is nothing left
+  -- to write (spatial_state/space_x/space_y are gone; status stays whatever it already was, and the
+  -- XOR guarantees berth_location_id is already set from commission).
   perform public.presence_complete(lp.id) from public.location_presence lp
    where lp.fleet_id = v_frow.id and lp.status = 'active';
   update public.fleets set status='completed', location_mode='movement', active_movement_id=null,
          current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null,
          updated_at=now()
    where id = v_frow.id;
-  select status, spatial_state, space_x, space_y into v_old_status, v_old_ss, v_old_x, v_old_y
-    from public.main_ship_instances where main_ship_id = b1;
-  update public.main_ship_instances
-     set status='stationary', spatial_state='in_space', space_x=555, space_y=-444
-   where main_ship_id = b1;
 
-  -- vacuity guards: ZERO active fleets (the resolver MUST return NULL), the RETIRED coordinate IS
-  -- present on the ship row (555,-444 — the retired layer WOULD have answered; ignoring an absent
-  -- signal proves nothing), and the ship is really berthed (the XOR shape) so berth truth CAN answer.
+  -- vacuity guards: ZERO active fleets (the resolver MUST return NULL), and the ship is really
+  -- berthed (the XOR shape) so berth truth CAN answer.
   select count(*) into n from public.fleets
    where main_ship_id = b1 and status in ('idle','moving','present','returning');
-  if n <> 0 then raise exception 'MAPSPACE-RETIRED FAIL: b1 holds % active fleet(s) — the retired-signal probe would be vacuous', n; end if;
-  select count(*) into n from public.main_ship_instances
-   where main_ship_id = b1 and spatial_state = 'in_space' and space_x = 555 and space_y = -444;
-  if n <> 1 then raise exception 'MAPSPACE-RETIRED FAIL: the retired coordinate is not present on the ship row — ignoring an absent signal is vacuous'; end if;
+  if n <> 0 then raise exception 'MAPSPACE-RETIRED FAIL: b1 holds % active fleet(s) — the berth probe would be vacuous', n; end if;
   select berth_location_id into v_berth from public.main_ship_instances where main_ship_id = b1;
   if v_berth is null then
     raise exception 'MAPSPACE-RETIRED FAIL: b1 is not berthed — the XOR shape drifted and berth truth cannot answer'; end if;
 
-  -- the oracle IGNORES the present retired signal (dark AND lit — the fallback carries no gate):
-  -- the unfleeted ship is settled at its berth, 'home' (0221 R1-h), never 'in_space'.
+  -- the fleetless ship is settled at its berth, 'home' (0221 R1-h) — never 'in_space' (there is no
+  -- column left for it to even mean anything by).
   r := public.mainship_space_validate_context(b1);
   if (r->>'ok')::boolean is not true or (r->>'state') is distinct from 'home' then
-    raise exception 'MAPSPACE-RETIRED FAIL: the OSN-held ship answered % — the retired coordinate must be ignored; the berth is the truth', r; end if;
+    raise exception 'MAPSPACE-RETIRED FAIL: the fleetless ship answered % — the berth is the truth', r; end if;
 
-  -- DARK map: the berthed place is gated off → fail-closed 'hidden', and the retired coordinate
-  -- never surfaces in the emit.
+  -- DARK map: the berthed place is gated off → fail-closed 'hidden', no coordinate in the emit.
   r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
   select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
   if e is null or (e->>'place') is distinct from 'hidden' or (e->>'space_x') is not null then
-    raise exception 'MAPSPACE-RETIRED FAIL (dark): an OSN-held ship draws % (expected hidden, no coordinate)', e; end if;
+    raise exception 'MAPSPACE-RETIRED FAIL (dark): a fleetless berthed ship draws % (expected hidden, no coordinate)', e; end if;
 
-  -- LIT map: place='berthed' at the BERTH — the retired coordinate still never surfaces.
+  -- LIT map: place='berthed' at the BERTH.
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
   r := pg_temp.call_as(uB, 'public.get_my_fleet_positions()');
   select t.elem into e from jsonb_array_elements(r) as t(elem) where t.elem->>'main_ship_id' = b1::text;
   if e is null or (e->>'place') is distinct from 'berthed' or (e->>'location_id')::uuid is distinct from v_berth
      or (e->>'space_x') is not null then
-    raise exception 'MAPSPACE-RETIRED FAIL (lit): an OSN-held ship draws % (expected berthed at its berth, no coordinate)', e; end if;
+    raise exception 'MAPSPACE-RETIRED FAIL (lit): a fleetless berthed ship draws % (expected berthed at its berth, no coordinate)', e; end if;
   update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
 
-  -- restore b1 EXACTLY as found: ship row back (all four columns, ONE update), fleet row rewound
-  -- column-for-column, active presence re-created — then PROVE the rewind with the oracle.
-  update public.main_ship_instances
-     set status=v_old_status, spatial_state=v_old_ss, space_x=v_old_x, space_y=v_old_y
-   where main_ship_id = b1;
+  -- restore b1 EXACTLY as found: fleet row rewound column-for-column, active presence re-created —
+  -- then PROVE the rewind with the oracle.
   update public.fleets
      set status=v_frow.status, location_mode=v_frow.location_mode, active_movement_id=v_frow.active_movement_id,
          current_sector_id=v_frow.current_sector_id, current_zone_id=v_frow.current_zone_id,
@@ -1877,7 +1888,7 @@ end $$;
 
 -- ════════ BLOCK ASSIGNGUARD-PERMEMBER-TAG (4b-0, lit): the legacy expedition's display-only
 -- group_id tag on PER-MEMBER fleets must NOT trip the guard — pins the main_ship_id IS NULL key ════════
--- send_ship_group_expedition (0204:316-318) tags fleets.group_id onto each member's OWN fleet after a
+-- the legacy group send (retired 0232) (0204:316-318) tags fleets.group_id onto each member's OWN fleet after a
 -- send — display-only, "ROUTING NEVER reads fleets.group_id". A guard keyed on group_id ALONE (the
 -- exact key mistake 0210:69-71 records) would see that tagged per-member fleet 'moving' and reject
 -- every assign into a group that merely has a legacy expedition out — banning assignment for the
@@ -1904,13 +1915,13 @@ begin
     raise exception 'ASSIGNGUARD-PERMEMBER FAIL: dark fixture assign of b1 was rejected: %', r; end if;
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
-  -- the REAL legacy expedition send (docked launch — launch_from_dock is lit): mints b1's OWN
-  -- per-member fleet and tags it with gB. Destination DRIFT, not slag: b1 is docked AT slag (the
-  -- SETTLEPARITY block flew it there and the 0153 hunk docked it), and the single send rejects a
-  -- destination equal to the ship's current dock ('already at that location') — the CI run caught
-  -- exactly that on the first cut of this fixture.
-  r := pg_temp.call_as(uB, format('public.send_ship_group_expedition(%L::uuid, %L::uuid)', gB, drift));
-  if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD-PERMEMBER FAIL: legacy expedition send: %', r; end if;
+  -- 4B-DROP REPOINT: the legacy group send that minted + group_id-tagged b1's OWN per-member fleet was
+  -- DROPPED by 0232, and the unified group-fleet model never tags a per-member (main_ship_id set) fleet.
+  -- The exact state under test — a per-member fleet, main_ship_id set, group_id-tagged, 'moving' — is
+  -- manufactured by DIRECT FIXTURE INSERT (the SAME surgery idiom the MEMBERBUSY fixture below uses for a
+  -- moving per-ship fleet), so the guard-key property is still proven without the retired send.
+  insert into public.fleets (player_id, status, location_mode, group_id, main_ship_id)
+    values (uB, 'moving', 'movement', gB, b1);
 
   r := pg_temp.call_as(uB, 'public.commission_additional_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD-PERMEMBER FAIL: commission b2: %', r; end if;
@@ -2062,7 +2073,7 @@ begin
   if n <> 1 then raise exception 'HUNTUNI-DARKPARITY FAIL: dark hunt did not depart the docked port (the 0199 head arm drifted)'; end if;
   -- the head's ship write survives: status='hunting', spatial cleared.
   select count(*) into n from public.main_ship_instances
-   where main_ship_id = e1 and status = 'hunting' and spatial_state is null;
+   where main_ship_id = e1 and status = 'hunting';
   if n <> 1 then raise exception 'HUNTUNI-DARKPARITY FAIL: the head''s status=hunting ship write is missing while dark'; end if;
   -- the frozen manifest, and the member's own dock dissolved (the head's own block).
   select count(*) into n from public.group_sortie_members where fleet_id = v_huntfleet and main_ship_id = e1;
@@ -2286,21 +2297,15 @@ begin
   select id into v_f3fleet from public.fleets
    where player_id = uF and main_ship_id = f3 and status = 'present';
   if v_f3fleet is null then raise exception 'HUNTUNI-CONSUME FAIL: f3 has no present commission fleet — the co-located fixture cannot be built'; end if;
-  -- ⚠ ENVELOPE SHAPE (verified at the 0156 TRUE head — 0053→0152→0156 are its only re-creates,
-  -- loose-grep derived): the per-ship legacy movers do NOT return the group RPCs' {ok:...}
-  -- envelope. move_main_ship_to_location returns a BARE movement envelope — {fleet_id, movement_id,
-  -- main_ship_id, from, from_location_id, to_location_id, arrive_at} — and every failure path
-  -- RAISES (0156:87-187), which call_as propagates, so a genuinely failed move aborts this block
-  -- with the RPC's own error. Success is therefore asserted on what the head actually returns: a
-  -- minted movement_id targeting slag. An `->>'ok'` check here reads NULL and raises on a
-  -- SUCCESSFUL move (the CI caught exactly that — the third fixture-envelope class in this arc).
-  r := pg_temp.call_as(uF, format('public.move_main_ship_to_location(%L::uuid, %L::uuid)', v_f3fleet, slag));
-  if (r->>'movement_id') is null or (r->>'to_location_id')::uuid is distinct from slag then
-    raise exception 'HUNTUNI-CONSUME FAIL: legacy move of f3 returned no movement toward slag: %', r; end if;
-  update public.fleet_movements
-     set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
-   where id = (r->>'movement_id')::uuid;
-  perform public.movement_settle_arrival((r->>'movement_id')::uuid);
+  -- 4B-DROP REPOINT: the legacy per-ship move that relocated f3's dock to slag was DROPPED by 0232, and
+  -- no live single-ship mover survives to relocate ONE ship (the fleet is the unit of movement now). The
+  -- co-located-dock STATE under test — f3's OWN present fleet + active presence AT slag — is what this
+  -- block exercises (not the mover), so it is built by DIRECT FIXTURE SURGERY on f3's commission present
+  -- fleet (the same idiom the MEMBERBUSY/catastrophe fixtures below use).
+  update public.fleets set current_location_id = slag, current_base_id = null, location_mode = 'location', updated_at = now()
+   where id = v_f3fleet;
+  update public.location_presence set location_id = slag, status = 'active', updated_at = now()
+   where fleet_id = v_f3fleet;
   select count(*) into n from public.fleets f
     join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active' and lp.location_id = slag
    where f.id = v_f3fleet and f.status = 'present' and f.current_location_id = slag;
@@ -2317,7 +2322,7 @@ begin
   -- SURGERY (consumed by the hunt's own status write — see the block header): the LEGACY 'home'
   -- shape, prod's majority, on f1/f2. THIS is the shape whose pre-0214 path fails OPEN into the
   -- double-mint. f3 deliberately KEEPS its co-located-dock shape — that is the state under test.
-  update public.main_ship_instances set status = 'home', spatial_state = null
+  update public.main_ship_instances set status = 'home'
    where main_ship_id in (f1, f2);
   -- vacuity: f1/f2 hold zero per-ship fleets — their only position is the group fleet's.
   select count(*) into n from public.fleets
@@ -2368,7 +2373,7 @@ begin
   -- the hunt's own layer survives lit: 'hunting' writes + the frozen manifest (all THREE members,
   -- including the co-located f3).
   select count(*) into n from public.main_ship_instances
-   where main_ship_id in (f1, f2, f3) and status = 'hunting' and spatial_state is null;
+   where main_ship_id in (f1, f2, f3) and status = 'hunting';
   if n <> 3 then raise exception 'HUNTUNI-NOSECONDFLEET FAIL: the status=hunting ship write is missing lit (% of 3)', n; end if;
   select count(*) into n from public.group_sortie_members where fleet_id = v_huntfleet;
   if n <> 3 then raise exception 'HUNTUNI-NOSECONDFLEET FAIL: the frozen manifest has % member(s), expected 3', n; end if;
@@ -2513,7 +2518,7 @@ begin
    where id = v_huntmv and origin_type = 'location' and origin_location_id = haven and target_location_id = v_hunt;
   if n <> 1 then raise exception 'HUNTUNI-BOOTSTRAP FAIL: the =0 hunt did not depart the docked port (head-arm drift)'; end if;
   select count(*) into n from public.main_ship_instances
-   where main_ship_id = g1 and status = 'hunting' and spatial_state is null;
+   where main_ship_id = g1 and status = 'hunting';
   if n <> 1 then raise exception 'HUNTUNI-BOOTSTRAP FAIL: the head''s hunting write is missing on the =0 path'; end if;
   select count(*) into n from public.group_sortie_members where fleet_id = v_huntfleet and main_ship_id = g1;
   if n <> 1 then raise exception 'HUNTUNI-BOOTSTRAP FAIL: g1 is not on the frozen manifest'; end if;
@@ -2574,8 +2579,14 @@ begin
    where id = v_gofleet and status = 'idle' and location_mode = 'space';
   if v_x is null then raise exception 'HUNTUNI-FROMSPACE FAIL: the fleet is not parked idle in space — the from-space state was not built'; end if;
   -- vacuity: ZERO ships carry a position — only the FLEET could supply the origin below (§2).
-  select count(*) into n from public.main_ship_instances where space_x is not null or space_y is not null;
-  if n <> 0 then raise exception 'HUNTUNI-FROMSPACE FAIL: % ship(s) carry a position — the origin could come from the retired layer', n; end if;
+  -- 4C-MIG-2B (migration 0231) DROPPED main_ship_instances.space_x/space_y outright — permanently,
+  -- trivially satisfied by construction; kept as a one-time schema-fact check (the same rework as
+  -- BLOCK ISOLATION / MAPSPACE-GROUP above).
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'main_ship_instances'
+                and column_name in ('space_x', 'space_y')) then
+    raise exception 'HUNTUNI-FROMSPACE FAIL: main_ship_instances still carries space_x/space_y — 4c-mig-2b did not drop them';
+  end if;
 
   -- ── ★ FROMSPACE ★ the hunt consumes the parked fleet and departs its coordinate. ───────────────
   r := pg_temp.call_as(uH, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
@@ -2604,7 +2615,7 @@ begin
    where f.player_id = uH and lp.status = 'active';
   if n <> 0 then raise exception 'HUNTUNI-FROMSPACE FAIL: % orphan active presence row(s) after the from-space consume', n; end if;
   select count(*) into n from public.main_ship_instances
-   where main_ship_id = h1 and status = 'hunting' and spatial_state is null;
+   where main_ship_id = h1 and status = 'hunting';
   if n <> 1 then raise exception 'HUNTUNI-FROMSPACE FAIL: the hunting write is missing on the from-space path'; end if;
 
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
@@ -3043,7 +3054,7 @@ begin
          current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
          updated_at = now()
    where main_ship_id = j1 and status = 'present';
-  update public.main_ship_instances set status = 'home', spatial_state = null where main_ship_id = j1;
+  update public.main_ship_instances set status = 'home' where main_ship_id = j1;
   if public.mainship_resolve_fleet(j1) is not null then
     raise exception 'BERTH_RESOLVER FAIL: j1 still resolves a fleet — phase B could be answered by the retired layer'; end if;
   r := pg_temp.call_as(uJ, 'public.get_my_fleet_positions()');
@@ -3987,7 +3998,7 @@ begin
          current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
          updated_at = now()
    where main_ship_id = r1 and status = 'present';
-  update public.main_ship_instances set status = 'home', spatial_state = null where main_ship_id = r1;
+  update public.main_ship_instances set status = 'home' where main_ship_id = r1;
 
   -- vacuity RAISE guards: the shape is REALLY the berthed majority (ungrouped, berthed at Haven,
   -- and the resolver answers NO fleet — else the probe could be answered by the retired layer).
@@ -4062,7 +4073,7 @@ begin
          current_base_id = null, current_location_id = null, current_zone_id = null, current_sector_id = null,
          updated_at = now()
    where main_ship_id = r2 and status = 'present';
-  update public.main_ship_instances set status = 'home', spatial_state = null where main_ship_id = r2;
+  update public.main_ship_instances set status = 'home' where main_ship_id = r2;
   r := pg_temp.call_as(uR, 'public.upsert_ship_group(1, ''Repointers'')');
   if (r->>'ok')::boolean is not true then
     raise exception 'REPOINT GROUPED FAIL: the grouped repoint fixture was not built (group: %)', r; end if;

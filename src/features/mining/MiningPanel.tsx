@@ -82,7 +82,7 @@ export function MiningPanel({
     // ex-amber). Rides MapScreen's top-left OverlayRail (UI R1) — no self-positioning; the primitive
     // keeps it interactive inside the pointer-transparent rail. Tokens only.
     <OverlayPanel tone="warning" data-testid="mining-panel" className="w-64 text-ink">
-      <p className="text-[11px] font-medium text-warning">Mining</p>
+      <p className="text-sm font-medium text-warning">Mining</p>
       <Button
         variant="warning"
         size="sm"
@@ -96,24 +96,24 @@ export function MiningPanel({
         Extract minerals
       </Button>
       {!settled && (
-        <p data-testid="mining-extract-hint" className="mt-1 text-[10px] text-ink-faint">
+        <p data-testid="mining-extract-hint" className="mt-1 text-xs text-ink-faint">
           Stop in open space to extract.
         </p>
       )}
       {extractNote && (
-        <p data-testid="mining-extract-note" className="mt-1 text-[10px] text-warning">
+        <p data-testid="mining-extract-note" className="mt-1 text-xs text-warning">
           {extractNote}
         </p>
       )}
       {result.extractions.length > 0 ? (
         <ul data-testid="mining-extractions" className="mt-2 space-y-1 border-t border-edge pt-2">
           {result.extractions.map((e) => (
-            <li key={e.extraction_id} data-testid={`mining-extraction-${e.extraction_id}`} className="text-[10px]">
+            <li key={e.extraction_id} data-testid={`mining-extraction-${e.extraction_id}`} className="text-xs">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-ink">{e.field_name}</span>
                 <span
                   data-testid={`mining-extraction-badge-${e.extraction_id}`}
-                  className={`rounded px-1.5 py-0.5 text-[9px] ${
+                  className={`rounded px-1.5 py-0.5 text-[11px] ${
                     e.secured_at ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'
                   }`}
                 >
@@ -142,7 +142,7 @@ export function MiningPanel({
           ))}
         </ul>
       ) : (
-        <p data-testid="mining-extractions-none" className="mt-2 border-t border-edge pt-2 text-[10px] text-ink-muted">
+        <p data-testid="mining-extractions-none" className="mt-2 border-t border-edge pt-2 text-xs text-ink-muted">
           No extractions yet.
         </p>
       )}

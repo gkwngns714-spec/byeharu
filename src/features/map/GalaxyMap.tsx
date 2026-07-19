@@ -9,13 +9,17 @@ import { territoryLayer } from './territoryLayer'
 import { miningFieldRangeLayer } from './miningFieldLayer'
 import { MiningFieldMarker } from './MiningFieldMarker'
 import type { MiningField } from '../mining/miningTypes'
+import { dangerZoneLayer } from './dangerZoneLayer'
+import { spatialCombatLayer } from './spatialCombatLayer'
+import type { CombatEvent, CombatUnit } from '../combat/combatTypes'
+import type { DangerZoneLite } from './pirateApi'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { SpaceMoveTargetMarker } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
-import { resolveSpaceTapOwner, type FleetGoTargetView } from './fleetGoTarget'
+import { type FleetGoTargetView } from './fleetGoTarget'
 import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
 import { labelVisible } from './markerStyle'
@@ -31,6 +35,11 @@ import { Button, OverlayPanel, OverlayRail } from '../../components/ui'
 // The UNIFIED spatial transform: world → viewBox. Replaces the old dynamic `norm`. Pure; never clamps.
 const norm = (p: { x: number; y: number }): { x: number; y: number } => worldToViewBox(p)
 
+// CLEAN-MAP DOUBLE-TAP thresholds: a second empty-space tap within this window + radius of the first
+// is a double-tap (matches native double-click timing; generous enough for touch double-tap).
+const DOUBLE_TAP_MS = 350
+const DOUBLE_TAP_MAX_GAP_PX = 30
+
 export function GalaxyMap({
   locations,
   movements,
@@ -38,15 +47,20 @@ export function GalaxyMap({
   dockedTeamRollups,
   unifiedGroupFleets,
   combatSortieFleets,
-  fleetMovementUnifiedEnabled,
   fleetGoView,
-  onTargetPoint,
+  onDoubleTapPoint,
   selectedId,
   onSelect,
   miningFields,
   miningExtractRadius,
   selectedMiningFieldName,
   onSelectMiningField,
+  dangerZones = [],
+  combatUnits = [],
+  combatEvents = [],
+  pirateMode = 'off',
+  pirateDraftPoints = [],
+  onPirateTap,
 }: {
   locations: MapLocation[]
   movements: FleetMovement[]
@@ -61,18 +75,16 @@ export function GalaxyMap({
   // once in useGalaxyMapData). Feeds the team layer's "in combat at X" badge so a fleet mid-hunt-combat
   // never vanishes from the map. [] while the unified fetch is dark → byte-identical.
   combatSortieFleets: UnifiedGroupFleetLite[]
-  // FLEET-GO 4a-2: the RUNTIME unified flag (useGalaxyMapData's one read) — with ≥1 owned group it
-  // hands every open-space tap to the FLEET (resolveSpaceTapOwner) and suppresses the per-ship
-  // coordinate surface. False (prod today) → the tap path + tree are byte-identical to 4a-1.
-  // ⚠ Deliberately NOT mainship_send_enabled: that flag gates the fleet-positions READ — using it as
-  // a hide-lever would blank the whole marker layer (the mainshipCommandMode lesson, restated).
-  fleetMovementUnifiedEnabled: boolean
-  // S5 MAP-UX: the ONE selection source lives in MapScreen (the FleetCommandTarget union). This map
-  // no longer owns a fleet-go target: a fleet-owned space tap reports the RAW world point up via
-  // onTargetPoint, and the crosshair marker below renders whatever view MapScreen derived (null →
-  // no marker). The confirm surface is MapScreen's bottom-center FleetCommandPanel.
+  // CLEAN-MAP HUB: the map is unobstructed by default. The ONE gesture that summons commands is a
+  // DOUBLE-TAP on empty space (mouse double-click OR touch double-tap — both flow through pointer
+  // events). MapScreen's handler opens the command hub — a compact ICON CLUSTER anchored AT the
+  // double-tapped point — so the tap reports BOTH the RAW world point (drives the eventual go-target
+  // crosshair + the in-range mining check) AND the SCREEN px of the tap (relative to this map's box)
+  // so the caller can float the icons exactly where the player double-tapped. A single tap on empty
+  // space does nothing (the map stays clean); a marker tap still selects; the pirate route mode still
+  // consumes single taps (onPirateTap, below).
   fleetGoView: FleetGoTargetView | null
-  onTargetPoint: (world: WorldCoord) => void
+  onDoubleTapPoint: (world: WorldCoord, screen: { x: number; y: number }) => void
   selectedId: string | null
   onSelect: (id: string | null) => void
   // MINING-FIELD-MARKERS: the active fields ([] while mining is disabled — 0226 fail-closed) + the
@@ -83,6 +95,30 @@ export function GalaxyMap({
   miningExtractRadius: number
   selectedMiningFieldName: string | null
   onSelectMiningField: (name: string | null) => void
+  // PIRATE INTERCEPT (prototype) — [] / 'off' / [] / undefined while the flag is dark (the caller's
+  // gate), so every prop below defaults to a no-op shape and the map is byte-identical to today.
+  /** Active danger_zones (get_danger_zones) — rendered as smooth blobs, UNDER movement lines/markers. */
+  dangerZones?: DangerZoneLite[]
+  // COMBAT-S4 — the caller's active combat_units + recent combat_events (both already polled every
+  // ~1.5s by the shell's useCombat and exposed via useShellState().combat). The spatial-combat layer
+  // draws the units that carry positions (their range rings, side-distinct glyphs, and this tick's fire
+  // lines). [] defaults → the layer renders nothing, so a map with no active battle — or ANY map while
+  // spatial_combat_enabled is dark (no positioned rows can exist) — is byte-identical to today.
+  /** Active combat units (RLS-scoped to the caller — enemy pirate rows carry the caller's own
+   *  player_id, so they arrive in the SAME read). Only positioned+alive rows render. */
+  combatUnits?: CombatUnit[]
+  /** Recent combat events; the layer consumes only the latest tick's spatial `missile_salvo`s (fire
+   *  lines between units), ignoring the aggregate/dark-path events that carry no unit_id. */
+  combatEvents?: CombatEvent[]
+  /** 'off' = normal ship-go tap handling (byte-identical to pre-slice behavior). 'route' TAKES OVER
+   *  the entire empty-space tap surface (mutually exclusive with the fleet-go tap) — each tap appends
+   *  a route waypoint via onPirateTap instead of setting a fleet-go target. */
+  pirateMode?: 'off' | 'route'
+  /** The in-progress route waypoints, drawn as a connected polyline + vertex dots while plotting. */
+  pirateDraftPoints?: WorldCoord[]
+  /** Called with the tapped RAW world point whenever pirateMode !== 'off' (ownership/group checks do
+   *  NOT apply — route planning is not gated on owning a fleet the way ship-go is). */
+  onPirateTap?: (world: WorldCoord) => void
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
@@ -104,19 +140,14 @@ export function GalaxyMap({
   const userMovedRef = useRef(false)
   const lastFitSig = useRef<string | null>(null)
 
-  // ── FLEET-GO 4a-2 — WHO owns an open-space tap (charter §2/§2a: ALL movement on the MAP; the
-  // FLEET is the only mover). Unified lit + ≥1 owned group → the fleet coordinate-go surface owns
-  // every tap. 4A-POST: the per-ship coordinate arm (useSpaceMoveCommand / readiness / eligibility)
-  // is DELETED — `perShipCanTarget` is hard false, so the owner is only ever 'fleet' or 'none'.
-  const tapOwner = resolveSpaceTapOwner({
-    unifiedEnabled: fleetMovementUnifiedEnabled,
-    hasGroups: teamGroups.length > 0,
-    perShipCanTarget: false,
-  })
-  // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a target tap; drags
-  // and multi-touch stay map pan. Tracked alongside (never replacing) the existing pan snapshot.
+  // Gesture bookkeeping: a single short near-stationary pointer on EMPTY space is a candidate tap;
+  // drags and multi-touch stay map pan. Tracked alongside (never replacing) the existing pan snapshot.
   const tap = useRef<{ x: number; y: number; t: number; maxPointers: number } | null>(null)
   const pointers = useRef<Set<number>>(new Set())
+  // CLEAN-MAP DOUBLE-TAP: the last committed empty-space tap (screen px + timestamp). A second tap
+  // close in time + space is a double-tap → summon. Pointer events fire for BOTH mouse and touch, so
+  // this ONE mechanism covers mouse double-click and touch double-tap without a separate onDoubleClick.
+  const lastTap = useRef<{ x: number; y: number; t: number } | null>(null)
 
   // ── S6B-PRES content-fit camera (presentation only; never alters world/marker coordinates) ──
   // 4C-CLIENT: the per-ship open-space focus arm (spatial_state='in_space' point / legacy coordinate
@@ -134,6 +165,14 @@ export function GalaxyMap({
   // Stable focus signature: changes only on a MEANINGFUL focus change (the named-content set),
   // never per animation frame — so the fit is applied once per context.
   const focusSignature = useMemo(() => `named:${locations.map((l) => l.id).join(',')}`, [locations])
+
+  // location_ids that own an active danger_zone polygon — the gate for territory-ring suppression
+  // (a hostile site shows its polygon INSTEAD of a ring only when it actually has one; otherwise it
+  // keeps its ring, so every pirate site shows exactly one region, never zero). See territoryLayer.
+  const zonedLocationIds = useMemo(
+    () => new Set(dangerZones.flatMap((z) => (z.location_id ? [z.location_id] : []))),
+    [dangerZones],
+  )
 
   // Apply the content-fit camera for the INITIAL view (once per focus change), never after the player
   // has interacted. Explicit reset re-enables it.
@@ -180,12 +219,10 @@ export function GalaxyMap({
     pointers.current.delete(e.pointerId)
     drag.current = null
     tap.current = null
-    // S6C gesture rules kept: a single short near-stationary tap on EMPTY space (the <svg> itself —
-    // markers/backdrop don't hit here) selects a coordinate target. FLEET-GO 4a-2: the tap's OWNER is
-    // resolved by the ONE pure precedence (resolveSpaceTapOwner) — 'fleet' (unified lit + ≥1 group)
-    // targets the fleet coordinate-go; 'none' ignores the tap (4A-POST deleted the per-ship arm).
+    // A single short near-stationary tap on EMPTY space (the <svg> itself — markers/backdrop don't hit
+    // here) is the gesture candidate. Drags/multi-touch already returned as pan.
     const svg = svgRef.current
-    if (tapOwner === 'none' || !t || !svg || e.target !== svg) return
+    if (!t || !svg || e.target !== svg) return
     const travelPx = Math.hypot(e.clientX - t.x, e.clientY - t.y)
     const durationMs = e.timeStamp - t.t
     if (classifyPointerGesture({ travelPx, durationMs, maxPointers: t.maxPointers }) !== 'tap') return
@@ -195,11 +232,28 @@ export function GalaxyMap({
       { k: view.k, tx: view.tx, ty: view.ty },
       { width: rect.width, height: rect.height },
     )
-    // Owner is 'fleet' here (the only non-'none' owner). S5 MAP-UX: the RAW world point goes UP to
-    // MapScreen (the ONE FleetCommandTarget owner) — canonicalization stays PREVIEW-only there.
-    // Redirect = re-tap a new point, then click the row again (the §2a deviation argued in
-    // FleetCommandPanel's header: accidental-redirect hazard + N-group disambiguation).
-    onTargetPoint(world)
+    // PIRATE INTERCEPT: route-planning TAKES OVER the tap surface — each SINGLE tap appends a
+    // waypoint. Double-tap detection is suspended in this mode so a plotted point is never swallowed
+    // as the first half of a "double". 'off' (the default) falls through to the summon path.
+    if (pirateMode !== 'off') {
+      lastTap.current = null
+      onPirateTap?.(world)
+      return
+    }
+    // CLEAN-MAP: a lone single tap does NOTHING (the map stays unobstructed). A second tap close in
+    // time + space is a DOUBLE-TAP → summon the command hub (MapScreen) AT this point. This one
+    // pointer-driven path serves mouse double-click and touch double-tap alike. Report the world
+    // point AND the screen px (relative to this map's box, the SAME rect screenToWorld used) so the
+    // caller floats the action icons exactly where the player double-tapped.
+    const prev = lastTap.current
+    const gapMs = e.timeStamp - (prev?.t ?? -Infinity)
+    const gapPx = prev ? Math.hypot(e.clientX - prev.x, e.clientY - prev.y) : Infinity
+    if (prev && gapMs <= DOUBLE_TAP_MS && gapPx <= DOUBLE_TAP_MAX_GAP_PX) {
+      lastTap.current = null
+      onDoubleTapPoint(world, { x: e.clientX - rect.left, y: e.clientY - rect.top })
+      return
+    }
+    lastTap.current = { x: e.clientX, y: e.clientY, t: e.timeStamp }
   }
   // pointerleave/cancel: end the pan and abandon any tap candidate (never a selection).
   const onPointerLeave = (e: RPointerEvent) => {
@@ -327,13 +381,18 @@ export function GalaxyMap({
               radius (territory_radius * WORLD_TO_VIEWBOX_SCALE — scales with zoom, deliberately
               NOT /k); every element pointer-transparent. Locations without territory_radius render
               nothing — the pre-0217 map is byte-identical. */}
-          {territoryLayer({ locations, norm, k: view.k })}
+          {territoryLayer({ locations, norm, k: view.k, zonedLocationIds })}
 
           {/* MINING-FIELD-MARKERS — the extraction-range ring per active field, same "world-true
               region, under every marker" placement as the territory rings just above (pure,
               hook-free `miningFieldRangeLayer`, unit-tested the SAME way). [] fields (mining
               disabled) or a non-positive radius → renders nothing. */}
           {miningFieldRangeLayer({ fields: miningFields, norm, k: view.k, radius: miningExtractRadius })}
+
+          {/* PIRATE INTERCEPT (prototype) — smooth danger-zone blobs (get_danger_zones), ABOVE the
+              plain circle territoryLayer rings (untouched) and UNDER movement lines/markers. []
+              while the flag is dark (the caller's gate) → renders nothing, byte-identical to today. */}
+          {dangerZoneLayer({ zones: dangerZones, norm, k: view.k })}
 
           {/* Movement paths (under markers) — IN-FLIGHT ONLY.
               The rows arrive already filtered to status='moving', but that status is settled by the 30s
@@ -425,6 +484,17 @@ export function GalaxyMap({
             combatFleets: combatSortieFleets,
           })}
 
+          {/* COMBAT-S4 — the SPATIAL-COMBAT layer, composed by the pure, hook-free `spatialCombatLayer`
+              helper (the territoryLayer/teamMarkersLayer element-tree convention; the unit test calls
+              the SAME function). Renders the caller's active on-map battle: each positioned unit at its
+              world pos (player accent chevrons vs enemy danger triangles), its weapon RANGE ring, and
+              this tick's fire lines between units. Above the markers (the battle is the focus of the
+              frame) and pointer-transparent (the location under it stays the tap target). DARK BY DATA:
+              while spatial_combat_enabled is off, no combat_units row carries a position, so `combatUnits`
+              has no positioned rows and this renders NOTHING — byte-identical to today. Re-renders each
+              ~1.5s poll (useCombat), so approach + kiting + fire animate as ticks land. */}
+          {spatialCombatLayer({ units: combatUnits, events: combatEvents, norm, k: view.k })}
+
           {/* 4C-CLIENT: the per-ship overlay layer (shipLayer — route + MainShipMarker) is DELETED
               with the per-ship movement client (S5 already deleted the redundant fleetShipsLayer).
               Owned ships are represented by the team badges above (fleeted) or as INFO surfaces
@@ -442,6 +512,26 @@ export function GalaxyMap({
               testId="fleet-go-target"
               stroke="var(--color-accent)"
             />
+          )}
+
+          {/* PIRATE INTERCEPT — the in-progress route draft: a connected polyline through the tapped
+              waypoints + a dot per vertex. 'off' or an empty draft renders nothing. */}
+          {pirateMode !== 'off' && pirateDraftPoints.length > 0 && (
+            <g data-testid="pirate-draft-layer" style={{ pointerEvents: 'none' }}>
+              {pirateDraftPoints.length > 1 && (
+                <polyline
+                  points={pirateDraftPoints.map((p) => { const s = norm(p); return `${s.x},${s.y}` }).join(' ')}
+                  fill="none"
+                  stroke="var(--color-accent)"
+                  strokeWidth={1.5 / view.k}
+                  strokeDasharray={`${4 / view.k} ${3 / view.k}`}
+                />
+              )}
+              {pirateDraftPoints.map((p, i) => {
+                const s = norm(p)
+                return <circle key={i} cx={s.x} cy={s.y} r={4 / view.k} fill="var(--color-accent)" />
+              })}
+            </g>
           )}
 
           {/* OSN-3 S6B3 — DEVELOPMENT-ONLY, non-interactive fixed-space preview. Final visual child of the
@@ -469,34 +559,42 @@ export function GalaxyMap({
 
       {/* bottom-left: player-facing marker key + hint (pointer-transparent — never blocks map gestures).
           Mirrors the markerStyle glyph semantics exactly: diamond port / circle waypoint / triangle hostile. */}
-      <OverlayPanel slot="bottom-left" inert className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-faint">
-        <span className="flex items-center gap-1">
-          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
-            <polygon points="5,0 10,5 5,10 0,5" fill="var(--color-accent)" />
-          </svg>
-          Port — dock &amp; trade
-        </span>
-        <span className="flex items-center gap-1">
-          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
-            <circle cx="5" cy="5" r="4" fill="var(--color-success)" />
-          </svg>
-          Safe
-        </span>
-        <span className="flex items-center gap-1">
-          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
-            <polygon points="5,0.5 9.5,9 0.5,9" fill="var(--color-danger)" />
-          </svg>
-          Hostile
-        </span>
-        {miningFields.length > 0 && (
-          <span className="flex items-center gap-1">
-            <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" aria-hidden="true">
-              <polygon points="9.7,5 6.7,10 3.3,10 0.3,5 3.3,0 6.7,0" fill="var(--color-warning)" />
-            </svg>
-            Mining field — settle within range to extract
-          </span>
-        )}
-        <span className="basis-full">Tap a marker for details · drag to pan · scroll to zoom</span>
+      {/* bottom-left: collapsible marker key — a small "Map key" chip by default so it never
+          covers the map; expands to a readable vertical list (was a tiny wrapping block that
+          sprawled across the bottom on narrow screens). */}
+      <OverlayPanel slot="bottom-left" className="pointer-events-auto max-w-[calc(100vw-1.5rem)] text-sm text-ink-muted">
+        <details>
+          <summary className="cursor-pointer select-none list-none font-medium">Map key</summary>
+          <div className="mt-2 flex flex-col gap-1.5 text-ink-faint">
+            <span className="flex items-center gap-1.5">
+              <svg viewBox="0 0 10 10" className="h-3 w-3" aria-hidden="true">
+                <polygon points="5,0 10,5 5,10 0,5" fill="var(--color-accent)" />
+              </svg>
+              Port — dock &amp; trade
+            </span>
+            <span className="flex items-center gap-1.5">
+              <svg viewBox="0 0 10 10" className="h-3 w-3" aria-hidden="true">
+                <circle cx="5" cy="5" r="4" fill="var(--color-success)" />
+              </svg>
+              Safe
+            </span>
+            <span className="flex items-center gap-1.5">
+              <svg viewBox="0 0 10 10" className="h-3 w-3" aria-hidden="true">
+                <polygon points="5,0.5 9.5,9 0.5,9" fill="var(--color-danger)" />
+              </svg>
+              Hostile
+            </span>
+            {miningFields.length > 0 && (
+              <span className="flex items-center gap-1.5">
+                <svg viewBox="0 0 10 10" className="h-3 w-3" aria-hidden="true">
+                  <polygon points="9.7,5 6.7,10 3.3,10 0.3,5 3.3,0 6.7,0" fill="var(--color-warning)" />
+                </svg>
+                Mining field — settle within range to extract
+              </span>
+            )}
+            <span className="mt-1">Double-tap the map to command · tap a marker for details · drag to pan · scroll to zoom</span>
+          </div>
+        </details>
       </OverlayPanel>
     </div>
   )

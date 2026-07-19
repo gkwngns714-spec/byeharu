@@ -50,10 +50,9 @@
 # veteran_frame hp_mult arm and the plain arm every run — slot distinctness, exact
 # max_hp = round(base × 1.08), and idempotent-replay immutability; the harness never writes a
 # Ship-Soul table directly, negative-grepped below)
-# plus the TEAMMAP-1 group-tag block (0187: send_ship_group_expedition re-created from its 0163
-# head with ONE marked hunk tagging the member fleets with the team's group_id — a 2-ship team
-# send tags both fleets = exactly the envelope's sent[] ids with no strays, and the arrival settle
-# docks both members at the port with the informational, display-only tag surviving the settle)
+# (the TEAMMAP-1 group-tag block is RETIRED — it tested the legacy group send's per-member-fleet tag
+# hunk, and that send was DROPPED by 0232; per-member fleet tagging is not part of the unified
+# group-fleet model, so the concept has no live authority to re-point onto)
 # plus the SHIELD-0 foundation block (0191: the shield schema foundation asserted DEPLOY-INERT —
 # both regen knobs (`shield_regen_combat_pct`/`shield_regen_idle_pct`) committed '0' and NEVER
 # touched, even in-txn (no consumer exists; negative-grepped below); the exact schema shape
@@ -62,12 +61,9 @@
 # the regen predicate empty); and the mainship_sync_combat_shield leaf smoke — floor/ceiling
 # clamps + in-range write exact, missing ship = zero rows, shield_le_max trips, hp/max_hp
 # byte-untouched, service-role-only ACL + shield-only prosrc)
-# plus the TEAMMOVE-1 group-move block (0190: move_ship_group_to_location — a DOCKED team moves
-# onward as one via per-member delegation to the UNCHANGED live move_main_ship_to_location (0156
-# head): mid-flight and split-port members reject member_not_ready with zero departures, a
-# manufactured mid-loop presence failure proves the all-or-nothing rollback of the already-departed
-# member, and the happy path re-departs the members' OWN docked fleets moving + group-tagged, then
-# docks the whole team at the onward port with the tag surviving)
+# (the TEAMMOVE-1 group-move block is RETIRED — it tested the legacy group move and its per-member
+# single-ship delegation, both DROPPED by 0232; onward group movement is the unified
+# command_ship_group_go, proven in fleetgo-proof — one authority per concept)
 # plus the SOUL-1 hook+fold block (0193: the commission roll hook — a DARK commission writes zero
 # trait rows, a LIT commission births exactly 2 derivation-matching traits through the real RPC,
 # ensure_main_ship_for_player hooks its create branch only (a lit replay never rolls an existing
@@ -131,7 +127,7 @@ SQL="$REPO_ROOT/scripts/team-command-proof.sql"
 # the FINALE of the fleet reshape; then CRON-GUARD (0206) appended as the 30th tail — the poison-row
 # proof that the two hottest legacy crons no longer wedge on a single failing row. SHIPYARD-2 (#138,
 # merged) has its own proof file and never touched this pair.)
-MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_MOD22 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_TEAMMAP TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_TEAMMOVE TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_FLEETCTRL TEAMCMD_PASS_NOHOME TEAMCMD_PASS_CMDBUFF TEAMCMD_PASS_CRONGUARD"
+MARKERS="TEAMCMD_PASS_DARK TEAMCMD_PASS_HULLSTATS TEAMCMD_PASS_WRITE TEAMCMD_PASS_CAPTAINS TEAMCMD_PASS_TEAMSTATS TEAMCMD_PASS_SEND TEAMCMD_PASS_STOP TEAMCMD_PASS_DELETE TEAMCMD_PASS_COMBATPARITY TEAMCMD_PASS_TEAMHUNT TEAMCMD_PASS_SHARDDROP TEAMCMD_PASS_TEAMSETTLE TEAMCMD_PASS_CAPXP TEAMCMD_PASS_CAPLEVEL TEAMCMD_PASS_MOD2 TEAMCMD_PASS_MOD22 TEAMCMD_PASS_SHIPYARD0 TEAMCMD_PASS_SOUL0 TEAMCMD_PASS_SHIELD0 TEAMCMD_PASS_SOUL1 TEAMCMD_PASS_SHIELD1 TEAMCMD_PASS_DECKS3 TEAMCMD_PASS_SHIELD2 TEAMCMD_PASS_NANGUARD TEAMCMD_PASS_FLEETCTRL TEAMCMD_PASS_NOHOME TEAMCMD_PASS_CMDBUFF TEAMCMD_PASS_CRONGUARD"
 PASS_LINE="TEAM-COMMAND B-VERIFY PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -159,7 +155,7 @@ if [ "$MODE" = "selftest" ]; then
   # ── all NINE team RPCs are exercised (the five B-surface RPCs + the C0 group preview + the D0
   #    authoritative totals + the D2 combat team-send + the TEAMMOVE-1 docked-team group move) plus the
   #    FLEET-CONTROL (0204) command-ship setter. ─────────────────────────────────────────────────────
-  for fn in upsert_ship_group assign_ship_to_group delete_ship_group send_ship_group_expedition stop_ship_group_transit get_my_group_expedition_preview get_my_group_expedition_totals send_ship_group_hunt move_ship_group_to_location set_fleet_command_ship; do
+  for fn in upsert_ship_group assign_ship_to_group delete_ship_group stop_ship_group_transit get_my_group_expedition_preview get_my_group_expedition_totals send_ship_group_hunt set_fleet_command_ship; do
     grep -q "public.$fn(" "$SQL" || fail "harness does not exercise the '$fn' RPC"
   done
 
@@ -186,7 +182,7 @@ if [ "$MODE" = "selftest" ]; then
   # ── every reject token is asserted (dark gate, validation, fail-closed resolves, send outcomes). Pin the
   #    ASSERT FORM (`is distinct from '<tok>'`), not a bare token match — a bare grep would also match the
   #    SQL header comments, so a gutted .sql that only mentions the tokens in prose could false-green. ────
-  for tok in team_command_disabled invalid_group_index invalid_name ship_not_found group_not_found empty_group member_send_failed invalid_activity stats_invalid invalid_location member_not_ready fleet_inactive_no_command fleet_full ship_not_in_fleet; do
+  for tok in team_command_disabled invalid_group_index invalid_name ship_not_found group_not_found empty_group invalid_activity stats_invalid invalid_location member_not_ready fleet_inactive_no_command fleet_full ship_not_in_fleet; do
     grep -q "is distinct from '$tok'" "$SQL" || fail "harness does not ASSERT the '$tok' reject (is distinct from form)"
   done
 
@@ -233,13 +229,16 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "update public.main_ship_hull_types set base_shield = 0 where hull_type_id = 'starter_frigate'" "$SQL" \
     || fail "harness does not RESTORE base_shield to 0 after the commission-copy arm (the required restore)"
 
-  # ── behavior specifics: all-or-nothing send rollback; the EXACT mixed + idempotent stop aggregates;
-  #    the physical held-in-open-space shape; delete's SET-NULL member un-grouping. ───────────────────
-  grep -qi "all-or-nothing" "$SQL"                                    || fail "harness does not assert the all-or-nothing send rollback"
-  grep -q "status in ('moving','present','returning')" "$SQL"        || fail "all-or-nothing does not assert zero active fleets for the rolled-back member"
-  grep -q "'stopped')::int is distinct from 2" "$SQL"                 || fail "harness does not assert the exact mixed stop aggregate (stopped=2)"
-  grep -q "'skipped')::int is distinct from 3" "$SQL"                 || fail "harness does not assert the exact idempotent double-stop aggregate (skipped=3)"
-  grep -q "spatial_state = 'in_space'" "$SQL"                         || fail "harness does not assert the held-in-open-space physical shape"
+  # ── behavior specifics: 4B-DROP RETIRE — the legacy group send (all-or-nothing behavior + its
+  #    per-member-fleet model) was dropped by 0232; BLOCK SEND now only PROVISIONS gA1/gC1 via the live
+  #    team RPCs and the unified group send is proven in fleetgo-proof. BLOCK STOP asserts the EXACT
+  #    best-effort all-skip aggregate (no member can be put into per-ship transit post-0232, so
+  #    stop_ship_group_transit over a fully-docked team is the graceful all-skip — see the BLOCK STOP
+  #    header in the .sql). Plus delete's SET-NULL member un-grouping. ──
+  grep -q "'stopped')::int is distinct from 0 or (r->>'skipped')::int is distinct from 3 or (r->>'failed')::int is distinct from 0" "$SQL" \
+    || fail "harness does not assert the exact best-effort all-skip stop aggregate (stopped=0/skipped=3/failed=0 — no member has per-ship transit to halt post-0232)"
+  grep -qF "e->>'outcome' = 'skipped' and e->>'reason' = 'no_active_fleet'" "$SQL" \
+    || fail "harness does not assert the skipped members carry the graceful no_active_fleet outcome/reason"
   grep -qi "on delete set null" "$SQL"                                || fail "harness does not assert the delete SET-NULL member un-grouping"
   grep -q "group_id is null" "$SQL"                                   || fail "harness does not assert members are un-grouped after delete"
 
@@ -294,9 +293,10 @@ if [ "$MODE" = "selftest" ]; then
   # ── D3 (0169) team-settle pins, in assert form (a gutted .sql that only mentions them in prose
   #    cannot false-green): the escape's returning-status delta (pair-shape), the reconciler re-home
   #    in the legacy write shape, BOTH reconciler race guards (mid-combat + in-transit), the manifest
-  #    retention decision, the M1 hunting-reject WITHOUT a lost update, and the repair revival. ──────
-  grep -qF "and status = 'returning' and spatial_state is null" "$SQL" \
-    || fail "harness does not ASSERT the D3 returning-status delta (pair-shape form)"
+  #    retention decision, and the repair revival. (The M1 single-send race pin is RETIRED with the
+  #    legacy single-ship send — dropped by 0232.) ──────
+  grep -qF "and status = 'returning'" "$SQL" \
+    || fail "harness does not ASSERT the D3 returning-status delta"
   grep -qF "(want 2 home/legacy-shape after the reconciler)" "$SQL" \
     || fail "harness does not ASSERT the reconciler re-home (legacy write shape)"
   grep -qF "reconciler touched a mid-combat member (race guard)" "$SQL" \
@@ -305,10 +305,6 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT the in-transit reconciler race guard"
   grep -qF "(want 2 retained)" "$SQL" \
     || fail "harness does not ASSERT the manifest retention decision"
-  grep -qF "live single send ACCEPTED a hunting ship (M1)" "$SQL" \
-    || fail "harness does not ASSERT the M1 hunting-reject pin"
-  grep -qF "the rejected single send moved the hunting ship (lost update)" "$SQL" \
-    || fail "harness does not ASSERT the no-lost-update half of the M1 pin"
   grep -qF "repair did not revive the destroyed member (want home @ max_hp)" "$SQL" \
     || fail "harness does not ASSERT the repair revival (recovery pin)"
 
@@ -530,21 +526,9 @@ if [ "$MODE" = "selftest" ]; then
     | grep -qiE '(insert into|update|delete from|copy)[[:space:]]+(public\.)?(ship_trait_types|main_ship_traits)\b' \
     && fail "harness directly mutates a Ship-Soul-owned table (sole-writer law violation)" || true
 
-  # ── TEAMMAP (0187 / TEAMMAP-1) pins, in assert form (a gutted .sql that only mentions them in
-  #    prose cannot false-green): the group-tag hunk assert (member fleets carry the team's
-  #    group_id), the envelope-exactness assert (tagged set = the sent[] fleet ids), the no-strays
-  #    assert, the arrival-dock assert (0153 dock shape), and the tag-survives-the-settle assert
-  #    (the map's docked-team badge read). ─────────────────────────────────────────────────────────
-  grep -qF "(want 2 — the 0187 tag hunk)" "$SQL" \
-    || fail "harness does not ASSERT the 0187 group-tag hunk (member fleets carry group_id)"
-  grep -qF "tagged fleets are not exactly the envelope" "$SQL" \
-    || fail "harness does not ASSERT the tagged set = the envelope's sent[] fleet ids"
-  grep -qF "(want exactly the 2 member fleets — no strays)" "$SQL" \
-    || fail "harness does not ASSERT the no-stray-tags pin"
-  grep -qF "(want 2 — the 0153 dock write)" "$SQL" \
-    || fail "harness does not ASSERT arrival docks both members (0153 stationary/at_location)"
-  grep -qF "(want 2 — the docked-team badge read)" "$SQL" \
-    || fail "harness does not ASSERT the tag survives the settle (present member fleets at the port)"
+  # ── TEAMMAP (0187 / TEAMMAP-1) RETIRED: the group-tag block tested the legacy group send's
+  #    per-member-fleet tag hunk — that send was DROPPED by 0232, and per-member fleet tagging is not
+  #    part of the unified group-fleet model, so the block is retired (one authority per concept). ──
 
   # ── SHIELD0 (0191 / SHIELD-0) pins, in assert form (a gutted .sql that only mentions them in
   #    prose cannot false-green): BOTH committed knob seeds (never raised, even in-txn — no
@@ -600,36 +584,9 @@ if [ "$MODE" = "selftest" ]; then
   grep -qF "the shield leaf body mentions hp (one leaf one concern breach)" "$SQL" \
     || fail "harness does not PIN the leaf's shield-only prosrc (no hp token)"
 
-  # ── TEAMMOVE (0190 / TEAMMOVE-1) pins, in assert form (a gutted .sql that only mentions them in
-  #    prose cannot false-green): the mid-flight and split-port member_not_ready rejects (each with
-  #    its zero-departures half), the all-or-nothing rollback (member_send_failed pinned to the
-  #    mid-loop presence raise + zero moving fleets + both fleets still docked), the happy-path
-  #    present-departure envelopes over the members' OWN fleets, the moving + group-tagged departure
-  #    with the no-strays pin, and the onward dock with the tag surviving. ───────────────────────────
-  grep -qF "TEAMMOVE FAIL not-docked reject" "$SQL" \
-    || fail "harness does not ASSERT the mid-flight-member member_not_ready reject"
-  grep -qF "the not-docked reject departed t1" "$SQL" \
-    || fail "harness does not ASSERT zero departures on the not-docked reject"
-  grep -qF "TEAMMOVE FAIL mixed-location reject" "$SQL" \
-    || fail "harness does not ASSERT the split-port-team member_not_ready reject"
-  grep -qF "the mixed-location reject departed a member" "$SQL" \
-    || fail "harness does not ASSERT zero departures on the mixed-location reject"
-  grep -qF "all-or-nothing detail not pinned to t2''s presence raise" "$SQL" \
-    || fail "harness does not PIN the all-or-nothing abort to the mid-loop member raise"
-  grep -qF "(want 0 — the TEAMMOVE all-or-nothing rollback)" "$SQL" \
-    || fail "harness does not ASSERT zero moving fleets after the aborted team move"
-  grep -qF "(want 2 — the departed member must be rolled back)" "$SQL" \
-    || fail "harness does not ASSERT both fleets still docked after the aborted team move"
-  grep -qF "present-departure envelopes from Slagworks to Driftmarch (want 2)" "$SQL" \
-    || fail "harness does not ASSERT the 0156 present-departure envelope shape"
-  grep -qF "are not the members'' own docked fleets" "$SQL" \
-    || fail "harness does not ASSERT the wrapper re-departs the members' OWN fleets (composes, never re-creates)"
-  grep -qF "(want 2 — the TEAMMOVE group departure)" "$SQL" \
-    || fail "harness does not ASSERT all members traveling with group-tagged fleets"
-  grep -qF "(want 2 — the team docked at Driftmarch)" "$SQL" \
-    || fail "harness does not ASSERT the onward arrival docks the team (0153 pair)"
-  grep -qF "(want 2 — the moved team present at Driftmarch, tag surviving)" "$SQL" \
-    || fail "harness does not ASSERT the tag survives the onward settle"
+  # ── TEAMMOVE (0190 / TEAMMOVE-1) RETIRED: the docked-team onward-move block tested the legacy group
+  #    move (per-member delegation to the legacy single-ship move) — both were DROPPED by 0232. Onward
+  #    group movement is the unified command_ship_group_go, proven in fleetgo-proof (one authority). ──
 
   # ── SOUL1 (0193 / SOUL-1) pins, in assert form (a gutted .sql that only mentions them in prose
   #    cannot false-green): the dark-commission zero-roll (the call-site gate); the dark-parity
@@ -798,20 +755,17 @@ if [ "$MODE" = "selftest" ]; then
 
   # ── FLEET-CONTROL (0204) witness pins, in assert form (a gutted .sql that only mentions them in prose
   #    cannot false-green): the committed-dark flag pin; the DARK no-command-requirement (a zero-command
-  #    fleet sends while dark, fleet_inactive_no_command NEVER appears) + the DARK no-8-cap (9 members);
-  #    the LIT reject on ALL THREE movement RPCs; the activation (designate → reject disappears + the
-  #    is_command_ship persistence); the exact 8th-OK / 9th-fleet_full boundary held at 8; and the
-  #    designation guard (ungrouped → ship_not_in_fleet) + the stand-down re-inactivation round-trip. ──
+  #    fleet HUNTS while dark, fleet_inactive_no_command NEVER appears) + the DARK no-8-cap (9 members);
+  #    the LIT reject on the group hunt RPC (the legacy send/move gate probes were retired with those
+  #    RPCs by 0232 — send_ship_group_hunt carries the identical gate); the activation (designate →
+  #    reject disappears + is_command_ship persistence); the exact 8th-OK / 9th-fleet_full boundary held
+  #    at 8; and the designation guard (ungrouped → ship_not_in_fleet) + the stand-down round-trip. ──
   grep -qF "FLEETCTRL FAIL: fleet_control_enabled is not committed false (dark)" "$SQL" \
     || fail "FLEETCTRL: harness does not ASSERT the committed-dark flag"
-  grep -qF "a no-command fleet was blocked while dark (want no command requirement)" "$SQL" \
-    || fail "FLEETCTRL: harness does not ASSERT the DARK no-command-requirement (send succeeds, no fleet_inactive reject)"
+  grep -qF "a no-command fleet hit the command gate while dark (want no command requirement)" "$SQL" \
+    || fail "FLEETCTRL: harness does not ASSERT the DARK no-command-requirement (hunt succeeds, no fleet_inactive reject)"
   grep -qF "want 9 — no 8-cap while dark" "$SQL" \
     || fail "FLEETCTRL: harness does not ASSERT the DARK no-8-cap (9 members assigned)"
-  grep -qF "FLEETCTRL FAIL lit send inactive" "$SQL" \
-    || fail "FLEETCTRL: harness does not ASSERT the LIT send fleet_inactive_no_command reject"
-  grep -qF "FLEETCTRL FAIL lit move inactive" "$SQL" \
-    || fail "FLEETCTRL: harness does not ASSERT the LIT move fleet_inactive_no_command reject"
   grep -qF "FLEETCTRL FAIL lit hunt inactive" "$SQL" \
     || fail "FLEETCTRL: harness does not ASSERT the LIT hunt fleet_inactive_no_command reject"
   grep -qF "is_command_ship did not persist on the designated ship" "$SQL" \
@@ -835,16 +789,16 @@ if [ "$MODE" = "selftest" ]; then
   #    stay green): (a) launch origin is the docked LOCATION, not the base; (b) the return port is recorded;
   #    (c) the reconciler DOCKS the returner, never re-homes it under the flag; (d) H1 — a returned docked
   #    team can LAUNCH AGAIN (the second-launch regression witness the per-ship split guarantees). ─────────
-  grep -qF "origin_type='location' and origin_location_id=slag and target_type='location'" "$SQL" \
-    || fail "NOHOME: harness does not ASSERT the docked launch departs from the port LOCATION (not the base)"
+  grep -qF "id=v_team_mv and origin_type='location' and origin_location_id=slag" "$SQL" \
+    || fail "NOHOME: harness does not ASSERT the docked TEAM hunt departs from the port LOCATION (not the base)"
   grep -qF "(r->>'return_location_id')::uuid is distinct from slag" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the chosen/origin return port is recorded on the launch envelope"
-  grep -qF "the returning member was re-homed under the lit flag" "$SQL" \
+  grep -qF "the NO-HOME law was violated by a re-home" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the reconciler DOCKS (never re-homes) the returner under the flag"
   grep -qF "a returned docked team could not launch again" "$SQL" \
     || fail "NOHOME: harness does not ASSERT the H1 second-launch witness (a returned team hunts AGAIN)"
-  grep -qF "has no per-ship tagged present fleet at the return port (H1 wedge)" "$SQL" \
-    || fail "NOHOME: harness does not ASSERT the H1 per-ship fleet split (each returned member owns a tagged fleet)"
+  grep -qF "has no per-ship present fleet at the return port (H1 wedge" "$SQL" \
+    || fail "NOHOME: harness does not ASSERT the H1 per-ship fleet split (each returned member owns a present fleet)"
 
   # ── COMMAND-BUFFS (0205) witness pins, in assert form (a gutted .sql that only mentions them in prose
   #    cannot false-green): the committed-dark flag; the commission-trigger roll = the deterministic hash

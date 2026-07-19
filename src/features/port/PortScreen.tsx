@@ -5,6 +5,7 @@ import { HaulBoardPanel } from './HaulBoardPanel'
 import { PortPickerPanel } from './PortPickerPanel'
 import { SalvageMarketPanel } from './SalvageMarketPanel'
 import { RepairPanel } from './RepairPanel'
+import { ShopPanel } from './ShopPanel'
 import { ShipyardPanel } from './ShipyardPanel'
 import { StationHangar } from './StationHangar'
 import { derivePortsWithShips, portOfShip, resolveChosenShipId } from './portPicker'
@@ -187,6 +188,18 @@ export function PortScreen() {
                 paid Repair button (the free repair_main_ship safelock handles destroyed ships).
                 locationId is the SERVER dock projection (this docked branch). */}
             <RepairPanel
+              lifecycleKey={lifecycleKey}
+              locationId={dock.locationId}
+              mainShipId={chosenShipId}
+            />
+            {/* PORT-SHOP (dark, flag-gated): the port outfitter — buy entry-level fitting modules +
+                ammo for credits. A port SERVICE on the main rail beside repair/salvage. Unlike those,
+                the shop has its OWN gated read RPC (get_port_shop, 0235) which rejects
+                port_shop_disabled before any read, so the panel reads its lit/dark signal straight
+                from that RPC — flag false (production today) → renders null, so production is
+                byte-unchanged. Bought modules land in the fittable module pool (module_instances);
+                bought ammo lands in inventory. locationId is the SERVER dock projection. */}
+            <ShopPanel
               lifecycleKey={lifecycleKey}
               locationId={dock.locationId}
               mainShipId={chosenShipId}

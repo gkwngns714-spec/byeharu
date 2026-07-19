@@ -1,0 +1,110 @@
+name: COMBAT-CARDINALITY — 0240 aggregate-bucket uniqueness disposable proof (no production)
+
+# Proves migration 0240 (20260618000240_combat_units_aggregate_bucket_uniqueness.sql) on a THROWAWAY
+# local Supabase — NEVER production:
+#   1. selftest — a DB-free static check that scripts/combat-cardinality-proof.sql is well-formed:
+#      self-rolling-back (opens a txn, ends in ROLLBACK, no COMMIT), carries every PASS marker in
+#      assert-form, probes the constraint boundary with caught unique_violation/check_violation
+#      subtransactions, and draws no session RNG (0041);
+#   2. disposable-matrix — `supabase start` applies the FULL migration chain (incl. 0023's original
+#      blanket constraint THEN 0240's drop+re-scope). 0240's own in-migration self-assert runs here
+#      against real Postgres; then the proof seeds all 3 combat_units row classes and asserts the new
+#      partial index PERMITS multi-pirate + multi-member rows while REJECTING a duplicate aggregate
+#      bucket, and that no sibling invariant was weakened.
+# The proof flips NO committed flag and writes nothing durable (self-rolling-back). No `environment:` on
+# any job, so none can read production secrets. Modeled on pirate-zone-grant-lockdown-proof.yml /
+# combat-spatial-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-combat-cardinality-fix**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: combat-cardinality-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static harness checks (DB-free)
+        run: |
+          set -euo pipefail
+          SQL=scripts/combat-cardinality-proof.sql
+          [ -f "$SQL" ] || { echo "proof sql not found"; exit 1; }
+
+          # self-rolling-back: opens a txn, ends in ROLLBACK, and never COMMITs.
+          grep -qiE '^\s*begin\s*;' "$SQL"    || { echo "harness does not open a txn (begin;)"; exit 1; }
+          grep -qiE '^\s*rollback\s*;' "$SQL" || { echo "harness does not end in ROLLBACK"; exit 1; }
+          if grep -qiE '^\s*commit\s*;' "$SQL"; then echo "harness COMMITs — must be self-rolling-back"; exit 1; fi
+
+          # every PASS marker present, in assert-form (each has a matching FAIL raise or catch).
+          for m in CARDINALITY_PASS_PRODSHAPE CARDINALITY_PASS_MULTIENEMY CARDINALITY_PASS_MANYENEMY \
+                   CARDINALITY_PASS_MEMBERS CARDINALITY_PASS_AGGREGATE_UNIQUE CARDINALITY_PASS_MIXED \
+                   CARDINALITY_PASS_XOR CARDINALITY_PASS_NOWEAKEN CARDINALITY_PASS_DETERMINISTIC; do
+            grep -q "$m" "$SQL" || { echo "missing PASS marker: $m"; exit 1; }
+          done
+          grep -q 'COMBAT-CARDINALITY PROOF PASSED' "$SQL" || { echo "missing final PASS line"; exit 1; }
+
+          # the constraint-boundary probes are caught in subtransactions (never abort the outer txn).
+          grep -q 'when unique_violation then' "$SQL" || { echo "harness lacks the unique_violation rejection catch"; exit 1; }
+          grep -q 'when check_violation then'  "$SQL" || { echo "harness lacks the check_violation rejection catch"; exit 1; }
+
+          # the core-fix assert and the aggregate-rejection assert must both exist in assert-form.
+          grep -q 'MULTIENEMY FAIL'       "$SQL" || { echo "harness lacks the multi-pirate permitted assert"; exit 1; }
+          grep -q 'AGGREGATE_UNIQUE FAIL' "$SQL" || { echo "harness lacks the duplicate-aggregate-rejected assert"; exit 1; }
+          grep -q 'NOWEAKEN FAIL'         "$SQL" || { echo "harness lacks the no-constraint-weakened assert"; exit 1; }
+
+          # the boundary is exercised via direct combat_units inserts (this is a schema-constraint proof).
+          grep -qiE 'insert into public\.combat_units' "$SQL" || { echo "harness does not probe combat_units directly"; exit 1; }
+
+          # determinism: no random() (0041 law). gen_random_uuid() has "_uuid" between random and ( so a
+          # plain "random(" check never flags it.
+          if grep -qE 'random\(' "$SQL"; then echo "harness uses random() (0041 determinism law)"; exit 1; fi
+
+          echo "COMBAT-CARDINALITY SELFTEST: ALL PASSED (self-rolling-back; 9 PASS markers in assert-form; unique_violation/check_violation boundary probes in subtransactions; direct combat_units constraint probing; no random())"
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0023 blanket + 0240 re-scope)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: COMBAT-CARDINALITY apply-proof (multi-pirate permitted; duplicate aggregate rejected)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          # capture rc WITHOUT letting bash -e kill the step before we print the psql output.
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/combat-cardinality-proof.sql > /tmp/ccardout.txt 2>&1
+          rc=$?
+          set -e
+          echo "----- proof output (rc=$rc) -----"
+          cat /tmp/ccardout.txt
+          echo "---------------------------------"
+          [ "$rc" -eq 0 ] || { echo "psql exited $rc — the proof aborted"; exit 1; }
+          for m in CARDINALITY_PASS_PRODSHAPE CARDINALITY_PASS_MULTIENEMY CARDINALITY_PASS_MANYENEMY \
+                   CARDINALITY_PASS_MEMBERS CARDINALITY_PASS_AGGREGATE_UNIQUE CARDINALITY_PASS_MIXED \
+                   CARDINALITY_PASS_XOR CARDINALITY_PASS_NOWEAKEN CARDINALITY_PASS_DETERMINISTIC; do
+            grep -q "$m" /tmp/ccardout.txt || { echo "PROOF DID NOT EMIT MARKER: $m"; exit 1; }
+          done
+          grep -q 'COMBAT-CARDINALITY PROOF PASSED' /tmp/ccardout.txt \
+            || { echo 'PROOF DID NOT REACH THE PASS MARKER'; exit 1; }
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
