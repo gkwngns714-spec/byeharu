@@ -70,7 +70,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (select 1 from public.app_owners where user_id = auth.uid())
 $$;
@@ -126,7 +126,7 @@ create or replace function public.world_editor_ping(p_request_id text, p_payload
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_uid    uuid := auth.uid();
