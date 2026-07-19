@@ -13,9 +13,16 @@
 // layer adds the region read for the same rows — no parallel location system. Ring tone composes
 // markerStyle's ONE type→token decision (danger hostile / success safe / accent port) — no second
 // color table.
+//
+// PIRATE-RING SUPPRESSION: a hostile location (markerStyle's `isCombatMarker` — pirate_hunt/pirate_den
+// or the hunt_pirates activity) already gets the dangerZoneLayer "slime" polygon, so drawing this
+// plain circle on top of it read as a redundant duplicate zone. Hostile locations are therefore
+// SKIPPED here and represented ONLY by their danger-zone polygon; ports/safe/resource locations keep
+// their ring exactly as before. This reuses markerStyle's ONE hostile classifier — no second table,
+// no data change (territory_radius and the intercept/presence logic that reads it are untouched).
 import { createElement, type ReactElement } from 'react'
 import type { MapLocation } from './mapTypes'
-import { markerStyle, type MarkerStyleInputs } from './markerStyle'
+import { isCombatMarker, markerStyle, type MarkerStyleInputs } from './markerStyle'
 import { WORLD_TO_VIEWBOX_SCALE } from './openSpaceTransform'
 
 /** What a ring needs: position + radius + the markerStyle tone inputs (any MapLocation satisfies). */
@@ -28,6 +35,7 @@ export function territoryLayer(args: {
 }): ReactElement[] {
   const out: ReactElement[] = []
   for (const loc of args.locations) {
+    if (isCombatMarker(loc)) continue // hostile → shown by the danger-zone polygon; no duplicate ring
     const r = loc.territory_radius
     if (r == null || !Number.isFinite(r) || r <= 0) continue // null radius = no territory, no ring
     const p = args.norm({ x: loc.x, y: loc.y })
