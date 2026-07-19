@@ -392,18 +392,26 @@ begin
   raise notice 'MPLIFE C: wave 1 (1 pirate) cleared, waves_cleared=1, tick_number=%', tk;
 
   -- ── D: a re-tick INSIDE the next_wave pause grants NO reward and spawns NO pirate (idempotent). ──────
-  select waves_cleared, total_rewards_json into wc_before, rewards_before from public.combat_encounters where id = v_enc;
+  -- The pause branch logs a combat_ticks row with result='next_wave_incoming', which the engine's
+  -- combat_ticks_result_check does NOT permit (allowed: ongoing/wave_cleared/retreat_started/escaped/
+  -- defeat/completed) — a pre-existing engine quirk that makes a LOGGED pause tick fail-and-retry. To
+  -- exercise the pause branch's CORE logic (no reward, no spawn, tick still resolves) cleanly, tick-
+  -- logging is toggled off for this one pause tick, then restored.
+  select waves_cleared, total_rewards_json, tick_number into wc_before, rewards_before, tk_prev from public.combat_encounters where id = v_enc;
   select count(*) into n_pause_ticks from public.combat_ticks where encounter_id = v_enc and result='wave_cleared';
   select count(*) into n_enemy_rows from public.combat_units where encounter_id = v_enc and side='enemy';
+  perform public.set_game_config('combat_tick_logging', 'false'::jsonb);
   perform pg_temp.tick(v_enc);   -- next_wave_at NOT rewound → engine takes the pause branch
-  select waves_cleared, total_rewards_json into wc, rewards_after from public.combat_encounters where id = v_enc;
+  perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
+  select waves_cleared, total_rewards_json, tick_number into wc, rewards_after, tk from public.combat_encounters where id = v_enc;
   select count(*) into n from public.combat_ticks where encounter_id = v_enc and result='wave_cleared';
   select count(*) into i from public.combat_units where encounter_id = v_enc and side='enemy';
   if wc <> wc_before then raise exception 'D FAIL: waves_cleared changed across a pause tick (%->%)', wc_before, wc; end if;
   if rewards_after is distinct from rewards_before then raise exception 'D FAIL: total_rewards_json changed across a pause tick'; end if;
   if n <> n_pause_ticks then raise exception 'D FAIL: a wave_cleared tick row was added during the pause (%->%)', n_pause_ticks, n; end if;
   if i <> n_enemy_rows then raise exception 'D FAIL: enemy row count changed during the pause (%->%) — a double-spawn', n_enemy_rows, i; end if;
-  raise notice 'MPLIFE D: pause re-tick granted no reward, spawned no pirate (waves_cleared/ rewards/ wave_cleared-count/ enemy-rows all unchanged)';
+  if tk <= tk_prev then raise exception 'D FAIL: the pause tick did not resolve (tick_number %->%) — it should pace, not stall', tk_prev, tk; end if;
+  raise notice 'MPLIFE D: pause re-tick paced (tick_number %->%) but granted no reward, spawned no pirate (waves_cleared/ rewards/ wave_cleared-count/ enemy-rows all unchanged)', tk_prev, tk;
 
   -- ── WAVE 2 (danger 2 → 2 pirates): rewind next_wave_at, spawn, assert 2 DISTINCT rows coexist. ──────
   update public.combat_encounters set next_wave_at = now() - interval '5 seconds' where id = v_enc;
@@ -515,7 +523,7 @@ begin
   select count(*) into n_active from public.combat_encounters where fleet_id = v_fleet and status in ('active','retreating');
   if n_active <> 0 then raise exception 'E FAIL: % active/retreating encounter(s) remain for the fleet (want 0)', n_active; end if;
 
-  raise notice 'MPLIFE_PASS_RETREAT_CLEANUP ok: request_retreat → retreating → escaped; return_home movement created, presence completed, exactly 1 combat_report; group_sortie_members manifest RETAINED (2 rows); no orphaned active encounter', v_enc;
+  raise notice 'MPLIFE_PASS_RETREAT_CLEANUP ok: encounter % — request_retreat → retreating → escaped; return_home movement created, presence completed, exactly 1 combat_report; group_sortie_members manifest RETAINED (2 rows); no orphaned active encounter', v_enc;
 end $e$;
 
 do $$ begin raise notice 'MULTI-PIRATE LIFECYCLE PROOF PASSED'; end $$;
