@@ -81,7 +81,7 @@ function commandRpcName(commandType: WorldEditorCommandType): string {
 
 /** Normalize the raw snake_case server envelope into the typed camelCase result. */
 function normalizeEnvelope<R>(
-  envelope: WorldEditorCommandEnvelope,
+  envelope: WorldEditorCommandEnvelope<unknown>,
   raw: RawServerEnvelope | null,
 ): WorldEditorCommandResult<R> {
   if (!raw || typeof raw.ok !== 'boolean') {
