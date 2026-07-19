@@ -1,0 +1,65 @@
+name: WORLD-EDITOR OWNER-SPINE — server-authoritative owner boundary disposable proof (no production)
+
+# Proves migration 0243 (world_editor_owner_security_spine) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0243. 0243's own in-migration self-assert
+#     runs here against real Postgres (spine present, deny-all allow-list, authenticated-only entrypoint,
+#     0239 lockdown intact, read surface unchanged) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the guard end to end against the running disposable DB:
+#     owner ACCEPTED; non-owner REJECTED (not_authorized); anon REJECTED (not_authenticated); direct RPC
+#     as the authenticated role cannot bypass; request_id idempotent; pirate-zone lockdown intact; the
+#     read-only editor RPCs untouched.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, mutates NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# pirate-zone-grant-lockdown-proof.yml / danger-combat-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-v1b0-ownerspine**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-ownerspine-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0243 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR OWNER-SPINE real-chain proof (owner accept / non-owner + anon reject / idempotent)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-ownerspine-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            OWNERSPINE_PASS_OWNER_ACCEPTED \
+            OWNERSPINE_PASS_NONOWNER_REJECTED \
+            OWNERSPINE_PASS_ANON_REJECTED \
+            OWNERSPINE_PASS_DIRECT_RPC_AS_AUTHENTICATED_REJECTED \
+            OWNERSPINE_PASS_IDEMPOTENT \
+            OWNERSPINE_PASS_PRIVILEGE_MATRIX \
+            OWNERSPINE_PASS_ZONE_LOCKDOWN_INTACT \
+            OWNERSPINE_PASS_READ_SURFACE_INTACT \
+            'WORLD-EDITOR OWNER-SPINE PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL OWNER-SPINE PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
