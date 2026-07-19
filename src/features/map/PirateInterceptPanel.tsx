@@ -1,25 +1,22 @@
 import { useState } from 'react'
-import type { MapLocation } from './mapTypes'
 import type { WorldCoord } from './openSpaceTransform'
-import { commandShipGroupCancelRoute, commandShipGroupGoRoute, pirateZoneCreate } from './pirateApi'
+import { commandShipGroupCancelRoute, commandShipGroupGoRoute } from './pirateApi'
 import { Badge, Button, OverlayPanel } from '../../components/ui'
 
-// PIRATE INTERCEPT (prototype) — the ONE UI surface for the two new player/owner-facing capabilities:
-//   'route' — plot 1-3 waypoints + a final open-space point, preview the danger-zone warning, send.
-//   'draw'  — click-to-add-vertex polygon editor (functional prototype; freehand-stroke capture is the
-//             documented stub — see the migration header) + save via pirate_zone_create.
-// Mounted by MapScreen ONLY while pirateInterceptEnabled is lit (the parent's gate) — this component
-// itself does not re-check the flag; a dark deploy never mounts it, so it adds zero bundle-visible
-// surface to a player who never sees the flag flip.
+// PIRATE INTERCEPT — the player-facing ROUTE planner: plot 1-3 waypoints + a final open-space point to
+// route a fleet AROUND known danger zones (or deliberately bait one), then send. Mounted by MapScreen
+// ONLY while pirateInterceptEnabled is lit (the parent's gate) — this component does not re-check the
+// flag; a dark deploy never mounts it.
 //
-// PROTOTYPE SCOPE (explicit): operates on the player's FIRST ship group only (groupId prop) — a
-// multi-group route-planner selector is a follow-up, mirroring how FleetCommandPanel's own target
-// model is singular. The route's final leg is always an open-space point tapped on the map (routing
-// to a PORT as the final leg is supported server-side via p_target_location_id but has no UI here).
+// SCOPE: the zone-DRAWING (pirate_zone_create) authoring flow is a DEVELOPER/admin tool, not player
+// gameplay — it is deliberately absent from this player UI (the server RPC stays for dev/admin use).
+// Players only ROUTE around danger here; they never draw pirate territory.
+//
+// Operates on the player's FIRST ship group only (groupId prop), mirroring how FleetCommandPanel's own
+// target model is singular. The route's final leg is always an open-space point tapped on the map.
 
 export function PirateInterceptPanel({
   groupId,
-  locations,
   mode,
   onModeChange,
   draftPoints,
@@ -29,9 +26,8 @@ export function PirateInterceptPanel({
   onClose,
 }: {
   groupId: string | null
-  locations: MapLocation[]
-  mode: 'off' | 'route' | 'draw'
-  onModeChange: (mode: 'off' | 'route' | 'draw') => void
+  mode: 'off' | 'route'
+  onModeChange: (mode: 'off' | 'route') => void
   draftPoints: WorldCoord[]
   onUndoDraft: () => void
   onClearDraft: () => void
@@ -42,10 +38,6 @@ export function PirateInterceptPanel({
 }) {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const [zoneName, setZoneName] = useState('New Danger Zone')
-  const [attachLocationId, setAttachLocationId] = useState<string>('')
-
-  const hostileLocations = locations.filter((l) => l.location_type === 'pirate_hunt' || l.location_type === 'pirate_den')
 
   const sendRoute = async () => {
     if (!groupId || draftPoints.length === 0) return
@@ -73,31 +65,16 @@ export function PirateInterceptPanel({
     setMessage(result.ok ? `Cleared ${String(result.cleared ?? 0)} queued leg(s).` : `Could not clear route: ${result.reason}`)
   }
 
-  const saveZone = async () => {
-    if (draftPoints.length < 3) return
-    setBusy(true)
-    setMessage(null)
-    const vertices: [number, number][] = draftPoints.map((p) => [p.x, p.y])
-    const result = await pirateZoneCreate(zoneName.trim() || 'Danger Zone', vertices, attachLocationId || null)
-    setBusy(false)
-    if (result.ok) {
-      setMessage(result.standalone === true ? 'Zone saved (standalone — warning only, no combat).' : 'Zone saved and linked to a hostile site.')
-      onClearDraft()
-      onModeChange('off')
-      onCommanded()
-    } else {
-      setMessage(`Could not save zone: ${result.reason}`)
-    }
-  }
-
-  const toggle = (next: 'route' | 'draw') => {
+  // Arm/disarm the route-plotting tap mode. Toggling clears any in-progress draft so a stale plot never
+  // carries between arming sessions.
+  const toggleRoute = () => {
     onClearDraft()
     setMessage(null)
-    onModeChange(mode === next ? 'off' : next)
+    onModeChange(mode === 'route' ? 'off' : 'route')
   }
 
   return (
-    <OverlayPanel className="pointer-events-auto flex w-64 flex-col gap-2 text-xs">
+    <OverlayPanel className="pointer-events-auto flex w-64 max-w-[calc(100vw-1.5rem)] flex-col gap-2 text-sm">
       <div className="flex items-center justify-between">
         <span className="font-semibold text-ink">Pirate Intercept</span>
         {onClose && (
@@ -112,19 +89,15 @@ export function PirateInterceptPanel({
           </button>
         )}
       </div>
-      <div className="flex gap-2">
-        <Button size="sm" variant={mode === 'route' ? 'primary' : 'secondary'} onClick={() => toggle('route')}>
-          Plot route
-        </Button>
-        <Button size="sm" variant={mode === 'draw' ? 'primary' : 'secondary'} onClick={() => toggle('draw')}>
-          Draw zone
-        </Button>
-      </div>
+      <p className="text-ink-muted">Plot a path that routes your fleet around danger zones on the way to a destination.</p>
+      <Button size="sm" variant={mode === 'route' ? 'primary' : 'secondary'} className="w-full" onClick={toggleRoute}>
+        {mode === 'route' ? 'Stop plotting' : 'Plot a route'}
+      </Button>
 
       {mode === 'route' && (
         <div className="flex flex-col gap-2">
           {!groupId && <p className="text-ink-muted">No fleet yet — add a ship to a team first.</p>}
-          <p className="text-ink-muted">Tap the map to plot up to 4 points — the last is the destination.</p>
+          <p className="text-ink-muted">Tap the map to plot up to 4 points — the last one is the destination.</p>
           <p className="text-ink">{draftPoints.length} plotted</p>
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={onUndoDraft} disabled={draftPoints.length === 0}>Undo</Button>
@@ -138,36 +111,6 @@ export function PirateInterceptPanel({
               Cancel queued
             </Button>
           </div>
-        </div>
-      )}
-
-      {mode === 'draw' && (
-        <div className="flex flex-col gap-2">
-          <p className="text-ink-muted">Tap the map to add zone corners (3+). Smoothed automatically.</p>
-          <p className="text-ink">{draftPoints.length} corners</p>
-          <input
-            className="rounded border border-edge bg-app px-2 py-1 text-ink"
-            value={zoneName}
-            onChange={(e) => setZoneName(e.target.value)}
-            placeholder="Zone name"
-          />
-          <select
-            className="rounded border border-edge bg-app px-2 py-1 text-ink"
-            value={attachLocationId}
-            onChange={(e) => setAttachLocationId(e.target.value)}
-          >
-            <option value="">Standalone (no combat — geometry/warning only)</option>
-            {hostileLocations.map((l) => (
-              <option key={l.id} value={l.id}>Attach to: {l.name}</option>
-            ))}
-          </select>
-          <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={onUndoDraft} disabled={draftPoints.length === 0}>Undo</Button>
-            <Button size="sm" variant="secondary" onClick={onClearDraft} disabled={draftPoints.length === 0}>Clear</Button>
-          </div>
-          <Button size="sm" onClick={() => void saveZone()} disabled={busy || draftPoints.length < 3}>
-            Save zone
-          </Button>
         </div>
       )}
 

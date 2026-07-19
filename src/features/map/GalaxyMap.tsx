@@ -79,7 +79,7 @@ export function GalaxyMap({
   // DOUBLE-TAP on empty space (mouse double-click OR touch double-tap — both flow through pointer
   // events). MapScreen's handler sets the go-target (the crosshair the fleetGoView prop drives) AND
   // opens the command hub. A single tap on empty space does nothing (the map stays clean); a marker
-  // tap still selects; pirate route/draw modes still consume single taps (onPirateTap, below).
+  // tap still selects; the pirate route mode still consumes single taps (onPirateTap, below).
   fleetGoView: FleetGoTargetView | null
   onDoubleTapPoint: (world: WorldCoord) => void
   selectedId: string | null
@@ -107,14 +107,14 @@ export function GalaxyMap({
   /** Recent combat events; the layer consumes only the latest tick's spatial `missile_salvo`s (fire
    *  lines between units), ignoring the aggregate/dark-path events that carry no unit_id. */
   combatEvents?: CombatEvent[]
-  /** 'off' = normal ship-go tap handling (byte-identical to pre-slice behavior). 'route' / 'draw' TAKE
-   *  OVER the entire empty-space tap surface (mutually exclusive with the fleet-go tap) — each tap
-   *  appends a point via onPirateTap instead of setting a fleet-go target. */
-  pirateMode?: 'off' | 'route' | 'draw'
-  /** The in-progress route/zone points, drawn as a connected polyline + vertex dots while plotting. */
+  /** 'off' = normal ship-go tap handling (byte-identical to pre-slice behavior). 'route' TAKES OVER
+   *  the entire empty-space tap surface (mutually exclusive with the fleet-go tap) — each tap appends
+   *  a route waypoint via onPirateTap instead of setting a fleet-go target. */
+  pirateMode?: 'off' | 'route'
+  /** The in-progress route waypoints, drawn as a connected polyline + vertex dots while plotting. */
   pirateDraftPoints?: WorldCoord[]
   /** Called with the tapped RAW world point whenever pirateMode !== 'off' (ownership/group checks do
-   *  NOT apply — route planning and zone drawing are not gated on owning a fleet the way ship-go is). */
+   *  NOT apply — route planning is not gated on owning a fleet the way ship-go is). */
   onPirateTap?: (world: WorldCoord) => void
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -221,9 +221,9 @@ export function GalaxyMap({
       { k: view.k, tx: view.tx, ty: view.ty },
       { width: rect.width, height: rect.height },
     )
-    // PIRATE INTERCEPT: route-planning / zone-drawing TAKES OVER the tap surface — each SINGLE tap
-    // appends a point. Double-tap detection is suspended in these modes so a plotted point is never
-    // swallowed as the first half of a "double". 'off' (the default) falls through to the summon path.
+    // PIRATE INTERCEPT: route-planning TAKES OVER the tap surface — each SINGLE tap appends a
+    // waypoint. Double-tap detection is suspended in this mode so a plotted point is never swallowed
+    // as the first half of a "double". 'off' (the default) falls through to the summon path.
     if (pirateMode !== 'off') {
       lastTap.current = null
       onPirateTap?.(world)
@@ -501,8 +501,8 @@ export function GalaxyMap({
             />
           )}
 
-          {/* PIRATE INTERCEPT (prototype) — the in-progress route/zone draft: a connected polyline
-              through the tapped points + a dot per vertex. 'off' or an empty draft renders nothing. */}
+          {/* PIRATE INTERCEPT — the in-progress route draft: a connected polyline through the tapped
+              waypoints + a dot per vertex. 'off' or an empty draft renders nothing. */}
           {pirateMode !== 'off' && pirateDraftPoints.length > 0 && (
             <g data-testid="pirate-draft-layer" style={{ pointerEvents: 'none' }}>
               {pirateDraftPoints.length > 1 && (
@@ -549,7 +549,7 @@ export function GalaxyMap({
       {/* bottom-left: collapsible marker key — a small "Map key" chip by default so it never
           covers the map; expands to a readable vertical list (was a tiny wrapping block that
           sprawled across the bottom on narrow screens). */}
-      <OverlayPanel slot="bottom-left" className="pointer-events-auto max-w-[calc(100vw-1.5rem)] text-xs text-ink-muted">
+      <OverlayPanel slot="bottom-left" className="pointer-events-auto max-w-[calc(100vw-1.5rem)] text-sm text-ink-muted">
         <details>
           <summary className="cursor-pointer select-none list-none font-medium">Map key</summary>
           <div className="mt-2 flex flex-col gap-1.5 text-ink-faint">
