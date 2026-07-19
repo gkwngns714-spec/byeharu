@@ -23,6 +23,17 @@ export type GetMyExplorationDiscoveriesResult =
   | { ok: true; discoveries: ExplorationDiscovery[] }
   | { ok: false; reason: string }
 
+/** WORLD EDITOR (read-only) — one visible exploration_sites row: position + name ONLY (never the
+ *  reward_bundle_json composition). Mirrors mining's MiningField marker shape (§WE.8
+ *  twin-of-mining). Lives HERE (the pure types module, the MiningField-in-miningTypes layout) so
+ *  pure world-editor modules can bind to the read contract without touching the supabase client;
+ *  explorationApi re-exports it for its read function's callers. */
+export interface ExplorationSiteLite {
+  name: string
+  space_x: number
+  space_y: number
+}
+
 // The server's narrow scan result contract (mirrors command_exploration_scan's wrapper).
 export type CommandExplorationScanResult =
   | {
