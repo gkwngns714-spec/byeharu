@@ -1,0 +1,63 @@
+name: WORLD-EDITOR V1C — anchor scaffold + world-wide backfill disposable proof (no production)
+
+# Proves migration 0245 (worldeditor_v1c_anchor_scaffold) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0245. 0245's own in-migration self-assert
+#     runs here against real Postgres (every location anchored, anchor coords == location coords exactly,
+#     no duplicate active anchors, get_world_map untouched) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then re-verifies the deployed state end to end: backfill complete and
+#     non-vacuous; the 0066/0227 anchor==location invariant world-wide; one-active-per-location; the
+#     get_world_map signature/body/grants byte-stable; the backfill idempotent on re-run; the new
+#     resolver exposed exactly like get_world_map and in leak-parity with it.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, mutates NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-ownerspine-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-v1c-anchor-scaffold**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-v1c-anchor-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0245 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR V1C real-chain proof (backfill complete / invariant world-wide / map read unchanged / idempotent)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-v1c-anchor-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            V1C_PASS_ALL_LOCATIONS_ANCHORED \
+            V1C_PASS_ANCHOR_EQUALS_LOCATION \
+            V1C_PASS_ONE_ACTIVE_PER_LOCATION \
+            V1C_PASS_GET_WORLD_MAP_UNCHANGED \
+            V1C_PASS_IDEMPOTENT \
+            V1C_PASS_RESOLVER_LEAK_PARITY \
+            'WORLD-EDITOR V1C ANCHOR-SCAFFOLD PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL V1C ANCHOR-SCAFFOLD PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
