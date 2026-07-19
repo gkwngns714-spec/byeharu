@@ -1,0 +1,146 @@
+name: COMBAT-TICKS RESULT FIX — 0241 next_wave_incoming disposable apply-proof (no production)
+
+# Proves migration 0241 (admit result='next_wave_incoming' to combat_ticks_result_check) on a THROWAWAY
+# local Supabase — NEVER production:
+#   1. selftest — a DB-free static check that scripts/combat-ticks-result-fix-proof.sql is well-formed:
+#      self-rolling-back (begin;…rollback;, no COMMIT), lights every dark flag ONLY inside the txn, keeps
+#      combat_tick_logging ON (the whole point), obeys the sole-writer law (never hand-writes combat_units
+#      / group_sortie_members rows), drives the real RPC/engine chain, carries every NWINC_PASS marker +
+#      the determinism guards (variance 0, no random(), manual process_combat_ticks — no cron/sleep), and
+#      contains the section-C control experiment (re-add the pre-0241 six-value CHECK, then restore).
+#   2. disposable-matrix — `supabase start` applies the FULL migration chain (incl. 0234 spatial tick +
+#      0240 aggregate-bucket uniqueness + 0241 result widening); the proof then drives a REAL encounter
+#      across a wave pause with combat_tick_logging ON and asserts (S) the CHECK admits next_wave_incoming,
+#      (C) the pre-0241 CHECK would STALL a logged pause tick, and (P) the shipped CHECK lands the pause
+#      tick and the encounter CONTINUES. THE GREEN RUN OF THIS JOB IS THE EXECUTION OF THE PROOF.
+# The proof flips NO committed flag and writes nothing durable (self-rolling-back). No `environment:` on
+# any job, so none can read production secrets. Modeled on multipirate-lifecycle-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-combat-ticks-result-fix**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: combat-ticks-result-fix-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static harness checks (DB-free)
+        run: |
+          set -euo pipefail
+          SQL=scripts/combat-ticks-result-fix-proof.sql
+          [ -f "$SQL" ] || { echo "proof sql not found"; exit 1; }
+
+          # self-rolling-back: opens a txn, ends in ROLLBACK, never COMMITs.
+          grep -qiE '^\s*begin\s*;' "$SQL"    || { echo "harness does not open a txn (begin;)"; exit 1; }
+          grep -qiE '^\s*rollback\s*;' "$SQL" || { echo "harness does not end in ROLLBACK"; exit 1; }
+          if grep -qiE '^\s*commit\s*;' "$SQL"; then echo "harness COMMITs — must be self-rolling-back"; exit 1; fi
+          # ROLLBACK must be the LAST SQL statement (only comments/blank may follow).
+          last="$(grep -niE '^\s*rollback\s*;' "$SQL" | tail -1 | cut -d: -f1)"
+          tail -n +"$((last + 1))" "$SQL" | sed -E 's/--.*//' | tr -d '[:space:]' | grep -q . \
+            && { echo "SQL follows the final ROLLBACK (would autocommit)"; exit 1; } || true
+
+          # every NWINC_PASS marker present + the final PASS line.
+          for m in NWINC_PASS_CONSTRAINT NWINC_PASS_CONTROL NWINC_PASS_PAUSE_LOGS; do
+            grep -q "$m" "$SQL" || { echo "missing PASS marker: $m"; exit 1; }
+          done
+          grep -q 'NEXT-WAVE-INCOMING FIX PROOF PASSED' "$SQL" || { echo "missing final PASS line"; exit 1; }
+
+          # every dark flag is enabled ONLY inside the txn (no COMMIT above guarantees the committed value
+          # is never written).
+          for f in team_command_enabled mainship_additional_commission_enabled module_crafting_enabled \
+                   module_fitting_enabled spatial_combat_enabled; do
+            grep -qE "update public\.game_config set value='true'::jsonb where key='$f';" "$SQL" \
+              || { echo "harness does not enable dark flag '$f' inside the txn"; exit 1; }
+          done
+
+          # combat_tick_logging must be ON for this proof (the pause tick MUST be logged to exercise the
+          # next_wave_incoming insert path). Toggling it OFF anywhere would defeat the proof's purpose.
+          grep -qE "set_game_config\('combat_tick_logging', 'true'::jsonb\)" "$SQL" \
+            || { echo "harness does not enable combat_tick_logging (the pause tick must be LOGGED)"; exit 1; }
+          if grep -qE "set_game_config\('combat_tick_logging', 'false'::jsonb\)" "$SQL"; then
+            echo "harness toggles combat_tick_logging OFF — it must stay ON across the pause tick"; exit 1; fi
+
+          # DETERMINISM GUARDS: variance zeroed, no session RNG, no cron/sleep dependence, manual tick.
+          grep -q "set_game_config('combat_damage_variance_pct', '0'::jsonb)" "$SQL" \
+            || { echo "harness does not zero combat_damage_variance_pct (determinism)"; exit 1; }
+          if grep -qE 'random\(' "$SQL"; then echo "harness uses random() (0041 determinism law)"; exit 1; fi
+          if grep -qiE 'cron\.schedule|pg_sleep|pg_cron|select[[:space:]]+pg_sleep' "$SQL"; then
+            echo "harness depends on cron/sleep (must be manual, deterministic)"; exit 1; fi
+          grep -q 'process_combat_ticks()' "$SQL" || { echo "harness never invokes process_combat_ticks() manually"; exit 1; }
+
+          # SOLE-WRITER LAW: combat_units + group_sortie_members are NEVER hand-written (only the real
+          # engine writers touch them). Section C re-adds/drops a combat_TICKS CONSTRAINT (DDL) — never a
+          # combat_units/group_sortie_members row write.
+          for t in combat_units group_sortie_members; do
+            grep -qiE "insert[[:space:]]+into[[:space:]]+(public\.)?$t" "$SQL" \
+              && { echo "harness inserts $t directly (engine is sole writer)"; exit 1; } || true
+            grep -qiE "update[[:space:]]+(public\.)?$t[[:space:]]" "$SQL" \
+              && { echo "harness UPDATEs $t directly"; exit 1; } || true
+            grep -qiE "delete[[:space:]]+from[[:space:]]+(public\.)?$t" "$SQL" \
+              && { echo "harness DELETEs $t directly"; exit 1; } || true
+          done
+
+          # the real RPC/engine chain is exercised (not a hand-rolled shortcut).
+          for fn in reveal_starter_ports commission_first_main_ship commission_additional_main_ship \
+                    reward_grant craft_module fit_module_to_ship upsert_ship_group assign_ship_to_group \
+                    set_fleet_command_ship send_ship_group_hunt movement_settle_arrival process_combat_ticks; do
+            grep -q "public.$fn(" "$SQL" || { echo "harness does not use real RPC public.$fn"; exit 1; }
+          done
+
+          # section-C CONTROL EXPERIMENT: re-adds the pre-0241 SIX-value CHECK (no next_wave_incoming) AND
+          # restores the widened one — the combat_ticks_result_check CHECK is dropped+re-added >= twice.
+          n_add="$(grep -cE 'add constraint combat_ticks_result_check' "$SQL" || true)"
+          n_drop="$(grep -cE 'drop constraint combat_ticks_result_check' "$SQL" || true)"
+          [ "$n_add" -ge 2 ] || { echo "control experiment missing: expected >=2 'add constraint combat_ticks_result_check' (narrow + restore), got $n_add"; exit 1; }
+          [ "$n_drop" -ge 2 ] || { echo "control experiment missing: expected >=2 'drop constraint combat_ticks_result_check', got $n_drop"; exit 1; }
+          # the widened restore admits next_wave_incoming somewhere in an array literal.
+          grep -qE "array\[.*'next_wave_incoming'.*\]" "$SQL" \
+            || { echo "harness never restores the widened CHECK admitting next_wave_incoming"; exit 1; }
+
+          echo "COMBAT-TICKS RESULT FIX SELFTEST: ALL PASSED (self-rolling-back; 3 NWINC_PASS markers + final PASS; all 5 dark flags lit only inside the txn; combat_tick_logging ON across the pause; determinism guards — variance 0, no random(), no cron/sleep, manual process_combat_ticks; sole-writer law for combat_units + group_sortie_members; full real-RPC/engine chain; section-C control experiment re-adds the pre-0241 six-value CHECK and restores the widened one)"
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0234 + 0240 + 0241)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: COMBAT-TICKS RESULT FIX proof (the green run IS the execution)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/combat-ticks-result-fix-proof.sql > /tmp/nwincout.txt 2>&1
+          rc=$?
+          set -e
+          echo "----- proof output (rc=$rc) -----"
+          cat /tmp/nwincout.txt
+          echo "---------------------------------"
+          [ "$rc" -eq 0 ] || { echo "psql exited $rc — the proof aborted"; exit 1; }
+          for m in NWINC_PASS_CONSTRAINT NWINC_PASS_CONTROL NWINC_PASS_PAUSE_LOGS; do
+            grep -q "$m" /tmp/nwincout.txt || { echo "PROOF DID NOT EMIT MARKER: $m"; exit 1; }
+          done
+          grep -q 'NEXT-WAVE-INCOMING FIX PROOF PASSED' /tmp/nwincout.txt \
+            || { echo 'PROOF DID NOT REACH THE FINAL PASS MARKER'; exit 1; }
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
