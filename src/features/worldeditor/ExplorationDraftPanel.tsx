@@ -5,14 +5,17 @@
 // reportById) as notices — error → danger, warning → warning (the SAME Notice tones the location
 // and mining panels use). Values are only ever FLAGGED, never clamped, never thrown.
 //
-// PUBLISH (0244 slice): a CREATE draft gains the FIRST wired publish action — one Publish button
-// that issues the owner-gated exploration_site_create command through the shared command client.
-// The server is the ONLY authority (0243 is_owner() guard + 0244 server-side re-validation); the
-// button's publishable gate is advisory UX, never authorization. The requestId is minted ONCE per
-// publish attempt and kept across retries, so a retry REPLAYS idempotently instead of double-
-// applying. On success the local draft is discarded (the site is live now). Until migration 0244 is
-// deployed the RPC does not exist and the call fails closed as a transport error — the capability
-// is dark. EDIT drafts still have no publish path (site_create is create-only; edit is later).
+// PUBLISH (0244 + 0247 slices): ONE Publish button for BOTH draft modes, routed by mode through the
+// shared command client. A CREATE draft issues the owner-gated exploration_site_create command
+// (0244); an EDIT draft issues exploration_site_update (0247) carrying target_id (the forked
+// sourceId — the live row's natural-key name), `expected` (the fork-time sourceSnapshot — the
+// server's optimistic-concurrency baseline: any live drift is a typed stale_revision, nothing
+// overwritten) and the new fields. The server is the ONLY authority (0243 is_owner() guard +
+// server-side re-validation); the button's publishable gate is advisory UX, never authorization.
+// The requestId is minted ONCE per publish attempt and kept across retries, so a retry REPLAYS
+// idempotently instead of double-applying. On success the local draft is discarded (the change is
+// live now). Until the migration is deployed the RPC does not exist and the call fails closed as a
+// transport error — the capability is dark.
 //
 // The reward-bundle editor authors the CREATE-only local reward_bundle_json (the ONE shared
 // pending-bundle shape, lib/rewardBundle.ts). On an EDIT draft the bundle is not authorable: the
@@ -125,16 +128,29 @@ export function ExplorationDraftPanel() {
     const requestId =
       publishAttempt?.draftId === draft.draftId ? publishAttempt.requestId : newRequestId()
     setPublishAttempt({ draftId: draft.draftId, requestId, phase: 'sending', failure: null })
-    const result = await invokeWorldEditorCommand({
-      requestId,
-      commandType: 'exploration_site_create',
-      payload: {
-        fields: draft.payload,
-        source_revision: draft.mode.kind === 'edit' ? draft.mode.sourceRevision : null,
-      },
-    })
+    // Mode routes the command: create → exploration_site_create (0244); edit →
+    // exploration_site_update (0247), addressed by the forked sourceId with the fork-time
+    // sourceSnapshot as the server's optimistic-concurrency `expected` baseline.
+    const result = await invokeWorldEditorCommand(
+      draft.mode.kind === 'edit'
+        ? {
+            requestId,
+            commandType: 'exploration_site_update',
+            payload: {
+              target_id: draft.mode.sourceId,
+              expected: draft.mode.sourceSnapshot,
+              fields: draft.payload,
+              source_revision: draft.mode.sourceRevision,
+            },
+          }
+        : {
+            requestId,
+            commandType: 'exploration_site_create',
+            payload: { fields: draft.payload, source_revision: null },
+          },
+    )
     if (result.ok) {
-      // The site is live now — the local draft has served its purpose.
+      // The change is live now — the local draft has served its purpose.
       setPublishAttempt(null)
       discardDraft(draft.draftId)
       return
@@ -176,8 +192,8 @@ export function ExplorationDraftPanel() {
       </div>
 
       <p className="mb-2 text-xs text-ink-faint">
-        Drafts are local to this browser until published. Publishing a new-site draft writes the
-        live world (owner only — the server decides).
+        Drafts are local to this browser until published. Publishing a draft writes the live world
+        (owner only — the server decides).
       </p>
 
       {/* ── draft list ── */}
@@ -323,39 +339,33 @@ export function ExplorationDraftPanel() {
             </p>
           )}
 
-          {/* ── publish (create drafts only — the 0244 exploration_site_create command) ── */}
-          {activeDraft.mode.kind === 'create' ? (
-            <div className="flex flex-col gap-1.5 border-t border-edge/50 pt-2">
-              {publishAttempt?.draftId === activeDraft.draftId && publishAttempt.failure && (
-                <PublishFailureNotices failure={publishAttempt.failure} />
-              )}
-              <Button
-                size="sm"
-                variant="primary"
-                busy={
-                  publishAttempt?.draftId === activeDraft.draftId &&
-                  publishAttempt.phase === 'sending'
-                }
-                busyLabel="Publishing…"
-                disabled={!(report?.publishable ?? false)}
-                onClick={() => void onPublish(activeDraft)}
-              >
-                {publishAttempt?.draftId === activeDraft.draftId &&
-                publishAttempt.phase === 'failed'
-                  ? 'Retry publish'
-                  : 'Publish'}
-              </Button>
-              <p className="text-xs text-ink-faint">
-                Creates this site in the live world. Owner-only — the server checks, this button
-                grants nothing.
-              </p>
-            </div>
-          ) : (
-            <p className="border-t border-edge/50 pt-2 text-xs text-ink-faint">
-              Publishing an EDIT of a live site is a later slice — only new-site drafts publish
-              today.
+          {/* ── publish (create → 0244 exploration_site_create; edit → 0247 exploration_site_update) ── */}
+          <div className="flex flex-col gap-1.5 border-t border-edge/50 pt-2">
+            {publishAttempt?.draftId === activeDraft.draftId && publishAttempt.failure && (
+              <PublishFailureNotices failure={publishAttempt.failure} />
+            )}
+            <Button
+              size="sm"
+              variant="primary"
+              busy={
+                publishAttempt?.draftId === activeDraft.draftId &&
+                publishAttempt.phase === 'sending'
+              }
+              busyLabel="Publishing…"
+              disabled={!(report?.publishable ?? false)}
+              onClick={() => void onPublish(activeDraft)}
+            >
+              {publishAttempt?.draftId === activeDraft.draftId &&
+              publishAttempt.phase === 'failed'
+                ? 'Retry publish'
+                : 'Publish'}
+            </Button>
+            <p className="text-xs text-ink-faint">
+              {activeDraft.mode.kind === 'create'
+                ? 'Creates this site in the live world. Owner-only — the server checks, this button grants nothing.'
+                : 'Updates the live site. Owner-only — the server re-checks the row is unchanged since this draft was forked (a stale draft is rejected, never overwritten).'}
             </p>
-          )}
+          </div>
         </div>
       )}
     </section>

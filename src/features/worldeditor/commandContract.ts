@@ -9,11 +9,14 @@
 
 /** Command kinds. world_editor_ping is the guarded no-op contract proof (0243);
  *  exploration_site_create is the FIRST live-world-write publish command (0244, owner-gated);
- *  mining_field_create is its mining twin — the SECOND publish command (0246, owner-gated). */
+ *  mining_field_create is its mining twin — the SECOND publish command (0246, owner-gated);
+ *  exploration_site_update is the FIRST UPDATE publish command (0247, owner-gated, optimistic
+ *  concurrency: payload carries target_id + the fork-time `expected` snapshot). */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
   | 'exploration_site_create'
   | 'mining_field_create'
+  | 'exploration_site_update'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -34,7 +37,8 @@ export type WorldEditorErrorCode =
   | 'invalid_request' // missing / blank requestId
   | 'duplicate_request' // idempotent replay (surfaced on a successful replay envelope)
   | 'validation_failed' // the authoritative payload subset failed server-side re-validation (0244)
-  | 'stale_revision' // the draft's forked source revision no longer matches the live row (reserved)
+  | 'stale_revision' // the live row drifted from the draft's fork-time `expected` snapshot (0247 optimistic concurrency)
+  | 'not_found' // the update target no longer exists (0247; details carry source_missing)
   | 'conflict' // a unique natural key (e.g. exploration_sites.name / mining_fields.name) is already taken (0244/0246)
   | 'transport_error' // client-side: the RPC call itself failed (network / permission)
 
@@ -95,6 +99,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'exploration_site_create'
     case 'mining_field_create':
       return 'mining_field_create'
+    case 'exploration_site_update':
+      return 'exploration_site_update'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)
@@ -142,6 +148,8 @@ export function describeWorldEditorError(code: WorldEditorErrorCode): string {
       return 'The server rejected the draft — fix the flagged fields and retry.'
     case 'stale_revision':
       return 'The live row changed since this draft was forked — review the draft before retrying.'
+    case 'not_found':
+      return 'The live row this draft edits no longer exists — it may have been renamed or removed.'
     case 'conflict':
       return 'The name is already taken in the live world.'
     case 'transport_error':
