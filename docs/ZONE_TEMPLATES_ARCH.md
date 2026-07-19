@@ -919,3 +919,450 @@ typed tables (now the blueprint/revision/behavior shape); combat is ONE function
 post-`v_enc` `UPDATE` not a 4-signature thread; mining is NOT dark and has no richness/depletion columns and
 `module_range_attributes` does not exist; the security spine the plan omitted ships first; N-location fan-out is
 real plpgsql work.
+
+---
+
+## World Editor — Proposed Architecture (Unified)
+
+**Status:** PROPOSED throughout. Everything in this section is target design, not built. Every **CURRENT**
+claim cites real schema at `file:line`; everything else is **PROPOSED**. This section does NOT restructure §0–§10
+above — it sits on top of them and cross-references. The blueprint/behavior-module Zone model (§2), the immutable-
+published-revision philosophy (§2.2, §2.7), the ONE server-side effective-config resolver (§5.3), the owner-security
+spine as prerequisite #1 (§7), and the two live prod prerequisites (§1.5 security hole, §5.5 `combat_units`
+cardinality) all carry forward unchanged and are the foundation this section builds on.
+
+### WE.0 Core thesis (stated unambiguously)
+
+The long-term product is **ONE owner-only World Editor on the REAL game map.** Locations are only **ONE layer**
+within it. Mining, exploration, and zones are **ALSO layers in the SAME editor.** They are **NOT separate editors,
+NOT separate maps, NOT separate product experiences** — mining and exploration are later **MODULES of the same
+editor**, reached by toggling a layer, never by navigating to a different tool.
+
+The separate tables that exist today — `locations` (`20260616000002_world_map.sql:48-72`), `mining_fields`
+(`20260618000103_mining_p12_fields_schema.sql:50-70`), `exploration_sites`
+(`20260618000098_exploration_p11_sites_schema.sql:38-58`), and `danger_zones`
+(`20260618000233_pirate_intercept_danger_zones.sql:182-198`) — are **migration/integration facts, NOT desired
+product boundaries.** The DB keeps them distinct for correct domain integrity; the editor unifies how they are
+**authored and visualized.**
+
+**The model is: ONE World Editor shell + multiple typed content-layer ADAPTERS.** An **adapter** is the typed bridge
+between the shared shell and a domain's authoritative model/commands — it is **NOT a separate editor**. The shell
+knows nothing domain-specific; each adapter teaches the shell how to read, draw, inspect, and command one domain's
+real tables. Adding a domain = adding an adapter, never forking the editor (NO SPAGHETTI: one editor authority,
+compose don't fork).
+
+### WE.1 Layer tree
+
+```
+World Editor
+├── Locations   (ports, pirate sites, stations, other point locations)
+├── Mining      (mining sites, resource fields, mining zone profiles)
+├── Exploration (exploration sites, discoveries, anomalies, exploration regions)
+├── Zones       (pirate zones, mining zones, exploration zones, future behavior zones)
+└── Future layers (trade routes, faction territories, missions, hazards, events)
+```
+
+Every layer renders through the **same** real map, the same camera/pan/zoom, the same world-coordinate system, the
+same selection/inspection patterns, the same owner authorization, the same draft/publish/enable lifecycle, and the
+same audit/rollback framework (§WE.10). A layer differs from another ONLY in its typed adapter — the domain model,
+the domain commands, and the typed inspector/authoring form it contributes.
+
+### WE.2 The shared World Editor shell
+
+The shell owns everything domain-agnostic, exactly once:
+
+| Shell owns | Notes |
+|---|---|
+| Real map rendering | The shared map primitives (§WE.11), never a bespoke canvas |
+| World-coordinate conversion | `openSpaceTransform` `worldToViewBox`/`viewBoxToWorld` (§WE.11) — ONE projection authority |
+| Camera state, pan/zoom | `galaxyCamera` `{k,tx,ty}` |
+| Selection + layer visibility | select any typed content item; toggle layers on/off |
+| Point-placement + polygon-editing tools | shared typed geometry tools (§WE.4) |
+| Shared inspector patterns | a common inspection shell each adapter fills with typed fields |
+| Draft / published / enabled state display | one lifecycle vocabulary (§WE.10) |
+| Authorization state | one owner spine (§WE.10, §7) |
+| Validation results + dependency warnings | surfaced uniformly (§WE.10 dependency validation) |
+| Audit / revision history | one audit framework (§WE.10) |
+| Publish / enable / disable / archive actions | one lifecycle control surface |
+
+**Typed domain adapters** connect the shell to the real underlying systems, one per layer:
+`LocationLayerAdapter`, `MiningLayerAdapter`, `ExplorationLayerAdapter`, `ZoneLayerAdapter`, `FutureLayerAdapter`.
+Each adapter bridges the shell to its domain's authoritative model and commands (§WE.5–§WE.8) — it is the typed
+seam, **not** a second editor.
+
+**Adapter boundary (explicit).** The adapters are **MODULES INSIDE ONE World Editor application** — they are **NOT
+separate routes, NOT separate maps, NOT separate editors, NOT separate security models, NOT separate publication
+systems.** They share the one shell, the one map, the one owner spine (§WE.10, §7), and the one publication/audit
+framework (§WE.10). Each adapter eventually provides ONE typed contract to the shell:
+
+| Adapter operation | Meaning |
+|---|---|
+| read visible content | enumerate its domain's items for the current view |
+| resolve map representation | give the shell point-anchor or polygon geometry to render (§WE.4, §WE.5) |
+| select & inspect | fill the shared inspector with typed fields |
+| create / edit draft | produce a typed draft (never touching the live row, §WE.10) |
+| validate | domain-specific validation, orchestrated by the shared framework |
+| publish | freeze a typed published revision (§2.2 philosophy) |
+| enable / reveal | activate runtime state (or reveal, where applicable) |
+| disable | fast forward-only kill-switch |
+| archive | soft-retire |
+| report dependencies | real referrers that block move/disable/archive (§WE.10) |
+| report audit / revision history | authoring provenance (§WE.10) |
+
+**Not every adapter implements every operation in phase 1.** Where an adapter does not yet support an operation
+(because the runtime does not back it), that operation MUST be **explicit and DISABLED in the UI — never
+simulated.** An unsupported control is greyed out with a stated reason, never a stub that pretends to work or
+writes data the runtime cannot consume (§WE.7, §WE.8 hard rule).
+
+### WE.3 Preserve typed authoritative models (anti-spaghetti)
+
+The editor unifies **authoring and visualization**; the database **preserves correct domain boundaries.** Do NOT
+collapse mining/exploration/zones into `locations`:
+
+- Ports & pirate sites keep using `locations` (`…0002…:48-72`).
+- Mining keeps `mining_fields` (`…0103…:50-70`).
+- Exploration keeps `exploration_sites` (`…0098…:38-58`).
+- Zones use the blueprint + typed behavior-module + placement + override model of §2 (materialized on
+  `zone_placements`/today's `danger_zones`).
+
+**AVOID (explicit anti-patterns):** one oversized table with unrelated nullable columns; arbitrary JSON as
+authoritative config; polymorphic records without referential integrity; duplicated security per domain;
+duplicated draft/publish per domain; a separate map per domain. Each is a spaghetti failure the unified-authoring /
+separate-storage split is designed to prevent.
+
+### WE.4 Spatial model — audit the coordinate authorities; DO NOT create a third
+
+**CURRENT — there are TWO coordinate authorities, and a location's position is represented TWICE:**
+
+1. **`locations.x/y double precision`** (`…0002…:57-58`) — described in-code as **legacy display-only**; it is what
+   `get_world_map` surfaces to the client (`…0002…:115`). It does NOT drive movement.
+2. **`space_anchors.space_x/space_y`** (`…0063…:35-36`) — the **movement-authoritative** open-space coordinate
+   table: `kind ∈ {base, location}` (`…0063…:30`), `location_id … on delete restrict` (`…0063…:33`), coords NOT
+   NULL and bounded ±10000 (`…0063…:50-54`), at most one ACTIVE anchor per location (partial unique
+   `…0063…:63-65`), and an **immutability trigger** — an active anchor's kind/owner/coords are immutable; relocation
+   = retire + insert a new active row (`…0063…:71-101`). RLS is server-only, `service_role` grant only
+   (`…0063…:104-109`).
+
+So `space_anchors` drives authoritative movement; `locations.x/y` is display-only — the same point stored in two
+places.
+
+**PROPOSED reconciliation — reuse/evolve `space_anchors`; do NOT create a `world_anchors` table.** The owner's
+`world_anchors` sketch (stable anchor identity, canonical x/y, world/map id, lifecycle/revision, typed entities
+referencing `anchor_id`) **already has a real candidate: `space_anchors`.** It already provides stable identity, a
+canonical coordinate, a closed typed-owner discriminator, a lifecycle (active → retired), immutability, and a
+bounded domain. Creating a NEW `world_anchors` table would introduce a **THIRD** coordinate authority — which the
+owner forbids. **Recommendation:** evolve `space_anchors` into THE canonical point-based spatial anchor, with typed
+entities referencing it (`locations.anchor_id`, `mining_fields.anchor_id`, `exploration_sites.anchor_id`) rather
+than re-inventing anchors. (If `space_anchors` were ever found unsuitable — e.g. its base/location kind
+discriminator cannot be extended to mining/exploration without a forced migration — the fallback is the **minimal
+staged** extension of `space_anchors` (add the new `kind` arms + typed owner FKs by additive migration), NOT a new
+table. Default recommendation stays: reuse/evolve `space_anchors`.)
+
+**Staged migration strategy — canonical ENDPOINT vs SAFE STAGED PATH.** This is deliberately NOT one big migration
+that adds `anchor_id` everywhere at once. It is a staged sequence, and **the canonical representation at each phase
+is stated explicitly** so there is never ambiguity about which coordinate is authoritative mid-flight:
+
+| # | Step | Canonical coordinate DURING this phase |
+|---|---|---|
+| 1 | Audit **every** current coordinate reader AND writer | `locations.x/y` (display) + `space_anchors` (movement) — unchanged |
+| 2 | Verify the current relationship between `locations.x/y` and `space_anchors` (which readers use which) | unchanged |
+| 3 | Define **ONE** authoritative coordinate resolver (the single read/derive authority) | still `space_anchors` for movement; resolver formalizes it |
+| 4 | Add **NULLABLE** `anchor_id` references where required (additive, no backfill yet) | `space_anchors` (movement); `locations.x/y` still display |
+| 5 | **Deterministic backfill** of anchors from existing coordinates | `space_anchors` (movement); display unchanged |
+| 6 | **Verify** referential + coordinate parity (anchor coords match display within tolerance) | `space_anchors` |
+| 7 | Introduce a **trusted server RPC as the ONLY mutation boundary** for position | `space_anchors` (RPC writes it first) |
+| 8 | **TEMPORARILY synchronize** compatibility copies during migration (RPC syncs `locations.x/y` from the anchor) | `space_anchors` authoritative; `locations.x/y` = **compatibility copy** |
+| 9 | Move **runtime reads** to `space_anchors` (via the resolver) | `space_anchors` — now sole read authority |
+| 10 | **Revoke/remove legacy direct coordinate writes** (no path writes `locations.x/y` except the sync) | `space_anchors` |
+| 11 | Remove duplicate coordinate columns **ONLY in a later migration**, after all readers migrated + prod verification | `space_anchors` (display columns gone or pure projection) |
+
+**CRITICAL FRAMING:** during transition, the dual writes are **COMPATIBILITY MACHINERY, NOT two equal
+authorities.** The single-writer RPC must **NOT** permanently maintain two co-equal coordinate authorities — that
+would be exactly the spaghetti this design forbids. `space_anchors` **ULTIMATELY becomes the authoritative
+coordinate**, and `locations.x/y` (and any other copy) becomes **derived compatibility data or is removed** (step
+11). At no point is a new `world_anchors` or any third coordinate system introduced. **Conclusion: an existing
+table (`space_anchors`) is reused and made canonical — never a third authority.**
+
+**Polygons are NOT reduced to point anchors.** Zone placements and area-based mining/exploration retain canonical
+**materialized geometry** — the `geometry(Polygon)` SRID-0 contract of §1.1 (as on `danger_zones.boundary`,
+`…0233…:188`). Points → anchor; polygons → materialized geometry. Two canonical spatial representations, one per
+geometry form, never a third.
+
+### WE.5 Point AND area content (geometry-form matrix)
+
+The World Editor treats "world content" as broader than "locations." Content is point-based OR area-based, with ONE
+canonical runtime representation per form:
+
+| Content | Geometry form | Canonical runtime representation |
+|---|---|---|
+| Port | point | anchor (§WE.4) |
+| Pirate site | point | anchor |
+| Mining station | point | anchor |
+| Ore field | polygon | materialized `geometry(Polygon)` SRID 0 (§1.1) |
+| Exploration landmark | point | anchor |
+| Anomaly region | polygon | materialized geometry |
+| Pirate activity zone | polygon | materialized geometry (today `danger_zones.boundary`) |
+| Corridor | line → materialized polygon | materialized geometry (swept capsule, §4.5) |
+
+Shared typed geometry tools serve every layer; **points → anchor, polygons → materialized geometry** — no implicit
+second geometry path (§4.5, §WE.11).
+
+### WE.6 Location layer (grounded in reality)
+
+The Location layer authors the point-based canonical types the runtime actually supports on a `locations` row:
+
+- **Ports** — `location_type='trade_outpost'` (`…0002…:52-56`) with `physical_role` `city`/`port`
+  (`…0065…:27-29`).
+- **Pirate sites** — `location_type` `pirate_hunt`/`pirate_den` (`…0002…:53-56`), the hostile hosts the intercept
+  engine requires (§5.2).
+- **Stations / landmarks** where supported — `physical_role` `station`/`landmark` (`…0065…:29`).
+
+Capabilities attach via **real tables, not JSON on the location row:** `location_services`
+(`docking`/`market`/`repair`/`refit`/`recruitment`, each with an enable/disable `status`, `…0065…:35-43`), plus
+FK ledgers keyed off the location — bases / station-storage (`…0157…`, location FK `on delete restrict`),
+`market_offers` (`…0085…`), `port_shop` (`…0235…`), repair, and investment (`…0132…`). **`physical_role`**
+(`city`/`port`/`station`/`landmark`/`activity_site`/`unclassified`, `…0065…:27-29`) is a **durable physical
+identity orthogonal to `location_type`** (which is gameplay activity) — the editor treats them as distinct axes.
+**No arbitrary-JSON authoritative capability on locations** — capabilities are typed rows the adapter reads/writes
+through owner-gated commands.
+
+### WE.7 Mining layer (grounded in the real mining schema)
+
+Mining is a **first-class layer** of the World Editor, NOT a separate mining editor. Owner-only authoring flow:
+
+> view existing mining content on the real map → select/inspect → create a supported mining **DRAFT** → place a
+> **point** site or draw an **area** field **as the real model supports** → configure a typed resource profile
+> **only where real columns exist** → associate with locations/zones where meaningful → **validate** → **publish**
+> → **enable** → **disable** → **archive** → **audit/rollback**.
+
+**CURRENT reality (grounded, `…0103…:50-70`):** `mining_fields` has `id`, `name` (unique), `space_x`/`space_y`
+(double precision, finite, ±10000), `reward_bundle_json` (jsonb OBJECT, **items-only** `{items:[{item_id,
+quantity}]}`), `is_active`, `created_at`. It is **point-based** (space coords, no polygon column), **has NO FK to
+`locations`**, and its only per-field payload is `reward_bundle_json`. Extraction is proximity-based and completely
+zone-agnostic (`command_mining_extract` / `process_mining_securing`, §1.3), repeatable per (player, field) with a
+cooldown from `mining_extractions.created_at` (`…0103…:86-108`).
+
+**Properties the owner named that have NO real column/runtime today — REQUIRES NEW RUNTIME, OUT OF AUTHORING SCOPE
+UNTIL BUILT:**
+- **richness** — no column on `mining_fields`; yields are the fixed `reward_bundle_json` bundle.
+- **depletion** — NOT on `mining_fields`. It exists ONLY as a **separate dark World-State layer**,
+  `mining_field_state.reserve_fraction` (`20260618000137_world_balance_p19_field_depletion.sql`), gated on
+  `world_balance_enabled=false` → **never runs live** (§1.3).
+- **regeneration** — same dark World-State layer; never live.
+- **eligibility** (module-based mining gating) — does not exist; the `module_range_attributes` flag the old task
+  premise assumed **is not in the repo** (§1.3).
+
+**What the mining adapter CAN currently author (real columns only):** a field's `name`, its position
+(`space_x`/`space_y`), its `reward_bundle_json` items-only bundle, and its `is_active` flag. **Nothing else exists
+to author.**
+
+**FUTURE runtime capabilities (do NOT invent schema/behavior as if present):** richness, depletion, regeneration,
+and module-based eligibility are **future runtime capabilities**, not current ones. Before any editor control for
+them may be enabled, the ENGINE work must land first: a per-field richness/yield model that scales
+`reward_bundle_json`; a live depletion/regeneration runtime (today only the dark, never-run
+`mining_field_state.reserve_fraction` under `world_balance_enabled=false`, `…0137…`); and a module-eligibility
+system (which does not exist at all). **Hard rule:** the editor must **NEVER** expose a control that writes data the
+runtime does not understand — these controls stay **disabled and explicit** until their engine exists (§WE.2
+adapter boundary).
+
+Area mining may reuse the blueprint/placement architecture (§2, a `zone_mining_behaviors` module seeds N fields
+inside a boundary, §8 Slice H); point mining sites reference the shared anchor (§WE.4). The adapter **bridges**
+`mining_fields` (which has no location FK) to the shell — it does NOT collapse mining into `locations`.
+
+### WE.8 Exploration layer (grounded in the real exploration schema)
+
+Exploration is a **first-class layer**, NOT a separate exploration editor. Owner-only authoring flow:
+
+> view existing exploration content → select/inspect → create a supported exploration **DRAFT** → place a **point**
+> discovery or draw an **area** region as supported → configure a typed discovery/event profile **only where real
+> columns/runtime exist** → **validate** → **publish** → **enable or reveal separately** → **disable** →
+> **archive** → **audit/rollback**.
+
+**CURRENT reality (grounded, `…0098…:38-58`):** `exploration_sites` is the twin of `mining_fields` — `id`, `name`
+(unique), `space_x`/`space_y`, `reward_bundle_json` (jsonb, `{metal?, items[]}`), `is_active`, `created_at`.
+Point-based, no polygon, no location FK. Per-player state lives in `exploration_discoveries` with **`unique
+(player_id, site_id)`** (`…0098…:73-79`) plus a pending→secured lifecycle (`main_ship_id`, `pending_bundle_json`,
+`secured_at`, `…0099…:60-62`, `…0100…:34-35`). Discovery is proximity-based via `command_scan` (§1.4). The whole
+subsystem is **dark**: `exploration_enabled=false`, never proven live (§1.4).
+
+**Properties the owner named that have NO real column/runtime today — REQUIRES NEW RUNTIME, OUT OF AUTHORING SCOPE
+UNTIL BUILT:**
+- **one-time vs repeatable** — the runtime is **one-time ONLY**: `unique (player_id, site_id)` (`…0098…:78`)
+  permits exactly one discovery per player per site. **Repeatable exploration does not exist** and would need a new
+  runtime.
+- **cooldown** — no cooldown column/runtime for exploration (unlike mining, which paces via `created_at`); a
+  per-site exploration cooldown is out-of-scope-until-built.
+- **prerequisites** — no prerequisite column/runtime.
+- **visibility / reveal** — sites are **hidden server-only until discovered** (RLS enabled, no client policy,
+  `…0098…:60-63`); there is no authorable pre-discovery visibility/reveal state. Per-player **completion** state
+  DOES exist (a `discoveries` row = completed), but an authorable **reveal** step separate from discovery does not.
+
+**What the exploration adapter CAN currently author (real columns only):** a site's `name`, its position
+(`space_x`/`space_y`), its `reward_bundle_json` (`{metal?, items[]}`), and its `is_active` flag. Per-player
+discovery **completion** state already exists (`exploration_discoveries`, one row = completed). **Nothing else
+exists to author.**
+
+**FUTURE runtime capabilities (do NOT invent schema/behavior as if present):** repeatable discovery, per-site
+cooldown, prerequisites, and an authorable pre-discovery reveal step are **future runtime capabilities**. Before
+any editor control for them may be enabled, the ENGINE work must land first: dropping/replacing the `unique
+(player_id, site_id)` one-shot constraint (`…0098…:78`) plus a cooldown runtime for repeatability; a prerequisite-
+evaluation runtime; and a reveal/visibility runtime distinct from discovery. **Hard rule:** the editor must
+**NEVER** expose a control that writes data the runtime does not understand — these controls stay **disabled and
+explicit** until their engine exists (§WE.2 adapter boundary).
+
+The exploration adapter authors point discoveries / area regions against the REAL `exploration_sites` /
+`exploration_discoveries` model. Because the base system is **dark and unproven** (`exploration_enabled=false`),
+this layer is built **LAST** (§8 Slice I): light and prove exploration end-to-end FIRST, then add the layer.
+
+### WE.9 Zone layer
+
+The Zone layer reuses the existing **blueprint + typed behavior-module + placement + override** model already
+documented in §2 — it adds nothing new here, it just renders and authors that model as one layer of the World
+Editor:
+
+- **Pirate behavior zones (v1)** — the single behavior the first slice ships (§2.8, §5).
+- **FUTURE mining / exploration behavior zones + future typed modules** (hazard, trade-modifier, visibility,
+  faction, mission-trigger, travel-speed, regeneration, §2.3) — all through the **same** typed
+  blueprint/revision/placement/override machinery, gated by the compatibility policy (§6.1).
+
+See §2 (schema), §2.7 (immutable-revision lifecycle), §5.3 (the ONE resolver), §6 (growth/compat/overlap). This
+layer does not duplicate those sections; the ZoneLayerAdapter is the seam onto them.
+
+### WE.10 ONE shared security + lifecycle + draft + audit framework (not per-domain)
+
+Every layer shares ONE framework. Domain-specific validation lives inside each typed adapter/command; the
+framework itself is built once.
+
+**Authorization — ONE owner/developer authz spine for ALL layers.**
+*CURRENT REALITY:* there is **NO server-side owner spine.** No `is_owner()`/`is_admin()`/allow-list exists
+(§1.5); `pirate_zone_create`/`delete` are granted to plain `authenticated` with the self-described *"PROTOTYPE:
+no admin-role gate"* (`…0233…:1478-1480`, grant at `…0233…:1473`); the only "owner" gate is a **CLIENT-side**
+`dev_zone_editor_enabled` flag + a hidden `/dev/zones` route (`20260618000238…`, whose own header states no server
+function reads it). *PROPOSED:* build the spine **ONCE** as **prerequisite #1** (the security spine of §7): an owner
+allow-list (`app_owners`) + an `is_owner()` `SECURITY DEFINER` predicate that **EVERY** typed domain command
+(location / mining / exploration / zone) calls before acting. **Do NOT** create one owner check for zones, another
+for mining, another for exploration — one spine, consulted by all adapters.
+
+**Shared guarantees for every layer:** server-side owner authorization; anonymous rejection;
+unauthorized-authenticated rejection; no unrestricted direct browser writes; draft isolation; validation before
+publication; explicit publication; separate enablement/reveal; audit records; disable/kill switch; rollback/
+restoration where practical. *CURRENT REALITY on audit:* **no audit records exist today** —
+`danger_zones.created_by` (`…0233…`) is the only authorship attribution anywhere, and `locations` has **none** —
+so the audit framework is **NEW** (`zone_authoring_audit`, §7.6, generalized to all layers).
+
+**Shared DRAFT framework — ONE content-authoring lifecycle with typed draft payloads/tables.** Distinguish, for
+every layer: **stable content identity / draft revision / published IMMUTABLE revision / enabled runtime state /
+revealed visibility state (where applicable) / disabled / archived** (consistent with §2.2/§2.7's immutable-
+published-revision philosophy). Physical tables may differ per domain, but editor behavior + lifecycle semantics
+stay identical across layers.
+
+**Shared lifecycle ≠ ONE generic table.** Do NOT force every domain into one generic draft/revision table, and
+specifically do **NOT** introduce an unrestricted-JSON `world_content` / `world_content_drafts` bag to make the
+domains *look* identical — that is the arbitrary-JSON-as-authoritative-config anti-pattern the owner forbids.
+**TYPED per-domain revision tables are acceptable and PREFERABLE**, e.g. `location_draft_revisions` /
+`mining_field_draft_revisions` / `exploration_site_draft_revisions` / `zone_blueprint_revisions` (§2.2) — or a
+carefully **typed** shared revision framework. The COMMONALITY lives in **lifecycle semantics, authorization,
+editor commands, validation orchestration, audit conventions, and publication contracts — NOT in storage shape.**
+Domain config stays typed and constrained; no arbitrary JSON is ever the authoritative final config.
+
+*CURRENT REALITY:* **no draft/published lifecycle exists.** `locations` has only
+`status ∈ {active, locked, hidden}` (a one-way reveal, `service_role`-only, `…0002…:68-69`, `20260618000068…`)
+and `location_services.status` (per-service enable/disable, `…0065…:39`); there is **no `created_by`/`updated_at`/
+`archived_at` on `locations`.** *PROPOSED:* a **draft-staging** approach so editing a draft **NEVER** touches the
+live row (the immutable-published-revision philosophy of §2.2, applied to every layer). **No arbitrary JSON as the
+authoritative final config** on any layer.
+
+**Dependency validation (grounded).** Before publish / move / disable / archive, the framework checks REAL
+referrers of the affected item and refuses to break them:
+`location_presence` (`20260616000008…`), `fleet_movements` targets, `main_ship_space_movements` targets
+(`…0055…`), `main_ship_instances.berth_location_id` docking (`…0216…`), `player_home_port` (`…0065…:58-62`,
+`on delete restrict`), bases / station-storage (`…0157…`, `on delete restrict`), `space_anchors`
+(`…0063…:33`, `on delete restrict`), plus `market_offers`/investments/haul/combat/world_events/`danger_zones`.
+**Never hard-delete a referenced published item;** prefer disable/archive; delete only if the item was never
+published or referenced.
+
+### WE.11 One real map — retire the bespoke one (anti-spaghetti)
+
+The World Editor renders on the **REAL map primitives**, not a second canvas:
+`src/features/map/GalaxyMap.tsx`; coordinate authority `src/features/map/openSpaceTransform.ts`
+(`worldToViewBox`/`viewBoxToWorld`, `WORLD_MIN`/`WORLD_MAX` ±10000, `VIEWBOX_SIZE=1000`, `openSpaceTransform.ts:36-39,
+74-85`); camera `galaxyCamera.ts`; markers `markerStyle.ts` / `LocationMarker.tsx`; zone render `dangerZoneLayer.ts`;
+territory `territoryLayer.ts`; data `mapApi.ts` / `pirateApi.ts`.
+
+*CURRENT REALITY:* `src/features/dev/ZoneEditor.tsx` uses a **BESPOKE** `makeFit` SVG transform (its own
+`SVG = 1000`, `ZoneEditor.tsx:31,49-76`, `viewBox 0 0 ${SVG} ${SVG}` at `:223`) and does **NOT** reuse
+`GalaxyMap`/`openSpaceTransform`/`galaxyCamera`/`markerStyle` — a second, incompatible world↔SVG projection and a
+second renderer for one map (§4.1). *PROPOSED:* the World Editor uses the shared real-map primitives and the
+bespoke `ZoneEditor` map is **RETIRED** — **one map authority, not two** (§4, Slice B). A `/dev/zones` route rename
+is not required immediately, but the component must be designed for the broader World Editor role: **a single World
+Editor route/shell**, never `/dev/mining-editor` + `/dev/exploration-editor`.
+
+### WE.12 Editor UX
+
+> **One map** → **toggle layers** (Locations / Mining / Exploration / Zones) → **select a content type** →
+> **add point / draw area / select existing** → **configure typed properties** → **inspect relationships &
+> dependencies** → **save draft** → **preview effective result** (via the server resolver, §5.3, never a client
+> merge) → **validate** → **publish explicitly** → **enable or reveal separately**.
+
+**The user never leaves the World Editor to author mining or exploration.** Switching from authoring a port to
+authoring an ore field to authoring a pirate zone is a **layer toggle**, not a navigation to another tool.
+
+### WE.13 Bounded phased roadmap (ONE editor from the beginning)
+
+The phases exist because the underlying systems have **different readiness** — but the **PRODUCT is one World
+Editor from the start.** Later mining/exploration phases **EXTEND the same editor**; they are **NOT separate
+editors.**
+
+1. **Foundation** — shared real map + layer registry + selection model + read-only typed inspectors + owner-
+   authorization integration (maps onto §8 Slice A security spine + Slice B shared-map extraction).
+2. **Unified read-only world view** — show current locations, mining records, exploration records, and zones ALL on
+   ONE map as selectable typed layers, even though they come from separate schemas.
+3. **Location authoring** — draft authoring for the existing canonical location types (ports, pirate sites).
+4. **Mining authoring** — connect the real mining tables/commands (`mining_fields`, §WE.7) to the shared shell
+   (§8 Slice H).
+5. **Exploration authoring** — connect the real exploration tables/commands (`exploration_sites`, §WE.8) to the
+   shared shell, AFTER exploration is lit and proven (§8 Slice I).
+6. **Zone behavior authoring** — pirate (v1, §8 Slice G) then mining/exploration behaviors via typed blueprint
+   modules + placements (§8 Slices H/I, gated by the §6.1 compatibility policy).
+
+**Gating:** no phase is built until the prerequisites are resolved and each slice is separately approved (§8). The
+two prod prerequisites are **SEPARATE, INDEPENDENT prerequisites** — they are not one item: (#1) the **security-
+containment** spine that closes the LIVE `pirate_zone_create` griefing hole (§1.5, §7), and (#2) the **`combat_units`
+UNIQUE cardinality** fix that unblocks multi-pirate waves (§5.5). Either can be true while the other is false;
+both must land before the feature work they respectively gate. Later mining/exploration phases add **adapters to
+the same shell**, never new editors.
+
+**V1 boundary (implementation stays bounded even though it is one editor from the start).** "One editor from the
+beginning" does **NOT** mean every layer is writable in the first release. The first stages are strictly ordered:
+
+1. **security prerequisites** (the §7 owner spine + the §1.5 containment fix);
+2. **shared real-map foundation** (§WE.11, §8 Slice B);
+3. **unified READ-ONLY rendering** of existing content across all layers on one map (§WE.13 stage 2);
+4. **read-only typed inspectors** for each layer;
+5. **draft authoring for ONE already-supported domain only** (locations — the domain with the most-ready runtime);
+6. **controlled publication only after separate approval + verification** (§8 per-slice gate).
+
+**Do NOT make location + mining + exploration + zone mutation all writable simultaneously.** Unified rendering and
+inspection come first for every layer; write-authoring is unlocked **one domain at a time**, each behind its own
+separately-approved slice, its own flag, and its own apply-proof — never as a single big-bang editable release.
+
+### WE.14 Reality-vs-model reconciliation
+
+An honest statement of the CURRENT tensions and how this unified design reconciles each:
+
+| CURRENT tension | How the unified design reconciles it |
+|---|---|
+| **Two coordinate authorities** — `locations.x/y` display-only (`…0002…:57-58`) + `space_anchors` movement-authoritative (`…0063…:35-54`), same point stored twice | **Reuse/evolve `space_anchors`** as the canonical anchor; one-writer RPC keeps display synced from the anchor — **NO third authority** (`world_anchors` is rejected) (§WE.4) |
+| **Mining & exploration in separate tables** (`mining_fields` `…0103…:50-70`, `exploration_sites` `…0098…:38-58`), no location FK | **Typed adapters/layers** bridge them to the shell — **NOT separate editors, NOT collapsed into `locations`** (§WE.3, §WE.7, §WE.8) |
+| **No owner spine** — client-flag + hidden route only; `pirate_zone_create` open to `authenticated` (`…0233…:1478-1480`) | **Build ONE shared owner spine** (`app_owners` + `is_owner()`), prerequisite #1, consulted by every layer's commands (§WE.10, §7) |
+| **No draft lifecycle** — `locations.status` is a one-way reveal only (`…0002…:68-69`); no `created_by`/`archived_at` | **One shared draft-staging framework** with typed payloads; editing a draft never touches the live row (§WE.10, §2.2) |
+| **No mining richness/depletion/regeneration/eligibility; no exploration repeatable/cooldown/prerequisites/reveal** | Author only against **real columns**; those properties are marked **out-of-scope-until-built** until a real runtime backs them (§WE.7, §WE.8) |
+| **Two maps** — `GalaxyMap` (`openSpaceTransform`) vs bespoke `ZoneEditor` `makeFit` (`ZoneEditor.tsx:31,49-76`) | **Retire the bespoke `ZoneEditor` map**; the World Editor renders on the shared real-map primitives — one map authority (§WE.11, §4) |
+
+### WE.15 Scope of approval
+
+This document is **architecture only.** **Merging PR #222 approves the ARCHITECTURAL DIRECTION ONLY** — it does
+**NOT** approve or authorize any code, any migration, any production write, any grant, any flag change, or any
+activation. Every implementation slice (§8) remains subject to its own separate review, its own apply-proof, its
+own migration approval on the protected `production` environment, and its own owner-gated enable. Nothing in this
+section is built, deployed, or lit by accepting it.
