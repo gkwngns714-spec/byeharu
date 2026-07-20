@@ -1,16 +1,16 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 239,
-  "functions": 232,
+  "migrations": 249,
+  "functions": 243,
   "tables": 87,
   "flags": 37,
   "systems": 29,
   "phases": 28,
   "rungs": 9,
-  "jobs": 235,
-  "nodes": 661,
-  "edges": 1909
+  "jobs": 236,
+  "nodes": 682,
+  "edges": 1933
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -2719,6 +2719,116 @@
    "seedsFlag": []
   },
   {
+   "id": "mig:20260618000244",
+   "kind": "migration",
+   "label": "worldeditor_publish_exploration_create",
+   "stamp": "20260618000244",
+   "seq": null,
+   "addedAt": "2026-07-20T05:31:09+09:00",
+   "file": "supabase/migrations/20260618000244_worldeditor_publish_exploration_create.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE 1: exploration_site_create — the FIRST live-world-WRITE publish command, owner-gated through the 0243 contract. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the first World Editor command that MUTATES world content — it INSERTs one row into public.exploration_sites. It reproduces the 0243 world",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000245",
+   "kind": "migration",
+   "label": "worldeditor_v1c_anchor_scaffold",
+   "stamp": "20260618000245",
+   "seq": null,
+   "addedAt": "2026-07-20T05:23:34+09:00",
+   "file": "supabase/migrations/20260618000245_worldeditor_v1c_anchor_scaffold.sql",
+   "detail": "Byeharu — WORLD-EDITOR V1C PR-A/B: anchor scaffolding + world-wide location backfill. ADDITIVE ONLY — the world is byte-identical after this migration. GOAL (V1C direction): make public.space_anchors (0063) the canonical location coordinate authority. This slice is the SAFE ADDITIVE first stage ONLY: PR-A  a read resolver (get_location_anchor_points) that resolves a location's canonical point FROM",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000246",
+   "kind": "migration",
+   "label": "worldeditor_publish_mining_create",
+   "stamp": "20260618000246",
+   "seq": null,
+   "addedAt": "2026-07-20T05:45:55+09:00",
+   "file": "supabase/migrations/20260618000246_worldeditor_publish_mining_create.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE 2: mining_field_create — the SECOND live-world-write publish command, owner-gated through the 0243 contract; the byte-for-byte MINING TWIN of 0244. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the second World Editor command that MUTATES world content — it INSERTs one row into public.mining_fie",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000247",
+   "kind": "migration",
+   "label": "worldeditor_publish_exploration_update",
+   "stamp": "20260618000247",
+   "seq": null,
+   "addedAt": "2026-07-20T06:02:20+09:00",
+   "file": "supabase/migrations/20260618000247_worldeditor_publish_exploration_update.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE 3: exploration_site_update — the FIRST live-world-UPDATE publish command, owner-gated through the 0243 contract, with OPTIMISTIC CONCURRENCY. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the first World Editor command that EDITS existing world content — it UPDATEs one row in public.exploration_",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000248",
+   "kind": "migration",
+   "label": "worldeditor_publish_mining_update",
+   "stamp": "20260618000248",
+   "seq": null,
+   "addedAt": "2026-07-20T06:14:34+09:00",
+   "file": "supabase/migrations/20260618000248_worldeditor_publish_mining_update.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE 4: mining_field_update — the MINING TWIN of the 0247 exploration_site_update live-world-UPDATE publish command, owner-gated through the 0243 contract, with OPTIMISTIC CONCURRENCY. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the second World Editor command that EDITS existing world content — it",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000249",
+   "kind": "migration",
+   "label": "worldeditor_publish_location_update",
+   "stamp": "20260618000249",
+   "seq": null,
+   "addedAt": "2026-07-20T06:31:55+09:00",
+   "file": "supabase/migrations/20260618000249_worldeditor_publish_location_update.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE 5: location_update — the THIRD publish DOMAIN (locations), an owner-gated live-world-UPDATE command through the 0243 contract, with OPTIMISTIC CONCURRENCY. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the location twin of exploration_site_update (0247) / mining_field_update (0248) — it UPDATEs ",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000250",
+   "kind": "migration",
+   "label": "worldeditor_publish_setactive",
+   "stamp": "20260618000250",
+   "seq": null,
+   "addedAt": "2026-07-20T12:17:46+09:00",
+   "file": "supabase/migrations/20260618000250_worldeditor_publish_setactive.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE 6: exploration_site_set_active + mining_field_set_active — the UNPUBLISH/RESTORE commands, owner-gated through the 0243 contract, with OPTIMISTIC CONCURRENCY. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the canonical SAFE unpublish/re-publish surface — TWO twin commands that toggle ONE row's i",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000252",
+   "kind": "migration",
+   "label": "worldeditor_publish_location_create",
+   "stamp": "20260618000252",
+   "seq": null,
+   "addedAt": "2026-07-20T12:34:12+09:00",
+   "file": "supabase/migrations/20260618000252_worldeditor_publish_location_create.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE 7: location_create — the LAST publishing gap: an owner-gated live-world-CREATE command for the locations domain through the 0243 contract. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the location twin of exploration_site_create (0244) / mining_field_create (0246) — it INSERTs one row into publ",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000254",
+   "kind": "migration",
+   "label": "worldeditor_publish_zone_create",
+   "stamp": "20260618000254",
+   "seq": null,
+   "addedAt": "2026-07-20T13:10:12+09:00",
+   "file": "supabase/migrations/20260618000254_worldeditor_publish_zone_create.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING: zone_create — the 4th/FINAL publish DOMAIN: an owner-gated live-world-CREATE command for danger-zone GEOMETRY through the 0243 contract. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the zone twin of location_create (0252) / exploration_site_create (0244) — it MATERIALIZES an owner zone draft's seed ",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000255",
+   "kind": "migration",
+   "label": "worldeditor_publish_zone_unpublish",
+   "stamp": "20260618000255",
+   "seq": null,
+   "addedAt": "2026-07-20T16:36:03+09:00",
+   "file": "supabase/migrations/20260618000255_worldeditor_publish_zone_unpublish.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE: zone_unpublish — the owner-gated SAFE unpublish for the 4th publish domain (zones), the twin of 0254 zone_create, through the 0243 contract. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the canonical SAFE zone-unpublish command — flips ONE public.danger_zones row's status from 'active' to 'ina",
+   "seedsFlag": []
+  },
+  {
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
@@ -4108,6 +4218,72 @@
    "id": "fn:world_editor_ping",
    "kind": "function",
    "label": "world_editor_ping",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:exploration_site_create",
+   "kind": "function",
+   "label": "exploration_site_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:get_location_anchor_points",
+   "kind": "function",
+   "label": "get_location_anchor_points",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:mining_field_create",
+   "kind": "function",
+   "label": "mining_field_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:exploration_site_update",
+   "kind": "function",
+   "label": "exploration_site_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:mining_field_update",
+   "kind": "function",
+   "label": "mining_field_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:location_update",
+   "kind": "function",
+   "label": "location_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:exploration_site_set_active",
+   "kind": "function",
+   "label": "exploration_site_set_active",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:mining_field_set_active",
+   "kind": "function",
+   "label": "mining_field_set_active",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:location_create",
+   "kind": "function",
+   "label": "location_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:zone_create",
+   "kind": "function",
+   "label": "zone_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:zone_unpublish",
+   "kind": "function",
+   "label": "zone_unpublish",
    "detail": "Postgres function"
   },
   {
@@ -9951,6 +10127,66 @@
    "type": "alters"
   },
   {
+   "source": "mig:20260618000244",
+   "target": "fn:exploration_site_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000244",
+   "target": "table:world_editor_audit",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000245",
+   "target": "fn:get_location_anchor_points",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000246",
+   "target": "fn:mining_field_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000247",
+   "target": "fn:exploration_site_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000248",
+   "target": "fn:mining_field_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000249",
+   "target": "fn:location_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000250",
+   "target": "fn:exploration_site_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000250",
+   "target": "fn:mining_field_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000252",
+   "target": "fn:location_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000254",
+   "target": "fn:zone_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000255",
+   "target": "fn:zone_unpublish",
+   "type": "creates"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -11437,6 +11673,12 @@
    "target": "mig:20260616000014",
    "type": "extends",
    "note": "combat_ticks"
+  },
+  {
+   "source": "mig:20260618000244",
+   "target": "mig:20260618000243",
+   "type": "extends",
+   "note": "world_editor_audit"
   },
   {
    "source": "fn:base_reserve_units",
@@ -14399,6 +14641,61 @@
    "type": "touches"
   },
   {
+   "source": "fn:get_location_anchor_points",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:location_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:location_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:exploration_site_set_active",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:exploration_site_set_active",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:exploration_site_set_active",
+   "target": "table:exploration_sites",
+   "type": "touches"
+  },
+  {
+   "source": "fn:zone_create",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_create",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:zone_create",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:zone_unpublish",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_unpublish",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
    "source": "table:profiles",
    "target": "system:Auth",
    "type": "owned-by"
@@ -16508,6 +16805,13 @@
    "title": "COMBAT SLICE 0: the module-attribute foundation (mig 0229, DARK `module_range_attributes_enabled`)",
    "migs": [
     "20260618000229"
+   ]
+  },
+  {
+   "date": "2026-07-20",
+   "title": "SESSION WRAP: World Editor V1A (merged) + V1B-0 Owner Security Spine (merged, mig 0243 — **DEPLOYED LIVE**) + V1B-1 Location Drafts (merged); V1B-2 validation in progress; V1C coordinate-authority inventory open",
+   "migs": [
+    "20260618000243"
    ]
   }
  ]
