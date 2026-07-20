@@ -401,6 +401,15 @@ comment on function public.zone_create(text, jsonb) is
 revoke all on function public.zone_create(text, jsonb) from public;
 grant execute on function public.zone_create(text, jsonb) to authenticated;  -- guard is in-body; NEVER anon
 
+-- danger_zones is THIS command's write target: revoke any client direct-write grant so the ONLY
+-- write path is the SECURITY DEFINER body. Supabase project defaults (GRANT ALL on new public
+-- tables) can leave INSERT/UPDATE/DELETE open on the 0233 table even though no migration widened
+-- it; every sibling publish slice revokes its own table (e.g. 0246 mining_fields). SELECT is
+-- preserved — the flag-gated zone read (get_danger_zones + danger_zones_select_when_lit RLS
+-- policy) depends on it, and self-assert (d) verifies SELECT survives. Idempotent: revoking a
+-- privilege the role does not hold is a silent no-op (so the fresh-chain CI apply-proof stays green).
+revoke insert, update, delete on table public.danger_zones from anon, authenticated;
+
 -- ── 3. self-assert (deploy-time; any raise aborts the txn — nothing half-applies) ─────────────────
 do $pubassert$
 begin
