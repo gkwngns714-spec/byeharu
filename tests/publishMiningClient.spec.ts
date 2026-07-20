@@ -32,6 +32,10 @@ test('commandRpcName maps mining_field_update to its server entrypoint', () => {
   expect(commandRpcName('mining_field_update')).toBe('mining_field_update')
 })
 
+test('commandRpcName maps mining_field_set_active to its server entrypoint', () => {
+  expect(commandRpcName('mining_field_set_active')).toBe('mining_field_set_active')
+})
+
 // ── envelope normalization ──────────────────────────────────────────────────────────────────────────
 test('normalizeEnvelope: a mining_field_create success envelope carries result/commandType through', () => {
   const raw: RawServerEnvelope = {
@@ -124,4 +128,41 @@ test('normalizeEnvelope: a mining not_found envelope carries the source_missing 
   if (r.ok) throw new Error('unreachable')
   expect(r.error).toBe('not_found')
   expect(r.details?.[0]?.code).toBe('source_missing')
+})
+
+// ── the 0250 SET-ACTIVE (unpublish/restore) command envelope ────────────────────────────────────────
+const SET_ACTIVE_ENVELOPE: WorldEditorCommandEnvelope = {
+  requestId: 'req-mact-1',
+  commandType: 'mining_field_set_active',
+  payload: {
+    target_id: 'Field A',
+    expected: { name: 'Field A', space_x: 1, space_y: 2, reward_bundle_json: null },
+    is_active: false,
+  },
+}
+
+test('normalizeEnvelope: a mining set_active success carries {set_active,id,name,is_active} + command_type through', () => {
+  const raw: RawServerEnvelope = {
+    ok: true,
+    request_id: 'req-mact-1',
+    command_type: 'mining_field_set_active',
+    result: { set_active: true, id: 'abc', name: 'Field A', is_active: false },
+  }
+  const r = normalizeEnvelope(SET_ACTIVE_ENVELOPE, raw)
+  expect(r.ok).toBe(true)
+  if (!r.ok) throw new Error('unreachable')
+  expect(r.commandType).toBe('mining_field_set_active')
+  expect(r.result).toEqual({ set_active: true, id: 'abc', name: 'Field A', is_active: false })
+})
+
+test('normalizeEnvelope: a mining set_active stale_revision envelope carries the per-field source_changed details through', () => {
+  const r = normalizeEnvelope(SET_ACTIVE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-mact-1',
+    error: 'stale_revision',
+    details: [{ code: 'source_changed', field: 'space_y' }],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('stale_revision')
+  expect(r.details?.[0]).toEqual({ code: 'source_changed', field: 'space_y' })
 })

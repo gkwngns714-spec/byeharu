@@ -29,6 +29,7 @@ test('commandRpcName maps every command kind to its server entrypoint', () => {
   expect(commandRpcName('world_editor_ping')).toBe('world_editor_ping')
   expect(commandRpcName('exploration_site_create')).toBe('exploration_site_create')
   expect(commandRpcName('exploration_site_update')).toBe('exploration_site_update')
+  expect(commandRpcName('exploration_site_set_active')).toBe('exploration_site_set_active')
 })
 
 // ── extended error vocabulary ───────────────────────────────────────────────────────────────────────
@@ -176,6 +177,43 @@ test('normalizeEnvelope: a not_found envelope carries the source_missing detail 
   if (r.ok) throw new Error('unreachable')
   expect(r.error).toBe('not_found')
   expect(r.details?.[0]?.code).toBe('source_missing')
+})
+
+// ── the 0250 SET-ACTIVE (unpublish/restore) command envelope ────────────────────────────────────────
+const SET_ACTIVE_ENVELOPE: WorldEditorCommandEnvelope = {
+  requestId: 'req-act-1',
+  commandType: 'exploration_site_set_active',
+  payload: {
+    target_id: 'Site A',
+    expected: { name: 'Site A', space_x: 1, space_y: 2, reward_bundle_json: null },
+    is_active: false,
+  },
+}
+
+test('normalizeEnvelope: a set_active success carries {set_active,id,name,is_active} + command_type through', () => {
+  const raw: RawServerEnvelope = {
+    ok: true,
+    request_id: 'req-act-1',
+    command_type: 'exploration_site_set_active',
+    result: { set_active: true, id: 'abc', name: 'Site A', is_active: false },
+  }
+  const r = normalizeEnvelope(SET_ACTIVE_ENVELOPE, raw)
+  expect(r.ok).toBe(true)
+  if (!r.ok) throw new Error('unreachable')
+  expect(r.commandType).toBe('exploration_site_set_active')
+  expect(r.result).toEqual({ set_active: true, id: 'abc', name: 'Site A', is_active: false })
+})
+
+test('normalizeEnvelope: a set_active stale_revision envelope carries the per-field source_changed details through', () => {
+  const r = normalizeEnvelope(SET_ACTIVE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-act-1',
+    error: 'stale_revision',
+    details: [{ code: 'source_changed', field: 'name' }],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('stale_revision')
+  expect(r.details?.[0]).toEqual({ code: 'source_changed', field: 'name' })
 })
 
 // ── request-id minting ──────────────────────────────────────────────────────────────────────────────
