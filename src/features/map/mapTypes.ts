@@ -89,6 +89,27 @@ export function flattenWorldMapLocations(world: WorldMap): MapLocation[] {
   return out
 }
 
+/** One zone reference from the RAW get_world_map() tree: the zone's uuid + display names. The tree
+ *  (sectors[].zones[]) ALREADY carries zone id + name (unlike the flattened MapLocation list, which
+ *  drops zone_id) — so the World Editor's create-location zone picker needs NO new server read. */
+export interface WorldMapZoneRef {
+  zone_id: string
+  zone_name: string
+  sector_name: string
+}
+
+/** Flatten the nested get_world_map() tree to the zone-reference list (id + names). PURE — the
+ *  single authority for this walk (sibling of flattenWorldMapLocations; consumers never re-walk the
+ *  tree by hand). Tolerant of missing arms. Leak-parity: exactly the zones get_world_map already
+ *  serves every client (active zones in active sectors) — nothing new is exposed. */
+export function flattenWorldMapZones(world: WorldMap): WorldMapZoneRef[] {
+  const out: WorldMapZoneRef[] = []
+  for (const sector of world.sectors ?? [])
+    for (const zone of sector.zones ?? [])
+      out.push({ zone_id: zone.id, zone_name: zone.name, sector_name: sector.name })
+  return out
+}
+
 /**
  * M5: World State (dynamic). Read-only mirror of the location_state table. The
  * client never writes these — worldstate_tick() (server cron) owns them.

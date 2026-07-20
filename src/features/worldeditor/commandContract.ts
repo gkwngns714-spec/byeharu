@@ -20,7 +20,11 @@
  *  exploration_site_set_active / mining_field_set_active are the UNPUBLISH/RESTORE commands (0250,
  *  owner-gated): they toggle ONE row's is_active flag — the canonical safe unpublish (false) and
  *  re-publish (true), NO hard delete — under the same optimistic-concurrency contract (payload
- *  carries target_id + the fork-time `expected` snapshot + the boolean is_active direction). */
+ *  carries target_id + the fork-time `expected` snapshot + the boolean is_active direction);
+ *  location_create is the LAST publishing gap (0252, owner-gated): creates ONE new location from a
+ *  CREATE draft — fields carry a REQUIRED zone_id (uuid of an existing zone, server-validated as a
+ *  typed validation_failed {invalid_zone}) beside the 11 location draft fields; no target_id /
+ *  expected (a create has no live source row). */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
   | 'exploration_site_create'
@@ -28,6 +32,7 @@ export type WorldEditorCommandType =
   | 'exploration_site_update'
   | 'mining_field_update'
   | 'location_update'
+  | 'location_create'
   | 'exploration_site_set_active'
   | 'mining_field_set_active'
 
@@ -118,6 +123,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'mining_field_update'
     case 'location_update':
       return 'location_update'
+    case 'location_create':
+      return 'location_create'
     case 'exploration_site_set_active':
       return 'exploration_site_set_active'
     case 'mining_field_set_active':

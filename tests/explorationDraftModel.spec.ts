@@ -139,7 +139,7 @@ test('out-of-bounds coordinates are flagged — the payload keeps its exact valu
 
 // ── preview shape parity with the live exploration layer (diamond glyph, --color-accent tone) ───────
 test('draftToLayerItem has EXACTLY the LayerItem shape explorationLayerAdapter.readItems produces', () => {
-  const DATA: WorldEditorData = { locations: [], miningFields: [], explorationSites: [site()], zones: [] }
+  const DATA: WorldEditorData = { locations: [], zoneRefs: [], miningFields: [], explorationSites: [site()], zones: [] }
   const liveItem = explorationLayerAdapter.readItems(DATA)[0]
   const draftItem = draftToLayerItem(forkEdit(site(), 'draft-a', T0))
 

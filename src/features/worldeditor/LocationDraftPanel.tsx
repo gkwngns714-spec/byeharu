@@ -14,11 +14,19 @@
 // server-side re-validation); the button's publishable gate is advisory UX, never authorization.
 // The requestId is minted ONCE per publish attempt and kept across retries, so a retry REPLAYS
 // idempotently instead of double-applying. On success the local draft is discarded (the change is
-// live now). A CREATE draft has NO server command yet (location_create is a later slice) — creates
-// keep the honest "later slice" note. Until migration 0249 is deployed the RPC does not exist and
-// the call fails closed as a transport error — the capability is dark.
+// live now).
+//
+// CREATE (0252 slice): the LAST publishing gap — a CREATE draft publishes through the owner-gated
+// location_create command. A new location REQUIRES a zone (locations.zone_id NOT NULL, FK→zones;
+// names are unique per zone), so the create form adds a REQUIRED zone selector. The zone list comes
+// from the RAW get_world_map tree the editor shell already fetched (WorldEditorData.zoneRefs —
+// sectors[].zones[] carries id + name; NO new server read). The command sends
+// fields = {zone_id, ...draft.payload}; the server re-validates zone_id itself (a typed
+// validation_failed {invalid_zone}) — the selector is advisory UX, never authorization. Until
+// migration 0249/0252 is deployed the RPC does not exist and the call fails closed as a transport
+// error — the capability is dark.
 import { useState, type ReactNode } from 'react'
-import type { ActivityType, LocationType } from '../map/mapTypes'
+import type { ActivityType, LocationType, WorldMapZoneRef } from '../map/mapTypes'
 import { WORLD_MAX, WORLD_MIN } from '../map/openSpaceTransform'
 import { Button, Notice } from '../../components/ui'
 import { isDirty } from './locationDraftModel'
@@ -89,7 +97,13 @@ function ValidationNotices({ report }: { report: ValidationReport }) {
   )
 }
 
-export function LocationDraftPanel() {
+export function LocationDraftPanel({
+  zoneOptions = [],
+}: {
+  /** Zone references (uuid + names) for the create-draft zone selector — sourced from the RAW
+   *  get_world_map tree (WorldEditorData.zoneRefs); advisory UX only, the server re-validates. */
+  zoneOptions?: readonly WorldMapZoneRef[]
+} = {}) {
   const {
     drafts,
     activeDraft,
@@ -102,6 +116,10 @@ export function LocationDraftPanel() {
   } = useLocationDrafts()
   const [confirmingDiscardId, setConfirmingDiscardId] = useState<string | null>(null)
   const [publishAttempt, setPublishAttempt] = useState<PublishAttempt | null>(null)
+  // The create-draft zone choice, keyed per draftId ('' = not chosen). Transient UI state — the
+  // zone is a PUBLISH argument, not a draft payload field (LocationDraftPayload mirrors MapLocation,
+  // which carries no zone_id).
+  const [createZoneByDraft, setCreateZoneByDraft] = useState<Record<string, string>>({})
 
   const set = (partial: Partial<LocationDraftPayload>) => {
     if (activeDraft) patchDraft(activeDraft.draftId, partial)
@@ -120,24 +138,36 @@ export function LocationDraftPanel() {
 
   const onPublish = async (draft: LocationDraft) => {
     if (publishAttempt?.phase === 'sending') return
-    if (draft.mode.kind !== 'edit') return // creates have no server command yet (later slice)
+    const zoneId = createZoneByDraft[draft.draftId] ?? ''
+    if (draft.mode.kind === 'create' && zoneId === '') return // zone is REQUIRED for a create
     // Mint the requestId ONCE per attempt; a retry of the SAME draft reuses it, so the server
     // replays idempotently instead of double-applying.
     const requestId =
       publishAttempt?.draftId === draft.draftId ? publishAttempt.requestId : newRequestId()
     setPublishAttempt({ draftId: draft.draftId, requestId, phase: 'sending', failure: null })
-    // location_update (0249): addressed by the forked sourceId (the live row's uuid) with the
-    // fork-time sourceSnapshot as the server's optimistic-concurrency `expected` baseline.
-    const result = await invokeWorldEditorCommand({
-      requestId,
-      commandType: 'location_update',
-      payload: {
-        target_id: draft.mode.sourceId,
-        expected: draft.mode.sourceSnapshot,
-        fields: draft.payload,
-        source_revision: draft.mode.sourceRevision,
-      },
-    })
+    // edit → location_update (0249): addressed by the forked sourceId (the live row's uuid) with
+    //   the fork-time sourceSnapshot as the server's optimistic-concurrency `expected` baseline.
+    // create → location_create (0252): no target/expected (nothing live to drift from); fields
+    //   carry the REQUIRED zone_id beside the draft payload — the server validates it (invalid_zone).
+    const result =
+      draft.mode.kind === 'edit'
+        ? await invokeWorldEditorCommand({
+            requestId,
+            commandType: 'location_update',
+            payload: {
+              target_id: draft.mode.sourceId,
+              expected: draft.mode.sourceSnapshot,
+              fields: draft.payload,
+              source_revision: draft.mode.sourceRevision,
+            },
+          })
+        : await invokeWorldEditorCommand({
+            requestId,
+            commandType: 'location_create',
+            payload: {
+              fields: { zone_id: zoneId, ...draft.payload },
+            },
+          })
     if (result.ok) {
       // The change is live now — the local draft has served its purpose.
       setPublishAttempt(null)
@@ -162,8 +192,8 @@ export function LocationDraftPanel() {
       </div>
 
       <p className="mb-2 text-xs text-ink-faint">
-        Drafts are local to this browser until published. Publishing an edit writes the live world
-        (owner only — the server decides); publishing a NEW location is a later slice.
+        Drafts are local to this browser until published. Publishing writes the live world (owner
+        only — the server decides); a NEW location must pick the zone it is created in.
       </p>
 
       {/* ── draft list ── */}
@@ -331,7 +361,7 @@ export function LocationDraftPanel() {
             Public location
           </label>
 
-          {/* ── publish (edit → 0249 location_update; create has no server command yet) ── */}
+          {/* ── publish (edit → 0249 location_update; create → 0252 location_create) ── */}
           {activeDraft.mode.kind === 'edit' ? (
             <div className="flex flex-col gap-1.5 border-t border-edge/50 pt-2">
               {publishAttempt?.draftId === activeDraft.draftId && publishAttempt.failure && (
@@ -359,9 +389,61 @@ export function LocationDraftPanel() {
               </p>
             </div>
           ) : (
-            <p className="border-t border-edge/50 pt-2 text-xs text-ink-faint">
-              Publishing a NEW location is a later slice — this draft stays local.
-            </p>
+            <div className="flex flex-col gap-1.5 border-t border-edge/50 pt-2">
+              {/* zone is REQUIRED for a create (locations.zone_id NOT NULL; names unique per zone).
+                  Options come from the raw get_world_map tree (zoneRefs) — advisory UX, the server
+                  re-validates zone_id (typed invalid_zone). */}
+              <Field label="Zone (required — the new location is created inside it)">
+                <select
+                  className={INPUT}
+                  value={createZoneByDraft[activeDraft.draftId] ?? ''}
+                  onChange={(e) =>
+                    setCreateZoneByDraft((prev) => ({
+                      ...prev,
+                      [activeDraft.draftId]: e.target.value,
+                    }))
+                  }
+                >
+                  <option value="">— pick a zone —</option>
+                  {zoneOptions.map((z) => (
+                    <option key={z.zone_id} value={z.zone_id}>
+                      {z.sector_name} · {z.zone_name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {zoneOptions.length === 0 && (
+                <Notice tone="warning">
+                  No zones available to create into — the world map read returned none.
+                </Notice>
+              )}
+              {publishAttempt?.draftId === activeDraft.draftId && publishAttempt.failure && (
+                <PublishFailureNotices failure={publishAttempt.failure} />
+              )}
+              <Button
+                size="sm"
+                variant="primary"
+                busy={
+                  publishAttempt?.draftId === activeDraft.draftId &&
+                  publishAttempt.phase === 'sending'
+                }
+                busyLabel="Publishing…"
+                disabled={
+                  !(report?.publishable ?? false) ||
+                  (createZoneByDraft[activeDraft.draftId] ?? '') === ''
+                }
+                onClick={() => void onPublish(activeDraft)}
+              >
+                {publishAttempt?.draftId === activeDraft.draftId &&
+                publishAttempt.phase === 'failed'
+                  ? 'Retry publish (Create)'
+                  : 'Publish (Create)'}
+              </Button>
+              <p className="text-xs text-ink-faint">
+                Creates a NEW live location in the chosen zone. Owner-only — the server re-validates
+                every field (including the zone) and rejects a name already used in that zone.
+              </p>
+            </div>
           )}
         </div>
       )}
