@@ -21,12 +21,16 @@ export type WorldPoint = WorldCoord
 export type LayerId = 'locations' | 'mining' | 'exploration' | 'zones'
 
 /** How a content item is drawn on the real map (§WE.5 geometry-form matrix): a point → an anchor
- *  coordinate; a polygon → a materialized boundary ring. Coordinates are CANONICAL WORLD coords — the
- *  shell projects them to viewBox through the ONE shared transform (worldEditorGeometry.resolveToViewBox),
- *  never a second projection. */
+ *  coordinate; a polygon → a materialized boundary ring; a circle → a world-coord center + a
+ *  world-unit radius (V3A — the seed geometry a circular zone is authored from, BEFORE it is
+ *  materialized into a vertex ring). Coordinates are CANONICAL WORLD coords — the shell projects them
+ *  to viewBox through the ONE shared transform (worldEditorGeometry.resolveToViewBox), never a second
+ *  projection; a world-unit LENGTH (the circle radius) converts through WORLD_TO_VIEWBOX_SCALE, the
+ *  one length authority. */
 export type MapRepresentation =
   | { readonly kind: 'point'; readonly world: WorldPoint }
   | { readonly kind: 'polygon'; readonly ring: readonly WorldPoint[] }
+  | { readonly kind: 'circle'; readonly center: WorldPoint; readonly radius: number }
 
 /** The point-glyph a layer draws for a point item (the adapter chooses; the shell just renders it).
  *  Mirrors markerStyle's shape vocabulary + a hex for resource fields. Ignored for polygon items. */
