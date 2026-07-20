@@ -57,14 +57,15 @@ test('worldEditorData.ts imports are unchanged — no draft type/module enters t
   const src = read('worldEditorData.ts')
   expect(src).not.toMatch(/locationDraft|LocationDraft|useLocationDrafts/)
 
-  // Pin the EXACT import surface of the unified read snapshot (Foundation V1, PR #228).
+  // Pin the EXACT import surface of the unified read snapshot (Foundation V1, PR #228; the 0252
+  // create slice added the zone-ref flatten — STILL the same mapTypes read module, no new source).
   const importLines = src
     .split('\n')
     .filter((l) => l.startsWith('import '))
     .map((l) => l.trim())
   expect(importLines).toEqual([
     "import { fetchWorldMap } from '../map/mapApi'",
-    "import { flattenWorldMapLocations, type MapLocation } from '../map/mapTypes'",
+    "import { flattenWorldMapLocations, flattenWorldMapZones, type MapLocation, type WorldMapZoneRef } from '../map/mapTypes'",
     "import { getActiveMiningFields } from '../mining/miningApi'",
     "import type { MiningField } from '../mining/miningTypes'",
     "import { getVisibleExplorationSites, type ExplorationSiteLite } from '../exploration/explorationApi'",

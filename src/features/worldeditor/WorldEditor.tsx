@@ -563,9 +563,11 @@ export function WorldEditor() {
             </div>
           </section>
 
-          {/* V1B-1/V2A-2/V2C: the ACTIVE domain's local draft list + form (client-side only). */}
+          {/* V1B-1/V2A-2/V2C: the ACTIVE domain's local draft list + form (client-side only).
+              zoneOptions (0252): the create-location zone picker's source — the zone refs the raw
+              get_world_map tree already carries (WorldEditorData.zoneRefs; no extra server read). */}
           {authoringDomain === 'locations' ? (
-            <LocationDraftPanel />
+            <LocationDraftPanel zoneOptions={data?.zoneRefs ?? []} />
           ) : authoringDomain === 'mining' ? (
             <MiningDraftPanel />
           ) : (

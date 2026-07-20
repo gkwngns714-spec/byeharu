@@ -72,7 +72,7 @@ test('worldEditorData.ts imports are unchanged — no draft type/module enters t
     .map((l) => l.trim())
   expect(importLines).toEqual([
     "import { fetchWorldMap } from '../map/mapApi'",
-    "import { flattenWorldMapLocations, type MapLocation } from '../map/mapTypes'",
+    "import { flattenWorldMapLocations, flattenWorldMapZones, type MapLocation, type WorldMapZoneRef } from '../map/mapTypes'",
     "import { getActiveMiningFields } from '../mining/miningApi'",
     "import type { MiningField } from '../mining/miningTypes'",
     "import { getVisibleExplorationSites, type ExplorationSiteLite } from '../exploration/explorationApi'",
