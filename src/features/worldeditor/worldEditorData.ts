@@ -15,6 +15,7 @@ import { getActiveMiningFields } from '../mining/miningApi'
 import type { MiningField } from '../mining/miningTypes'
 import { getVisibleExplorationSites, type ExplorationSiteLite } from '../exploration/explorationApi'
 import { fetchDangerZones, type DangerZoneLite } from '../map/pirateApi'
+import { fetchGameConfig } from '../../lib/catalog'
 
 /** The unified read-only snapshot. Every adapter reads a slice of THIS one object (§WE.2). */
 export interface WorldEditorData {
@@ -25,15 +26,33 @@ export interface WorldEditorData {
   readonly miningFields: MiningField[]
   readonly explorationSites: ExplorationSiteLite[]
   readonly zones: DangerZoneLite[]
+  /** C1: the SERVER-AUTHORITATIVE mining overlap radius — game_config.mining_extract_radius (the
+   *  same public-read tunable the server coalesces, 0104). null when the config row is absent /
+   *  unreadable / non-positive — the validators then fall back to their clearly-labeled
+   *  NON-AUTHORITATIVE 750 default. Read-only: fetched, never written. */
+  readonly miningExtractRadius: number | null
+  /** C1: the SERVER-AUTHORITATIVE exploration overlap radius — game_config.exploration_scan_radius
+   *  (0099). Same null-fallback semantics as miningExtractRadius. */
+  readonly explorationScanRadius: number | null
 }
 
-/** Fetch every layer's read source in parallel. Read-only throughout — no argument mutates state. */
+/** A positive finite game_config numeric, or null (absent / unreadable / non-numeric / ≤0 all fail
+ *  closed to null so the pure validators fall back honestly — never a fabricated authority). */
+function configRadius(cfg: Record<string, number>, key: string): number | null {
+  const v = cfg[key]
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null
+}
+
+/** Fetch every layer's read source in parallel. Read-only throughout — no argument mutates state.
+ *  game_config is the EXISTING public-read tunables table (lib/catalog.fetchGameConfig — a SELECT,
+ *  never a write); a failed config read degrades to null radii, never throws into the editor. */
 export async function fetchWorldEditorData(): Promise<WorldEditorData> {
-  const [world, miningFields, explorationSites, zones] = await Promise.all([
+  const [world, miningFields, explorationSites, zones, gameConfig] = await Promise.all([
     fetchWorldMap(),
     getActiveMiningFields(),
     getVisibleExplorationSites(),
     fetchDangerZones(),
+    fetchGameConfig().catch((): Record<string, number> => ({})),
   ])
   return {
     locations: flattenWorldMapLocations(world),
@@ -41,5 +60,7 @@ export async function fetchWorldEditorData(): Promise<WorldEditorData> {
     miningFields,
     explorationSites,
     zones,
+    miningExtractRadius: configRadius(gameConfig, 'mining_extract_radius'),
+    explorationScanRadius: configRadius(gameConfig, 'exploration_scan_radius'),
   }
 }

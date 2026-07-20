@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import {
-  EXPLORATION_SITE_OVERLAP_RADIUS,
+  EXPLORATION_SITE_OVERLAP_RADIUS_FALLBACK,
   validateExplorationDraft,
   type ExplorationValidationCode,
   type ExplorationValidationContext,
@@ -162,14 +162,14 @@ test('reward bundle: null on a CREATE is a WARNING (no reward configured) — st
 
 // ── site overlap (ONE shared distance formula; touching is NOT overlap) ─────────────────────────────
 test('site_overlap: d < exploration_scan_radius warns; d == radius does not; an edit ignores its own row', () => {
-  expect(EXPLORATION_SITE_OVERLAP_RADIUS).toBe(750)
+  expect(EXPLORATION_SITE_OVERLAP_RADIUS_FALLBACK).toBe(750)
 
   // exactly at the radius → NOT an overlap
-  const touching = ctx({ live: [site({ space_x: EXPLORATION_SITE_OVERLAP_RADIUS, space_y: 0 })] })
+  const touching = ctx({ live: [site({ space_x: EXPLORATION_SITE_OVERLAP_RADIUS_FALLBACK, space_y: 0 })] })
   expect(codes(validateExplorationDraft(createDraft({ space_x: 0, space_y: 0 }), touching))).toEqual([])
 
   // strictly inside the radius → WARNING
-  const near = ctx({ live: [site({ space_x: EXPLORATION_SITE_OVERLAP_RADIUS - 1, space_y: 0 })] })
+  const near = ctx({ live: [site({ space_x: EXPLORATION_SITE_OVERLAP_RADIUS_FALLBACK - 1, space_y: 0 })] })
   const r = validateExplorationDraft(createDraft({ space_x: 0, space_y: 0 }), near)
   expect(codes(r)).toEqual(['site_overlap'])
   expect(severityOf(r, 'site_overlap')).toBe('warning')
@@ -179,6 +179,26 @@ test('site_overlap: d < exploration_scan_radius warns; d == radius does not; an 
   const src = site()
   const d = forkEdit(src, 'draft-a', T0)
   expect(codes(validateExplorationDraft(d, ctx({ live: [src] })))).toEqual([])
+})
+
+// ── C1: the radius arrives FROM CONTEXT (server-authoritative); 750 is only the labeled fallback ────
+test('site_overlap radius: ctx.overlapRadius (game_config) overrides the 750 fallback; absent/invalid context falls back', () => {
+  const at400 = () => createDraft({ space_x: 0, space_y: 0 })
+  const live400 = [site({ space_x: 400, space_y: 0 })]
+
+  // server radius 300: distance 400 is OUTSIDE → no overlap (would warn under the 750 fallback)
+  expect(codes(validateExplorationDraft(at400(), ctx({ live: live400, overlapRadius: 300 })))).toEqual([])
+
+  // server radius 500: distance 400 is INSIDE → warning
+  const wide = validateExplorationDraft(at400(), ctx({ live: live400, overlapRadius: 500 }))
+  expect(codes(wide)).toEqual(['site_overlap'])
+  expect(severityOf(wide, 'site_overlap')).toBe('warning')
+
+  // absent (undefined), null, and invalid (0 / NaN) all fall back to the labeled 750 default
+  for (const overlapRadius of [undefined, null, 0, Number.NaN]) {
+    const r = validateExplorationDraft(at400(), ctx({ live: live400, overlapRadius }))
+    expect(codes(r), `overlapRadius ${String(overlapRadius)}`).toEqual(['site_overlap'])
+  }
 })
 
 // ── stale source (store-computed sourceStatus surfaced honestly) ────────────────────────────────────

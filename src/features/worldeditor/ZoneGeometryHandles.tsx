@@ -3,7 +3,7 @@
 // events): vertex grips, edge-midpoint insert grips, circle center/radius grips, and the draw-mode
 // capture surface. Every gesture converts pointer → world through the ONE shared inverse projection
 // (openSpaceTransform.screenToWorld with the live camera + the svg's real pixel bbox — never a
-// bespoke transform, §WE.11: the ZoneEditor `makeFit` is exactly the spaghetti this retires) and
+// bespoke transform, §WE.11: the retired ZoneEditor's fit-to-content fork was exactly that) and
 // writes EXCLUSIVELY via `patchGeometry` → store.patchDraft(draftId, { geometry }) — a LOCAL draft
 // patch. ZERO live zone write: no RPC, no zone-RPC-client or publish-transport import (guarded by
 // tests/zoneDraftGuards.spec.ts).

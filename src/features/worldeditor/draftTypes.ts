@@ -50,6 +50,12 @@ export interface DraftValidationEnv<TPayload, TLive> {
   readonly sourceStatus: DraftSourceStatus
   /** Every OTHER local draft (this draft excluded) — for conflicting-draft detection. */
   readonly otherDrafts: readonly Draft<TPayload>[]
+  /** C1: the SERVER-AUTHORITATIVE overlap radius for this domain's proximity rule (game_config's
+   *  mining_extract_radius / exploration_scan_radius, threaded from the read snapshot by the shell).
+   *  Absent/null → the domain validator falls back to its clearly-labeled NON-AUTHORITATIVE
+   *  default. Domains without a proximity rule (locations, zones) ignore it. The value arrives AS
+   *  CONTEXT — the pure validators never fetch. */
+  readonly overlapRadius?: number | null
 }
 
 /** The ONE binding a domain hands the generic core. Everything the lifecycle needs to know about a

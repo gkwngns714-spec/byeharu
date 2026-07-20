@@ -153,6 +153,9 @@ export interface DraftsStore<TPayload, TLive, TReport> {
 export function useDraftsStore<TPayload, TLive, TReport>(
   descriptor: DomainDraftDescriptor<TPayload, TLive, TReport>,
   live: readonly TLive[] | null,
+  // C1: the domain's server-authoritative overlap radius from the read snapshot (null when the
+  // config row is absent) — passed INTO the validation env so the pure validators never fetch.
+  overlapRadius: number | null = null,
 ): DraftsStore<TPayload, TLive, TReport> {
   const [state, dispatch] = useReducer(reducer<TPayload>, {
     drafts: [],
@@ -234,11 +237,12 @@ export function useDraftsStore<TPayload, TLive, TReport>(
           live: liveRows,
           sourceStatus: statusById.get(d.draftId) ?? 'current',
           otherDrafts: state.drafts.filter((o) => o.draftId !== d.draftId),
+          overlapRadius,
         }),
       )
     }
     return m
-  }, [state.drafts, live, statusById, descriptor])
+  }, [state.drafts, live, statusById, descriptor, overlapRadius])
 
   const activeDraft = state.drafts.find((d) => d.draftId === state.activeDraftId) ?? null
 

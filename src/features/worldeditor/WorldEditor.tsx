@@ -11,7 +11,9 @@ import { VIEW, clampK, clampPan, fitCameraToWorldPoints, type Camera } from '../
 import { smoothClosedPathD } from '../map/smoothPolygon'
 import { fetchWorldEditorData, type WorldEditorData } from './worldEditorData'
 import { WORLD_EDITOR_LAYERS, defaultVisibleLayerIds } from './worldEditorRegistry'
-import { representationWorldPoints, resolveToViewBox } from './worldEditorGeometry'
+import { resolveToViewBox } from './worldEditorGeometry'
+import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
+import type { FocusDomain } from './worldEditorCoordinates'
 import {
   DEFERRED_OPERATIONS,
   DEFERRED_OPERATION_REASON,
@@ -20,7 +22,6 @@ import {
   type LayerId,
   type LayerItem,
   type PointGlyph,
-  type WorldPoint,
 } from './worldEditorTypes'
 import { LocationDraftsContext, useLocationDraftsStore } from './useLocationDrafts'
 import { LocationDraftPanel } from './LocationDraftPanel'
@@ -41,8 +42,13 @@ import { Button } from '../../components/ui'
 // WORLD EDITOR — Foundation V1 shell + V1B-1 "Location Drafts & Preview". ONE owner-only surface on
 // the REAL game map: it renders on the SHARED map primitives — the fixed `worldToViewBox` projection
 // (via worldEditorGeometry) and `galaxyCamera` camera math — NEVER a bespoke fit-to-content transform
-// (the ZoneEditor `makeFit` spaghetti this replaces, §WE.11). It toggles the four typed content
+// (the retired ZoneEditor's spaghetti this replaced, §WE.11). It toggles the four typed content
 // layers, selects any item, and inspects its typed fields.
+//
+// C1 (coordinate contract, worldEditorCoordinates.ts): STORED gameplay coordinates NEVER change —
+// how the world reads in the editor is controlled by typed display adapters + the CAMERA only. The
+// Focus control below frames ONE domain at a time via worldEditorFocus.cameraForDomain (pure,
+// reusing the shared galaxyCamera fit) — a camera derivation, never a data write.
 //
 // V1B-1: create/edit open a LOCAL LocationDraft (useLocationDrafts store — localStorage only, a
 // SEPARATE structure never merged into WorldEditorData) previewed as an overlay ABOVE the read-only
@@ -87,6 +93,17 @@ const AUTHORING_DOMAIN_LABELS: Record<AuthoringDomain, string> = {
   zones: 'Zones',
 }
 
+/** C1 Focus control — the camera-only domain framer's button row ('all' keeps today's
+ *  content-fit-everything frame; each domain frames its own cluster at its true tier). */
+const FOCUS_DOMAINS: readonly FocusDomain[] = ['all', 'locations', 'mining', 'exploration', 'zones']
+const FOCUS_DOMAIN_LABELS: Record<FocusDomain, string> = {
+  all: 'All',
+  locations: 'Locations',
+  mining: 'Mining',
+  exploration: 'Exploration',
+  zones: 'Zones',
+}
+
 /** V1B-1: create/edit are LIVE (they open a local draft); the rest of DEFERRED_OPERATIONS stays
  *  rendered disabled-with-reason. The constant itself is untouched (worldEditorTypes is the boundary
  *  authority) — this is a shell-side split, pinned by tests/locationDraftGuards.spec.ts. */
@@ -127,13 +144,21 @@ export function WorldEditor() {
 
   // V2A-2 mining draft store — same law, bound to the mining descriptor; data.miningFields is the
   // live-row slice for staleness re-validation (exactly as data.locations feeds the location store).
-  const miningDraftStore = useMiningDraftsStore(data?.miningFields ?? null)
+  // C1: the snapshot's server-authoritative mining_extract_radius rides into the validation context.
+  const miningDraftStore = useMiningDraftsStore(
+    data?.miningFields ?? null,
+    data?.miningExtractRadius ?? null,
+  )
 
   // V2C exploration draft store — same law, bound to the exploration descriptor;
   // data.explorationSites is the live-row slice for staleness re-validation (typically [] under the
   // server-only RLS — an edit fork then simply reads 'source_missing'-free only while its row stays
   // visible).
-  const explorationDraftStore = useExplorationDraftsStore(data?.explorationSites ?? null)
+  // C1: the server-authoritative exploration_scan_radius rides into the validation context.
+  const explorationDraftStore = useExplorationDraftsStore(
+    data?.explorationSites ?? null,
+    data?.explorationScanRadius ?? null,
+  )
 
   // V3A-2 zone draft store — same law, bound to the zone descriptor; data.zones is the live-row
   // slice for staleness re-validation ([] while pirate_intercept_enabled is dark — the zone read is
@@ -185,12 +210,12 @@ export function WorldEditor() {
   }, [itemsByLayer, visible])
 
   // Content-fit the camera ONCE when data first arrives (unless the user already took camera control) —
-  // via the SHARED galaxyCamera fit over every item's canonical world points (§WE.11). Frames the whole
-  // world; the ZoneEditor `makeFit` is gone.
+  // via the SHARED galaxyCamera fit over every item's canonical world points (§WE.11), collected
+  // through the ONE C1 framing helper (worldEditorFocus, domain 'all'). The retired ZoneEditor's
+  // bespoke fit is gone. Auto-fit-once semantics are unchanged: 'all' is and stays the default frame.
   useEffect(() => {
     if (!data || fittedRef.current || userMovedRef.current) return
-    const pts: WorldPoint[] = []
-    for (const list of itemsByLayer.values()) for (const it of list) pts.push(...representationWorldPoints(it.representation))
+    const pts = focusPointsForDomain(itemsByLayer, 'all')
     if (pts.length === 0) return
     fittedRef.current = true
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -240,11 +265,19 @@ export function WorldEditor() {
     return () => svg.removeEventListener('wheel', onWheel)
   }, [zoomByFactor])
 
+  // Reset stays the ALL-domains content fit (cameraForDomain 'all' — identical camera; empty world
+  // yields the identity camera via the fit's own empty rule).
   const resetView = () => {
     userMovedRef.current = false
-    const pts: WorldPoint[] = []
-    for (const list of itemsByLayer.values()) for (const it of list) pts.push(...representationWorldPoints(it.representation))
-    setView(pts.length ? fitCameraToWorldPoints(pts) : { k: 1, tx: 0, ty: 0 })
+    setView(cameraForDomain(itemsByLayer, 'all'))
+  }
+
+  // C1 Focus — CAMERA-ONLY domain framing: derive the fit for one domain's points and set the view.
+  // No stored coordinate is read-modified-written anywhere on this path; 'all' reproduces the reset
+  // frame. Marks the camera user-held so the auto-fit-once never fights a chosen focus.
+  const focusDomain = (domain: FocusDomain) => {
+    userMovedRef.current = true
+    setView(cameraForDomain(itemsByLayer, domain))
   }
 
   const toggleLayer = (id: LayerId) =>
@@ -499,6 +532,27 @@ export function WorldEditor() {
                 )
               })}
             </div>
+          </section>
+
+          {/* C1 Focus — camera-only domain framing (worldEditorFocus.cameraForDomain over the SAME
+              shared galaxyCamera fit). Frames one domain's cluster at its true tier; 'All' is the
+              same frame Reset uses. NEVER touches stored coordinates. */}
+          <section className="rounded-card border border-edge bg-surface p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Focus</div>
+            <div className="flex flex-wrap gap-1.5">
+              {FOCUS_DOMAINS.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => focusDomain(d)}
+                  className="rounded-md border border-edge bg-surface-2 px-3 py-1.5 text-sm text-ink-muted hover:border-accent/60 hover:text-ink"
+                >
+                  {FOCUS_DOMAIN_LABELS[d]}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-faint">
+              Frames the camera on one domain. Display only — stored world coordinates never change.
+            </p>
           </section>
 
           <section className="rounded-card border border-edge bg-surface p-3">

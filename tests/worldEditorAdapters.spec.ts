@@ -45,6 +45,8 @@ const DATA: WorldEditorData = {
     { id: 'z-circle', name: 'Seeded Ring', source: 'circle', location_id: null, ring: [[5, 5], [6, 5], [6, 6], [5, 5]] },
     { id: 'z-bad', name: 'Too Few', source: 'drawn', location_id: null, ring: [[1, 1], [2, 2]] }, // < 3 → skipped
   ],
+  miningExtractRadius: null,
+  explorationScanRadius: null,
 }
 
 // ── Locations layer ─────────────────────────────────────────────────────────────────────────────────

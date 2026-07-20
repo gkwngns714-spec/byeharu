@@ -136,7 +136,7 @@ test('out-of-bounds coordinates are flagged — the payload keeps its exact valu
 
 // ── preview shape parity with the live mining layer (hex glyph, --color-warning tone) ───────────────
 test('draftToLayerItem has EXACTLY the LayerItem shape miningLayerAdapter.readItems produces', () => {
-  const DATA: WorldEditorData = { locations: [], zoneRefs: [], miningFields: [field()], explorationSites: [], zones: [] }
+  const DATA: WorldEditorData = { locations: [], zoneRefs: [], miningFields: [field()], explorationSites: [], zones: [], miningExtractRadius: null, explorationScanRadius: null }
   const liveItem = miningLayerAdapter.readItems(DATA)[0]
   const draftItem = draftToLayerItem(forkEdit(field(), 'draft-a', T0))
 

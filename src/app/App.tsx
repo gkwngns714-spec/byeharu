@@ -8,7 +8,6 @@ import { MapScreen } from '../features/map/MapScreen'
 import { ShipScreen } from '../features/ship/ShipScreen'
 import { PortScreen } from '../features/port/PortScreen'
 import { CommandScreen } from '../features/command/CommandScreen'
-import { ZoneEditor } from '../features/dev/ZoneEditor'
 import { WorldEditor } from '../features/worldeditor/WorldEditor'
 
 // UI-REBUILD (2b) — four destinations under the ONE persistent shell (AppShell). `/` lands on the
@@ -40,22 +39,11 @@ export function App() {
           <Route path="/port" element={<PortScreen />} />
           <Route path="/command" element={<CommandScreen />} />
         </Route>
-        {/* DEV ZONE EDITOR (owner-only authoring) — a HIDDEN route, deliberately NOT under AppShell
-            and never linked from the nav. RequireAuth so pirate_zone_create has an auth.uid(); the
-            ZoneEditor itself renders null unless game_config.dev_zone_editor_enabled is true (0238),
-            so a normal player who somehow hits /dev/zones sees nothing. */}
-        <Route
-          path="/dev/zones"
-          element={
-            <RequireAuth>
-              <ZoneEditor />
-            </RequireAuth>
-          }
-        />
-        {/* WORLD EDITOR — Foundation V1 (owner-only, READ-ONLY). Same HIDDEN-route gate as /dev/zones:
-            RequireAuth (so reads run with an auth session), NOT under AppShell, never linked from nav.
-            The WorldEditor renders null unless game_config.dev_zone_editor_enabled is true (REUSES the
-            ZoneEditor flag — no new flag), so a normal player who hits /dev/world sees nothing. */}
+        {/* WORLD EDITOR — the ONE owner-only authoring surface (C1 retired the legacy standalone
+            zone editor route; the World Editor's zones layer owns that job on the real map).
+            HIDDEN route: RequireAuth (so reads run with an auth session), NOT under AppShell, never
+            linked from nav. The WorldEditor renders null unless game_config.dev_zone_editor_enabled
+            is true (0238, fail-closed), so a normal player who hits /dev/world sees nothing. */}
         <Route
           path="/dev/world"
           element={

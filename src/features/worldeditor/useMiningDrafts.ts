@@ -36,11 +36,14 @@ export type MiningDraftsStore = DraftsStore<MiningDraftPayload, MiningField, Min
 /** Build the ONE mining draft store instance (the WorldEditor shell calls this and provides it via
  *  MiningDraftsContext). `liveFields` is the CURRENT read snapshot's mining-field list
  *  (data.miningFields) — used ONLY to re-validate edit drafts (fingerprint comparison); drafts never
- *  flow back into it. */
+ *  flow back into it. `extractRadius` (C1) is the snapshot's server-authoritative
+ *  game_config.mining_extract_radius (null when absent) — threaded into the validation context so
+ *  the overlap rule uses the real tunable, not the hardcoded fallback. */
 export function useMiningDraftsStore(
   liveFields: readonly MiningField[] | null,
+  extractRadius: number | null = null,
 ): MiningDraftsStore {
-  return useDraftsStore(MINING_DRAFT_DESCRIPTOR, liveFields)
+  return useDraftsStore(MINING_DRAFT_DESCRIPTOR, liveFields, extractRadius)
 }
 
 const binding = createDraftsContext<MiningDraftPayload, MiningField, MiningValidationReport>(
