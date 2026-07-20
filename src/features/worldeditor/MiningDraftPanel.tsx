@@ -18,6 +18,13 @@
 // Until the migration is deployed the RPC does not exist and the call fails closed as a transport
 // error — the capability is dark.
 //
+// UNPUBLISH/RESTORE (0250 slice): an EDIT draft additionally carries a small Disable/Enable toggle
+// that issues the owner-gated mining_field_set_active command — the canonical SAFE unpublish
+// (is_active=false; readers treat the row as nonexistent) and re-publish (is_active=true; the row
+// comes back bit-for-bit). NO hard delete exists anywhere. The command carries the SAME
+// optimistic-concurrency addressing as an update (target_id + the fork-time sourceSnapshot as
+// `expected`), so a drifted live row is a typed stale_revision — never blindly flipped.
+//
 // The reward-bundle editor authors the CREATE-only local reward_bundle_json (the ONE shared
 // pending-bundle shape, lib/rewardBundle.ts). On an EDIT draft the bundle is not authorable: the
 // live bundle is never readable client-side (see miningDraftTypes.ts), so the panel says so
@@ -57,6 +64,17 @@ const num = (v: string): number => (v.trim() === '' ? Number.NaN : Number(v))
 interface PublishAttempt {
   readonly draftId: string
   readonly requestId: string
+  readonly phase: 'sending' | 'failed'
+  readonly failure: WorldEditorCommandFailure | null
+}
+
+/** Transient set-active (unpublish/restore) state for ONE edit draft — the same requestId-once law
+ *  as PublishAttempt: a retry of the SAME toggle direction reuses the requestId (idempotent replay);
+ *  flipping direction is a NEW command and mints a fresh one. */
+interface SetActiveAttempt {
+  readonly draftId: string
+  readonly requestId: string
+  readonly desired: boolean
   readonly phase: 'sending' | 'failed'
   readonly failure: WorldEditorCommandFailure | null
 }
@@ -106,6 +124,10 @@ export function MiningDraftPanel() {
   } = useMiningDrafts()
   const [confirmingDiscardId, setConfirmingDiscardId] = useState<string | null>(null)
   const [publishAttempt, setPublishAttempt] = useState<PublishAttempt | null>(null)
+  const [setActiveAttempt, setSetActiveAttempt] = useState<SetActiveAttempt | null>(null)
+  // The editor's live read is active-rows-only, so an edit fork starts assumed ACTIVE; a successful
+  // set_active flips this LOCAL assumption (presentation only — the server is the authority).
+  const [disabledDraftIds, setDisabledDraftIds] = useState<ReadonlySet<string>>(new Set())
 
   const set = (partial: Partial<MiningDraftPayload>) => {
     if (activeDraft) patchDraft(activeDraft.draftId, partial)
@@ -119,7 +141,44 @@ export function MiningDraftPanel() {
     }
     setConfirmingDiscardId(null)
     if (publishAttempt?.draftId === draft.draftId) setPublishAttempt(null)
+    if (setActiveAttempt?.draftId === draft.draftId) setSetActiveAttempt(null)
     discardDraft(draft.draftId)
+  }
+
+  // ── unpublish/restore (0250 mining_field_set_active): toggle the live row's is_active flag —
+  // the safe unpublish (false) / re-publish (true); nothing is ever deleted. Same addressing as an
+  // edit publish (target_id + fork-time `expected`), so a drifted live row is a typed stale_revision.
+  const onSetActive = async (draft: MiningDraft) => {
+    if (draft.mode.kind !== 'edit') return
+    if (setActiveAttempt?.phase === 'sending' || publishAttempt?.phase === 'sending') return
+    const desired = disabledDraftIds.has(draft.draftId) // currently disabled → restore, else unpublish
+    // Mint the requestId ONCE per attempt; a retry of the SAME direction reuses it (idempotent replay).
+    const requestId =
+      setActiveAttempt?.draftId === draft.draftId && setActiveAttempt.desired === desired
+        ? setActiveAttempt.requestId
+        : newRequestId()
+    setSetActiveAttempt({ draftId: draft.draftId, requestId, desired, phase: 'sending', failure: null })
+    const result = await invokeWorldEditorCommand({
+      requestId,
+      commandType: 'mining_field_set_active',
+      payload: {
+        target_id: draft.mode.sourceId,
+        expected: draft.mode.sourceSnapshot,
+        is_active: desired,
+        source_revision: draft.mode.sourceRevision,
+      },
+    })
+    if (result.ok) {
+      setSetActiveAttempt(null)
+      setDisabledDraftIds((prev) => {
+        const next = new Set(prev)
+        if (desired) next.delete(draft.draftId)
+        else next.add(draft.draftId)
+        return next
+      })
+      return
+    }
+    setSetActiveAttempt({ draftId: draft.draftId, requestId, desired, phase: 'failed', failure: result })
   }
 
   const onPublish = async (draft: MiningDraft) => {
@@ -367,6 +426,35 @@ export function MiningDraftPanel() {
                 : 'Updates the live field. Owner-only — the server re-checks the row is unchanged since this draft was forked (a stale draft is rejected, never overwritten).'}
             </p>
           </div>
+
+          {/* ── unpublish/restore (edit drafts only — 0250 mining_field_set_active) ── */}
+          {activeDraft.mode.kind === 'edit' && (
+            <div className="flex flex-col gap-1.5 border-t border-edge/50 pt-2">
+              {setActiveAttempt?.draftId === activeDraft.draftId && setActiveAttempt.failure && (
+                <PublishFailureNotices failure={setActiveAttempt.failure} />
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                busy={
+                  setActiveAttempt?.draftId === activeDraft.draftId &&
+                  setActiveAttempt.phase === 'sending'
+                }
+                busyLabel={
+                  disabledDraftIds.has(activeDraft.draftId) ? 'Enabling…' : 'Disabling…'
+                }
+                onClick={() => void onSetActive(activeDraft)}
+              >
+                {disabledDraftIds.has(activeDraft.draftId)
+                  ? 'Enable this field'
+                  : 'Disable this field'}
+              </Button>
+              <p className="text-xs text-ink-faint">
+                Disabling hides the live field from the game (safe unpublish — nothing is deleted);
+                enabling restores it exactly. Owner-only — the server decides.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </section>

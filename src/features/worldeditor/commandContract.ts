@@ -16,7 +16,11 @@
  *  owner-gated optimistic-concurrency contract over mining_fields);
  *  location_update is the THIRD publish DOMAIN (0249, owner-gated): the location UPDATE command —
  *  uuid-addressed (target_id = the MapLocation id the edit fork pinned) with the same
- *  optimistic-concurrency contract over all 11 location draft fields. */
+ *  optimistic-concurrency contract over all 11 location draft fields;
+ *  exploration_site_set_active / mining_field_set_active are the UNPUBLISH/RESTORE commands (0250,
+ *  owner-gated): they toggle ONE row's is_active flag — the canonical safe unpublish (false) and
+ *  re-publish (true), NO hard delete — under the same optimistic-concurrency contract (payload
+ *  carries target_id + the fork-time `expected` snapshot + the boolean is_active direction). */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
   | 'exploration_site_create'
@@ -24,6 +28,8 @@ export type WorldEditorCommandType =
   | 'exploration_site_update'
   | 'mining_field_update'
   | 'location_update'
+  | 'exploration_site_set_active'
+  | 'mining_field_set_active'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -112,6 +118,10 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'mining_field_update'
     case 'location_update':
       return 'location_update'
+    case 'exploration_site_set_active':
+      return 'exploration_site_set_active'
+    case 'mining_field_set_active':
+      return 'mining_field_set_active'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)
