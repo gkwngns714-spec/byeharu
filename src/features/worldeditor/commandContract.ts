@@ -30,7 +30,13 @@
  *  = {name, zone_kind, attach_location_id, geometry}; server-side PostGIS is the geometry authority
  *  (a bad materialized ring is a typed validation_failed detail {invalid_geometry}; a bad attach
  *  target {invalid_attach}); NO conflict code (danger_zones.name has no unique constraint). NOT the
- *  0239-locked pirate_zone_create — a new 0243-spine surface. */
+ *  0239-locked pirate_zone_create — a new 0243-spine surface;
+ *  zone_unpublish is the zone UNPUBLISH command and twin of zone_create (0255, owner-gated): flips
+ *  ONE danger_zones row from status 'active' to 'inactive' (the canonical safe unpublish — the row,
+ *  geometry, name and attach survive for a future republish; NO hard delete) under the same
+ *  optimistic-concurrency contract (payload = {target_id: the zone uuid, expected: {name, source,
+ *  location_id}}). Ineligible targets are a typed not_unpublishable (protected_zone for seeded
+ *  source<>'drawn' zones; already_inactive for non-active zones); a vanished target is not_found. */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
   | 'exploration_site_create'
@@ -40,6 +46,7 @@ export type WorldEditorCommandType =
   | 'location_update'
   | 'location_create'
   | 'zone_create'
+  | 'zone_unpublish'
   | 'exploration_site_set_active'
   | 'mining_field_set_active'
 
@@ -65,6 +72,7 @@ export type WorldEditorErrorCode =
   | 'stale_revision' // the live row drifted from the draft's fork-time `expected` snapshot (0247 optimistic concurrency)
   | 'not_found' // the update target no longer exists (0247; details carry source_missing)
   | 'conflict' // a unique natural key (exploration_sites.name / mining_fields.name / locations unique(zone_id,name)) is already taken (0244/0246/0249)
+  | 'not_unpublishable' // the zone exists but may not be unpublished (0255; details carry protected_zone | already_inactive)
   | 'transport_error' // client-side: the RPC call itself failed (network / permission)
 
 /** One structured issue inside a failure envelope (the 0244 details[] vocabulary — e.g. a
@@ -134,6 +142,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'location_create'
     case 'zone_create':
       return 'zone_create'
+    case 'zone_unpublish':
+      return 'zone_unpublish'
     case 'exploration_site_set_active':
       return 'exploration_site_set_active'
     case 'mining_field_set_active':
@@ -189,6 +199,8 @@ export function describeWorldEditorError(code: WorldEditorErrorCode): string {
       return 'The live row this draft edits no longer exists — it may have been renamed or removed.'
     case 'conflict':
       return 'The name is already taken in the live world.'
+    case 'not_unpublishable':
+      return 'This zone cannot be unpublished — it is a seeded zone or is already inactive.'
     case 'transport_error':
       return 'The command could not reach the server.'
     default:

@@ -34,7 +34,9 @@ test('locationDraftModel.ts and useLocationDrafts.ts contain no supabase/fetch/r
 // legitimate definition site, and ExplorationDraftPanel.tsx (0244/0247) + MiningDraftPanel.tsx
 // (0246/0248) + LocationDraftPanel.tsx (0249/0252) + ZoneDraftPanel.tsx (0254 zone_create — the
 // 4th/final publish domain, the same narrowing every prior panel made when its publish slice
-// landed) are the sanctioned publish surfaces (owner-gated SERVER-side; the client grants
+// landed) are the sanctioned publish surfaces, and ZoneInspectorActions.tsx (0255 zone_unpublish —
+// the LIVE-zone unpublish action, the first command that acts on a selected live row rather than a
+// draft panel) is the sanctioned unpublish surface (all owner-gated SERVER-side; the client grants
 // nothing). The guard's law is that no OTHER world-editor module references the command client.
 const COMMAND_PATH_FILES = [
   'commandClient.ts',
@@ -43,6 +45,7 @@ const COMMAND_PATH_FILES = [
   'MiningDraftPanel.tsx',
   'LocationDraftPanel.tsx',
   'ZoneDraftPanel.tsx',
+  'ZoneInspectorActions.tsx',
 ]
 test('no file in src/features/worldeditor outside the sanctioned command path references a command client', () => {
   for (const name of readdirSync(WE_DIR)) {

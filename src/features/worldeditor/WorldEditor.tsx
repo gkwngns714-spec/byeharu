@@ -37,6 +37,7 @@ import { ZoneDraftPanel } from './ZoneDraftPanel'
 import { ZONE_DRAFT_DESCRIPTOR } from './zoneDraftModel'
 import { ZoneGeometryHandles, type ZoneGestureMode } from './ZoneGeometryHandles'
 import { DraftPreviewOverlay } from './DraftPreviewOverlay'
+import { ZoneInspectorActions } from './ZoneInspectorActions'
 import { Button } from '../../components/ui'
 
 // WORLD EDITOR — Foundation V1 shell + V1B-1 "Location Drafts & Preview". ONE owner-only surface on
@@ -190,6 +191,14 @@ export function WorldEditor() {
     return () => {
       alive = false
     }
+  }, [])
+
+  // Re-fetch the ONE read-only snapshot after an owner command mutates the live world (e.g. a zone
+  // unpublish): the server is the authority, so the map only reflects the change after this re-read —
+  // never an optimistic client edit. Still read-only (SELECT/read-RPC only, via fetchWorldEditorData).
+  const reloadData = useCallback(async () => {
+    const d = await fetchWorldEditorData()
+    setData(d)
   }, [])
 
   // Per-layer resolved items (only for visible layers). Each adapter reads a slice of the ONE snapshot.
@@ -665,6 +674,20 @@ export function WorldEditor() {
                     {DEFERRED_OPERATION_REASON}
                   </p>
                 </div>
+
+                {/* V3B: the ONE owner-gated LIVE zone write reachable from the shell — unpublish a
+                    selected live danger zone (0255 zone_unpublish). Server is_owner() is the authority;
+                    on success the snapshot re-reads and the zone leaves the map. Only shown for a live
+                    zone selection; drafts publish through their own panels. */}
+                {selectedZone && (
+                  <ZoneInspectorActions
+                    zone={selectedZone}
+                    onUnpublished={() => {
+                      setSelected(null)
+                      void reloadData()
+                    }}
+                  />
+                )}
               </div>
             )}
           </section>

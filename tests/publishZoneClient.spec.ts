@@ -162,3 +162,105 @@ test('normalizeEnvelope: a zone create not_authorized failure normalizes with no
   expect(r.error).toBe('not_authorized')
   expect(r.details).toBeUndefined()
 })
+
+// ── the 0255 zone_unpublish (twin of zone_create) command envelope ────────────────────────────────
+// zone_unpublish flips ONE danger_zones row from status 'active'→'inactive' (soft unpublish; the row
+// is preserved). Payload = {target_id: the zone uuid, expected: {name, source, location_id}}. Its
+// server behavior is proven by scripts/worldeditor-publish-zone-unpublish-proof.sql; here we only pin
+// the RPC mapping + the envelope normalization for its result and its typed rejections, including the
+// NEW not_unpublishable code (details: protected_zone | already_inactive).
+const UNPUBLISH_ENVELOPE: WorldEditorCommandEnvelope = {
+  requestId: 'req-zoneunpub-1',
+  commandType: 'zone_unpublish',
+  payload: {
+    target_id: '2f8a1b3c-0000-4000-8000-000000000099',
+    expected: { name: 'Crimson Reach', source: 'drawn', location_id: null },
+  },
+}
+
+test('commandRpcName maps zone_unpublish to its server entrypoint', () => {
+  expect(commandRpcName('zone_unpublish')).toBe('zone_unpublish')
+})
+
+test('normalizeEnvelope: a zone_unpublish success carries {unpublished,id,name,status} + command_type through', () => {
+  const raw: RawServerEnvelope = {
+    ok: true,
+    request_id: 'req-zoneunpub-1',
+    command_type: 'zone_unpublish',
+    result: {
+      unpublished: true,
+      id: '2f8a1b3c-0000-4000-8000-000000000099',
+      name: 'Crimson Reach',
+      status: 'inactive',
+    },
+  }
+  const r = normalizeEnvelope(UNPUBLISH_ENVELOPE, raw)
+  expect(r.ok).toBe(true)
+  if (!r.ok) throw new Error('unreachable')
+  expect(r.commandType).toBe('zone_unpublish')
+  expect(r.result).toEqual({
+    unpublished: true,
+    id: '2f8a1b3c-0000-4000-8000-000000000099',
+    name: 'Crimson Reach',
+    status: 'inactive',
+  })
+})
+
+test('normalizeEnvelope: a zone_unpublish idempotent replay keeps replayed + duplicate_request code', () => {
+  const r = normalizeEnvelope(UNPUBLISH_ENVELOPE, {
+    ok: true,
+    request_id: 'req-zoneunpub-1',
+    command_type: 'zone_unpublish',
+    replayed: true,
+    code: 'duplicate_request',
+    result: { unpublished: true, id: '2f8a1b3c-0000-4000-8000-000000000099', name: 'Crimson Reach', status: 'inactive' },
+  })
+  if (!r.ok) throw new Error('replay must normalize as ok')
+  expect(r.replayed).toBe(true)
+  expect(r.code).toBe('duplicate_request')
+})
+
+test('normalizeEnvelope: a zone_unpublish not_found envelope carries the source_missing detail through', () => {
+  const r = normalizeEnvelope(UNPUBLISH_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneunpub-1',
+    error: 'not_found',
+    details: [{ code: 'source_missing', field: null }],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('not_found')
+  expect(r.details?.[0]?.code).toBe('source_missing')
+})
+
+test('normalizeEnvelope: a zone_unpublish stale_revision envelope carries per-field source_changed details through', () => {
+  const r = normalizeEnvelope(UNPUBLISH_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneunpub-1',
+    error: 'stale_revision',
+    details: [{ code: 'source_changed', field: 'name' }],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('stale_revision')
+  expect(r.details?.[0]).toEqual({ code: 'source_changed', field: 'name' })
+})
+
+test('normalizeEnvelope: a zone_unpublish not_unpublishable carries protected_zone / already_inactive details through', () => {
+  const protectedZone = normalizeEnvelope(UNPUBLISH_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneunpub-1',
+    error: 'not_unpublishable',
+    details: [{ code: 'protected_zone', field: 'source' }],
+  })
+  if (protectedZone.ok) throw new Error('unreachable')
+  expect(protectedZone.error).toBe('not_unpublishable')
+  expect(protectedZone.details?.[0]?.code).toBe('protected_zone')
+
+  const alreadyInactive = normalizeEnvelope(UNPUBLISH_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneunpub-1',
+    error: 'not_unpublishable',
+    details: [{ code: 'already_inactive', field: 'status' }],
+  })
+  if (alreadyInactive.ok) throw new Error('unreachable')
+  expect(alreadyInactive.details?.[0]?.code).toBe('already_inactive')
+})
