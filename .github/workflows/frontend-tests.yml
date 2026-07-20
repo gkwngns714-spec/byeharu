@@ -1,0 +1,54 @@
+name: Frontend tests (tests/*.spec.ts)
+
+# Closes a real CI gap: build.yml only typechecks/builds, and the DB proof workflows only
+# cover Postgres invariants — the tests/*.spec.ts suite (World Editor adapters/geometry,
+# location/mining draft models + guards, team roster/stop/send, UI primitives, etc.) never
+# ran in CI, so a red frontend spec was able to land on main uncaught. This job runs the
+# whole suite on every PR and slice branch push.
+#
+# galaxy.spec.ts is excluded on purpose: it is the only *.spec.ts that uses the Playwright
+# `page` fixture, and it drives the LIVE deployed Pages site with real Supabase secrets
+# (see browser-galaxy.yml, workflow_dispatch-only, serialized against the live DB). Every
+# other spec is a pure Node/TS proof (no `page` fixture anywhere else in tests/), so no
+# browser binaries are installed here — keeps this job fast and free of prod access.
+# dockServicesUi.uispec.ts is a distinct filename pattern (not *.spec.ts) already covered by
+# its own harness-server workflow (phase9-dock-services-ui-proof.yml).
+
+on:
+  push:
+    branches: [main, 'slice-**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No `npx playwright install` here: every spec run below is a pure Node/TS proof
+      # (no test in this set uses the `page`/`browser`/`context` fixtures), so Playwright
+      # never launches a browser and no chromium binary is needed.
+      - name: Run frontend spec suite (tests/*.spec.ts, excluding live-site galaxy.spec.ts)
+        run: npx playwright test $(find tests -maxdepth 1 -name '*.spec.ts' ! -name 'galaxy.spec.ts' | sort)
+
+      - name: Upload playwright report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-tests-report
+          path: playwright-report/
+          retention-days: 14

@@ -55,7 +55,10 @@ export async function commandShipGroupCancelRoute(groupId: string): Promise<Pira
   return data as PirateRpcResult
 }
 
-// ── pirate_zone_create / pirate_zone_delete (write) — the draw-editor's save/delete. ───────────────────
+// ── pirate_zone_create / pirate_zone_delete (write) — DORMANT since C1 retired the legacy /dev/zones
+// ZoneEditor (their only caller). Kept as thin wrappers over the 0239-LOCKED RPCs (execute revoked
+// from authenticated — they reject at the server boundary); the World Editor's zone publish flows
+// through the 0243 command spine (zone_create), never these. ──────────────────────────────────────────
 export async function pirateZoneCreate(
   name: string,
   vertices: [number, number][],

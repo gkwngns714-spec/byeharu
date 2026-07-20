@@ -4,7 +4,7 @@ import {
   representationWorldPoints,
 } from '../src/features/worldeditor/worldEditorGeometry'
 import type { MapRepresentation } from '../src/features/worldeditor/worldEditorTypes'
-import { worldToViewBox, viewBoxToWorld } from '../src/features/map/openSpaceTransform'
+import { worldToViewBox, viewBoxToWorld, WORLD_TO_VIEWBOX_SCALE } from '../src/features/map/openSpaceTransform'
 
 // WORLD EDITOR V1 — the map-representation resolver forwards to the SHARED openSpaceTransform (the ONE
 // projection authority, §WE.11) and NEVER invents a second world↔viewBox map. Pure proofs, no DB.
@@ -31,6 +31,30 @@ test('representationWorldPoints returns the canonical world coords for camera fi
   expect(representationWorldPoints({ kind: 'point', world: { x: 7, y: 9 } })).toEqual([{ x: 7, y: 9 }])
   const ring = [{ x: 1, y: 2 }, { x: 3, y: 4 }]
   expect(representationWorldPoints({ kind: 'polygon', ring })).toEqual(ring)
+})
+
+// ── V3A PR-1: circle representation (additive third arm; point + polygon above are UNCHANGED) ───────
+
+test('circle representation resolves center through the shared transform and radius through the ONE length scale', () => {
+  const rep: MapRepresentation = { kind: 'circle', center: { x: 250, y: -600 }, radius: 400 }
+  const resolved = resolveToViewBox(rep)
+  expect(resolved.kind).toBe('circle')
+  if (resolved.kind !== 'circle') throw new Error('unreachable')
+  expect(resolved.center).toEqual(worldToViewBox({ x: 250, y: -600 }))
+  expect(resolved.radius).toBeCloseTo(400 * WORLD_TO_VIEWBOX_SCALE, 9) // 400 world units → 20 viewBox units
+})
+
+test('representationWorldPoints for a circle returns the four world bbox corners (camera-fit frames the disc)', () => {
+  const pts = representationWorldPoints({ kind: 'circle', center: { x: 100, y: -200 }, radius: 50 })
+  expect(pts).toHaveLength(4)
+  expect(pts).toEqual(
+    expect.arrayContaining([
+      { x: 50, y: -250 },
+      { x: 150, y: -250 },
+      { x: 150, y: -150 },
+      { x: 50, y: -150 },
+    ]),
+  )
 })
 
 test('resolve is a true projection — round-trips back to world within float tolerance', () => {

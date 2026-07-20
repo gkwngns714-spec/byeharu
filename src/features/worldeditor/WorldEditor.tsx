@@ -11,7 +11,9 @@ import { VIEW, clampK, clampPan, fitCameraToWorldPoints, type Camera } from '../
 import { smoothClosedPathD } from '../map/smoothPolygon'
 import { fetchWorldEditorData, type WorldEditorData } from './worldEditorData'
 import { WORLD_EDITOR_LAYERS, defaultVisibleLayerIds } from './worldEditorRegistry'
-import { representationWorldPoints, resolveToViewBox } from './worldEditorGeometry'
+import { resolveToViewBox } from './worldEditorGeometry'
+import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
+import type { FocusDomain } from './worldEditorCoordinates'
 import {
   DEFERRED_OPERATIONS,
   DEFERRED_OPERATION_REASON,
@@ -20,23 +22,57 @@ import {
   type LayerId,
   type LayerItem,
   type PointGlyph,
-  type WorldPoint,
 } from './worldEditorTypes'
 import { LocationDraftsContext, useLocationDraftsStore } from './useLocationDrafts'
 import { LocationDraftPanel } from './LocationDraftPanel'
 import { DraftPreview } from './DraftPreview'
+import { MiningDraftsContext, useMiningDraftsStore } from './useMiningDrafts'
+import { MiningDraftPanel } from './MiningDraftPanel'
+import { MINING_DRAFT_DESCRIPTOR } from './miningDraftModel'
+import { ExplorationDraftsContext, useExplorationDraftsStore } from './useExplorationDrafts'
+import { ExplorationDraftPanel } from './ExplorationDraftPanel'
+import { EXPLORATION_DRAFT_DESCRIPTOR } from './explorationDraftModel'
+import { ZoneDraftsContext, useZoneDraftsStore } from './useZoneDrafts'
+import { ZoneDraftPanel } from './ZoneDraftPanel'
+import { ZONE_DRAFT_DESCRIPTOR } from './zoneDraftModel'
+import { ZoneGeometryHandles, type ZoneGestureMode } from './ZoneGeometryHandles'
+import { DraftPreviewOverlay } from './DraftPreviewOverlay'
+import { ZoneInspectorActions } from './ZoneInspectorActions'
 import { Button } from '../../components/ui'
 
 // WORLD EDITOR — Foundation V1 shell + V1B-1 "Location Drafts & Preview". ONE owner-only surface on
 // the REAL game map: it renders on the SHARED map primitives — the fixed `worldToViewBox` projection
 // (via worldEditorGeometry) and `galaxyCamera` camera math — NEVER a bespoke fit-to-content transform
-// (the ZoneEditor `makeFit` spaghetti this replaces, §WE.11). It toggles the four typed content
+// (the retired ZoneEditor's spaghetti this replaced, §WE.11). It toggles the four typed content
 // layers, selects any item, and inspects its typed fields.
+//
+// C1 (coordinate contract, worldEditorCoordinates.ts): STORED gameplay coordinates NEVER change —
+// how the world reads in the editor is controlled by typed display adapters + the CAMERA only. The
+// Focus control below frames ONE domain at a time via worldEditorFocus.cameraForDomain (pure,
+// reusing the shared galaxyCamera fit) — a camera derivation, never a data write.
 //
 // V1B-1: create/edit open a LOCAL LocationDraft (useLocationDrafts store — localStorage only, a
 // SEPARATE structure never merged into WorldEditorData) previewed as an overlay ABOVE the read-only
 // layers. NOTHING here writes to the live world: no RPC write, no game_config write, no mutation —
 // publish/enable/disable/archive remain EXPLICITLY DISABLED (§WE.2), never faked.
+//
+// V2A-2: a SECOND authoring domain — mining-field drafts — beside the location domain, both bound
+// to the SAME generic draft core through their one descriptor each. A domain toggle selects which
+// panel + which draft preview overlay is active; the location domain's behavior is unchanged.
+// Mining drafts are equally local-only: zero mining_fields writes, zero mining gameplay RPCs.
+//
+// V2C: a THIRD authoring domain — exploration-site drafts — bound to the same generic core through
+// the ONE exploration descriptor, mirroring mining exactly. The locations and mining domains'
+// behavior is unchanged. Exploration drafts are equally local-only: zero exploration_sites writes,
+// zero exploration gameplay RPCs (command_exploration_scan is a PLAYER command, never an editor
+// mutation path).
+//
+// V3A PR-2: a FOURTH authoring domain — zone drafts (circle/polygon geometry) — bound to the same
+// generic core through the ONE zone descriptor. Geometry is authored via map GESTURES
+// (ZoneGeometryHandles: draw circle / draw polygon / edit vertices — gesture mode is SHELL state,
+// never store state) that write EXCLUSIVELY through store.patchDraft. Zone drafts are equally
+// local-only: zero danger_zones writes, zero pirate_zone_* RPCs (locked), NO publish (PR-3). The
+// locations/mining/exploration domains' behavior is unchanged.
 //
 // Gate: identical to ZoneEditor — renders null unless game_config.dev_zone_editor_enabled is exactly
 // jsonb `true` (fetchDevZoneEditorEnabled, fail-closed). Reached only by navigating to /dev/world.
@@ -44,6 +80,29 @@ import { Button } from '../../components/ui'
 interface Selection {
   readonly layer: LayerId
   readonly id: string
+}
+
+/** The four live draft-authoring domains (V2A-2 + V2C + V3A-2). The toggle picks which panel/preview
+ *  is active — every store stays mounted (drafts persist per-domain either way). */
+type AuthoringDomain = 'locations' | 'mining' | 'exploration' | 'zones'
+
+/** Toggle labels for the four authoring domains (ONE authority for the toggle row). */
+const AUTHORING_DOMAIN_LABELS: Record<AuthoringDomain, string> = {
+  locations: 'Locations',
+  mining: 'Mining fields',
+  exploration: 'Exploration sites',
+  zones: 'Zones',
+}
+
+/** C1 Focus control — the camera-only domain framer's button row ('all' keeps today's
+ *  content-fit-everything frame; each domain frames its own cluster at its true tier). */
+const FOCUS_DOMAINS: readonly FocusDomain[] = ['all', 'locations', 'mining', 'exploration', 'zones']
+const FOCUS_DOMAIN_LABELS: Record<FocusDomain, string> = {
+  all: 'All',
+  locations: 'Locations',
+  mining: 'Mining',
+  exploration: 'Exploration',
+  zones: 'Zones',
 }
 
 /** V1B-1: create/edit are LIVE (they open a local draft); the rest of DEFERRED_OPERATIONS stays
@@ -78,10 +137,39 @@ export function WorldEditor() {
   const [visible, setVisible] = useState<Set<LayerId>>(() => defaultVisibleLayerIds())
   const [selected, setSelected] = useState<Selection | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
+  const [authoringDomain, setAuthoringDomain] = useState<AuthoringDomain>('locations')
 
   // V1B-1 draft store — a SEPARATE structure (localStorage-backed); live locations are passed ONLY
   // for the mandatory staleness re-validation. Never merged into the read snapshot.
   const draftStore = useLocationDraftsStore(data?.locations ?? null)
+
+  // V2A-2 mining draft store — same law, bound to the mining descriptor; data.miningFields is the
+  // live-row slice for staleness re-validation (exactly as data.locations feeds the location store).
+  // C1: the snapshot's server-authoritative mining_extract_radius rides into the validation context.
+  const miningDraftStore = useMiningDraftsStore(
+    data?.miningFields ?? null,
+    data?.miningExtractRadius ?? null,
+  )
+
+  // V2C exploration draft store — same law, bound to the exploration descriptor;
+  // data.explorationSites is the live-row slice for staleness re-validation (typically [] under the
+  // server-only RLS — an edit fork then simply reads 'source_missing'-free only while its row stays
+  // visible).
+  // C1: the server-authoritative exploration_scan_radius rides into the validation context.
+  const explorationDraftStore = useExplorationDraftsStore(
+    data?.explorationSites ?? null,
+    data?.explorationScanRadius ?? null,
+  )
+
+  // V3A-2 zone draft store — same law, bound to the zone descriptor; data.zones is the live-row
+  // slice for staleness re-validation ([] while pirate_intercept_enabled is dark — the zone read is
+  // dark-coupled to that flag).
+  const zoneDraftStore = useZoneDraftsStore(data?.zones ?? null)
+
+  // V3A-2 zone GESTURE mode — SHELL state, deliberately NOT in the draft store (the store holds
+  // authoring intent; gesture ephemera live and die with the shell). The zone panel's draw buttons
+  // set it; ZoneGeometryHandles consumes it.
+  const [zoneGestureMode, setZoneGestureMode] = useState<ZoneGestureMode>('idle')
 
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
@@ -105,6 +193,14 @@ export function WorldEditor() {
     }
   }, [])
 
+  // Re-fetch the ONE read-only snapshot after an owner command mutates the live world (e.g. a zone
+  // unpublish): the server is the authority, so the map only reflects the change after this re-read —
+  // never an optimistic client edit. Still read-only (SELECT/read-RPC only, via fetchWorldEditorData).
+  const reloadData = useCallback(async () => {
+    const d = await fetchWorldEditorData()
+    setData(d)
+  }, [])
+
   // Per-layer resolved items (only for visible layers). Each adapter reads a slice of the ONE snapshot.
   const itemsByLayer = useMemo(() => {
     const map = new Map<LayerId, LayerItem[]>()
@@ -123,12 +219,12 @@ export function WorldEditor() {
   }, [itemsByLayer, visible])
 
   // Content-fit the camera ONCE when data first arrives (unless the user already took camera control) —
-  // via the SHARED galaxyCamera fit over every item's canonical world points (§WE.11). Frames the whole
-  // world; the ZoneEditor `makeFit` is gone.
+  // via the SHARED galaxyCamera fit over every item's canonical world points (§WE.11), collected
+  // through the ONE C1 framing helper (worldEditorFocus, domain 'all'). The retired ZoneEditor's
+  // bespoke fit is gone. Auto-fit-once semantics are unchanged: 'all' is and stays the default frame.
   useEffect(() => {
     if (!data || fittedRef.current || userMovedRef.current) return
-    const pts: WorldPoint[] = []
-    for (const list of itemsByLayer.values()) for (const it of list) pts.push(...representationWorldPoints(it.representation))
+    const pts = focusPointsForDomain(itemsByLayer, 'all')
     if (pts.length === 0) return
     fittedRef.current = true
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -178,11 +274,19 @@ export function WorldEditor() {
     return () => svg.removeEventListener('wheel', onWheel)
   }, [zoomByFactor])
 
+  // Reset stays the ALL-domains content fit (cameraForDomain 'all' — identical camera; empty world
+  // yields the identity camera via the fit's own empty rule).
   const resetView = () => {
     userMovedRef.current = false
-    const pts: WorldPoint[] = []
-    for (const list of itemsByLayer.values()) for (const it of list) pts.push(...representationWorldPoints(it.representation))
-    setView(pts.length ? fitCameraToWorldPoints(pts) : { k: 1, tx: 0, ty: 0 })
+    setView(cameraForDomain(itemsByLayer, 'all'))
+  }
+
+  // C1 Focus — CAMERA-ONLY domain framing: derive the fit for one domain's points and set the view.
+  // No stored coordinate is read-modified-written anywhere on this path; 'all' reproduces the reset
+  // frame. Marks the camera user-held so the auto-fit-once never fights a chosen focus.
+  const focusDomain = (domain: FocusDomain) => {
+    userMovedRef.current = true
+    setView(cameraForDomain(itemsByLayer, domain))
   }
 
   const toggleLayer = (id: LayerId) =>
@@ -213,19 +317,55 @@ export function WorldEditor() {
     [data, selected],
   )
 
+  // V2A-2: the selected LIVE mining field (mining edit-draft fork source; name is the natural key).
+  const selectedMiningField = useMemo(
+    () =>
+      data && selected?.layer === 'mining'
+        ? data.miningFields.find((f) => f.name === selected.id) ?? null
+        : null,
+    [data, selected],
+  )
+
+  // V2C: the selected LIVE exploration site (exploration edit-draft fork source; name is the
+  // natural key — the read contract exposes no client uuid).
+  const selectedExplorationSite = useMemo(
+    () =>
+      data && selected?.layer === 'exploration'
+        ? data.explorationSites.find((s) => s.name === selected.id) ?? null
+        : null,
+    [data, selected],
+  )
+
+  // V3A-2: the selected LIVE danger zone (zone edit-draft fork source; danger_zones has a real uuid).
+  const selectedZone = useMemo(
+    () =>
+      data && selected?.layer === 'zones'
+        ? data.zones.find((z) => z.id === selected.id) ?? null
+        : null,
+    [data, selected],
+  )
+
   // DARK by default — render nothing while loading the gate or when the flag is off (fail-closed).
   if (enabled !== true) return null
 
   const k = view.k
+  // Narrowed const so the zone gesture layer's callbacks close over a non-null draft.
+  const zoneActiveDraft = zoneDraftStore.activeDraft
 
   return (
     <LocationDraftsContext.Provider value={draftStore}>
+    <MiningDraftsContext.Provider value={miningDraftStore}>
+    <ExplorationDraftsContext.Provider value={explorationDraftStore}>
+    <ZoneDraftsContext.Provider value={zoneDraftStore}>
     <div className="flex min-h-screen flex-col gap-3 bg-app p-4 text-ink">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-bold">World Editor</h1>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-ink-muted">dev · owner-only</span>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">Foundation V1 · read-only live</span>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V1B-1 · local drafts (no publish)</span>
+        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V2A-2 · mining drafts (no publish)</span>
+        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V2C · exploration drafts (no publish)</span>
+        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V3A-2 · zone drafts (no publish)</span>
       </header>
 
       <div className="flex flex-1 flex-wrap items-start gap-4">
@@ -320,8 +460,54 @@ export function WorldEditor() {
                 )
               })}
 
-              {/* V1B-1: the active draft's preview overlay — ABOVE every read-only layer item. */}
-              <DraftPreview k={k} />
+              {/* V1B-1/V2A-2/V2C/V3A-2: the ACTIVE authoring domain's draft preview overlay — ABOVE
+                  every read-only layer item. Locations keep their bound DraftPreview unchanged;
+                  mining/exploration/zones render the generic overlay through their ONE descriptor
+                  binding each; zones ADD the interactive geometry-gesture layer on top. */}
+              {authoringDomain === 'locations' ? (
+                <DraftPreview k={k} />
+              ) : authoringDomain === 'mining' ? (
+                miningDraftStore.activeDraft && (
+                  <DraftPreviewOverlay
+                    activeDraft={miningDraftStore.activeDraft}
+                    toLayerItem={MINING_DRAFT_DESCRIPTOR.toLayerItem}
+                    withinBounds={MINING_DRAFT_DESCRIPTOR.withinBounds}
+                    k={k}
+                  />
+                )
+              ) : authoringDomain === 'exploration' ? (
+                explorationDraftStore.activeDraft && (
+                  <DraftPreviewOverlay
+                    activeDraft={explorationDraftStore.activeDraft}
+                    toLayerItem={EXPLORATION_DRAFT_DESCRIPTOR.toLayerItem}
+                    withinBounds={EXPLORATION_DRAFT_DESCRIPTOR.withinBounds}
+                    k={k}
+                  />
+                )
+              ) : (
+                zoneActiveDraft && (
+                  <>
+                    <DraftPreviewOverlay
+                      activeDraft={zoneActiveDraft}
+                      toLayerItem={ZONE_DRAFT_DESCRIPTOR.toLayerItem}
+                      withinBounds={ZONE_DRAFT_DESCRIPTOR.withinBounds}
+                      k={k}
+                    />
+                    {/* the ONE interactive geometry layer: every gesture converts pointer→world via
+                        the shared screenToWorld and writes ONLY store.patchDraft (zero live write) */}
+                    <ZoneGeometryHandles
+                      draft={zoneActiveDraft}
+                      mode={zoneGestureMode}
+                      onModeChange={setZoneGestureMode}
+                      patchGeometry={(geometry) =>
+                        zoneDraftStore.patchDraft(zoneActiveDraft.draftId, { geometry })
+                      }
+                      view={view}
+                      svgRef={svgRef}
+                    />
+                  </>
+                )
+              )}
             </g>
           </svg>
 
@@ -357,6 +543,27 @@ export function WorldEditor() {
             </div>
           </section>
 
+          {/* C1 Focus — camera-only domain framing (worldEditorFocus.cameraForDomain over the SAME
+              shared galaxyCamera fit). Frames one domain's cluster at its true tier; 'All' is the
+              same frame Reset uses. NEVER touches stored coordinates. */}
+          <section className="rounded-card border border-edge bg-surface p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Focus</div>
+            <div className="flex flex-wrap gap-1.5">
+              {FOCUS_DOMAINS.map((d) => (
+                <button
+                  key={d}
+                  onClick={() => focusDomain(d)}
+                  className="rounded-md border border-edge bg-surface-2 px-3 py-1.5 text-sm text-ink-muted hover:border-accent/60 hover:text-ink"
+                >
+                  {FOCUS_DOMAIN_LABELS[d]}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-ink-faint">
+              Frames the camera on one domain. Display only — stored world coordinates never change.
+            </p>
+          </section>
+
           <section className="rounded-card border border-edge bg-surface p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Inspector</div>
             {!selected || !inspectorFields ? (
@@ -373,26 +580,84 @@ export function WorldEditor() {
                   ))}
                 </dl>
 
-                {/* Authoring — V1B-1: create/edit are LIVE and open a LOCAL draft (zero live
-                    mutation). publish/enable/disable/archive stay EXPLICITLY DISABLED (§WE.2). */}
+                {/* Authoring — V1B-1/V2A-2/V2C: create/edit are LIVE and open a LOCAL draft in the
+                    ACTIVE authoring domain (zero live mutation). publish/enable/disable/archive
+                    stay EXPLICITLY DISABLED (§WE.2). */}
                 <div className="mt-2">
                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Authoring</div>
                   <div className="flex flex-wrap gap-1.5">
-                    <Button size="sm" onClick={() => draftStore.beginCreateDraft()}>
-                      Create draft
-                    </Button>
                     <Button
                       size="sm"
-                      disabled={!selectedLocation}
-                      title={
-                        selectedLocation
-                          ? 'Fork this location into a local edit draft.'
-                          : 'Edit drafts fork off a selected LOCATION in this slice.'
+                      onClick={() =>
+                        authoringDomain === 'locations'
+                          ? draftStore.beginCreateDraft()
+                          : authoringDomain === 'mining'
+                            ? miningDraftStore.beginCreateDraft()
+                            : authoringDomain === 'exploration'
+                              ? explorationDraftStore.beginCreateDraft()
+                              : zoneDraftStore.beginCreateDraft()
                       }
-                      onClick={() => selectedLocation && draftStore.forkEditDraft(selectedLocation)}
                     >
-                      Edit as draft
+                      Create draft
                     </Button>
+                    {authoringDomain === 'locations' ? (
+                      <Button
+                        size="sm"
+                        disabled={!selectedLocation}
+                        title={
+                          selectedLocation
+                            ? 'Fork this location into a local edit draft.'
+                            : 'Edit drafts fork off a selected LOCATION in this slice.'
+                        }
+                        onClick={() => selectedLocation && draftStore.forkEditDraft(selectedLocation)}
+                      >
+                        Edit as draft
+                      </Button>
+                    ) : authoringDomain === 'mining' ? (
+                      <Button
+                        size="sm"
+                        disabled={!selectedMiningField}
+                        title={
+                          selectedMiningField
+                            ? 'Fork this mining field into a local edit draft.'
+                            : 'Edit drafts fork off a selected MINING FIELD in this domain.'
+                        }
+                        onClick={() =>
+                          selectedMiningField && miningDraftStore.forkEditDraft(selectedMiningField)
+                        }
+                      >
+                        Edit as draft
+                      </Button>
+                    ) : authoringDomain === 'exploration' ? (
+                      <Button
+                        size="sm"
+                        disabled={!selectedExplorationSite}
+                        title={
+                          selectedExplorationSite
+                            ? 'Fork this exploration site into a local edit draft.'
+                            : 'Edit drafts fork off a selected EXPLORATION SITE in this domain.'
+                        }
+                        onClick={() =>
+                          selectedExplorationSite &&
+                          explorationDraftStore.forkEditDraft(selectedExplorationSite)
+                        }
+                      >
+                        Edit as draft
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        disabled={!selectedZone}
+                        title={
+                          selectedZone
+                            ? 'Fork this zone into a local edit draft (its ring materializes to editable vertices).'
+                            : 'Edit drafts fork off a selected ZONE in this domain.'
+                        }
+                        onClick={() => selectedZone && zoneDraftStore.forkEditDraft(selectedZone)}
+                      >
+                        Edit as draft
+                      </Button>
+                    )}
                     {DEFERRED_OPERATIONS.filter((op) => !LIVE_DRAFT_OPERATIONS.includes(op)).map((op) => (
                       <button
                         key={op}
@@ -409,15 +674,72 @@ export function WorldEditor() {
                     {DEFERRED_OPERATION_REASON}
                   </p>
                 </div>
+
+                {/* V3B: the ONE owner-gated LIVE zone write reachable from the shell — unpublish a
+                    selected live danger zone (0255 zone_unpublish). Server is_owner() is the authority;
+                    on success the snapshot re-reads and the zone leaves the map. Only shown for a live
+                    zone selection; drafts publish through their own panels. */}
+                {selectedZone && (
+                  <ZoneInspectorActions
+                    zone={selectedZone}
+                    onUnpublished={() => {
+                      setSelected(null)
+                      void reloadData()
+                    }}
+                  />
+                )}
               </div>
             )}
           </section>
 
-          {/* V1B-1: the local draft list + form (client-side only; see LocationDraftPanel). */}
-          <LocationDraftPanel />
+          {/* V2A-2/V2C/V3A-2: the authoring-domain toggle — picks which draft panel + preview is
+              active. Every store stays mounted; switching never discards another domain's drafts. */}
+          <section className="rounded-card border border-edge bg-surface p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Authoring domain</div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {(['locations', 'mining', 'exploration', 'zones'] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => {
+                    setAuthoringDomain(d)
+                    setZoneGestureMode('idle') // gesture mode never outlives the zone domain view
+                  }}
+                  className={`rounded-md border px-3 py-2 text-sm ${
+                    authoringDomain === d
+                      ? 'border-accent/60 bg-accent-soft text-ink'
+                      : 'border-edge bg-surface-2 text-ink-muted'
+                  }`}
+                  aria-pressed={authoringDomain === d}
+                >
+                  {AUTHORING_DOMAIN_LABELS[d]}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* V1B-1/V2A-2/V2C/V3A-2: the ACTIVE domain's local draft list + form (client-side only).
+              zoneOptions (0252): the create-location zone picker's source — the zone refs the raw
+              get_world_map tree already carries (WorldEditorData.zoneRefs; no extra server read). */}
+          {authoringDomain === 'locations' ? (
+            <LocationDraftPanel zoneOptions={data?.zoneRefs ?? []} />
+          ) : authoringDomain === 'mining' ? (
+            <MiningDraftPanel />
+          ) : authoringDomain === 'exploration' ? (
+            <ExplorationDraftPanel />
+          ) : (
+            <ZoneDraftPanel
+              locations={data?.locations ?? []}
+              zones={data?.zones ?? []}
+              gestureMode={zoneGestureMode}
+              onGestureModeChange={setZoneGestureMode}
+            />
+          )}
         </aside>
       </div>
     </div>
+    </ZoneDraftsContext.Provider>
+    </ExplorationDraftsContext.Provider>
+    </MiningDraftsContext.Provider>
     </LocationDraftsContext.Provider>
   )
 }

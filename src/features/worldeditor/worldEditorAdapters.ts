@@ -14,6 +14,7 @@ import type { MiningField } from '../mining/miningTypes'
 import type { ExplorationSiteLite } from '../exploration/explorationApi'
 import type { DangerZoneLite } from '../map/pirateApi'
 import type { WorldEditorData } from './worldEditorData'
+import { formatWorldCoord } from './worldEditorCoordinates'
 import type {
   InspectorField,
   LayerItem,
@@ -22,10 +23,11 @@ import type {
   WorldPoint,
 } from './worldEditorTypes'
 
-const fmtCoord = (n: number): string => (Number.isFinite(n) ? n.toFixed(1) : '—')
+// C1: coordinate presentation goes through the ONE formatter (worldEditorCoordinates) — the local
+// fmtCoord moved there; the inspector renders STORED gameplay coordinates read-only, always.
 const coordFields = (w: WorldPoint): InspectorField[] => [
-  { label: 'World X', value: fmtCoord(w.x) },
-  { label: 'World Y', value: fmtCoord(w.y) },
+  { label: 'World X', value: formatWorldCoord(w.x) },
+  { label: 'World Y', value: formatWorldCoord(w.y) },
 ]
 
 // ── Locations (§WE.6) — get_world_map rows. Glyph/tone from the shared markerStyle policy. ───────────

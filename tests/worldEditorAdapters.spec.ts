@@ -37,6 +37,7 @@ const loc = (over: Partial<MapLocation> = {}): MapLocation => ({
 
 const DATA: WorldEditorData = {
   locations: [loc(), loc({ id: 'loc-2', name: 'Reef Den', location_type: 'pirate_den', x: -50, y: 200 })],
+  zoneRefs: [{ zone_id: 'zone-1', zone_name: 'Wreck Belt', sector_name: 'Outer Haven' }],
   miningFields: [{ name: 'Sparse Ore Belt', space_x: 300, space_y: 150 }],
   explorationSites: [{ name: 'Signal 7', space_x: -400, space_y: 620 }],
   zones: [
@@ -44,6 +45,8 @@ const DATA: WorldEditorData = {
     { id: 'z-circle', name: 'Seeded Ring', source: 'circle', location_id: null, ring: [[5, 5], [6, 5], [6, 6], [5, 5]] },
     { id: 'z-bad', name: 'Too Few', source: 'drawn', location_id: null, ring: [[1, 1], [2, 2]] }, // < 3 → skipped
   ],
+  miningExtractRadius: null,
+  explorationScanRadius: null,
 }
 
 // ── Locations layer ─────────────────────────────────────────────────────────────────────────────────
