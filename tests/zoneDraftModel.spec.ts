@@ -240,7 +240,7 @@ test('circle bounds: in-bounds center + finite radius>0 + full extent within the
 
 // ── preview shape parity with the live zone layer (geometry → representation 1:1) ───────────────────
 test('draftToLayerItem has EXACTLY the LayerItem shape zoneLayerAdapter.readItems produces, for both geometries', () => {
-  const DATA: WorldEditorData = { locations: [], zoneRefs: [], miningFields: [], explorationSites: [], zones: [zone()] }
+  const DATA: WorldEditorData = { locations: [], zoneRefs: [], miningFields: [], explorationSites: [], zones: [zone()], miningExtractRadius: null, explorationScanRadius: null }
   const liveItem = zoneLayerAdapter.readItems(DATA)[0]
   const polygonItem = draftToLayerItem(forkEdit(zone(), 'draft-a', T0))
 

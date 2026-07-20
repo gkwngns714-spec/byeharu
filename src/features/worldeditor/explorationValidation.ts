@@ -66,12 +66,21 @@ export type ExplorationValidationContext = DraftValidationContext<
   ExplorationSiteLite
 >
 
-/** Mirrors the server's own coalesce(cfg_num('exploration_scan_radius'), 750) fallback (0099) — the
- *  world-unit radius within which a settled ship's scan can discover a site. Two sites closer than
- *  this radius are ambiguous targets for the nearest-site scan, so overlap is flagged (WARNING —
- *  the live runtime reads the tunable from game_config; this pure module cannot, so the server
- *  default is the honest advisory baseline). */
-export const EXPLORATION_SITE_OVERLAP_RADIUS = 750
+/** NON-AUTHORITATIVE FALLBACK (C1) — mirrors the server's own coalesce(cfg_num(
+ *  'exploration_scan_radius'), 750) DEFAULT (0099), used ONLY when the context carries no
+ *  server-authoritative radius. The AUTHORITY is game_config.exploration_scan_radius, read by the
+ *  editor snapshot (worldEditorData.explorationScanRadius) and threaded in as ctx.overlapRadius —
+ *  this pure module never fetches, so absent context falls back to the server's documented default. */
+export const EXPLORATION_SITE_OVERLAP_RADIUS_FALLBACK = 750
+
+/** The effective scan radius for the overlap rule: the server-authoritative ctx.overlapRadius when
+ *  present (finite, > 0), else the labeled fallback. Pure — context in, number out. */
+function effectiveOverlapRadius(ctx: ExplorationValidationContext): number {
+  const r = ctx.overlapRadius
+  return typeof r === 'number' && Number.isFinite(r) && r > 0
+    ? r
+    : EXPLORATION_SITE_OVERLAP_RADIUS_FALLBACK
+}
 
 /** The generic issue constructors pinned to the exploration domain's code/field unions (a null
  *  field would otherwise widen TField to string). */
@@ -202,17 +211,18 @@ function ruleSiteOverlap(
   ctx: ExplorationValidationContext,
 ): ExplorationValidationIssue[] {
   if (!Number.isFinite(p.space_x) || !Number.isFinite(p.space_y)) return []
+  const radius = effectiveOverlapRadius(ctx)
   const sourceId = mode.kind === 'edit' ? mode.sourceId : null
   const issues: ExplorationValidationIssue[] = []
   for (const live of ctx.live) {
     if (live.name === sourceId) continue
     const d = distance(p.space_x, p.space_y, live.space_x, live.space_y)
-    if (d < EXPLORATION_SITE_OVERLAP_RADIUS)
+    if (d < radius)
       issues.push(
         warn(
           'site_overlap',
           null,
-          `Within scanner range of '${live.name}' (distance ${Math.round(d)} < radius ${EXPLORATION_SITE_OVERLAP_RADIUS}) — nearest-site discovery becomes ambiguous.`,
+          `Within scanner range of '${live.name}' (distance ${Math.round(d)} < radius ${radius}) — nearest-site discovery becomes ambiguous.`,
         ),
       )
   }

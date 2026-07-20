@@ -71,5 +71,8 @@ test('worldEditorData.ts imports are unchanged — no draft type/module enters t
     "import type { MiningField } from '../mining/miningTypes'",
     "import { getVisibleExplorationSites, type ExplorationSiteLite } from '../exploration/explorationApi'",
     "import { fetchDangerZones, type DangerZoneLite } from '../map/pirateApi'",
+    // C1: the server-authoritative overlap radii ride the snapshot — a READ of the existing
+    // public game_config tunables (lib/catalog.fetchGameConfig), never a write, never a draft type.
+    "import { fetchGameConfig } from '../../lib/catalog'",
   ])
 })

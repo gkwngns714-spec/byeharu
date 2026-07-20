@@ -40,11 +40,14 @@ export type ExplorationDraftsStore = DraftsStore<
 /** Build the ONE exploration draft store instance (the WorldEditor shell calls this and provides it
  *  via ExplorationDraftsContext). `liveSites` is the CURRENT read snapshot's exploration-site list
  *  (data.explorationSites) — used ONLY to re-validate edit drafts (fingerprint comparison); drafts
- *  never flow back into it. */
+ *  never flow back into it. `scanRadius` (C1) is the snapshot's server-authoritative
+ *  game_config.exploration_scan_radius (null when absent) — threaded into the validation context so
+ *  the overlap rule uses the real tunable, not the hardcoded fallback. */
 export function useExplorationDraftsStore(
   liveSites: readonly ExplorationSiteLite[] | null,
+  scanRadius: number | null = null,
 ): ExplorationDraftsStore {
-  return useDraftsStore(EXPLORATION_DRAFT_DESCRIPTOR, liveSites)
+  return useDraftsStore(EXPLORATION_DRAFT_DESCRIPTOR, liveSites, scanRadius)
 }
 
 const binding = createDraftsContext<

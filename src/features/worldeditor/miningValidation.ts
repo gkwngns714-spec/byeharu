@@ -55,12 +55,21 @@ export type MiningValidationReport = DraftValidationReport<MiningValidationIssue
  *  only (get_active_mining_fields is the client's whole view of mining_fields). */
 export type MiningValidationContext = DraftValidationContext<MiningDraftPayload, MiningField>
 
-/** Mirrors the server's own coalesce(cfg_num('mining_extract_radius'), 750) fallback (0104) — the
- *  world-unit radius within which a settled fleet can extract from a field. Two fields closer than
- *  this radius are ambiguous targets for the nearest-field extract, so overlap is flagged (WARNING —
- *  the live runtime reads the tunable from game_config; this pure module cannot, so the server
- *  default is the honest advisory baseline, the same fallback useGalaxyMapData renders rings with). */
-export const MINING_FIELD_OVERLAP_RADIUS = 750
+/** NON-AUTHORITATIVE FALLBACK (C1) — mirrors the server's own coalesce(cfg_num(
+ *  'mining_extract_radius'), 750) DEFAULT (0104), used ONLY when the context carries no
+ *  server-authoritative radius. The AUTHORITY is game_config.mining_extract_radius, read by the
+ *  editor snapshot (worldEditorData.miningExtractRadius) and threaded in as ctx.overlapRadius —
+ *  this pure module never fetches, so absent context falls back to the server's documented default. */
+export const MINING_FIELD_OVERLAP_RADIUS_FALLBACK = 750
+
+/** The effective extract radius for the overlap rule: the server-authoritative ctx.overlapRadius
+ *  when present (finite, > 0), else the labeled fallback. Pure — context in, number out. */
+function effectiveOverlapRadius(ctx: MiningValidationContext): number {
+  const r = ctx.overlapRadius
+  return typeof r === 'number' && Number.isFinite(r) && r > 0
+    ? r
+    : MINING_FIELD_OVERLAP_RADIUS_FALLBACK
+}
 
 /** The generic issue constructors pinned to the mining domain's code/field unions (a null field
  *  would otherwise widen TField to string). */
@@ -188,17 +197,18 @@ function ruleFieldOverlap(
   ctx: MiningValidationContext,
 ): MiningValidationIssue[] {
   if (!Number.isFinite(p.space_x) || !Number.isFinite(p.space_y)) return []
+  const radius = effectiveOverlapRadius(ctx)
   const sourceId = mode.kind === 'edit' ? mode.sourceId : null
   const issues: MiningValidationIssue[] = []
   for (const live of ctx.live) {
     if (live.name === sourceId) continue
     const d = distance(p.space_x, p.space_y, live.space_x, live.space_y)
-    if (d < MINING_FIELD_OVERLAP_RADIUS)
+    if (d < radius)
       issues.push(
         warn(
           'field_overlap',
           null,
-          `Within extraction range of '${live.name}' (distance ${Math.round(d)} < radius ${MINING_FIELD_OVERLAP_RADIUS}) — nearest-field extraction becomes ambiguous.`,
+          `Within extraction range of '${live.name}' (distance ${Math.round(d)} < radius ${radius}) — nearest-field extraction becomes ambiguous.`,
         ),
       )
   }

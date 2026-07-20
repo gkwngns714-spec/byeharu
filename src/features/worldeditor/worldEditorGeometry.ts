@@ -1,8 +1,8 @@
 // WORLD EDITOR — the ONE map-representation resolver (§WE.2 "resolve map representation", §WE.11 "one
 // real map"). PURE: it forwards CANONICAL WORLD coordinates through the SHARED openSpaceTransform
 // (worldToViewBox) — the single projection authority the real GalaxyMap uses — and NEVER invents a
-// second world↔viewBox map (that bespoke `makeFit` is exactly the ZoneEditor spaghetti being retired,
-// §WE.11). No React, no DOM, no clamping: unit-tested directly against worldToViewBox.
+// second world↔viewBox map (the retired ZoneEditor's bespoke fit-to-content transform was exactly
+// that spaghetti, §WE.11). No React, no DOM, no clamping: unit-tested directly against worldToViewBox.
 import { WORLD_TO_VIEWBOX_SCALE, worldToViewBox, type ViewBoxCoord } from '../map/openSpaceTransform'
 import type { MapRepresentation, WorldPoint } from './worldEditorTypes'
 
