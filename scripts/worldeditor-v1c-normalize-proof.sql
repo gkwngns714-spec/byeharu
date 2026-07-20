@@ -1,8 +1,8 @@
 -- WORLD-EDITOR V1C NORMALIZE (PR-C) — disposable apply-proof (run against a THROWAWAY local
 -- Supabase ONLY — the seeded migration chain; NEVER production).
 --
--- Proves migration 0251 (20260618000251_worldeditor_v1c_normalize.sql) after `supabase start`
--- applied the FULL chain (0251's own in-migration parity envelope already ran — any failure there
+-- Proves migration 0253 (20260618000253_worldeditor_v1c_normalize.sql) after `supabase start`
+-- applied the FULL chain (0253's own in-migration parity envelope already ran — any failure there
 -- turns `supabase start` red before this script even runs). This proof independently re-verifies the
 -- DEPLOYED post-normalize world:
 --   1  K_IN_BOUNDS                  — the applied scale k is a positive INTEGER, re-derivable from
@@ -19,7 +19,7 @@
 --                                     location's new center (ST_Scale preserved the 0237 slimes);
 --   7  INFLIGHT_RECONCILED          — real-table coherence (every moving location-bound leg matches
 --                                     its location exactly; zero rows is a legitimate pass) PLUS a
---                                     seeded REPLAY of the 0251 §7 reconcile idiom on a synthetic
+--                                     seeded REPLAY of the 0253 §7 reconcile idiom on a synthetic
 --                                     pre-image leg (non-vacuous by construction);
 --   8  REVEAL_PORTS_STRUCTURAL      — reveal_starter_ports() carries the ×k arrays (not the old
 --                                     ones), no anchor-id pin, service_role-only exposure;
@@ -32,7 +32,7 @@
 --                                     the documented float seam).
 --
 -- CHAIN-PINNED PRE-IMAGE: this proof runs on the deterministic seeded chain, where the starter
--- ports' pre-0251 coordinates are the 0227 literals (-150,-90) / (210,-30) / (30,240) — k is
+-- ports' pre-0253 coordinates are the 0227 literals (-150,-90) / (210,-30) / (30,240) — k is
 -- re-derived from them, never read from the migration. Self-rolling-back: one begin;…rollback;,
 -- ZERO persisted state. NEVER point this at production.
 
@@ -67,7 +67,7 @@ begin
     raise exception 'V1C-NORM PROOF FAIL: k=% is not the one uniform scale across ports/axes', v_k;
   end if;
 
-  -- reconstruct the pre-image extent M = M_post / k over EVERY class 0251 folded into M, and re-prove
+  -- reconstruct the pre-image extent M = M_post / k over EVERY class 0253 folded into M, and re-prove
   -- the k formula: k = floor(8500 / M), M·k < 10000.
   select greatest(
     (select coalesce(max(greatest(abs(x), abs(y),
@@ -165,7 +165,7 @@ begin
 end $$;
 
 -- ── PROOF 4 — RELATIVE_GEOMETRY_PRESERVED: (a) the chain-pinned pre-image spot-check — the three
---    starter ports sit EXACTLY at the 0227 coordinates × k (proves 0251 scaled the REAL historical
+--    starter ports sit EXACTLY at the 0227 coordinates × k (proves 0253 scaled the REAL historical
 --    frame, not an arbitrary similar one); (b) every location pair keeps distance ×k (float
 --    tolerance) and bearing (a uniform positive scale is a similarity transform). ──────────────────
 do $$
@@ -245,7 +245,7 @@ end $$;
 -- ── PROOF 7 — INFLIGHT_RECONCILED: (a) real-table coherence — every MOVING location-bound leg's
 --    frozen snapshot equals its target/origin location's live post-scale coordinate (count-equality,
 --    the 0227 (F) idiom; ZERO in-flight rows is a legitimate pass on the seeded chain); (b) REPLAY —
---    seed a synthetic pre-image leg and run the EXACT 0251 §7 reconcile expression, proving the
+--    seed a synthetic pre-image leg and run the EXACT 0253 §7 reconcile expression, proving the
 --    idiom itself non-vacuously. ────────────────────────────────────────────────────────────────────
 do $$
 declare v_k int; v_moving int; v_ok int; v_hx double precision; v_hy double precision;
@@ -266,7 +266,7 @@ begin
     raise exception 'V1C-NORM PROOF FAIL: only %/% moving location-targeted leg(s) match their location''s live coordinate', v_ok, v_moving;
   end if;
 
-  -- (b) replay: a synthetic pre-image leg to Haven Reach (rec coords), reconciled by the 0251 §7
+  -- (b) replay: a synthetic pre-image leg to Haven Reach (rec coords), reconciled by the 0253 §7
   -- expression, must land bit-for-bit on the deployed post-scale coordinate.
   select x, y into v_hx, v_hy from public.locations where id = 'b1a00001-0066-4a00-8a00-000000000001';
   create temporary table _pf_replay (origin_type text, origin_x double precision, origin_y double precision,
@@ -331,7 +331,7 @@ begin
 end $$;
 
 -- ── PROOF 9 — GET_WORLD_MAP_UNCHANGED: signature, hidden-invisibility body pins, territory field,
---    NO space_anchors read, client grants — the 0217/0245 head, byte-stable through 0251. ───────────
+--    NO space_anchors read, client grants — the 0217/0245 head, byte-stable through 0253. ───────────
 do $$
 declare v_src text;
 begin

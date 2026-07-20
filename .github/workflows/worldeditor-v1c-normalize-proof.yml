@@ -1,7 +1,7 @@
 name: WORLD-EDITOR V1C — coordinate normalize (PR-C) disposable proof (no production)
 
-# Proves migration 0251 (worldeditor_v1c_normalize) on a THROWAWAY local Supabase — NEVER prod:
-#   * `supabase start` applies the FULL migration chain incl. 0251. 0251's own in-migration parity
+# Proves migration 0253 (worldeditor_v1c_normalize) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0253. 0253's own in-migration parity
 #     envelope runs here against real Postgres (live-computed integer k; envelope; anchor==location
 #     exact world-wide; relative geometry + territory disjointness preserved; danger-zone
 #     center-containment; in-flight reconcile; reveal_starter_ports ×k; get_world_map untouched;
@@ -39,7 +39,7 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
-      - name: Start disposable local Supabase (applies the full chain incl. 0251 + its parity envelope)
+      - name: Start disposable local Supabase (applies the full chain incl. 0253 + its parity envelope)
         run: supabase start
       - name: Export disposable DB_URL (no secrets)
         run: |
