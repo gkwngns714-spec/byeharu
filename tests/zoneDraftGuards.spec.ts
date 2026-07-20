@@ -3,14 +3,17 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// WORLD EDITOR V3A PR-2 — STRUCTURAL GUARDS (source-text proofs of the zone slice's hard
+// WORLD EDITOR V3A PR-2/PR-3 — STRUCTURAL GUARDS (source-text proofs of the zone slice's hard
 // exclusions), mirroring tests/miningDraftGuards.spec.ts:
 //   1. PURITY — the zone draft model + store + validator (and the gesture/panel components) perform
-//      ZERO network/database IO and can express no write. Geometry gestures write ONLY through the
-//      local draft store (patchDraft).
-//   2. NO LIVE-WRITE / NO PUBLISH PATH — no zone draft file imports pirateApi (the locked
-//      pirate_zone_create/delete client) or commandClient (the publish transport): this slice is
-//      draft + validation + gestures ONLY; publish is PR-3 and the legacy zone RPCs stay locked.
+//      ZERO direct network/database IO and can express no direct write. Geometry gestures write
+//      ONLY through the local draft store (patchDraft).
+//   2. NO LEGACY LIVE-WRITE PATH — no zone draft file imports pirateApi or references the LOCKED
+//      pirate_zone_create/delete RPCs (0239: service_role only) — publishing (PR-3, migration 0254
+//      zone_create) goes EXCLUSIVELY through the 0243-spine command client, and ONLY from the ONE
+//      sanctioned publish surface, ZoneDraftPanel.tsx (registered in
+//      tests/locationDraftGuards.spec.ts COMMAND_PATH_FILES — the same narrowing every prior
+//      publish panel made). Every other zone file stays command-free.
 //   3. READ-SNAPSHOT INTEGRITY — worldEditorData.ts is byte-identical on its import surface: the
 //      zone draft store is a SEPARATE structure and never enters the unified read snapshot.
 // Run: `npx playwright test zoneDraftGuards.spec.ts`.
@@ -27,6 +30,9 @@ const ZONE_DRAFT_FILES = [
   'ZoneGeometryHandles.tsx',
 ]
 
+// The ONE sanctioned zone publish surface (PR-3): it may import the command client; nothing else may.
+const SANCTIONED_PUBLISH_SURFACE = 'ZoneDraftPanel.tsx'
+
 // ── 1. purity guard (every zone file — the components included: gestures patch a LOCAL draft only) ──
 test('no zone draft file contains supabase/fetch/rpc/table access or a write call', () => {
   for (const name of ZONE_DRAFT_FILES) {
@@ -39,24 +45,39 @@ test('no zone draft file contains supabase/fetch/rpc/table access or a write cal
   }
 })
 
-// ── 2. no live-write / no publish wiring ────────────────────────────────────────────────────────────
-// The locked zone RPCs (pirate_zone_create / pirate_zone_delete) and their client (pirateApi) must
-// never appear — the live zone TYPE is reached through worldEditorData's type surface instead. The
-// publish transport (commandClient: invokeWorldEditorCommand / newRequestId / commandType) must not
-// appear either: publish is PR-3, absent here by construction.
-test('no zone draft file imports pirateApi or commandClient, or references the locked zone RPCs / publish transport', () => {
+// ── 2. no legacy live-write path; publish wiring ONLY on the sanctioned surface ─────────────────────
+// The locked zone RPCs (pirate_zone_create / pirate_zone_delete, 0239: service_role only) and their
+// client (pirateApi) must never appear in ANY zone file — publishing does not resurrect them: the
+// 0254 zone_create command is a NEW owner-gated surface through the 0243 spine. The publish
+// transport (commandClient: invokeWorldEditorCommand / newRequestId / commandType) may appear ONLY
+// in the sanctioned publish surface (ZoneDraftPanel.tsx — the panel locationDraftGuards'
+// COMMAND_PATH_FILES also registers); every other zone file stays command-free.
+test('no zone draft file references pirateApi or the locked zone RPCs; publish wiring only in the sanctioned panel', () => {
   for (const name of ZONE_DRAFT_FILES) {
     const src = read(name)
     expect(src, `${name} must not import pirateApi`).not.toContain('pirateApi')
-    expect(src, `${name} must not import commandClient`).not.toContain("from './commandClient'")
     expect(src, `${name} must not reference the locked zone RPCs`).not.toMatch(/pirate_zone_/)
-    expect(src, `${name} must not carry publish wiring`).not.toContain('invokeWorldEditorCommand')
-    expect(src, `${name} must not carry publish wiring`).not.toContain('newRequestId')
-    expect(src, `${name} must not carry publish wiring`).not.toContain('commandType')
     expect(src, `${name} must not reference DangerZoneLite via pirateApi`).not.toMatch(
       /from\s+'\.\.\/map\/pirateApi'/,
     )
+    if (name === SANCTIONED_PUBLISH_SURFACE) continue
+    expect(src, `${name} must not import commandClient`).not.toContain("from './commandClient'")
+    expect(src, `${name} must not carry publish wiring`).not.toContain('invokeWorldEditorCommand')
+    expect(src, `${name} must not carry publish wiring`).not.toContain('newRequestId')
+    expect(src, `${name} must not carry publish wiring`).not.toContain('commandType')
   }
+})
+
+// The sanctioned surface publishes through the ONE command path with the ONE command kind — never a
+// raw RPC name string of its own, never the locked legacy RPCs (asserted above for all files).
+test('ZoneDraftPanel publishes exclusively via the 0254 zone_create command through commandClient', () => {
+  const src = read(SANCTIONED_PUBLISH_SURFACE)
+  expect(src).toContain("from './commandClient'")
+  expect(src).toContain('invokeWorldEditorCommand')
+  expect(src).toContain("commandType: 'zone_create'")
+  // the transport is the command client alone — no direct supabase/rpc escape hatch
+  expect(src).not.toMatch(/supabase/i)
+  expect(src).not.toMatch(/\.rpc\s*\(/)
 })
 
 // The gesture layer's ONLY write is the local draft patch: it receives patchGeometry (shell-bound

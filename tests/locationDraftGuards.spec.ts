@@ -32,16 +32,17 @@ test('locationDraftModel.ts and useLocationDrafts.ts contain no supabase/fetch/r
 // ── 2. one-command-path guard ───────────────────────────────────────────────────────────────────────
 // commandClient.ts (the transport binding) + commandContract.ts (its pure contract) are the ONE
 // legitimate definition site, and ExplorationDraftPanel.tsx (0244/0247) + MiningDraftPanel.tsx
-// (0246/0248) + LocationDraftPanel.tsx (0249 location_update — the same narrowing the exploration
-// and mining panels made when their publish slices landed) are the sanctioned publish surfaces
-// (owner-gated SERVER-side; the client grants nothing). The guard's law is that no OTHER
-// world-editor module references the command client.
+// (0246/0248) + LocationDraftPanel.tsx (0249/0252) + ZoneDraftPanel.tsx (0254 zone_create — the
+// 4th/final publish domain, the same narrowing every prior panel made when its publish slice
+// landed) are the sanctioned publish surfaces (owner-gated SERVER-side; the client grants
+// nothing). The guard's law is that no OTHER world-editor module references the command client.
 const COMMAND_PATH_FILES = [
   'commandClient.ts',
   'commandContract.ts',
   'ExplorationDraftPanel.tsx',
   'MiningDraftPanel.tsx',
   'LocationDraftPanel.tsx',
+  'ZoneDraftPanel.tsx',
 ]
 test('no file in src/features/worldeditor outside the sanctioned command path references a command client', () => {
   for (const name of readdirSync(WE_DIR)) {

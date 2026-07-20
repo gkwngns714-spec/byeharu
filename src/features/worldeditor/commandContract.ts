@@ -24,7 +24,13 @@
  *  location_create is the LAST publishing gap (0252, owner-gated): creates ONE new location from a
  *  CREATE draft — fields carry a REQUIRED zone_id (uuid of an existing zone, server-validated as a
  *  typed validation_failed {invalid_zone}) beside the 11 location draft fields; no target_id /
- *  expected (a create has no live source row). */
+ *  expected (a create has no live source row);
+ *  zone_create is the FOURTH/final publish DOMAIN (0254, owner-gated): materializes a zone draft's
+ *  seed geometry (circle {center,radius} | open polygon ring) into a live danger_zones row — fields
+ *  = {name, zone_kind, attach_location_id, geometry}; server-side PostGIS is the geometry authority
+ *  (a bad materialized ring is a typed validation_failed detail {invalid_geometry}; a bad attach
+ *  target {invalid_attach}); NO conflict code (danger_zones.name has no unique constraint). NOT the
+ *  0239-locked pirate_zone_create — a new 0243-spine surface. */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
   | 'exploration_site_create'
@@ -33,6 +39,7 @@ export type WorldEditorCommandType =
   | 'mining_field_update'
   | 'location_update'
   | 'location_create'
+  | 'zone_create'
   | 'exploration_site_set_active'
   | 'mining_field_set_active'
 
@@ -125,6 +132,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'location_update'
     case 'location_create':
       return 'location_create'
+    case 'zone_create':
+      return 'zone_create'
     case 'exploration_site_set_active':
       return 'exploration_site_set_active'
     case 'mining_field_set_active':

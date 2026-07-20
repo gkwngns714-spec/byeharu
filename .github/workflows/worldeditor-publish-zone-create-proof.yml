@@ -1,0 +1,77 @@
+name: WORLD-EDITOR PUBLISH-ZONE-CREATE — 4th/final publish domain disposable proof (no production)
+
+# Proves migration 0254 (worldeditor_publish_zone_create) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0254. 0254's own in-migration self-assert
+#     runs here against real Postgres (0243 spine + snapshot columns present, zone_create SECURITY
+#     DEFINER + authenticated-only, no client write grant on danger_zones with SELECT intact,
+#     get_danger_zones intact, 0239 pirate-zone lockdown intact incl. the service_role grant) — any
+#     regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the geometry-publish command end to end against the
+#     running disposable DB: owner CIRCLE create APPLIED (ST_Buffer materialization, attached to a
+#     live hostile site, ~pi*r^2 area); owner POLYGON create APPLIED (closed-ring ST_MakePolygon,
+#     standalone, visible through get_danger_zones once pirate_intercept_enabled is lit — txn-local
+#     flip, rolled back); non-owner REJECTED (not_authorized, no insert); anon REJECTED
+#     (not_authenticated + no execute grant); request_id idempotent (one insert, one audit row,
+#     identical replay); bad fields REJECTED server-side (validation_failed + the zoneValidation
+#     detail vocabulary); a SELF-INTERSECTING ring REJECTED at the authoritative ST_IsValid gate
+#     (typed invalid_geometry — the client scan is advisory); a bad attach target a TYPED
+#     invalid_attach (never a raw FK violation); audit row carries after_snapshot only; the 0239
+#     pirate-zone lockdown intact (zone_create is a NEW owner-gated surface — the locked
+#     pirate_zone_create/delete are untouched).
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-publish-location-create-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-publish-zone-create**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-publish-zone-create-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0254 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR PUBLISH-ZONE-CREATE real-chain proof (circle/polygon creates / rejections / idempotent / validation / invalid-geometry / invalid-attach / lockdown-intact)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-publish-zone-create-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            PUBLISH_ZONE_PASS_OWNER_CREATES_CIRCLE \
+            PUBLISH_ZONE_PASS_OWNER_CREATES_POLYGON \
+            PUBLISH_ZONE_PASS_NONOWNER_REJECTED \
+            PUBLISH_ZONE_PASS_ANON_REJECTED \
+            PUBLISH_ZONE_PASS_IDEMPOTENT \
+            PUBLISH_ZONE_PASS_VALIDATION_REJECTED \
+            PUBLISH_ZONE_PASS_INVALID_GEOMETRY_REJECTED \
+            PUBLISH_ZONE_PASS_INVALID_ATTACH_REJECTED \
+            PUBLISH_ZONE_PASS_AUDIT_SNAPSHOT \
+            PUBLISH_ZONE_PASS_PIRATE_ZONE_LOCKDOWN_INTACT \
+            'WORLD-EDITOR PUBLISH-ZONE-CREATE PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL PUBLISH-ZONE-CREATE PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
