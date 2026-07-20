@@ -1,0 +1,71 @@
+name: WORLD-EDITOR V1C — coordinate normalize (PR-C) disposable proof (no production)
+
+# Proves migration 0251 (worldeditor_v1c_normalize) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0251. 0251's own in-migration parity
+#     envelope runs here against real Postgres (live-computed integer k; envelope; anchor==location
+#     exact world-wide; relative geometry + territory disjointness preserved; danger-zone
+#     center-containment; in-flight reconcile; reveal_starter_ports ×k; get_world_map untouched;
+#     mining/exploration untouched; EXACT ÷k reversibility) — any regression ABORTS `supabase start`
+#     red before the proof even runs.
+#   * a self-rolling-back SQL proof then independently re-verifies the deployed post-normalize world
+#     end to end (10 pass markers incl. a re-derived k and a bit-for-bit reversibility round trip).
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, mutates NO world
+# row. NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-v1c-anchor-proof.yml.
+#
+# NOTE: the migration itself is UNDEPLOYED by design — its production deploy is the OWNER'S gate
+# (world-affecting, player-visible). This workflow is the disposable-matrix net only.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-v1c-normalize**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-v1c-normalize-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0251 + its parity envelope)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR V1C NORMALIZE real-chain proof (k / envelope / parity / reversibility)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-v1c-normalize-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            V1C_NORM_PASS_K_IN_BOUNDS \
+            V1C_NORM_PASS_ANCHOR_EQUALS_LOCATION \
+            V1C_NORM_PASS_ENVELOPE \
+            V1C_NORM_PASS_RELATIVE_GEOMETRY_PRESERVED \
+            V1C_NORM_PASS_TERRITORY_DISJOINT \
+            V1C_NORM_PASS_DANGER_CONTAINS_CENTER \
+            V1C_NORM_PASS_INFLIGHT_RECONCILED \
+            V1C_NORM_PASS_REVEAL_PORTS_STRUCTURAL \
+            V1C_NORM_PASS_GET_WORLD_MAP_UNCHANGED \
+            V1C_NORM_PASS_REVERSIBLE \
+            'WORLD-EDITOR V1C NORMALIZE PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL V1C NORMALIZE PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
