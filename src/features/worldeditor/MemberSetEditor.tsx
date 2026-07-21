@@ -21,9 +21,19 @@ export interface RefOption {
 const num = (v: string): number => (v.trim() === '' ? Number.NaN : Number(v))
 const numValue = (v: number): string | number => (Number.isFinite(v) ? v : '')
 
-/** The message for a given row index from the advisory issues[] (first match), or undefined. */
+/** The message for a given row index from the issues[] (first match), or undefined. */
 function issueFor(issues: readonly MemberIssue[], index: number): string | undefined {
   return issues.find((i) => i.index === index)?.message
+}
+
+/** Advisory (non-blocking) messages bound to a given row index. */
+function rowAdvisories(advisories: readonly MemberIssue[], index: number): MemberIssue[] {
+  return advisories.filter((a) => a.index === index)
+}
+
+/** Advisory (non-blocking) messages that apply to the whole set (no row index). */
+function setAdvisories(advisories: readonly MemberIssue[]): MemberIssue[] {
+  return advisories.filter((a) => a.index === undefined)
 }
 
 function RefSelect({
@@ -56,6 +66,8 @@ type MemberSetEditorProps =
       readonly members: readonly FleetMemberForm[]
       readonly options: readonly RefOption[]
       readonly issues: readonly MemberIssue[]
+      /** Purely non-blocking heads-up notes (never disable Save). */
+      readonly advisories?: readonly MemberIssue[]
       readonly disabled?: boolean
       readonly onChange: (members: FleetMemberForm[]) => void
     }
@@ -64,12 +76,14 @@ type MemberSetEditorProps =
       readonly members: readonly EncounterMemberForm[]
       readonly options: readonly RefOption[]
       readonly issues: readonly MemberIssue[]
+      readonly advisories?: readonly MemberIssue[]
       readonly disabled?: boolean
       readonly onChange: (members: EncounterMemberForm[]) => void
     }
 
 export function MemberSetEditor(props: MemberSetEditorProps) {
   const { options, issues, disabled } = props
+  const advisories = props.advisories ?? []
 
   if (props.kind === 'fleet') {
     const { members, onChange } = props
@@ -100,10 +114,18 @@ export function MemberSetEditor(props: MemberSetEditorProps) {
                 value={numValue(m.elite_chance)} onChange={(e) => patch(i, { elite_chance: num(e.target.value) })} />
             </div>
             {issueFor(issues, i) ? <div className="text-xs text-danger">{issueFor(issues, i)}</div> : null}
+            {/* per-row ADVISORY notes (non-blocking, e.g. elite-inert) — subtle, never a Save gate */}
+            {rowAdvisories(advisories, i).map((a) => (
+              <div key={a.code} className="text-xs text-ink-faint">{a.message}</div>
+            ))}
             <Button size="sm" variant="ghost" disabled={disabled} onClick={() => remove(i)}>
               Remove
             </Button>
           </div>
+        ))}
+        {/* whole-set ADVISORY notes (non-blocking, e.g. runtime unit-cap trimming) near the members block */}
+        {setAdvisories(advisories).map((a) => (
+          <div key={a.code} className="text-xs text-warning">{a.message}</div>
         ))}
         <Button size="sm" variant="ghost" disabled={disabled} onClick={add}>
           Add enemy

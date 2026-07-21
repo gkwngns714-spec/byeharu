@@ -9,7 +9,7 @@ import { CombatFormField, COMBAT_INPUT } from './CombatFormField'
 import { CombatErrorNotices } from './CombatErrorNotices'
 import { MemberSetEditor, type RefOption } from './MemberSetEditor'
 import { mapCombatError } from './combatErrorMap'
-import { validateFleetMembers } from './combatMemberValidation'
+import { fleetAdvisories, validateFleetMembers } from './combatMemberValidation'
 import { buildFleetTemplateCreate, buildFleetTemplateUpdate, buildSetActive, type FleetMemberForm, type FleetTemplateForm } from './combatPayloads'
 import type { CombatAuthoring } from './useCombatAuthoring'
 import type { EnemyArchetypeRow } from './enemyRegistryData'
@@ -80,6 +80,8 @@ export function FleetTemplateAuthoring({
   const errView = attempt?.failure ? mapCombatError(attempt.failure, TIER) : null
   const set = (partial: Partial<Draft>) => setDraft((d) => ({ ...d, ...partial }))
   const memberIssues = editing.mode === 'none' ? [] : validateFleetMembers(draft.members)
+  // Advisory-only heads-ups (runtime unit-cap trim, elite-inert) — never gate Save (flag-don't-clamp).
+  const memberAdvisories = editing.mode === 'none' ? [] : fleetAdvisories(draft.members)
 
   return (
     <div className="flex flex-col gap-2">
@@ -128,7 +130,7 @@ export function FleetTemplateAuthoring({
           <CombatFormField label="Name" error={errView?.fieldErrors['display_name']}>
             <input className={COMBAT_INPUT} value={draft.display_name} onChange={(e) => set({ display_name: e.target.value })} />
           </CombatFormField>
-          <MemberSetEditor kind="fleet" members={draft.members} options={options} issues={memberIssues} disabled={disabled} onChange={(members) => set({ members })} />
+          <MemberSetEditor kind="fleet" members={draft.members} options={options} issues={memberIssues} advisories={memberAdvisories} disabled={disabled} onChange={(members) => set({ members })} />
           <div className="flex gap-1.5">
             <Button size="sm" variant="primary" busy={attempt?.phase === 'sending'} busyLabel="Saving…" onClick={submit}>
               {attempt?.phase === 'failed' ? 'Retry save' : 'Save'}
