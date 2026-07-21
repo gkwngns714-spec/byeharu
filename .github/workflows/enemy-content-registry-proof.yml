@@ -1,0 +1,75 @@
+name: ENEMY CONTENT REGISTRY — dark owner-authored catalog disposable proof (no production)
+
+# Proves migration 0257 (enemy_content_registry) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0257. 0257's own in-migration self-assert
+#     runs here against real Postgres (both tables + RLS, all six RPCs SECURITY DEFINER +
+#     authenticated-only + anon-denied, no client write grant on either registry table, the fail-closed
+#     flag seeded, world_editor_audit.request_id UNIQUE intact) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the six owner commands end to end against the running
+#     disposable DB: flag-OFF denies even the owner (not_enabled, reject-before-any-read); with the flag
+#     flipped ON inside the txn — anon REJECTED (not_authenticated), non-owner REJECTED (not_authorized),
+#     owner CREATE (reward_profile + archetype; row + one audit w/ after_snapshot + source_revision),
+#     owner UPDATE (revision bumped, audit before+after), owner SET_ACTIVE false (soft, row survives),
+#     request_id idempotent (one apply, one audit, identical replay), STALE expected_revision REJECTED
+#     (nothing written), invalid unit_type_id/reward_profile refs REJECTED, direct client writes DENIED,
+#     audit fields correct, and the DARK guarantee (combat reward tunables unchanged; NO combat function
+#     body reads the new tables).
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-publish-setactive-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-e0-enemy-content-registry**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enemy-content-registry-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0257 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: ENEMY CONTENT REGISTRY real-chain proof (flag gate / rejections / create-update-setactive / idempotent / stale / invalid-ref / dark)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/enemy-content-registry-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            ENEMY_REGISTRY_PASS_FLAG_OFF_DENIED \
+            ENEMY_REGISTRY_PASS_ANON_DENIED \
+            ENEMY_REGISTRY_PASS_NONOWNER_DENIED \
+            ENEMY_REGISTRY_PASS_OWNER_CREATE \
+            ENEMY_REGISTRY_PASS_OWNER_UPDATE \
+            ENEMY_REGISTRY_PASS_OWNER_SET_ACTIVE \
+            ENEMY_REGISTRY_PASS_IDEMPOTENT \
+            ENEMY_REGISTRY_PASS_STALE_REVISION_REJECTED \
+            ENEMY_REGISTRY_PASS_INVALID_REFERENCE_REJECTED \
+            ENEMY_REGISTRY_PASS_DIRECT_WRITE_DENIED \
+            ENEMY_REGISTRY_PASS_AUDIT_FIELDS \
+            ENEMY_REGISTRY_PASS_COMBAT_UNCHANGED \
+            'ENEMY CONTENT REGISTRY PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL ENEMY-CONTENT-REGISTRY PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
