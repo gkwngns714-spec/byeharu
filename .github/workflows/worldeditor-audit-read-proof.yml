@@ -1,0 +1,65 @@
+name: WORLD-EDITOR AUDIT-READ — owner-only audit reader disposable proof (no production)
+
+# Proves migration 0256 (world_editor_audit_list) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0256. 0256's own in-migration self-assert
+#     runs here against real Postgres (0243 spine present, reader SECURITY DEFINER + authenticated-only,
+#     world_editor_audit stays RLS deny-all with no client table grant) — any regression ABORTS red.
+#   * a self-rolling-back SQL proof then drives the reader end to end against the running disposable DB:
+#     owner reads a typed page; non-owner REJECTED (not_authorized); anon REJECTED (not_authenticated +
+#     no execute grant); the server-only leak is CLOSED (reward_bundle_json / created_by / raw actor UUID
+#     never appear; actor_is_owner + redactions[] instead); whitelisted filters narrow correctly and
+#     unknown enum / malformed cursor are invalid_request; keyset pagination is stable + complete and the
+#     page size is clamped; the read writes NO audit row and the ledger stays deny-all.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-publish-zone-unpublish-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-audit-read**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-audit-read-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0256 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR AUDIT-READ real-chain proof (owner read / denials / no-leak / filters / pagination / read-only)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-audit-read-proof.sql 2>&1)" || true
+          echo "$out"
+          for marker in \
+            AUDIT_READ_PASS_OWNER_READS \
+            AUDIT_READ_PASS_DENIALS \
+            AUDIT_READ_PASS_NO_LEAK \
+            AUDIT_READ_PASS_FILTERS \
+            AUDIT_READ_PASS_PAGINATION \
+            AUDIT_READ_PASS_READONLY_AND_DENYALL \
+            'WORLD-EDITOR AUDIT-READ PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL AUDIT-READ PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
