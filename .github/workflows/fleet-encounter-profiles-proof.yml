@@ -1,0 +1,83 @@
+name: FLEET TEMPLATES + ENCOUNTER PROFILES — dark owner-authored composition disposable proof (no production)
+
+# Proves migration 0258 (fleet_templates_encounter_profiles) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0258. 0258's own in-migration self-assert
+#     runs here against real Postgres (all four tables + RLS, all six RPCs SECURITY DEFINER +
+#     authenticated-only + anon-denied, no client write grant on any of the four tables, the fail-closed
+#     flag seeded, the three deactivation-guard triggers present, world_editor_audit.request_id UNIQUE
+#     intact, NO delete RPC) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the six owner commands end to end against the running
+#     disposable DB: DUAL-FLAG-off denies even the owner under each single-flag-off combo
+#     (not_enabled, reject-before-any-read); with BOTH flags flipped ON inside the txn — anon REJECTED
+#     (not_authenticated), non-owner REJECTED (not_authorized), owner CREATE (fleet parent+member +
+#     encounter parent+member; each one audit w/ after_snapshot.members), owner UPDATE (REPLACE-ALL
+#     1→2 members, revision bumped, audit before.members=1/after.members=2), owner SET_ACTIVE false
+#     (soft, member rows survive), request_id idempotent (one apply, one audit, members not duplicated),
+#     STALE expected_revision REJECTED, invalid/inactive archetype+fleet refs + invalid reward override
+#     REJECTED, out-of-range member/encounter numerics REJECTED, empty/duplicate members REJECTED,
+#     intentional owner audit exposure of after.members (actor redacted), direct client writes DENIED,
+#     audit fields correct, the DEACTIVATION triggers block-then-allow, and the DARK guarantee (combat
+#     tunables unchanged; NO combat function body reads the four tables).
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on enemy-content-registry-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-e1-fleet-encounter-profiles**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fleet-encounter-profiles-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0258 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: FLEET-ENCOUNTER real-chain proof (dual-flag gate / rejections / create-update-setactive / idempotent / stale / invalid-ref / bounded / members / deactivation-guard / dark)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/fleet-encounter-profiles-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            FLEET_ENCOUNTER_PASS_FLAG_OFF_DENIED \
+            FLEET_ENCOUNTER_PASS_ANON_DENIED \
+            FLEET_ENCOUNTER_PASS_NONOWNER_DENIED \
+            FLEET_ENCOUNTER_PASS_OWNER_CREATE \
+            FLEET_ENCOUNTER_PASS_OWNER_UPDATE \
+            FLEET_ENCOUNTER_PASS_OWNER_SET_ACTIVE \
+            FLEET_ENCOUNTER_PASS_IDEMPOTENT \
+            FLEET_ENCOUNTER_PASS_STALE_REVISION_REJECTED \
+            FLEET_ENCOUNTER_PASS_INVALID_REFERENCE_REJECTED \
+            FLEET_ENCOUNTER_PASS_BOUNDED_NUMERIC_REJECTED \
+            FLEET_ENCOUNTER_PASS_MEMBERS_REQUIRED \
+            FLEET_ENCOUNTER_PASS_AUDIT_EXPOSURE_INTENTIONAL \
+            FLEET_ENCOUNTER_PASS_DIRECT_WRITE_DENIED \
+            FLEET_ENCOUNTER_PASS_AUDIT_FIELDS \
+            FLEET_ENCOUNTER_PASS_DEACTIVATION_GUARD \
+            FLEET_ENCOUNTER_PASS_DARK_GUARANTEE \
+            FLEET_ENCOUNTER_PASS_NO_DELETE_RPC \
+            'FLEET TEMPLATES + ENCOUNTER PROFILES PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL FLEET-ENCOUNTER-PROFILES PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

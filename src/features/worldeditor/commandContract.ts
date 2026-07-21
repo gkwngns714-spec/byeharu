@@ -59,6 +59,21 @@ export type WorldEditorCommandType =
   | 'enemy_archetype_create'
   | 'enemy_archetype_update'
   | 'enemy_archetype_set_active'
+  // FLEET TEMPLATES + ENCOUNTER PROFILES (0258, owner-gated, DARK behind BOTH enemy_content_registry_enabled
+  // AND encounter_authoring_enabled): the six net-new owner-authored composition commands over
+  // enemy_fleet_templates + encounter_profiles (each with a normalized members child, REPLACE-ALL keyed to
+  // the parent revision). create carries content + members; update/set_active address the live row by
+  // p_payload.target_id (the key) with optimistic concurrency on p_payload.expected_revision. The new
+  // per-member failure codes (invalid_archetype_ref / archetype_inactive / invalid_fleet_ref /
+  // fleet_inactive / invalid_reward_override / invalid_count_range / duplicate_member / members_required …)
+  // live in WorldEditorFailureDetail.code (free-text) inside details[] — NOT the top-level error union. No
+  // runtime combat path reads these tables.
+  | 'enemy_fleet_template_create'
+  | 'enemy_fleet_template_update'
+  | 'enemy_fleet_template_set_active'
+  | 'encounter_profile_create'
+  | 'encounter_profile_update'
+  | 'encounter_profile_set_active'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -171,6 +186,18 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'enemy_archetype_update'
     case 'enemy_archetype_set_active':
       return 'enemy_archetype_set_active'
+    case 'enemy_fleet_template_create':
+      return 'enemy_fleet_template_create'
+    case 'enemy_fleet_template_update':
+      return 'enemy_fleet_template_update'
+    case 'enemy_fleet_template_set_active':
+      return 'enemy_fleet_template_set_active'
+    case 'encounter_profile_create':
+      return 'encounter_profile_create'
+    case 'encounter_profile_update':
+      return 'encounter_profile_update'
+    case 'encounter_profile_set_active':
+      return 'encounter_profile_set_active'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)
