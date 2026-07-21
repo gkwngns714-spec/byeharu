@@ -6,7 +6,7 @@ import {
   useState,
   type PointerEvent as RPointerEvent,
 } from 'react'
-import { fetchDevZoneEditorEnabled } from '../../lib/catalog'
+import { fetchDevZoneEditorEnabled, fetchIsOwner } from '../../lib/catalog'
 import { VIEW, clampK, clampPan, fitCameraToWorldPoints, type Camera } from '../map/galaxyCamera'
 import { smoothClosedPathD } from '../map/smoothPolygon'
 import { fetchWorldEditorData, type WorldEditorData } from './worldEditorData'
@@ -135,6 +135,9 @@ export function Glyph({ x, y, r, glyph, tone }: { x: number; y: number; r: numbe
 
 export function WorldEditor() {
   const [enabled, setEnabled] = useState<boolean | null>(null)
+  // OWNER GATE (client exposure control): null=resolving, true=owner, false=not owner / lookup failed
+  // (fail-closed). The backend is_owner() boundary still guards every command/read regardless of this.
+  const [isOwner, setIsOwner] = useState<boolean | null>(null)
   const [data, setData] = useState<WorldEditorData | null>(null)
   const [visible, setVisible] = useState<Set<LayerId>>(() => defaultVisibleLayerIds())
   const [selected, setSelected] = useState<Selection | null>(null)
@@ -182,14 +185,17 @@ export function WorldEditor() {
   const userMovedRef = useRef(false)
   const fittedRef = useRef(false)
 
-  // Gate FIRST (fail-closed): read the dev flag; only if lit do we fetch any map data.
+  // Gate FIRST (fail-closed): resolve BOTH the dev flag (exposure control) AND owner status (the
+  // authoritative is_owner() check) before rendering anything; only an owner with the flag lit fetches
+  // any map data. A non-owner or any lookup failure fails closed (isOwner=false → no editor, no History).
   useEffect(() => {
     let alive = true
     void (async () => {
-      const on = await fetchDevZoneEditorEnabled()
+      const [on, owner] = await Promise.all([fetchDevZoneEditorEnabled(), fetchIsOwner()])
       if (!alive) return
       setEnabled(on)
-      if (on) {
+      setIsOwner(owner)
+      if (on && owner) {
         const d = await fetchWorldEditorData()
         if (alive) setData(d)
       }
@@ -363,8 +369,24 @@ export function WorldEditor() {
     [data, selected],
   )
 
-  // DARK by default — render nothing while loading the gate or when the flag is off (fail-closed).
+  // DARK by default (fail-closed). Render nothing while the flag is loading or off (exposure gate), and
+  // nothing while owner status is still resolving. An authenticated NON-OWNER gets a controlled
+  // "Not authorized" surface — the editor and the History panel never render for them. (The backend
+  // is_owner() boundary independently rejects any non-owner command/read regardless of this client gate.)
   if (enabled !== true) return null
+  if (isOwner === null) return null
+  if (isOwner !== true) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-app p-4 text-ink">
+        <div
+          className="rounded-card border border-edge bg-surface p-4 text-sm text-ink-muted"
+          data-testid="worldeditor-not-authorized"
+        >
+          Not authorized — the World Editor is owner-only.
+        </div>
+      </div>
+    )
+  }
 
   const k = view.k
   // Narrowed const so the zone gesture layer's callbacks close over a non-null draft.
