@@ -1,0 +1,81 @@
+name: LOCATION → ENCOUNTER BINDINGS — dark owner-authored binding disposable proof (no production)
+
+# Proves migration 0259 (location_encounter_bindings) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0259. 0259's own in-migration self-assert
+#     runs here against real Postgres (the table + RLS, all three RPCs SECURITY DEFINER +
+#     authenticated-only + anon-denied, no client write grant, the fail-closed flag seeded, the
+#     deactivation-guard trigger on encounter_profiles, world_editor_audit.request_id UNIQUE intact, NO
+#     delete RPC) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the three owner commands end to end against the running
+#     disposable DB: TRI-FLAG-off denies even the owner under each off-combo (not_enabled,
+#     reject-before-any-read); with ALL THREE flags flipped ON inside the txn — anon REJECTED
+#     (not_authenticated), non-owner REJECTED (not_authorized), owner CREATE (row rev1 active + one audit
+#     w/ after_snapshot), owner UPDATE (weight 1→5, revision bumped, audit before/after), owner SET_ACTIVE
+#     false (soft, row survives), request_id idempotent (one apply, one audit, no second row), STALE
+#     expected_revision REJECTED, invalid/inactive location + encounter refs REJECTED, out-of-range weight
+#     REJECTED, duplicate binding REJECTED (conflict/duplicate_binding), the DEACTIVATION trigger
+#     block-then-allow, intentional owner audit exposure of the after snapshot (actor redacted), direct
+#     client writes DENIED, and the DARK guarantee (combat tunables unchanged; NO combat function body
+#     reads the binding table).
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on fleet-encounter-profiles-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-e2-location-encounter-bindings**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: location-encounter-bindings-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0259 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: LOCATION-ENCOUNTER-BINDINGS real-chain proof (tri-flag gate / rejections / create-update-setactive / idempotent / stale / invalid-ref / bounded / duplicate / deactivation-guard / dark)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/location-encounter-bindings-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            LEB_PASS_FLAG_OFF_DENIED \
+            LEB_PASS_ANON_DENIED \
+            LEB_PASS_NONOWNER_DENIED \
+            LEB_PASS_OWNER_CREATE \
+            LEB_PASS_OWNER_UPDATE \
+            LEB_PASS_OWNER_SET_ACTIVE \
+            LEB_PASS_IDEMPOTENT \
+            LEB_PASS_STALE_REVISION_REJECTED \
+            LEB_PASS_INVALID_REFERENCE_REJECTED \
+            LEB_PASS_BOUNDED_NUMERIC_REJECTED \
+            LEB_PASS_DUPLICATE_BINDING_REJECTED \
+            LEB_PASS_DEACTIVATION_GUARD \
+            LEB_PASS_AUDIT_EXPOSURE_INTENTIONAL \
+            LEB_PASS_DIRECT_WRITE_DENIED \
+            LEB_PASS_DARK_GUARANTEE \
+            LEB_PASS_NO_DELETE_RPC \
+            'LOCATION → ENCOUNTER BINDINGS PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL LOCATION-ENCOUNTER-BINDINGS PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
