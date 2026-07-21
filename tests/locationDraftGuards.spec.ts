@@ -46,6 +46,10 @@ const COMMAND_PATH_FILES = [
   'LocationDraftPanel.tsx',
   'ZoneDraftPanel.tsx',
   'ZoneInspectorActions.tsx',
+  // E4 combat-authoring: useCombatAuthoring.ts is the SOLE new module that talks to the command client;
+  // every other E4 file (combatPayloads/combatErrorMap/combatMemberValidation/combatContentData + the
+  // *Authoring.tsx sub-panels + MemberSetEditor + CombatContentPanel) stays command-free.
+  'useCombatAuthoring.ts',
 ]
 test('no file in src/features/worldeditor outside the sanctioned command path references a command client', () => {
   for (const name of readdirSync(WE_DIR)) {

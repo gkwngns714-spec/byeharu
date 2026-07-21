@@ -39,6 +39,7 @@ import { ZoneGeometryHandles, type ZoneGestureMode } from './ZoneGeometryHandles
 import { DraftPreviewOverlay } from './DraftPreviewOverlay'
 import { ZoneInspectorActions } from './ZoneInspectorActions'
 import { WorldEditorHistoryPanel, type HistoricalFocus } from './WorldEditorHistoryPanel'
+import { CombatContentPanel } from './CombatContentPanel'
 import { worldToViewBox } from '../map/openSpaceTransform'
 import { Button } from '../../components/ui'
 
@@ -769,6 +770,12 @@ export function WorldEditor() {
               inside WorldEditor). Historical map focus reuses the ONE camera authority and never mutates
               the live `selected` authoring model. */}
           <WorldEditorHistoryPanel onFocusHistorical={focusHistorical} onClearHistorical={clearHistorical} />
+
+          {/* E4 — Combat content: ONE foldable rail section (collapsed by default) for owner-only
+              authoring of enemies/rewards/fleets/encounters/placements via the existing E0-E2 owner
+              RPCs. Frontend-only; reads through the already-built read adapters, writes through the ONE
+              command path (useCombatAuthoring). Fail-closed: it never reads or flips any *_enabled flag. */}
+          <CombatContentPanel locations={data?.locations ?? []} />
 
           {/* V2A-2/V2C/V3A-2: the authoring-domain toggle — picks which draft panel + preview is
               active. Every store stays mounted; switching never discards another domain's drafts. */}
