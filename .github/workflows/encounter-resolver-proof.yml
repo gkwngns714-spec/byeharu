@@ -1,0 +1,79 @@
+name: ENCOUNTER RESOLVER — dark quad-flag resolver + byte-identical-when-off disposable proof (no production)
+
+# Proves migration 0260 (encounter_runtime_resolver) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0260. 0260's own in-migration self-assert
+#     runs here against real Postgres (the flag seeded dark; resolved_plan_json additive + 0 tagged rows;
+#     encounter_runtime_state DARK/RLS/no client write/empty; the VERBATIM 0234 synthetic-wave + :898-899
+#     reward lines + the whole aggregate (C) arm survive byte-identical in the flag-OFF fallback; the
+#     resolved branch + reward adapter wired; the tick carries exactly 2 random( calls; the resolver is
+#     hashtextextended/':enc:'-deterministic; combat_create_group_encounter/report_create/reward_grant/
+#     base_add_resources not redefined + carry no E3 token; the reward adapter equals the legacy formula;
+#     engine ACL unchanged) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the resolver end to end against the running disposable DB:
+#     ER_PASS_VERBATIM / ER_PASS_REWARD_UNTOUCHED (prosrc), ER_PASS_DETERMINISM (two same-txn resolves
+#     identical), ER_PASS_NULL_FLAGS (each of the 4 flags off ⇒ NULL), ER_PASS_NULL_BINDING,
+#     ER_PASS_NULL_INACTIVE_LOC, ER_PASS_COOLDOWN, and — through the REAL combat chain — ER_PASS_FLAGOFF_ROWS
+#     + ER_PASS_FLAGOFF_REWARD (resolver off ⇒ the pre-E3 synthetic wave + reward, byte-identical),
+#     ER_PASS_RESOLVED_PLAN (resolver on ⇒ the authored wave, tagged, runtime ledger written, authored
+#     reward distinct from pre-E3), ER_PASS_CAP (the derived cap blocks + self-heals).
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on location-encounter-bindings-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-e3-encounter-resolver**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encounter-resolver-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0260 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: ENCOUNTER-RESOLVER real-chain proof (verbatim / reward-untouched / determinism / null-gates / flag-off byte-parity / resolved plan / cap)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/encounter-resolver-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            ER_PASS_VERBATIM \
+            ER_PASS_REWARD_UNTOUCHED \
+            ER_PASS_DETERMINISM \
+            ER_PASS_NULL_FLAGS \
+            ER_PASS_NULL_BINDING \
+            ER_PASS_NULL_INACTIVE_LOC \
+            ER_PASS_COOLDOWN \
+            ER_PASS_REWARD_SHARED \
+            ER_PASS_UNIT_CLAMP \
+            ER_PASS_SKIP_ZERO \
+            ER_PASS_FLAGOFF_ROWS \
+            ER_PASS_FLAGOFF_REWARD \
+            ER_PASS_RESOLVED_PLAN \
+            ER_PASS_MULTIWAVE \
+            ER_PASS_CAP \
+            'ENCOUNTER-RESOLVER PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL ENCOUNTER-RESOLVER PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
