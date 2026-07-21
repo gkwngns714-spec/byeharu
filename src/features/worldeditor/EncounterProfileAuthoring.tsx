@@ -147,7 +147,13 @@ export function EncounterProfileAuthoring({
             <input className={COMBAT_INPUT} value={draft.display_name} onChange={(e) => set({ display_name: e.target.value })} />
           </CombatFormField>
           <div className="grid grid-cols-3 gap-2">
-            <CombatFormField label="Difficulty (1–1000)" error={errView?.fieldErrors['difficulty']}>
+            {/* M2 — the E5 resolver (0261) reads only ep.active_encounter_cap/cooldown_seconds/reward_override_id
+                (lines 116-119); it never reads encounter_profiles.difficulty. Advisory, non-blocking. */}
+            <CombatFormField
+              label="Difficulty (1–1000)"
+              error={errView?.fieldErrors['difficulty']}
+              hint="Recorded, but has no runtime effect yet (danger scales from wave/time)."
+            >
               <input className={COMBAT_INPUT} type="number" value={numValue(draft.difficulty)} onChange={(e) => set({ difficulty: num(e.target.value) })} />
             </CombatFormField>
             <CombatFormField label="Active limit (1–100)" error={errView?.fieldErrors['active_encounter_cap']}>

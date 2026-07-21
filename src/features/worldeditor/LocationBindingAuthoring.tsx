@@ -11,6 +11,7 @@ import { CombatFormField, COMBAT_INPUT } from './CombatFormField'
 import { CombatErrorNotices } from './CombatErrorNotices'
 import { mapCombatError } from './combatErrorMap'
 import { buildLocationBindingCreate, buildLocationBindingUpdate, buildSetActive, type LocationBindingForm } from './combatPayloads'
+import { resolveRefLabel, type NamedRef } from './bindingLabels'
 import type { CombatAuthoring } from './useCombatAuthoring'
 import type { EncounterProfileRow } from './fleetEncounterData'
 import type { LocationEncounterBindingRow } from './locationEncounterBindingData'
@@ -54,8 +55,12 @@ export function LocationBindingAuthoring({
   const disabled = authoring.isDisabled(ENTITY)
   const activeEncounters = encounterProfiles.filter((e) => e.active)
 
-  const locName = (id: string) => locations.find((l) => l.id === id)?.name ?? id
-  const encName = (id: string) => encounterProfiles.find((e) => e.id === id)?.display_name ?? id
+  // M5 — bindings store raw UUIDs; resolve them to human labels for DISPLAY only (stored values stay UUIDs).
+  // A stale UUID with no snapshot match falls back to a short UUID (bindingLabels.resolveRefLabel).
+  const locRefs: NamedRef[] = locations.map((l) => ({ id: l.id, label: l.name }))
+  const encRefs: NamedRef[] = encounterProfiles.map((e) => ({ id: e.id, label: e.display_name }))
+  const locName = (id: string) => resolveRefLabel(id, locRefs)
+  const encName = (id: string) => resolveRefLabel(id, encRefs)
 
   const startCreate = () => { setDraft(BLANK); setEditing({ mode: 'create' }) }
   const startEdit = (row: LocationEncounterBindingRow) => {
