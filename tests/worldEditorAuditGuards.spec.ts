@@ -25,6 +25,7 @@ const AUDIT_LOGIC_FILES = [
   'worldEditorAuditDiff.ts',
   'worldEditorAuditFocus.ts',
   'worldEditorAuditView.ts',
+  'worldEditorAuditRequestState.ts',
 ]
 
 test('transport: the ONE audit read path calls only world_editor_audit_list — no table read, no mutation', () => {
@@ -52,6 +53,19 @@ test('the History slice offers NO rollback / replay / restore / republish / reru
   for (const f of [...HISTORY_UI_FILES, ...AUDIT_LOGIC_FILES]) {
     expect(read(f), `${f} must not contain a mutation-verb control`).not.toMatch(/rollback|replay|restore|republish|rerun/i)
   }
+})
+
+test('the Panel drives the pure request coordinator and keeps NO duplicate sequencing of its own', () => {
+  const panel = read('WorldEditorHistoryPanel.tsx')
+  // consumes the extracted pure coordinator
+  expect(panel).toMatch(/from '\.\/worldEditorAuditRequestState'/)
+  expect(panel).toContain('beginInitial')
+  expect(panel).toContain('applyInitialSuccess')
+  expect(panel).toContain('applyNextPageSuccess')
+  expect(panel).toContain('beginNextPage')
+  // does NOT reimplement the merge/generation logic inline
+  expect(panel, 'panel must not re-run its own page merge').not.toMatch(/mergePageDedup\s*\(/)
+  expect(panel, 'panel must not track a raw generation ref').not.toContain('genRef')
 })
 
 test('only the Panel + the data module reference the audit fetch; presentation children never fetch', () => {

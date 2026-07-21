@@ -47,5 +47,11 @@ export function mergePageDedup(
   incoming: readonly WorldEditorAuditEntry[],
 ): WorldEditorAuditEntry[] {
   const seen = new Set(prev.map((e) => e.id))
-  return [...prev, ...incoming.filter((e) => !seen.has(e.id))]
+  const out: WorldEditorAuditEntry[] = [...prev]
+  for (const e of incoming) {
+    if (seen.has(e.id)) continue // dedup against prior pages AND within this page; order stays stable
+    seen.add(e.id)
+    out.push(e)
+  }
+  return out
 }
