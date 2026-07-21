@@ -188,9 +188,21 @@ begin
      or not (v_after ? 'weight') then
     raise exception 'LEB PROOF FAIL: create audit after_snapshot malformed: %', v_after;
   end if;
+  -- NARROW SNAPSHOT: the after_snapshot is the binding ROW ONLY — EXACTLY its own nine columns, with NO
+  -- deep-expanded encounter-profile content (resource_grants/members), NO location geometry (x/y), and NO
+  -- actor field. This asserts the audit does not leak referenced-entity internals through the snapshot.
+  if (select count(*) from jsonb_object_keys(v_after)) <> 9
+     or not (v_after ? 'id' and v_after ? 'location_id' and v_after ? 'encounter_profile_id'
+             and v_after ? 'weight' and v_after ? 'active' and v_after ? 'revision'
+             and v_after ? 'notes' and v_after ? 'created_at' and v_after ? 'updated_at')
+     or v_after ? 'resource_grants' or v_after ? 'members' or v_after ? 'reward_override_id'
+     or v_after ? 'difficulty' or v_after ? 'x' or v_after ? 'y' or v_after ? 'actor' then
+    raise exception 'LEB PROOF FAIL: after_snapshot is not the binding row only (leaked nested profile/location/actor content): %', v_after;
+  end if;
   select count(*) into n from public.world_editor_audit where request_id = 'leb-create-1';
   if n <> 1 then raise exception 'LEB PROOF FAIL: create wrote % audit rows (expected 1)', n; end if;
   raise notice 'LEB_PASS_OWNER_CREATE';
+  raise notice 'LEB_PASS_AUDIT_SNAPSHOT_NARROW';
 end $$;
 
 -- ── PROOF 5 — OWNER UPDATE: weight 1 → 5, revision bump, before.weight=1 / after.weight=5 ────────────
@@ -298,18 +310,21 @@ begin
   raise notice 'LEB_PASS_STALE_REVISION_REJECTED';
 end $$;
 
--- ── PROOF 9 — INVALID/INELIGIBLE references rejected (all four codes), nothing written ───────────────
+-- ── PROOF 9 — INVALID/INELIGIBLE references rejected (existence + encounter-liveness codes), none written ─
+-- NOTE (preconfigure semantics): a location that merely has status <> 'active' is NOT rejected — creation
+-- is EXISTENCE-only on the location side (liveness deferred to E3). That the LOCKED location is ALLOWED is
+-- proven separately in PROOF 9b. Here we only prove the true rejections: a non-existent location, and the
+-- strict encounter-content side (missing / inactive encounter profile).
 do $$
-declare v_owner uuid; v_la uuid; v_ll uuid; v_ep uuid; v_epoff uuid; r jsonb; n int;
+declare v_owner uuid; v_la uuid; v_ep uuid; v_epoff uuid; r jsonb; n int;
 begin
   select v into v_owner from lebids where k = 'owner';
   select v into v_la from lebfx where k = 'loc_active';
-  select v into v_ll from lebfx where k = 'loc_locked';
   select v into v_ep from lebfx where k = 'ep';
   select v into v_epoff from lebfx where k = 'ep_off';
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
 
-  -- (a) invalid_location: a well-formed uuid referencing no location.
+  -- (a) invalid_location: a well-formed uuid referencing no location (existence IS enforced).
   r := public.location_encounter_binding_create('leb-badloc-1', jsonb_build_object(
          'location_id', gen_random_uuid()::text, 'encounter_profile_id', v_ep::text));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
@@ -317,15 +332,7 @@ begin
     raise exception 'LEB PROOF FAIL: bogus location not rejected invalid_location: %', r;
   end if;
 
-  -- (b) location_inactive: an EXISTING location whose status <> 'active' (locked).
-  r := public.location_encounter_binding_create('leb-locinactive-1', jsonb_build_object(
-         'location_id', v_ll::text, 'encounter_profile_id', v_ep::text));
-  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
-     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','location_inactive')) then
-    raise exception 'LEB PROOF FAIL: locked location not rejected location_inactive: %', r;
-  end if;
-
-  -- (c) invalid_encounter_ref: a well-formed uuid referencing no encounter profile.
+  -- (b) invalid_encounter_ref: a well-formed uuid referencing no encounter profile.
   r := public.location_encounter_binding_create('leb-badenc-1', jsonb_build_object(
          'location_id', v_la::text, 'encounter_profile_id', gen_random_uuid()::text));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
@@ -333,7 +340,7 @@ begin
     raise exception 'LEB PROOF FAIL: bogus encounter ref not rejected invalid_encounter_ref: %', r;
   end if;
 
-  -- (d) encounter_inactive: an EXISTING but inactive encounter profile (no active referrer).
+  -- (c) encounter_inactive: an EXISTING but inactive encounter profile (no active referrer).
   r := public.location_encounter_binding_create('leb-encinactive-1', jsonb_build_object(
          'location_id', v_la::text, 'encounter_profile_id', v_epoff::text));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
@@ -342,9 +349,38 @@ begin
   end if;
 
   select count(*) into n from public.world_editor_audit
-    where request_id in ('leb-badloc-1','leb-locinactive-1','leb-badenc-1','leb-encinactive-1');
+    where request_id in ('leb-badloc-1','leb-badenc-1','leb-encinactive-1');
   if n <> 0 then raise exception 'LEB PROOF FAIL: an invalid-reference create wrote % audit row(s)', n; end if;
   raise notice 'LEB_PASS_INVALID_REFERENCE_REJECTED';
+end $$;
+
+-- ── PROOF 9b — PRECONFIGURE: binding a NON-ACTIVE (status='locked') but EXISTING location SUCCEEDS ───
+-- The owner may author a binding ahead of publishing the location; runtime liveness is E3's resolver
+-- filter, not a create-time block. A non-existent location still returns invalid_location (PROOF 9a).
+do $$
+declare v_owner uuid; v_ll uuid; v_ep uuid; r jsonb; v_row record;
+begin
+  select v into v_owner from lebids where k = 'owner';
+  select v into v_ll from lebfx where k = 'loc_locked';
+  select v into v_ep from lebfx where k = 'ep';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+  -- sanity: the target location really is NOT active.
+  if (select status from public.locations where id = v_ll) = 'active' then
+    raise exception 'LEB PROOF FAIL: preconfigure fixture location is unexpectedly active';
+  end if;
+  r := public.location_encounter_binding_create('leb-preconfigure-1', jsonb_build_object(
+         'location_id', v_ll::text, 'encounter_profile_id', v_ep::text, 'weight', 2));
+  if (r->>'ok')::boolean is not true or (r->'result'->>'created') <> 'true' then
+    raise exception 'LEB PROOF FAIL: preconfigure on a non-active location was NOT allowed: %', r;
+  end if;
+  select * into v_row from public.location_encounter_bindings where location_id = v_ll and encounter_profile_id = v_ep;
+  if v_row.revision <> 1 or v_row.active is not true or v_row.weight <> 2 then
+    raise exception 'LEB PROOF FAIL: preconfigured binding row wrong (rev %, active %, weight %)', v_row.revision, v_row.active, v_row.weight;
+  end if;
+  if not exists (select 1 from public.world_editor_audit where request_id = 'leb-preconfigure-1') then
+    raise exception 'LEB PROOF FAIL: preconfigure create wrote no audit row';
+  end if;
+  raise notice 'LEB_PASS_PRECONFIGURE_INACTIVE_LOCATION_ALLOWED';
 end $$;
 
 -- ── PROOF 10 — BOUNDED weight rejected (0 and 2000 ⇒ invalid_weight), nothing written ───────────────

@@ -111,7 +111,6 @@ test('normalizeEnvelope: a binding validation_failed carries the reference/weigh
       error: 'validation_failed',
       details: [
         { code: 'invalid_location', field: 'location_id' },
-        { code: 'location_inactive', field: 'location_id' },
         { code: 'invalid_encounter_ref', field: 'encounter_profile_id' },
         { code: 'encounter_inactive', field: 'encounter_profile_id' },
         { code: 'invalid_weight', field: 'weight' },
@@ -122,7 +121,6 @@ test('normalizeEnvelope: a binding validation_failed carries the reference/weigh
   expect(r.error).toBe('validation_failed')
   expect(r.details?.map((d) => d.code)).toEqual([
     'invalid_location',
-    'location_inactive',
     'invalid_encounter_ref',
     'encounter_inactive',
     'invalid_weight',

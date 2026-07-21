@@ -122,8 +122,10 @@ comment on table public.location_encounter_bindings is
   'weight. (location_id, encounter_profile_id) is the UNIQUE ADDRESS; only weight/notes/active mutate. '
   'Carries NO runtime-instance state. Read by NOTHING at runtime — existing pirate combat is '
   'byte-identical; orphan-on-location-status is delegated to the E3 resolver (it filters to active '
-  'locations), which is WHY no trigger is placed on the Map-owned locations table. Public SELECT; writes '
-  'ONLY through the owner-gated 0259 RPCs behind the fail-closed encounter_binding_authoring_enabled flag.';
+  'locations), which is WHY no trigger is placed on the Map-owned locations table. PRECONFIGURE SEMANTICS: '
+  'create requires the location to EXIST but NOT to be active (liveness is deferred to E3), so a binding '
+  'may be authored ahead of publish and survives temporary unpublishing. Public SELECT; writes ONLY '
+  'through the owner-gated 0259 RPCs behind the fail-closed encounter_binding_authoring_enabled flag.';
 
 alter table public.location_encounter_bindings enable row level security;
 create policy "location_encounter_bindings_public_read" on public.location_encounter_bindings for select using (true);
@@ -192,7 +194,6 @@ declare
   v_details   jsonb := '[]'::jsonb;
   v_loc_txt   text;
   v_loc       uuid;
-  v_loc_stat  text;
   v_ep_txt    text;
   v_ep        uuid;
   v_ep_active boolean;
@@ -228,7 +229,11 @@ begin
   end if;
 
   -- (6) SERVER-SIDE re-validation into details[].
-  -- location_id: parseable uuid, must EXIST and be status='active'.
+  -- location_id: parseable uuid, must EXIST (a real locations row). PRECONFIGURE SEMANTICS: creation does
+  -- NOT require the location to be active/published — the owner must be able to preconfigure a binding on
+  -- an unpublished/not-yet-active location, and a binding must survive temporary unpublishing. The
+  -- three-way RUNTIME eligibility (location.status='active' AND binding.active AND encounter_profile.active)
+  -- is E3's resolver filter, NOT a create-time block (§header). Only EXISTENCE is enforced here.
   v_loc_txt := btrim(coalesce(p_payload->>'location_id', ''));
   if v_loc_txt = '' then
     v_details := v_details || jsonb_build_array(jsonb_build_object(
@@ -238,15 +243,9 @@ begin
     if v_loc is null then
       v_details := v_details || jsonb_build_array(jsonb_build_object(
         'code', 'invalid_location', 'field', 'location_id', 'message', 'location_id is not a valid location reference.'));
-    else
-      select status into v_loc_stat from public.locations where id = v_loc;
-      if not found then
-        v_details := v_details || jsonb_build_array(jsonb_build_object(
-          'code', 'invalid_location', 'field', 'location_id', 'message', 'No locations row for the referenced id.'));
-      elsif v_loc_stat is distinct from 'active' then
-        v_details := v_details || jsonb_build_array(jsonb_build_object(
-          'code', 'location_inactive', 'field', 'location_id', 'message', 'The referenced location is not active (status must be ''active'').'));
-      end if;
+    elsif not exists (select 1 from public.locations where id = v_loc) then
+      v_details := v_details || jsonb_build_array(jsonb_build_object(
+        'code', 'invalid_location', 'field', 'location_id', 'message', 'No locations row for the referenced id.'));
     end if;
   end if;
   -- encounter_profile_id: parseable uuid, must EXIST and be active=true.
@@ -562,8 +561,10 @@ end $$;
 
 comment on function public.location_encounter_binding_create(text, jsonb) is
   'LOCATION → ENCOUNTER BINDINGS (0259): owner-gated CREATE for location_encounter_bindings behind the '
-  'fail-closed encounter_binding_authoring_enabled flag (checked FIRST, tri-flag with E1+E0). location '
-  'must exist + be active; encounter profile must exist + be active. authenticated-only execute; NEVER anon.';
+  'fail-closed encounter_binding_authoring_enabled flag (checked FIRST, tri-flag with E1+E0). PRECONFIGURE '
+  'SEMANTICS: the location must EXIST but need NOT be active (an owner may preconfigure a binding on an '
+  'unpublished location; runtime liveness is E3''s resolver filter). The encounter profile must exist + be '
+  'active (the E1-content side stays strict). authenticated-only execute; NEVER anon.';
 
 -- ── 5. ACL — authenticated may CALL (guard is in-body); anon/public may not. No table grant widened.
 revoke all on function public.location_encounter_binding_create(text, jsonb) from public;

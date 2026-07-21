@@ -80,10 +80,11 @@ export type WorldEditorCommandType =
   // live location (locations, 0002) to an E1 encounter_profile (0258). create carries {location_id,
   // encounter_profile_id, weight?}; update/set_active address the live row by p_payload.target_id (the
   // binding UUID) with optimistic concurrency on p_payload.expected_revision (only weight/notes/active
-  // mutate — the (location, encounter) address is stable). The new per-binding failure codes
-  // (invalid_location / location_inactive / invalid_encounter_ref / encounter_inactive / invalid_weight /
-  // duplicate_binding) live in WorldEditorFailureDetail.code (free-text) inside details[] — NOT the
-  // top-level error union. No runtime combat path reads this table.
+  // mutate — the (location, encounter) address is stable). PRECONFIGURE SEMANTICS: create requires the
+  // location to EXIST but not to be active (liveness is E3's runtime filter), so there is NO
+  // location_inactive code. The per-binding failure codes (invalid_location / invalid_encounter_ref /
+  // encounter_inactive / invalid_weight / duplicate_binding) live in WorldEditorFailureDetail.code
+  // (free-text) inside details[] — NOT the top-level error union. No runtime combat path reads this table.
   | 'location_encounter_binding_create'
   | 'location_encounter_binding_update'
   | 'location_encounter_binding_set_active'
