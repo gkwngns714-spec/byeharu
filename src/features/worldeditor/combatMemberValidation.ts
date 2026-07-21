@@ -79,7 +79,11 @@ export function validateFleetMembers(members: readonly FleetMemberForm[]): Membe
  *  1. runtime_unit_cap: when the fleet's possible total (Σ max_count) exceeds RUNTIME_WAVE_UNIT_CAP, the E3
  *     resolver trims a resolved wave down to the cap, so extra rolled units are silently dropped at runtime.
  *  2. elite_inert: E1 authors elite_chance and E3 rolls is_elite, but E3 applies NO elite stat effect yet —
- *     elite is authored-but-inert today, so a >0 chance is recorded but has no combat consequence. */
+ *     elite is authored-but-inert today, so a >0 chance is recorded but has no combat consequence.
+ *  3. fleet_weight_inert (M2): the E5 resolver (0261) weights ONLY encounter members (line 148 sum(m.weight))
+ *     and location bindings (lines 102-103); it never reads a FLEET member's weight — the fleet expands EVERY
+ *     active archetype (lines 164-170 select enemy_archetype_id/min_count/max_count/elite_chance, NOT weight).
+ *     So a fleet-member weight set away from the neutral 1 is recorded but has no runtime effect yet. */
 export function fleetAdvisories(members: readonly FleetMemberForm[]): MemberIssue[] {
   const notes: MemberIssue[] = []
   const maxTotal = members.reduce((sum, m) => sum + (Number.isFinite(m.max_count) ? m.max_count : 0), 0)
@@ -97,6 +101,14 @@ export function fleetAdvisories(members: readonly FleetMemberForm[]): MemberIssu
         index,
         severity: 'advisory',
         message: 'Elite chance is recorded but has no combat effect yet.',
+      })
+    }
+    if (Number.isFinite(m.weight) && m.weight !== 1) {
+      notes.push({
+        code: 'fleet_weight_inert',
+        index,
+        severity: 'advisory',
+        message: 'Recorded, but fleet-member weight has no runtime effect yet.',
       })
     }
   })

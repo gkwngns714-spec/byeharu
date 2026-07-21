@@ -113,3 +113,22 @@ test('advisories are advisory-severity and never appear as blocking validation i
   expect(has(validateFleetMembers(members), 'runtime_unit_cap')).toBe(false)
   expect(has(validateFleetMembers(members), 'elite_inert')).toBe(false)
 })
+
+// ── M2: fleet-member weight is inert (the E5 resolver never reads it) ───────────────────────────────────
+test('a fleet-member weight != 1 yields the fleet_weight_inert advisory bound to that row', () => {
+  const notes = fleetAdvisories([fleetMember({ weight: 5 })])
+  expect(has(notes, 'fleet_weight_inert')).toBe(true)
+  expect(notes.find((a) => a.code === 'fleet_weight_inert')?.index).toBe(0)
+  expect(notes.find((a) => a.code === 'fleet_weight_inert')?.severity).toBe('advisory')
+})
+
+test('a neutral fleet-member weight of 1 yields no fleet_weight_inert advisory', () => {
+  expect(has(fleetAdvisories([fleetMember({ weight: 1 })]), 'fleet_weight_inert')).toBe(false)
+})
+
+test('fleet_weight_inert is advisory-only — never a blocking validation issue, never gates Save', () => {
+  const members = [fleetMember({ weight: 7 })]
+  expect(has(validateFleetMembers(members), 'fleet_weight_inert')).toBe(false)
+  // a weight in (0,1000] is valid; the note is a heads-up, not a rejection
+  expect(validateFleetMembers(members)).toEqual([])
+})

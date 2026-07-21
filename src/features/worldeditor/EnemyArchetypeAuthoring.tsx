@@ -7,7 +7,13 @@ import { Button } from '../../components/ui'
 import { CombatFormField, COMBAT_INPUT } from './CombatFormField'
 import { CombatErrorNotices } from './CombatErrorNotices'
 import { mapCombatError } from './combatErrorMap'
-import { buildEnemyArchetypeCreate, buildEnemyArchetypeUpdate, buildSetActive, type EnemyArchetypeForm } from './combatPayloads'
+import { buildEnemyArchetypeCreate, buildEnemyArchetypeUpdate, buildSetActive } from './combatPayloads'
+import {
+  BLANK_ARCHETYPE_DRAFT,
+  archetypeDraftFromRow,
+  archetypeDraftToForm,
+  type ArchetypeDraft,
+} from './enemyArchetypeDraft'
 import type { CombatAuthoring } from './useCombatAuthoring'
 import type { EnemyArchetypeRow, RewardProfileRow } from './enemyRegistryData'
 
@@ -15,52 +21,10 @@ const ENTITY = 'enemy_archetype' as const
 const TIER = 'E0' as const
 const num = (v: string): number => (v.trim() === '' ? Number.NaN : Number(v))
 const numValue = (v: number): string | number => (Number.isFinite(v) ? v : '')
-
-interface Draft {
-  key: string
-  display_name: string
-  faction: string
-  unit_type_id: string
-  behavior_key: string
-  base_difficulty: number
-  difficulty_rating: number
-  default_reward_profile_id: string
-  notes: string
-}
-
-const BLANK: Draft = {
-  key: '', display_name: '', faction: '', unit_type_id: '', behavior_key: '',
-  base_difficulty: Number.NaN, difficulty_rating: Number.NaN, default_reward_profile_id: '', notes: '',
-}
-
-function draftFromRow(row: EnemyArchetypeRow): Draft {
-  return {
-    key: row.key,
-    display_name: row.display_name,
-    faction: row.faction ?? '',
-    unit_type_id: row.unit_type_id,
-    behavior_key: row.behavior_key ?? '',
-    base_difficulty: row.base_difficulty,
-    difficulty_rating: row.difficulty_rating,
-    default_reward_profile_id: row.default_reward_profile_id,
-    notes: row.notes ?? '',
-  }
-}
-
-function toForm(d: Draft): EnemyArchetypeForm {
-  return {
-    key: d.key,
-    display_name: d.display_name,
-    faction: d.faction,
-    unit_type_id: d.unit_type_id,
-    behavior_key: d.behavior_key,
-    base_difficulty: d.base_difficulty,
-    default_reward_profile_id: d.default_reward_profile_id,
-    difficulty_rating: d.difficulty_rating,
-    stat_overrides: {},
-    notes: d.notes.trim() === '' ? null : d.notes,
-  }
-}
+// M2 — knobs the E5 resolver does NOT read (0261 archetype join, lines 164-170, selects only
+// enemy_archetype_id/min_count/max_count/elite_chance + a.unit_type_id/base_difficulty/stat_overrides/
+// default_reward_profile_id — NEITHER difficulty_rating NOR behavior_key). Advisory, non-blocking.
+const INERT_HINT = 'Recorded, but has no runtime effect yet.'
 
 type Editing = { mode: 'none' } | { mode: 'create' } | { mode: 'edit'; key: string; revision: number }
 
@@ -74,17 +38,17 @@ export function EnemyArchetypeAuthoring({
   authoring: CombatAuthoring
 }) {
   const [editing, setEditing] = useState<Editing>({ mode: 'none' })
-  const [draft, setDraft] = useState<Draft>(BLANK)
+  const [draft, setDraft] = useState<ArchetypeDraft>(BLANK_ARCHETYPE_DRAFT)
   const disabled = authoring.isDisabled(ENTITY)
   const activeProfiles = rewardProfiles.filter((p) => p.active)
 
-  const startCreate = () => { setDraft(BLANK); setEditing({ mode: 'create' }) }
-  const startEdit = (row: EnemyArchetypeRow) => { setDraft(draftFromRow(row)); setEditing({ mode: 'edit', key: row.key, revision: row.revision }) }
+  const startCreate = () => { setDraft(BLANK_ARCHETYPE_DRAFT); setEditing({ mode: 'create' }) }
+  const startEdit = (row: EnemyArchetypeRow) => { setDraft(archetypeDraftFromRow(row)); setEditing({ mode: 'edit', key: row.key, revision: row.revision }) }
   const close = () => setEditing({ mode: 'none' })
 
   const submit = () => {
-    if (editing.mode === 'create') authoring.submitCreate(ENTITY, buildEnemyArchetypeCreate(toForm(draft)), close)
-    else if (editing.mode === 'edit') authoring.submitUpdate(ENTITY, editing.key, buildEnemyArchetypeUpdate(editing.key, editing.revision, toForm(draft)), close)
+    if (editing.mode === 'create') authoring.submitCreate(ENTITY, buildEnemyArchetypeCreate(archetypeDraftToForm(draft)), close)
+    else if (editing.mode === 'edit') authoring.submitUpdate(ENTITY, editing.key, buildEnemyArchetypeUpdate(editing.key, editing.revision, archetypeDraftToForm(draft)), close)
   }
 
   const attemptKeyFor =
@@ -92,7 +56,7 @@ export function EnemyArchetypeAuthoring({
     : editing.mode === 'edit' ? authoring.keyFor(ENTITY, 'update', editing.key) : null
   const attempt = attemptKeyFor ? authoring.attemptFor(attemptKeyFor) : null
   const errView = attempt?.failure ? mapCombatError(attempt.failure, TIER) : null
-  const set = (partial: Partial<Draft>) => setDraft((d) => ({ ...d, ...partial }))
+  const set = (partial: Partial<ArchetypeDraft>) => setDraft((d) => ({ ...d, ...partial }))
 
   return (
     <div className="flex flex-col gap-2">
@@ -153,7 +117,7 @@ export function EnemyArchetypeAuthoring({
             <CombatFormField label="Base difficulty (0–1000)" error={errView?.fieldErrors['base_difficulty']}>
               <input className={COMBAT_INPUT} type="number" value={numValue(draft.base_difficulty)} onChange={(e) => set({ base_difficulty: num(e.target.value) })} />
             </CombatFormField>
-            <CombatFormField label="Difficulty rating" error={errView?.fieldErrors['difficulty_rating']}>
+            <CombatFormField label="Difficulty rating" error={errView?.fieldErrors['difficulty_rating']} hint={INERT_HINT}>
               <input className={COMBAT_INPUT} type="number" value={numValue(draft.difficulty_rating)} onChange={(e) => set({ difficulty_rating: num(e.target.value) })} />
             </CombatFormField>
           </div>
@@ -161,7 +125,7 @@ export function EnemyArchetypeAuthoring({
             <CombatFormField label="Faction (optional)">
               <input className={COMBAT_INPUT} value={draft.faction} placeholder="e.g. pirate" onChange={(e) => set({ faction: e.target.value })} />
             </CombatFormField>
-            <CombatFormField label="Behavior (optional)">
+            <CombatFormField label="Behavior (optional)" hint={INERT_HINT}>
               <input className={COMBAT_INPUT} value={draft.behavior_key} placeholder="e.g. spatial_synthetic" onChange={(e) => set({ behavior_key: e.target.value })} />
             </CombatFormField>
           </div>
