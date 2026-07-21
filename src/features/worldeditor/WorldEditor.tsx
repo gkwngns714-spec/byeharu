@@ -6,7 +6,7 @@ import {
   useState,
   type PointerEvent as RPointerEvent,
 } from 'react'
-import { fetchDevZoneEditorEnabled } from '../../lib/catalog'
+import { fetchDevZoneEditorEnabled, fetchIsOwner } from '../../lib/catalog'
 import { VIEW, clampK, clampPan, fitCameraToWorldPoints, type Camera } from '../map/galaxyCamera'
 import { smoothClosedPathD } from '../map/smoothPolygon'
 import { fetchWorldEditorData, type WorldEditorData } from './worldEditorData'
@@ -38,6 +38,8 @@ import { ZONE_DRAFT_DESCRIPTOR } from './zoneDraftModel'
 import { ZoneGeometryHandles, type ZoneGestureMode } from './ZoneGeometryHandles'
 import { DraftPreviewOverlay } from './DraftPreviewOverlay'
 import { ZoneInspectorActions } from './ZoneInspectorActions'
+import { WorldEditorHistoryPanel, type HistoricalFocus } from './WorldEditorHistoryPanel'
+import { worldToViewBox } from '../map/openSpaceTransform'
 import { Button } from '../../components/ui'
 
 // WORLD EDITOR — Foundation V1 shell + V1B-1 "Location Drafts & Preview". ONE owner-only surface on
@@ -133,6 +135,9 @@ export function Glyph({ x, y, r, glyph, tone }: { x: number; y: number; r: numbe
 
 export function WorldEditor() {
   const [enabled, setEnabled] = useState<boolean | null>(null)
+  // OWNER GATE (client exposure control): null=resolving, true=owner, false=not owner / lookup failed
+  // (fail-closed). The backend is_owner() boundary still guards every command/read regardless of this.
+  const [isOwner, setIsOwner] = useState<boolean | null>(null)
   const [data, setData] = useState<WorldEditorData | null>(null)
   const [visible, setVisible] = useState<Set<LayerId>>(() => defaultVisibleLayerIds())
   const [selected, setSelected] = useState<Selection | null>(null)
@@ -171,19 +176,26 @@ export function WorldEditor() {
   // set it; ZoneGeometryHandles consumes it.
   const [zoneGestureMode, setZoneGestureMode] = useState<ZoneGestureMode>('idle')
 
+  // V1.5 History — the EPHEMERAL historical map overlay (a past audit record framed on the map). SHELL
+  // state only: never persisted to the DB or authoring state, never merged into the live `selected` model.
+  const [historicalFocus, setHistoricalFocus] = useState<HistoricalFocus | null>(null)
+
   const svgRef = useRef<SVGSVGElement | null>(null)
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
   const userMovedRef = useRef(false)
   const fittedRef = useRef(false)
 
-  // Gate FIRST (fail-closed): read the dev flag; only if lit do we fetch any map data.
+  // Gate FIRST (fail-closed): resolve BOTH the dev flag (exposure control) AND owner status (the
+  // authoritative is_owner() check) before rendering anything; only an owner with the flag lit fetches
+  // any map data. A non-owner or any lookup failure fails closed (isOwner=false → no editor, no History).
   useEffect(() => {
     let alive = true
     void (async () => {
-      const on = await fetchDevZoneEditorEnabled()
+      const [on, owner] = await Promise.all([fetchDevZoneEditorEnabled(), fetchIsOwner()])
       if (!alive) return
       setEnabled(on)
-      if (on) {
+      setIsOwner(owner)
+      if (on && owner) {
         const d = await fetchWorldEditorData()
         if (alive) setData(d)
       }
@@ -289,6 +301,18 @@ export function WorldEditor() {
     setView(cameraForDomain(itemsByLayer, domain))
   }
 
+  // V1.5 — frame a HISTORICAL audit record on the map through the ONE camera authority
+  // (fitCameraToWorldPoints). Marks the camera user-held (so the auto-fit-once never overrides it), sets
+  // the ephemeral overlay, and PRESERVES the live `selected` authoring model (a historical item is never
+  // written into it, and no edit control is opened).
+  const focusHistorical = (focus: HistoricalFocus) => {
+    if (focus.points.length === 0) return
+    userMovedRef.current = true
+    setView(fitCameraToWorldPoints(focus.points))
+    setHistoricalFocus(focus)
+  }
+  const clearHistorical = () => setHistoricalFocus(null)
+
   const toggleLayer = (id: LayerId) =>
     setVisible((prev) => {
       const next = new Set(prev)
@@ -345,8 +369,24 @@ export function WorldEditor() {
     [data, selected],
   )
 
-  // DARK by default — render nothing while loading the gate or when the flag is off (fail-closed).
+  // DARK by default (fail-closed). Render nothing while the flag is loading or off (exposure gate), and
+  // nothing while owner status is still resolving. An authenticated NON-OWNER gets a controlled
+  // "Not authorized" surface — the editor and the History panel never render for them. (The backend
+  // is_owner() boundary independently rejects any non-owner command/read regardless of this client gate.)
   if (enabled !== true) return null
+  if (isOwner === null) return null
+  if (isOwner !== true) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-app p-4 text-ink">
+        <div
+          className="rounded-card border border-edge bg-surface p-4 text-sm text-ink-muted"
+          data-testid="worldeditor-not-authorized"
+        >
+          Not authorized — the World Editor is owner-only.
+        </div>
+      </div>
+    )
+  }
 
   const k = view.k
   // Narrowed const so the zone gesture layer's callbacks close over a non-null draft.
@@ -508,6 +548,38 @@ export function WorldEditor() {
                   </>
                 )
               )}
+              {/* V1.5 — the EPHEMERAL historical overlay: a distinct dashed outline/marker for the audit
+                  record being focused. Non-interactive; visually separate from live layers; never part of
+                  the authoring selection. Projected through the ONE shared worldToViewBox transform. */}
+              {historicalFocus && historicalFocus.points.length > 0
+                ? (() => {
+                    const vpts = historicalFocus.points.map((p) => worldToViewBox(p))
+                    const stroke = historicalFocus.inactive ? 'var(--color-ink-faint)' : 'var(--color-warning)'
+                    return (
+                      <g pointerEvents="none" data-testid="history-overlay" aria-label="historical location">
+                        {vpts.length >= 3 ? (
+                          <path
+                            d={vpts.map((v, i) => `${i === 0 ? 'M' : 'L'}${v.x} ${v.y}`).join(' ') + ' Z'}
+                            fill="none"
+                            stroke={stroke}
+                            strokeWidth={2 / k}
+                            strokeDasharray={`${6 / k} ${4 / k}`}
+                          />
+                        ) : (
+                          <circle
+                            cx={vpts[0].x}
+                            cy={vpts[0].y}
+                            r={12 / k}
+                            fill="none"
+                            stroke={stroke}
+                            strokeWidth={2 / k}
+                            strokeDasharray={`${4 / k} ${3 / k}`}
+                          />
+                        )}
+                      </g>
+                    )
+                  })()
+                : null}
             </g>
           </svg>
 
@@ -691,6 +763,12 @@ export function WorldEditor() {
               </div>
             )}
           </section>
+
+          {/* V1.5 — read-only History (owner audit ledger, via the world_editor_audit_list RPC only).
+              Inherits the /dev/world + RequireAuth + owner + dev_zone_editor_enabled gate (it renders
+              inside WorldEditor). Historical map focus reuses the ONE camera authority and never mutates
+              the live `selected` authoring model. */}
+          <WorldEditorHistoryPanel onFocusHistorical={focusHistorical} onClearHistorical={clearHistorical} />
 
           {/* V2A-2/V2C/V3A-2: the authoring-domain toggle — picks which draft panel + preview is
               active. Every store stays mounted; switching never discards another domain's drafts. */}
