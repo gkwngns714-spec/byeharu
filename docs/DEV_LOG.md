@@ -5,6 +5,17 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-21 — Combat-content program (E0–E4) **activation-prep authored (NOT run)**
+
+Authored the go-live tooling for the E0–E4 combat-content program (PRs #257–#261, migrations
+`0257`–`0260`, all DARK/seeded-false): four dependency-guarded per-flag `scripts/activate-*.sql`
+(+ matching `.sh` runners) and a combined `scripts/activate-combat-content-all.sql`, plus the program
+summary. Scripts are **AUTHORED-NOT-RUN** — the owner flips them at go-live in order E0→E1→E2→E3.
+Full architecture, merge/deploy/flag-flip order, the E3 byte-identity guarantee, and deferred items:
+see **[docs/COMBAT_CONTENT_PROGRAM.md](COMBAT_CONTENT_PROGRAM.md)**.
+
+---
+
 ## 2026-07-21 — OPERATIONAL RECORD: **World Editor V1.5 audit-read backend DEPLOYED & PRODUCTION-PROVEN** (migration `0256`, prod head **0256**)
 
 **Deployed migration:** `20260618000256_worldeditor_audit_read.sql` (owner-only audit reader `public.world_editor_audit_list(jsonb)`). **PRs:** docs closure `#252` (merge `335d948`) + backend `#253` (merge `5e234e1`), both admin-merged 2026-07-21. **Deployment run:** `29792617330` @ `5e234e1` → `success` (job `88517404749`, 26s). **Production migration head:** `0256` (recorded once; `0253` remains reserved/absent).
