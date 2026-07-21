@@ -5,6 +5,25 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-21 — OPERATIONAL RECORD: **World Editor V1.5 Operations & Audit UX — frontend History UI merged + Pages-deployed + owner-gated** (PR #255)
+
+**Merged:** PR #255 (`slice-worldeditor-audit-history-ui`, head `bcefaf7`) → `main` merge commit **`0a32c7a`** (owner-admin, 2026-07-21). Frontend-only: the read-only World Editor **History** side-rail (owner audit browser) consuming ONLY the deployed `world_editor_audit_list` RPC (0256), plus a **client-side owner gate** on `/dev/world` reusing the deployed `is_owner()` RPC (0243). No migration, no backend change.
+
+**Deployed:** `Deploy to GitHub Pages` run **`29806992198`** @ `0a32c7a` → **success**. URL: `https://gkwngns714-spec.github.io/byeharu/`. Auto-publish (no approval gate); no database/backend deployment.
+
+**Owner gate:** `/dev/world` now resolves the `dev_zone_editor_enabled` flag AND `is_owner()` before rendering — flag-off/loading → nothing; owner resolving → nothing; authenticated non-owner → controlled "Not authorized" surface; owner + flag → renders. Map data + the History panel mount only for an owner. Fail-closed on any owner-lookup error. The backend `is_owner()` boundary is unchanged and independently enforced.
+
+**Production verification:**
+- **Anonymous access control — LIVE-verified:** visiting the deployed `/dev/world` unauthenticated redirects to `/auth`; the bundle renders cleanly with no console errors.
+- **Backend owner boundary — re-verified read-only (prod head `0256`, unchanged):** `is_owner()` present + authenticated-only (anon denied); `world_editor_audit_list` SECURITY DEFINER + in-body `is_owner()` + anon-denied; `world_editor_audit` RLS deny-all with no client SELECT; audit row count `2` (unchanged — the read RPC writes nothing).
+- **History data behaviors — production-proven at the RPC level (2026-07-21 bounded prod proof):** denials, filters, keyset pagination, key-level sanitization (`reward_bundle_json`/`created_by`/`actor` never returned), `before=null` on create, sanitized before/after on unpublish, redaction metadata — this is the exact data path the History UI renders.
+- **Frontend correctness — 949/949 specs, typecheck + build green:** contract/normalization (fail-closed, recursive forbidden-key deny-list, geometry safety), semantic diff, request-lifecycle coordinator (16 behavioral cases), owner-gate guards.
+- **Pending (needs the owner's own logged-in session):** the owner-authenticated *visual* walkthrough (owner opens the editor, History panel loads/filters/selects/map-focuses; non-owner "Not authorized" appears). Not executable without an owner/non-owner browser session; covered by the guard tests + the RPC production proof + the live anon gate above.
+
+**Verdict:** V1.5 backend, owner gate, deploy, and data path are **production-proven**; the owner-authenticated live UI walkthrough is the sole remaining confirmation. No rollback/replay/restore surface; scope closed at V1.5 read-only Operations & Audit UX.
+
+---
+
 ## 2026-07-21 — OPERATIONAL RECORD: **World Editor V1.5 audit-read backend DEPLOYED & PRODUCTION-PROVEN** (migration `0256`, prod head **0256**)
 
 **Deployed migration:** `20260618000256_worldeditor_audit_read.sql` (owner-only audit reader `public.world_editor_audit_list(jsonb)`). **PRs:** docs closure `#252` (merge `335d948`) + backend `#253` (merge `5e234e1`), both admin-merged 2026-07-21. **Deployment run:** `29792617330` @ `5e234e1` → `success` (job `88517404749`, 26s). **Production migration head:** `0256` (recorded once; `0253` remains reserved/absent).
