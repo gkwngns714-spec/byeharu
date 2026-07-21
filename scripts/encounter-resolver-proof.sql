@@ -592,6 +592,16 @@ begin
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
 
+  raise notice 'E5_DIAG: e0=% e1=% e2=% e3=% | enc_pjson=% | direct_resolve=% | binds=% locstatus=% capcnt=% loc_bd=%',
+    public.cfg_bool('enemy_content_registry_enabled'), public.cfg_bool('encounter_authoring_enabled'),
+    public.cfg_bool('encounter_binding_authoring_enabled'), public.cfg_bool('encounter_resolver_enabled'),
+    (select resolved_plan_json from public.combat_encounters where id = v_enc),
+    public.resolve_location_encounter(v_hunt, v_enc::text),
+    (select count(*) from public.location_encounter_bindings where location_id=v_hunt and active is true),
+    (select status from public.locations where id=v_hunt),
+    (select count(*) from public.combat_encounters ce where ce.location_id=v_hunt and ce.status in ('active','retreating') and ce.resolved_plan_json->>'encounter_profile_id'=v_ep::text),
+    (select base_difficulty from public.locations where id=v_hunt);
+
   -- the resolved wave: 1 unit at the location center; the encounter tagged; the runtime ledger written.
   select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
   if n <> 1 then raise exception 'ER PROOF FAIL RESOLVED: % enemy rows (want 1)', n; end if;
