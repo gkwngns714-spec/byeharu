@@ -1,8 +1,10 @@
 name: ENCOUNTER RESOLVER — dark quad-flag resolver + byte-identical-when-off disposable proof (no production)
 
-# Proves migration 0260 (encounter_runtime_resolver) on a THROWAWAY local Supabase — NEVER prod:
-#   * `supabase start` applies the FULL migration chain incl. 0260. 0260's own in-migration self-assert
-#     runs here against real Postgres (the flag seeded dark; resolved_plan_json additive + 0 tagged rows;
+# Proves migrations 0260 (encounter_runtime_resolver) + 0261 (E5 variety + zero-elite) on a THROWAWAY
+# local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0260/0261. Their own in-migration self-asserts
+#     run here against real Postgres (E5/0261 re-proves byte-identity + folds the per-encounter seed, drops
+#     is_elite, tags elite_policy=disabled_v1). (0260: the flag seeded dark; resolved_plan_json additive + 0 tagged rows;
 #     encounter_runtime_state DARK/RLS/no client write/empty; the VERBATIM 0234 synthetic-wave + :898-899
 #     reward lines + the whole aggregate (C) arm survive byte-identical in the flag-OFF fallback; the
 #     resolved branch + reward adapter wired; the tick carries exactly 2 random( calls; the resolver is
@@ -25,6 +27,7 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-e3-encounter-resolver**'
+      - 'slice-e5-**'
 
 permissions:
   contents: read
@@ -52,7 +55,9 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           : "${DB_URL:?DB_URL (disposable stack) required}"
-          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/encounter-resolver-proof.sql 2>&1)"
+          # capture without aborting so the psql output (incl. any RAISE) is always printed for diagnosis;
+          # the marker loop below is the pass/fail gate.
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/encounter-resolver-proof.sql 2>&1)" || true
           echo "$out"
           for marker in \
             ER_PASS_VERBATIM \
@@ -70,6 +75,10 @@ jobs:
             ER_PASS_RESOLVED_PLAN \
             ER_PASS_MULTIWAVE \
             ER_PASS_CAP \
+            ER_PASS_E5_VARIETY \
+            ER_PASS_E5_SEED_STABLE \
+            ER_PASS_E5_NO_ELITE \
+            ER_PASS_E5_ELITE_GUARD \
             'ENCOUNTER-RESOLVER PROOF PASSED'; do
             echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
           done

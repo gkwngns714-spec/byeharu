@@ -39,7 +39,7 @@ if [ "$MODE" = "selftest" ]; then
     printf '%s' "$CLEAN" | grep -qF "$obj" || fail "operation must assert E3 object $obj is present"
   done
   printf '%s' "$CLEAN" | grep -qF "v_resolver_engaged" || fail "operation must prosrc-pin the resolved branch (process_combat_ticks references v_resolver_engaged)"
-  printf '%s' "$CLEAN" | grep -qF "resolve_location_encounter(e.location_id)" || fail "operation must prosrc-pin the resolved spawn call (resolve_location_encounter(e.location_id))"
+  printf '%s' "$CLEAN" | grep -qF "resolve_location_encounter(e.location_id, e.id::text)" || fail "operation must prosrc-pin the seeded resolved spawn call (resolve_location_encounter(e.location_id, e.id::text))"
 
   # DEPENDENCY GUARD: refuse unless E0 AND E1 AND E2 already true (the quad chain).
   printf '%s' "$CLEAN" | grep -qF "cfg_bool('enemy_content_registry_enabled')"      || fail "operation must guard on the E0 flag"

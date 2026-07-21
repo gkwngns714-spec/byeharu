@@ -54,7 +54,8 @@ enemy archetypes + reward profiles        (E0 — the reusable enemy TEMPLATES +
 
 - **E3 — Encounter Runtime Resolver** (migration `0260_encounter_runtime_resolver.sql`).
   The runtime consumer. Adds `resolve_location_encounter(uuid)` (deterministic, quad-flag-gated
-  encounter planner, returns a plan or NULL), `resolve_encounter_reward_inputs(jsonb, integer, integer)`
+  encounter planner, returns a plan or NULL — **E5/0261 replaces this signature with
+  `resolve_location_encounter(uuid, text)`**), `resolve_encounter_reward_inputs(jsonb, integer, integer)`
   (the algebraic mirror of the legacy reward formula), the `encounter_runtime_state` table
   (cooldown/active_count anchor), and **re-creates `process_combat_ticks()`** as the 0234 body
   **verbatim** plus a one-read `v_resolver_engaged` flag and two wrapped arms. Flag:
@@ -64,6 +65,18 @@ enemy archetypes + reward profiles        (E0 — the reusable enemy TEMPLATES +
 - **E4 — World Editor Combat-Authoring UI** (frontend only; PR #261 / branch
   `slice-e4-worldeditor-combat-ui`). The owner-only, fail-closed World Editor screens that author
   everything above. No migration, no runtime combat path.
+
+- **E5 — Resolver Per-Encounter Variety + Zero-Elite Readiness** (migration
+  `0261_encounter_variety_zero_elite.sql`; branch `slice-e5-resolver-variety-zero-elite`, stacked on the
+  activation-prep branch). Resolver-only, DARK behind the same `encounter_resolver_enabled` quad-flag.
+  (1) **Variety** — `resolve_location_encounter` gains a per-encounter **seed** (`uuid, text`) that
+  `process_combat_ticks` fills with `e.id::text`, so two encounters at one location resolve different
+  (still fully deterministic) compositions; E3's roll was location-static. (2) **Zero-elite readiness** —
+  the resolver **drops the inert `is_elite` roll** (elite has no combat effect until the elite stat-wiring
+  slice); no `is_elite` is persisted and the plan carries a single honest marker `elite_policy=disabled_v1`.
+  `process_combat_ticks` is re-emitted **byte-identical** except the one seeded resolver-call line, so combat
+  is unchanged while the flag is off. The `activate-encounter-resolver` act gains a **zero-elite readiness
+  guard** that refuses to flip while any active binding reaches a fleet member with `elite_chance>0`.
 
 ---
 
@@ -151,7 +164,9 @@ pins:
 
 - `process_combat_ticks` keeps the verbatim flag-off arms (the byte-identity anchors);
 - the tick carries exactly **2** `random(` calls (the resolver adds none) and `resolve_location_encounter`
-  carries **no** session-RNG token (the determinism law — deterministic `hashtextextended`/`:enc:` roll);
+  carries **no** session-RNG token (the determinism law — deterministic `hashtextextended`/`:enc:` roll;
+  **E5/0261** re-proves this after folding the per-encounter seed `e.id::text` into every salt and pinning
+  the tick's one changed line, `resolve_location_encounter(e.location_id, e.id::text)`);
 - `resolve_encounter_reward_inputs` is **algebraically** the legacy reward formula, and is NULL-safe
   on a missing `multiplier_ref`;
 - no non-resolver path (`combat_create_group_encounter`, report/reward/base paths) references the
@@ -165,12 +180,14 @@ resolved branch goes inert and combat is byte-identical again on the next tick. 
 
 ## 7. Deferred items (built-but-not-wired / intentionally out of scope)
 
-- **Composition variety** — E3's resolver salts its weighted pick **location-static** (deterministic
-  per location), so a bound location resolves the same encounter shape each time. Per-encounter /
-  time-varying composition variety is deferred.
-- **ELITE stat wiring** — `enemy_fleet_template_members.elite_chance` is authored and rolled by the
-  resolver, but produces **no combat effect yet** (no elite stat application in `process_combat_ticks`).
-  It is data-plumbed ahead of the combat hook.
+- **Composition variety** — ~~E3's resolver salts its weighted pick location-static~~ **DONE in E5
+  (0261)**: `resolve_location_encounter` folds a per-encounter seed (`e.id::text`) into every salt, so
+  encounters at one location vary (still fully deterministic). Time-varying variety remains out of scope.
+- **ELITE stat wiring** — `enemy_fleet_template_members.elite_chance` is authored but **no longer rolled**
+  by the resolver (E5/0261 dropped the inert `is_elite` roll; the plan carries `elite_policy=disabled_v1`).
+  Elite still produces **no combat effect** — the elite stat-wiring slice (with the actual combat hook) is
+  the deferred item. Until then, `activate-encounter-resolver` refuses to flip while any active binding
+  reaches an `elite_chance>0` fleet member.
 - **Deactivation-trigger typed envelope** — the cross-slice deactivation guards (E1/E2 triggers on
   E0/E1 tables) RAISE a raw Postgres exception rather than returning the typed `{ok:false, error, details[]}`
   envelope the RPCs use. Fine as defense-in-depth; a typed surface is deferred.

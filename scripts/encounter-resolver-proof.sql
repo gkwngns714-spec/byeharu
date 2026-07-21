@@ -21,10 +21,14 @@
 --
 -- Self-rolling-back (begin;...rollback;): flips every gate flag ONLY inside the txn, keeps ZERO state.
 --
+-- E5 (0261): every existing DIRECT resolve_location_encounter(...) call now passes a FIXED per-location
+-- seed (loc::text) so all existing markers still hold; the resolved combat path feeds e.id::text internally.
+--
 -- PASS markers: ER_PASS_VERBATIM, ER_PASS_FLAGOFF_ROWS, ER_PASS_FLAGOFF_REWARD, ER_PASS_RESOLVED_PLAN,
 -- ER_PASS_MULTIWAVE, ER_PASS_NULL_FLAGS, ER_PASS_NULL_BINDING, ER_PASS_NULL_INACTIVE_LOC, ER_PASS_CAP,
 -- ER_PASS_COOLDOWN, ER_PASS_DETERMINISM, ER_PASS_REWARD_SHARED, ER_PASS_UNIT_CLAMP, ER_PASS_SKIP_ZERO,
--- ER_PASS_REWARD_UNTOUCHED, "ENCOUNTER-RESOLVER PROOF PASSED".
+-- ER_PASS_REWARD_UNTOUCHED, ER_PASS_E5_VARIETY, ER_PASS_E5_SEED_STABLE, ER_PASS_E5_NO_ELITE,
+-- ER_PASS_E5_ELITE_GUARD, "ENCOUNTER-RESOLVER PROOF PASSED".
 
 \set ON_ERROR_STOP on
 
@@ -291,17 +295,17 @@ do $$
 declare p jsonb;
 begin
   -- FIX 1 (a): both spawning archetypes share ONE default reward ⇒ resolved (reward = the shared profile).
-  p := public.resolve_location_encounter((select v from erfx where k='loc_same'));
+  p := public.resolve_location_encounter((select v from erfx where k='loc_same'), (select v from erfx where k='loc_same')::text);
   if p is null then raise exception 'ER PROOF FAIL SHARED: same-default fleet did not resolve'; end if;
   if jsonb_array_length(p->'units') <> 2 or (p->'reward_profile'->>'id') <> (select v from erfx where k='rp')::text then
     raise exception 'ER PROOF FAIL SHARED: expected 2 units + the shared reward, got %', p;
   end if;
   -- FIX 1 (b): DIVERGENT defaults, NO override ⇒ NOT runtime-eligible ⇒ NULL (falls back to legacy).
-  if public.resolve_location_encounter((select v from erfx where k='loc_diff')) is not null then
+  if public.resolve_location_encounter((select v from erfx where k='loc_diff'), (select v from erfx where k='loc_diff')::text) is not null then
     raise exception 'ER PROOF FAIL SHARED: divergent-default fleet with no override did NOT return NULL';
   end if;
   -- FIX 1 (c): divergent defaults WITH an encounter reward_override ⇒ resolves via the override.
-  p := public.resolve_location_encounter((select v from erfx where k='loc_ovr'));
+  p := public.resolve_location_encounter((select v from erfx where k='loc_ovr'), (select v from erfx where k='loc_ovr')::text);
   if p is null or (p->'reward_profile'->>'id') <> (select v from erfx where k='rp')::text then
     raise exception 'ER PROOF FAIL SHARED: the override did not decide the reward: %', p;
   end if;
@@ -312,7 +316,7 @@ do $$
 declare p jsonb; v_ceiling int := coalesce(public.cfg_num('enemy_synthetic_max_units'),6)::int; v_sum int;
 begin
   -- FIX 3: a fleet rolling 10 units is clamped to the synthetic ceiling (6).
-  p := public.resolve_location_encounter((select v from erfx where k='loc_big'));
+  p := public.resolve_location_encounter((select v from erfx where k='loc_big'), (select v from erfx where k='loc_big')::text);
   if p is null then raise exception 'ER PROOF FAIL CLAMP: over-ceiling fleet did not resolve'; end if;
   select coalesce(sum((u->>'count')::int),0) into v_sum from jsonb_array_elements(p->'units') u;
   if v_sum <> v_ceiling then
@@ -326,7 +330,7 @@ declare p jsonb;
 begin
   -- FIX 4: a member rolling count 0 is SKIPPED (not forced to 1); only the count-1 archetype spawns, and
   -- the skipped archetype's DIVERGENT default reward does NOT poison the reward sharing.
-  p := public.resolve_location_encounter((select v from erfx where k='loc_zero'));
+  p := public.resolve_location_encounter((select v from erfx where k='loc_zero'), (select v from erfx where k='loc_zero')::text);
   if p is null then raise exception 'ER PROOF FAIL SKIPZERO: zero+one fleet did not resolve'; end if;
   if jsonb_array_length(p->'units') <> 1 or (p->'units'->0->>'enemy_archetype_id') <> (select v from erfx where k='arch')::text
      or (p->'units'->0->>'count') <> '1' then
@@ -370,8 +374,8 @@ end $$;
 do $$
 declare v_loc uuid := (select v from erfx where k='loc'); p1 jsonb; p2 jsonb;
 begin
-  p1 := public.resolve_location_encounter(v_loc);
-  p2 := public.resolve_location_encounter(v_loc);
+  p1 := public.resolve_location_encounter(v_loc, v_loc::text);
+  p2 := public.resolve_location_encounter(v_loc, v_loc::text);
   if p1 is null then raise exception 'ER PROOF FAIL: resolve returned NULL with all flags on + a live bound location'; end if;
   if p1 is distinct from p2 then raise exception 'ER PROOF FAIL: two same-txn resolves differ (non-deterministic): % vs %', p1, p2; end if;
   if (p1->>'encounter_profile_id') <> (select v from erfx where k='ep')::text
@@ -389,20 +393,20 @@ declare v_loc uuid := (select v from erfx where k='loc'); k text;
 begin
   foreach k in array array['enemy_content_registry_enabled','encounter_authoring_enabled','encounter_binding_authoring_enabled','encounter_resolver_enabled'] loop
     update public.game_config set value='false'::jsonb where key=k;
-    if public.resolve_location_encounter(v_loc) is not null then
+    if public.resolve_location_encounter(v_loc, v_loc::text) is not null then
       raise exception 'ER PROOF FAIL: resolve did not return NULL with % off', k;
     end if;
     update public.game_config set value='true'::jsonb where key=k;
   end loop;
   -- restored: resolve is non-null again.
-  if public.resolve_location_encounter(v_loc) is null then raise exception 'ER PROOF FAIL: resolve stayed NULL after restoring all flags'; end if;
+  if public.resolve_location_encounter(v_loc, v_loc::text) is null then raise exception 'ER PROOF FAIL: resolve stayed NULL after restoring all flags'; end if;
   raise notice 'ER_PASS_NULL_FLAGS';
 end $$;
 
 do $$
 declare v_nobind uuid := (select v from erfx where k='nobind');
 begin
-  if public.resolve_location_encounter(v_nobind) is not null then
+  if public.resolve_location_encounter(v_nobind, v_nobind::text) is not null then
     raise exception 'ER PROOF FAIL: an active location with NO active binding did not resolve to NULL';
   end if;
   raise notice 'ER_PASS_NULL_BINDING';
@@ -412,7 +416,7 @@ do $$
 declare v_locked uuid := (select v from erfx where k='locked');
 begin
   if (select status from public.locations where id = v_locked) = 'active' then raise exception 'ER PROOF FAIL: locked fixture is active'; end if;
-  if public.resolve_location_encounter(v_locked) is not null then
+  if public.resolve_location_encounter(v_locked, v_locked::text) is not null then
     raise exception 'ER PROOF FAIL: a non-active (locked) bound location did not resolve to NULL';
   end if;
   raise notice 'ER_PASS_NULL_INACTIVE_LOC';
@@ -422,16 +426,16 @@ do $$
 declare v_cd uuid := (select v from erfx where k='loc_cd'); v_ep_cd uuid := (select v from erfx where k='ep_cd');
 begin
   -- fresh: no runtime-state row ⇒ resolves.
-  if public.resolve_location_encounter(v_cd) is null then raise exception 'ER PROOF FAIL: cooldown fixture did not resolve when fresh'; end if;
+  if public.resolve_location_encounter(v_cd, v_cd::text) is null then raise exception 'ER PROOF FAIL: cooldown fixture did not resolve when fresh'; end if;
   -- a recent spawn ⇒ cooldown BLOCKS.
   insert into public.encounter_runtime_state (location_id, encounter_profile_id, last_spawn_at, active_count)
     values (v_cd, v_ep_cd, now(), 1);
-  if public.resolve_location_encounter(v_cd) is not null then
+  if public.resolve_location_encounter(v_cd, v_cd::text) is not null then
     raise exception 'ER PROOF FAIL: resolve did not return NULL within the cooldown window';
   end if;
   -- back-date past the 60s window ⇒ the block CLEARS.
   update public.encounter_runtime_state set last_spawn_at = now() - interval '1 hour' where location_id = v_cd and encounter_profile_id = v_ep_cd;
-  if public.resolve_location_encounter(v_cd) is null then
+  if public.resolve_location_encounter(v_cd, v_cd::text) is null then
     raise exception 'ER PROOF FAIL: resolve stayed NULL after the cooldown window elapsed';
   end if;
   delete from public.encounter_runtime_state where location_id = v_cd;   -- clean the fixture
@@ -500,6 +504,13 @@ begin
   r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-hunt',
          jsonb_build_object('location_id', v_hunt::text, 'encounter_profile_id', v_ep::text, 'weight', 1)::text));
   if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL hunt: %', r; end if;
+  -- The REAL hunt location may already carry a pre-existing (seeded) active binding. E5 folds a per-encounter
+  -- seed into the weighted binding pick, so with >1 active binding the resolver can pick a DIFFERENT bound
+  -- profile per encounter (that variety is EXACTLY E5's point). The resolved / cap / multiwave scenarios below
+  -- assert against er_ep specifically, so make er_ep the SOLE active binding here (deactivate any other) —
+  -- the resolved pick is then deterministic regardless of the seed.
+  update public.location_encounter_bindings set active = false
+   where location_id = v_hunt and encounter_profile_id <> v_ep and active is true;
 end $$;
 
 -- helper: send a group to the hunt location and settle the arrival, returning the encounter id.
@@ -672,15 +683,147 @@ do $$
 declare v_hunt uuid := (select v from erfx where k='hunt'); v_enc2 uuid := (select v from erfx where k='enc2');
 begin
   -- enc2 is active + tagged er_ep ⇒ active_cnt = 1 = cap ⇒ NULL.
-  if public.resolve_location_encounter(v_hunt) is not null then
+  if public.resolve_location_encounter(v_hunt, v_hunt::text) is not null then
     raise exception 'ER PROOF FAIL CAP: resolve did not block at the active_encounter_cap';
   end if;
   -- retire enc2 ⇒ active_cnt = 0 ⇒ resolves again (cooldown 0 on er_ep, so CAP is isolated).
   update public.combat_encounters set status='defeat', ended_at=now() where id = v_enc2;
-  if public.resolve_location_encounter(v_hunt) is null then
+  if public.resolve_location_encounter(v_hunt, v_hunt::text) is null then
     raise exception 'ER PROOF FAIL CAP: resolve did not self-heal after the encounter left active';
   end if;
   raise notice 'ER_PASS_CAP';
+end $$;
+
+-- ════════ E5 (0261): VARIETY + SEED-STABLE + ZERO-ELITE + ELITE-READINESS-GUARD ══════════════════════
+-- Author a WIDE variety fixture (one archetype, count 1..6 — so the seed moves the composition) and an
+-- elite_chance>0 fixture (for the readiness guard). All flags are still on here (the RESOLVED scenario left
+-- encounter_resolver_enabled=true; NULL_FLAGS restored E0/E1/E2). resolve() is read-only (STABLE) — repeated
+-- calls persist nothing.
+do $$
+declare uZ uuid := (select v from erfx where k='uZ'); r jsonb; v_zone uuid;
+  v_arch uuid := (select v from erfx where k='arch');   -- default reward = er_reward (rp)
+  v_f_var uuid; v_ep_var uuid; v_loc_var uuid;
+  v_f_elite uuid; v_ep_elite uuid; v_loc_elite uuid;
+begin
+  select id into v_zone from public.zones limit 1;
+
+  -- VARIETY: a single archetype with min_count 1, max_count 6 — the per-seed count roll spans [1,6].
+  r := pg_temp.call_as(uZ, format('public.enemy_fleet_template_create(%L, %L::jsonb)', 'erp-fleet-var',
+         jsonb_build_object('key','erp_fleet_var','display_name','ERP Fleet Var','members', jsonb_build_array(
+           jsonb_build_object('enemy_archetype_id',v_arch::text,'min_count',1,'max_count',6,'weight',1,'elite_chance',0)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL fleet_var: %', r; end if;
+  v_f_var := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.encounter_profile_create(%L, %L::jsonb)', 'erp-ep-var',
+         jsonb_build_object('key','erp_ep_var','display_name','ERP EP Var','active_encounter_cap',5,'cooldown_seconds',0,
+           'members', jsonb_build_array(jsonb_build_object('fleet_template_id',v_f_var::text,'weight',1)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL ep_var: %', r; end if;
+  v_ep_var := (r->'result'->>'id')::uuid;
+  insert into public.locations (zone_id, name, location_type, x, y, base_difficulty, status)
+    values (v_zone, 'ERP Loc Var', 'pirate_hunt', 970, 970, 7, 'active') returning id into v_loc_var;
+  r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-var',
+         jsonb_build_object('location_id', v_loc_var::text, 'encounter_profile_id', v_ep_var::text, 'weight', 1)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL var: %', r; end if;
+
+  -- ELITE fixture (fleet + ep + location authored now; bound active LATER, inside the guard test).
+  r := pg_temp.call_as(uZ, format('public.enemy_fleet_template_create(%L, %L::jsonb)', 'erp-fleet-elite',
+         jsonb_build_object('key','erp_fleet_elite','display_name','ERP Fleet Elite','members', jsonb_build_array(
+           jsonb_build_object('enemy_archetype_id',v_arch::text,'min_count',1,'max_count',1,'weight',1,'elite_chance',0.5)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL fleet_elite: %', r; end if;
+  v_f_elite := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.encounter_profile_create(%L, %L::jsonb)', 'erp-ep-elite',
+         jsonb_build_object('key','erp_ep_elite','display_name','ERP EP Elite','active_encounter_cap',5,'cooldown_seconds',0,
+           'members', jsonb_build_array(jsonb_build_object('fleet_template_id',v_f_elite::text,'weight',1)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL ep_elite: %', r; end if;
+  v_ep_elite := (r->'result'->>'id')::uuid;
+  insert into public.locations (zone_id, name, location_type, x, y, base_difficulty, status)
+    values (v_zone, 'ERP Loc Elite', 'pirate_hunt', 971, 971, 7, 'active') returning id into v_loc_elite;
+
+  insert into erfx values ('loc_var', v_loc_var), ('ep_var', v_ep_var),
+                          ('f_elite', v_f_elite), ('ep_elite', v_ep_elite), ('loc_elite', v_loc_elite);
+end $$;
+
+-- ER_PASS_E5_VARIETY: across 16 seeds the SAME location resolves >= 2 distinct unit compositions.
+do $$
+declare v_loc uuid := (select v from erfx where k='loc_var'); v_distinct int;
+begin
+  if public.resolve_location_encounter(v_loc, '0') is null then
+    raise exception 'ER PROOF FAIL E5_VARIETY: variety fixture did not resolve';
+  end if;
+  select count(distinct (public.resolve_location_encounter(v_loc, g::text) -> 'units')::text)
+    into v_distinct from generate_series(0, 15) g;
+  if v_distinct < 2 then
+    raise exception 'ER PROOF FAIL E5_VARIETY: only % distinct composition(s) across 16 seeds (want >= 2 — seed is not moving the roll)', v_distinct;
+  end if;
+  raise notice 'ER_PASS_E5_VARIETY';
+end $$;
+
+-- ER_PASS_E5_SEED_STABLE: the SAME (location, seed) resolves IDENTICALLY (deterministic).
+do $$
+declare v_loc uuid := (select v from erfx where k='loc_var'); a jsonb; b jsonb;
+begin
+  a := public.resolve_location_encounter(v_loc, 'sX');
+  b := public.resolve_location_encounter(v_loc, 'sX');
+  if a is null then raise exception 'ER PROOF FAIL E5_SEED_STABLE: resolve NULL for a live bound location'; end if;
+  if a is distinct from b then
+    raise exception 'ER PROOF FAIL E5_SEED_STABLE: the same (loc, seed) resolved differently: % vs %', a, b;
+  end if;
+  raise notice 'ER_PASS_E5_SEED_STABLE';
+end $$;
+
+-- ER_PASS_E5_NO_ELITE: no resolved unit carries an is_elite key; the plan tags elite_policy=disabled_v1;
+--   the resolver source carries no is_elite token.
+do $$
+declare v_loc uuid := (select v from erfx where k='loc_var'); p jsonb; u jsonb; v_res text;
+begin
+  p := public.resolve_location_encounter(v_loc, 'ne');
+  if p is null then raise exception 'ER PROOF FAIL E5_NO_ELITE: variety fixture did not resolve'; end if;
+  for u in select value from jsonb_array_elements(p -> 'units') loop
+    if u ? 'is_elite' then raise exception 'ER PROOF FAIL E5_NO_ELITE: a resolved unit still carries is_elite: %', u; end if;
+  end loop;
+  if (p ->> 'elite_policy') is distinct from 'disabled_v1' then
+    raise exception 'ER PROOF FAIL E5_NO_ELITE: plan elite_policy % <> disabled_v1', (p ->> 'elite_policy');
+  end if;
+  select pg_get_functiondef(oid) into v_res from pg_proc where proname='resolve_location_encounter' and pronamespace='public'::regnamespace;
+  if v_res ilike '%is_elite%' then raise exception 'ER PROOF FAIL E5_NO_ELITE: resolver source still references is_elite'; end if;
+  raise notice 'ER_PASS_E5_NO_ELITE';
+end $$;
+
+-- ER_PASS_E5_ELITE_GUARD: the activate-encounter-resolver section-2b readiness SELECT reads 0 over the
+--   elite_chance=0 fixtures, and > 0 once an elite_chance>0 fleet is bound active.
+do $$
+declare uZ uuid := (select v from erfx where k='uZ'); r jsonb; v_n int;
+  v_loc_elite uuid := (select v from erfx where k='loc_elite'); v_ep_elite uuid := (select v from erfx where k='ep_elite');
+begin
+  select count(*) into v_n
+    from public.location_encounter_bindings b
+    join public.locations l                      on l.id = b.location_id and l.status = 'active'
+    join public.encounter_profiles ep            on ep.id = b.encounter_profile_id and ep.active is true
+    join public.encounter_profile_members epm     on epm.encounter_profile_id = ep.id
+    join public.enemy_fleet_templates ft          on ft.id = epm.fleet_template_id and ft.active is true
+    join public.enemy_fleet_template_members fm   on fm.fleet_template_id = ft.id
+    join public.enemy_archetypes a                on a.id = fm.enemy_archetype_id and a.active is true
+   where b.active is true and fm.elite_chance > 0;
+  if v_n <> 0 then
+    raise exception 'ER PROOF FAIL E5_ELITE_GUARD: readiness guard counted % elite binding(s) before any elite fixture was bound (want 0)', v_n;
+  end if;
+
+  r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-elite',
+         jsonb_build_object('location_id', v_loc_elite::text, 'encounter_profile_id', v_ep_elite::text, 'weight', 1)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL elite: %', r; end if;
+
+  select count(*) into v_n
+    from public.location_encounter_bindings b
+    join public.locations l                      on l.id = b.location_id and l.status = 'active'
+    join public.encounter_profiles ep            on ep.id = b.encounter_profile_id and ep.active is true
+    join public.encounter_profile_members epm     on epm.encounter_profile_id = ep.id
+    join public.enemy_fleet_templates ft          on ft.id = epm.fleet_template_id and ft.active is true
+    join public.enemy_fleet_template_members fm   on fm.fleet_template_id = ft.id
+    join public.enemy_archetypes a                on a.id = fm.enemy_archetype_id and a.active is true
+   where b.active is true and fm.elite_chance > 0;
+  if v_n < 1 then
+    raise exception 'ER PROOF FAIL E5_ELITE_GUARD: readiness guard did NOT trip after an elite_chance>0 binding went active (got %)', v_n;
+  end if;
+  raise notice 'ER_PASS_E5_ELITE_GUARD';
 end $$;
 
 do $$ begin raise notice 'ENCOUNTER-RESOLVER PROOF PASSED'; end $$;

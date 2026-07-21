@@ -22,10 +22,14 @@
 --   An act that RAISES rolls itself back and blocks nothing; the owner fixes the named cause and re-runs.
 --
 -- ── WHAT IT DOES (ONE transaction; the ORDER is load-bearing) ──────────────────────────────────────
---   1. PRECONDITIONS (read-only; RAISE if unmet): migration head >= 20260618000260 (the whole E0-E3
---      chain is deployed); every E0-E3 object present — the E0 tables + 6 RPCs, the E1 tables + 6 RPCs,
---      the E2 table + 3 RPCs, the E3 resolver fns + process_combat_ticks resolved branch (pinned by
---      prosrc) + encounter_runtime_state; all four config keys present.
+--   1. PRECONDITIONS (read-only; RAISE if unmet): migration head >= 20260618000261 (the whole E0-E5
+--      chain is deployed — 0261 carries the E5 SEEDED process_combat_ticks body the prosrc pin requires);
+--      every E0-E3 object present — the E0 tables + 6 RPCs, the E1 tables + 6 RPCs, the E2 table + 3 RPCs,
+--      the E3 resolver fns + process_combat_ticks resolved branch (pinned by prosrc) + encounter_runtime_state;
+--      all four config keys present.
+--   1b. ZERO-ELITE READINESS GUARD (read-only; RAISE if any active binding reaches a fleet member with
+--      elite_chance>0 — E5 made the resolver zero-elite, so live elite content would silently no-op). Runs
+--      BEFORE any flip (the resolver is still off).
 --   2. THE WRITES (LAST; ONE DO block, so no execution model can half-flip), in STRICT ORDER:
 --        enemy_content_registry_enabled       -> true   (E0)
 --        encounter_authoring_enabled          -> true   (E1)
@@ -60,8 +64,8 @@ declare
   v_tick    text;
 begin
   select max(version)::text into v_head from supabase_migrations.schema_migrations;
-  if v_head is null or v_head < '20260618000260' then
-    raise exception 'PRECONDITION FAIL: migration head % < 20260618000260 — deploy the whole E0-E3 chain (0257-0260) before activating', coalesce(v_head, '(none)');
+  if v_head is null or v_head < '20260618000261' then
+    raise exception 'PRECONDITION FAIL: migration head % < 20260618000261 — this one-shot pins the E5 SEEDED process_combat_ticks body, which only exists after migration 0261; deploy the whole E0-E5 chain (0257-0261) before activating (a deploy stopped at 20260618000260 lacks the seeded resolver call and would fail the prosrc pin below)', coalesce(v_head, '(none)');
   end if;
 
   -- E0 tables + E1 tables + E2 table + E3 runtime-state table.
@@ -87,20 +91,20 @@ begin
       'public.encounter_profile_update(text,jsonb)', 'public.encounter_profile_set_active(text,jsonb)',
       'public.location_encounter_binding_create(text,jsonb)', 'public.location_encounter_binding_update(text,jsonb)',
       'public.location_encounter_binding_set_active(text,jsonb)',
-      'public.resolve_location_encounter(uuid)', 'public.resolve_encounter_reward_inputs(jsonb,integer,integer)',
+      'public.resolve_location_encounter(uuid,text)', 'public.resolve_encounter_reward_inputs(jsonb,integer,integer)',
       'public.process_combat_ticks()']) fn
    where to_regprocedure(fn) is null;
   if v_missing is not null then
     raise exception 'PRECONDITION FAIL: RPC/function(s) missing: %', v_missing;
   end if;
 
-  -- the deployed process_combat_ticks body must carry the 0260 resolved branch (pinned by prosrc).
+  -- the deployed process_combat_ticks body must carry the E5 seeded resolved branch (pinned by prosrc).
   select p.prosrc into v_tick from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'process_combat_ticks';
   if v_tick is null
      or position('v_resolver_engaged' in v_tick) = 0
-     or position('resolve_location_encounter(e.location_id)' in v_tick) = 0 then
-    raise exception 'PRECONDITION FAIL: the deployed process_combat_ticks does not carry the 0260 resolved branch — E3 not applied';
+     or position('resolve_location_encounter(e.location_id, e.id::text)' in v_tick) = 0 then
+    raise exception 'PRECONDITION FAIL: the deployed process_combat_ticks does not carry the E5 seeded resolved branch — E3/E5 not applied';
   end if;
 
   -- all four keys must already exist.
@@ -112,7 +116,33 @@ begin
     raise exception 'PRECONDITION FAIL: game_config key(s) missing: %', v_missing;
   end if;
 
-  raise notice 'ACTALL_PASS_PRECONDITIONS ok: head % (>= 0260), 8 tables + 17 RPCs/fns present, resolved branch pinned, 4 flag keys present', v_head;
+  raise notice 'ACTALL_PASS_PRECONDITIONS ok: head % (>= 0261), 8 tables + 17 RPCs/fns present, resolved branch pinned, 4 flag keys present', v_head;
+end $$;
+
+-- ══════════ 1b. ZERO-ELITE READINESS GUARD (read-only; RAISE if any live binding reaches elite_chance>0) ══
+-- E5 (0261) removed the inert is_elite roll from the resolver: elite produces NO combat effect until the
+-- elite stat-wiring slice, and the resolver no longer even reads elite_chance. If an owner has authored a
+-- fleet member with elite_chance>0 and bound it active, flipping the resolver on would SILENTLY drop that
+-- authored intent (the resolver ignores it). This one-shot flips ALL FOUR flags in the writes block below, so
+-- run the SAME guard the per-flag activate-encounter-resolver.sql carries HERE — before ANY flip, while the
+-- resolver is still off — so the one-shot cannot bypass E5's zero-elite promise. Refuse until every reachable
+-- active binding is elite-free (owner zeroes elite_chance, or waits for the elite stat-wiring slice).
+do $$
+declare v_n integer;
+begin
+  select count(*) into v_n
+    from public.location_encounter_bindings b
+    join public.locations l                     on l.id = b.location_id and l.status = 'active'
+    join public.encounter_profiles ep           on ep.id = b.encounter_profile_id and ep.active is true
+    join public.encounter_profile_members epm    on epm.encounter_profile_id = ep.id
+    join public.enemy_fleet_templates ft         on ft.id = epm.fleet_template_id and ft.active is true
+    join public.enemy_fleet_template_members fm  on fm.fleet_template_id = ft.id
+    join public.enemy_archetypes a               on a.id = fm.enemy_archetype_id and a.active is true
+   where b.active is true and fm.elite_chance > 0;
+  if v_n > 0 then
+    raise exception 'ELITE-READINESS FAIL: % active binding(s) reach a fleet member with elite_chance>0, but E5 (0261) made the resolver zero-elite (is_elite dropped; elite has no combat effect yet). Set those elite_chance values to 0 (making the no-elite posture explicit) or wait for the elite stat-wiring slice, then re-run.', v_n;
+  end if;
+  raise notice 'ACTE3_PASS_ELITE_READINESS ok: no active binding reaches an elite_chance>0 fleet member — the zero-elite resolver drops no authored intent';
 end $$;
 
 -- ══════════ 2. THE WRITES (LAST; ONE block: atomic; STRICT ORDER E0 -> E1 -> E2 -> E3) ══════════
