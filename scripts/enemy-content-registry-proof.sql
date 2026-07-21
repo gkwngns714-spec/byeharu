@@ -39,7 +39,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
   r := public.reward_profile_create('reg-flagoff-1', jsonb_build_object(
          'key','proof_flagoff','display_name','Should Not Exist',
-         'resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10))));
+         'resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10,'multiplier_ref','reward_multiplier'))));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'not_enabled' then
     raise exception 'ENEMY-REGISTRY PROOF FAIL: owner was not rejected not_enabled while flag off: %', r;
   end if;
@@ -69,7 +69,7 @@ declare r jsonb; n int;
 begin
   perform set_config('request.jwt.claims', json_build_object('role','anon')::text, true);
   r := public.reward_profile_create('reg-anon-1', jsonb_build_object(
-         'key','proof_anon','display_name','Nope','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10))));
+         'key','proof_anon','display_name','Nope','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10,'multiplier_ref','reward_multiplier'))));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'not_authenticated' then
     raise exception 'ENEMY-REGISTRY PROOF FAIL: anon not rejected not_authenticated: %', r;
   end if;
@@ -88,7 +88,7 @@ begin
   select v into v_no from regids where k = 'nonowner';
   perform set_config('request.jwt.claims', json_build_object('sub', v_no::text, 'role','authenticated')::text, true);
   r := public.reward_profile_create('reg-nonowner-1', jsonb_build_object(
-         'key','proof_nonowner','display_name','Nope','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10))));
+         'key','proof_nonowner','display_name','Nope','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10,'multiplier_ref','reward_multiplier'))));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'not_authorized' then
     raise exception 'ENEMY-REGISTRY PROOF FAIL: non-owner not rejected not_authorized: %', r;
   end if;
@@ -158,7 +158,7 @@ begin
   r := public.reward_profile_update('reg-update-rp-1', jsonb_build_object(
          'target_id','proof_reward','expected_revision',1,
          'display_name','Proof Reward v2',
-         'resource_grants', jsonb_build_object('metal', jsonb_build_object('base',20))));
+         'resource_grants', jsonb_build_object('metal', jsonb_build_object('base',20,'multiplier_ref','reward_multiplier'))));
   if (r->>'ok')::boolean is not true or (r->'result'->>'updated') <> 'true' then
     raise exception 'ENEMY-REGISTRY PROOF FAIL: owner reward_profile update not ok: %', r;
   end if;
@@ -202,10 +202,10 @@ begin
   select v into v_owner from regids where k = 'owner';
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
   r1 := public.reward_profile_create('reg-idem-1', jsonb_build_object(
-          'key','proof_idem','display_name','Idem A','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10))));
+          'key','proof_idem','display_name','Idem A','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10,'multiplier_ref','reward_multiplier'))));
   -- replay the SAME request_id with a DIFFERENT payload — must NOT re-apply; must return prior result.
   r2 := public.reward_profile_create('reg-idem-1', jsonb_build_object(
-          'key','proof_idem_DIFFERENT','display_name','Idem B','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',99))));
+          'key','proof_idem_DIFFERENT','display_name','Idem B','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',99,'multiplier_ref','reward_multiplier'))));
   if (r1->>'ok')::boolean is not true then
     raise exception 'ENEMY-REGISTRY PROOF FAIL: first idempotent call not ok: %', r1;
   end if;
@@ -234,7 +234,7 @@ begin
   -- proof_reward is at revision 3 (create→update→set_active); pass a WRONG expected_revision.
   r := public.reward_profile_update('reg-stale-1', jsonb_build_object(
          'target_id','proof_reward','expected_revision',99,
-         'display_name','Should Not Apply','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10))));
+         'display_name','Should Not Apply','resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10,'multiplier_ref','reward_multiplier'))));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'stale_revision'
      or (r->'details'->0->>'code') <> 'source_changed' or (r->'details'->0->>'field') <> 'revision' then
     raise exception 'ENEMY-REGISTRY PROOF FAIL: stale expected_revision not rejected precisely: %', r;
@@ -281,6 +281,173 @@ begin
   select count(*) into n from public.world_editor_audit where request_id in ('reg-badunit-1','reg-badprofile-1');
   if n <> 0 then raise exception 'ENEMY-REGISTRY PROOF FAIL: an invalid-reference create wrote % audit row(s)', n; end if;
   raise notice 'ENEMY_REGISTRY_PASS_INVALID_REFERENCE_REJECTED';
+end $$;
+
+-- ── PROOF 9b — STRICT resource_grants shape (item 1): only metal.{base,danger_coeff,multiplier_ref} ─
+do $$
+declare v_owner uuid; r jsonb; n int;
+begin
+  select v into v_owner from regids where k = 'owner';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+
+  -- unknown TOP-LEVEL resource key ('gold') is rejected even alongside a valid metal.
+  r := public.reward_profile_create('reg-rg-unknownkey-1', jsonb_build_object(
+         'key','proof_rg_unknownkey','display_name','Bad Grants',
+         'resource_grants', jsonb_build_object(
+           'metal', jsonb_build_object('base',10,'multiplier_ref','reward_multiplier'),
+           'gold',  jsonb_build_object('base',5,'multiplier_ref','reward_multiplier'))));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','invalid_resource_grants','field','resource_grants')) then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: unknown resource key not rejected: %', r;
+  end if;
+
+  -- bad multiplier_ref (not the literal 'reward_multiplier') is rejected, field-precisely.
+  r := public.reward_profile_create('reg-rg-badmult-1', jsonb_build_object(
+         'key','proof_rg_badmult','display_name','Bad Grants',
+         'resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10,'multiplier_ref','hacked_ref'))));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','invalid_resource_grants','field','metal.multiplier_ref')) then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: bad multiplier_ref not rejected: %', r;
+  end if;
+
+  -- negative base is rejected.
+  r := public.reward_profile_create('reg-rg-negbase-1', jsonb_build_object(
+         'key','proof_rg_negbase','display_name','Bad Grants',
+         'resource_grants', jsonb_build_object('metal', jsonb_build_object('base',-5,'multiplier_ref','reward_multiplier'))));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','invalid_resource_grants','field','metal.base')) then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: negative base not rejected: %', r;
+  end if;
+
+  -- nested / non-scalar base (an object) is rejected.
+  r := public.reward_profile_create('reg-rg-nested-1', jsonb_build_object(
+         'key','proof_rg_nested','display_name','Bad Grants',
+         'resource_grants', jsonb_build_object('metal', jsonb_build_object('base', jsonb_build_object('x',1), 'multiplier_ref','reward_multiplier'))));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','invalid_resource_grants','field','metal.base')) then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: nested/non-scalar base not rejected: %', r;
+  end if;
+
+  -- an UNKNOWN key under metal is rejected too (belt-and-braces on the inner whitelist).
+  r := public.reward_profile_create('reg-rg-innerkey-1', jsonb_build_object(
+         'key','proof_rg_innerkey','display_name','Bad Grants',
+         'resource_grants', jsonb_build_object('metal', jsonb_build_object('base',10,'multiplier_ref','reward_multiplier','bonus',3))));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','invalid_resource_grants','field','metal.bonus')) then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: unknown inner metal key not rejected: %', r;
+  end if;
+
+  -- NONE of the rejected shapes wrote a row or an audit row.
+  if exists (select 1 from public.reward_profiles where key like 'proof_rg_%') then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: a rejected resource_grants shape wrote a row';
+  end if;
+  select count(*) into n from public.world_editor_audit where request_id like 'reg-rg-%';
+  if n <> 0 then raise exception 'ENEMY-REGISTRY PROOF FAIL: a rejected resource_grants shape wrote % audit row(s)', n; end if;
+  raise notice 'ENEMY_REGISTRY_PASS_RESOURCE_GRANTS_STRICT';
+end $$;
+
+-- ── PROOF 9c — base_difficulty is BOUNDED [0,1000] (item 2): an out-of-range value is rejected ──────
+do $$
+declare v_owner uuid; r jsonb; v_pid uuid;
+begin
+  select v into v_owner from regids where k = 'owner';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+  select id into v_pid from public.reward_profiles where key = 'proof_reward';
+  -- 5000 is above the 1000 cap; every OTHER field is valid so base_difficulty is the sole failure.
+  r := public.enemy_archetype_create('reg-baddiff-1', jsonb_build_object(
+         'key','proof_baddiff','display_name','Too Hard','unit_type_id','pirate_synthetic',
+         'base_difficulty',5000,'difficulty_rating',1,'default_reward_profile_id', v_pid));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','base_difficulty_invalid','field','base_difficulty')) then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: out-of-range base_difficulty not rejected: %', r;
+  end if;
+  if exists (select 1 from public.enemy_archetypes where key = 'proof_baddiff') then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: an out-of-range base_difficulty create wrote a row';
+  end if;
+  raise notice 'ENEMY_REGISTRY_PASS_BASE_DIFFICULTY_BOUNDED';
+end $$;
+
+-- ── PROOF 9d — unit_type_id RESTRICTED to the enemy anchor (item 3): a player ship type is rejected ─
+do $$
+declare v_owner uuid; r jsonb; v_pid uuid; v_row record;
+begin
+  select v into v_owner from regids where k = 'owner';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+  select id into v_pid from public.reward_profiles where key = 'proof_reward';
+
+  -- 'frigate' is a REAL, FK-valid player-ship unit_type (0004) — accepted by the FK, REJECTED by the
+  -- enemy-eligibility restriction. Proves the guard goes beyond mere FK existence.
+  r := public.enemy_archetype_create('reg-playertype-1', jsonb_build_object(
+         'key','proof_playertype','display_name','Player Ship Enemy','unit_type_id','frigate',
+         'base_difficulty',10,'difficulty_rating',1,'default_reward_profile_id', v_pid));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','invalid_unit_type')) then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: a player-ship unit_type was not rejected invalid_unit_type: %', r;
+  end if;
+  if exists (select 1 from public.enemy_archetypes where key = 'proof_playertype') then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: a player-ship-type create wrote a row';
+  end if;
+
+  -- an UPDATE cannot silently move a live archetype onto an ineligible unit_type. proof_enemy (from
+  -- PROOF 4) is at revision 1 on pirate_synthetic; try to move it to 'frigate' with the right revision.
+  r := public.enemy_archetype_update('reg-move-playertype-1', jsonb_build_object(
+         'target_id','proof_enemy','expected_revision',1,
+         'display_name','Proof Enemy','unit_type_id','frigate',
+         'base_difficulty',15,'difficulty_rating',2,'default_reward_profile_id', v_pid));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not (r->'details') @> jsonb_build_array(jsonb_build_object('code','invalid_unit_type')) then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: an update moving to a player-ship unit_type was not rejected: %', r;
+  end if;
+  select * into v_row from public.enemy_archetypes where key = 'proof_enemy';
+  if v_row.unit_type_id <> 'pirate_synthetic' or v_row.revision <> 1 then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: a rejected unit_type move still mutated the archetype (unit % rev %)', v_row.unit_type_id, v_row.revision;
+  end if;
+  raise notice 'ENEMY_REGISTRY_PASS_UNIT_TYPE_RESTRICTED';
+end $$;
+
+-- ── PROOF 9e — audit exposure is INTENTIONAL (item 4): resource_grants is owner-visible sanitized ────
+-- authoring data through world_editor_audit_list (0256); reward_bundle_json / created_by / actor stay
+-- redacted per that reader's field filter. This block ASSERTS the intended visibility explicitly so it
+-- is a deliberate contract, not an accident.
+do $$
+declare v_owner uuid; r jsonb; v_item jsonb;
+begin
+  select v into v_owner from regids where k = 'owner';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+
+  -- the owner-only reader, filtered by request_id (free-text; the registry command_type is outside the
+  -- reader's enum whitelist, so we address the row by its request_id — the intended read path).
+  r := public.world_editor_audit_list(jsonb_build_object('request_id','reg-create-rp-1'));
+  if (r->>'ok')::boolean is not true or jsonb_typeof(r->'items') <> 'array' or jsonb_array_length(r->'items') <> 1 then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: audit reader did not return the create row: %', r;
+  end if;
+  v_item := r->'items'->0;
+
+  -- INTENDED: resource_grants IS returned to the owner (authoring data the owner themselves wrote).
+  if not (v_item->'after' ? 'resource_grants') or jsonb_typeof(v_item->'after'->'resource_grants') <> 'object' then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: resource_grants is NOT owner-visible in the audit after-snapshot (intended exposure regressed): %', v_item;
+  end if;
+  -- REDACTED: the reader strips reward_bundle_json + created_by, and never ships the raw actor UUID.
+  if (v_item->'after' ? 'reward_bundle_json') or (v_item->'after' ? 'created_by') then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: reward_bundle_json/created_by leaked into the audit after-snapshot: %', v_item;
+  end if;
+  if (v_item ? 'actor') then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: the raw actor UUID was shipped by the audit reader: %', v_item;
+  end if;
+  if (v_item->>'actor_is_owner') <> 'true' or not (v_item->'redactions') @> jsonb_build_array('actor') then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: the reader did not report actor_is_owner + the actor redaction: %', v_item;
+  end if;
+
+  -- the UPDATE row exposes resource_grants in BOTH before and after (still owner-visible, still redacted).
+  r := public.world_editor_audit_list(jsonb_build_object('request_id','reg-update-rp-1'));
+  v_item := r->'items'->0;
+  if not (v_item->'before' ? 'resource_grants') or not (v_item->'after' ? 'resource_grants') then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: update audit did not carry resource_grants in before+after: %', v_item;
+  end if;
+  if (v_item->'before' ? 'created_by') or (v_item->'after' ? 'created_by') or (v_item ? 'actor') then
+    raise exception 'ENEMY-REGISTRY PROOF FAIL: update audit leaked a redacted field: %', v_item;
+  end if;
+  raise notice 'ENEMY_REGISTRY_PASS_AUDIT_EXPOSURE_INTENTIONAL';
 end $$;
 
 -- ── PROOF 10 — DIRECT client writes are DENIED (no INSERT/UPDATE/DELETE grant on either table) ──────

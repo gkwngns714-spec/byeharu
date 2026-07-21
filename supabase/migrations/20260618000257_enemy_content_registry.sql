@@ -109,7 +109,12 @@ create table if not exists public.enemy_archetypes (
   faction                   text not null default 'pirate',
   unit_type_id              text not null references public.unit_types(id),
   behavior_key              text not null default 'spatial_synthetic',
-  base_difficulty           double precision not null default 0 check (base_difficulty >= 0),
+  -- base_difficulty mirrors locations.base_difficulty (default 0). The upper bound 1000 is a
+  -- defensible sanity cap: the seeded max is 25 (pirate_heavy), so 1000 leaves ~40x headroom while
+  -- still rejecting pathological / non-finite values (a double precision column could otherwise hold
+  -- NaN — which fails `<= 1000` in Postgres ordering — or +Infinity, also rejected). The server
+  -- validators enforce the same [0,1000] range before any write.
+  base_difficulty           double precision not null default 0 check (base_difficulty >= 0 and base_difficulty <= 1000),
   default_reward_profile_id uuid not null references public.reward_profiles(id),
   difficulty_rating         integer not null default 1 check (difficulty_rating >= 1),
   stat_overrides            jsonb not null default '{}'::jsonb,
@@ -142,6 +147,74 @@ insert into public.game_config (key, value, description) values
    'reads these tables; existing pirate combat byte-identical')
 on conflict (key) do nothing;
 
+-- ── 3b. _reward_grants_valid_details — THE ONE strict E0 resource_grants shape validator ───────────
+-- resource_grants is authoring data, NOT arbitrary JSON: it documents the SAME reward-formula params
+-- combat uses today (combat_logic.sql:225-229). E0 pins the exact shape so a malformed/expansive map
+-- can never be authored: the ONLY top-level key is 'metal'; within metal the ONLY keys are base
+-- (required, finite number >= 0), danger_coeff (optional, finite number >= 0) and multiplier_ref
+-- (required, the LITERAL string 'reward_multiplier'). jsonb cannot encode NaN/Infinity, so
+-- jsonb_typeof='number' already means "finite"; a nested object / non-scalar under a numeric key has
+-- jsonb_typeof<>'number' and is rejected. Returns a details[] (empty ⇒ valid) so BOTH the create and
+-- the update RPC share ONE authority (no forked copy). IMMUTABLE, pure (touches no table); called
+-- only from the SECURITY DEFINER RPCs (owned by the same role — no client execute grant needed).
+create or replace function public._reward_grants_valid_details(p_grants jsonb)
+returns jsonb
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  v_details jsonb := '[]'::jsonb;
+  v_metal   jsonb;
+  v_k       text;
+begin
+  if p_grants is null or jsonb_typeof(p_grants) <> 'object' then
+    return jsonb_build_array(jsonb_build_object(
+      'code','invalid_resource_grants','field','resource_grants','message','resource_grants must be a JSON object.'));
+  end if;
+  -- ONLY 'metal' is an allowed top-level resource key — reject any other/unknown key.
+  for v_k in select key from jsonb_each(p_grants) loop
+    if v_k <> 'metal' then
+      v_details := v_details || jsonb_build_array(jsonb_build_object(
+        'code','invalid_resource_grants','field','resource_grants',
+        'message','Unknown resource key '''||v_k||''' (only ''metal'' is allowed in E0).'));
+    end if;
+  end loop;
+  v_metal := p_grants->'metal';
+  if v_metal is null or jsonb_typeof(v_metal) <> 'object' then
+    v_details := v_details || jsonb_build_array(jsonb_build_object(
+      'code','invalid_resource_grants','field','metal','message','resource_grants.metal must be a JSON object with base + multiplier_ref.'));
+    return v_details;   -- nothing further to check under a missing/malformed metal.
+  end if;
+  -- within metal only base / danger_coeff / multiplier_ref are allowed (reject unknown/nested keys).
+  for v_k in select key from jsonb_each(v_metal) loop
+    if v_k not in ('base','danger_coeff','multiplier_ref') then
+      v_details := v_details || jsonb_build_array(jsonb_build_object(
+        'code','invalid_resource_grants','field','metal.'||v_k,'message','Unknown key '''||v_k||''' under metal (allowed: base, danger_coeff, multiplier_ref).'));
+    end if;
+  end loop;
+  -- base: REQUIRED, finite number >= 0 (a nested object / non-scalar has jsonb_typeof<>'number').
+  if jsonb_typeof(v_metal->'base') is distinct from 'number' or (v_metal->'base')::numeric < 0 then
+    v_details := v_details || jsonb_build_array(jsonb_build_object(
+      'code','invalid_resource_grants','field','metal.base','message','metal.base must be a finite number >= 0.'));
+  end if;
+  -- danger_coeff: OPTIONAL, finite number >= 0 when present.
+  if v_metal ? 'danger_coeff'
+     and (jsonb_typeof(v_metal->'danger_coeff') is distinct from 'number' or (v_metal->'danger_coeff')::numeric < 0) then
+    v_details := v_details || jsonb_build_array(jsonb_build_object(
+      'code','invalid_resource_grants','field','metal.danger_coeff','message','metal.danger_coeff, if present, must be a finite number >= 0.'));
+  end if;
+  -- multiplier_ref: REQUIRED, exactly the literal string 'reward_multiplier' (no other config ref).
+  if jsonb_typeof(v_metal->'multiplier_ref') is distinct from 'string'
+     or (v_metal->>'multiplier_ref') is distinct from 'reward_multiplier' then
+    v_details := v_details || jsonb_build_array(jsonb_build_object(
+      'code','invalid_resource_grants','field','metal.multiplier_ref','message','metal.multiplier_ref must equal the literal string ''reward_multiplier''.'));
+  end if;
+  return v_details;
+end $$;
+
+revoke all on function public._reward_grants_valid_details(jsonb) from public;  -- internal only; NO client grant
+
 -- ── 4. the SIX owner-gated write commands ─────────────────────────────────────────────────────────
 -- Each (p_request_id text, p_payload jsonb) returns a typed {ok,request_id,result|error} envelope
 -- and performs, IN ORDER: (1) FLAG GATE FIRST (reject-before-any-read: not_enabled); (2) authn
@@ -165,7 +238,6 @@ declare
   v_key     text;
   v_name    text;
   v_grants  jsonb;
-  v_entry   record;
   v_after   jsonb;
   v_result  jsonb;
   v_prior   text;
@@ -208,28 +280,9 @@ begin
     v_details := v_details || jsonb_build_array(jsonb_build_object(
       'code', 'name_required', 'field', 'display_name', 'message', 'display_name is required.'));
   end if;
+  -- resource_grants: THE ONE strict E0 shape validator (only metal.{base,danger_coeff,multiplier_ref}).
   v_grants := p_payload->'resource_grants';
-  if v_grants is null or jsonb_typeof(v_grants) <> 'object' then
-    v_details := v_details || jsonb_build_array(jsonb_build_object(
-      'code', 'resource_grants_invalid', 'field', 'resource_grants', 'message', 'resource_grants must be a JSON object.'));
-  else
-    for v_entry in select key as gk, value as gv from jsonb_each(v_grants) loop
-      if jsonb_typeof(v_entry.gv) <> 'object'
-         or jsonb_typeof(v_entry.gv->'base') is distinct from 'number'
-         or (v_entry.gv->'base')::numeric < 0 then
-        v_details := v_details || jsonb_build_array(jsonb_build_object(
-          'code', 'resource_grants_invalid', 'field', 'resource_grants',
-          'message', 'resource_grants.' || v_entry.gk || '.base must be a number >= 0.'));
-      end if;
-      if v_entry.gv ? 'danger_coeff'
-         and (jsonb_typeof(v_entry.gv->'danger_coeff') is distinct from 'number'
-              or (v_entry.gv->'danger_coeff')::numeric < 0) then
-        v_details := v_details || jsonb_build_array(jsonb_build_object(
-          'code', 'resource_grants_invalid', 'field', 'resource_grants',
-          'message', 'resource_grants.' || v_entry.gk || '.danger_coeff, if present, must be a number >= 0.'));
-      end if;
-    end loop;
-  end if;
+  v_details := v_details || public._reward_grants_valid_details(v_grants);
   if jsonb_array_length(v_details) > 0 then
     return jsonb_build_object('ok', false, 'request_id', p_request_id, 'error', 'validation_failed', 'details', v_details);
   end if;
@@ -282,7 +335,6 @@ declare
   v_target   text;
   v_name     text;
   v_grants   jsonb;
-  v_entry    record;
   v_live     record;
   v_before   jsonb;
   v_after    jsonb;
@@ -323,28 +375,9 @@ begin
     v_details := v_details || jsonb_build_array(jsonb_build_object(
       'code', 'name_required', 'field', 'display_name', 'message', 'display_name is required.'));
   end if;
+  -- resource_grants: THE ONE strict E0 shape validator (shared with reward_profile_create).
   v_grants := p_payload->'resource_grants';
-  if v_grants is null or jsonb_typeof(v_grants) <> 'object' then
-    v_details := v_details || jsonb_build_array(jsonb_build_object(
-      'code', 'resource_grants_invalid', 'field', 'resource_grants', 'message', 'resource_grants must be a JSON object.'));
-  else
-    for v_entry in select key as gk, value as gv from jsonb_each(v_grants) loop
-      if jsonb_typeof(v_entry.gv) <> 'object'
-         or jsonb_typeof(v_entry.gv->'base') is distinct from 'number'
-         or (v_entry.gv->'base')::numeric < 0 then
-        v_details := v_details || jsonb_build_array(jsonb_build_object(
-          'code', 'resource_grants_invalid', 'field', 'resource_grants',
-          'message', 'resource_grants.' || v_entry.gk || '.base must be a number >= 0.'));
-      end if;
-      if v_entry.gv ? 'danger_coeff'
-         and (jsonb_typeof(v_entry.gv->'danger_coeff') is distinct from 'number'
-              or (v_entry.gv->'danger_coeff')::numeric < 0) then
-        v_details := v_details || jsonb_build_array(jsonb_build_object(
-          'code', 'resource_grants_invalid', 'field', 'resource_grants',
-          'message', 'resource_grants.' || v_entry.gk || '.danger_coeff, if present, must be a number >= 0.'));
-      end if;
-    end loop;
-  end if;
+  v_details := v_details || public._reward_grants_valid_details(v_grants);
   if jsonb_array_length(v_details) > 0 then
     return jsonb_build_object('ok', false, 'request_id', p_request_id, 'error', 'validation_failed', 'details', v_details);
   end if;
@@ -566,9 +599,13 @@ begin
     v_details := v_details || jsonb_build_array(jsonb_build_object(
       'code', 'name_required', 'field', 'display_name', 'message', 'display_name is required.'));
   end if;
-  if jsonb_typeof(p_payload->'base_difficulty') is distinct from 'number' or (p_payload->'base_difficulty')::numeric < 0 then
+  -- base_difficulty: finite (jsonb numbers cannot be NaN/Infinity) and within [0,1000] — the same
+  -- sanity range the table CHECK enforces (seeded max is 25; 1000 is generous headroom).
+  if jsonb_typeof(p_payload->'base_difficulty') is distinct from 'number'
+     or (p_payload->'base_difficulty')::numeric < 0
+     or (p_payload->'base_difficulty')::numeric > 1000 then
     v_details := v_details || jsonb_build_array(jsonb_build_object(
-      'code', 'base_difficulty_invalid', 'field', 'base_difficulty', 'message', 'base_difficulty must be a finite number >= 0.'));
+      'code', 'base_difficulty_invalid', 'field', 'base_difficulty', 'message', 'base_difficulty must be a finite number in [0, 1000].'));
   else
     v_diff := (p_payload->'base_difficulty')::numeric;
   end if;
@@ -580,9 +617,16 @@ begin
   else
     v_rating := (p_payload->'difficulty_rating')::numeric;
   end if;
-  if v_unit = '' or not exists (select 1 from public.unit_types where id = v_unit) then
+  -- unit_type_id: RESTRICTED to the synthetic-enemy identity anchor 'pirate_synthetic' (0234). The FK
+  -- alone would accept ANY unit_types row (incl. a real player-ship type like 'frigate'); E0 enemies
+  -- are only ever the synthetic anchor. unit_types has no explicit enemy-eligibility column
+  -- (status='disabled' is a weak signal — it is the anchor's incidental state, not an eligibility
+  -- flag), so we pin the exact id. An update re-runs this, so an archetype can never be moved onto an
+  -- ineligible unit_type. The existence check is belt-and-braces (the anchor is seeded by 0234).
+  if v_unit is distinct from 'pirate_synthetic'
+     or not exists (select 1 from public.unit_types where id = v_unit) then
     v_details := v_details || jsonb_build_array(jsonb_build_object(
-      'code', 'invalid_unit_type', 'field', 'unit_type_id', 'message', 'unit_type_id must reference an existing unit_types row.'));
+      'code', 'invalid_unit_type', 'field', 'unit_type_id', 'message', 'unit_type_id must be the synthetic-enemy anchor ''pirate_synthetic''.'));
   end if;
   begin
     v_profile := nullif(btrim(coalesce(p_payload->>'default_reward_profile_id', '')), '')::uuid;
@@ -703,9 +747,13 @@ begin
     v_details := v_details || jsonb_build_array(jsonb_build_object(
       'code', 'name_required', 'field', 'display_name', 'message', 'display_name is required.'));
   end if;
-  if jsonb_typeof(p_payload->'base_difficulty') is distinct from 'number' or (p_payload->'base_difficulty')::numeric < 0 then
+  -- base_difficulty: finite (jsonb numbers cannot be NaN/Infinity) and within [0,1000] — the same
+  -- sanity range the table CHECK enforces (seeded max is 25; 1000 is generous headroom).
+  if jsonb_typeof(p_payload->'base_difficulty') is distinct from 'number'
+     or (p_payload->'base_difficulty')::numeric < 0
+     or (p_payload->'base_difficulty')::numeric > 1000 then
     v_details := v_details || jsonb_build_array(jsonb_build_object(
-      'code', 'base_difficulty_invalid', 'field', 'base_difficulty', 'message', 'base_difficulty must be a finite number >= 0.'));
+      'code', 'base_difficulty_invalid', 'field', 'base_difficulty', 'message', 'base_difficulty must be a finite number in [0, 1000].'));
   else
     v_diff := (p_payload->'base_difficulty')::numeric;
   end if;
@@ -717,9 +765,16 @@ begin
   else
     v_rating := (p_payload->'difficulty_rating')::numeric;
   end if;
-  if v_unit = '' or not exists (select 1 from public.unit_types where id = v_unit) then
+  -- unit_type_id: RESTRICTED to the synthetic-enemy identity anchor 'pirate_synthetic' (0234). The FK
+  -- alone would accept ANY unit_types row (incl. a real player-ship type like 'frigate'); E0 enemies
+  -- are only ever the synthetic anchor. unit_types has no explicit enemy-eligibility column
+  -- (status='disabled' is a weak signal — it is the anchor's incidental state, not an eligibility
+  -- flag), so we pin the exact id. An update re-runs this, so an archetype can never be moved onto an
+  -- ineligible unit_type. The existence check is belt-and-braces (the anchor is seeded by 0234).
+  if v_unit is distinct from 'pirate_synthetic'
+     or not exists (select 1 from public.unit_types where id = v_unit) then
     v_details := v_details || jsonb_build_array(jsonb_build_object(
-      'code', 'invalid_unit_type', 'field', 'unit_type_id', 'message', 'unit_type_id must reference an existing unit_types row.'));
+      'code', 'invalid_unit_type', 'field', 'unit_type_id', 'message', 'unit_type_id must be the synthetic-enemy anchor ''pirate_synthetic''.'));
   end if;
   begin
     v_profile := nullif(btrim(coalesce(p_payload->>'default_reward_profile_id', '')), '')::uuid;
