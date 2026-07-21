@@ -5,6 +5,22 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-21 — OPERATIONAL RECORD: **World Editor V1.5 audit-read backend DEPLOYED & PRODUCTION-PROVEN** (migration `0256`, prod head **0256**)
+
+**Deployed migration:** `20260618000256_worldeditor_audit_read.sql` (owner-only audit reader `public.world_editor_audit_list(jsonb)`). **PRs:** docs closure `#252` (merge `335d948`) + backend `#253` (merge `5e234e1`), both admin-merged 2026-07-21. **Deployment run:** `29792617330` @ `5e234e1` → `success` (job `88517404749`, 26s). **Production migration head:** `0256` (recorded once; `0253` remains reserved/absent).
+
+**Function security & privilege posture (verified on target):** `SECURITY DEFINER`; `search_path=''`; volatility `STABLE`; owner role `postgres`; in-body `is_owner()` authorization. EXECUTE: `PUBLIC` none, `anon` none, `authenticated` only. `world_editor_audit` remains RLS-enabled with **0 policies** and **no client SELECT** (anon/authenticated) — the reader is the sole read path; no table grant, no unrelated grant/policy change.
+
+**Bounded read-only production proof — PASS:** anonymous → `not_authenticated`; authenticated non-owner → `not_authorized`; owner small-limit → bounded page; exact request-ID lookup on the two existing canary audit rows; empty filter → clean empty page; keyset cursor continuation (page 1 → page 2) with no repeated item. Sanitization (key-level): **0** snapshots contain `reward_bundle_json`, `created_by`, or raw `actor` — `actor_is_owner` + `redactions[]` returned instead (`created_by` appears only as a redaction label, never a field); create record `before = null`; unpublish record sanitized before/after (`active`→`inactive`); `boundary_wkt` present as the intended owner-visible geometry. **Read-only invariance:** `world_editor_audit` row count `2 → 2` (the reader wrote nothing).
+
+**Before/after audit row count:** 2 → 2. **Not observable in current production dataset (covered by disposable proof):** a *second* full pagination page beyond 2 rows; edit-command (non-zone) snapshots — the disposable proof covers both.
+
+**Verdict:** `WORLD EDITOR V1.5 AUDIT-READ BACKEND: PRODUCTION-PROVEN`.
+
+**Residual risks:** no index on `world_editor_audit(created_at, command_type)` — fine at single-owner tens-to-hundreds-of-rows scale, revisit if the ledger grows; the reader returns `boundary_wkt`/coords (owner-visible, needed for the upcoming history→map focus). Next: the read-only frontend History UI on a separate branch (no migration).
+
+---
+
 ## 2026-07-20 — MILESTONE: **WORLD EDITOR FOUR-DOMAIN AUTHORING V1 — COMPLETE** (full owner-gated publish surface deployed, migrations 0244→0255, prod head **0255**; reversible zone lifecycle proven live in production)
 
 **What this entry is.** The close-out of the World Editor publishing program: every publish domain is now an owner-gated, server-authoritative write RPC through the `0243` spine, deployed live, and the zone lifecycle (create → live → unpublish → inert) was proven end-to-end against production under a controlled canary. This completes **World Editor four-domain authoring V1**.
