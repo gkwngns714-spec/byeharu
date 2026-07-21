@@ -130,7 +130,7 @@ as $$
            (p_grants->'metal'->>'base')::double precision
            * greatest(p_reward_tier, 1)
            * (1 + coalesce((p_grants->'metal'->>'danger_coeff')::double precision, 0) * p_danger)
-           * public.cfg_num(p_grants->'metal'->>'multiplier_ref'));
+           * coalesce(public.cfg_num(p_grants->'metal'->>'multiplier_ref'), 1.0));
 $$;
 
 comment on function public.resolve_encounter_reward_inputs(jsonb, integer, integer) is
@@ -146,7 +146,7 @@ grant execute on function public.resolve_encounter_reward_inputs(jsonb, integer,
 -- Reads the E0-E2 content and returns ONE resolved plan jsonb, or NULL when the resolver is dark / the
 -- location is not live / no active binding / cap or cooldown blocks / no spawnable unit / no active
 -- reward profile. Determinism law (0041/0186): hashtextextended over ':enc:' salts only — NO
--- random()/setseed; every order-by is byte-order-pinned (collate "C"). STABLE (reads only).
+-- random()/setseed; every order-by is byte-order-pinned (collate pg_catalog."C"). STABLE (reads only).
 create or replace function public.resolve_location_encounter(p_location_id uuid)
 returns jsonb
 language plpgsql
@@ -155,20 +155,27 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_ep_id         uuid;
-  v_cap           integer;
-  v_cooldown      integer;
-  v_reward_over   uuid;
-  v_fleet_id      uuid;
-  v_active_cnt    integer;
-  v_units         jsonb := '[]'::jsonb;
-  v_m             record;
-  v_count         integer;
-  v_range         integer;
-  v_is_elite      boolean;
-  v_reward_id     uuid;
-  v_reward_grants jsonb;
-  v_first_arch    uuid;
+  v_ep_id           uuid;
+  v_cap             integer;
+  v_cooldown        integer;
+  v_reward_over     uuid;
+  v_fleet_id        uuid;
+  v_active_cnt      integer;
+  v_units           jsonb := '[]'::jsonb;
+  v_rolled          jsonb := '[]'::jsonb;   -- pass-1 per-archetype rolls {…, count} before the clamp
+  v_elem            jsonb;
+  v_m               record;
+  v_count           integer;
+  v_range           integer;
+  v_is_elite        boolean;
+  v_total           integer := 0;           -- running sum of rolled counts (for the ceiling clamp)
+  v_ceiling         integer;
+  v_i               integer;
+  v_c               integer;
+  v_reward_id       uuid;
+  v_reward_grants   jsonb;
+  v_shared_reward   uuid;                    -- the ONE default reward shared by every spawning archetype
+  v_reward_conflict boolean := false;        -- true ⇒ spawning archetypes disagree (no arbitrary pick)
 begin
   -- (a) QUAD-FLAG gate — inert unless all four are lit (the E2->E1->E0 chain + this slice's own flag).
   if not (public.cfg_bool('enemy_content_registry_enabled')
@@ -183,7 +190,7 @@ begin
     return null;
   end if;
 
-  -- (c) deterministic WEIGHTED pick of ONE active binding for this location (order by id::text collate "C",
+  -- (c) deterministic WEIGHTED pick of ONE active binding for this location (order by id::text collate pg_catalog."C",
   --     salt p_location_id||':enc:binding'). Cumulative-weight walk: the first row whose running weight
   --     total reaches the hashed fraction of the grand total. None ⇒ NULL.
   select pick.encounter_profile_id into v_ep_id
@@ -249,6 +256,8 @@ begin
     return null;
   end if;
 
+  -- PASS 1: roll each ACTIVE archetype member's count + elite (skip INACTIVE archetypes). Collect the
+  -- rolls (incl. default_reward_profile_id) so the TOTAL can be clamped BEFORE units are materialised.
   for v_m in
     select fm.enemy_archetype_id, fm.min_count, fm.max_count, fm.elite_chance,
            a.unit_type_id, a.base_difficulty, a.stat_overrides, a.default_reward_profile_id
@@ -257,28 +266,74 @@ begin
      where fm.fleet_template_id = v_fleet_id and a.active is true
      order by fm.enemy_archetype_id::text collate pg_catalog."C"
   loop
-    if v_first_arch is null then
-      v_first_arch := v_m.default_reward_profile_id;
-    end if;
     v_range := v_m.max_count - v_m.min_count + 1;
     v_count := v_m.min_count
                + (((hashtextextended(p_location_id::text || ':enc:count:' || v_m.enemy_archetype_id::text, 0) % v_range) + v_range) % v_range)::integer;
     v_is_elite := (((hashtextextended(p_location_id::text || ':enc:elite:' || v_m.enemy_archetype_id::text, 0) % 1000000000) + 1000000000) % 1000000000)::double precision
                   / 1000000000.0 < v_m.elite_chance;
-    v_units := v_units || jsonb_build_array(jsonb_build_object(
+    v_rolled := v_rolled || jsonb_build_array(jsonb_build_object(
       'enemy_archetype_id', v_m.enemy_archetype_id,
       'unit_type_id', v_m.unit_type_id,
       'base_difficulty', v_m.base_difficulty,
       'count', v_count,
       'stat_overrides', v_m.stat_overrides,
-      'is_elite', v_is_elite));
+      'is_elite', v_is_elite,
+      'default_reward_profile_id', v_m.default_reward_profile_id));
+    v_total := v_total + v_count;
   end loop;
-  if jsonb_array_length(v_units) = 0 then
-    return null;   -- every archetype inactive ⇒ nothing spawnable ⇒ NOT a resolved encounter.
+
+  -- (f2) CLAMP the TOTAL unit count to the synthetic ceiling (cron-stall guard: the spatial targeting
+  --      step is O(n^2) in live units, so an unbounded authored fleet could blow statement_timeout and
+  --      abort the WHOLE combat cron). Trim deterministically from the LAST-sorted archetype downward
+  --      until the total fits — reuse the synthetic arm's own cap key so authored + synthetic waves share
+  --      ONE unit ceiling.
+  v_ceiling := greatest(1, coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::integer);
+  if v_total > v_ceiling then
+    for v_i in reverse (jsonb_array_length(v_rolled) - 1) .. 0 loop
+      exit when v_total <= v_ceiling;
+      v_c := (v_rolled->v_i->>'count')::integer;
+      if v_c > 0 then
+        v_count := greatest(0, v_c - (v_total - v_ceiling));
+        v_total := v_total - (v_c - v_count);
+        v_rolled := jsonb_set(v_rolled, array[v_i::text, 'count'], to_jsonb(v_count));
+      end if;
+    end loop;
   end if;
 
-  -- (g) effective reward profile = ep override else the FIRST archetype's default; must be active.
-  v_reward_id := coalesce(v_reward_over, v_first_arch);
+  -- (f3) MATERIALISE units — skip any archetype whose (possibly clamped) count is 0 (FIX 4: no phantom
+  --      1-unit spawn) — and determine the SHARED reward profile over the SPAWNING archetypes only.
+  for v_i in 0 .. jsonb_array_length(v_rolled) - 1 loop
+    v_elem := v_rolled -> v_i;
+    if (v_elem->>'count')::integer <= 0 then
+      continue;
+    end if;
+    if v_shared_reward is null then
+      v_shared_reward := (v_elem->>'default_reward_profile_id')::uuid;
+    elsif (v_elem->>'default_reward_profile_id')::uuid is distinct from v_shared_reward then
+      v_reward_conflict := true;
+    end if;
+    v_units := v_units || jsonb_build_array(jsonb_build_object(
+      'enemy_archetype_id', (v_elem->>'enemy_archetype_id')::uuid,
+      'unit_type_id', v_elem->>'unit_type_id',
+      'base_difficulty', (v_elem->>'base_difficulty')::double precision,
+      'count', (v_elem->>'count')::integer,
+      'stat_overrides', v_elem->'stat_overrides',
+      'is_elite', (v_elem->>'is_elite')::boolean));
+  end loop;
+  if jsonb_array_length(v_units) = 0 then
+    return null;   -- every archetype inactive / rolled-or-clamped to 0 ⇒ nothing spawnable ⇒ NOT resolved.
+  end if;
+
+  -- (g) reward profile: the encounter OVERRIDE if set; else the ONE default shared by every SPAWNING
+  --     archetype; else — divergent defaults with no override — the encounter is NOT runtime-eligible
+  --     (return NULL ⇒ legacy synthetic wave). NO arbitrary pick. The chosen profile must be active.
+  if v_reward_over is not null then
+    v_reward_id := v_reward_over;
+  elsif v_reward_conflict then
+    return null;
+  else
+    v_reward_id := v_shared_reward;
+  end if;
   select rp.resource_grants into v_reward_grants
     from public.reward_profiles rp
    where rp.id = v_reward_id and rp.active is true;
@@ -420,6 +475,7 @@ declare
   -- ██ E3 (0260) — the encounter-resolver working set ██
   v_resolver_engaged      boolean;   -- read ONCE per invocation (the quad-flag AND); see the one-read block
   v_plan                  jsonb;     -- the resolved plan for THIS spawn, or NULL (resolver dark / no plan)
+  v_fresh_resolve         boolean;   -- true only on the FIRST resolve of an encounter (gates tag + ledger)
 begin
   v_tick_secs     := coalesce(cfg_num('combat_tick_seconds'), 3);
   v_retreat_delay := coalesce(cfg_num('retreat_delay_seconds'), 8);
@@ -570,10 +626,21 @@ begin
           update combat_encounters set tick_number=v_tick, danger_level=v_danger, last_resolved_at=now(), updated_at=now() where id=e.id;
           v_count := v_count + 1;
         else
-          -- E3 (0260): resolve an authored encounter for this location when the quad-flag is lit; a NULL
-          -- plan (resolver dark / no active binding / cap / cooldown / no unit) falls straight through to
-          -- the VERBATIM pre-E3 synthetic wave below — byte-identical when the resolver is off.
-          if v_resolver_engaged then v_plan := public.resolve_location_encounter(e.location_id); end if;
+          -- E3 (0260): a resolved encounter REUSES its own plan on every wave (resolved_plan_json set) —
+          -- never re-resolving, which with cap=1 would count the encounter against itself and degrade
+          -- wave 2+ to a synthetic wave while the sticky tag still paid the resolved reward. Only a FRESH
+          -- encounter (tag NULL) calls the resolver, so cap/cooldown apply just at first resolution
+          -- (correctly excluding self — the tag is written AFTER the first spawn). A NULL plan (resolver
+          -- dark / no binding / cap / cooldown / no unit) falls through to the VERBATIM pre-E3 wave below.
+          v_fresh_resolve := false;
+          if v_resolver_engaged then
+            if e.resolved_plan_json is not null then
+              v_plan := e.resolved_plan_json;
+            else
+              v_plan := public.resolve_location_encounter(e.location_id);
+              v_fresh_resolve := true;
+            end if;
+          end if;
           if v_resolver_engaged and v_plan is not null then
             -- E3 (0260) RESOLVED WAVE: instantiate the authored plan. SAME pacing formulas as the
             -- synthetic arm (690-703), substituting each unit-archetype base_difficulty and the
@@ -586,7 +653,8 @@ begin
             delete from combat_units where encounter_id = e.id and side = 'enemy';
             v_e_before := 0;
             for v_weapon in select value from jsonb_array_elements(v_plan->'units') loop
-              v_enemy_count := greatest(1, (v_weapon->>'count')::integer);
+              v_enemy_count := (v_weapon->>'count')::integer;
+              continue when v_enemy_count <= 0;   -- FIX 4: a 0-count plan unit spawns nothing (no phantom 1)
               v_enemy_hp     := (v_weapon->>'base_difficulty')::double precision * coalesce(cfg_num('enemy_hp_base'),14)
                                 * (1 + v_danger * coalesce(cfg_num('enemy_hp_danger_scale'),0.6)) * v_variance;
               v_enemy_attack := (v_weapon->>'base_difficulty')::double precision * coalesce(cfg_num('enemy_attack_base'),1.0)
@@ -613,11 +681,15 @@ begin
               v_e_before := v_e_before + v_enemy_hp;
             end loop;
             v_enemy_hp := v_e_before;   -- the wave TOTAL (enemy_integrity_max mirrors the synthetic arm)
-            update combat_encounters set resolved_plan_json = v_plan where id = e.id;
-            insert into encounter_runtime_state (location_id, encounter_profile_id, last_spawn_at, active_count)
-              values (e.location_id, (v_plan->>'encounter_profile_id')::uuid, now(), 1)
-              on conflict (location_id, encounter_profile_id)
-              do update set last_spawn_at = now(), active_count = encounter_runtime_state.active_count + 1;
+            if v_fresh_resolve then
+              -- tag + the cooldown/active-count ledger are written ONLY at first resolution; a reused
+              -- plan (wave 2+) leaves both untouched so the cooldown anchors on the FIRST spawn only.
+              update combat_encounters set resolved_plan_json = v_plan where id = e.id;
+              insert into encounter_runtime_state (location_id, encounter_profile_id, last_spawn_at, active_count)
+                values (e.location_id, (v_plan->>'encounter_profile_id')::uuid, now(), 1)
+                on conflict (location_id, encounter_profile_id)
+                do update set last_spawn_at = now(), active_count = encounter_runtime_state.active_count + 1;
+            end if;
             if v_log_events then
               insert into combat_events (encounter_id, player_id, tick_number, seq, event_type, source, target, payload_json)
                 values (e.id, e.player_id, v_tick, v_seq, 'wave_spawned', 'pirate', 'player',
@@ -1197,6 +1269,12 @@ begin
      is distinct from round(coalesce(public.cfg_num('reward_metal_base'),10) * greatest(1,1)
                             * (1 + coalesce(public.cfg_num('reward_danger_scale'),0.25) * 1) * coalesce(public.cfg_num('reward_multiplier'),1.0)) then
     raise exception 'ENCOUNTER-RESOLVER self-assert FAIL: resolve_encounter_reward_inputs is not algebraically the legacy reward formula'; end if;
+
+  -- (7b) reward adapter NULL-safety: a missing multiplier_ref key must yield 1.0 (the coalesce guard),
+  --      never NULL (which would poison the wave-clear reward on the resolved path).
+  if public.resolve_encounter_reward_inputs('{"metal":{"base":10,"multiplier_ref":"__er_no_such_key__"}}'::jsonb, 1, 1) is null then
+    raise exception 'ENCOUNTER-RESOLVER self-assert FAIL: resolve_encounter_reward_inputs returns NULL for a missing multiplier_ref (coalesce guard lost)';
+  end if;
 
   -- (8) ACL: the tick + the two resolver functions stay non-client-executable (engine-only).
   if has_function_privilege('authenticated', 'public.process_combat_ticks()', 'execute')

@@ -22,8 +22,9 @@
 -- Self-rolling-back (begin;...rollback;): flips every gate flag ONLY inside the txn, keeps ZERO state.
 --
 -- PASS markers: ER_PASS_VERBATIM, ER_PASS_FLAGOFF_ROWS, ER_PASS_FLAGOFF_REWARD, ER_PASS_RESOLVED_PLAN,
--- ER_PASS_NULL_FLAGS, ER_PASS_NULL_BINDING, ER_PASS_NULL_INACTIVE_LOC, ER_PASS_CAP, ER_PASS_COOLDOWN,
--- ER_PASS_DETERMINISM, ER_PASS_REWARD_UNTOUCHED, "ENCOUNTER-RESOLVER PROOF PASSED".
+-- ER_PASS_MULTIWAVE, ER_PASS_NULL_FLAGS, ER_PASS_NULL_BINDING, ER_PASS_NULL_INACTIVE_LOC, ER_PASS_CAP,
+-- ER_PASS_COOLDOWN, ER_PASS_DETERMINISM, ER_PASS_REWARD_SHARED, ER_PASS_UNIT_CLAMP, ER_PASS_SKIP_ZERO,
+-- ER_PASS_REWARD_UNTOUCHED, "ENCOUNTER-RESOLVER PROOF PASSED".
 
 \set ON_ERROR_STOP on
 
@@ -165,6 +166,176 @@ begin
   v_ep_cd := (r->'result'->>'id')::uuid;
 
   insert into erfx values ('rp', v_rp), ('arch', v_arch), ('fleet', v_fleet), ('ep', v_ep), ('ep_cd', v_ep_cd);
+end $$;
+
+-- ════════ AUTHOR multi-archetype Fix-test content (reward sharing / clamp / skip-zero) ═══════════════
+do $$
+declare uZ uuid := (select v from erfx where k='uZ'); r jsonb;
+  v_rp uuid := (select v from erfx where k='rp'); v_arch uuid := (select v from erfx where k='arch');
+  v_rp2 uuid; v_arch2 uuid; v_arch3 uuid; v_archbig uuid;
+  v_f_same uuid; v_f_diff uuid; v_f_big uuid; v_f_zero uuid;
+  v_ep_same uuid; v_ep_diff uuid; v_ep_ovr uuid; v_ep_big uuid; v_ep_zero uuid;
+begin
+  -- a SECOND reward profile (base 30) — the DIVERGENT default for the reward-sharing test.
+  r := pg_temp.call_as(uZ, 'public.reward_profile_create(''erp-rp-2'', ''{"key":"erp_reward2","display_name":"ERP Reward 2","resource_grants":{"metal":{"base":30,"danger_coeff":0.25,"multiplier_ref":"reward_multiplier"}}}''::jsonb)');
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL rp2: %', r; end if;
+  v_rp2 := (r->'result'->>'id')::uuid;
+
+  -- er_arch2 shares er_reward (SAME default); er_arch3 defaults er_reward2 (DIVERGENT); er_arch_big shares er_reward.
+  r := pg_temp.call_as(uZ, format('public.enemy_archetype_create(%L, %L::jsonb)', 'erp-arch-2',
+         jsonb_build_object('key','erp_arch2','display_name','ERP Arch2','unit_type_id','pirate_synthetic','base_difficulty',5,'difficulty_rating',1,'default_reward_profile_id',v_rp::text)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL arch2: %', r; end if;
+  v_arch2 := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.enemy_archetype_create(%L, %L::jsonb)', 'erp-arch-3',
+         jsonb_build_object('key','erp_arch3','display_name','ERP Arch3','unit_type_id','pirate_synthetic','base_difficulty',5,'difficulty_rating',1,'default_reward_profile_id',v_rp2::text)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL arch3: %', r; end if;
+  v_arch3 := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.enemy_archetype_create(%L, %L::jsonb)', 'erp-arch-big',
+         jsonb_build_object('key','erp_arch_big','display_name','ERP ArchBig','unit_type_id','pirate_synthetic','base_difficulty',5,'difficulty_rating',1,'default_reward_profile_id',v_rp::text)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL archbig: %', r; end if;
+  v_archbig := (r->'result'->>'id')::uuid;
+
+  -- fleets: SAME-reward pair, DIVERGENT-reward pair, an OVER-ceiling single (10 > 6), a ZERO+ONE pair.
+  r := pg_temp.call_as(uZ, format('public.enemy_fleet_template_create(%L, %L::jsonb)', 'erp-fleet-same',
+         jsonb_build_object('key','erp_fleet_same','display_name','ERP Fleet Same','members', jsonb_build_array(
+           jsonb_build_object('enemy_archetype_id',v_arch::text,'min_count',1,'max_count',1,'weight',1,'elite_chance',0),
+           jsonb_build_object('enemy_archetype_id',v_arch2::text,'min_count',1,'max_count',1,'weight',1,'elite_chance',0)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL fleet_same: %', r; end if;
+  v_f_same := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.enemy_fleet_template_create(%L, %L::jsonb)', 'erp-fleet-diff',
+         jsonb_build_object('key','erp_fleet_diff','display_name','ERP Fleet Diff','members', jsonb_build_array(
+           jsonb_build_object('enemy_archetype_id',v_arch::text,'min_count',1,'max_count',1,'weight',1,'elite_chance',0),
+           jsonb_build_object('enemy_archetype_id',v_arch3::text,'min_count',1,'max_count',1,'weight',1,'elite_chance',0)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL fleet_diff: %', r; end if;
+  v_f_diff := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.enemy_fleet_template_create(%L, %L::jsonb)', 'erp-fleet-big',
+         jsonb_build_object('key','erp_fleet_big','display_name','ERP Fleet Big','members', jsonb_build_array(
+           jsonb_build_object('enemy_archetype_id',v_archbig::text,'min_count',10,'max_count',10,'weight',1,'elite_chance',0)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL fleet_big: %', r; end if;
+  v_f_big := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.enemy_fleet_template_create(%L, %L::jsonb)', 'erp-fleet-zero',
+         jsonb_build_object('key','erp_fleet_zero','display_name','ERP Fleet Zero','members', jsonb_build_array(
+           jsonb_build_object('enemy_archetype_id',v_arch3::text,'min_count',0,'max_count',0,'weight',1,'elite_chance',0),
+           jsonb_build_object('enemy_archetype_id',v_arch::text,'min_count',1,'max_count',1,'weight',1,'elite_chance',0)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL fleet_zero: %', r; end if;
+  v_f_zero := (r->'result'->>'id')::uuid;
+
+  -- encounter profiles (cap 5, cooldown 0). erp_ep_ovr sets reward_override_id = er_reward (override wins).
+  r := pg_temp.call_as(uZ, format('public.encounter_profile_create(%L, %L::jsonb)', 'erp-ep-same',
+         jsonb_build_object('key','erp_ep_same','display_name','ERP EP Same','active_encounter_cap',5,'cooldown_seconds',0,
+           'members', jsonb_build_array(jsonb_build_object('fleet_template_id',v_f_same::text,'weight',1)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL ep_same: %', r; end if;
+  v_ep_same := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.encounter_profile_create(%L, %L::jsonb)', 'erp-ep-diff',
+         jsonb_build_object('key','erp_ep_diff','display_name','ERP EP Diff','active_encounter_cap',5,'cooldown_seconds',0,
+           'members', jsonb_build_array(jsonb_build_object('fleet_template_id',v_f_diff::text,'weight',1)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL ep_diff: %', r; end if;
+  v_ep_diff := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.encounter_profile_create(%L, %L::jsonb)', 'erp-ep-ovr',
+         jsonb_build_object('key','erp_ep_ovr','display_name','ERP EP Ovr','active_encounter_cap',5,'cooldown_seconds',0,'reward_override_id',v_rp::text,
+           'members', jsonb_build_array(jsonb_build_object('fleet_template_id',v_f_diff::text,'weight',1)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL ep_ovr: %', r; end if;
+  v_ep_ovr := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.encounter_profile_create(%L, %L::jsonb)', 'erp-ep-big',
+         jsonb_build_object('key','erp_ep_big','display_name','ERP EP Big','active_encounter_cap',5,'cooldown_seconds',0,
+           'members', jsonb_build_array(jsonb_build_object('fleet_template_id',v_f_big::text,'weight',1)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL ep_big: %', r; end if;
+  v_ep_big := (r->'result'->>'id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.encounter_profile_create(%L, %L::jsonb)', 'erp-ep-zero',
+         jsonb_build_object('key','erp_ep_zero','display_name','ERP EP Zero','active_encounter_cap',5,'cooldown_seconds',0,
+           'members', jsonb_build_array(jsonb_build_object('fleet_template_id',v_f_zero::text,'weight',1)))::text));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTHOR FAIL ep_zero: %', r; end if;
+  v_ep_zero := (r->'result'->>'id')::uuid;
+
+  insert into erfx values ('rp2', v_rp2), ('arch2', v_arch2), ('arch3', v_arch3), ('archbig', v_archbig),
+    ('ep_same', v_ep_same), ('ep_diff', v_ep_diff), ('ep_ovr', v_ep_ovr), ('ep_big', v_ep_big), ('ep_zero', v_ep_zero);
+end $$;
+
+-- ════════ Fix-test fixture locations + bindings ══════════════════════════════════════════════════════
+do $$
+declare uZ uuid := (select v from erfx where k='uZ'); r jsonb; v_zone uuid;
+  v_ls uuid; v_ld uuid; v_lo uuid; v_lb uuid; v_lz uuid;
+begin
+  select id into v_zone from public.zones limit 1;
+  insert into public.locations (zone_id, name, location_type, x, y, base_difficulty, status)
+    values (v_zone, 'ERP Loc Same', 'pirate_hunt', 960, 960, 7, 'active') returning id into v_ls;
+  insert into public.locations (zone_id, name, location_type, x, y, base_difficulty, status)
+    values (v_zone, 'ERP Loc Diff', 'pirate_hunt', 961, 961, 7, 'active') returning id into v_ld;
+  insert into public.locations (zone_id, name, location_type, x, y, base_difficulty, status)
+    values (v_zone, 'ERP Loc Ovr', 'pirate_hunt', 962, 962, 7, 'active') returning id into v_lo;
+  insert into public.locations (zone_id, name, location_type, x, y, base_difficulty, status)
+    values (v_zone, 'ERP Loc Big', 'pirate_hunt', 963, 963, 7, 'active') returning id into v_lb;
+  insert into public.locations (zone_id, name, location_type, x, y, base_difficulty, status)
+    values (v_zone, 'ERP Loc Zero', 'pirate_hunt', 964, 964, 7, 'active') returning id into v_lz;
+  insert into erfx values ('loc_same', v_ls), ('loc_diff', v_ld), ('loc_ovr', v_lo), ('loc_big', v_lb), ('loc_zero', v_lz);
+
+  r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-same',
+         jsonb_build_object('location_id', v_ls::text, 'encounter_profile_id', (select v from erfx where k='ep_same')::text, 'weight', 1)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL same: %', r; end if;
+  r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-diff',
+         jsonb_build_object('location_id', v_ld::text, 'encounter_profile_id', (select v from erfx where k='ep_diff')::text, 'weight', 1)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL diff: %', r; end if;
+  r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-ovr',
+         jsonb_build_object('location_id', v_lo::text, 'encounter_profile_id', (select v from erfx where k='ep_ovr')::text, 'weight', 1)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL ovr: %', r; end if;
+  r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-big',
+         jsonb_build_object('location_id', v_lb::text, 'encounter_profile_id', (select v from erfx where k='ep_big')::text, 'weight', 1)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL big: %', r; end if;
+  r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-zero',
+         jsonb_build_object('location_id', v_lz::text, 'encounter_profile_id', (select v from erfx where k='ep_zero')::text, 'weight', 1)::text));
+  if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL zero: %', r; end if;
+end $$;
+
+-- ════════ FIX 1/3/4 direct resolver tests: reward sharing, unit clamp, skip-zero ════════════════════
+do $$
+declare p jsonb;
+begin
+  -- FIX 1 (a): both spawning archetypes share ONE default reward ⇒ resolved (reward = the shared profile).
+  p := public.resolve_location_encounter((select v from erfx where k='loc_same'));
+  if p is null then raise exception 'ER PROOF FAIL SHARED: same-default fleet did not resolve'; end if;
+  if jsonb_array_length(p->'units') <> 2 or (p->'reward_profile'->>'id') <> (select v from erfx where k='rp')::text then
+    raise exception 'ER PROOF FAIL SHARED: expected 2 units + the shared reward, got %', p;
+  end if;
+  -- FIX 1 (b): DIVERGENT defaults, NO override ⇒ NOT runtime-eligible ⇒ NULL (falls back to legacy).
+  if public.resolve_location_encounter((select v from erfx where k='loc_diff')) is not null then
+    raise exception 'ER PROOF FAIL SHARED: divergent-default fleet with no override did NOT return NULL';
+  end if;
+  -- FIX 1 (c): divergent defaults WITH an encounter reward_override ⇒ resolves via the override.
+  p := public.resolve_location_encounter((select v from erfx where k='loc_ovr'));
+  if p is null or (p->'reward_profile'->>'id') <> (select v from erfx where k='rp')::text then
+    raise exception 'ER PROOF FAIL SHARED: the override did not decide the reward: %', p;
+  end if;
+  raise notice 'ER_PASS_REWARD_SHARED';
+end $$;
+
+do $$
+declare p jsonb; v_ceiling int := coalesce(public.cfg_num('enemy_synthetic_max_units'),6)::int; v_sum int;
+begin
+  -- FIX 3: a fleet rolling 10 units is clamped to the synthetic ceiling (6).
+  p := public.resolve_location_encounter((select v from erfx where k='loc_big'));
+  if p is null then raise exception 'ER PROOF FAIL CLAMP: over-ceiling fleet did not resolve'; end if;
+  select coalesce(sum((u->>'count')::int),0) into v_sum from jsonb_array_elements(p->'units') u;
+  if v_sum <> v_ceiling then
+    raise exception 'ER PROOF FAIL CLAMP: total units % not clamped to the ceiling % (rolled 10)', v_sum, v_ceiling;
+  end if;
+  raise notice 'ER_PASS_UNIT_CLAMP';
+end $$;
+
+do $$
+declare p jsonb;
+begin
+  -- FIX 4: a member rolling count 0 is SKIPPED (not forced to 1); only the count-1 archetype spawns, and
+  -- the skipped archetype's DIVERGENT default reward does NOT poison the reward sharing.
+  p := public.resolve_location_encounter((select v from erfx where k='loc_zero'));
+  if p is null then raise exception 'ER PROOF FAIL SKIPZERO: zero+one fleet did not resolve'; end if;
+  if jsonb_array_length(p->'units') <> 1 or (p->'units'->0->>'enemy_archetype_id') <> (select v from erfx where k='arch')::text
+     or (p->'units'->0->>'count') <> '1' then
+    raise exception 'ER PROOF FAIL SKIPZERO: expected exactly the 1 non-zero archetype, got %', p;
+  end if;
+  if (p->'reward_profile'->>'id') <> (select v from erfx where k='rp')::text then
+    raise exception 'ER PROOF FAIL SKIPZERO: reward not the surviving archetype default (skipped archetype leaked): %', p;
+  end if;
+  raise notice 'ER_PASS_SKIP_ZERO';
 end $$;
 
 -- ════════ fixture locations + bindings (for the DIRECT resolver unit tests) ══════════════════════════
@@ -448,6 +619,52 @@ begin
     raise exception 'ER PROOF FAIL RESOLVED: the authored (base 20) reward is indistinguishable from the pre-E3 (base 10) reward — the test cannot discriminate the branch';
   end if;
   raise notice 'ER_PASS_RESOLVED_PLAN';
+end $$;
+
+-- ════════ MULTI-WAVE (FIX 2): a resolved encounter REUSES its plan on wave 2 (not synthetic); reward stays resolved ═
+do $$
+declare v_enc uuid := (select v from erfx where k='enc2'); v_hunt uuid := (select v from erfx where k='hunt');
+  v_ep uuid := (select v from erfx where k='ep'); v_grants jsonb; v_tier int; n int;
+  v_hpmax double precision; v_exp_hp2 double precision; v_ac int; v_metal double precision; v_exp double precision;
+begin
+  select reward_tier into v_tier from public.locations where id = v_hunt;
+  select resource_grants into v_grants from public.reward_profiles where id = (select v from erfx where k='rp');
+
+  -- wave 1 already cleared (waves_cleared=1). Fast-forward the wave gate and tick → wave 2 spawns. With the
+  -- FIX the encounter REUSES its plan (cap=1 would otherwise re-resolve, self-count, and degrade to synthetic).
+  update public.combat_encounters set next_wave_at = now() - interval '1 second',
+         last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
+  if n <> 1 then raise exception 'ER PROOF FAIL MULTIWAVE: % enemy rows on wave 2 (want 1)', n; end if;
+  -- wave-2 danger = 1 + waves_cleared(1) = 2 ⇒ RESOLVED hp uses the archetype base_difficulty (5) at danger 2,
+  -- NOT the synthetic loc.base_difficulty formula (that degradation is exactly what the fix prevents).
+  select hp_max into v_hpmax from public.combat_units where encounter_id = v_enc and side='enemy';
+  v_exp_hp2 := 5 * coalesce(public.cfg_num('enemy_hp_base'),14) * (1 + 2 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
+  if abs(v_hpmax - v_exp_hp2) > 0.001 then
+    raise exception 'ER PROOF FAIL MULTIWAVE: wave-2 hp_max % <> resolved archetype-derived % (degraded to synthetic?)', v_hpmax, v_exp_hp2;
+  end if;
+  if (select resolved_plan_json->>'encounter_profile_id' from public.combat_encounters where id = v_enc) <> v_ep::text then
+    raise exception 'ER PROOF FAIL MULTIWAVE: the resolved tag was lost on wave 2';
+  end if;
+  -- the ledger was NOT re-upserted on the reused wave (active_count stays 1; the cooldown anchors on wave 1).
+  select active_count into v_ac from public.encounter_runtime_state where location_id = v_hunt and encounter_profile_id = v_ep;
+  if v_ac <> 1 then raise exception 'ER PROOF FAIL MULTIWAVE: runtime active_count % (want 1 — reuse must not re-upsert)', v_ac; end if;
+
+  -- clear wave 2; the reward must STILL be resolved (base 20) ⇒ total = R(tier,1) + R(tier,2).
+  update public.combat_units set hp_current = 1 where encounter_id = v_enc and side='enemy';
+  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+  perform public.process_combat_ticks();
+  if (select waves_cleared from public.combat_encounters where id = v_enc) < 2 then
+    raise exception 'ER PROOF FAIL MULTIWAVE: wave 2 did not clear';
+  end if;
+  v_metal := ((select total_rewards_json from public.combat_encounters where id = v_enc)->>'metal')::double precision;
+  v_exp := public.resolve_encounter_reward_inputs(v_grants, v_tier, 1) + public.resolve_encounter_reward_inputs(v_grants, v_tier, 2);
+  if v_metal is distinct from v_exp then
+    raise exception 'ER PROOF FAIL MULTIWAVE: accumulated metal % <> two resolved waves % (wave 2 paid synthetic?)', v_metal, v_exp;
+  end if;
+  raise notice 'ER_PASS_MULTIWAVE';
 end $$;
 
 -- ════════ CAP: the resolved encounter (still active, tagged er_ep, cap=1) blocks a 2nd resolve; heals ═

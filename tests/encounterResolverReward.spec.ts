@@ -29,8 +29,10 @@ const CFG: Record<string, number> = { reward_multiplier: REWARD_MULTIPLIER }
 
 function resolveReward(grants: ResourceGrants, rewardTier: number, danger: number): number {
   const m = grants.metal
+  // FIX 5: a missing multiplier_ref key yields 1.0 (coalesce), never NaN/undefined — mirrors the SQL
+  // `coalesce(public.cfg_num(...), 1.0)`.
   return Math.round(
-    m.base * Math.max(rewardTier, 1) * (1 + (m.danger_coeff ?? 0) * danger) * CFG[m.multiplier_ref],
+    m.base * Math.max(rewardTier, 1) * (1 + (m.danger_coeff ?? 0) * danger) * (CFG[m.multiplier_ref] ?? 1.0),
   )
 }
 
@@ -52,4 +54,12 @@ test('an authored base distinct from the config default produces a distinct (dis
   for (let rewardTier = 1; rewardTier <= 5; rewardTier++) {
     expect(resolveReward(authored, rewardTier, 1)).not.toBe(legacyReward(rewardTier, 1))
   }
+})
+
+test('FIX 5: an unknown multiplier_ref key falls back to 1.0 (never NaN/undefined)', () => {
+  const missing: ResourceGrants = { metal: { base: 10, danger_coeff: 0.25, multiplier_ref: '__no_such_key__' } }
+  const v = resolveReward(missing, 1, 1)
+  expect(Number.isFinite(v)).toBe(true)
+  // with the multiplier defaulting to 1.0 the value equals the legacy formula (which also uses 1.0).
+  expect(v).toBe(legacyReward(1, 1))
 })
