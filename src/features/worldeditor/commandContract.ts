@@ -74,6 +74,20 @@ export type WorldEditorCommandType =
   | 'encounter_profile_create'
   | 'encounter_profile_update'
   | 'encounter_profile_set_active'
+  // LOCATION → ENCOUNTER BINDINGS (0259, owner-gated, DARK behind the TRI-FLAG chain
+  // enemy_content_registry_enabled AND encounter_authoring_enabled AND encounter_binding_authoring_enabled):
+  // the three net-new owner-authored commands over location_encounter_bindings — a join table binding a
+  // live location (locations, 0002) to an E1 encounter_profile (0258). create carries {location_id,
+  // encounter_profile_id, weight?}; update/set_active address the live row by p_payload.target_id (the
+  // binding UUID) with optimistic concurrency on p_payload.expected_revision (only weight/notes/active
+  // mutate — the (location, encounter) address is stable). PRECONFIGURE SEMANTICS: create requires the
+  // location to EXIST but not to be active (liveness is E3's runtime filter), so there is NO
+  // location_inactive code. The per-binding failure codes (invalid_location / invalid_encounter_ref /
+  // encounter_inactive / invalid_weight / duplicate_binding) live in WorldEditorFailureDetail.code
+  // (free-text) inside details[] — NOT the top-level error union. No runtime combat path reads this table.
+  | 'location_encounter_binding_create'
+  | 'location_encounter_binding_update'
+  | 'location_encounter_binding_set_active'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -198,6 +212,12 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'encounter_profile_update'
     case 'encounter_profile_set_active':
       return 'encounter_profile_set_active'
+    case 'location_encounter_binding_create':
+      return 'location_encounter_binding_create'
+    case 'location_encounter_binding_update':
+      return 'location_encounter_binding_update'
+    case 'location_encounter_binding_set_active':
+      return 'location_encounter_binding_set_active'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)
