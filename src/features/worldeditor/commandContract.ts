@@ -49,6 +49,16 @@ export type WorldEditorCommandType =
   | 'zone_unpublish'
   | 'exploration_site_set_active'
   | 'mining_field_set_active'
+  // ENEMY CONTENT REGISTRY (0257, owner-gated, DARK behind enemy_content_registry_enabled): the six
+  // net-new owner-authored catalog commands over reward_profiles + enemy_archetypes. create carries
+  // the content fields; update/set_active address the live row by p_payload.target_id (the key) with
+  // optimistic concurrency on p_payload.expected_revision. No runtime combat path reads these tables.
+  | 'reward_profile_create'
+  | 'reward_profile_update'
+  | 'reward_profile_set_active'
+  | 'enemy_archetype_create'
+  | 'enemy_archetype_update'
+  | 'enemy_archetype_set_active'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -73,6 +83,7 @@ export type WorldEditorErrorCode =
   | 'not_found' // the update target no longer exists (0247; details carry source_missing)
   | 'conflict' // a unique natural key (exploration_sites.name / mining_fields.name / locations unique(zone_id,name)) is already taken (0244/0246/0249)
   | 'not_unpublishable' // the zone exists but may not be unpublished (0255; details carry protected_zone | already_inactive)
+  | 'not_enabled' // the fail-closed feature flag is off (0257 enemy_content_registry_enabled — reject-before-any-read)
   | 'transport_error' // client-side: the RPC call itself failed (network / permission)
 
 /** One structured issue inside a failure envelope (the 0244 details[] vocabulary — e.g. a
@@ -148,6 +159,18 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'exploration_site_set_active'
     case 'mining_field_set_active':
       return 'mining_field_set_active'
+    case 'reward_profile_create':
+      return 'reward_profile_create'
+    case 'reward_profile_update':
+      return 'reward_profile_update'
+    case 'reward_profile_set_active':
+      return 'reward_profile_set_active'
+    case 'enemy_archetype_create':
+      return 'enemy_archetype_create'
+    case 'enemy_archetype_update':
+      return 'enemy_archetype_update'
+    case 'enemy_archetype_set_active':
+      return 'enemy_archetype_set_active'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)
@@ -201,6 +224,8 @@ export function describeWorldEditorError(code: WorldEditorErrorCode): string {
       return 'The name is already taken in the live world.'
     case 'not_unpublishable':
       return 'This zone cannot be unpublished — it is a seeded zone or is already inactive.'
+    case 'not_enabled':
+      return 'The enemy content registry is not enabled — an owner must turn it on first.'
     case 'transport_error':
       return 'The command could not reach the server.'
     default:
