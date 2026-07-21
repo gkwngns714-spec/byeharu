@@ -5,7 +5,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-07-21 — OPERATIONAL RECORD: **World Editor V1.5 Operations & Audit UX — frontend History UI merged + Pages-deployed + owner-gated** (PR #255)
+## 2026-07-21 — MILESTONE: **WORLD EDITOR V1.5 OPERATIONS & AUDIT UX — COMPLETE AND PRODUCTION-PROVEN** (History UI merged PR #255 + Pages-deployed + owner-gated + owner smoke test PASSED)
 
 **Merged:** PR #255 (`slice-worldeditor-audit-history-ui`, head `bcefaf7`) → `main` merge commit **`0a32c7a`** (owner-admin, 2026-07-21). Frontend-only: the read-only World Editor **History** side-rail (owner audit browser) consuming ONLY the deployed `world_editor_audit_list` RPC (0256), plus a **client-side owner gate** on `/dev/world` reusing the deployed `is_owner()` RPC (0243). No migration, no backend change.
 
@@ -18,9 +18,9 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 - **Backend owner boundary — re-verified read-only (prod head `0256`, unchanged):** `is_owner()` present + authenticated-only (anon denied); `world_editor_audit_list` SECURITY DEFINER + in-body `is_owner()` + anon-denied; `world_editor_audit` RLS deny-all with no client SELECT; audit row count `2` (unchanged — the read RPC writes nothing).
 - **History data behaviors — production-proven at the RPC level (2026-07-21 bounded prod proof):** denials, filters, keyset pagination, key-level sanitization (`reward_bundle_json`/`created_by`/`actor` never returned), `before=null` on create, sanitized before/after on unpublish, redaction metadata — this is the exact data path the History UI renders.
 - **Frontend correctness — 949/949 specs, typecheck + build green:** contract/normalization (fail-closed, recursive forbidden-key deny-list, geometry safety), semantic diff, request-lifecycle coordinator (16 behavioral cases), owner-gate guards.
-- **Pending (needs the owner's own logged-in session):** the owner-authenticated *visual* walkthrough (owner opens the editor, History panel loads/filters/selects/map-focuses; non-owner "Not authorized" appears). Not executable without an owner/non-owner browser session; covered by the guard tests + the RPC production proof + the live anon gate above.
+- **Owner-authenticated walkthrough — PASSED (2026-07-21):** confirmed in the deployed owner session and visually corroborated at `/dev/world` — the World Editor renders (map + side rail: Layers/Focus/Inspector), the **History panel** lists the audit records with command / target / timestamp plus the `INACTIVE` and `REDACTED` indicators, and audit detail, redaction metadata, and historical map focus all worked. No rollback/replay/restore control present.
 
-**Verdict:** V1.5 backend, owner gate, deploy, and data path are **production-proven**; the owner-authenticated live UI walkthrough is the sole remaining confirmation. No rollback/replay/restore surface; scope closed at V1.5 read-only Operations & Audit UX.
+**Verdict:** `WORLD EDITOR V1.5 OPERATIONS & AUDIT UX: COMPLETE AND PRODUCTION-PROVEN`. Merge + Pages deploy + owner gate + backend boundary + audit data path + owner-authenticated UI walkthrough all pass. Scope closed at V1.5 read-only Operations & Audit UX; no next roadmap phase begun.
 
 ---
 
