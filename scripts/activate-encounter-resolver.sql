@@ -32,8 +32,8 @@
 --     • the two E3 resolver functions exist: resolve_location_encounter(uuid),
 --       resolve_encounter_reward_inputs(jsonb, integer, integer);
 --     • process_combat_ticks() exists AND its body carries the resolved branch — the prosrc references
---       v_resolver_engaged AND resolve_location_encounter(e.location_id) (the 0260 resolved arm, not a
---       pre-E3 body wearing the same version number);
+--       v_resolver_engaged AND resolve_location_encounter(e.location_id, e.id::text) (the E5 seeded resolved
+--       arm, not a pre-E3/E5 body wearing the same version number);
 --     • the encounter_runtime_state table exists (the resolver's cooldown/active_count anchor);
 --     • ALL FOUR config keys exist.
 --   DEPENDENCY GUARD (read-only; RAISE if unmet):
@@ -85,7 +85,7 @@ begin
   -- the two resolver functions + the recreated combat tick fn exist (by exact signature).
   select string_agg(fn, ', ') into v_missing
     from unnest(array[
-      'public.resolve_location_encounter(uuid)',
+      'public.resolve_location_encounter(uuid,text)',
       'public.resolve_encounter_reward_inputs(jsonb,integer,integer)',
       'public.process_combat_ticks()']) fn
    where to_regprocedure(fn) is null;
@@ -98,15 +98,15 @@ begin
     raise exception 'PRECONDITION FAIL: public.encounter_runtime_state missing (0260 not deployed?)';
   end if;
 
-  -- the deployed process_combat_ticks body must carry the 0260 RESOLVED BRANCH — the version number
+  -- the deployed process_combat_ticks body must carry the E5 SEEDED RESOLVED BRANCH — the version number
   -- alone proves nothing about WHICH body landed. Pin it by prosrc: the resolver-engaged quad read
-  -- (v_resolver_engaged) AND the resolved spawn call (resolve_location_encounter(e.location_id)).
+  -- (v_resolver_engaged) AND the seeded resolved spawn call (resolve_location_encounter(e.location_id, e.id::text)).
   select p.prosrc into v_tick from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'process_combat_ticks';
   if v_tick is null
      or position('v_resolver_engaged' in v_tick) = 0
-     or position('resolve_location_encounter(e.location_id)' in v_tick) = 0 then
-    raise exception 'PRECONDITION FAIL: the deployed process_combat_ticks does not carry the 0260 resolved branch (no v_resolver_engaged / resolve_location_encounter(e.location_id)) — E3 not applied';
+     or position('resolve_location_encounter(e.location_id, e.id::text)' in v_tick) = 0 then
+    raise exception 'PRECONDITION FAIL: the deployed process_combat_ticks does not carry the E5 seeded resolved branch (no v_resolver_engaged / resolve_location_encounter(e.location_id, e.id::text)) — E3/E5 not applied';
   end if;
 
   -- all four keys must already exist.
@@ -134,6 +134,30 @@ begin
     raise exception 'DEPENDENCY FAIL: encounter_binding_authoring_enabled (E2) is not true — the resolver is QUAD-GATED; activate E2 first (scripts/activate-encounter-binding.sql)';
   end if;
   raise notice 'ACTE3_PASS_DEPENDENCY ok: E0 + E1 + E2 are already true — flipping E3 completes the quad-flag and the resolver goes LIVE';
+end $$;
+
+-- ══════════ 2b. ZERO-ELITE READINESS GUARD (read-only; RAISE if any live binding reaches elite_chance>0) ══
+-- E5 (0261) removed the inert is_elite roll from the resolver: elite produces NO combat effect until the
+-- elite stat-wiring slice, and the resolver no longer even reads elite_chance. If an owner has authored a
+-- fleet member with elite_chance>0 and bound it active, flipping E3 now would SILENTLY drop that authored
+-- intent (the resolver ignores it). Refuse the flip until every reachable active binding is elite-free — the
+-- owner either zeroes elite_chance (making the intent explicit) or waits for the elite stat-wiring slice.
+do $$
+declare v_n integer;
+begin
+  select count(*) into v_n
+    from public.location_encounter_bindings b
+    join public.locations l                     on l.id = b.location_id and l.status = 'active'
+    join public.encounter_profiles ep           on ep.id = b.encounter_profile_id and ep.active is true
+    join public.encounter_profile_members epm    on epm.encounter_profile_id = ep.id
+    join public.enemy_fleet_templates ft         on ft.id = epm.fleet_template_id and ft.active is true
+    join public.enemy_fleet_template_members fm  on fm.fleet_template_id = ft.id
+    join public.enemy_archetypes a               on a.id = fm.enemy_archetype_id and a.active is true
+   where b.active is true and fm.elite_chance > 0;
+  if v_n > 0 then
+    raise exception 'ELITE-READINESS FAIL: % active binding(s) reach a fleet member with elite_chance>0, but E5 (0261) made the resolver zero-elite (is_elite dropped; elite has no combat effect yet). Set those elite_chance values to 0 (making the no-elite posture explicit) or wait for the elite stat-wiring slice, then re-run.', v_n;
+  end if;
+  raise notice 'ACTE3_PASS_ELITE_READINESS ok: no active binding reaches an elite_chance>0 fleet member — the zero-elite resolver drops no authored intent';
 end $$;
 
 -- ══════════ 3. THE WRITE — ██ COMBAT BEHAVIOR CHANGES ON THIS COMMIT ██ (via set_game_config, 0046) ══

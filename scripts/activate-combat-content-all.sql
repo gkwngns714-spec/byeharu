@@ -87,20 +87,20 @@ begin
       'public.encounter_profile_update(text,jsonb)', 'public.encounter_profile_set_active(text,jsonb)',
       'public.location_encounter_binding_create(text,jsonb)', 'public.location_encounter_binding_update(text,jsonb)',
       'public.location_encounter_binding_set_active(text,jsonb)',
-      'public.resolve_location_encounter(uuid)', 'public.resolve_encounter_reward_inputs(jsonb,integer,integer)',
+      'public.resolve_location_encounter(uuid,text)', 'public.resolve_encounter_reward_inputs(jsonb,integer,integer)',
       'public.process_combat_ticks()']) fn
    where to_regprocedure(fn) is null;
   if v_missing is not null then
     raise exception 'PRECONDITION FAIL: RPC/function(s) missing: %', v_missing;
   end if;
 
-  -- the deployed process_combat_ticks body must carry the 0260 resolved branch (pinned by prosrc).
+  -- the deployed process_combat_ticks body must carry the E5 seeded resolved branch (pinned by prosrc).
   select p.prosrc into v_tick from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'process_combat_ticks';
   if v_tick is null
      or position('v_resolver_engaged' in v_tick) = 0
-     or position('resolve_location_encounter(e.location_id)' in v_tick) = 0 then
-    raise exception 'PRECONDITION FAIL: the deployed process_combat_ticks does not carry the 0260 resolved branch — E3 not applied';
+     or position('resolve_location_encounter(e.location_id, e.id::text)' in v_tick) = 0 then
+    raise exception 'PRECONDITION FAIL: the deployed process_combat_ticks does not carry the E5 seeded resolved branch — E3/E5 not applied';
   end if;
 
   -- all four keys must already exist.

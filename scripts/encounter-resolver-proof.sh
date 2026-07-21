@@ -31,6 +31,10 @@ for marker in \
   ER_PASS_RESOLVED_PLAN \
   ER_PASS_MULTIWAVE \
   ER_PASS_CAP \
+  ER_PASS_E5_VARIETY \
+  ER_PASS_E5_SEED_STABLE \
+  ER_PASS_E5_NO_ELITE \
+  ER_PASS_E5_ELITE_GUARD \
   'ENCOUNTER-RESOLVER PROOF PASSED'; do
   echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
 done
