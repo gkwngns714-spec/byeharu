@@ -55,7 +55,9 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           : "${DB_URL:?DB_URL (disposable stack) required}"
-          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/encounter-resolver-proof.sql 2>&1)"
+          # capture without aborting so the psql output (incl. any RAISE) is always printed for diagnosis;
+          # the marker loop below is the pass/fail gate.
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/encounter-resolver-proof.sql 2>&1)" || true
           echo "$out"
           for marker in \
             ER_PASS_VERBATIM \
