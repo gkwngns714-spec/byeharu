@@ -504,6 +504,13 @@ begin
   r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-hunt',
          jsonb_build_object('location_id', v_hunt::text, 'encounter_profile_id', v_ep::text, 'weight', 1)::text));
   if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL hunt: %', r; end if;
+  -- The REAL hunt location may already carry a pre-existing (seeded) active binding. E5 folds a per-encounter
+  -- seed into the weighted binding pick, so with >1 active binding the resolver can pick a DIFFERENT bound
+  -- profile per encounter (that variety is EXACTLY E5's point). The resolved / cap / multiwave scenarios below
+  -- assert against er_ep specifically, so make er_ep the SOLE active binding here (deactivate any other) —
+  -- the resolved pick is then deterministic regardless of the seed.
+  update public.location_encounter_bindings set active = false
+   where location_id = v_hunt and encounter_profile_id <> v_ep and active is true;
 end $$;
 
 -- helper: send a group to the hunt location and settle the arrival, returning the encounter id.
@@ -591,16 +598,6 @@ begin
 
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
-
-  raise notice 'E5_DIAG: e0=% e1=% e2=% e3=% | enc_pjson=% | direct_resolve=% | binds=% locstatus=% capcnt=% loc_bd=%',
-    public.cfg_bool('enemy_content_registry_enabled'), public.cfg_bool('encounter_authoring_enabled'),
-    public.cfg_bool('encounter_binding_authoring_enabled'), public.cfg_bool('encounter_resolver_enabled'),
-    (select resolved_plan_json from public.combat_encounters where id = v_enc),
-    public.resolve_location_encounter(v_hunt, v_enc::text),
-    (select count(*) from public.location_encounter_bindings where location_id=v_hunt and active is true),
-    (select status from public.locations where id=v_hunt),
-    (select count(*) from public.combat_encounters ce where ce.location_id=v_hunt and ce.status in ('active','retreating') and ce.resolved_plan_json->>'encounter_profile_id'=v_ep::text),
-    (select base_difficulty from public.locations where id=v_hunt);
 
   -- the resolved wave: 1 unit at the location center; the encounter tagged; the runtime ledger written.
   select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
