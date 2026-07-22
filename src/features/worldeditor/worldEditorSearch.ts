@@ -17,16 +17,20 @@
 // invented read.)
 import { fitCameraToWorldPoints, type Camera } from '../map/galaxyCamera'
 import { representationWorldPoints } from './worldEditorGeometry'
+import { itemPassesStatus, type WorldEntityStatusFilter } from './worldEditorFilters'
 import type { LayerId, LayerItem, WorldPoint } from './worldEditorTypes'
 
 /** One ranked search hit. `worldPoints` are the entity's CANONICAL world coordinates (a point's own
  *  coord, or a zone polygon's whole ring) — the exact input the shared camera fit frames, so a click
- *  jumps the camera through the ONE authority with no per-domain special-casing. */
+ *  jumps the camera through the ONE authority with no per-domain special-casing. `status` is the
+ *  entity's lifecycle (from the 0269 catalog) so the results list can badge an INACTIVE hit and a jump
+ *  works identically for inactive entities. */
 export interface EntityMatch {
   readonly domain: LayerId
   readonly id: string
   readonly name: string
   readonly worldPoints: readonly WorldPoint[]
+  readonly status?: string
 }
 
 /** Rank buckets: an exact (case-insensitive) name wins, then a prefix match, then any substring.
@@ -38,20 +42,24 @@ function matchRank(nameLower: string, queryLower: string): number | null {
   return null
 }
 
-/** Search every adapter-resolved entity by NAME (case-insensitive substring), ranked exact → prefix →
- *  substring, then A→Z, then stable in registry/domain order. Pure: reads only the passed items map.
+/** Search every adapter/catalog-resolved entity by NAME (case-insensitive substring), ranked exact →
+ *  prefix → substring, then A→Z, then stable in registry/domain order. Pure: reads only the passed
+ *  items map. Results OBEY the shared lifecycle filter (`status`, default 'all') — the SAME
+ *  itemPassesStatus predicate the map uses — so search never surfaces an entity the filter hides.
  *
  *  EMPTY-QUERY RULE (chosen): a blank/whitespace query yields NO matches — the results dropdown stays
  *  closed until the owner types, rather than dumping the whole world into a list. */
 export function searchEntities(
   itemsByLayer: ReadonlyMap<LayerId, readonly LayerItem[]>,
   query: string,
+  status: WorldEntityStatusFilter = 'all',
 ): EntityMatch[] {
   const q = query.trim().toLowerCase()
   if (q === '') return []
   const ranked: { match: EntityMatch; rank: number; nameLower: string }[] = []
   for (const [domain, items] of itemsByLayer) {
     for (const it of items) {
+      if (!itemPassesStatus(it, status)) continue
       const nameLower = it.label.toLowerCase()
       const rank = matchRank(nameLower, q)
       if (rank === null) continue
@@ -63,6 +71,7 @@ export function searchEntities(
           id: it.id,
           name: it.label,
           worldPoints: representationWorldPoints(it.representation),
+          status: it.status,
         },
       })
     }

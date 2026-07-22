@@ -1,125 +1,106 @@
 import { test, expect } from '@playwright/test'
 import {
   filterVisibleItems,
+  statusFilteredByLayer,
   itemPassesStatus,
-  DEFAULT_STATUS_FILTER,
-  STATUS_FILTER_ALL,
-  STATUS_FILTER_OPTIONS,
-  type StatusFilter,
+  DEFAULT_WORLD_ENTITY_STATUS_FILTER,
+  WORLD_ENTITY_STATUS_FILTERS,
+  WORLD_ENTITY_STATUS_LABELS,
+  type WorldEntityStatusFilter,
   type WorldEditorFilterState,
 } from '../src/features/worldeditor/worldEditorFilters'
-import { LOCATION_STATUSES } from '../src/features/worldeditor/locationEnums'
 import type { LayerId, LayerItem } from '../src/features/worldeditor/worldEditorTypes'
 
-// WORLD EDITOR V5 — pure proofs for the layer/status VIEW filter (worldEditorFilters). No browser/DB:
-// filterVisibleItems is pure (items + filter state in → filtered LayerItem[] out). It composes the
-// existing layer-visibility set with the new status narrow and MUST reproduce the shell's former
-// flatten exactly under the default state. Run: `npx playwright test worldEditorFilters.spec.ts`.
+// WORLD EDITOR V5 LIFECYCLE — pure proofs for the ONE shared lifecycle VIEW filter (worldEditorFilters).
+// No browser/DB: filterVisibleItems / statusFilteredByLayer / itemPassesStatus are pure. The filter is
+// now cross-domain: EVERY item (from the 0269 catalog) carries a normalized lifecycle status
+// ('active'|'inactive') — locations, mining, exploration AND zones — and ONE narrow honors it
+// everywhere. Run: `npx playwright test worldEditorFilters.spec.ts`.
 
-const location = (id: string, status: string): LayerItem => ({
-  layer: 'locations',
+const item = (layer: LayerId, id: string, status: 'active' | 'inactive'): LayerItem => ({
+  layer,
   id,
   label: id,
-  representation: { kind: 'point', world: { x: 0, y: 0 } },
+  representation:
+    layer === 'zones'
+      ? { kind: 'polygon', ring: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 10 }] }
+      : { kind: 'point', world: { x: 0, y: 0 } },
   tone: 'var(--color-accent)',
   glyph: 'circle',
   status,
 })
 
-// mining/exploration/zones carry NO status in their read contract → LayerItem.status stays undefined.
-const point = (layer: LayerId, id: string): LayerItem => ({
-  layer,
-  id,
-  label: id,
-  representation: { kind: 'point', world: { x: 100, y: 100 } },
-  tone: 'var(--color-warning)',
-  glyph: 'hex',
-})
-
-const zone = (id: string): LayerItem => ({
-  layer: 'zones',
-  id,
-  label: id,
-  representation: { kind: 'polygon', ring: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 10 }] },
-  tone: 'var(--color-danger)',
-  glyph: 'circle',
-})
-
-/** A world with mixed location statuses + status-less domains, in registry order. */
+/** A world with a mix of active + inactive entities in EVERY domain, in registry order. */
 const makeItemsByLayer = (): Map<LayerId, LayerItem[]> =>
   new Map<LayerId, LayerItem[]>([
-    ['locations', [location('port-a', 'active'), location('port-b', 'locked'), location('port-c', 'hidden')]],
-    ['mining', [point('mining', 'field-1'), point('mining', 'field-2')]],
-    ['exploration', [point('exploration', 'site-1')]],
-    ['zones', [zone('zone-1')]],
+    ['locations', [item('locations', 'loc-a', 'active'), item('locations', 'loc-i', 'inactive')]],
+    ['mining', [item('mining', 'mine-a', 'active'), item('mining', 'mine-i', 'inactive')]],
+    ['exploration', [item('exploration', 'exp-a', 'active'), item('exploration', 'exp-i', 'inactive')]],
+    ['zones', [item('zones', 'zone-a', 'active'), item('zones', 'zone-i', 'inactive')]],
   ])
 
 const allLayers: ReadonlySet<LayerId> = new Set<LayerId>(['locations', 'mining', 'exploration', 'zones'])
 const state = (
   visibleLayers: ReadonlySet<LayerId>,
-  status: StatusFilter = STATUS_FILTER_ALL,
+  status: WorldEntityStatusFilter,
 ): WorldEditorFilterState => ({ visibleLayers, status })
-
 const ids = (items: LayerItem[]): string[] => items.map((it) => it.id)
 
-// ── default state == identity (today's whole-world flatten) ─────────────────────────────────────────
-test('default state (all layers visible + status all) reproduces the naive registry-order flatten', () => {
+// ── the filter vocabulary ─────────────────────────────────────────────────────────────────────────
+test('the shared filter defaults to active; options are active → inactive → all', () => {
+  expect(DEFAULT_WORLD_ENTITY_STATUS_FILTER).toBe('active')
+  expect(WORLD_ENTITY_STATUS_FILTERS).toEqual(['active', 'inactive', 'all'])
+  expect(WORLD_ENTITY_STATUS_LABELS).toEqual({ active: 'Active', inactive: 'Inactive', all: 'All' })
+})
+
+// ── all four domains under active / inactive / all ──────────────────────────────────────────────────
+test('active shows only active across ALL four domains', () => {
+  const out = filterVisibleItems(makeItemsByLayer(), state(allLayers, 'active'))
+  expect(ids(out)).toEqual(['loc-a', 'mine-a', 'exp-a', 'zone-a'])
+})
+
+test('inactive shows only inactive across ALL four domains', () => {
+  const out = filterVisibleItems(makeItemsByLayer(), state(allLayers, 'inactive'))
+  expect(ids(out)).toEqual(['loc-i', 'mine-i', 'exp-i', 'zone-i'])
+})
+
+test('all shows both active and inactive across ALL four domains, in registry order', () => {
+  const out = filterVisibleItems(makeItemsByLayer(), state(allLayers, 'all'))
+  expect(ids(out)).toEqual(['loc-a', 'loc-i', 'mine-a', 'mine-i', 'exp-a', 'exp-i', 'zone-a', 'zone-i'])
+})
+
+// ── layer visibility composes with the lifecycle narrow ─────────────────────────────────────────────
+test('a de-selected domain is hidden; the lifecycle narrow still applies to the rest', () => {
   const items = makeItemsByLayer()
-  // the exact flatten the shell used inline before this module existed
-  const naive: LayerItem[] = []
-  for (const layer of ['locations', 'mining', 'exploration', 'zones'] as LayerId[]) {
-    naive.push(...(items.get(layer) ?? []))
+  const out = filterVisibleItems(items, state(new Set<LayerId>(['mining', 'zones']), 'inactive'))
+  expect(ids(out)).toEqual(['mine-i', 'zone-i'])
+})
+
+test('empty visible-set → empty view regardless of lifecycle', () => {
+  for (const s of WORLD_ENTITY_STATUS_FILTERS) {
+    expect(filterVisibleItems(makeItemsByLayer(), state(new Set<LayerId>(), s))).toEqual([])
   }
-  expect(DEFAULT_STATUS_FILTER).toBe(STATUS_FILTER_ALL)
-  expect(filterVisibleItems(items, state(allLayers))).toEqual(naive)
-  expect(filterVisibleItems(items, state(allLayers))).toHaveLength(7)
 })
 
-// ── layer visibility ────────────────────────────────────────────────────────────────────────────────
-test('a de-selected domain is hidden; only selected domains show', () => {
-  const items = makeItemsByLayer()
-  // hide mining + exploration + zones → locations only
-  const out = filterVisibleItems(items, state(new Set<LayerId>(['locations'])))
-  expect(ids(out)).toEqual(['port-a', 'port-b', 'port-c'])
-  // hide locations → the status-less domains remain
-  const out2 = filterVisibleItems(items, state(new Set<LayerId>(['mining', 'zones'])))
-  expect(ids(out2)).toEqual(['field-1', 'field-2', 'zone-1'])
+// ── statusFilteredByLayer (drives per-layer counts + the search index) ──────────────────────────────
+test('statusFilteredByLayer keeps every layer key and filters by lifecycle only', () => {
+  const filtered = statusFilteredByLayer(makeItemsByLayer(), 'inactive')
+  expect([...filtered.keys()]).toEqual(['locations', 'mining', 'exploration', 'zones'])
+  expect(ids(filtered.get('locations')!)).toEqual(['loc-i'])
+  expect(ids(filtered.get('zones')!)).toEqual(['zone-i'])
+  const all = statusFilteredByLayer(makeItemsByLayer(), 'all')
+  expect(all.get('mining')!.length).toBe(2)
 })
 
-test('empty visible-set → empty view', () => {
-  expect(filterVisibleItems(makeItemsByLayer(), state(new Set<LayerId>()))).toEqual([])
+// ── itemPassesStatus ────────────────────────────────────────────────────────────────────────────────
+test('itemPassesStatus: all passes everything; a value matches its own lifecycle only', () => {
+  expect(itemPassesStatus(item('locations', 'x', 'inactive'), 'all')).toBe(true)
+  expect(itemPassesStatus(item('locations', 'x', 'active'), 'active')).toBe(true)
+  expect(itemPassesStatus(item('locations', 'x', 'active'), 'inactive')).toBe(false)
+  expect(itemPassesStatus(item('zones', 'z', 'inactive'), 'inactive')).toBe(true)
 })
 
-// ── status narrow (locations only) ──────────────────────────────────────────────────────────────────
-test('status narrow includes matching locations and excludes the rest', () => {
-  const items = makeItemsByLayer()
-  const active = filterVisibleItems(items, state(new Set<LayerId>(['locations']), 'active'))
-  expect(ids(active)).toEqual(['port-a'])
-  const hidden = filterVisibleItems(items, state(new Set<LayerId>(['locations']), 'hidden'))
-  expect(ids(hidden)).toEqual(['port-c'])
-})
-
-test('status narrow NEVER hides a status-less domain (undefined status always passes)', () => {
-  const items = makeItemsByLayer()
-  // narrow to 'locked' across ALL layers: only port-b of locations, but every mining/exploration/zone
-  // item survives because they carry no status to match against.
-  const out = filterVisibleItems(items, state(allLayers, 'locked'))
-  expect(ids(out)).toEqual(['port-b', 'field-1', 'field-2', 'site-1', 'zone-1'])
-})
-
-test('itemPassesStatus: all passes everything; a value matches equal / undefined, excludes others', () => {
-  expect(itemPassesStatus(location('x', 'locked'), STATUS_FILTER_ALL)).toBe(true)
-  expect(itemPassesStatus(location('x', 'active'), 'active')).toBe(true)
-  expect(itemPassesStatus(location('x', 'active'), 'hidden')).toBe(false)
-  // a status-less item passes any narrow
-  expect(itemPassesStatus(point('mining', 'm'), 'hidden')).toBe(true)
-})
-
-test('STATUS_FILTER_OPTIONS is "all" + every legal location status, in order', () => {
-  expect(STATUS_FILTER_OPTIONS).toEqual([STATUS_FILTER_ALL, ...LOCATION_STATUSES])
-})
-
-// ── purity: stored data never mutated ───────────────────────────────────────────────────────────────
+// ── purity ──────────────────────────────────────────────────────────────────────────────────────────
 const deepFreeze = <T>(v: T): T => {
   if (v && typeof v === 'object') {
     for (const k of Object.getOwnPropertyNames(v)) deepFreeze((v as Record<string, unknown>)[k])
@@ -128,14 +109,14 @@ const deepFreeze = <T>(v: T): T => {
   return v
 }
 
-test('filterVisibleItems NEVER mutates its input: deep-frozen items pass through untouched', () => {
+test('filterVisibleItems / statusFilteredByLayer NEVER mutate their input', () => {
   const items = makeItemsByLayer()
   const snapshot = JSON.parse(JSON.stringify([...items.entries()])) as unknown
   for (const list of items.values()) deepFreeze(list)
   deepFreeze(items)
-
-  for (const s of STATUS_FILTER_OPTIONS) {
+  for (const s of WORLD_ENTITY_STATUS_FILTERS) {
     expect(() => filterVisibleItems(items, state(allLayers, s))).not.toThrow()
+    expect(() => statusFilteredByLayer(items, s)).not.toThrow()
   }
   expect(JSON.parse(JSON.stringify([...items.entries()]))).toEqual(snapshot)
 })

@@ -136,6 +136,89 @@ test('entityNavigation drives the existing selection model AND frames the camera
   expect(Number.isFinite(zoneNav.camera.k) && zoneNav.camera.k > 0).toBe(true)
 })
 
+// ── V5 LIFECYCLE: search results obey the shared filter + carry lifecycle status ─────────────────────
+const lifecycleItem = (
+  layer: LayerId,
+  id: string,
+  label: string,
+  status: 'active' | 'inactive',
+  x = 0,
+  y = 0,
+): LayerItem => ({
+  layer,
+  id,
+  label,
+  representation: { kind: 'point', world: { x, y } },
+  tone: 'var(--color-accent)',
+  glyph: 'circle',
+  status,
+})
+
+const makeLifecycleWorld = (): Map<LayerId, LayerItem[]> =>
+  new Map<LayerId, LayerItem[]>([
+    ['locations', [lifecycleItem('locations', 'l-a', 'Port Active', 'active'), lifecycleItem('locations', 'l-i', 'Port Inactive', 'inactive')]],
+    ['mining', [lifecycleItem('mining', 'Iron Belt', 'Iron Belt', 'inactive', 5000, 5000)]],
+    ['exploration', []],
+    [
+      'zones',
+      [
+        {
+          layer: 'zones',
+          id: 'z-i',
+          label: 'Port Zone',
+          representation: { kind: 'polygon', ring: [{ x: 2000, y: 2000 }, { x: 2400, y: 2000 }, { x: 2200, y: 2400 }] },
+          tone: 'var(--color-ink-faint)',
+          glyph: 'circle',
+          status: 'inactive',
+        },
+      ],
+    ],
+  ])
+
+test('search results OBEY the shared lifecycle filter (active/inactive/all)', () => {
+  const items = makeLifecycleWorld()
+  // 'active' → only the active port; the inactive port/mining/zone are excluded
+  expect(names(searchEntities(items, 'port', 'active'))).toEqual(['Port Active'])
+  // 'inactive' → only inactive hits
+  expect(names(searchEntities(items, 'port', 'inactive'))).toEqual(
+    expect.arrayContaining(['Port Inactive', 'Port Zone']),
+  )
+  expect(searchEntities(items, 'port', 'inactive').some((m) => m.name === 'Port Active')).toBe(false)
+  // 'all' → both
+  expect(names(searchEntities(items, 'port', 'all'))).toEqual(
+    expect.arrayContaining(['Port Active', 'Port Inactive', 'Port Zone']),
+  )
+  // default (no filter arg) behaves as 'all'
+  expect(searchEntities(items, 'port').length).toBe(searchEntities(items, 'port', 'all').length)
+})
+
+test('matches carry lifecycle status so an inactive hit can be badged', () => {
+  const items = makeLifecycleWorld()
+  const inactive = searchEntities(items, 'Port Inactive', 'all')[0]
+  expect(inactive.status).toBe('inactive')
+  const active = searchEntities(items, 'Port Active', 'all')[0]
+  expect(active.status).toBe('active')
+})
+
+test('an inactive point jumps the camera; an inactive zone frames its whole ring', () => {
+  const items = makeLifecycleWorld()
+  const minePoint = searchEntities(items, 'Iron Belt', 'inactive')[0]
+  expect(minePoint.status).toBe('inactive')
+  expect(minePoint.worldPoints).toEqual([{ x: 5000, y: 5000 }])
+  expect(entityNavigation(minePoint).camera).toEqual(fitCameraToWorldPoints(minePoint.worldPoints))
+
+  const zoneHit = searchEntities(items, 'Port Zone', 'inactive')[0]
+  expect(zoneHit.worldPoints).toHaveLength(3) // whole ring, not a point
+  const cam = entityNavigation(zoneHit).camera
+  expect(Number.isFinite(cam.k) && cam.k > 0).toBe(true)
+})
+
+test('a filter that hides every match yields no results (no-result state)', () => {
+  const items = makeLifecycleWorld()
+  // every "Iron Belt" is inactive → an 'active' filter surfaces nothing
+  expect(searchEntities(items, 'Iron Belt', 'active')).toEqual([])
+})
+
 // ── STRUCTURAL: pure navigation only — no writes, no second camera/search engine ─────────────────────
 test('worldEditorSearch is pure navigation: no IO, no write, reuses the shared camera fit', () => {
   const here = dirname(fileURLToPath(import.meta.url))

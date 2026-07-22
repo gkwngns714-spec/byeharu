@@ -10,13 +10,23 @@ import { fetchDevZoneEditorEnabled, fetchIsOwner } from '../../lib/catalog'
 import { VIEW, clampK, clampPan, fitCameraToWorldPoints, type Camera } from '../map/galaxyCamera'
 import { smoothClosedPathD } from '../map/smoothPolygon'
 import { fetchWorldEditorData, type WorldEditorData } from './worldEditorData'
+import { fetchWorldEditorCatalog } from './worldEditorCatalogData'
+import {
+  catalogItemsByLayer,
+  catalogRowPassesStatus,
+  findCatalogRow,
+  type WorldEditorCatalogRow,
+} from './worldEditorCatalog'
 import { WORLD_EDITOR_LAYERS, defaultVisibleLayerIds } from './worldEditorRegistry'
 import {
   filterVisibleItems,
-  DEFAULT_STATUS_FILTER,
-  STATUS_FILTER_OPTIONS,
-  type StatusFilter,
+  statusFilteredByLayer,
+  DEFAULT_WORLD_ENTITY_STATUS_FILTER,
+  WORLD_ENTITY_STATUS_FILTERS,
+  WORLD_ENTITY_STATUS_LABELS,
+  type WorldEntityStatusFilter,
 } from './worldEditorFilters'
+import { WorldEditorInactiveInspector } from './WorldEditorInactiveInspector'
 import { resolveToViewBox } from './worldEditorGeometry'
 import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
 import { WorldEditorSearchBox } from './WorldEditorSearchBox'
@@ -29,7 +39,6 @@ import {
   type DeferredOperation,
   type InspectorField,
   type LayerId,
-  type LayerItem,
   type PointGlyph,
 } from './worldEditorTypes'
 import { LocationDraftsContext, useLocationDraftsStore } from './useLocationDrafts'
@@ -158,10 +167,15 @@ export function WorldEditor() {
   // (fail-closed). The backend is_owner() boundary still guards every command/read regardless of this.
   const [isOwner, setIsOwner] = useState<boolean | null>(null)
   const [data, setData] = useState<WorldEditorData | null>(null)
+  // V5 LIFECYCLE — the 0269 catalog: the ONE lifecycle/nav index (BOTH active + inactive across all four
+  // domains). SOLE source for map visibility, list visibility, search, camera jump, lifecycle filtering,
+  // and selecting/reactivating inactive entities. The gameplay readers (`data`) stay the authority for
+  // full ACTIVE-entity editing detail — the two planes compose at render time, never merged.
+  const [catalogRows, setCatalogRows] = useState<WorldEditorCatalogRow[]>([])
   const [visible, setVisible] = useState<Set<LayerId>>(() => defaultVisibleLayerIds())
-  // V5 filters — the STATUS narrow. Default 'all' preserves today's whole-world view; composes with the
-  // existing `visible` layer set through the ONE filter authority (worldEditorFilters). VIEW state only.
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(DEFAULT_STATUS_FILTER)
+  // V5 LIFECYCLE — the ONE shared lifecycle filter across every domain. Default 'active' (the live
+  // world); switch to 'inactive'/'all' to see + reactivate inactive entities. VIEW state only.
+  const [statusFilter, setStatusFilter] = useState<WorldEntityStatusFilter>(DEFAULT_WORLD_ENTITY_STATUS_FILTER)
   const [selected, setSelected] = useState<Selection | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const [authoringDomain, setAuthoringDomain] = useState<AuthoringDomain>('locations')
@@ -233,8 +247,12 @@ export function WorldEditor() {
       setEnabled(on)
       setIsOwner(owner)
       if (on && owner) {
-        const d = await fetchWorldEditorData()
-        if (alive) setData(d)
+        // Load the active-editing snapshot AND the lifecycle catalog together (both owner-only reads).
+        const [d, rows] = await Promise.all([fetchWorldEditorData(), fetchWorldEditorCatalog()])
+        if (alive) {
+          setData(d)
+          setCatalogRows(rows)
+        }
       }
     })()
     return () => {
@@ -250,17 +268,33 @@ export function WorldEditor() {
     setData(d)
   }, [])
 
-  // Per-layer resolved items (only for visible layers). Each adapter reads a slice of the ONE snapshot.
-  const itemsByLayer = useMemo(() => {
-    const map = new Map<LayerId, LayerItem[]>()
-    if (!data) return map
-    for (const { adapter } of WORLD_EDITOR_LAYERS) map.set(adapter.id, adapter.readItems(data))
-    return map
-  }, [data])
+  // V5 LIFECYCLE — re-read the catalog after a lifecycle change (a reactivation flips a row active).
+  const reloadCatalog = useCallback(async () => {
+    const rows = await fetchWorldEditorCatalog()
+    setCatalogRows(rows)
+  }, [])
+
+  // After a successful reactivation: refresh BOTH the catalog (lifecycle/nav) AND the active domain
+  // reader (editing detail), and RETAIN selection + camera (the shell never clears them here). The row
+  // then reads active, so the active inspector takes over on the SAME selection.
+  const onReactivated = useCallback(async () => {
+    await Promise.all([reloadCatalog(), reloadData()])
+  }, [reloadCatalog, reloadData])
+
+  // The ONE nav/lifecycle index: per-layer LayerItems built from the 0269 catalog (BOTH active +
+  // inactive). This REPLACES the former adapter-derived map as the map/search/list source; the adapters
+  // stay the authority for full ACTIVE-entity inspection (adapter.inspect) + the edit-draft fork.
+  const itemsByLayer = useMemo(() => catalogItemsByLayer(catalogRows), [catalogRows])
+
+  // Per-layer items passing the shared lifecycle filter (layer visibility untouched) — drives the layer
+  // counts + the search index, so both obey the filter consistently with the map.
+  const filteredByLayer = useMemo(
+    () => statusFilteredByLayer(itemsByLayer, statusFilter),
+    [itemsByLayer, statusFilter],
+  )
 
   // The map's rendered set — the ONE filter authority (worldEditorFilters) composes the existing layer
-  // visibility (`visible`) with the V5 status narrow. Default state (all layers visible + status 'all')
-  // reproduces the former inline flatten exactly; the render loop below consumes this list unchanged.
+  // visibility (`visible`) with the shared lifecycle narrow. The render loop below consumes it unchanged.
   const visibleItems = useMemo(
     () => filterVisibleItems(itemsByLayer, { visibleLayers: visible, status: statusFilter }),
     [itemsByLayer, visible, statusFilter],
@@ -271,13 +305,13 @@ export function WorldEditor() {
   // through the ONE C1 framing helper (worldEditorFocus, domain 'all'). The retired ZoneEditor's
   // bespoke fit is gone. Auto-fit-once semantics are unchanged: 'all' is and stays the default frame.
   useEffect(() => {
-    if (!data || fittedRef.current || userMovedRef.current) return
+    if (fittedRef.current || userMovedRef.current) return
     const pts = focusPointsForDomain(itemsByLayer, 'all')
     if (pts.length === 0) return
     fittedRef.current = true
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setView(fitCameraToWorldPoints(pts))
-  }, [data, itemsByLayer])
+  }, [itemsByLayer])
 
   const toSvgUnits = (dxPx: number) => {
     const rect = svgRef.current?.getBoundingClientRect()
@@ -358,6 +392,24 @@ export function WorldEditor() {
     setView(camera)
   }, [])
 
+  // V5 LIFECYCLE — change the shared filter. DRAFT SAFETY (this slice, minimal): changing the filter
+  // NEVER discards a pending draft (drafts live in their own stores, untouched here). If the currently
+  // SELECTED entity becomes hidden by the new filter, we clear ONLY the visible selection — the draft
+  // (if any) is preserved. No confirm dialog yet (that is Slice 3).
+  const changeStatusFilter = useCallback(
+    (next: WorldEntityStatusFilter) => {
+      setStatusFilter(next)
+      setSelected((sel) => {
+        if (!sel) return sel
+        const row = findCatalogRow(catalogRows, sel.layer, sel.id)
+        // Keep the selection only when the selected entity still passes the new lifecycle filter;
+        // otherwise clear ONLY the visible selection (drafts stay intact).
+        return row != null && catalogRowPassesStatus(row, next) ? sel : null
+      })
+    },
+    [catalogRows],
+  )
+
   // V1.5 — frame a HISTORICAL audit record on the map through the ONE camera authority
   // (fitCameraToWorldPoints). Marks the camera user-held (so the auto-fit-once never overrides it), sets
   // the ephemeral overlay, and PRESERVES the live `selected` authoring model (a historical item is never
@@ -411,7 +463,16 @@ export function WorldEditor() {
     if (target) switchAuthoringDomain(target)
   }, [pendingDrafts, authoringDomain, switchAuthoringDomain])
 
-  // The inspector fields for the current selection, resolved THROUGH the owning adapter.
+  // V5 LIFECYCLE — the catalog row backing the current selection (active OR inactive). An INACTIVE
+  // selection is inspected + reactivated from this row (no active reader carries it); an ACTIVE
+  // selection falls through to the adapter inspector below.
+  const selectedCatalogRow = useMemo(
+    () => (selected ? findCatalogRow(catalogRows, selected.layer, selected.id) : null),
+    [catalogRows, selected],
+  )
+  const selectedIsInactive = selectedCatalogRow?.lifecycleStatus === 'inactive'
+
+  // The inspector fields for the current ACTIVE selection, resolved THROUGH the owning adapter.
   const inspectorFields: InspectorField[] | null = useMemo(() => {
     if (!data || !selected) return null
     const entry = WORLD_EDITOR_LAYERS.find((e) => e.adapter.id === selected.layer)
@@ -702,7 +763,8 @@ export function WorldEditor() {
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Layers</div>
             <div className="flex flex-col gap-1.5">
               {WORLD_EDITOR_LAYERS.map(({ adapter }) => {
-                const count = itemsByLayer.get(adapter.id)?.length ?? 0
+                // Count reflects the shared lifecycle filter (same source the map + search use).
+                const count = filteredByLayer.get(adapter.id)?.length ?? 0
                 const on = visible.has(adapter.id)
                 return (
                   <button
@@ -720,37 +782,37 @@ export function WorldEditor() {
               })}
             </div>
 
-            {/* V5 filters — the STATUS narrow. Composes with the per-layer toggles above through the
-                ONE filter authority (worldEditorFilters). Only LOCATIONS have a client-side status
-                (active/locked/hidden); mining/exploration/zones have none in their read contract, so a
-                status pick never hides them (grounded honesty). Default 'All' = no narrow. */}
+            {/* V5 LIFECYCLE — the ONE shared lifecycle filter across ALL four domains (from the 0269
+                catalog). 'Active' shows the live world; 'Inactive' shows only inactive entities (to
+                select + reactivate them); 'All' shows both. Applies uniformly to the map, search, list
+                counts, and the side-panel inspector. Default 'Active'. */}
             <div className="mt-3 flex items-center justify-between gap-2 border-t border-edge/50 pt-2.5">
               <label htmlFor="we-status-filter" className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                Status
+                Lifecycle
               </label>
               <select
                 id="we-status-filter"
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-                className="rounded-md border border-edge bg-surface-2 px-2 py-1 text-sm capitalize text-ink"
-                aria-label="Filter locations by status"
+                onChange={(e) => changeStatusFilter(e.target.value as WorldEntityStatusFilter)}
+                className="rounded-md border border-edge bg-surface-2 px-2 py-1 text-sm text-ink"
+                aria-label="Filter entities by lifecycle status"
               >
-                {STATUS_FILTER_OPTIONS.map((s) => (
+                {WORLD_ENTITY_STATUS_FILTERS.map((s) => (
                   <option key={s} value={s}>
-                    {s === 'all' ? 'All' : s}
+                    {WORLD_ENTITY_STATUS_LABELS[s]}
                   </option>
                 ))}
               </select>
             </div>
             <p className="mt-1.5 text-xs text-ink-faint">
-              Narrows locations by lifecycle status. View only — nothing is written.
+              Narrows every domain by lifecycle status. View only — nothing is written.
             </p>
           </section>
 
           {/* V5 Search — find any authored entity by NAME across every searchable domain, then SELECT
               it + JUMP the camera to it. Read-only navigation: reuses the shell's `selected` model and
               the SAME galaxyCamera fit the Focus buttons use (via worldEditorSearch.entityNavigation). */}
-          <WorldEditorSearchBox itemsByLayer={itemsByLayer} onSelect={onSearchSelect} />
+          <WorldEditorSearchBox itemsByLayer={itemsByLayer} onSelect={onSearchSelect} statusFilter={statusFilter} />
 
           {/* V5 Coordinate jump — the complement to Search: type a raw world X/Y and frame the camera
               on it through the SAME galaxyCamera fit (via worldEditorGoto.gotoCamera). Read-only
@@ -780,7 +842,17 @@ export function WorldEditor() {
 
           <section className="rounded-card border border-edge bg-surface p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Inspector</div>
-            {!selected || !inspectorFields ? (
+            {!selected ? (
+              <p className="text-sm text-ink-faint">Select any item on the map to inspect its typed fields.</p>
+            ) : selectedIsInactive && selectedCatalogRow ? (
+              // V5 LIFECYCLE — an INACTIVE selection: catalog-sourced detail + Reactivate ONLY (no
+              // active-only edit/publish controls). `key` resets the reactivate state per entity.
+              <WorldEditorInactiveInspector
+                key={`${selected.layer}:${selected.id}`}
+                row={selectedCatalogRow}
+                onReactivated={onReactivated}
+              />
+            ) : !inspectorFields ? (
               <p className="text-sm text-ink-faint">Select any item on the map to inspect its typed fields.</p>
             ) : (
               <div className="flex flex-col gap-2">
