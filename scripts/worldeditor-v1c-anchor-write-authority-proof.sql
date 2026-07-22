@@ -145,9 +145,15 @@ create temp table wauth_zone(k text primary key, v uuid) on commit drop;
 do $$
 declare v_zone uuid;
 begin
-  select id into v_zone from public.zones where status = 'active' order by name limit 1;
+  -- pick a zone reachable through the ACTIVE sector→zone hierarchy get_world_map renders, so a location
+  -- created into it is guaranteed to appear in the map payload.
+  select z.id into v_zone
+    from public.zones z
+    join public.sectors se on se.id = z.sector_id
+   where z.status = 'active' and se.status = 'active'
+   order by z.name limit 1;
   if v_zone is null then
-    raise exception 'WAUTH PROOF SETUP FAIL: no active zone to create a location in';
+    raise exception 'WAUTH PROOF SETUP FAIL: no active zone under an active sector to create a location in';
   end if;
   insert into wauth_zone values ('zone', v_zone);
 end $$;

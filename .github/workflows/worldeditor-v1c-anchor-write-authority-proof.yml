@@ -46,8 +46,12 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           : "${DB_URL:?DB_URL (disposable stack) required}"
+          set +e
           out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-v1c-anchor-write-authority-proof.sql 2>&1)"
+          code=$?
+          set -e
           echo "$out"
+          if [ "$code" -ne 0 ]; then echo "PROOF psql FAILED (exit $code)"; exit 1; fi
           for marker in \
             WAUTH_PASS_MIGRATION_INERT \
             WAUTH_PASS_MIGRATION_ORDER \
