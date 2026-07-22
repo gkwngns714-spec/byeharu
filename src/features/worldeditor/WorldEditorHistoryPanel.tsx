@@ -15,7 +15,7 @@ import {
   type AuditRequestState,
 } from './worldEditorAuditRequestState'
 import { describeAuditError, type WorldEditorAuditEntry, type WorldEditorAuditFilters } from './worldEditorAuditTypes'
-import type { RevertOutcome } from './worldEditorHistoryRevert'
+import type { WorldEditorCommandResult } from './commandContract'
 import type { WorldPoint } from './worldEditorTypes'
 import { WorldEditorHistoryFilters } from './WorldEditorHistoryFilters'
 import { WorldEditorHistoryList, type HistoryListPhase } from './WorldEditorHistoryList'
@@ -38,9 +38,10 @@ export interface HistoricalFocus {
 interface Props {
   readonly onFocusHistorical: (focus: HistoricalFocus) => void
   readonly onClearHistorical: () => void
-  /** V4 — seed a revert edit draft from an audit record (threaded straight to the detail, mirroring
-   *  onFocusHistorical). Returns whether the live source still exists ('reverted' / 'source_missing'). */
-  readonly onRevert: (entry: WorldEditorAuditEntry) => RevertOutcome
+  /** V4 — invoke the ONE server-authoritative revert (world_editor_revert, 0267) for an audit record.
+   *  The shell issues the command + refetches the map on success; the panel then refetches its OWN
+   *  History list (below). Returns the typed command result for the detail's inline notice. */
+  readonly onRevert: (entry: WorldEditorAuditEntry) => Promise<WorldEditorCommandResult>
 }
 
 const PAGE_SIZE = 25
@@ -78,6 +79,31 @@ export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical, 
     const res = await fetchWorldEditorAudit({ ...filtersRef.current, limit: PAGE_SIZE, cursor })
     if (stateRef.current.disposed) return
     commit(res.ok ? applyNextPageSuccess(stateRef.current, begun.gen, res) : applyFailure(stateRef.current, begun.gen, res))
+  }
+
+  // V4 — after a successful server revert, refetch the History list so the NEW audit row (the revert is
+  // recorded as a normal, itself-revertable domain update) + the reverted values appear — WITHOUT clearing
+  // the current selection, so the detail (and its success notice, keyed on the unchanged entry.id) stays
+  // mounted. Single atomic commit (no loading-spinner intermediate) → the detail never unmounts. Reuses the
+  // pure coordinator transitions (generation bump + applyInitialSuccess) — no duplicate sequencing.
+  const refetchPreservingSelection = async () => {
+    const keepId = stateRef.current.selectedId
+    const { state, gen } = beginInitial(stateRef.current)
+    stateRef.current = state // bump generation to invalidate any in-flight page; DO NOT render the cleared selection
+    const res = await fetchWorldEditorAudit({ ...filtersRef.current, limit: PAGE_SIZE })
+    if (stateRef.current.disposed) return
+    let next = res.ok
+      ? applyInitialSuccess(stateRef.current, gen, res)
+      : applyFailure(stateRef.current, gen, res)
+    if (res.ok && keepId && next.entries.some((e) => e.id === keepId)) next = selectEntry(next, keepId)
+    commit(next)
+  }
+
+  // Invoke the shell's server revert (it refetches the map on success), then refetch OUR list on success.
+  const handleRevert = async (entry: WorldEditorAuditEntry): Promise<WorldEditorCommandResult> => {
+    const result = await onRevert(entry)
+    if (result.ok) await refetchPreservingSelection()
+    return result
   }
 
   useEffect(() => {
@@ -149,7 +175,7 @@ export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical, 
       </div>
 
       {selected ? (
-        <WorldEditorHistoryDetail entry={selected} onFocusMap={focusSelectedOnMap} onRevert={onRevert} />
+        <WorldEditorHistoryDetail entry={selected} onFocusMap={focusSelectedOnMap} onRevert={handleRevert} />
       ) : null}
     </section>
   )

@@ -4,23 +4,27 @@ import { deriveAuditDiff, type AuditDiffClass } from './worldEditorAuditDiff'
 import { auditRecordHasFocus } from './worldEditorAuditFocus'
 import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { deriveInactive, formatAuditTime, safeCommandLabel, safeTargetLabel } from './worldEditorAuditView'
-import { canRevertEntry, type RevertOutcome } from './worldEditorHistoryRevert'
+import { canRevertEntry } from './worldEditorHistoryRevert'
+import { describeWorldEditorError, type WorldEditorCommandResult } from './commandContract'
 
 // WORLD EDITOR V1.5 — History record detail: operational metadata + semantic before/after diff +
 // redaction metadata + a historical map-focus action + (V4) a "Revert to this version" action.
-// The focus action is read-only (camera only). The revert action does NOT mutate anything here: it asks
-// the shell to fork an ordinary EDIT draft seeded with this record's historical `before` values — the
-// owner then reviews + publishes it through the existing owner-gated location_update path. It is offered
-// ONLY for revertable rows (location_update with a non-null before — canRevertEntry). Historical state
-// is clearly labelled so a snapshot never masquerades as the current live object; redactions are NEVER
-// inferred.
+// The focus action is read-only (camera only). The revert action asks the SHELL to invoke the ONE
+// server-authoritative revert (public.world_editor_revert, 0267) for this record — the detail itself
+// opens no command/rpc path (the shell owns the transport; guarded by the History-slice source guards).
+// It is offered ONLY for revertable rows (a location/mining/exploration/zone UPDATE with a non-null
+// before — canRevertEntry). Because a revert is an IMMEDIATE server overwrite of the current live row, a
+// one-step inline confirm precedes the fire; the outcome (success / typed error) renders as an inline
+// notice. Historical state is clearly labelled so a snapshot never masquerades as the current live
+// object; redactions are NEVER inferred.
 
 interface Props {
   readonly entry: WorldEditorAuditEntry
   readonly onFocusMap: () => void
-  /** Ask the shell to seed a revert edit draft from this record. Returns whether the live source still
-   *  exists to revert onto ('reverted') or is gone ('source_missing') — rendered as an inline notice. */
-  readonly onRevert: (entry: WorldEditorAuditEntry) => RevertOutcome
+  /** Ask the shell to invoke world_editor_revert for this record (server overwrite → refetch map +
+   *  History). Returns the typed command result — ok, or a typed error the notice surfaces via
+   *  describeWorldEditorError. */
+  readonly onRevert: (entry: WorldEditorAuditEntry) => Promise<WorldEditorCommandResult>
 }
 
 const CLASS_TONE: Record<AuditDiffClass, string> = {
@@ -33,10 +37,27 @@ const CLASS_TONE: Record<AuditDiffClass, string> = {
 export function WorldEditorHistoryDetail({ entry, onFocusMap, onRevert }: Props) {
   const [showUnchanged, setShowUnchanged] = useState(false)
   const [showRaw, setShowRaw] = useState(false)
-  // The last revert attempt's outcome, for the inline notice. Reset whenever a different record is
-  // selected (this component instance is reused across selections).
-  const [revertOutcome, setRevertOutcome] = useState<RevertOutcome | null>(null)
-  useEffect(() => setRevertOutcome(null), [entry.id])
+  // Revert control state: whether the one-step confirm is armed, whether a revert is in flight, and the
+  // last attempt's typed result (for the inline notice). All reset whenever a different record is selected
+  // (this component instance is reused across selections). Selection is PRESERVED across the post-success
+  // refetch (same entry.id), so the success notice persists after the History list refreshes.
+  const [confirming, setConfirming] = useState(false)
+  const [reverting, setReverting] = useState(false)
+  const [revertResult, setRevertResult] = useState<WorldEditorCommandResult | null>(null)
+  useEffect(() => {
+    setConfirming(false)
+    setReverting(false)
+    setRevertResult(null)
+  }, [entry.id])
+
+  const runRevert = async () => {
+    setConfirming(false)
+    setReverting(true)
+    const result = await onRevert(entry)
+    setRevertResult(result)
+    setReverting(false)
+  }
+
   const diff = deriveAuditDiff(entry.before, entry.after)
   const canFocus = auditRecordHasFocus(entry)
   const canRevert = canRevertEntry(entry)
@@ -84,23 +105,48 @@ export function WorldEditorHistoryDetail({ entry, onFocusMap, onRevert }: Props)
         </Button>
       ) : null}
 
-      {/* V4 — "Revert to this version": seed an EDIT draft (fields = this record's historical before)
-          on the CURRENT live location, published through the normal owner-gated location_update path.
-          Offered ONLY for revertable rows (location_update with a non-null before). A gone live source
-          is refused inline — never a new error channel. */}
+      {/* V4 — "Revert to this version": invoke the ONE server-authoritative revert (world_editor_revert,
+          0267) for this record via the shell's onRevert prop — one click restores the entity to its
+          before_snapshot server-side, then the map + History refetch. Offered ONLY for revertable rows (a
+          location/mining/exploration/zone UPDATE with a non-null before). Because it IMMEDIATELY overwrites
+          the current live row (owner + existence gated, NOT optimistic concurrency), a one-step inline
+          confirm precedes the fire. The outcome renders inline: success, or a typed error via
+          describeWorldEditorError. */}
       {canRevert ? (
-        <div className="flex flex-col gap-1">
-          <Button
-            size="sm"
-            onClick={() => setRevertOutcome(onRevert(entry))}
-            title="Open an edit draft that restores this location to its state before this change. You review it, then Publish — the live row must be unchanged (normal optimistic-concurrency guard)."
-          >
-            Revert to this version
-          </Button>
-          {revertOutcome === 'source_missing' ? (
-            <Notice tone="danger">
-              The source location no longer exists — nothing to revert onto.
-            </Notice>
+        <div className="flex flex-col gap-1" data-testid="history-revert">
+          {!confirming ? (
+            <Button
+              size="sm"
+              disabled={reverting}
+              onClick={() => {
+                setRevertResult(null)
+                setConfirming(true)
+              }}
+              title="Restore this item to its state before this change. This immediately overwrites the current live values on the server (owner-gated); the map and history then refresh."
+            >
+              {reverting ? 'Reverting…' : 'Revert to this version'}
+            </Button>
+          ) : (
+            <div className="flex flex-col gap-1 rounded-md border border-warning/50 bg-surface-2 p-1.5">
+              <p className="text-[11px] text-ink-muted">
+                Immediately overwrite the current live values with this historical version? This cannot be undone
+                except by another revert.
+              </p>
+              <div className="flex gap-1.5">
+                <Button size="sm" variant="danger" onClick={() => void runRevert()}>
+                  Confirm revert
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+          {revertResult?.ok ? (
+            <Notice tone="success">Reverted — the live world and history now reflect the restored version.</Notice>
+          ) : null}
+          {revertResult && !revertResult.ok ? (
+            <Notice tone="danger">{describeWorldEditorError(revertResult.error)}</Notice>
           ) : null}
         </div>
       ) : null}

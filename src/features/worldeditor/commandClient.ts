@@ -8,6 +8,7 @@
 // migration 0244 is deployed AND an owner is seeded (fail-closed).
 import { supabase } from '../../lib/supabase'
 import {
+  commandRpcArgs,
   commandRpcName,
   normalizeEnvelope,
   type RawServerEnvelope,
@@ -24,10 +25,9 @@ export * from './commandContract'
 export async function invokeWorldEditorCommand<R = unknown, P = Record<string, unknown>>(
   envelope: WorldEditorCommandEnvelope<P>,
 ): Promise<WorldEditorCommandResult<R>> {
-  const { data, error } = await supabase.rpc(commandRpcName(envelope.commandType), {
-    p_request_id: envelope.requestId,
-    p_payload: envelope.payload ?? {},
-  })
+  // The named-arg shape is owned by the pure contract (commandRpcArgs): every command sends
+  // { p_request_id, p_payload } EXCEPT world_editor_revert, whose signature takes { p_request_id, p_audit_id }.
+  const { data, error } = await supabase.rpc(commandRpcName(envelope.commandType), commandRpcArgs(envelope))
   if (error) {
     return { ok: false, requestId: envelope.requestId, error: 'transport_error' }
   }

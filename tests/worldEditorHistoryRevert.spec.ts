@@ -1,79 +1,31 @@
 import { test, expect } from '@playwright/test'
 import {
   canRevertEntry,
-  resolveLocationRevert,
-  revertSeedFromEntry,
+  revertCommandEnvelope,
+  REVERTABLE_COMMAND_TYPES,
 } from '../src/features/worldeditor/worldEditorHistoryRevert'
 import {
-  computeSourceFingerprint,
-  draftPayloadFrom,
-  forkEditWithPayload,
-  LOCATION_DRAFT_PAYLOAD_KEYS,
-} from '../src/features/worldeditor/locationDraftModel'
-import type { LocationDraftPayload } from '../src/features/worldeditor/locationDraftTypes'
+  commandRpcArgs,
+  commandRpcName,
+  describeWorldEditorError,
+} from '../src/features/worldeditor/commandContract'
 import type { AuditSnapshot, WorldEditorAuditEntry } from '../src/features/worldeditor/worldEditorAuditTypes'
-import type { MapLocation } from '../src/features/map/mapTypes'
 
-// WORLD EDITOR V4 — pure proofs for the "Revert to this version" slice. No browser/DB: the frontend
-// spec suite runs these as deterministic Node/TS proofs. They pin (1) the button-visibility rule, (2)
-// the historical-before → draft-payload projection, (3) the live-source refusal, (4) THE LOAD-BEARING
-// RULE — a revert forks off the CURRENT live location (expected = current projection) with fields =
-// historical — and (5) the resulting location_update command payload shape.
+// WORLD EDITOR V4 (client cutover) — pure proofs for the "Revert to this version" slice AFTER it was cut
+// over to the ONE server-authoritative revert (public.world_editor_revert, 0267). No browser/DB: the
+// frontend spec suite runs these as deterministic Node/TS proofs. They pin (1) the button-visibility rule
+// now spanning ALL FOUR revertable UPDATE domains, (2) the command envelope shape (a world_editor_revert
+// carrying the entry's audit id + a fresh request_id per attempt), (3) the UNIQUE audit-id RPC arg shape
+// (p_audit_id, not p_payload), and (4) the new typed error copy. The retired PR #269 client-side location
+// reconstruction (resolveLocationRevert / revertSeedFromEntry / forkEditWithPayload seed) is GONE — there
+// is ONE revert path and no client-side field reconstruction to test.
 
-const T0 = 1_700_000_000_000
-
-/** A live location as it exists NOW (the fork source — the optimistic-concurrency baseline). */
-const currentLive = (over: Partial<MapLocation> = {}): MapLocation => ({
-  id: 'loc-1',
-  name: 'Aurelia Prime', // renamed since the historical snapshot below
-  location_type: 'trade_outpost',
-  x: 300, // moved since the historical snapshot
-  y: -80,
-  base_difficulty: 7,
-  reward_tier: 4,
-  activity_type: 'trade_visit',
-  min_power_required: 10,
-  is_public: false,
-  status: 'active',
-  territory_radius: 500,
-  ...over,
-})
-
-/** The historical `before` values we want to restore — DELIBERATELY different from currentLive, plus
- *  the extra allow-listed snapshot keys the reader carries (id, zone_id, max_presence_seconds,
- *  created_at) that are NOT draft payload fields. */
 const HISTORICAL_BEFORE: AuditSnapshot = Object.freeze({
   id: 'loc-1',
-  zone_id: 'zone-9',
   name: 'Aurelia Port',
-  location_type: 'safe_zone',
-  activity_type: 'none',
   x: 120,
   y: -80,
-  reward_tier: 3,
-  base_difficulty: 5,
-  min_power_required: 0,
-  is_public: true,
-  territory_radius: 400,
-  status: 'active',
-  max_presence_seconds: 600,
-  created_at: '2026-01-01T00:00:00Z',
 })
-
-/** The 11-key projection of HISTORICAL_BEFORE (what the revert seed must equal). */
-const HISTORICAL_PAYLOAD: LocationDraftPayload = {
-  name: 'Aurelia Port',
-  location_type: 'safe_zone',
-  activity_type: 'none',
-  x: 120,
-  y: -80,
-  reward_tier: 3,
-  base_difficulty: 5,
-  min_power_required: 0,
-  is_public: true,
-  territory_radius: 400,
-  status: 'active',
-}
 
 const entry = (over: Partial<WorldEditorAuditEntry> = {}): WorldEditorAuditEntry => ({
   id: 'audit-1',
@@ -91,25 +43,29 @@ const entry = (over: Partial<WorldEditorAuditEntry> = {}): WorldEditorAuditEntry
   ...over,
 })
 
-// ── (1) button-visibility rule ─────────────────────────────────────────────────────────────────────
-test('canRevertEntry is TRUE only for a location_update with a non-null before', () => {
-  expect(canRevertEntry(entry())).toBe(true)
+// ── (1) button-visibility rule — ALL FOUR revertable UPDATE domains ──────────────────────────────────
+test('canRevertEntry is TRUE for every revertable UPDATE command with a non-null before', () => {
+  expect([...REVERTABLE_COMMAND_TYPES].sort()).toEqual(
+    ['exploration_site_update', 'location_update', 'mining_field_update', 'zone_update'].sort(),
+  )
+  for (const commandType of REVERTABLE_COMMAND_TYPES) {
+    expect(canRevertEntry(entry({ commandType })), `${commandType} must be revertable`).toBe(true)
+  }
 })
 
-test('canRevertEntry is FALSE for a location_update with a null before (a create record)', () => {
-  expect(canRevertEntry(entry({ before: null }))).toBe(false)
+test('canRevertEntry is FALSE for a revertable command type with a null before (a create record)', () => {
+  for (const commandType of REVERTABLE_COMMAND_TYPES) {
+    expect(canRevertEntry(entry({ commandType, before: null }))).toBe(false)
+  }
 })
 
-test('canRevertEntry is FALSE for every non-location_update command — even with a before present', () => {
+test('canRevertEntry is FALSE for every non-revertable command — even with a before present', () => {
   for (const commandType of [
     'location_create',
-    'zone_update',
     'zone_create',
     'zone_unpublish',
-    'exploration_site_update',
     'exploration_site_create',
     'exploration_site_set_active',
-    'mining_field_update',
     'mining_field_create',
     'mining_field_set_active',
     'world_editor_ping',
@@ -119,80 +75,54 @@ test('canRevertEntry is FALSE for every non-location_update command — even wit
   }
 })
 
-// ── (2) historical-before → draft-payload projection ─────────────────────────────────────────────────
-test('revertSeedFromEntry projects the before onto EXACTLY the 11 draft keys (extra snapshot keys dropped)', () => {
-  const seed = revertSeedFromEntry(entry())
-  expect(seed).toEqual(HISTORICAL_PAYLOAD)
-  // no id / zone_id / max_presence_seconds / created_at leak into the seed
-  expect(Object.keys(seed).sort()).toEqual([...LOCATION_DRAFT_PAYLOAD_KEYS].sort())
+// ── (2) the revert command envelope shape ─────────────────────────────────────────────────────────────
+test('revertCommandEnvelope builds a world_editor_revert command carrying the entry audit id', () => {
+  const env = revertCommandEnvelope(entry())
+  expect(env.commandType).toBe('world_editor_revert')
+  expect(env.payload).toEqual({ audit_id: 'audit-1' }) // the AUDIT id, not target_id/expected/fields
+  expect(env.targetType).toBe('location')
+  expect(env.targetId).toBe('loc-1')
+  expect(typeof env.requestId).toBe('string')
+  expect(env.requestId.length).toBeGreaterThan(0)
 })
 
-test('revertSeedFromEntry yields an empty seed for a null before', () => {
-  expect(revertSeedFromEntry(entry({ before: null }))).toEqual({})
+test('revertCommandEnvelope mints a FRESH request_id per attempt (idempotent-retry key)', () => {
+  const a = revertCommandEnvelope(entry())
+  const b = revertCommandEnvelope(entry())
+  expect(a.requestId).not.toBe(b.requestId)
 })
 
-// ── (3) live-source resolution + refusal ─────────────────────────────────────────────────────────────
-test('resolveLocationRevert resolves READY against the live location matched by targetId', () => {
-  const live = currentLive()
-  const res = resolveLocationRevert(entry(), [live])
-  expect(res.kind).toBe('ready')
-  if (res.kind !== 'ready') throw new Error('unreachable')
-  expect(res.live).toBe(live) // the CURRENT live row, not the audit snapshot
-  expect(res.seed).toEqual(HISTORICAL_PAYLOAD)
+test('the revert command carries the SAME audit id across attempts (a re-attempt reverts the same record)', () => {
+  const a = revertCommandEnvelope(entry({ id: 'audit-77' }))
+  const b = revertCommandEnvelope(entry({ id: 'audit-77' }))
+  expect(a.payload).toEqual({ audit_id: 'audit-77' })
+  expect(b.payload).toEqual({ audit_id: 'audit-77' })
 })
 
-test('resolveLocationRevert refuses (source_missing) when the target is not in the live snapshot', () => {
-  expect(resolveLocationRevert(entry(), []).kind).toBe('source_missing')
-  expect(resolveLocationRevert(entry(), [currentLive({ id: 'other' })]).kind).toBe('source_missing')
-  expect(resolveLocationRevert(entry({ targetId: null }), [currentLive()]).kind).toBe('source_missing')
+// ── (3) the UNIQUE audit-id RPC arg shape ─────────────────────────────────────────────────────────────
+test('commandRpcName maps world_editor_revert to its own entrypoint', () => {
+  expect(commandRpcName('world_editor_revert')).toBe('world_editor_revert')
 })
 
-// ── (4) THE LOAD-BEARING RULE: expected = current-live, fields = historical ───────────────────────────
-test('a revert forks off the CURRENT live location: expected=current projection, fields=historical', () => {
-  const live = currentLive()
-  const res = resolveLocationRevert(entry(), [live])
-  if (res.kind !== 'ready') throw new Error('unreachable')
-
-  const draft = forkEditWithPayload(res.live, res.seed, 'draft-revert', T0)
-
-  expect(draft.mode.kind).toBe('edit')
-  if (draft.mode.kind !== 'edit') throw new Error('unreachable')
-  // expected / optimistic-concurrency baseline = the CURRENT live projection (NOT the audit snapshot)
-  expect(draft.mode.sourceId).toBe('loc-1')
-  expect(draft.mode.sourceSnapshot).toEqual(draftPayloadFrom(live))
-  expect(draft.mode.sourceRevision).toBe(computeSourceFingerprint(draftPayloadFrom(live)))
-  // and it must NOT equal the historical projection (proves we did not fork off the snapshot)
-  expect(draft.mode.sourceSnapshot).not.toEqual(HISTORICAL_PAYLOAD)
-  // fields = the historical values
-  expect(draft.payload).toEqual(HISTORICAL_PAYLOAD)
+test('commandRpcArgs sends {p_request_id, p_audit_id} for a revert — NOT the p_payload bag', () => {
+  const env = revertCommandEnvelope(entry({ id: 'audit-9' }))
+  const args = commandRpcArgs(env)
+  expect(args).toEqual({ p_request_id: env.requestId, p_audit_id: 'audit-9' })
+  expect(args).not.toHaveProperty('p_payload') // the revert signature takes an audit id, not a payload
 })
 
-// ── (5) the resulting location_update command payload shape ───────────────────────────────────────────
-test('the revert publishes as location_update with expected=current-live + fields=historical', () => {
-  const live = currentLive()
-  const res = resolveLocationRevert(entry(), [live])
-  if (res.kind !== 'ready') throw new Error('unreachable')
-  const draft = forkEditWithPayload(res.live, res.seed, 'draft-revert', T0)
-  if (draft.mode.kind !== 'edit') throw new Error('unreachable')
-
-  // exactly the payload LocationDraftPanel.onPublish builds for an edit draft
-  const commandPayload = {
-    target_id: draft.mode.sourceId,
-    expected: draft.mode.sourceSnapshot,
-    fields: draft.payload,
-    source_revision: draft.mode.sourceRevision,
-  }
-
-  expect(commandPayload.target_id).toBe(live.id)
-  expect(commandPayload.expected).toEqual(draftPayloadFrom(live)) // current-live, guards concurrency
-  expect(commandPayload.fields).toEqual(HISTORICAL_PAYLOAD) // historical values applied
+test('commandRpcArgs still sends {p_request_id, p_payload} for a normal command (shape divergence is isolated)', () => {
+  const args = commandRpcArgs({
+    requestId: 'req-x',
+    commandType: 'location_update',
+    payload: { target_id: 'loc-1', expected: {}, fields: {} },
+  })
+  expect(args).toEqual({ p_request_id: 'req-x', p_payload: { target_id: 'loc-1', expected: {}, fields: {} } })
+  expect(args).not.toHaveProperty('p_audit_id')
 })
 
-// ── the new primitive stays behavior-preserving for a plain (empty) seed ─────────────────────────────
-test('forkEditWithPayload with an empty seed equals a plain edit fork (behavior-preserving)', () => {
-  const live = currentLive()
-  const draft = forkEditWithPayload(live, {}, 'draft-x', T0)
-  if (draft.mode.kind !== 'edit') throw new Error('unreachable')
-  expect(draft.payload).toEqual(draftPayloadFrom(live)) // no seed → payload = live projection
-  expect(draft.payload).toEqual(draft.mode.sourceSnapshot)
+// ── (4) the new typed error copy ─────────────────────────────────────────────────────────────────────
+test('describeWorldEditorError covers the revert error codes (not_revertable / source_missing)', () => {
+  expect(describeWorldEditorError('not_revertable')).toMatch(/revert/i)
+  expect(describeWorldEditorError('source_missing')).toMatch(/no longer exists/i)
 })

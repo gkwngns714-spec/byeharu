@@ -51,22 +51,47 @@ test('no History UI / audit-logic module touches supabase, a table, an rpc, or a
 
 test('the History slice offers NO in-place rollback / replay / republish / rerun control', () => {
   // V1.5 was inspect-only. V4 adds ONE composed control — "Revert to this version" (WorldEditorHistoryDetail)
-  // — but it is NOT a new mechanism: it seeds an ordinary EDIT draft through the shell's onRevert prop, which
-  // the owner then reviews and publishes through the EXISTING owner-gated location_update path. The slice must
-  // still express NO in-place re-execution of an audited command (rollback/replay/republish/rerun) — those
-  // would bypass the review-then-publish path. (The no-supabase/no-rpc/no-command-client guard above still
-  // proves the History files carry no direct write surface of any kind.)
+  // — delegated to the shell's onRevert prop, which invokes the ONE server-authoritative revert
+  // (world_editor_revert, 0267). The History UI/logic files must still carry NO transport of their own and
+  // must not name any in-place re-execution mechanism (rollback/replay/republish/rerun) — the server RPC is
+  // the sole authority (the no-supabase/no-rpc/no-command-client guard above proves the files carry no
+  // direct write surface; "revert" is the composed control, not a raw re-run of the audited command).
   for (const f of [...HISTORY_UI_FILES, ...AUDIT_LOGIC_FILES]) {
     expect(read(f), `${f} must not contain an in-place re-run control`).not.toMatch(/rollback|replay|republish|rerun/i)
   }
 })
 
-test('V4 revert is a draft SEED through the shell prop — the History detail expresses no write of its own', () => {
+test('V4 revert is a single world_editor_revert command through the shell prop — the detail carries no transport', () => {
   const detail = read('WorldEditorHistoryDetail.tsx')
   // the action is delegated to the shell via a prop callback (mirrors onFocusMap), never done inline
   expect(detail).toContain('onRevert')
-  // and the detail itself opens no publish/command/rpc path (defence in depth beside the guard above)
-  expect(detail, 'the detail must not publish directly').not.toMatch(/invokeWorldEditorCommand|commandClient|\.rpc\s*\(/)
+  // and the detail itself opens no command/rpc/supabase path (defence in depth beside the guard above)
+  expect(detail, 'the detail must not invoke the command directly').not.toMatch(/invokeWorldEditorCommand|commandClient|\.rpc\s*\(/)
+  // NO leftover client-side field reconstruction (retired PR #269): the detail neither seeds a draft nor
+  // rebuilds the historical payload — a revert is the single server command, nothing else.
+  expect(detail, 'the detail must not reconstruct the revert payload client-side').not.toMatch(
+    /forkEditWithPayload|resolveLocationRevert|revertSeedFromEntry/,
+  )
+})
+
+test('ONE revert authority: the shell routes revert through world_editor_revert; NO client-side reconstruction survives', () => {
+  const we = read('WorldEditor.tsx')
+  // the shell invokes the ONE server revert command (built by the pure envelope helper) and re-reads the map
+  expect(we, 'the shell must invoke the command transport for revert').toContain('invokeWorldEditorCommand')
+  expect(we, 'the shell must build the revert envelope from the audit entry').toContain('revertCommandEnvelope')
+  expect(we, 'a successful revert must re-read the map snapshot').toContain('reloadData')
+  // the retired PR #269 client-only reconstruction is GONE from the shell (one revert path, no dead code)
+  expect(we, 'the shell must not fork a revert draft').not.toContain('resolveLocationRevert')
+  expect(we, 'the shell must not seed a revert draft').not.toContain('revertSeedFromEntry')
+
+  // and the reconstruction functions themselves no longer exist in the decision module
+  const revert = read('worldEditorHistoryRevert.ts')
+  expect(revert, 'resolveLocationRevert must be retired').not.toContain('resolveLocationRevert')
+  expect(revert, 'revertSeedFromEntry must be retired').not.toContain('revertSeedFromEntry')
+  // the module now only decides visibility + builds the server command envelope
+  expect(revert).toContain('canRevertEntry')
+  expect(revert).toContain('revertCommandEnvelope')
+  expect(revert).toContain("commandType: 'world_editor_revert'")
 })
 
 test('the Panel drives the pure request coordinator and keeps NO duplicate sequencing of its own', () => {

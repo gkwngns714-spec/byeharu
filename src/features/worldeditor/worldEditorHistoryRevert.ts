@@ -1,77 +1,56 @@
-// WORLD EDITOR V4 — "Revert to this version" DECISION MODEL (pure; props in → decision out). No React,
-// no DOM, no network IO, no storage IO, no client-server call of any kind — the draftModel.ts idiom.
+// WORLD EDITOR — "Revert to this version" DECISION MODEL (pure; entry in → decision/command out). No
+// React, no DOM, no network IO, no storage IO, no supabase call — the draftModel.ts idiom.
 //
-// A revert is NOT a new mechanism: it is an ordinary EDIT draft whose fields are a historical
-// `before_snapshot`, published through the EXISTING owner-gated location_update RPC. This module owns
-// ONLY the three pure decisions the shell composes on that path:
-//   1. canRevertEntry  — the button-visibility rule (WHICH audit rows can be reverted at all).
-//   2. revertSeedFromEntry — project a historical `before` onto exactly the location draft payload keys.
-//   3. resolveLocationRevert — pair a revert against the CURRENT live location by targetId (or refuse).
+// A revert is ONE concept on ONE authority: the server-side public.world_editor_revert(p_request_id,
+// p_audit_id) RPC (migration 0267). It reads the RAW audit row by id and re-applies its before_snapshot
+// server-side across ALL FOUR update domains (location / mining_field / exploration_site / zone). The
+// client CANNOT reconstruct the historical state — mining/exploration reverts need server-only
+// reward_bundle_json the audit READER strips, and zone reverts need the fork-time WKT geometry — so this
+// module holds ONLY the two pure decisions the shell composes on that path:
+//   1. canRevertEntry     — the button-visibility rule (WHICH audit rows can be reverted at all).
+//   2. revertCommandEnvelope — build the world_editor_revert command envelope from an audit entry.
 //
-// THE LOAD-BEARING RULE (enforced by the fork the shell then runs, proven in the spec): the edit draft
-// is forked off the CURRENT LIVE location, so its `expected`/sourceSnapshot is the current live
-// projection (optimistic concurrency still guards); only the editable payload is overlaid with the
-// historical values. `expected` = current-live, `fields` = historical.
-//
-// SCOPE: ONLY location_update entries are revertable. CREATEs (no before), set_active / unpublish, and
-// ALL exploration / mining / zone reverts are EXCLUDED (their snapshots are server-only or not
-// client-replayable) — canRevertEntry refuses them, so the button never shows.
-import type { MapLocation } from '../map/mapTypes'
-import type { LocationDraftPayload } from './locationDraftTypes'
-import { LOCATION_DRAFT_PAYLOAD_KEYS } from './locationDraftModel'
+// This REPLACES the retired PR #269 client-side location-only reconstruction (the historical-field
+// projection + edit-draft seed): there is now ONE revert path — the server RPC — no leftover client field
+// reconstruction, and it covers all four domains with a single click.
+import { newRequestId, type WorldEditorCommandEnvelope, type RevertCommandPayload } from './commandContract'
 import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 
-/** The ONE command type a revert can target (a revert republishes through this exact RPC). */
-export const REVERTABLE_COMMAND_TYPE = 'location_update' as const
-
-/** The outcome the shell reports back to the History detail for inline notice rendering. */
-export type RevertOutcome = 'reverted' | 'source_missing'
+/** The four command types a revert can target — an UPDATE whose before_snapshot the server can re-apply.
+ *  Mirrors the RPC's revertable set exactly (create / set_active / unpublish are out of scope → refused
+ *  server-side as not_revertable, and never offered here). */
+export const REVERTABLE_COMMAND_TYPES = [
+  'location_update',
+  'mining_field_update',
+  'exploration_site_update',
+  'zone_update',
+] as const
 
 /**
- * True iff this audit row can be reverted: it must be a `location_update` (the only command whose
- * `before_snapshot` is a fully client-replayable location draft) AND carry a non-null `before` (a
- * create has none — there is no prior state to restore). Every other command type — location_create,
- * zone_*, exploration_*, mining_*, *_set_active, zone_unpublish, or any unknown-preserved string —
- * returns false, so the button is never offered for them.
+ * True iff this audit row can be reverted: it must be one of the four revertable UPDATE command types AND
+ * carry a non-null `before` (a create has none — there is no prior state to restore). Every other command
+ * type — *_create, *_set_active, zone_unpublish, world_editor_ping, or any unknown-preserved string —
+ * returns false, so the button is never offered for them (the server would also refuse with not_revertable).
  */
 export function canRevertEntry(entry: WorldEditorAuditEntry): boolean {
-  return entry.commandType === REVERTABLE_COMMAND_TYPE && entry.before != null
+  return (REVERTABLE_COMMAND_TYPES as readonly string[]).includes(entry.commandType) && entry.before != null
 }
 
 /**
- * Project a historical `before` snapshot onto EXACTLY the 11 location draft payload keys (name,
- * location_type, activity_type, x, y, reward_tier, base_difficulty, min_power_required, is_public,
- * territory_radius, status). Extra snapshot keys the reader carries (id, zone_id, max_presence_seconds,
- * created_at, …) are dropped — they are not editable draft fields. Values are trusted as-shaped at this
- * boundary exactly as a rehydrated draft is (the server re-validates every field on publish); a null
- * `before` yields an empty seed. Returned as a Partial so it overlays the live projection field-for-field.
+ * Build the world_editor_revert command envelope for an audit entry. It carries the entry's audit id as
+ * the payload (the server takes p_audit_id, not a {target_id, expected, fields} bag) and mints a FRESH
+ * request_id per attempt, so a retry after a transient failure is a distinct attempt — while the SERVER's
+ * request_id idempotency still makes any accidental exact replay a no-op. targetType/targetId are echoed
+ * for the audit envelope's own metadata; the SERVER re-reads the authoritative target from the audit row.
  */
-export function revertSeedFromEntry(entry: WorldEditorAuditEntry): Partial<LocationDraftPayload> {
-  const before = entry.before
-  if (!before) return {}
-  const seed: Record<string, unknown> = {}
-  for (const k of LOCATION_DRAFT_PAYLOAD_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(before, k)) seed[k] = before[k]
-  }
-  return seed as Partial<LocationDraftPayload>
-}
-
-/** The decision the shell acts on: fork onto `live` seeded with `seed`, or refuse (the source is gone). */
-export type RevertResolution =
-  | { readonly kind: 'ready'; readonly live: MapLocation; readonly seed: Partial<LocationDraftPayload> }
-  | { readonly kind: 'source_missing' }
-
-/**
- * Pair a revertable entry against the CURRENT live locations by `targetId`. When the live row still
- * exists, return it (the fork source — so `expected` is the current live projection) plus the historical
- * seed. When it is gone (targetId absent from the snapshot, or null), refuse: there is nothing to revert
- * onto. This NEVER forks off the audit snapshot — the live row is always the optimistic-concurrency base.
- */
-export function resolveLocationRevert(
+export function revertCommandEnvelope(
   entry: WorldEditorAuditEntry,
-  liveLocations: readonly MapLocation[],
-): RevertResolution {
-  const live = entry.targetId ? liveLocations.find((l) => l.id === entry.targetId) ?? null : null
-  if (!live) return { kind: 'source_missing' }
-  return { kind: 'ready', live, seed: revertSeedFromEntry(entry) }
+): WorldEditorCommandEnvelope<RevertCommandPayload> {
+  return {
+    requestId: newRequestId(),
+    commandType: 'world_editor_revert',
+    targetType: entry.targetType,
+    targetId: entry.targetId,
+    payload: { audit_id: entry.id },
+  }
 }

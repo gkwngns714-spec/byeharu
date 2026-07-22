@@ -43,9 +43,22 @@
  *  geometry, name and attach survive for a future republish; NO hard delete) under the same
  *  optimistic-concurrency contract (payload = {target_id: the zone uuid, expected: {name, source,
  *  location_id}}). Ineligible targets are a typed not_unpublishable (protected_zone for seeded
- *  source<>'drawn' zones; already_inactive for non-active zones); a vanished target is not_found. */
+ *  source<>'drawn' zones; already_inactive for non-active zones); a vanished target is not_found;
+ *  world_editor_revert is the ONE cross-domain REVERT authority (0267, owner-gated): it restores an
+ *  AUDITED entity to its recorded before_snapshot across ALL four update domains (location / mining /
+ *  exploration / zone). Its server signature is UNIQUE — public.world_editor_revert(p_request_id text,
+ *  p_audit_id uuid): it takes an AUDIT ID, not the usual {target_id, expected, fields} bag (the server
+ *  reads the RAW audit row — carrying server-only reward_bundle_json + WKT zone geometry the reader
+ *  strips — and re-applies it). INTENTIONAL OVERWRITE: guarded ONLY by owner + existence, NOT optimistic
+ *  concurrency (the `expected` baseline is derived server-side from the current live row). It writes ONE
+ *  new audit row whose command_type is the DOMAIN's update command (so History shows a normal,
+ *  itself-revertable update — the ledger NEVER carries a 'world_editor_revert' command_type). Refusals:
+ *  not_revertable (create/set_active/unpublish/malformed) | not_found (no such audit id) | source_missing
+ *  (the live row is gone) | validation_failed (a historical value is now invalid) | conflict (a restored
+ *  unique name re-collides). See worldEditorHistoryRevert.ts for the envelope builder. */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
+  | 'world_editor_revert'
   | 'exploration_site_create'
   | 'mining_field_create'
   | 'exploration_site_update'
@@ -120,6 +133,8 @@ export type WorldEditorErrorCode =
   | 'not_found' // the update target no longer exists (0247; details carry source_missing)
   | 'conflict' // a unique natural key (exploration_sites.name / mining_fields.name / locations unique(zone_id,name)) is already taken (0244/0246/0249)
   | 'not_unpublishable' // the zone exists but may not be unpublished (0255; details carry protected_zone | already_inactive)
+  | 'not_revertable' // the audit row is not a revertable UPDATE-with-before_snapshot (0267; create/set_active/unpublish/malformed)
+  | 'source_missing' // the live row a revert would overwrite no longer exists (0267 world_editor_revert)
   | 'not_enabled' // the fail-closed feature flag is off (0257 enemy_content_registry_enabled — reject-before-any-read)
   | 'transport_error' // client-side: the RPC call itself failed (network / permission)
 
@@ -171,11 +186,34 @@ export function newRequestId(): string {
   return crypto.randomUUID()
 }
 
+/** The payload a world_editor_revert command carries: the AUDIT ID to restore (server signature takes
+ *  p_audit_id, NOT the usual {target_id, expected, fields} bag). request_id is minted fresh per attempt. */
+export interface RevertCommandPayload {
+  readonly audit_id: string
+}
+
+/**
+ * Build the named RPC argument object for a command's supabase.rpc call. EVERY command shares the
+ * `{ p_request_id, p_payload }` shape EXCEPT world_editor_revert (0267), whose server signature is
+ * `world_editor_revert(p_request_id text, p_audit_id uuid)` — it takes the audit id directly as
+ * `p_audit_id`, never a p_payload bag. This is the ONE place that shape divergence is expressed, so the
+ * transport binding (commandClient) stays a thin, uniform pass-through. Pure + unit-testable (no network).
+ */
+export function commandRpcArgs(envelope: WorldEditorCommandEnvelope<unknown>): Record<string, unknown> {
+  if (envelope.commandType === 'world_editor_revert') {
+    const auditId = (envelope.payload as RevertCommandPayload | undefined)?.audit_id ?? null
+    return { p_request_id: envelope.requestId, p_audit_id: auditId }
+  }
+  return { p_request_id: envelope.requestId, p_payload: envelope.payload ?? {} }
+}
+
 /** Map a command kind to its server RPC entrypoint. One entrypoint per command, no client dispatch logic. */
 export function commandRpcName(commandType: WorldEditorCommandType): string {
   switch (commandType) {
     case 'world_editor_ping':
       return 'world_editor_ping'
+    case 'world_editor_revert':
+      return 'world_editor_revert'
     case 'exploration_site_create':
       return 'exploration_site_create'
     case 'mining_field_create':
@@ -281,6 +319,10 @@ export function describeWorldEditorError(code: WorldEditorErrorCode): string {
       return 'The name is already taken in the live world.'
     case 'not_unpublishable':
       return 'This zone cannot be unpublished — it is a seeded zone or is already inactive.'
+    case 'not_revertable':
+      return 'This history entry cannot be reverted — only edits to a location, mining field, exploration site or zone can be restored.'
+    case 'source_missing':
+      return 'The item this change edited no longer exists — there is nothing to revert onto.'
     case 'not_enabled':
       return 'The enemy content registry is not enabled — an owner must turn it on first.'
     case 'transport_error':
