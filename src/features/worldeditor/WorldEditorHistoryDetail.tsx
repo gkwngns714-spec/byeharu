@@ -6,6 +6,9 @@ import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { deriveInactive, formatAuditTime, safeCommandLabel, safeTargetLabel } from './worldEditorAuditView'
 import { canRevertEntry } from './worldEditorHistoryRevert'
 import { describeWorldEditorError, type WorldEditorCommandResult } from './commandContract'
+import { useDraftGuard } from './useWorldEditorDraftGuard'
+import { isLiveConflict } from './worldEditorDraftGuard'
+import { WorldEditorConflictNotice } from './WorldEditorConflictNotice'
 
 // WORLD EDITOR V1.5 — History record detail: operational metadata + semantic before/after diff +
 // redaction metadata + a historical map-focus action + (V4) a "Revert to this version" action.
@@ -25,6 +28,9 @@ interface Props {
    *  History). Returns the typed command result — ok, or a typed error the notice surfaces via
    *  describeWorldEditorError. */
   readonly onRevert: (entry: WorldEditorAuditEntry) => Promise<WorldEditorCommandResult>
+  /** V5 — re-read the live snapshot for the conflict "Reload live version" action (the revert hit an
+   *  optimistic-concurrency conflict); never discards a draft. */
+  readonly onReloadLive: () => void
 }
 
 const CLASS_TONE: Record<AuditDiffClass, string> = {
@@ -34,7 +40,8 @@ const CLASS_TONE: Record<AuditDiffClass, string> = {
   unchanged: 'text-ink-muted',
 }
 
-export function WorldEditorHistoryDetail({ entry, onFocusMap, onRevert }: Props) {
+export function WorldEditorHistoryDetail({ entry, onFocusMap, onRevert, onReloadLive }: Props) {
+  const guard = useDraftGuard()
   const [showUnchanged, setShowUnchanged] = useState(false)
   const [showRaw, setShowRaw] = useState(false)
   // Revert control state: whether the one-step confirm is armed, whether a revert is in flight, and the
@@ -133,7 +140,15 @@ export function WorldEditorHistoryDetail({ entry, onFocusMap, onRevert }: Props)
                 except by another revert.
               </p>
               <div className="flex gap-1.5">
-                <Button size="sm" variant="danger" onClick={() => void runRevert()}>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() =>
+                    // V5 GUARD — reverting overwrites the live world (a context change); a dirty draft in
+                    // the active domain is confirmed away first (Keep editing / Discard and continue).
+                    guard.requestAction('revert', () => void runRevert())
+                  }
+                >
                   Confirm revert
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
@@ -146,7 +161,13 @@ export function WorldEditorHistoryDetail({ entry, onFocusMap, onRevert }: Props)
             <Notice tone="success">Reverted — the live world and history now reflect the restored version.</Notice>
           ) : null}
           {revertResult && !revertResult.ok ? (
-            <Notice tone="danger">{describeWorldEditorError(revertResult.error)}</Notice>
+            isLiveConflict(revertResult.error) ? (
+              // V5 CONFLICT — the live row changed under the revert (source_missing / not_found /
+              // conflict): keep the record + offer an EXPLICIT "Reload live version" (no auto-overwrite).
+              <WorldEditorConflictNotice error={revertResult.error} onReload={onReloadLive} />
+            ) : (
+              <Notice tone="danger">{describeWorldEditorError(revertResult.error)}</Notice>
+            )
           ) : null}
         </div>
       ) : null}

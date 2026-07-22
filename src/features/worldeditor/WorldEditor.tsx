@@ -59,6 +59,11 @@ import {
   nextPendingDomain,
   type PendingDraftDomain,
 } from './worldEditorPendingDrafts'
+import {
+  useWorldEditorDraftGuard,
+  WorldEditorDraftGuardContext,
+} from './useWorldEditorDraftGuard'
+import { PendingDraftsDialog } from './PendingDraftsDialog'
 import { DraftPreviewOverlay } from './DraftPreviewOverlay'
 import { ZoneInspectorActions } from './ZoneInspectorActions'
 import { WorldEditorHistoryPanel, type HistoricalFocus } from './WorldEditorHistoryPanel'
@@ -227,6 +232,26 @@ export function WorldEditor() {
     [draftStore, miningDraftStore, explorationDraftStore, zoneDraftStore],
   )
 
+  // V5 — the ONE shared unsaved-draft NAVIGATION GUARD. Composes the four already-mounted draft stores
+  // + the active authoring domain and gates EVERY context-changing action behind the confirm dialog when
+  // it would abandon a DIRTY draft (client-only; NO autosave, NO new store — it reads the same stores the
+  // panels render). The pure decision lives in worldEditorDraftGuard; this is the shell's binding.
+  const draftGuard = useWorldEditorDraftGuard(
+    {
+      locations: draftStore,
+      mining: miningDraftStore,
+      exploration: explorationDraftStore,
+      zones: zoneDraftStore,
+    },
+    authoringDomain,
+  )
+  // Stable-identity handle so the guarded shell handlers stay `useCallback([])` (never re-wrap per render).
+  const guardRef = useRef(draftGuard)
+  guardRef.current = draftGuard
+  // Latest selection, read by the filter-change guard without widening its dep list.
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+
   // V1.5 History — the EPHEMERAL historical map overlay (a past audit record framed on the map). SHELL
   // state only: never persisted to the DB or authoring state, never merged into the live `selected` model.
   const [historicalFocus, setHistoricalFocus] = useState<HistoricalFocus | null>(null)
@@ -280,6 +305,13 @@ export function WorldEditor() {
   const onReactivated = useCallback(async () => {
     await Promise.all([reloadCatalog(), reloadData()])
   }, [reloadCatalog, reloadData])
+
+  // V5 — the conflict "Reload live version" action: on a publish/reactivate/revert optimistic-concurrency
+  // conflict (the live entity changed underneath), re-read the LIVE snapshot + catalog WITHOUT discarding
+  // the local draft or the attempted values — an EXPLICIT owner choice, never an automatic overwrite/rebase.
+  const reloadLive = useCallback(() => {
+    void Promise.all([reloadData(), reloadCatalog()])
+  }, [reloadData, reloadCatalog])
 
   // The ONE nav/lifecycle index: per-layer LayerItems built from the 0269 catalog (BOTH active +
   // inactive). This REPLACES the former adapter-derived map as the map/search/list source; the adapters
@@ -377,10 +409,18 @@ export function WorldEditor() {
   // no new selection/camera code — just setSelected + setView (camera user-held so the auto-fit-once
   // never fights the jump).
   const onSearchSelect = useCallback((match: EntityMatch) => {
-    const nav = entityNavigation(match)
-    setSelected(nav.selection)
-    userMovedRef.current = true
-    setView(nav.camera)
+    guardRef.current.requestAction('search-jump', () => {
+      const nav = entityNavigation(match)
+      setSelected(nav.selection)
+      userMovedRef.current = true
+      setView(nav.camera)
+    })
+  }, [])
+
+  // V5 GUARD — every map/inspector selection change (picking another entity, or deselecting) routes
+  // through the guard: it would move away from an in-progress dirty draft. Clean context selects at once.
+  const requestSelect = useCallback((next: Selection | null) => {
+    guardRef.current.requestAction('select-entity', () => setSelected(next))
   }, [])
 
   // V5 — COORDINATE JUMP: frame the camera on a raw world point the owner typed. The Camera comes
@@ -388,8 +428,10 @@ export function WorldEditor() {
   // identical camera-set path the search jump uses (mark user-held so the auto-fit-once never fights
   // it) — NO selection change, no write, no draft.
   const onGotoCamera = useCallback((camera: Camera) => {
-    userMovedRef.current = true
-    setView(camera)
+    guardRef.current.requestAction('camera-jump', () => {
+      userMovedRef.current = true
+      setView(camera)
+    })
   }, [])
 
   // V5 LIFECYCLE — change the shared filter. DRAFT SAFETY (this slice, minimal): changing the filter
@@ -398,14 +440,25 @@ export function WorldEditor() {
   // (if any) is preserved. No confirm dialog yet (that is Slice 3).
   const changeStatusFilter = useCallback(
     (next: WorldEntityStatusFilter) => {
-      setStatusFilter(next)
-      setSelected((sel) => {
-        if (!sel) return sel
-        const row = findCatalogRow(catalogRows, sel.layer, sel.id)
-        // Keep the selection only when the selected entity still passes the new lifecycle filter;
-        // otherwise clear ONLY the visible selection (drafts stay intact).
-        return row != null && catalogRowPassesStatus(row, next) ? sel : null
-      })
+      const applyFilter = () => {
+        setStatusFilter(next)
+        setSelected((sel) => {
+          if (!sel) return sel
+          const row = findCatalogRow(catalogRows, sel.layer, sel.id)
+          // Keep the selection only when the selected entity still passes the new lifecycle filter;
+          // otherwise clear ONLY the visible selection (drafts stay intact).
+          return row != null && catalogRowPassesStatus(row, next) ? sel : null
+        })
+      }
+      // V5 GUARD: route through the confirm dialog ONLY when the new filter would HIDE the current
+      // selection (the dirty draft's on-map anchor disappears); a change that keeps the selection visible
+      // applies immediately. The filter change itself still NEVER discards a draft (draft safety) — a
+      // discard happens only via the dialog's explicit "Discard and continue".
+      const sel = selectedRef.current
+      const selRow = sel ? findCatalogRow(catalogRows, sel.layer, sel.id) : null
+      const hidesSelection = sel != null && !(selRow != null && catalogRowPassesStatus(selRow, next))
+      if (hidesSelection) guardRef.current.requestAction('change-filter', applyFilter)
+      else applyFilter()
     },
     [catalogRows],
   )
@@ -454,6 +507,16 @@ export function WorldEditor() {
     setAuthoringDomain(domain)
     setZoneGestureMode('idle')
   }, [])
+
+  // V5 GUARD — the authoring-domain TABS route the switch through the guard (leaving a domain that holds
+  // a dirty draft prompts first). The pending-drafts JUMP keeps calling switchAuthoringDomain directly:
+  // it navigates TOWARD pending work, and only the active domain's own dirty draft is ever at risk.
+  const requestSwitchDomain = useCallback(
+    (domain: AuthoringDomain) => {
+      guardRef.current.requestAction('switch-domain', () => switchAuthoringDomain(domain))
+    },
+    [switchAuthoringDomain],
+  )
 
   // V5 — jump to the next domain that has pending drafts (pure target from the selector; cycles across
   // domains with unpublished work). This is the indicator's ENTIRE action surface: it AT MOST switches
@@ -544,6 +607,7 @@ export function WorldEditor() {
   const zoneActiveDraft = zoneDraftStore.activeDraft
 
   return (
+    <WorldEditorDraftGuardContext.Provider value={draftGuard}>
     <LocationDraftsContext.Provider value={draftStore}>
     <MiningDraftsContext.Provider value={miningDraftStore}>
     <ExplorationDraftsContext.Provider value={explorationDraftStore}>
@@ -591,7 +655,7 @@ export function WorldEditor() {
             onPointerLeave={endDrag}
             onPointerCancel={endDrag}
             onClick={(e) => {
-              if (e.target === svgRef.current) setSelected(null)
+              if (e.target === svgRef.current) requestSelect(null)
             }}
           >
             <defs>
@@ -618,7 +682,7 @@ export function WorldEditor() {
                 if (!d) return null
                 const isSel = selected?.layer === it.layer && selected.id === it.id
                 return (
-                  <g key={`${it.layer}:${it.id}`} onClick={(e) => { e.stopPropagation(); setSelected({ layer: it.layer, id: it.id }) }} style={{ cursor: 'pointer' }}>
+                  <g key={`${it.layer}:${it.id}`} onClick={(e) => { e.stopPropagation(); requestSelect({ layer: it.layer, id: it.id }) }} style={{ cursor: 'pointer' }}>
                     <path d={d} fill={it.tone} opacity={isSel ? 0.22 : 0.1} />
                     <path
                       d={d}
@@ -642,7 +706,7 @@ export function WorldEditor() {
                 return (
                   <g
                     key={`${it.layer}:${it.id}`}
-                    onClick={(e) => { e.stopPropagation(); setSelected({ layer: it.layer, id: it.id }) }}
+                    onClick={(e) => { e.stopPropagation(); requestSelect({ layer: it.layer, id: it.id }) }}
                     style={{ cursor: 'pointer' }}
                   >
                     <circle cx={x} cy={y} r={19 / k} fill="transparent" />
@@ -856,6 +920,7 @@ export function WorldEditor() {
                 key={`${selected.layer}:${selected.id}`}
                 row={selectedCatalogRow}
                 onReactivated={onReactivated}
+                onReloadLive={reloadLive}
               />
             ) : !inspectorFields ? (
               <p className="text-sm text-ink-faint">Select any item on the map to inspect its typed fields.</p>
@@ -976,7 +1041,7 @@ export function WorldEditor() {
                     active-only snapshot and unmount the reactivate control). Only shown for a live zone
                     selection; drafts publish through their own panels. `key` resets local status per zone. */}
                 {selectedZone && (
-                  <ZoneInspectorActions key={selectedZone.id} zone={selectedZone} />
+                  <ZoneInspectorActions key={selectedZone.id} zone={selectedZone} onReloadLive={reloadLive} />
                 )}
               </div>
             )}
@@ -990,6 +1055,7 @@ export function WorldEditor() {
             onFocusHistorical={focusHistorical}
             onClearHistorical={clearHistorical}
             onRevert={onRevertHistory}
+            onReloadLive={reloadLive}
           />
 
           {/* E4 — Combat content: ONE foldable rail section (collapsed by default) for owner-only
@@ -1011,7 +1077,7 @@ export function WorldEditor() {
                 return (
                   <button
                     key={d}
-                    onClick={() => switchAuthoringDomain(d)}
+                    onClick={() => requestSwitchDomain(d)}
                     className={`flex items-center justify-between gap-1.5 rounded-md border px-3 py-2 text-sm ${
                       authoringDomain === d
                         ? 'border-accent/60 bg-accent-soft text-ink'
@@ -1054,10 +1120,16 @@ export function WorldEditor() {
           )}
         </aside>
       </div>
+
+      {/* V5 — the ONE unsaved-draft confirm dialog (Keep editing / Discard and continue). Rendered once
+          here; it reads the shared guard from context and shows only when a context-changing action was
+          intercepted because it would abandon a dirty draft. */}
+      <PendingDraftsDialog />
     </div>
     </ZoneDraftsContext.Provider>
     </ExplorationDraftsContext.Provider>
     </MiningDraftsContext.Provider>
     </LocationDraftsContext.Provider>
+    </WorldEditorDraftGuardContext.Provider>
   )
 }

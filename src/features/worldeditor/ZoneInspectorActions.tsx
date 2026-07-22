@@ -10,6 +10,9 @@ import {
   type ZoneLifecycleStatus,
   type ZoneStatusCommandPayload,
 } from './zoneLifecycle'
+import { useDraftGuard } from './useWorldEditorDraftGuard'
+import { isLiveConflict } from './worldEditorDraftGuard'
+import { WorldEditorConflictNotice } from './WorldEditorConflictNotice'
 
 // WORLD EDITOR — the owner-only LIFECYCLE actions for a selected LIVE danger zone. Two COMPLEMENTARY
 // owner-gated commands over ONE danger_zones row's status: zone_unpublish (0255, active → inactive — the
@@ -42,12 +45,17 @@ interface ZoneStatusResult {
 export function ZoneInspectorActions({
   zone,
   onApplied,
+  onReloadLive,
 }: {
   zone: DangerZoneLite
   /** Fired after a successful status change with the row's NEW status — the shell may refresh History
    *  and any dependent view. Selection + camera are intentionally NOT touched here. */
   onApplied?: (status: ZoneLifecycleStatus) => void
+  /** V5 — re-read the live snapshot for the conflict "Reload live version" action (the live zone changed
+   *  under the unpublish/reactivate); never discards a draft. */
+  onReloadLive: () => void
 }) {
+  const guard = useDraftGuard()
   // LOCAL presentational status — the live read is active-only, so a selected zone starts active; a
   // successful command flips this so the complementary action becomes reachable (0250 precedent).
   const [status, setStatus] = useState<ZoneLifecycleStatus>('active')
@@ -103,20 +111,31 @@ export function ZoneInspectorActions({
           toggleable ? action.title : 'Only editor-created (drawn) zones can be reactivated or unpublished; this is a seeded zone.'
         }
         onClick={() => {
-          void onRun()
+          // V5 GUARD — unpublish/reactivate is a context-changing live command; a dirty draft in the
+          // active domain is confirmed away first (Keep editing / Discard and continue).
+          guard.requestAction(status === 'active' ? 'unpublish' : 'reactivate', () => {
+            void onRun()
+          })
         }}
       >
         {busy ? action.busyLabel : action.label}
       </Button>
       {phase.kind === 'failed' && (
-        <div className="rounded-md border border-edge bg-surface-2 px-2 py-1 text-xs text-ink">
-          <div>{describeWorldEditorError(phase.failure.error)}</div>
-          {phase.failure.details?.map((d, i) => (
-            <div key={`${d.code}-${i}`} className="text-ink-faint">
-              {d.message ?? d.code}
+        <>
+          {/* V5 CONFLICT — the live zone changed under the command (optimistic concurrency): keep the
+              local work and offer an EXPLICIT "Reload live version" (self-hides for non-conflict errors). */}
+          <WorldEditorConflictNotice error={phase.failure.error} onReload={onReloadLive} />
+          {!isLiveConflict(phase.failure.error) && (
+            <div className="rounded-md border border-edge bg-surface-2 px-2 py-1 text-xs text-ink">
+              <div>{describeWorldEditorError(phase.failure.error)}</div>
+              {phase.failure.details?.map((d, i) => (
+                <div key={`${d.code}-${i}`} className="text-ink-faint">
+                  {d.message ?? d.code}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   )

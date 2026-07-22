@@ -20,6 +20,7 @@ import type { WorldPoint } from './worldEditorTypes'
 import { WorldEditorHistoryFilters } from './WorldEditorHistoryFilters'
 import { WorldEditorHistoryList, type HistoryListPhase } from './WorldEditorHistoryList'
 import { WorldEditorHistoryDetail } from './WorldEditorHistoryDetail'
+import { useDraftGuard } from './useWorldEditorDraftGuard'
 
 // WORLD EDITOR V1.5 — the History container. It owns the filter form + the historical-overlay callbacks
 // and DRIVES the pure request-lifecycle coordinator (worldEditorAuditRequestState) — it keeps NO
@@ -42,11 +43,15 @@ interface Props {
    *  The shell issues the command + refetches the map on success; the panel then refetches its OWN
    *  History list (below). Returns the typed command result for the detail's inline notice. */
   readonly onRevert: (entry: WorldEditorAuditEntry) => Promise<WorldEditorCommandResult>
+  /** V5 — re-read the live snapshot for the conflict "Reload live version" action (a revert hit an
+   *  optimistic-concurrency conflict); never discards a draft. Passed straight to the detail. */
+  readonly onReloadLive: () => void
 }
 
 const PAGE_SIZE = 25
 
-export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical, onRevert }: Props) {
+export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical, onRevert, onReloadLive }: Props) {
+  const guard = useDraftGuard()
   const [filters, setFilters] = useState<WorldEditorAuditFilters>({})
 
   // pure coordinator = source of truth (ref); snapshot mirror = render state
@@ -121,8 +126,12 @@ export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical, 
   }
 
   const onSelect = (id: string) => {
-    commit(selectEntry(stateRef.current, id))
-    clearRef.current() // selecting a different record clears the previous historical overlay
+    // V5 GUARD — opening another history record is a context change; a dirty draft in the active domain
+    // is confirmed away first (Keep editing / Discard and continue). Clean context opens immediately.
+    guard.requestAction('open-history', () => {
+      commit(selectEntry(stateRef.current, id))
+      clearRef.current() // selecting a different record clears the previous historical overlay
+    })
   }
 
   const selected = snapshot.selectedId
@@ -175,7 +184,12 @@ export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical, 
       </div>
 
       {selected ? (
-        <WorldEditorHistoryDetail entry={selected} onFocusMap={focusSelectedOnMap} onRevert={handleRevert} />
+        <WorldEditorHistoryDetail
+          entry={selected}
+          onFocusMap={focusSelectedOnMap}
+          onRevert={handleRevert}
+          onReloadLive={onReloadLive}
+        />
       ) : null}
     </section>
   )
