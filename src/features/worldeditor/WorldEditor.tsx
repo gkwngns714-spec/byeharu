@@ -45,6 +45,11 @@ import { ZoneDraftsContext, useZoneDraftsStore } from './useZoneDrafts'
 import { ZoneDraftPanel } from './ZoneDraftPanel'
 import { ZONE_DRAFT_DESCRIPTOR } from './zoneDraftModel'
 import { ZoneGeometryHandles, type ZoneGestureMode } from './ZoneGeometryHandles'
+import {
+  pendingDraftsSummary,
+  nextPendingDomain,
+  type PendingDraftDomain,
+} from './worldEditorPendingDrafts'
 import { DraftPreviewOverlay } from './DraftPreviewOverlay'
 import { ZoneInspectorActions } from './ZoneInspectorActions'
 import { WorldEditorHistoryPanel, type HistoricalFocus } from './WorldEditorHistoryPanel'
@@ -98,8 +103,9 @@ interface Selection {
 }
 
 /** The four live draft-authoring domains (V2A-2 + V2C + V3A-2). The toggle picks which panel/preview
- *  is active — every store stays mounted (drafts persist per-domain either way). */
-type AuthoringDomain = 'locations' | 'mining' | 'exploration' | 'zones'
+ *  is active — every store stays mounted (drafts persist per-domain either way). ONE authority for the
+ *  domain set: reuses the pending-drafts selector's PendingDraftDomain (same registry-ordered union). */
+type AuthoringDomain = PendingDraftDomain
 
 /** Toggle labels for the four authoring domains (ONE authority for the toggle row). */
 const AUTHORING_DOMAIN_LABELS: Record<AuthoringDomain, string> = {
@@ -191,6 +197,21 @@ export function WorldEditor() {
   // authoring intent; gesture ephemera live and die with the shell). The zone panel's draw buttons
   // set it; ZoneGeometryHandles consumes it.
   const [zoneGestureMode, setZoneGestureMode] = useState<ZoneGestureMode>('idle')
+
+  // V5 — the cross-domain PENDING-DRAFTS roll-up: a PURE read of the four already-mounted stores'
+  // `drafts` arrays through the ONE selector (worldEditorPendingDrafts). Derived VIEW state only — it
+  // adds no store and never publishes/discards; it just tells the owner how much unpublished work is
+  // sitting across every domain so switching domains never loses track of a started draft.
+  const pendingDrafts = useMemo(
+    () =>
+      pendingDraftsSummary({
+        locations: draftStore,
+        mining: miningDraftStore,
+        exploration: explorationDraftStore,
+        zones: zoneDraftStore,
+      }),
+    [draftStore, miningDraftStore, explorationDraftStore, zoneDraftStore],
+  )
 
   // V1.5 History — the EPHEMERAL historical map overlay (a past audit record framed on the map). SHELL
   // state only: never persisted to the DB or authoring state, never merged into the live `selected` model.
@@ -375,6 +396,21 @@ export function WorldEditor() {
       return next
     })
 
+  // The ONE domain-switch — selects which draft panel/preview is active (gesture mode never outlives
+  // the zone domain view). Reused by BOTH the authoring-domain tabs AND the V5 pending-drafts jump.
+  const switchAuthoringDomain = useCallback((domain: AuthoringDomain) => {
+    setAuthoringDomain(domain)
+    setZoneGestureMode('idle')
+  }, [])
+
+  // V5 — jump to the next domain that has pending drafts (pure target from the selector; cycles across
+  // domains with unpublished work). This is the indicator's ENTIRE action surface: it AT MOST switches
+  // the active domain via the existing domain-switch — it NEVER publishes, discards, or edits a draft.
+  const jumpToPendingDomain = useCallback(() => {
+    const target = nextPendingDomain(pendingDrafts, authoringDomain)
+    if (target) switchAuthoringDomain(target)
+  }, [pendingDrafts, authoringDomain, switchAuthoringDomain])
+
   // The inspector fields for the current selection, resolved THROUGH the owning adapter.
   const inspectorFields: InspectorField[] | null = useMemo(() => {
     if (!data || !selected) return null
@@ -460,6 +496,22 @@ export function WorldEditor() {
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V2A-2 · mining drafts (no publish)</span>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V2C · exploration drafts (no publish)</span>
         <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V3A-2 · zone drafts (no publish)</span>
+
+        {/* V5 — the GLOBAL unpublished-drafts indicator: ONE compact badge showing the TOTAL pending
+            (local, unpublished) drafts across ALL four domains. Rendered ONLY when something is pending
+            (zero state stays clean — no intrusive badge). Clicking jumps the active domain to the next
+            one with pending work (reuses the existing domain-switch); it NEVER publishes or discards. */}
+        {pendingDrafts.total > 0 && (
+          <button
+            type="button"
+            onClick={jumpToPendingDomain}
+            className="ml-auto rounded-md border border-warning/60 bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning hover:border-warning"
+            title="Local drafts not yet published. Click to jump to a domain with pending work."
+            data-testid="worldeditor-pending-drafts"
+          >
+            {pendingDrafts.total} unpublished draft{pendingDrafts.total === 1 ? '' : 's'}
+          </button>
+        )}
       </header>
 
       <div className="flex flex-1 flex-wrap items-start gap-4">
@@ -875,23 +927,35 @@ export function WorldEditor() {
           <section className="rounded-card border border-edge bg-surface p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Authoring domain</div>
             <div className="grid grid-cols-2 gap-1.5">
-              {(['locations', 'mining', 'exploration', 'zones'] as const).map((d) => (
-                <button
-                  key={d}
-                  onClick={() => {
-                    setAuthoringDomain(d)
-                    setZoneGestureMode('idle') // gesture mode never outlives the zone domain view
-                  }}
-                  className={`rounded-md border px-3 py-2 text-sm ${
-                    authoringDomain === d
-                      ? 'border-accent/60 bg-accent-soft text-ink'
-                      : 'border-edge bg-surface-2 text-ink-muted'
-                  }`}
-                  aria-pressed={authoringDomain === d}
-                >
-                  {AUTHORING_DOMAIN_LABELS[d]}
-                </button>
-              ))}
+              {(['locations', 'mining', 'exploration', 'zones'] as const).map((d) => {
+                // V5 — per-domain pending-drafts dot: a small count on any tab whose store holds
+                // unpublished drafts, so the owner sees WHERE their pending work is without opening
+                // each panel. Pure read of the same selector; renders nothing when that domain is clean.
+                const pendingHere = pendingDrafts.byDomain[d]
+                return (
+                  <button
+                    key={d}
+                    onClick={() => switchAuthoringDomain(d)}
+                    className={`flex items-center justify-between gap-1.5 rounded-md border px-3 py-2 text-sm ${
+                      authoringDomain === d
+                        ? 'border-accent/60 bg-accent-soft text-ink'
+                        : 'border-edge bg-surface-2 text-ink-muted'
+                    }`}
+                    aria-pressed={authoringDomain === d}
+                  >
+                    <span>{AUTHORING_DOMAIN_LABELS[d]}</span>
+                    {pendingHere > 0 && (
+                      <span
+                        className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold leading-4 text-app"
+                        title={`${pendingHere} unpublished draft${pendingHere === 1 ? '' : 's'} in this domain`}
+                        data-testid={`worldeditor-pending-dot-${d}`}
+                      >
+                        {pendingHere}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
           </section>
 
