@@ -889,18 +889,17 @@ export function WorldEditor() {
                   </p>
                 </div>
 
-                {/* V3B: the ONE owner-gated LIVE zone write reachable from the shell — unpublish a
-                    selected live danger zone (0255 zone_unpublish). Server is_owner() is the authority;
-                    on success the snapshot re-reads and the zone leaves the map. Only shown for a live
-                    zone selection; drafts publish through their own panels. */}
+                {/* V3B: the owner-gated LIVE zone LIFECYCLE actions reachable from the shell — the
+                    complementary pair over one selected live zone's status: unpublish (0255
+                    zone_unpublish, active → inactive) and reactivate (0268 zone_set_active, inactive →
+                    active). Server is_owner() is the authority. The live read is active-only, so the
+                    component tracks the applied status LOCALLY (0250 precedent) and keeps SELECTION +
+                    camera so the complementary action stays reachable in-session; we deliberately do NOT
+                    reloadData()/clear selection here (that would drop an unpublished zone from the
+                    active-only snapshot and unmount the reactivate control). Only shown for a live zone
+                    selection; drafts publish through their own panels. `key` resets local status per zone. */}
                 {selectedZone && (
-                  <ZoneInspectorActions
-                    zone={selectedZone}
-                    onUnpublished={() => {
-                      setSelected(null)
-                      void reloadData()
-                    }}
-                  />
+                  <ZoneInspectorActions key={selectedZone.id} zone={selectedZone} />
                 )}
               </div>
             )}

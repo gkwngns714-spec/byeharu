@@ -44,6 +44,17 @@
  *  optimistic-concurrency contract (payload = {target_id: the zone uuid, expected: {name, source,
  *  location_id}}). Ineligible targets are a typed not_unpublishable (protected_zone for seeded
  *  source<>'drawn' zones; already_inactive for non-active zones); a vanished target is not_found;
+ *  zone_set_active is the owner-gated zone RE-ACTIVATE command (0268): it flips ONE danger_zones row's
+ *  status from 'inactive' back to 'active' — the restore-half of the 0250 exploration/mining set_active
+ *  toggles, adapted to the zone status column — closing the lifecycle-parity gap the one-way
+ *  zone_unpublish left open. REACTIVATE-ONLY: it REQUIRES the target to be currently inactive; an
+ *  already-active zone is a typed validation_failed {already_active} (nothing written). Payload =
+ *  {target_id: the zone uuid, expected: {name, source, location_id}} under the SAME optimistic-concurrency
+ *  contract (drift → stale_revision/source_changed). A seeded source<>'drawn' target is a typed
+ *  validation_failed {protected_zone} (the 0266 idiom); a vanished target is not_found. It COMPLEMENTS
+ *  zone_unpublish (which stays the SOLE deactivate path, unchanged), never supersedes it: the client's
+ *  Unpublish button still calls zone_unpublish, and the new Reactivate button (inactive zones only) calls
+ *  this command;
  *  world_editor_revert is the ONE cross-domain REVERT authority (0267, owner-gated): it restores an
  *  AUDITED entity to its recorded before_snapshot across ALL four update domains (location / mining /
  *  exploration / zone). Its server signature is UNIQUE — public.world_editor_revert(p_request_id text,
@@ -68,6 +79,7 @@ export type WorldEditorCommandType =
   | 'zone_create'
   | 'zone_update'
   | 'zone_unpublish'
+  | 'zone_set_active'
   | 'exploration_site_set_active'
   | 'mining_field_set_active'
   // ENEMY CONTENT REGISTRY (0257, owner-gated, DARK behind enemy_content_registry_enabled): the six
@@ -232,6 +244,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'zone_update'
     case 'zone_unpublish':
       return 'zone_unpublish'
+    case 'zone_set_active':
+      return 'zone_set_active'
     case 'exploration_site_set_active':
       return 'exploration_site_set_active'
     case 'mining_field_set_active':
