@@ -577,10 +577,10 @@ begin
                  where oid = 'public.zone_update(text,jsonb)'::regprocedure and prosecdef) then
     raise exception 'PUBLISH-ZONE-UPDATE self-assert FAIL: zone_update is not SECURITY DEFINER';
   end if;
-  if not exists (select 1 from pg_proc
-                 where oid = 'public.zone_update(text,jsonb)'::regprocedure
-                   and proconfig @> array['search_path=']) then
-    raise exception 'PUBLISH-ZONE-UPDATE self-assert FAIL: zone_update does not pin search_path='''' — a search_path hijack would be possible';
+  if not exists (select 1 from pg_proc p
+                 where p.oid = 'public.zone_update(text,jsonb)'::regprocedure
+                   and exists (select 1 from unnest(p.proconfig) cfg where cfg like 'search_path=%')) then
+    raise exception 'PUBLISH-ZONE-UPDATE self-assert FAIL: zone_update does not pin search_path — a search_path hijack would be possible';
   end if;
   if not has_function_privilege('authenticated', 'public.zone_update(text,jsonb)', 'execute') then
     raise exception 'PUBLISH-ZONE-UPDATE self-assert FAIL: authenticated cannot execute zone_update — the in-body guard would be unreachable';
