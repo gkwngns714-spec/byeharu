@@ -118,6 +118,9 @@ export const LOCATION_DRAFT_DESCRIPTOR: DomainDraftDescriptor<
       representation: { kind: 'point', world: { x: payload.x, y: payload.y } },
       tone: s.color,
       glyph: s.shape as PointGlyph,
+      // V5 filters: the draft's own status (payload.status) — same field the live location item carries,
+      // so the preview stays structurally interchangeable with a live layer item (parity test).
+      status: payload.status,
     }
   },
   withinBounds: (payload) => isWithinOpenSpaceBounds({ x: payload.x, y: payload.y }),
