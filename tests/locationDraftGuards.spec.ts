@@ -55,6 +55,11 @@ const COMMAND_PATH_FILES = [
   // History UI files themselves stay transport-free (proven by worldEditorAuditGuards.spec.ts). The pure
   // command envelope is built in worldEditorHistoryRevert.ts (contract only, no command client).
   'WorldEditor.tsx',
+  // V5 lifecycle (0269/0270): WorldEditorInactiveInspector.tsx is the sanctioned REACTIVATE surface — the
+  // command that acts on a selected INACTIVE catalog entity (zone/location via the 0270 detail
+  // reactivation_expected, mining/exploration straight from the catalog row). The pure per-domain command
+  // envelopes are built in worldEditorReactivate.ts (contract only, no command client).
+  'WorldEditorInactiveInspector.tsx',
 ]
 test('no file in src/features/worldeditor outside the sanctioned command path references a command client', () => {
   for (const name of readdirSync(WE_DIR)) {

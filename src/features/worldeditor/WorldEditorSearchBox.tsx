@@ -7,6 +7,7 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { WORLD_EDITOR_LAYERS } from './worldEditorRegistry'
 import { searchEntities, type EntityMatch } from './worldEditorSearch'
+import type { WorldEntityStatusFilter } from './worldEditorFilters'
 import type { LayerId, LayerItem } from './worldEditorTypes'
 
 /** Domain display labels — DERIVED from the ONE registry (adapter.id → adapter.title), never a
@@ -19,15 +20,21 @@ const DOMAIN_TITLE: Record<LayerId, string> = Object.fromEntries(
 interface Props {
   readonly itemsByLayer: ReadonlyMap<LayerId, readonly LayerItem[]>
   readonly onSelect: (match: EntityMatch) => void
+  /** The shared lifecycle filter — search results OBEY it (an inactive entity is only searchable when
+   *  the filter is 'inactive' or 'all'). */
+  readonly statusFilter: WorldEntityStatusFilter
 }
 
-export function WorldEditorSearchBox({ itemsByLayer, onSelect }: Props) {
+export function WorldEditorSearchBox({ itemsByLayer, onSelect, statusFilter }: Props) {
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0) // highlighted index into the DISPLAY-ordered flat list
   const [open, setOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  const matches = useMemo(() => searchEntities(itemsByLayer, query), [itemsByLayer, query])
+  const matches = useMemo(
+    () => searchEntities(itemsByLayer, query, statusFilter),
+    [itemsByLayer, query, statusFilter],
+  )
 
   // Display order: registry-domain order, ranked matches within each domain (so arrow-key traversal
   // and the grouped render share one index space). Groups with no matches are dropped.
@@ -134,6 +141,14 @@ export function WorldEditorSearchBox({ itemsByLayer, onSelect }: Props) {
                             }`}
                           >
                             <span className="truncate">{m.name}</span>
+                            {m.status === 'inactive' && (
+                              <span
+                                className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-faint bg-surface"
+                                data-testid="worldeditor-search-inactive-badge"
+                              >
+                                Inactive
+                              </span>
+                            )}
                           </button>
                         </li>
                       )

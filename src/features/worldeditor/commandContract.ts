@@ -312,6 +312,18 @@ export function normalizeEnvelope<R>(
   }
 }
 
+/** Normalize a raw FAILURE envelope ({ok:false, error, details}) — as returned by the owner-only
+ *  READ RPCs that share the 0243 error vocabulary (world_editor_entity_detail, 0270) — into the typed
+ *  {ok:false, error, details} shape. A missing/unknown error code folds to transport_error
+ *  (fail-closed). Pure, no network. */
+export function normalizeEnvelopeError(raw: {
+  error?: unknown
+  details?: ReadonlyArray<WorldEditorFailureDetail>
+}): { readonly ok: false; readonly error: WorldEditorErrorCode; readonly details?: ReadonlyArray<WorldEditorFailureDetail> } {
+  const error = typeof raw.error === 'string' ? (raw.error as WorldEditorErrorCode) : 'transport_error'
+  return { ok: false, error, details: raw.details }
+}
+
 /** Human-readable, exhaustive description of every error code (compile-enforces the union stays covered). */
 export function describeWorldEditorError(code: WorldEditorErrorCode): string {
   switch (code) {
