@@ -49,10 +49,24 @@ test('no History UI / audit-logic module touches supabase, a table, an rpc, or a
   }
 })
 
-test('the History slice offers NO rollback / replay / restore / republish / rerun control', () => {
+test('the History slice offers NO in-place rollback / replay / republish / rerun control', () => {
+  // V1.5 was inspect-only. V4 adds ONE composed control — "Revert to this version" (WorldEditorHistoryDetail)
+  // — but it is NOT a new mechanism: it seeds an ordinary EDIT draft through the shell's onRevert prop, which
+  // the owner then reviews and publishes through the EXISTING owner-gated location_update path. The slice must
+  // still express NO in-place re-execution of an audited command (rollback/replay/republish/rerun) — those
+  // would bypass the review-then-publish path. (The no-supabase/no-rpc/no-command-client guard above still
+  // proves the History files carry no direct write surface of any kind.)
   for (const f of [...HISTORY_UI_FILES, ...AUDIT_LOGIC_FILES]) {
-    expect(read(f), `${f} must not contain a mutation-verb control`).not.toMatch(/rollback|replay|restore|republish|rerun/i)
+    expect(read(f), `${f} must not contain an in-place re-run control`).not.toMatch(/rollback|replay|republish|rerun/i)
   }
+})
+
+test('V4 revert is a draft SEED through the shell prop — the History detail expresses no write of its own', () => {
+  const detail = read('WorldEditorHistoryDetail.tsx')
+  // the action is delegated to the shell via a prop callback (mirrors onFocusMap), never done inline
+  expect(detail).toContain('onRevert')
+  // and the detail itself opens no publish/command/rpc path (defence in depth beside the guard above)
+  expect(detail, 'the detail must not publish directly').not.toMatch(/invokeWorldEditorCommand|commandClient|\.rpc\s*\(/)
 })
 
 test('the Panel drives the pure request coordinator and keeps NO duplicate sequencing of its own', () => {

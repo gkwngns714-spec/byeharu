@@ -14,7 +14,8 @@ import {
   selectEntry,
   type AuditRequestState,
 } from './worldEditorAuditRequestState'
-import { describeAuditError, type WorldEditorAuditFilters } from './worldEditorAuditTypes'
+import { describeAuditError, type WorldEditorAuditEntry, type WorldEditorAuditFilters } from './worldEditorAuditTypes'
+import type { RevertOutcome } from './worldEditorHistoryRevert'
 import type { WorldPoint } from './worldEditorTypes'
 import { WorldEditorHistoryFilters } from './WorldEditorHistoryFilters'
 import { WorldEditorHistoryList, type HistoryListPhase } from './WorldEditorHistoryList'
@@ -37,11 +38,14 @@ export interface HistoricalFocus {
 interface Props {
   readonly onFocusHistorical: (focus: HistoricalFocus) => void
   readonly onClearHistorical: () => void
+  /** V4 — seed a revert edit draft from an audit record (threaded straight to the detail, mirroring
+   *  onFocusHistorical). Returns whether the live source still exists ('reverted' / 'source_missing'). */
+  readonly onRevert: (entry: WorldEditorAuditEntry) => RevertOutcome
 }
 
 const PAGE_SIZE = 25
 
-export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical }: Props) {
+export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical, onRevert }: Props) {
   const [filters, setFilters] = useState<WorldEditorAuditFilters>({})
 
   // pure coordinator = source of truth (ref); snapshot mirror = render state
@@ -144,7 +148,9 @@ export function WorldEditorHistoryPanel({ onFocusHistorical, onClearHistorical }
         )}
       </div>
 
-      {selected ? <WorldEditorHistoryDetail entry={selected} onFocusMap={focusSelectedOnMap} /> : null}
+      {selected ? (
+        <WorldEditorHistoryDetail entry={selected} onFocusMap={focusSelectedOnMap} onRevert={onRevert} />
+      ) : null}
     </section>
   )
 }
