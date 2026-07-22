@@ -21,6 +21,7 @@ export const KNOWN_AUDIT_COMMAND_TYPES = [
   'exploration_site_set_active',
   'mining_field_set_active',
   'zone_unpublish',
+  'zone_set_active',
 ] as const
 export type KnownAuditCommandType = (typeof KNOWN_AUDIT_COMMAND_TYPES)[number]
 
