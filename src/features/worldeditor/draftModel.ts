@@ -88,6 +88,21 @@ export function forkEdit<TPayload, TLive, TReport>(
   }
 }
 
+/** Fork an edit draft off a LIVE row AND seed its payload in ONE atomic step (no un-seeded draft ever
+ *  exists). The mode still pins the LIVE row's id + fingerprint + snapshot — so `expected`/optimistic
+ *  concurrency stays the CURRENT live row; only the editable payload is overlaid with `payload`. This
+ *  is the ONE primitive the V4 "revert" flow needs (fork-then-patch is not doable across two store
+ *  dispatches — the new draft is not yet in state when the second call would run). Deterministic. */
+export function forkEditWithPayload<TPayload, TLive, TReport>(
+  descriptor: DomainDraftDescriptor<TPayload, TLive, TReport>,
+  live: TLive,
+  payload: Partial<TPayload>,
+  draftId: string,
+  now: number,
+): Draft<TPayload> {
+  return patch(forkEdit(descriptor, live, draftId, now), payload, now)
+}
+
 /** Apply a partial payload change immutably; bumps updatedAt to the supplied clock. */
 export function patch<TPayload>(
   draft: Draft<TPayload>,

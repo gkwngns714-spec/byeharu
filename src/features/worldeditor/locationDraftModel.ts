@@ -29,6 +29,7 @@ import {
   draftSourceStatus as coreDraftSourceStatus,
   draftToLayerItem as coreDraftToLayerItem,
   forkEdit as coreForkEdit,
+  forkEditWithPayload as coreForkEditWithPayload,
   isDirty as coreIsDirty,
   parseStoredDraft as coreParseStoredDraft,
   patch as corePatch,
@@ -147,6 +148,18 @@ export function beginCreate(draftId: string, now: number): LocationDraft {
  *  pins sourceId + the row's fingerprint + a full snapshot so dirtiness/staleness stay decidable. */
 export function forkEdit(loc: MapLocation, draftId: string, now: number): LocationDraft {
   return coreForkEdit(LOCATION_DRAFT_DESCRIPTOR, loc, draftId, now)
+}
+
+/** Fork an edit draft off a LIVE location AND seed its payload in ONE step (the V4 revert primitive):
+ *  the mode pins the CURRENT live row's id/fingerprint/snapshot (the publish `expected` baseline), and
+ *  the payload is overlaid with `payload` (the historical values). Deterministic. */
+export function forkEditWithPayload(
+  loc: MapLocation,
+  payload: Partial<LocationDraftPayload>,
+  draftId: string,
+  now: number,
+): LocationDraft {
+  return coreForkEditWithPayload(LOCATION_DRAFT_DESCRIPTOR, loc, payload, draftId, now)
 }
 
 /** Apply a partial payload change immutably; bumps updatedAt to the supplied clock. */

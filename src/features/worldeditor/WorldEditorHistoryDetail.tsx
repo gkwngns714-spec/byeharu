@@ -1,19 +1,26 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Badge, Button, Notice } from '../../components/ui'
 import { deriveAuditDiff, type AuditDiffClass } from './worldEditorAuditDiff'
 import { auditRecordHasFocus } from './worldEditorAuditFocus'
 import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { deriveInactive, formatAuditTime, safeCommandLabel, safeTargetLabel } from './worldEditorAuditView'
+import { canRevertEntry, type RevertOutcome } from './worldEditorHistoryRevert'
 
 // WORLD EDITOR V1.5 — History record detail: operational metadata + semantic before/after diff +
-// redaction metadata + a historical map-focus action. STRICTLY read-only: the only interactive controls
-// are display toggles (show/hide unchanged, sanitized JSON) and the camera focus action — never a
-// state-changing control of any kind. Historical state is clearly labelled so a snapshot never
-// masquerades as the current live object. Redacted values are NEVER inferred.
+// redaction metadata + a historical map-focus action + (V4) a "Revert to this version" action.
+// The focus action is read-only (camera only). The revert action does NOT mutate anything here: it asks
+// the shell to fork an ordinary EDIT draft seeded with this record's historical `before` values — the
+// owner then reviews + publishes it through the existing owner-gated location_update path. It is offered
+// ONLY for revertable rows (location_update with a non-null before — canRevertEntry). Historical state
+// is clearly labelled so a snapshot never masquerades as the current live object; redactions are NEVER
+// inferred.
 
 interface Props {
   readonly entry: WorldEditorAuditEntry
   readonly onFocusMap: () => void
+  /** Ask the shell to seed a revert edit draft from this record. Returns whether the live source still
+   *  exists to revert onto ('reverted') or is gone ('source_missing') — rendered as an inline notice. */
+  readonly onRevert: (entry: WorldEditorAuditEntry) => RevertOutcome
 }
 
 const CLASS_TONE: Record<AuditDiffClass, string> = {
@@ -23,11 +30,16 @@ const CLASS_TONE: Record<AuditDiffClass, string> = {
   unchanged: 'text-ink-muted',
 }
 
-export function WorldEditorHistoryDetail({ entry, onFocusMap }: Props) {
+export function WorldEditorHistoryDetail({ entry, onFocusMap, onRevert }: Props) {
   const [showUnchanged, setShowUnchanged] = useState(false)
   const [showRaw, setShowRaw] = useState(false)
+  // The last revert attempt's outcome, for the inline notice. Reset whenever a different record is
+  // selected (this component instance is reused across selections).
+  const [revertOutcome, setRevertOutcome] = useState<RevertOutcome | null>(null)
+  useEffect(() => setRevertOutcome(null), [entry.id])
   const diff = deriveAuditDiff(entry.before, entry.after)
   const canFocus = auditRecordHasFocus(entry)
+  const canRevert = canRevertEntry(entry)
   const inactive = deriveInactive(entry)
 
   return (
@@ -70,6 +82,27 @@ export function WorldEditorHistoryDetail({ entry, onFocusMap }: Props) {
         <Button size="sm" onClick={onFocusMap} title="Move the camera to this record's historical location (does not change the live selection).">
           Focus on map
         </Button>
+      ) : null}
+
+      {/* V4 — "Revert to this version": seed an EDIT draft (fields = this record's historical before)
+          on the CURRENT live location, published through the normal owner-gated location_update path.
+          Offered ONLY for revertable rows (location_update with a non-null before). A gone live source
+          is refused inline — never a new error channel. */}
+      {canRevert ? (
+        <div className="flex flex-col gap-1">
+          <Button
+            size="sm"
+            onClick={() => setRevertOutcome(onRevert(entry))}
+            title="Open an edit draft that restores this location to its state before this change. You review it, then Publish — the live row must be unchanged (normal optimistic-concurrency guard)."
+          >
+            Revert to this version
+          </Button>
+          {revertOutcome === 'source_missing' ? (
+            <Notice tone="danger">
+              The source location no longer exists — nothing to revert onto.
+            </Notice>
+          ) : null}
+        </div>
       ) : null}
 
       {/* semantic before/after diff */}

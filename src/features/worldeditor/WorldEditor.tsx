@@ -39,6 +39,8 @@ import { ZoneGeometryHandles, type ZoneGestureMode } from './ZoneGeometryHandles
 import { DraftPreviewOverlay } from './DraftPreviewOverlay'
 import { ZoneInspectorActions } from './ZoneInspectorActions'
 import { WorldEditorHistoryPanel, type HistoricalFocus } from './WorldEditorHistoryPanel'
+import { resolveLocationRevert, type RevertOutcome } from './worldEditorHistoryRevert'
+import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { CombatContentPanel } from './CombatContentPanel'
 import { worldToViewBox } from '../map/openSpaceTransform'
 import { Button } from '../../components/ui'
@@ -313,6 +315,24 @@ export function WorldEditor() {
     setHistoricalFocus(focus)
   }
   const clearHistorical = () => setHistoricalFocus(null)
+
+  // V4 — "Revert to this version": a revert is an ordinary EDIT draft, NOT a new mechanism. Resolve the
+  // record against the CURRENT live locations (worldEditorHistoryRevert): if the live row still exists,
+  // fork an edit draft OFF IT — so `expected`/sourceSnapshot is the current live projection (optimistic
+  // concurrency still guards) — seeded with the historical `before` fields, then activate the Locations
+  // authoring domain so the owner sees the pre-filled draft and publishes it through the EXISTING
+  // owner-gated location_update path (a NEW audit row). If the live row is gone, refuse (the detail
+  // renders the inline notice). NOTHING writes to the live world here — publish stays the owner's click.
+  const onRevertHistory = useCallback(
+    (entry: WorldEditorAuditEntry): RevertOutcome => {
+      const resolution = resolveLocationRevert(entry, data?.locations ?? [])
+      if (resolution.kind === 'source_missing') return 'source_missing'
+      setAuthoringDomain('locations')
+      draftStore.forkEditWithPayload(resolution.live, resolution.seed)
+      return 'reverted'
+    },
+    [data, draftStore],
+  )
 
   const toggleLayer = (id: LayerId) =>
     setVisible((prev) => {
@@ -769,7 +789,11 @@ export function WorldEditor() {
               Inherits the /dev/world + RequireAuth + owner + dev_zone_editor_enabled gate (it renders
               inside WorldEditor). Historical map focus reuses the ONE camera authority and never mutates
               the live `selected` authoring model. */}
-          <WorldEditorHistoryPanel onFocusHistorical={focusHistorical} onClearHistorical={clearHistorical} />
+          <WorldEditorHistoryPanel
+            onFocusHistorical={focusHistorical}
+            onClearHistorical={clearHistorical}
+            onRevert={onRevertHistory}
+          />
 
           {/* E4 — Combat content: ONE foldable rail section (collapsed by default) for owner-only
               authoring of enemies/rewards/fleets/encounters/placements via the existing E0-E2 owner
