@@ -7,7 +7,7 @@
 // command/target values from the server are preserved as raw strings (shown as `Unsupported: <value>`),
 // never coerced into a known value.
 
-/** The audit ledger's command vocabulary (world_editor_audit.command_type across 0243–0255). */
+/** The audit ledger's command vocabulary (world_editor_audit.command_type across 0243–0266). */
 export const KNOWN_AUDIT_COMMAND_TYPES = [
   'world_editor_ping',
   'exploration_site_create',
@@ -17,6 +17,7 @@ export const KNOWN_AUDIT_COMMAND_TYPES = [
   'exploration_site_update',
   'mining_field_update',
   'location_update',
+  'zone_update',
   'exploration_site_set_active',
   'mining_field_set_active',
   'zone_unpublish',
