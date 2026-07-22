@@ -1,0 +1,72 @@
+name: CANONICAL COORD AUTHORITY — one ±10000 point-coordinate validator, behavior-preserving disposable proof (no production)
+
+# Proves migration 0265 (canonical_coord_validation_authority) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0264 + 0265. 0265's own in-migration self-assert
+#     runs here against real Postgres (the IMMUTABLE canonical_coord_violation authority emits [] on valid +
+#     inclusive ±10000 boundary and the exact coord_out_of_bounds / numeric_not_finite details; all six RPCs are
+#     SECURITY DEFINER, authenticated-only, routed through the authority with the inline ±10000 checks removed;
+#     the 0264 location anchor writes are intact) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then re-verifies end to end: 0265 is the applied head after 0264; it wrote no
+#     data row (empty audit, no coordinate drift); the authority reproduces the deployed inline emit byte-for-byte
+#     across a matrix of ground-truth literals; and each of the six RPCs, driven with bad coordinates, returns the
+#     EXACT pre-0265 validation_failed envelope while a valid coordinate still writes the row (+ the location
+#     anchor; a coordinate update still retires+inserts it), detail ordering preserved.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, mutates NO persisted row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on worldeditor-v1c-anchor-write-authority-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-canonical-coord-authority**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canonical-coord-authority-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0265 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: CANONICAL COORD AUTHORITY proof (byte-identical validation envelopes across the six RPCs)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          set +e
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/canonical-coord-authority-proof.sql 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -ne 0 ]; then echo "PROOF psql FAILED (exit $code)"; exit 1; fi
+          for marker in \
+            CANON_PASS_MIGRATION_ORDER \
+            CANON_PASS_MIGRATION_INERT \
+            CANON_PASS_AUTHORITY_IDENTITY \
+            CANON_PASS_EXPL_CREATE \
+            CANON_PASS_EXPL_UPDATE \
+            CANON_PASS_MINING_CREATE \
+            CANON_PASS_MINING_UPDATE \
+            CANON_PASS_LOC_CREATE \
+            CANON_PASS_LOC_UPDATE \
+            'CANONICAL COORD AUTHORITY PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL CANONICAL COORD AUTHORITY PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
