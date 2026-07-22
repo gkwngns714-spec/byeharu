@@ -1,0 +1,69 @@
+name: WORLD-EDITOR CATALOG MARKER-STYLE — catalog enrichment disposable proof (no production)
+
+# Proves migration 0271 (worldeditor_catalog_markerstyle) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0271. 0271's own in-migration self-assert runs
+#     here against real Postgres (catalog SECURITY DEFINER + search_path pinned + authenticated-only with anon
+#     revoked; read-only; reads the active space_anchor and NEVER locations.x/y; the four additive marker-style
+#     keys are built from the locations row with NO server-side style; all 4 gameplay readers intact; no
+#     source-table write grant) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the enrichment contract end to end against the running
+#     disposable DB: active + inactive location rows carry all four fields with the correct values from
+#     public.locations; mining/exploration/zone rows carry all four keys PRESENT and null; with the four keys
+#     stripped, the 0271 catalog output is byte-identical to a verbatim 0269 SHADOW for status active/inactive/all;
+#     the gameplay readers stay byte-identical and nothing is mutated; a non-owner and an anonymous caller are
+#     rejected and the security contract is intact.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
+# NO `environment:` on any job => none can read production secrets. Modeled on worldeditor-entity-catalog-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-catalog-markerstyle**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-catalog-markerstyle-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0271 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR CATALOG MARKER-STYLE real-chain proof (active+inactive location fields · non-location null · byte-identity vs 0269 · readers-intact · no-mutation · authz)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-catalog-markerstyle-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            WE_MS_SETUP_OK \
+            WE_MS_PASS_AUTHZ \
+            WE_MS_PASS_ACTIVE_LOCATION_FIELDS \
+            WE_MS_PASS_INACTIVE_LOCATION_FIELDS \
+            WE_MS_PASS_NONLOCATION_NULL \
+            WE_MS_PASS_BYTE_IDENTICAL_EXCEPT_FOUR_KEYS \
+            WE_MS_PASS_GAMEPLAY_READERS_BYTE_IDENTICAL \
+            WE_MS_PASS_NO_ROWS_MUTATED \
+            WE_MS_PASS_SECURITY_CONTRACT \
+            'WORLD-EDITOR CATALOG MARKER-STYLE PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL CATALOG MARKER-STYLE PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
