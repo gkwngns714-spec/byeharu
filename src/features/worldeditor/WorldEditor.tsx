@@ -14,6 +14,7 @@ import { WORLD_EDITOR_LAYERS, defaultVisibleLayerIds } from './worldEditorRegist
 import { resolveToViewBox } from './worldEditorGeometry'
 import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
 import { WorldEditorSearchBox } from './WorldEditorSearchBox'
+import { WorldEditorGotoBox } from './WorldEditorGotoBox'
 import { entityNavigation, type EntityMatch } from './worldEditorSearch'
 import type { FocusDomain } from './worldEditorCoordinates'
 import {
@@ -317,6 +318,15 @@ export function WorldEditor() {
     setSelected(nav.selection)
     userMovedRef.current = true
     setView(nav.camera)
+  }, [])
+
+  // V5 — COORDINATE JUMP: frame the camera on a raw world point the owner typed. The Camera comes
+  // pre-validated from worldEditorGoto.gotoCamera (the SAME galaxyCamera fit); the shell handler is the
+  // identical camera-set path the search jump uses (mark user-held so the auto-fit-once never fights
+  // it) — NO selection change, no write, no draft.
+  const onGotoCamera = useCallback((camera: Camera) => {
+    userMovedRef.current = true
+    setView(camera)
   }, [])
 
   // V1.5 — frame a HISTORICAL audit record on the map through the ONE camera authority
@@ -655,6 +665,11 @@ export function WorldEditor() {
               it + JUMP the camera to it. Read-only navigation: reuses the shell's `selected` model and
               the SAME galaxyCamera fit the Focus buttons use (via worldEditorSearch.entityNavigation). */}
           <WorldEditorSearchBox itemsByLayer={itemsByLayer} onSelect={onSearchSelect} />
+
+          {/* V5 Coordinate jump — the complement to Search: type a raw world X/Y and frame the camera
+              on it through the SAME galaxyCamera fit (via worldEditorGoto.gotoCamera). Read-only
+              navigation, validated against the ±10000 open-space bounds. Never writes a coordinate. */}
+          <WorldEditorGotoBox onGoto={onGotoCamera} />
 
           {/* C1 Focus — camera-only domain framing (worldEditorFocus.cameraForDomain over the SAME
               shared galaxyCamera fit). Frames one domain's cluster at its true tier; 'All' is the
