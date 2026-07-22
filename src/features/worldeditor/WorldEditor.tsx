@@ -13,6 +13,8 @@ import { fetchWorldEditorData, type WorldEditorData } from './worldEditorData'
 import { WORLD_EDITOR_LAYERS, defaultVisibleLayerIds } from './worldEditorRegistry'
 import { resolveToViewBox } from './worldEditorGeometry'
 import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
+import { WorldEditorSearchBox } from './WorldEditorSearchBox'
+import { entityNavigation, type EntityMatch } from './worldEditorSearch'
 import type { FocusDomain } from './worldEditorCoordinates'
 import {
   DEFERRED_OPERATIONS,
@@ -304,6 +306,18 @@ export function WorldEditor() {
     userMovedRef.current = true
     setView(cameraForDomain(itemsByLayer, domain))
   }
+
+  // V5 — entity SEARCH result click: PURE navigation, REUSING both existing authorities. The chosen
+  // match resolves through worldEditorSearch.entityNavigation into (a) the shell's existing `selected`
+  // model and (b) a Camera from the SAME galaxyCamera fit the Focus buttons use. No write, no draft,
+  // no new selection/camera code — just setSelected + setView (camera user-held so the auto-fit-once
+  // never fights the jump).
+  const onSearchSelect = useCallback((match: EntityMatch) => {
+    const nav = entityNavigation(match)
+    setSelected(nav.selection)
+    userMovedRef.current = true
+    setView(nav.camera)
+  }, [])
 
   // V1.5 — frame a HISTORICAL audit record on the map through the ONE camera authority
   // (fitCameraToWorldPoints). Marks the camera user-held (so the auto-fit-once never overrides it), sets
@@ -636,6 +650,11 @@ export function WorldEditor() {
               })}
             </div>
           </section>
+
+          {/* V5 Search — find any authored entity by NAME across every searchable domain, then SELECT
+              it + JUMP the camera to it. Read-only navigation: reuses the shell's `selected` model and
+              the SAME galaxyCamera fit the Focus buttons use (via worldEditorSearch.entityNavigation). */}
+          <WorldEditorSearchBox itemsByLayer={itemsByLayer} onSelect={onSearchSelect} />
 
           {/* C1 Focus — camera-only domain framing (worldEditorFocus.cameraForDomain over the SAME
               shared galaxyCamera fit). Frames one domain's cluster at its true tier; 'All' is the
