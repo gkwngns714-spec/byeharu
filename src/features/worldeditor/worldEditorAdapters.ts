@@ -46,6 +46,9 @@ export const locationLayerAdapter: ReadOnlyLayerAdapter<WorldEditorData> = {
         representation: { kind: 'point', world: { x: l.x, y: l.y } },
         tone: s.color,
         glyph: s.shape as PointGlyph,
+        // V5 filters: locations are the ONE domain with a real client-side status (active/locked/
+        // hidden). Same column the inspector reads below — never a second source.
+        status: l.status,
       }
     })
   },

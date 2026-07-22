@@ -11,6 +11,12 @@ import { VIEW, clampK, clampPan, fitCameraToWorldPoints, type Camera } from '../
 import { smoothClosedPathD } from '../map/smoothPolygon'
 import { fetchWorldEditorData, type WorldEditorData } from './worldEditorData'
 import { WORLD_EDITOR_LAYERS, defaultVisibleLayerIds } from './worldEditorRegistry'
+import {
+  filterVisibleItems,
+  DEFAULT_STATUS_FILTER,
+  STATUS_FILTER_OPTIONS,
+  type StatusFilter,
+} from './worldEditorFilters'
 import { resolveToViewBox } from './worldEditorGeometry'
 import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
 import { WorldEditorSearchBox } from './WorldEditorSearchBox'
@@ -147,6 +153,9 @@ export function WorldEditor() {
   const [isOwner, setIsOwner] = useState<boolean | null>(null)
   const [data, setData] = useState<WorldEditorData | null>(null)
   const [visible, setVisible] = useState<Set<LayerId>>(() => defaultVisibleLayerIds())
+  // V5 filters — the STATUS narrow. Default 'all' preserves today's whole-world view; composes with the
+  // existing `visible` layer set through the ONE filter authority (worldEditorFilters). VIEW state only.
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(DEFAULT_STATUS_FILTER)
   const [selected, setSelected] = useState<Selection | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const [authoringDomain, setAuthoringDomain] = useState<AuthoringDomain>('locations')
@@ -228,14 +237,13 @@ export function WorldEditor() {
     return map
   }, [data])
 
-  const visibleItems = useMemo(() => {
-    const out: LayerItem[] = []
-    for (const { adapter } of WORLD_EDITOR_LAYERS) {
-      if (!visible.has(adapter.id)) continue
-      out.push(...(itemsByLayer.get(adapter.id) ?? []))
-    }
-    return out
-  }, [itemsByLayer, visible])
+  // The map's rendered set — the ONE filter authority (worldEditorFilters) composes the existing layer
+  // visibility (`visible`) with the V5 status narrow. Default state (all layers visible + status 'all')
+  // reproduces the former inline flatten exactly; the render loop below consumes this list unchanged.
+  const visibleItems = useMemo(
+    () => filterVisibleItems(itemsByLayer, { visibleLayers: visible, status: statusFilter }),
+    [itemsByLayer, visible, statusFilter],
+  )
 
   // Content-fit the camera ONCE when data first arrives (unless the user already took camera control) —
   // via the SHARED galaxyCamera fit over every item's canonical world points (§WE.11), collected
@@ -659,6 +667,32 @@ export function WorldEditor() {
                 )
               })}
             </div>
+
+            {/* V5 filters — the STATUS narrow. Composes with the per-layer toggles above through the
+                ONE filter authority (worldEditorFilters). Only LOCATIONS have a client-side status
+                (active/locked/hidden); mining/exploration/zones have none in their read contract, so a
+                status pick never hides them (grounded honesty). Default 'All' = no narrow. */}
+            <div className="mt-3 flex items-center justify-between gap-2 border-t border-edge/50 pt-2.5">
+              <label htmlFor="we-status-filter" className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                Status
+              </label>
+              <select
+                id="we-status-filter"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                className="rounded-md border border-edge bg-surface-2 px-2 py-1 text-sm capitalize text-ink"
+                aria-label="Filter locations by status"
+              >
+                {STATUS_FILTER_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s === 'all' ? 'All' : s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <p className="mt-1.5 text-xs text-ink-faint">
+              Narrows locations by lifecycle status. View only — nothing is written.
+            </p>
           </section>
 
           {/* V5 Search — find any authored entity by NAME across every searchable domain, then SELECT
