@@ -3463,6 +3463,11 @@ begin
   insert into public.locations (id, zone_id, name, location_type, x, y, activity_type, status)
   values (v_fix, (select zone_id from public.locations where id = slag),
           'Territory Null Probe', 'mining_site', 71, -11, 'none', 'active');
+  -- ANCHOR AUTHORITY (0264 fail-closed get_world_map): a directly-inserted location fixture bypasses the
+  -- location_create RPC, so mirror the real create-path invariant by hand — exactly one active location-kind
+  -- anchor at the SAME (x,y), or the INNER JOIN in get_world_map drops this fixture and the probe goes vacuous.
+  insert into public.space_anchors (kind, location_id, space_x, space_y, status)
+    values ('location', v_fix, 71, -11, 'active');
   v_map := public.get_world_map();
   select count(*) into n
     from jsonb_array_elements(v_map->'sectors') as se(sec),
