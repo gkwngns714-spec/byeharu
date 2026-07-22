@@ -1,0 +1,58 @@
+name: COMBAT-FALLBACK — 0262 player-fallback-weapon disposable proof (no production)
+
+# Runs the COMBAT-FALLBACK disposable proof on a throwaway local Supabase — NEVER production:
+#   1. DB-free selftest: the harness is well-formed, self-rolling-back (opens a txn, toggles every dark
+#      capability flag ONLY inside it, ends in ROLLBACK with NO COMMIT), obeys the sole-writer law
+#      (group_sortie_members/combat_units are never hand-written — provisioning + the encounter/tick go
+#      through the real RPCs/engine functions only), and pins every property assert in assert-form;
+#   2. a disposable local Supabase (the full chain incl. 0262) running the real-chain scenario:
+#      commission 2 ships → give the fallback ship a captain (attack, NO weapon) → fit the other with a
+#      real autocannon → form a team, designate the fallback ship command → send the hunt → settle
+#      arrival (the creator synthesizes the fallback weapon from attack_snapshot) → tick 1 (the pirate
+#      takes real damage from the synthesized weapon alone; the armed ship's weapons_json is unchanged).
+# HOST DECISION (the decks/combat-spatial-proof precedent): a NEW, standalone workflow — not a block on
+# any contended proof. The proof flips NO committed flag; no `environment:` on any job — none can read
+# production secrets. The migration deploy itself is GATED (deploy-migrations.yml) and is NOT run here.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'fix/spatial-combat-empty-weapons'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: combat-fallback-weapon-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/combat-fallback-weapon-proof.sh selftest
+
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full migration chain incl. 0262 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: COMBAT-FALLBACK real-chain scenario
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          bash scripts/combat-fallback-weapon-proof.sh local
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
