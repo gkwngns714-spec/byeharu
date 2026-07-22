@@ -50,10 +50,16 @@ begin
   end if;
 
   -- body: reads the anchor coordinate, and keeps the 0217 hidden-invisibility pins + field.
+  -- After the V1C write-authority slice (0264) the read is FAIL-CLOSED: the anchor coord is emitted
+  -- DIRECTLY via an active-anchor INNER JOIN, with NO coalesce fallback to locations.x/y.
   if position('space_anchors' in v_src) = 0
-     or position('coalesce(a.space_x, l.x)' in v_src) = 0
-     or position('coalesce(a.space_y, l.y)' in v_src) = 0 then
-    raise exception 'PR-D PROOF FAIL: get_world_map() does not read the active anchor coordinate';
+     or position('''x'', a.space_x' in v_src) = 0
+     or position('''y'', a.space_y' in v_src) = 0
+     or position('join public.space_anchors a' in v_src) = 0 then
+    raise exception 'PR-D PROOF FAIL: get_world_map() does not read the active anchor coordinate directly (fail-closed INNER JOIN)';
+  end if;
+  if position('coalesce(a.space_x' in v_src) <> 0 or position('coalesce(a.space_y' in v_src) <> 0 then
+    raise exception 'PR-D PROOF FAIL: get_world_map() still has a coalesce anchor fallback — 0264 must have made it fail-closed';
   end if;
   if position('l.zone_id = z.id and l.status = ''active''' in v_src) = 0
      or position('z.sector_id = se.id and z.status = ''active''' in v_src) = 0
