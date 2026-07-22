@@ -297,24 +297,24 @@ end $$;
 
 -- ══ PROOF 3 — mining / exploration / zone rows carry all four keys PRESENT and equal to JSON null ══════
 do $$
-declare v_owner uuid; r jsonb; e jsonb; k text; dom text;
+declare v_owner uuid; r jsonb; e jsonb; v_fk text; dom text;
 begin
   select v into v_owner from msuids where k = 'owner';
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
   r := public.world_editor_entity_catalog(jsonb_build_object('status','all'));
-  foreach k in array array['ma','mi','ea','ei','za','zi'] loop
-    select el into e from jsonb_array_elements(r->'rows') el where (el->>'entity_id') = (select v from msfx where msfx.k = k)::text;
-    if e is null then raise exception 'MARKERSTYLE PROOF FAIL: non-location fixture % missing from status=all', k; end if;
+  foreach v_fk in array array['ma','mi','ea','ei','za','zi'] loop
+    select el into e from jsonb_array_elements(r->'rows') el where (el->>'entity_id') = (select v from msfx where k = v_fk)::text;
+    if e is null then raise exception 'MARKERSTYLE PROOF FAIL: non-location fixture % missing from status=all', v_fk; end if;
     dom := e->>'domain';
-    if dom = 'location' then raise exception 'MARKERSTYLE PROOF FAIL: fixture % unexpectedly a location', k; end if;
+    if dom = 'location' then raise exception 'MARKERSTYLE PROOF FAIL: fixture % unexpectedly a location', v_fk; end if;
     -- all four keys PRESENT ...
     if not (e ? 'location_type' and e ? 'activity_type' and e ? 'reward_tier' and e ? 'base_difficulty') then
-      raise exception 'MARKERSTYLE PROOF FAIL: fixture % (domain %) is missing one of the four marker keys: %', k, dom, e;
+      raise exception 'MARKERSTYLE PROOF FAIL: fixture % (domain %) is missing one of the four marker keys: %', v_fk, dom, e;
     end if;
     -- ... and every one is JSON null.
     if e->'location_type' <> 'null'::jsonb or e->'activity_type' <> 'null'::jsonb
        or e->'reward_tier' <> 'null'::jsonb or e->'base_difficulty' <> 'null'::jsonb then
-      raise exception 'MARKERSTYLE PROOF FAIL: fixture % (domain %) has a non-null marker field (must be null for non-location): %', k, dom, e;
+      raise exception 'MARKERSTYLE PROOF FAIL: fixture % (domain %) has a non-null marker field (must be null for non-location): %', v_fk, dom, e;
     end if;
   end loop;
   raise notice 'WE_MS_PASS_NONLOCATION_NULL';
@@ -343,8 +343,8 @@ begin
     end if;
     -- and confirm the ONLY added keys are exactly the four (no other key crept in).
     if exists (
-      select 1 from jsonb_array_elements(r0271->'rows') el, jsonb_object_keys(el) key
-      where key not in ('domain','entity_id','name','lifecycle_status','revision','point','geometry','updated_at',
+      select 1 from jsonb_array_elements(r0271->'rows') el, jsonb_object_keys(el) as okey
+      where okey not in ('domain','entity_id','name','lifecycle_status','revision','point','geometry','updated_at',
                         'location_type','activity_type','reward_tier','base_difficulty')) then
       raise exception 'MARKERSTYLE PROOF FAIL: a 0271 row has a key beyond the 8 original + 4 new keys (status=%)', st;
     end if;

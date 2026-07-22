@@ -48,8 +48,12 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           : "${DB_URL:?DB_URL (disposable stack) required}"
+          set +e
           out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-catalog-markerstyle-proof.sql 2>&1)"
+          rc=$?
+          set -e
           echo "$out"
+          if [ "$rc" -ne 0 ]; then echo "psql exited non-zero (rc=$rc) — proof did not complete"; exit "$rc"; fi
           for marker in \
             WE_MS_SETUP_OK \
             WE_MS_PASS_AUTHZ \
