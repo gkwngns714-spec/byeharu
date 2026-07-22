@@ -10,6 +10,9 @@ import {
   reactivationNeedsDetail,
 } from './worldEditorReactivate'
 import type { CatalogDomain, WorldEditorCatalogRow } from './worldEditorCatalog'
+import { useDraftGuard } from './useWorldEditorDraftGuard'
+import { isLiveConflict } from './worldEditorDraftGuard'
+import { WorldEditorConflictNotice } from './WorldEditorConflictNotice'
 
 // WORLD EDITOR — V5 LIFECYCLE: the read-only inspector + REACTIVATE action for a selected INACTIVE
 // catalog entity. An inactive entity is NOT in any active gameplay reader, so its detail comes from the
@@ -49,12 +52,17 @@ function representationSummary(row: WorldEditorCatalogRow): string {
 export function WorldEditorInactiveInspector({
   row,
   onReactivated,
+  onReloadLive,
 }: {
   readonly row: WorldEditorCatalogRow
   /** Fired after a successful reactivation — the shell refreshes the catalog AND the active domain
    *  reader (reloadData) and retains selection + camera. */
   readonly onReactivated: () => void | Promise<void>
+  /** V5 — re-read the live snapshot for the conflict "Reload live version" action (the live entity
+   *  changed under the reactivate); never discards a draft. */
+  readonly onReloadLive: () => void
 }) {
+  const guard = useDraftGuard()
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   // One idempotency key per entity attempt; a retry of the SAME entity reuses it (idempotent replay).
   // The shell keys this component by the selection id, so the ref resets when a different entity is picked.
@@ -137,7 +145,11 @@ export function WorldEditorInactiveInspector({
           size="sm"
           disabled={busy}
           onClick={() => {
-            void onReactivate()
+            // V5 GUARD — reactivating is a context-changing live command; a dirty draft in the active
+            // domain is confirmed away first (Keep editing / Discard and continue).
+            guard.requestAction('reactivate', () => {
+              void onReactivate()
+            })
           }}
           data-testid="worldeditor-reactivate"
           title="Reactivate this entity: it returns to the live world. Owner-only; the server applies and returns the new status."
@@ -150,14 +162,21 @@ export function WorldEditorInactiveInspector({
       </div>
 
       {phase.kind === 'failed' && (
-        <div className="rounded-md border border-edge bg-surface-2 px-2 py-1 text-xs text-ink" data-testid="worldeditor-reactivate-error">
-          <div>{describeWorldEditorError(phase.error)}</div>
-          {phase.details?.map((d, i) => (
-            <div key={`${d.code}-${i}`} className="text-ink-faint">
-              {d.message ?? d.code}
+        <>
+          {/* V5 CONFLICT — the live entity changed under the reactivate (optimistic concurrency): keep the
+              local work and offer an EXPLICIT "Reload live version" (self-hides for non-conflict errors). */}
+          <WorldEditorConflictNotice error={phase.error} onReload={onReloadLive} />
+          {!isLiveConflict(phase.error) && (
+            <div className="rounded-md border border-edge bg-surface-2 px-2 py-1 text-xs text-ink" data-testid="worldeditor-reactivate-error">
+              <div>{describeWorldEditorError(phase.error)}</div>
+              {phase.details?.map((d, i) => (
+                <div key={`${d.code}-${i}`} className="text-ink-faint">
+                  {d.message ?? d.code}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   )
