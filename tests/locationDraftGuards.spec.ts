@@ -50,6 +50,11 @@ const COMMAND_PATH_FILES = [
   // every other E4 file (combatPayloads/combatErrorMap/combatMemberValidation/combatContentData + the
   // *Authoring.tsx sub-panels + MemberSetEditor + CombatContentPanel) stays command-free.
   'useCombatAuthoring.ts',
+  // V4 revert cutover (0267 world_editor_revert): WorldEditor.tsx (the shell) is the sanctioned surface
+  // that invokes the ONE cross-domain revert command on behalf of the read-only History panel — the
+  // History UI files themselves stay transport-free (proven by worldEditorAuditGuards.spec.ts). The pure
+  // command envelope is built in worldEditorHistoryRevert.ts (contract only, no command client).
+  'WorldEditor.tsx',
 ]
 test('no file in src/features/worldeditor outside the sanctioned command path references a command client', () => {
   for (const name of readdirSync(WE_DIR)) {

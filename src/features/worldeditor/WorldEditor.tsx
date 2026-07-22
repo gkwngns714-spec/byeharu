@@ -39,7 +39,8 @@ import { ZoneGeometryHandles, type ZoneGestureMode } from './ZoneGeometryHandles
 import { DraftPreviewOverlay } from './DraftPreviewOverlay'
 import { ZoneInspectorActions } from './ZoneInspectorActions'
 import { WorldEditorHistoryPanel, type HistoricalFocus } from './WorldEditorHistoryPanel'
-import { resolveLocationRevert, type RevertOutcome } from './worldEditorHistoryRevert'
+import { revertCommandEnvelope } from './worldEditorHistoryRevert'
+import { invokeWorldEditorCommand, type WorldEditorCommandResult } from './commandClient'
 import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { CombatContentPanel } from './CombatContentPanel'
 import { worldToViewBox } from '../map/openSpaceTransform'
@@ -316,22 +317,22 @@ export function WorldEditor() {
   }
   const clearHistorical = () => setHistoricalFocus(null)
 
-  // V4 — "Revert to this version": a revert is an ordinary EDIT draft, NOT a new mechanism. Resolve the
-  // record against the CURRENT live locations (worldEditorHistoryRevert): if the live row still exists,
-  // fork an edit draft OFF IT — so `expected`/sourceSnapshot is the current live projection (optimistic
-  // concurrency still guards) — seeded with the historical `before` fields, then activate the Locations
-  // authoring domain so the owner sees the pre-filled draft and publishes it through the EXISTING
-  // owner-gated location_update path (a NEW audit row). If the live row is gone, refuse (the detail
-  // renders the inline notice). NOTHING writes to the live world here — publish stays the owner's click.
+  // V4 — "Revert to this version": ONE revert authority — the server-side world_editor_revert RPC (0267).
+  // Clicking invokes it with the record's audit id (revertCommandEnvelope mints a fresh request_id per
+  // attempt); the server re-applies the before_snapshot across ALL four domains (location / mining /
+  // exploration / zone) — including server-only reward_bundle_json + zone WKT geometry the client cannot
+  // reconstruct — as an INTENTIONAL owner-gated overwrite, and writes a NEW audit row. On success we
+  // re-read the ONE map snapshot (reloadData) so the reverted state shows; the History panel refetches its
+  // own list. A typed error (not_revertable / source_missing / validation_failed / conflict) flows back to
+  // the detail's inline notice. NO client-side field reconstruction — the retired PR #269 location-only
+  // draft-seed path is gone.
   const onRevertHistory = useCallback(
-    (entry: WorldEditorAuditEntry): RevertOutcome => {
-      const resolution = resolveLocationRevert(entry, data?.locations ?? [])
-      if (resolution.kind === 'source_missing') return 'source_missing'
-      setAuthoringDomain('locations')
-      draftStore.forkEditWithPayload(resolution.live, resolution.seed)
-      return 'reverted'
+    async (entry: WorldEditorAuditEntry): Promise<WorldEditorCommandResult> => {
+      const result = await invokeWorldEditorCommand(revertCommandEnvelope(entry))
+      if (result.ok) await reloadData()
+      return result
     },
-    [data, draftStore],
+    [reloadData],
   )
 
   const toggleLayer = (id: LayerId) =>
