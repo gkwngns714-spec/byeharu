@@ -1,0 +1,69 @@
+name: WORLD-EDITOR ENTITY-DETAIL — owner inactive-detail / reactivation disposable proof (no production)
+
+# Proves migration 0270 (worldeditor_entity_detail) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0270. 0270's own in-migration self-assert runs
+#     here against real Postgres (world_editor_entity_detail SECURITY DEFINER + search_path pinned +
+#     authenticated-only with anon revoked; read-only — no table write / no audit derivation; reads
+#     space_anchors for the location fail-closed guard; zone+location only; 0269 catalog + 4 gameplay readers +
+#     zone_set_active + location_update intact; no source-table write grant) — any regression ABORTS red.
+#   * a self-rolling-back SQL proof then drives the WHOLE contract end to end against the running disposable DB:
+#     authz (non-owner / anon / unsupported mining-exploration / unknown domain / bad id / not_found); an active
+#     entity rejected; ZONE detail→zone_set_active and LOCATION detail→location_update end-to-end using the
+#     opaque reactivation_expected verbatim; mining+exploration reactivate from the catalog WITHOUT the reader;
+#     a stale detail fails safely with stale_revision and no lifecycle change; a missing location anchor fails
+#     closed; the gameplay readers + the 0269 catalog payload + audit rows + stored entities stay unchanged.
+# Read-only proof: self-rolling-back (begin;…rollback;), keeps NO world row. NO `environment:` on any job =>
+# none can read production secrets. Modeled on worldeditor-entity-catalog-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-entity-detail**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-entity-detail-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0270 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR ENTITY-DETAIL real-chain proof (authz · active-rejected · zone/location detail→reactivate · mining/exploration from-catalog · stale-safe · fail-closed · readers+catalog+audit unchanged)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-entity-detail-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            DET_SETUP_OK \
+            DET_PASS_AUTHZ \
+            DET_PASS_ACTIVE_REJECTED \
+            DET_PASS_ZONE_DETAIL_AND_REACTIVATE \
+            DET_PASS_LOCATION_DETAIL_AND_REACTIVATE \
+            DET_PASS_MINING_EXPLORATION_FROM_CATALOG \
+            DET_PASS_STALE_SAFE \
+            DET_PASS_FAILCLOSED_MISSING_ANCHOR \
+            DET_PASS_READONLY_UNCHANGED \
+            'WORLD-EDITOR ENTITY-DETAIL PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL ENTITY-DETAIL PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
