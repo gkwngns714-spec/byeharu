@@ -22,13 +22,17 @@
 
 begin;
 
--- ── PROOF 0 — MIGRATION INERT: it modified no existing data row (empty backfill, nothing retired, no audit) ─
+-- ── PROOF 0 — MIGRATION INERT: 0264 modified no existing data row. Its ONLY DML is an INSERT-only idempotent
+--    backfill (never UPDATE/DELETE/retire of an existing row) — so on this chain every active location already
+--    has its active anchor (backfill inserted 0), the map coordinates are byte-identical (PROOF 1), and it ran
+--    no editor command (audit ledger empty). NOTE: the seed legitimately carries RETIRED location anchors (the
+--    3 starter ports were re-pinned by 0066/0227 via retire+insert); those predate 0264 and are NOT asserted
+--    away here — 0264 retires nothing. ─────────────────────────────────────────────────────────────────────
 do $$
-declare v_locs int; v_anchors int; v_retired int; v_audit int;
+declare v_locs int; v_anchors int; v_audit int;
 begin
   select count(*) into v_locs    from public.locations;
   select count(*) into v_anchors from public.space_anchors where kind = 'location' and status = 'active';
-  select count(*) into v_retired from public.space_anchors where kind = 'location' and status = 'retired';
   select count(*) into v_audit   from public.world_editor_audit;
   if v_locs = 0 then
     raise exception 'WAUTH PROOF FAIL: no locations — every invariant would be vacuous';
@@ -37,14 +41,12 @@ begin
   if v_anchors <> v_locs then
     raise exception 'WAUTH PROOF FAIL: % active location anchor(s) for % location(s) — backfill was NOT a clean no-op', v_anchors, v_locs;
   end if;
-  -- the migration retired NO anchor (it relocates none), and ran NO editor command (audit ledger empty).
-  if v_retired <> 0 then
-    raise exception 'WAUTH PROOF FAIL: % retired location anchor(s) exist on a fresh chain — the migration relocated an anchor it should not have', v_retired;
-  end if;
+  -- the migration ran NO editor command (the audit ledger — the only place an editor write is recorded — is
+  -- empty on a fresh chain; every RPC-driven audit row later in this proof is written by THIS proof).
   if v_audit <> 0 then
     raise exception 'WAUTH PROOF FAIL: world_editor_audit has % row(s) on a fresh chain — the migration wrote an editor/audit row', v_audit;
   end if;
-  raise notice 'WAUTH_PASS_MIGRATION_INERT (% locations, % active anchors, 0 retired, 0 audit)', v_locs, v_anchors;
+  raise notice 'WAUTH_PASS_MIGRATION_INERT (% locations, % active anchors, backfill no-op, 0 audit)', v_locs, v_anchors;
 end $$;
 
 -- ── PROOF 6 — MIGRATION ORDER: 0264 applied after prod head 0262 (and is the greatest version) ─────────────
