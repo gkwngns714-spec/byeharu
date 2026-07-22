@@ -1,0 +1,59 @@
+name: WORLD-EDITOR V1C PR-D — get_world_map read-cutover byte-identity disposable proof (no production)
+
+# Proves migration 0263 (worldeditor_v1c_pr_d_read_cutover) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0263. 0263's own in-migration self-assert runs
+#     here against real Postgres (every location anchored, anchor coords == location coords world-wide, the
+#     cutover landed as SECURITY DEFINER reading space_anchors) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then re-verifies end to end: the function shape (SECURITY DEFINER, reads
+#     space_anchors, status filters + territory_radius + grants intact); BYTE-IDENTITY of the live
+#     anchor-backed payload against a legacy locations.x/y payload (jsonb AND text); and that get_world_map
+#     PROVABLY reads the anchor (perturbing one anchor moves exactly that location's coordinate).
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, mutates NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on worldeditor-v1c-anchor-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-v1c-pr-d-readcutover**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-v1c-pr-d-read-cutover-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0263 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR V1C PR-D read-cutover proof (byte-identity + reads-anchors)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-v1c-pr-d-read-cutover-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            PRD_PASS_FUNCTION_SHAPE \
+            PRD_PASS_BYTE_IDENTICAL \
+            PRD_PASS_READS_ANCHORS \
+            'WORLD-EDITOR V1C PR-D READ-CUTOVER PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL V1C PR-D READ-CUTOVER PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
