@@ -649,6 +649,11 @@ export function WorldEditor() {
                     {isSel && (
                       <circle cx={x} cy={y} r={r * 2.2} fill="var(--color-map-halo)" stroke="var(--color-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
                     )}
+                    {/* dockable-port "hub" ring (markerStyle.hubRing) — the same second ring the player
+                        LocationMarker draws; stroke follows the item tone (dimmed for inactive). */}
+                    {it.hubRing && (
+                      <circle cx={x} cy={y} r={r * 1.45} fill="none" stroke={it.tone} strokeWidth={1.25} vectorEffect="non-scaling-stroke" opacity={0.8} pointerEvents="none" />
+                    )}
                     <Glyph x={x} y={y} r={r} glyph={it.glyph} tone={it.tone} />
                     <text
                       x={x}

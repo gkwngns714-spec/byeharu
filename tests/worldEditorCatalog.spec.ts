@@ -11,7 +11,10 @@ import {
   type WorldEditorCatalogRow,
 } from '../src/features/worldeditor/worldEditorCatalog'
 import { representationWorldPoints } from '../src/features/worldeditor/worldEditorGeometry'
+import { filterVisibleItems } from '../src/features/worldeditor/worldEditorFilters'
 import { fitCameraToWorldPoints } from '../src/features/map/galaxyCamera'
+import { markerStyle } from '../src/features/map/markerStyle'
+import type { LayerId } from '../src/features/worldeditor/worldEditorTypes'
 
 // WORLD EDITOR V5 LIFECYCLE — pure proofs for the 0269 catalog model (worldEditorCatalog). No browser/
 // DB: normalization (untrusted jsonb → typed rows), the domain↔layer bridge, the per-row selection id,
@@ -19,9 +22,19 @@ import { fitCameraToWorldPoints } from '../src/features/map/galaxyCamera'
 
 // Raw server rows (the exact 0269 row contract): revision null for every row; updated_at non-null only
 // for zones; point is the anchor/centroid; geometry is the closed vertex ring (zones only).
-const rawLocation = (id: string, name: string, lifecycle: string) => ({
+const rawLocation = (
+  id: string,
+  name: string,
+  lifecycle: string,
+  marker: { location_type?: string | null; activity_type?: string | null; reward_tier?: number | null; base_difficulty?: number | null } = {},
+) => ({
   domain: 'location', entity_id: id, name, lifecycle_status: lifecycle,
   revision: null, point: { x: -100, y: 200 }, geometry: null, updated_at: null,
+  // 0271 marker-style fields (location-only); defaults to a plain safe_zone waypoint.
+  location_type: marker.location_type === undefined ? 'safe_zone' : marker.location_type,
+  activity_type: marker.activity_type === undefined ? 'none' : marker.activity_type,
+  reward_tier: marker.reward_tier === undefined ? 0 : marker.reward_tier,
+  base_difficulty: marker.base_difficulty === undefined ? 0 : marker.base_difficulty,
 })
 const rawMining = (id: string, name: string, lifecycle: string) => ({
   domain: 'mining', entity_id: id, name, lifecycle_status: lifecycle,
@@ -161,11 +174,77 @@ test('an inactive point jumps the camera; an inactive zone frames its whole ring
   expect(Number.isFinite(fitCameraToWorldPoints(ringPts).k)).toBe(true)
 })
 
+// ── 0271 MARKER-STYLE: location markers keep their SEMANTIC glyph/tone/hub-ring (via markerStyle) ─────
+const itemFor = (raw: unknown) => catalogRowToLayerItem(normalizeCatalogRow(raw)!)!
+
+test('a pirate_hunt location retains the danger tone + triangle glyph (no hub ring)', () => {
+  const it = itemFor(rawLocation('ph', 'Raider Nest', 'active', { location_type: 'pirate_hunt', activity_type: 'hunt_pirates', reward_tier: 2, base_difficulty: 25 }))
+  expect(it.glyph).toBe('triangle')
+  expect(it.tone).toBe('var(--color-danger)')
+  expect(it.hubRing).toBe(false)
+  // and it matches the SHARED policy exactly (no re-implementation)
+  const s = markerStyle({ location_type: 'pirate_hunt', activity_type: 'hunt_pirates', reward_tier: 2, base_difficulty: 25 })
+  expect(it.tone).toBe(s.color)
+  expect(it.glyph).toBe(s.shape)
+})
+
+test('a trade_outpost location retains the accent tone + diamond glyph + hub ring', () => {
+  const it = itemFor(rawLocation('to', 'Free Port', 'active', { location_type: 'trade_outpost', activity_type: 'trade_visit', reward_tier: 3, base_difficulty: 4 }))
+  expect(it.glyph).toBe('diamond')
+  expect(it.tone).toBe('var(--color-accent)')
+  expect(it.hubRing).toBe(true)
+})
+
+test('inactive locations keep the SEMANTIC glyph + hub ring but dim the tone', () => {
+  const inactivePirate = itemFor(rawLocation('phx', 'Ghost Nest', 'inactive', { location_type: 'pirate_hunt', activity_type: 'hunt_pirates', reward_tier: 1, base_difficulty: 30 }))
+  expect(inactivePirate.glyph).toBe('triangle') // semantic glyph preserved
+  expect(inactivePirate.tone).toBe('var(--color-ink-faint)') // dimmed
+  expect(inactivePirate.hubRing).toBe(false)
+
+  const inactivePort = itemFor(rawLocation('tox', 'Ghost Port', 'inactive', { location_type: 'trade_outpost', activity_type: 'trade_visit', reward_tier: 3, base_difficulty: 4 }))
+  expect(inactivePort.glyph).toBe('diamond') // semantic glyph preserved
+  expect(inactivePort.hubRing).toBe(true) // hub ring preserved
+  expect(inactivePort.tone).toBe('var(--color-ink-faint)') // dimmed
+})
+
+test('null location marker metadata falls back safely (no crash, no hub ring)', () => {
+  const it = itemFor(rawLocation('nul', 'Mystery', 'active', { location_type: null, activity_type: null, reward_tier: null, base_difficulty: null }))
+  expect(it.glyph).toBe('circle')
+  expect(it.hubRing).toBe(false)
+  expect(typeof it.tone).toBe('string') // a real token, never undefined
+})
+
+test('non-location domains keep flat per-domain styling and never get a hub ring', () => {
+  const mine = itemFor(rawMining('m', 'Iron Belt', 'active'))
+  expect(mine).toMatchObject({ glyph: 'hex', tone: 'var(--color-warning)' })
+  expect(mine.hubRing).toBe(false)
+  const zone = itemFor(rawZone('z', 'Reach', 'active'))
+  expect(zone.hubRing).toBe(false)
+})
+
+test('the active/inactive/all filter never alters an item’s semantic marker classification', () => {
+  const rows = normalizeCatalogRows({
+    rows: [
+      rawLocation('ph-a', 'Nest A', 'active', { location_type: 'pirate_hunt', activity_type: 'hunt_pirates', reward_tier: 2, base_difficulty: 25 }),
+      rawLocation('ph-i', 'Nest I', 'inactive', { location_type: 'pirate_hunt', activity_type: 'hunt_pirates', reward_tier: 2, base_difficulty: 25 }),
+    ],
+  })
+  const items = catalogItemsByLayer(rows)
+  const all = new Set<LayerId>(['locations', 'mining', 'exploration', 'zones'])
+  // every pirate_hunt stays a triangle no matter which lifecycle bucket the filter shows
+  for (const status of ['active', 'inactive', 'all'] as const) {
+    for (const it of filterVisibleItems(items, { visibleLayers: all, status })) {
+      expect(it.glyph).toBe('triangle')
+    }
+  }
+})
+
 // ── a drawable-less row is dropped ───────────────────────────────────────────────────────────────────
 test('a row with neither point nor geometry is not drawable → no LayerItem', () => {
   const row: WorldEditorCatalogRow = {
     domain: 'location', entityId: 'x', name: 'Nowhere', lifecycleStatus: 'active',
     revision: null, point: null, geometry: null, updatedAt: null,
+    locationType: 'safe_zone', activityType: 'none', rewardTier: 0, baseDifficulty: 0,
   }
   expect(catalogRowToLayerItem(row)).toBeNull()
 })

@@ -12,8 +12,10 @@
 // filtering, selecting inactive entities, and the reactivate decision. The gameplay readers stay the
 // authority for full ACTIVE-entity EDITING detail (adapter.inspect + the edit-draft fork) — this index
 // is never merged into them; the two planes compose at render time only.
+import { markerStyle } from '../map/markerStyle'
+import type { ActivityType, LocationType } from '../map/mapTypes'
 import type { WorldEntityStatusFilter } from './worldEditorFilters'
-import type { LayerId, LayerItem, MapRepresentation, WorldPoint } from './worldEditorTypes'
+import type { LayerId, LayerItem, MapRepresentation, PointGlyph, WorldPoint } from './worldEditorTypes'
 
 /** The lifecycle a catalog row carries — the normalized 0269 vocabulary (locations map their
  *  active|locked|hidden enum to active|inactive server-side; the rest use is_active / status). */
@@ -36,6 +38,13 @@ export interface WorldEditorCatalogRow {
   readonly point: WorldPoint | null
   readonly geometry: { readonly kind: 'ring'; readonly ring: readonly WorldPoint[] } | null
   readonly updatedAt: string | null
+  // V5 MARKER-STYLE (0271): the four fields markerStyle reads, populated ONLY for domain='location'
+  // (both active + inactive); null for mining/exploration/zone. Fed VERBATIM into the SHARED
+  // markerStyle policy so location markers keep their semantic glyph/tone/hub-ring — never re-derived.
+  readonly locationType: string | null
+  readonly activityType: string | null
+  readonly rewardTier: number | null
+  readonly baseDifficulty: number | null
 }
 
 /** Map the catalog's SINGULAR domain tag to the plural LayerId the registry/map/search speak. */
@@ -77,22 +86,49 @@ function rowRepresentation(row: WorldEditorCatalogRow): MapRepresentation | null
   return null
 }
 
+/** The semantic marker (glyph / tone / hub-ring) for a LOCATION row — computed through the SHARED
+ *  markerStyle policy (never re-implemented), exactly as the read adapter's location path did. Falls
+ *  back SAFELY to the flat domain style when the 0271 marker fields are absent (defensive — a location
+ *  row should always carry them). */
+function locationMarker(row: WorldEditorCatalogRow): { tone: string; glyph: PointGlyph; hubRing: boolean } {
+  if (row.locationType == null) {
+    const style = DOMAIN_STYLE.locations
+    return { tone: style.tone, glyph: style.glyph, hubRing: false }
+  }
+  const s = markerStyle({
+    location_type: row.locationType as LocationType,
+    activity_type: (row.activityType ?? 'none') as ActivityType,
+    reward_tier: row.rewardTier ?? 0,
+    base_difficulty: row.baseDifficulty ?? 0,
+  })
+  return { tone: s.color, glyph: s.shape as PointGlyph, hubRing: s.hubRing }
+}
+
 /** Project ONE catalog row to the SAME LayerItem shape the read adapters produce — carrying its
  *  lifecycle `status` (so the filter/search/inspector can honor it and badge INACTIVE) and its natural
- *  selection id. Returns null for a row with no drawable representation (never rendered). */
+ *  selection id. LOCATION rows keep their SEMANTIC markerStyle marker (glyph/tone/hub-ring, dimmed when
+ *  inactive); mining/exploration/zones keep their flat per-domain styling. Returns null for a row with
+ *  no drawable representation (never rendered). */
 export function catalogRowToLayerItem(row: WorldEditorCatalogRow): LayerItem | null {
   const representation = rowRepresentation(row)
   if (!representation) return null
   const layer = catalogDomainToLayer(row.domain)
-  const style = DOMAIN_STYLE[layer]
+  const inactive = row.lifecycleStatus === 'inactive'
+  // Locations resolve their glyph/tone/hub-ring through markerStyle; other domains use the flat style.
+  const marker =
+    layer === 'locations'
+      ? locationMarker(row)
+      : { tone: DOMAIN_STYLE[layer].tone, glyph: DOMAIN_STYLE[layer].glyph, hubRing: false }
   return {
     layer,
     id: catalogRowSelectionId(row),
     label: row.name,
     representation,
-    tone: row.lifecycleStatus === 'inactive' ? INACTIVE_TONE : style.tone,
-    glyph: style.glyph,
+    // INACTIVE dims the tone to the faint token but KEEPS the semantic glyph + hub-ring.
+    tone: inactive ? INACTIVE_TONE : marker.tone,
+    glyph: marker.glyph,
     status: row.lifecycleStatus,
+    hubRing: marker.hubRing,
   }
 }
 
@@ -195,6 +231,11 @@ export function normalizeCatalogRow(raw: unknown): WorldEditorCatalogRow | null 
     point: normalizePoint(o.point),
     geometry: normalizeGeometry(o.geometry),
     updatedAt: typeof o.updated_at === 'string' ? o.updated_at : null,
+    // 0271 marker-style fields — location-only (null for other domains). Kept nullable + defensive.
+    locationType: typeof o.location_type === 'string' ? o.location_type : null,
+    activityType: typeof o.activity_type === 'string' ? o.activity_type : null,
+    rewardTier: asFiniteNumber(o.reward_tier),
+    baseDifficulty: asFiniteNumber(o.base_difficulty),
   }
 }
 

@@ -48,12 +48,13 @@ export interface LayerItem {
   readonly tone: string
   /** Point glyph; unused for polygon representations. */
   readonly glyph: PointGlyph
-  /** V5 filters — the item's lifecycle status IF its domain has one in the client read contract
-   *  (locations.status ∈ {active,locked,hidden}). GROUNDED HONESTY: domains with no status column in
-   *  their read payload (mining/exploration/zones today) leave this UNDEFINED — never a fabricated
-   *  status. The status filter treats an undefined status as "always shown" (it can't match on a value
-   *  that isn't read), so those domains are unaffected by a status narrow. */
+  /** V5 lifecycle — the item's normalized lifecycle status ('active' | 'inactive') from the 0269
+   *  catalog (the ONE nav index across all four domains). The shared lifecycle filter matches on it;
+   *  an item with no status only ever passes the 'all' filter. */
   readonly status?: string
+  /** V5 marker-style — a dockable-port "hub" ring (markerStyle.hubRing). Set only for LOCATION items
+   *  whose type is a dockable port; the map draws a second ring around the glyph. Undefined elsewhere. */
+  readonly hubRing?: boolean
 }
 
 /** One typed field in the read-only inspector (§WE.2 shared inspector shell). Value is pre-formatted
