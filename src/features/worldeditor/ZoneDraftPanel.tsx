@@ -11,8 +11,12 @@
 // details pipeline). The requestId is minted ONCE per publish attempt and kept across retries, so a
 // retry REPLAYS idempotently instead of double-applying. On success the local draft is discarded
 // (the zone is live now — visible on the map only while pirate_intercept_enabled is lit, the
-// documented read-side dark coupling). EDIT drafts have no publish yet (zone_update is a later
-// slice). The 0239-LOCKED legacy zone-write RPCs are never referenced or reused (guard-enforced) —
+// documented read-side dark coupling). An EDIT draft publishes through the owner-gated zone_update
+// command (0266) — addressed by the forked sourceId (the live zone's uuid) with the fork-time
+// sourceSnapshot as the server's optimistic-concurrency `expected` baseline; only the MUTABLE fields
+// (name, attach_location_id, geometry) are sent (zone_kind is fixed 'pirate'). A seeded source<>'drawn'
+// zone is rejected server-side (validation_failed {protected_zone}). The 0239-LOCKED legacy zone-write
+// RPCs are never referenced or reused (guard-enforced) —
 // this panel speaks ONLY the 0243-spine command client, the sanctioned command path
 // (tests/locationDraftGuards.spec.ts COMMAND_PATH_FILES; tests/zoneDraftGuards.spec.ts).
 //
@@ -154,31 +158,51 @@ export function ZoneDraftPanel({
     discardDraft(draft.draftId)
   }
 
-  // PUBLISH (CREATE drafts only — zone_update is a later slice): fields are the draft payload
-  // VERBATIM ({name, zone_kind, attach_location_id, geometry}) — the server materializes and
-  // re-validates everything (the button's publishable gate is advisory UX, never authorization).
+  // PUBLISH — create → 0254 zone_create; edit → 0266 zone_update. fields are the draft payload's
+  // MUTABLE slice; the server materializes the geometry (ST_Buffer / ST_MakePolygon) and re-validates
+  // everything (the button's publishable gate is advisory UX, never authorization).
   const onPublish = async (draft: ZoneDraft) => {
     if (publishAttempt?.phase === 'sending') return
-    if (draft.mode.kind !== 'create') return
     // Mint the requestId ONCE per attempt; a retry of the SAME draft reuses it, so the server
     // replays idempotently instead of double-applying.
     const requestId =
       publishAttempt?.draftId === draft.draftId ? publishAttempt.requestId : newRequestId()
     setPublishAttempt({ draftId: draft.draftId, requestId, phase: 'sending', failure: null })
-    const result = await invokeWorldEditorCommand({
-      requestId,
-      commandType: 'zone_create',
-      payload: {
-        fields: {
-          name: draft.payload.name,
-          zone_kind: draft.payload.zone_kind,
-          attach_location_id: draft.payload.attach_location_id,
-          geometry: draft.payload.geometry,
-        },
-      },
-    })
+    // create → zone_create (0254): the draft payload VERBATIM ({name, zone_kind, attach_location_id,
+    //   geometry}); no target/expected (nothing live to drift from).
+    // edit → zone_update (0266): addressed by the forked sourceId (the live zone's uuid) with the
+    //   fork-time sourceSnapshot as the server's optimistic-concurrency `expected` baseline. Only the
+    //   MUTABLE fields go over the wire — zone_kind is fixed 'pirate' and is never edited.
+    const result =
+      draft.mode.kind === 'edit'
+        ? await invokeWorldEditorCommand({
+            requestId,
+            commandType: 'zone_update',
+            payload: {
+              target_id: draft.mode.sourceId,
+              expected: draft.mode.sourceSnapshot,
+              fields: {
+                name: draft.payload.name,
+                attach_location_id: draft.payload.attach_location_id,
+                geometry: draft.payload.geometry,
+              },
+              source_revision: draft.mode.sourceRevision,
+            },
+          })
+        : await invokeWorldEditorCommand({
+            requestId,
+            commandType: 'zone_create',
+            payload: {
+              fields: {
+                name: draft.payload.name,
+                zone_kind: draft.payload.zone_kind,
+                attach_location_id: draft.payload.attach_location_id,
+                geometry: draft.payload.geometry,
+              },
+            },
+          })
     if (result.ok) {
-      // The zone is live now — the local draft has served its purpose.
+      // The zone change is live now — the local draft has served its purpose.
       setPublishAttempt(null)
       onGestureModeChange('idle')
       discardDraft(draft.draftId)
@@ -231,8 +255,8 @@ export function ZoneDraftPanel({
       </div>
 
       <p className="mb-2 text-xs text-ink-faint">
-        Drafts are local to this browser until published. Publishing a NEW zone writes the live
-        world (owner only — the server decides); editing a live zone publishes in a later slice.
+        Drafts are local to this browser until published. Publishing a NEW zone (or an EDIT of a live
+        one) writes the live world — owner only, the server decides. Seeded zones cannot be edited.
       </p>
       <p className="mb-2 text-xs text-ink-faint">
         Note: live zones are visible (and forkable) only while pirate_intercept_enabled is lit — the
@@ -378,8 +402,36 @@ export function ZoneDraftPanel({
             </p>
           </div>
 
-          {/* ── publish (create → 0254 zone_create; edit publish is a later slice) ── */}
-          {activeDraft.mode.kind === 'create' ? (
+          {/* ── publish (create → 0254 zone_create; edit → 0266 zone_update) ── */}
+          {activeDraft.mode.kind === 'edit' ? (
+            <div className="flex flex-col gap-1.5 border-t border-edge/50 pt-2">
+              {publishAttempt?.draftId === activeDraft.draftId && publishAttempt.failure && (
+                <PublishFailureNotices failure={publishAttempt.failure} />
+              )}
+              <Button
+                size="sm"
+                variant="primary"
+                busy={
+                  publishAttempt?.draftId === activeDraft.draftId &&
+                  publishAttempt.phase === 'sending'
+                }
+                busyLabel="Publishing…"
+                disabled={!(report?.publishable ?? false)}
+                onClick={() => void onPublish(activeDraft)}
+              >
+                {publishAttempt?.draftId === activeDraft.draftId &&
+                publishAttempt.phase === 'failed'
+                  ? 'Retry publish (Edit)'
+                  : 'Publish (Edit)'}
+              </Button>
+              <p className="text-xs text-ink-faint">
+                Updates the live zone shape, name and attachment. Owner-only — the server re-checks
+                the zone is unchanged since this draft was forked (a stale draft is rejected, never
+                overwritten) and re-materializes the geometry (a tangled ring is rejected, never
+                repaired). Seeded zones cannot be edited.
+              </p>
+            </div>
+          ) : (
             <div className="flex flex-col gap-1.5 border-t border-edge/50 pt-2">
               {publishAttempt?.draftId === activeDraft.draftId && publishAttempt.failure && (
                 <PublishFailureNotices failure={publishAttempt.failure} />
@@ -406,10 +458,6 @@ export function ZoneDraftPanel({
                 shows on the map only while the intercept flag is lit.
               </p>
             </div>
-          ) : (
-            <p className="border-t border-edge/50 pt-2 text-xs text-ink-faint">
-              Publishing an EDIT of a live zone is a later slice — this draft stays local until then.
-            </p>
           )}
         </div>
       )}

@@ -264,3 +264,129 @@ test('normalizeEnvelope: a zone_unpublish not_unpublishable carries protected_zo
   if (alreadyInactive.ok) throw new Error('unreachable')
   expect(alreadyInactive.details?.[0]?.code).toBe('already_inactive')
 })
+
+// ── the 0266 zone_update (zone EDIT command) envelope ─────────────────────────────────────────────
+// zone_update re-materializes an edit draft's geometry onto the SAME danger_zones row. Payload =
+// {target_id: the zone uuid, expected: the fork-time {name, zone_kind, attach_location_id, geometry}
+// snapshot, fields: {name, attach_location_id, geometry}}. Its server behavior is proven by
+// scripts/worldeditor-publish-zone-update-proof.sql; here we only pin the RPC mapping + the envelope
+// normalization for its result and its typed rejections (stale_revision, the authoritative
+// invalid_geometry, and the seeded-zone protected_zone — all riding the existing pipelines, NO new
+// error code).
+const UPDATE_ENVELOPE: WorldEditorCommandEnvelope = {
+  requestId: 'req-zoneupd-1',
+  commandType: 'zone_update',
+  payload: {
+    target_id: '2f8a1b3c-0000-4000-8000-000000000099',
+    // the fork-time sourceSnapshot (zoneDraftModel.projectFromLive) — geometry is an OPEN polygon ring.
+    expected: {
+      name: 'Crimson Reach',
+      zone_kind: 'pirate',
+      attach_location_id: null,
+      geometry: {
+        kind: 'polygon',
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 300, y: 0 },
+          { x: 300, y: 300 },
+          { x: 0, y: 300 },
+        ],
+      },
+    },
+    // only the MUTABLE slice goes over the wire (zone_kind is fixed 'pirate', never edited); the server
+    // materializes the geometry (here re-seeded as a circle) and re-validates everything.
+    fields: {
+      name: 'Crimson Reach (edited)',
+      attach_location_id: '7c4d2e1a-0000-4000-8000-000000000031',
+      geometry: { kind: 'circle', center: { x: 1000, y: 1000 }, radius: 200 },
+    },
+    source_revision: 'zoneupd-rev-1',
+  },
+}
+
+test('commandRpcName maps zone_update to its server entrypoint', () => {
+  expect(commandRpcName('zone_update')).toBe('zone_update')
+})
+
+test('normalizeEnvelope: a zone_update success carries {updated,id,name} + command_type through', () => {
+  const raw: RawServerEnvelope = {
+    ok: true,
+    request_id: 'req-zoneupd-1',
+    command_type: 'zone_update',
+    result: { updated: true, id: '2f8a1b3c-0000-4000-8000-000000000099', name: 'Crimson Reach (edited)' },
+  }
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, raw)
+  expect(r.ok).toBe(true)
+  if (!r.ok) throw new Error('unreachable')
+  expect(r.commandType).toBe('zone_update')
+  expect(r.result).toEqual({
+    updated: true,
+    id: '2f8a1b3c-0000-4000-8000-000000000099',
+    name: 'Crimson Reach (edited)',
+  })
+  expect(r.replayed).toBeUndefined()
+})
+
+test('normalizeEnvelope: a zone_update idempotent replay keeps replayed + duplicate_request code', () => {
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: true,
+    request_id: 'req-zoneupd-1',
+    command_type: 'zone_update',
+    replayed: true,
+    code: 'duplicate_request',
+    result: { updated: true, id: '2f8a1b3c-0000-4000-8000-000000000099', name: 'Crimson Reach (edited)' },
+  })
+  if (!r.ok) throw new Error('replay must normalize as ok')
+  expect(r.replayed).toBe(true)
+  expect(r.code).toBe('duplicate_request')
+})
+
+test('normalizeEnvelope: a zone_update stale_revision carries per-field source_changed details (name/geometry)', () => {
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneupd-1',
+    error: 'stale_revision',
+    details: [
+      { code: 'source_changed', field: 'name' },
+      { code: 'source_changed', field: 'geometry' },
+    ],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('stale_revision')
+  expect(r.details?.map((d) => d.field)).toEqual(['name', 'geometry'])
+})
+
+test('normalizeEnvelope: a zone_update not_found carries the source_missing detail through', () => {
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneupd-1',
+    error: 'not_found',
+    details: [{ code: 'source_missing', field: null }],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('not_found')
+  expect(r.details?.[0]?.code).toBe('source_missing')
+})
+
+test('normalizeEnvelope: the zone_update invalid_geometry + protected_zone rejections ride validation_failed details', () => {
+  const invalidGeom = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneupd-1',
+    error: 'validation_failed',
+    details: [{ code: 'invalid_geometry', field: 'geometry', message: 'untangle the ring' }],
+  })
+  if (invalidGeom.ok) throw new Error('unreachable')
+  expect(invalidGeom.error).toBe('validation_failed')
+  expect(invalidGeom.details?.[0]?.code).toBe('invalid_geometry')
+
+  // a seeded source<>'drawn' zone is not editable — a DETAIL under validation_failed, not a new code.
+  const protectedZone = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneupd-1',
+    error: 'validation_failed',
+    details: [{ code: 'protected_zone', field: 'source' }],
+  })
+  if (protectedZone.ok) throw new Error('unreachable')
+  expect(protectedZone.error).toBe('validation_failed')
+  expect(protectedZone.details?.[0]?.code).toBe('protected_zone')
+})

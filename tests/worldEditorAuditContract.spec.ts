@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test'
 import { normalizeAuditResponse } from '../src/features/worldeditor/worldEditorAuditNormalize'
 import { deriveAuditDiff } from '../src/features/worldeditor/worldEditorAuditDiff'
 import { auditRecordWorldPoints, auditRecordHasFocus } from '../src/features/worldeditor/worldEditorAuditFocus'
-import type { WorldEditorAuditEntry } from '../src/features/worldeditor/worldEditorAuditTypes'
+import {
+  isKnownAuditCommandType,
+  type WorldEditorAuditEntry,
+} from '../src/features/worldeditor/worldEditorAuditTypes'
 
 // WORLD EDITOR V1.5 — pure contract/normalization/diff/focus tests for the owner audit reader
 // (migration 0256). No React, no network — the RPC's SERVER behavior is proven by
@@ -24,6 +27,14 @@ const okEntryRaw = (over: Record<string, unknown> = {}) => ({
   after: { id: 'zzz', name: 'Z', status: 'active' },
   redactions: ['actor'],
   ...over,
+})
+
+// ── command vocabulary ──────────────────────────────────────────────────────────────────────────────
+test('zone_update (0266) is a KNOWN audit command type alongside the other zone commands', () => {
+  expect(isKnownAuditCommandType('zone_update')).toBe(true)
+  expect(isKnownAuditCommandType('zone_create')).toBe(true)
+  expect(isKnownAuditCommandType('zone_unpublish')).toBe(true)
+  expect(isKnownAuditCommandType('some_future_command')).toBe(false)
 })
 
 // ── normalization ─────────────────────────────────────────────────────────────────────────────────

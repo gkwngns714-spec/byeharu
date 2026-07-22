@@ -31,6 +31,13 @@
  *  (a bad materialized ring is a typed validation_failed detail {invalid_geometry}; a bad attach
  *  target {invalid_attach}); NO conflict code (danger_zones.name has no unique constraint). NOT the
  *  0239-locked pirate_zone_create — a new 0243-spine surface;
+ *  zone_update is the zone EDIT command (0266, owner-gated): the last missing edge of the publish
+ *  matrix — re-materializes an edit draft's geometry onto the SAME danger_zones row (payload =
+ *  {target_id: the zone uuid, expected: the fork-time {name, zone_kind, attach_location_id, geometry}
+ *  snapshot, fields: {name, attach_location_id, geometry}}) under the same optimistic-concurrency
+ *  contract as location_update (name/attach/geometry drift → stale_revision). A seeded source<>'drawn'
+ *  target is a typed validation_failed {protected_zone}; invalid_geometry / invalid_attach ride the
+ *  same details[] pipeline; NO conflict code;
  *  zone_unpublish is the zone UNPUBLISH command and twin of zone_create (0255, owner-gated): flips
  *  ONE danger_zones row from status 'active' to 'inactive' (the canonical safe unpublish — the row,
  *  geometry, name and attach survive for a future republish; NO hard delete) under the same
@@ -46,6 +53,7 @@ export type WorldEditorCommandType =
   | 'location_update'
   | 'location_create'
   | 'zone_create'
+  | 'zone_update'
   | 'zone_unpublish'
   | 'exploration_site_set_active'
   | 'mining_field_set_active'
@@ -182,6 +190,8 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'location_create'
     case 'zone_create':
       return 'zone_create'
+    case 'zone_update':
+      return 'zone_update'
     case 'zone_unpublish':
       return 'zone_unpublish'
     case 'exploration_site_set_active':
