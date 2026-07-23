@@ -14,6 +14,11 @@ export const ICON_NAMES = [
   'chevron',
   'close',
   'plus',
+  'layers',
+  'search',
+  'info',
+  'edit',
+  'history',
 ] as const
 
 export type IconName = (typeof ICON_NAMES)[number]
@@ -62,4 +67,14 @@ export const ICON_PATHS: Record<IconName, readonly string[]> = {
   close: ['M6 6l12 12', 'M18 6 6 18'],
   // Plus / add.
   plus: ['M12 5v14', 'M5 12h14'],
+  // Stacked sheets — map layer visibility.
+  layers: ['M12 3 3 7.5l9 4.5 9-4.5L12 3Z', 'M3 12.5 12 17l9-4.5', 'M3 17 12 21.5 21 17'],
+  // Magnifier — find / search.
+  search: ['M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z', 'm16.2 16.2 4.3 4.3'],
+  // Circled i — details / inspector.
+  info: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z', 'M12 11v5.5', 'M12 7.6v.9'],
+  // Pencil — authoring / drafts.
+  edit: ['M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z', 'm14.5 6.5 3 3'],
+  // Clock with a back-arrow tick — the audit history.
+  history: ['M12 3a9 9 0 1 0 9 9', 'M12 3 8.5 5.5 12 8', 'M12 7.5V12l3.5 2.5'],
 }
