@@ -144,3 +144,33 @@ jobs:
             echo "$out" | grep -qF "$marker" || { echo "MISSING SELFTEST MARKER: $marker"; exit 1; }
           done
           echo 'THE PATCHED READINESS VERIFIER STILL FAILS CLOSED'
+
+      - name: NEW RUNTIME/ENCOUNTER CHECKS ACTUALLY EXECUTE (CH22 pin / CH24 / CH26 / CH27)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          # With no resolvable binding, section 8 returns early and the new checks never run. Point the
+          # verifier at the chain migration 0259 SEEDS on every fresh stack (profile key pirate_basic)
+          # via the key fallback, so section 8 executes for real. It must STILL fail closed (that
+          # seeded binding is already active, its cooldown is 0, its revision is 1, …).
+          out="$(CANARY_BINDING_ID=00000000-0000-0000-0000-000000000000 \
+                 CANARY_PROFILE_KEY=pirate_basic \
+                 CANARY_EXPECT_BINDING_REV='' CANARY_EXPECT_PROFILE_REV='' CANARY_EXPECT_TEMPLATE_REV='' \
+                 CANARY_EXPECT_ARCHETYPE_REV='' CANARY_EXPECT_REWARD_REV='' \
+                 DB_URL="$DB_URL" ./scripts/encounter-canary-readiness.sh --expect-blocked 2>&1)" || {
+            echo "$out"; echo 'SECTION-8 EXECUTION SELFTEST FAILED'; exit 1; }
+          echo "$out"
+          for marker in \
+            'CH04_BINDING_RESOLVED_BY_KEY' \
+            'CH22_RUNTIME_STATE' \
+            'CH26_LOCATION_QUIET' \
+            'CH27_NO_LIVE_RESOLVED' \
+            'CANARY_READY_BLOCKED' \
+            'CANARY_READINESS_SELFTEST_PASS'; do
+            echo "$out" | grep -qF "$marker" || { echo "MISSING SECTION-8 MARKER: $marker"; exit 1; }
+          done
+          # the CH24 loop must have run without error over the (empty) runtime-state table, and the
+          # verifier must not have blown up mid-file.
+          if echo "$out" | grep -q 'ERROR:'; then
+            echo 'the readiness verifier raised a Postgres ERROR — a new check is broken'; exit 1
+          fi
+          echo 'CH22/CH24/CH26/CH27 EXECUTED AGAINST REAL POSTGRES AND THE VERIFIER STILL FAILS CLOSED'
