@@ -4,7 +4,7 @@ name: ENCOUNTER RESOLVER — dark quad-flag resolver + byte-identical-when-off d
 # local Supabase — NEVER prod:
 #   * `supabase start` applies the FULL migration chain incl. 0260/0261. Their own in-migration self-asserts
 #     run here against real Postgres (E5/0261 re-proves byte-identity + folds the per-encounter seed, drops
-#     is_elite, tags elite_policy=disabled_v1). (0260: the flag seeded dark; resolved_plan_json additive + 0 tagged rows;
+#     is_elite, tags elite_policy — 0272 then wires elite and retags it multiplier_v1). (0260: the flag seeded dark; resolved_plan_json additive + 0 tagged rows;
 #     encounter_runtime_state DARK/RLS/no client write/empty; the VERBATIM 0234 synthetic-wave + :898-899
 #     reward lines + the whole aggregate (C) arm survive byte-identical in the flag-OFF fallback; the
 #     resolved branch + reward adapter wired; the tick carries exactly 2 random( calls; the resolver is
@@ -28,6 +28,7 @@ on:
       - 'autopilot/**'
       - 'slice-e3-encounter-resolver**'
       - 'slice-e5-**'
+      - 'slice-elite-**'
 
 permissions:
   contents: read
@@ -77,8 +78,7 @@ jobs:
             ER_PASS_CAP \
             ER_PASS_E5_VARIETY \
             ER_PASS_E5_SEED_STABLE \
-            ER_PASS_E5_NO_ELITE \
-            ER_PASS_E5_ELITE_GUARD \
+            ER_PASS_ELITE_WIRED \
             'ENCOUNTER-RESOLVER PROOF PASSED'; do
             echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
           done
