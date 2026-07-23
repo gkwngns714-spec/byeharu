@@ -509,8 +509,27 @@ from reportlab.platypus.doctemplate import NextPageTemplate
 full = [NextPageTemplate('main')] + full
 
 doc.multiBuild(full)
-print('ENTRIES', len(ENTRIES))
-print('TABLES', n_tables, 'CODEBLOCKS', n_code)
-print('DEGRADED', DEGRADED)
-print('SUBST_HITS', SUBST_HITS)
-print('MISSING_GLYPHS', sorted(MISSING))
+
+
+def _say(label, value):
+    """Print a summary line without ever crashing the run.
+
+    The PDF is fully written by the time we get here, so a console that cannot
+    encode a character must NOT take the process down with it. Windows consoles
+    default to cp949 on this machine, and SUBST_HITS/MISSING_GLYPHS contain the
+    very emoji that have no font coverage — printing them raised
+    UnicodeEncodeError and made a SUCCESSFUL render exit non-zero.
+    """
+    text = f'{label} {value}'
+    enc = (sys.stdout.encoding or 'utf-8')
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode(enc, 'backslashreplace').decode(enc))
+
+
+_say('ENTRIES', len(ENTRIES))
+_say('TABLES', f'{n_tables} CODEBLOCKS {n_code}')
+_say('DEGRADED', DEGRADED)
+_say('SUBST_HITS', SUBST_HITS)
+_say('MISSING_GLYPHS', sorted(MISSING))
