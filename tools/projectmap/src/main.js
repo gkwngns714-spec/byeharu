@@ -8,7 +8,7 @@ import { deriveStatuses, STATUS, STATUS_ORDER } from './status.js'
 import { deriveHistory } from './history.js'
 
 const KIND_SIZE = { system: 5.2, rung: 4.6, phase: 4.2, flag: 3.4, table: 2.4, migration: 1.7, function: 1.3 }
-const EDGE_TYPES = ['creates', 'supersedes', 'extends', 'alters', 'drops', 'seeds', 'gated-by', 'calls', 'touches', 'owned-by', 'delivers', 'delivered-by', 'flips', 'waits-on']
+const EDGE_TYPES = ['creates', 'supersedes', 'extends', 'alters', 'drops', 'seeds', 'gated-by', 'calls', 'touches', 'owned-by', 'owned-by-fn', 'delivers', 'delivered-by', 'flips', 'waits-on']
 const EDGE_DESC = {
   creates: 'migration defines a function/table',
   supersedes: 'migration re-creates a function an earlier one defined',
@@ -20,6 +20,7 @@ const EDGE_DESC = {
   calls: 'function calls another function',
   touches: 'function reads/writes a table',
   'owned-by': 'table belongs to a system (sole writer)',
+  'owned-by-fn': 'function belongs to a system (named in SYSTEM_BOUNDARIES)',
   delivers: 'a plan slice delivers this feature gate',
   'delivered-by': 'a plan slice was delivered by this migration',
   flips: 'an activation rung flips this flag',
@@ -124,7 +125,7 @@ scene.add(lines)
 const state = {
   status: new Set(STATUS_ORDER),
   kind: new Set(['system', 'rung', 'phase', 'flag', 'table', 'migration', 'function']),
-  edge: new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by', 'delivers', 'flips', 'waits-on']),
+  edge: new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by', 'owned-by-fn', 'delivers', 'flips', 'waits-on']),
   query: '',
   selected: null,
 }
@@ -262,7 +263,7 @@ document.getElementById('search').addEventListener('input', (e) => {
 document.getElementById('reset').addEventListener('click', () => {
   state.status = new Set(STATUS_ORDER)
   state.kind = new Set(['rung', 'phase', 'system', 'flag', 'table', 'migration', 'function'])
-  state.edge = new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by', 'delivers', 'flips', 'waits-on'])
+  state.edge = new Set(['creates', 'supersedes', 'extends', 'seeds', 'gated-by', 'owned-by', 'owned-by-fn', 'delivers', 'flips', 'waits-on'])
   state.query = ''; state.selected = null
   document.getElementById('search').value = ''
   // Re-sync each filter group from its own container — no index arithmetic, so

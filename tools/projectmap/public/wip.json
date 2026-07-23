@@ -1,20 +1,22 @@
 {
-  "generatedAt": "2026-07-23T02:09:13.395Z",
+  "generatedAt": "2026-07-23T02:50:23.291Z",
   "source": "open pull requests on gkwngns714-spec/byeharu",
   "count": 2,
   "items": [
     {
-      "pr": 282,
-      "title": "docs: World Editor roadmap closure (0263–0271, lifecycle parity, production-live)",
-      "branch": "docs-worldeditor-roadmap-closure",
-      "stamp": null,
-      "color": "#00e5ff",
+      "pr": 284,
+      "title": "combat-content: elite stat wiring (migration 0272, DARK — resolver-only, tick untouched)",
+      "branch": "slice-elite-stat-wiring",
+      "stamp": "20260618000272",
+      "color": "#ff2d95",
       "touches": {
-        "functions": [],
+        "functions": [
+          "resolve_location_encounter"
+        ],
         "tables": []
       },
       "nodes": [
-        "system:Production"
+        "fn:resolve_location_encounter"
       ]
     },
     {

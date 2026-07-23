@@ -248,16 +248,54 @@ to the CHECK (mig 0241), and sticky spatial mode so a mid-fight de-spatializatio
 Buy entry-level modules at a port: a server-authoritative `port_shop_buy` with catalog pricing, plus the
 docked ShopPanel client. Dark behind `port_shop_enabled`. Deps: P1 ECON-SEED, BERTH.
 
-### WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it *(L — V1 read-only foundation + V1B-0 owner spine + V1B-1 location drafts SHIPPED, merged 2026-07-19 as migs 0238/0243; spine 0243 UNDEPLOYED by design; publish pipeline planned)*
+### WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it *(L — COMPLETE: four-domain authoring, V1.5 audit + History, unified revert and lifecycle catalog SHIPPED as migs 0238/0243/0244/0245/0246/0247/0248/0249/0250/0252/0254/0255/0256/0263/0264/0265/0266/0267/0268/0269/0270/0271 — mutation paths proven by CI apply-proof on real Postgres; the production closure smoke was READ-ONLY by design)*
 
-The owner's in-game world-authoring surface (`src/features/worldeditor/`, arch: `docs/ZONE_TEMPLATES_ARCH.md`).
-V1: read-only unified map layers — locations, mining, exploration, zones — behind the client dev route
-gated by `dev_zone_editor_enabled` (mig 0238; UX gating, never authorization). V1B-0: the ONE
-server-authoritative owner security spine — `app_owners` + `is_owner()` + audit/idempotency command
-contracts every future editor command calls FIRST (mig 0243; fail-closed, ZERO world mutation,
-deliberately undeployed pending review). V1B-1: client-side location drafts + preview (draft model,
-guards, DraftPreview — no publish path exists yet). Next: the draft→publish command pipeline riding the
-0243 spine. Deps: none on game loops — fully editor-side.
+The owner's in-game world-authoring surface (`src/features/worldeditor/`, one `/dev/world` route;
+arch: `docs/ZONE_TEMPLATES_ARCH.md`; closure records: `docs/WORLD_EDITOR_V1_CLOSURE.md`,
+`docs/WORLD_EDITOR_ROADMAP_CLOSURE.md`). It authors four domains — locations, mining fields,
+exploration sites, danger zones — and it owns no table: every write lands in tables other systems own,
+which is exactly why it is not allowed to write them directly.
+
+**The spine.** V1 was read-only unified map layers behind the client dev route gated by
+`dev_zone_editor_enabled` (mig 0238; UX gating, never authorization). V1B-0 shipped the ONE
+server-authoritative owner security spine — `app_owners` + `is_owner()` + the audit/idempotency command
+contract every editor command calls FIRST (mig 0243). Every authoring command since rides that one
+spine: `SECURITY DEFINER`, `search_path=''`, EXECUTE to `authenticated` only, owner enforced in-body,
+and the same fixed sequence — authorize, validate, deduplicate by `request_id`, compare the `expected`
+fork-time snapshot, mutate, insert the before/after audit row in the same transaction.
+
+**Four-domain authoring.** Create / edit / lifecycle for all four domains: point domains first
+(migs 0244/0246/0247/0248/0249/0250/0252), then zones — create (mig 0254), unpublish (mig 0255),
+update (mig 0266) and reactivate (mig 0268), which is where zones reached lifecycle parity with the
+other three. Nothing is ever hard-deleted: unpublish is a status transition, the row stays as its own
+audit artifact, and reactivation is a first-class command rather than a database repair.
+
+**Audit, revert, catalog.** V1.5 made the ledger readable: `world_editor_audit_list` (mig 0256), an
+owner-only, sanitized, keyset-paginated read behind the History panel. Mig 0267 turned that into
+recovery — ONE `world_editor_revert` that replays any audit record's `before` snapshot back through
+that domain's own `*_update` command, never as a direct table write, so a revert obeys exactly the
+validation and audit rules an edit does. Migs 0269/0270/0271 added the lifecycle catalog and detail
+reads: the only world reads in the game that return inactive entities, supplying the opaque
+concurrency token a reactivation needs and the marker-style fields the editor map draws from.
+
+**Coordinates.** `space_anchors` is the single location-coordinate authority for read (mig 0263) and
+write (mig 0264), and mig 0265 collapsed six duplicated inline ±10000 checks into one canonical
+`canonical_coord_violation` validator. The physical ×17 rescale (slot 0253) stays HELD and unmerged;
+the approved direction is the C1 display adapter — stored gameplay coordinates unchanged, editor view
+controlled by typed display adapters plus the camera.
+
+**Frontend V5** (client-only, Pages-deployed): entity search with camera jump, coordinate go-to,
+layer and status filters, a global active/inactive/all lifecycle filter, inactive-entity selection and
+reactivation, a global unpublished-drafts indicator, one-click revert from History, and a mandatory
+unsaved-draft navigation guard on every context switch.
+
+**What is proven, and how.** Every mutation path — create, update, unpublish, reactivate, revert,
+concurrency, audit, reactivation contracts — is proven end-to-end by the disposable PostgreSQL CI
+apply-proofs through mig 0271, with the gameplay readers asserted byte-identical. The production
+closure smoke was deliberately READ-ONLY (editor loads owner-gated, catalog across all four domains,
+search, lifecycle filter, History, coordinate go-to, drafts indicator, map render) — **no production
+write RPC was invoked**, so live mutation is proven by CI, not by a production write. Deps: none on
+game loops — fully editor-side.
 
 ### P0 — NO-HOME: launch from the dock, dock at the return port *(S/M — SHIPPED dark as mig 0199; the OWNER'S ABSOLUTE LAW)*
 

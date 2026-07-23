@@ -164,6 +164,88 @@ export function createMethod({ graph, status, mount, onSelect }) {
           The rule for the stat adapter itself: "don't replace the engine — replace the source."</p>
       </section>
 
+      <section class="tl-sec${dimSec('world editor owner authoring rpc audit idempotency concurrency lifecycle revert coordinates dev world')}">
+        <div class="tl-era">the editor</div>
+        <h2>The World Editor: authoring the world the same way the game mutates it</h2>
+        <div class="tl-desc">${cite('phase:WORLDEDIT', 'WORLDEDIT')} is the one place the world's static
+          content is authored — locations, mining fields, exploration sites, danger zones. It is worth
+          reading as architecture rather than as a feature: it is the stance above applied to the one
+          actor who could legitimately have been trusted to bypass it.</div>
+
+        <div class="tl-subhead">why owner-only, and why that is not the authorization</div>
+        <p class="mth-p">The editor edits live content in a live multiplayer world, so its blast radius
+          is every player at once. Only the owner may author — but "owner" is a fact the server
+          establishes, never a claim the client makes. ${cite('fn:is_owner')} is the single
+          authorization authority, backed by an owner table, and it is checked <em>inside</em> every
+          command body. The client route flag only decides whether the editor UI is worth rendering; it
+          decides nothing about permission. That separation is the point: a UX gate that fails open
+          costs nothing, an authorization gate that fails open costs the world.</p>
+
+        <div class="tl-subhead">why writes go through RPCs, not tables</div>
+        <p class="mth-p">The editor writes tables it does not own: ${cite('table:locations')},
+          ${cite('table:zones')}, ${cite('table:sectors')} belong to Map, the mining and exploration
+          content to Reference/Config. Under one-authority-per-concept, an authoring surface with direct
+          table access would be a second writer — exactly the fork the law forbids. So every edit is a
+          <code>SECURITY DEFINER</code> RPC with <code>search_path=''</code> and EXECUTE granted to
+          authenticated callers only, and the client's own INSERT/UPDATE/DELETE grants on those tables
+          are revoked. The editor is not privileged; it is narrow.</p>
+
+        <div class="tl-subhead">one fixed sequence, in one transaction</div>
+        <p class="mth-p">Every command runs the same order, and the order is the design: <b>authorize</b>
+          (${cite('fn:is_owner')} in-body, before anything is disclosed — a non-owner cannot even learn
+          whether a request was a replay), <b>validate</b> server-side against one shared validator so
+          six commands cannot drift into six coordinate rules, <b>deduplicate</b> on a caller-supplied
+          request ID recorded in the audit ledger so a retried publish is not a second publish,
+          <b>mutate</b>, then <b>audit</b> — the before/after snapshot inserted in the same transaction
+          as the change, so an unaudited edit is not a thing that can exist.</p>
+
+        <div class="tl-subhead">optimistic concurrency instead of locks</div>
+        <p class="mth-p">Editing is a long human activity; holding a lock across it would be a lie about
+          how the work happens. Instead each edit carries the snapshot it was forked from, and
+          ${cite('fn:location_update')} (and its siblings) refuse the write if the row has moved since —
+          the UI answers with an explicit "reload the live version" rather than silently winning. A lost
+          update is turned into a visible conflict.</p>
+
+        <div class="tl-subhead">lifecycle, not deletion — and everything reversible</div>
+        <p class="mth-p">Nothing is destroyed. ${cite('fn:zone_unpublish')} moves a zone to inactive and
+          ${cite('fn:zone_set_active')} brings it back; ${cite('fn:location_update')} carries the same
+          transition for locations. The row survives as its own evidence, which is what makes
+          ${cite('fn:world_editor_revert')} possible: the ONE revert replays an audit record's <em>before</em>
+          state back through that domain's own update command. A revert is therefore an ordinary edit —
+          same authorization, same validation, same new audit row — never a privileged direct write, and
+          never a second recovery path to keep in sync. Reading that history is its own owner-only,
+          sanitized, paginated command (${cite('fn:world_editor_audit_list')} over
+          ${cite('table:world_editor_audit')}), and because every gameplay read is active-only by
+          construction, seeing inactive content needs deliberate owner-only reads
+          (${cite('fn:world_editor_entity_catalog')}, ${cite('fn:world_editor_entity_detail')}) rather
+          than a relaxed filter on the player's.</p>
+
+        <div class="tl-subhead">physical coordinates vs. what the editor draws</div>
+        <p class="mth-p">A world too sparse to edit comfortably is a display problem, and the tempting
+          fix — rescaling the stored coordinates — would silently rewrite every distance, travel time and
+          proximity rule in the game. So the physical frame is frozen and the adapter moved: stored
+          gameplay coordinates are untouched, and the editor view is controlled by typed display adapters
+          plus the camera. ${cite('fn:location_create')} and ${cite('fn:location_update')} write the
+          anchor authority, and one canonical bounds validator is the only place the legal coordinate
+          range is written down.</p>
+
+        <div class="tl-subhead">four domains, one surface</div>
+        <p class="mth-p">The four domains share the map, the draft model, the concurrency contract, the
+          audit panel and the revert button, because they share the command shape underneath — zone
+          authoring (${cite('fn:zone_create')}, ${cite('fn:zone_update')}) differs from point authoring
+          only in its geometry, not in its rules. A per-domain editor would have been four drafts, four
+          audits and four reverts to keep honest; instead the parity is structural.</p>
+
+        <div class="tl-subhead">how it was verified without touching the live world</div>
+        <p class="mth-p">Every mutation path — create, update, unpublish, reactivate, revert,
+          concurrency, idempotency, audit — is proven end-to-end by the disposable-PostgreSQL apply-proof
+          CI, which applies the whole migration chain to a real database and asserts the gameplay readers
+          stay byte-identical. The production check was deliberately the other half: a READ-ONLY closure
+          smoke on ${cite('fn:world_editor_ping')} and the owner-gated read surface — no production write
+          RPC was invoked. That asymmetry is honest and intentional. Live writes are proven by CI, not by
+          mutating a world thirty people are playing in.</p>
+      </section>
+
       <section class="tl-sec${dimSec('narrative arc core loop economy movement berth activation combat grew')}">
         <div class="tl-era">the arc</div>
         <h2>How the game grew</h2>
@@ -190,7 +272,9 @@ export function createMethod({ graph, status, mount, onSelect }) {
         <div class="mth-src">Grounded in <code>docs/HOW_ITS_BUILT.md</code>,
           <code>docs/MOVEMENT_UNIFICATION_CHARTER.md</code>, <code>docs/SYSTEM_BOUNDARIES.md</code>,
           <code>docs/FULL_CAPACITY_PLAN.md</code>, <code>docs/ACTIVATION_GUIDE.md</code>,
-          <code>docs/ARCHITECTURE.md</code>, <code>docs/PROD_GATE_APPROVAL_POLICY.md</code>, and the
+          <code>docs/ARCHITECTURE.md</code>, <code>docs/PROD_GATE_APPROVAL_POLICY.md</code>,
+          <code>docs/WORLD_EDITOR_V1_CLOSURE.md</code>,
+          <code>docs/WORLD_EDITOR_ROADMAP_CLOSURE.md</code>, and the
           <code>scripts/*-proof.{sh,sql}</code> + <code>.github/workflows/*proof*.yml</code> family.</div>
       </section>`
   }

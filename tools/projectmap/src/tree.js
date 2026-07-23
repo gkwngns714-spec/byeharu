@@ -6,9 +6,11 @@
 // A tree needs every node to have exactly one parent, which the real graph does
 // not respect (a function touches many tables). So parentage here is *assigned*,
 // and where assignment is a judgement call the tree says so rather than hiding
-// it — see assignFunctionSystems() and the "unclassified" bucket.
+// it — see systems.js (the single ownership authority) and the "unclassified"
+// bucket at the bottom of this view.
 
 import { STATUS } from './status.js'
+import { functionSystems } from './systems.js'
 
 const ROW_H = 24
 const COL_W = 250
@@ -16,53 +18,17 @@ const BOX_W = 214
 const BOX_H = 19
 
 /**
- * Give each function a single owning system.
+ * Give each function a single owning system, as tree node ids.
  *
- * 1. direct   — it touches a table with a sole writer -> that system
- * 2. indirect — it calls (or is called by) functions already placed -> majority
- * 3. neither  — left unclassified, and counted honestly
- *
- * Step 2 is inference, not law. It is what lets 144 of 203 functions sit
- * somewhere meaningful instead of 111; the other 59 stay in their own bucket.
+ * The rules live in systems.js — ONE authority, shared with the 3D layout, so
+ * the 조직도 and the map can never quietly disagree about where a function is.
+ * Unclassified functions are deliberately absent from the map (not set to null):
+ * the tree renders them as their own honest bucket further down.
  */
 export function assignFunctionSystems(graph) {
-  const owner = new Map(graph.edges.filter((e) => e.type === 'owned-by').map((e) => [e.source, e.target]))
-  const touches = graph.edges.filter((e) => e.type === 'touches')
-  const calls = graph.edges.filter((e) => e.type === 'calls')
+  const { system, how } = functionSystems(graph.nodes, graph.edges)
   const assign = new Map()
-  const how = new Map()
-
-  const tally = new Map()
-  for (const e of touches) {
-    const sys = owner.get(e.target)
-    if (!sys) continue
-    if (!tally.has(e.source)) tally.set(e.source, new Map())
-    const m = tally.get(e.source)
-    m.set(sys, (m.get(sys) ?? 0) + 1)
-  }
-  for (const [fn, m] of tally) {
-    assign.set(fn, [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0])
-    how.set(fn, 'writes/reads a table this system owns')
-  }
-
-  const fnIds = graph.nodes.filter((n) => n.kind === 'function').map((n) => n.id)
-  for (let pass = 0; pass < 4; pass++) {
-    const add = new Map()
-    for (const fn of fnIds) {
-      if (assign.has(fn)) continue
-      const votes = new Map()
-      for (const e of calls) {
-        const other = e.source === fn ? e.target : e.target === fn ? e.source : null
-        if (!other) continue
-        const s = assign.get(other)
-        if (!s) continue
-        votes.set(s, (votes.get(s) ?? 0) + 1)
-      }
-      if (votes.size) add.set(fn, [...votes].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0])
-    }
-    if (!add.size) break
-    for (const [k, v] of add) { assign.set(k, v); how.set(k, 'inferred — it calls functions owned by this system') }
-  }
+  for (const [fn, sys] of system) if (sys) assign.set(fn, `system:${sys}`)
   return { assign, how }
 }
 
@@ -83,7 +49,7 @@ function tally(node) {
 
 // ── the three ways of looking at it ──────────────────────────────────────────
 
-function bySystem(graph, status) {
+export function bySystem(graph, status) {
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
   const { assign, how } = assignFunctionSystems(graph)
   const owned = new Map() // system -> tables

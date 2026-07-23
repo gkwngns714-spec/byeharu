@@ -127,25 +127,60 @@ const allFlags = [...new Set(migrations.flatMap((m) => m.seedsFlag))].filter((f)
 const fnSet = new Set(allFns)
 const tableSet = new Set(allTables)
 
-// ── system ownership, parsed from the sole-writer matrix in SYSTEM_BOUNDARIES ──
+// ── system ownership, parsed from SYSTEM_BOUNDARIES ───────────────────────────
 // The doc is the project's own law of separation; we read it rather than invent it.
+// It states ownership twice, and the two statements are NOT the same statement:
+//
+//   §1 "Master table → sole-writer matrix"      table    -> owning system
+//   §6 "Function-level ownership"               function -> owning system
+//
+// §6 exists because one system (the World Editor) owns no table at all: it is an
+// owner-gated authoring surface over tables other systems own, and its identity
+// lives in its RPCs. Reading only §1 makes that whole system invisible.
+//
+// The walk is section-aware. Before, the table loop ran over EVERY `|` line in
+// the file and skipped §2/§3 only by luck of their column shape — one reshaped
+// row away from silently rewriting ownership. Now each table is read by the
+// parser that means it, and a table nobody claims is simply not read.
 const ownership = new Map() // table -> system
+const fnOwnership = new Map() // function -> system
+const docWarnings = []
 let boundariesFound = false
 const bPath = join(DOCS, 'SYSTEM_BOUNDARIES.md')
 if (existsSync(bPath)) {
   const md = readFileSync(bPath, 'utf8')
-  for (const line of md.split('\n')) {
+  // `**Fleet**` in the owner column — the same cell dialect in both sections.
+  const ownerIn = (cell) => cell.match(/\*\*([^*]+)\*\*/)?.[1]?.trim()
+  const tablesIn = (cell) => [...cell.matchAll(/`([a-z_0-9]+)`/g)].map((m) => m[1])
+  // Function cells are written more loosely by humans: `public.zone_create()`,
+  // `zone_create()`, `zone_create`. Normalise all three to the bare name.
+  const fnsIn = (cell) => [...cell.matchAll(/`([a-z_0-9.]+)(?:\(\s*\))?`/g)]
+    .map((m) => strip(m[1].replace(/\(\s*\)$/, '')))
+  let section = ''
+  // Split on \r?\n, not \n: the doc is CRLF on this checkout, and in JS `\r` is
+  // a line terminator that `.` refuses to match — a trailing \r silently kills
+  // any `^…$` heading regex.
+  for (const line of md.split(/\r?\n/)) {
+    const h = line.match(/^##(?!#)\s+(.*)$/) // `##` only; `###` stays inside its `##`
+    if (h) { section = h[1]; continue }
     if (!line.startsWith('|')) continue
     const cells = line.split('|').map((c) => c.trim())
     if (cells.length < 3) continue
-    const tablesCell = cells[1]
-    const ownerCell = cells[2]
-    const owner = ownerCell.match(/\*\*([^*]+)\*\*/)?.[1]?.trim()
+    const owner = ownerIn(cells[2])
     if (!owner) continue
-    const tables = [...tablesCell.matchAll(/`([a-z_0-9]+)`/g)].map((m) => m[1])
-    if (!tables.length) continue
-    boundariesFound = true
-    for (const t of tables) ownership.set(t, owner)
+    if (/master table/i.test(section)) {
+      const tables = tablesIn(cells[1])
+      if (!tables.length) continue
+      boundariesFound = true
+      for (const t of tables) ownership.set(t, owner)
+    } else if (/function-level ownership/i.test(section)) {
+      for (const f of fnsIn(cells[1])) {
+        // Filter through the real symbol universe: a doc typo must produce a
+        // warning, never a phantom function node with an owner.
+        if (!fnSet.has(f)) { docWarnings.push(`SYSTEM_BOUNDARIES §function-level ownership names \`${f}\` (owner ${owner}) — no such function in any migration; row ignored`); continue }
+        fnOwnership.set(f, owner)
+      }
+    }
   }
 }
 
@@ -310,7 +345,15 @@ for (const m of migrations) {
   })
 }
 for (const f of allFns) {
-  push({ id: `fn:${f}`, kind: 'function', label: f, detail: 'Postgres function' })
+  push({
+    id: `fn:${f}`, kind: 'function', label: f,
+    // Named ownership is law, not inference — the views must prefer it over
+    // their own touch/call heuristics.
+    system: fnOwnership.get(f) ?? null,
+    detail: fnOwnership.has(f)
+      ? `Postgres function — owned by ${fnOwnership.get(f)} (SYSTEM_BOUNDARIES function-level ownership)`
+      : 'Postgres function',
+  })
 }
 for (const t of allTables) {
   push({
@@ -322,8 +365,15 @@ for (const t of allTables) {
 for (const f of allFlags) {
   push({ id: `flag:${f}`, kind: 'flag', label: f, detail: 'game_config feature flag' })
 }
-for (const s of new Set(ownership.values())) {
-  push({ id: `system:${s}`, kind: 'system', label: s, detail: 'system owner (SYSTEM_BOUNDARIES)' })
+// A system exists if the doc names it as an owner of ANYTHING — a table (§1) or
+// a function (§6). Union, not just tables, or a table-less system has no node.
+const allSystems = new Set([...ownership.values(), ...fnOwnership.values()])
+for (const s of allSystems) {
+  const ownsTable = [...ownership.values()].includes(s)
+  push({
+    id: `system:${s}`, kind: 'system', label: s,
+    detail: ownsTable ? 'system owner (SYSTEM_BOUNDARIES)' : 'system owner (SYSTEM_BOUNDARIES) — owns functions, no table of its own',
+  })
 }
 for (const p of plans.phases) {
   push({
@@ -398,6 +448,10 @@ for (const m of migrations) {
 
 // table -> system ownership
 for (const [t, s] of ownership) if (tableSet.has(t)) link(`table:${t}`, `system:${s}`, 'owned-by')
+// function -> system ownership. Deliberately a DIFFERENT edge type: consumers
+// read `owned-by` as "this is an ownable table" (tree.js builds its touch-tally
+// owner map from it), and a function arriving there would be counted as one.
+for (const [f, s] of fnOwnership) if (fnSet.has(f)) link(`fn:${f}`, `system:${s}`, 'owned-by-fn')
 
 // plan -> the real things that deliver it
 for (const p of plans.phases) {
@@ -432,7 +486,7 @@ const graph = {
     functions: allFns.length,
     tables: allTables.length,
     flags: allFlags.length,
-    systems: new Set(ownership.values()).size,
+    systems: allSystems.size,
     phases: plans.phases.length,
     rungs: plans.rungs.length,
     jobs: jobs.length,
@@ -463,6 +517,13 @@ if (!plans.phases.length) problems.push('FULL_CAPACITY_PLAN.md: parsed no §C ph
 if (!plans.rungs.length) problems.push('FULL_CAPACITY_PLAN.md: parsed no §B rungs — the roadmap view would lose the activation ladder')
 if (devLogFound && !jobs.length) problems.push('docs/DEV_LOG.md: exists but parsed no `## YYYY-MM-DD — title` entries — the timeline build log would be empty')
 if (!devLogFound) warnings.push('docs/DEV_LOG.md: not found — the timeline shows no build log')
+warnings.push(...docWarnings)
+// Deliberately a warning, not a failure: the function-ownership section is a
+// newer statement than the file itself, and a tree that predates it must still
+// scan cleanly. Losing it later is caught by the counts drift guard below.
+if (boundariesFound && !fnOwnership.size) {
+  warnings.push('SYSTEM_BOUNDARIES.md: no `## … Function-level ownership …` rows parsed — every function falls back to inferred ownership')
+}
 if (!addDates.size) warnings.push('git: no migration add-dates — the build-order view degrades to file order')
 
 const rungsNoFlag = plans.rungs.filter((r) => !r.flags.length).map((r) => r.key)
@@ -502,5 +563,6 @@ const byType = {}
 for (const e of cleanEdges) byType[e.type] = (byType[e.type] ?? 0) + 1
 console.log('\nedge types:')
 for (const [t, c] of Object.entries(byType).sort((a, b) => b[1] - a[1])) console.log(`  ${String(c).padStart(5)}  ${t}`)
-console.log(`\nsystems from SYSTEM_BOUNDARIES: ${boundariesFound ? [...new Set(ownership.values())].join(', ') : 'NOT PARSED'}`)
+console.log(`\nsystems from SYSTEM_BOUNDARIES: ${boundariesFound ? [...allSystems].join(', ') : 'NOT PARSED'}`)
+console.log(`function-level ownership rows: ${fnOwnership.size}${fnOwnership.size ? ` (${[...new Set(fnOwnership.values())].join(', ')})` : ' — none; ownership falls back to inference'}`)
 console.log(`\n-> ${OUT}`)

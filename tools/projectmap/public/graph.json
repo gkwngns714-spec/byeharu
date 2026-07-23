@@ -10,7 +10,7 @@
   "rungs": 9,
   "jobs": 239,
   "nodes": 741,
-  "edges": 2159
+  "edges": 2179
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -3016,1644 +3016,1918 @@
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_world_map",
    "kind": "function",
    "label": "get_world_map",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:cfg_num",
    "kind": "function",
    "label": "cfg_num",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:base_reserve_units",
    "kind": "function",
    "label": "base_reserve_units",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:base_merge_units",
    "kind": "function",
    "label": "base_merge_units",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:initialize_new_player",
    "kind": "function",
    "label": "initialize_new_player",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:bootstrap_me",
    "kind": "function",
    "label": "bootstrap_me",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:handle_new_user_base",
    "kind": "function",
    "label": "handle_new_user_base",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_create",
    "kind": "function",
    "label": "fleet_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_speed",
    "kind": "function",
    "label": "fleet_speed",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_get_power",
    "kind": "function",
    "label": "fleet_get_power",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_set_moving",
    "kind": "function",
    "label": "fleet_set_moving",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_set_present",
    "kind": "function",
    "label": "fleet_set_present",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_set_returning",
    "kind": "function",
    "label": "fleet_set_returning",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_complete",
    "kind": "function",
    "label": "fleet_complete",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_destroy",
    "kind": "function",
    "label": "fleet_destroy",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:movement_create",
    "kind": "function",
    "label": "movement_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:activity_start",
    "kind": "function",
    "label": "activity_start",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:presence_create",
    "kind": "function",
    "label": "presence_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:presence_complete",
    "kind": "function",
    "label": "presence_complete",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:presence_request_leave",
    "kind": "function",
    "label": "presence_request_leave",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_fleet_movements",
    "kind": "function",
    "label": "process_fleet_movements",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:send_fleet_to_location",
    "kind": "function",
    "label": "send_fleet_to_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:request_leave_location",
    "kind": "function",
    "label": "request_leave_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:base_add_resources",
    "kind": "function",
    "label": "base_add_resources",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_combat_stats",
    "kind": "function",
    "label": "fleet_combat_stats",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_apply_losses",
    "kind": "function",
    "label": "fleet_apply_losses",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:reward_grant",
    "kind": "function",
    "label": "reward_grant",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:report_create",
    "kind": "function",
    "label": "report_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_combat_reports",
    "kind": "function",
    "label": "get_combat_reports",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:combat_create_encounter",
    "kind": "function",
    "label": "combat_create_encounter",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:combat_set_retreating",
    "kind": "function",
    "label": "combat_set_retreating",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_combat_ticks",
    "kind": "function",
    "label": "process_combat_ticks",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:request_retreat",
    "kind": "function",
    "label": "request_retreat",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_sync_quantities",
    "kind": "function",
    "label": "fleet_sync_quantities",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:dev_reset_player",
    "kind": "function",
    "label": "dev_reset_player",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:movement_attach_cargo",
    "kind": "function",
    "label": "movement_attach_cargo",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:worldstate_register_presence",
    "kind": "function",
    "label": "worldstate_register_presence",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:worldstate_unregister_presence",
    "kind": "function",
    "label": "worldstate_unregister_presence",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:worldstate_tick",
    "kind": "function",
    "label": "worldstate_tick",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:dev_worldstate_prime",
    "kind": "function",
    "label": "dev_worldstate_prime",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_location_state_ticks",
    "kind": "function",
    "label": "process_location_state_ticks",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:base_spend_resources",
    "kind": "function",
    "label": "base_spend_resources",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:production_create_order",
    "kind": "function",
    "label": "production_create_order",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:production_complete_order",
    "kind": "function",
    "label": "production_complete_order",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:train_units",
    "kind": "function",
    "label": "train_units",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_build_queue",
    "kind": "function",
    "label": "process_build_queue",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:production_start_next",
    "kind": "function",
    "label": "production_start_next",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:cancel_build_order",
    "kind": "function",
    "label": "cancel_build_order",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:inventory_deposit",
    "kind": "function",
    "label": "inventory_deposit",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:inventory_spend",
    "kind": "function",
    "label": "inventory_spend",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:inventory_get_balance",
    "kind": "function",
    "label": "inventory_get_balance",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:pirate_loot_for_wave",
    "kind": "function",
    "label": "pirate_loot_for_wave",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:loot_merge_items",
    "kind": "function",
    "label": "loot_merge_items",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:ensure_main_ship_for_player",
    "kind": "function",
    "label": "ensure_main_ship_for_player",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_main_ship",
    "kind": "function",
    "label": "get_main_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:rename_main_ship",
    "kind": "function",
    "label": "rename_main_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:calculate_expedition_stats",
    "kind": "function",
    "label": "calculate_expedition_stats",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:cfg_bool",
    "kind": "function",
    "label": "cfg_bool",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:set_game_config",
    "kind": "function",
    "label": "set_game_config",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:db_table_sizes",
    "kind": "function",
    "label": "db_table_sizes",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:db_runtime_counts",
    "kind": "function",
    "label": "db_runtime_counts",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:maintenance_cleanup_runtime_data",
    "kind": "function",
    "label": "maintenance_cleanup_runtime_data",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:cleanup_test_runtime",
    "kind": "function",
    "label": "cleanup_test_runtime",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_expedition_preview",
    "kind": "function",
    "label": "get_my_expedition_preview",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:send_main_ship_expedition",
    "kind": "function",
    "label": "send_main_ship_expedition",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:request_main_ship_return",
    "kind": "function",
    "label": "request_main_ship_return",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_mainship_expeditions",
    "kind": "function",
    "label": "process_mainship_expeditions",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:resolve_fleet_movement_speed",
    "kind": "function",
    "label": "resolve_fleet_movement_speed",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:repair_main_ship",
    "kind": "function",
    "label": "repair_main_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:dev_set_main_ship_destroyed",
    "kind": "function",
    "label": "dev_set_main_ship_destroyed",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:move_main_ship_to_location",
    "kind": "function",
    "label": "move_main_ship_to_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleets_main_ship_id_write_once",
    "kind": "function",
    "label": "fleets_main_ship_id_write_once",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_lock_context",
    "kind": "function",
    "label": "mainship_space_lock_context",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_validate_context",
    "kind": "function",
    "label": "mainship_space_validate_context",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_resolve_origin",
    "kind": "function",
    "label": "mainship_space_resolve_origin",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_assert_cross_domain_exclusion",
    "kind": "function",
    "label": "mainship_space_assert_cross_domain_exclusion",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_begin_move",
    "kind": "function",
    "label": "mainship_space_begin_move",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_mainship_space_arrivals",
    "kind": "function",
    "label": "process_mainship_space_arrivals",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_main_ship_space_move",
    "kind": "function",
    "label": "command_main_ship_space_move",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_dock_at_location",
    "kind": "function",
    "label": "mainship_space_dock_at_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:space_anchors_immutability_guard",
    "kind": "function",
    "label": "space_anchors_immutability_guard",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_settle_space_arrival",
    "kind": "function",
    "label": "mainship_space_settle_space_arrival",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_stop",
    "kind": "function",
    "label": "mainship_space_stop",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_main_ship_space_stop",
    "kind": "function",
    "label": "command_main_ship_space_stop",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:is_home_port_eligible",
    "kind": "function",
    "label": "is_home_port_eligible",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:player_home_port_eligibility_guard",
    "kind": "function",
    "label": "player_home_port_eligibility_guard",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:assign_home_port",
    "kind": "function",
    "label": "assign_home_port",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_location_target_legal",
    "kind": "function",
    "label": "mainship_space_location_target_legal",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_begin_move_core",
    "kind": "function",
    "label": "mainship_space_begin_move_core",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_main_ship_space_move_to_location",
    "kind": "function",
    "label": "command_main_ship_space_move_to_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:reveal_starter_ports",
    "kind": "function",
    "label": "reveal_starter_ports",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_osn_movement_readiness",
    "kind": "function",
    "label": "get_osn_movement_readiness",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_current_dock_services",
    "kind": "function",
    "label": "get_my_current_dock_services",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:port_entry_commission_writer",
    "kind": "function",
    "label": "port_entry_commission_writer",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:commission_first_main_ship",
    "kind": "function",
    "label": "commission_first_main_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:normalize_main_ship_dock",
    "kind": "function",
    "label": "normalize_main_ship_dock",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:port_entry_commission_build",
    "kind": "function",
    "label": "port_entry_commission_build",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:commission_additional_main_ship",
    "kind": "function",
    "label": "commission_additional_main_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_resolve_owned_ship",
    "kind": "function",
    "label": "mainship_resolve_owned_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_market_offers",
    "kind": "function",
    "label": "get_market_offers",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:trade_cargo_add_lot",
    "kind": "function",
    "label": "trade_cargo_add_lot",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:wallet_debit",
    "kind": "function",
    "label": "wallet_debit",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:market_buy",
    "kind": "function",
    "label": "market_buy",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:trade_cargo_consume",
    "kind": "function",
    "label": "trade_cargo_consume",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:wallet_credit",
    "kind": "function",
    "label": "wallet_credit",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:market_sell",
    "kind": "function",
    "label": "market_sell",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_resolve_docked_location",
    "kind": "function",
    "label": "mainship_resolve_docked_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:wallet_ensure",
    "kind": "function",
    "label": "wallet_ensure",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:market_claim_relief",
    "kind": "function",
    "label": "market_claim_relief",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:osn_distance",
    "kind": "function",
    "label": "osn_distance",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:exploration_scan",
    "kind": "function",
    "label": "exploration_scan",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_exploration_scan",
    "kind": "function",
    "label": "command_exploration_scan",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_exploration_securing",
    "kind": "function",
    "label": "process_exploration_securing",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_exploration_discoveries",
    "kind": "function",
    "label": "get_my_exploration_discoveries",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mining_extract",
    "kind": "function",
    "label": "mining_extract",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_mining_extract",
    "kind": "function",
    "label": "command_mining_extract",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_mining_securing",
    "kind": "function",
    "label": "process_mining_securing",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_mining_extractions",
    "kind": "function",
    "label": "get_my_mining_extractions",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:modules_mint_instance",
    "kind": "function",
    "label": "modules_mint_instance",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:production_craft_module",
    "kind": "function",
    "label": "production_craft_module",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:craft_module",
    "kind": "function",
    "label": "craft_module",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_module_instances",
    "kind": "function",
    "label": "get_my_module_instances",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fitting_apply",
    "kind": "function",
    "label": "fitting_apply",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fitting_execute_command",
    "kind": "function",
    "label": "fitting_execute_command",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fitting_command_client_envelope",
    "kind": "function",
    "label": "fitting_command_client_envelope",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fit_module_to_ship",
    "kind": "function",
    "label": "fit_module_to_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:unfit_module_from_ship",
    "kind": "function",
    "label": "unfit_module_from_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_ship_fittings",
    "kind": "function",
    "label": "get_my_ship_fittings",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:captains_mint_instance",
    "kind": "function",
    "label": "captains_mint_instance",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:captain_assign_apply",
    "kind": "function",
    "label": "captain_assign_apply",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:captain_execute_command",
    "kind": "function",
    "label": "captain_execute_command",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:captain_command_client_envelope",
    "kind": "function",
    "label": "captain_command_client_envelope",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:assign_captain_to_ship",
    "kind": "function",
    "label": "assign_captain_to_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:unassign_captain_from_ship",
    "kind": "function",
    "label": "unassign_captain_from_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_space_assert_settled_safe",
    "kind": "function",
    "label": "mainship_space_assert_settled_safe",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_captain_instances",
    "kind": "function",
    "label": "get_my_captain_instances",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_ship_captains",
    "kind": "function",
    "label": "get_my_ship_captains",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:production_recruit_captain",
    "kind": "function",
    "label": "production_recruit_captain",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:recruit_captain",
    "kind": "function",
    "label": "recruit_captain",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:ranking_season_open",
    "kind": "function",
    "label": "ranking_season_open",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:ranking_score_delta",
    "kind": "function",
    "label": "ranking_score_delta",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:ranking_accrue_standings",
    "kind": "function",
    "label": "ranking_accrue_standings",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_ranking_seasons",
    "kind": "function",
    "label": "get_ranking_seasons",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_ranking_leaderboard",
    "kind": "function",
    "label": "get_ranking_leaderboard",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:location_investment_invest",
    "kind": "function",
    "label": "location_investment_invest",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:invest_in_location",
    "kind": "function",
    "label": "invest_in_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:location_investment_current_window",
    "kind": "function",
    "label": "location_investment_current_window",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_location_development",
    "kind": "function",
    "label": "get_location_development",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_location_investment_leaderboard",
    "kind": "function",
    "label": "get_location_investment_leaderboard",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_location_investments",
    "kind": "function",
    "label": "get_my_location_investments",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:worldstate_current_price_multiplier",
    "kind": "function",
    "label": "worldstate_current_price_multiplier",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:trade_effective_price",
    "kind": "function",
    "label": "trade_effective_price",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:worldstate_field_remaining",
    "kind": "function",
    "label": "worldstate_field_remaining",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:worldstate_deplete_field",
    "kind": "function",
    "label": "worldstate_deplete_field",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:world_events_publish",
    "kind": "function",
    "label": "world_events_publish",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:world_events_set_active",
    "kind": "function",
    "label": "world_events_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_world_events",
    "kind": "function",
    "label": "get_world_events",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_ui_asset_catalog",
    "kind": "function",
    "label": "get_ui_asset_catalog",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_main_ship_stop_transit",
    "kind": "function",
    "label": "command_main_ship_stop_transit",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_main_ship_settle_arrival",
    "kind": "function",
    "label": "command_main_ship_settle_arrival",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:movement_settle_arrival",
    "kind": "function",
    "label": "movement_settle_arrival",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_main_ship_settle_arrival_legacy",
    "kind": "function",
    "label": "command_main_ship_settle_arrival_legacy",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_mark_legacy_in_flight",
    "kind": "function",
    "label": "mainship_mark_legacy_in_flight",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_mark_docked_at_location",
    "kind": "function",
    "label": "mainship_mark_docked_at_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_or_create_store",
    "kind": "function",
    "label": "get_or_create_store",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_docked_store",
    "kind": "function",
    "label": "get_my_docked_store",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_resolve_owned_group",
    "kind": "function",
    "label": "mainship_resolve_owned_group",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:upsert_ship_group",
    "kind": "function",
    "label": "upsert_ship_group",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:assign_ship_to_group",
    "kind": "function",
    "label": "assign_ship_to_group",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:delete_ship_group",
    "kind": "function",
    "label": "delete_ship_group",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:send_ship_group_expedition",
    "kind": "function",
    "label": "send_ship_group_expedition",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:stop_ship_group_transit",
    "kind": "function",
    "label": "stop_ship_group_transit",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_group_expedition_preview",
    "kind": "function",
    "label": "get_my_group_expedition_preview",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:calculate_group_expedition_stats",
    "kind": "function",
    "label": "calculate_group_expedition_stats",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_group_expedition_totals",
    "kind": "function",
    "label": "get_my_group_expedition_totals",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:combat_fleet_return_speed",
    "kind": "function",
    "label": "combat_fleet_return_speed",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_sync_combat_hp",
    "kind": "function",
    "label": "mainship_sync_combat_hp",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_mark_combat_destroyed",
    "kind": "function",
    "label": "mainship_mark_combat_destroyed",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:send_ship_group_hunt",
    "kind": "function",
    "label": "send_ship_group_hunt",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:combat_create_group_encounter",
    "kind": "function",
    "label": "combat_create_group_encounter",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:sell_item_at_port",
    "kind": "function",
    "label": "sell_item_at_port",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:haul_generate_offers",
    "kind": "function",
    "label": "haul_generate_offers",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:captain_xp_accrue",
    "kind": "function",
    "label": "captain_xp_accrue",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:haul_accept_contract",
    "kind": "function",
    "label": "haul_accept_contract",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:haul_deliver_contract",
    "kind": "function",
    "label": "haul_deliver_contract",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_port_contracts",
    "kind": "function",
    "label": "get_port_contracts",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:rename_main_ship_self",
    "kind": "function",
    "label": "rename_main_ship_self",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:soul_roll_traits_for_ship",
    "kind": "function",
    "label": "soul_roll_traits_for_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:production_start_hull_build",
    "kind": "function",
    "label": "production_start_hull_build",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:start_hull_build",
    "kind": "function",
    "label": "start_hull_build",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:move_ship_group_to_location",
    "kind": "function",
    "label": "move_ship_group_to_location",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_sync_combat_shield",
    "kind": "function",
    "label": "mainship_sync_combat_shield",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:nohome_dock_returning_ship",
    "kind": "function",
    "label": "nohome_dock_returning_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_fleet_positions",
    "kind": "function",
    "label": "get_my_fleet_positions",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:repair_ship_hull_at_port",
    "kind": "function",
    "label": "repair_ship_hull_at_port",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:ship_room_slots_seed_defaults",
    "kind": "function",
    "label": "ship_room_slots_seed_defaults",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:ship_room_configure",
    "kind": "function",
    "label": "ship_room_configure",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:configure_ship_room",
    "kind": "function",
    "label": "configure_ship_room",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_ship_room_slots",
    "kind": "function",
    "label": "get_my_ship_room_slots",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:set_fleet_command_ship",
    "kind": "function",
    "label": "set_fleet_command_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_buff_roll_for_ship",
    "kind": "function",
    "label": "command_buff_roll_for_ship",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_buff_roll_on_commission",
    "kind": "function",
    "label": "command_buff_roll_on_commission",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_ship_group_go",
    "kind": "function",
    "label": "command_ship_group_go",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_set_in_space",
    "kind": "function",
    "label": "fleet_set_in_space",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_ship_group_stop",
    "kind": "function",
    "label": "command_ship_group_stop",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mainship_resolve_fleet",
    "kind": "function",
    "label": "mainship_resolve_fleet",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:ship_group_resolve_fleet",
    "kind": "function",
    "label": "ship_group_resolve_fleet",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:movement_position_at",
    "kind": "function",
    "label": "movement_position_at",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_current_position",
    "kind": "function",
    "label": "fleet_current_position",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:fleet_in_territory",
    "kind": "function",
    "label": "fleet_in_territory",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_ship_group_dock",
    "kind": "function",
    "label": "command_ship_group_dock",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_active_mining_fields",
    "kind": "function",
    "label": "get_active_mining_fields",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:ship_weapon_modules",
    "kind": "function",
    "label": "ship_weapon_modules",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:combat_flee_pending",
    "kind": "function",
    "label": "combat_flee_pending",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_my_pending_encounter",
    "kind": "function",
    "label": "get_my_pending_encounter",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_combat_telegraphs",
    "kind": "function",
    "label": "process_combat_telegraphs",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:pirate_intercept_leg_zone_hits",
    "kind": "function",
    "label": "pirate_intercept_leg_zone_hits",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:pirate_intercept_compute_risk",
    "kind": "function",
    "label": "pirate_intercept_compute_risk",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:pirate_intercept_evaluate_leg",
    "kind": "function",
    "label": "pirate_intercept_evaluate_leg",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_ship_group_cancel_route",
    "kind": "function",
    "label": "command_ship_group_cancel_route",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:command_ship_group_go_route",
    "kind": "function",
    "label": "command_ship_group_go_route",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:process_pirate_route_legs",
    "kind": "function",
    "label": "process_pirate_route_legs",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:pirate_intercept_preview_route",
    "kind": "function",
    "label": "pirate_intercept_preview_route",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_danger_zones",
    "kind": "function",
    "label": "get_danger_zones",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:pirate_zone_create",
    "kind": "function",
    "label": "pirate_zone_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:pirate_zone_delete",
    "kind": "function",
    "label": "pirate_zone_delete",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:combat_unit_decide_move",
    "kind": "function",
    "label": "combat_unit_decide_move",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:buy_shop_offer_at_port",
    "kind": "function",
    "label": "buy_shop_offer_at_port",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_port_shop",
    "kind": "function",
    "label": "get_port_shop",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:is_owner",
    "kind": "function",
    "label": "is_owner",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:world_editor_ping",
    "kind": "function",
    "label": "world_editor_ping",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:exploration_site_create",
    "kind": "function",
    "label": "exploration_site_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:get_location_anchor_points",
    "kind": "function",
    "label": "get_location_anchor_points",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mining_field_create",
    "kind": "function",
    "label": "mining_field_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:exploration_site_update",
    "kind": "function",
    "label": "exploration_site_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mining_field_update",
    "kind": "function",
    "label": "mining_field_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:location_update",
    "kind": "function",
    "label": "location_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:exploration_site_set_active",
    "kind": "function",
    "label": "exploration_site_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:mining_field_set_active",
    "kind": "function",
    "label": "mining_field_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:location_create",
    "kind": "function",
    "label": "location_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:zone_create",
    "kind": "function",
    "label": "zone_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:zone_unpublish",
    "kind": "function",
    "label": "zone_unpublish",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:world_editor_audit_list",
    "kind": "function",
    "label": "world_editor_audit_list",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:_reward_grants_valid_details",
    "kind": "function",
    "label": "_reward_grants_valid_details",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:reward_profile_create",
    "kind": "function",
    "label": "reward_profile_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:reward_profile_update",
    "kind": "function",
    "label": "reward_profile_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:reward_profile_set_active",
    "kind": "function",
    "label": "reward_profile_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:enemy_archetype_create",
    "kind": "function",
    "label": "enemy_archetype_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:enemy_archetype_update",
    "kind": "function",
    "label": "enemy_archetype_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:enemy_archetype_set_active",
    "kind": "function",
    "label": "enemy_archetype_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:_guard_archetype_deactivation",
    "kind": "function",
    "label": "_guard_archetype_deactivation",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:_guard_reward_profile_deactivation",
    "kind": "function",
    "label": "_guard_reward_profile_deactivation",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:_guard_fleet_template_deactivation",
    "kind": "function",
    "label": "_guard_fleet_template_deactivation",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:_fleet_members_valid_details",
    "kind": "function",
    "label": "_fleet_members_valid_details",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:_encounter_members_valid_details",
    "kind": "function",
    "label": "_encounter_members_valid_details",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:enemy_fleet_template_create",
    "kind": "function",
    "label": "enemy_fleet_template_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:enemy_fleet_template_update",
    "kind": "function",
    "label": "enemy_fleet_template_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:enemy_fleet_template_set_active",
    "kind": "function",
    "label": "enemy_fleet_template_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:encounter_profile_create",
    "kind": "function",
    "label": "encounter_profile_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:encounter_profile_update",
    "kind": "function",
    "label": "encounter_profile_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:encounter_profile_set_active",
    "kind": "function",
    "label": "encounter_profile_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:_guard_encounter_profile_deactivation",
    "kind": "function",
    "label": "_guard_encounter_profile_deactivation",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:location_encounter_binding_create",
    "kind": "function",
    "label": "location_encounter_binding_create",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:location_encounter_binding_update",
    "kind": "function",
    "label": "location_encounter_binding_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:location_encounter_binding_set_active",
    "kind": "function",
    "label": "location_encounter_binding_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:resolve_encounter_reward_inputs",
    "kind": "function",
    "label": "resolve_encounter_reward_inputs",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:resolve_location_encounter",
    "kind": "function",
    "label": "resolve_location_encounter",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:canonical_coord_violation",
    "kind": "function",
    "label": "canonical_coord_violation",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:zone_update",
    "kind": "function",
    "label": "zone_update",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:world_editor_revert",
    "kind": "function",
    "label": "world_editor_revert",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:zone_set_active",
    "kind": "function",
    "label": "zone_set_active",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:world_editor_entity_catalog",
    "kind": "function",
    "label": "world_editor_entity_catalog",
+   "system": null,
    "detail": "Postgres function"
   },
   {
    "id": "fn:world_editor_entity_detail",
    "kind": "function",
    "label": "world_editor_entity_detail",
+   "system": null,
    "detail": "Postgres function"
   },
   {
@@ -5863,9 +6137,9 @@
    "kind": "phase",
    "label": "WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it",
    "planned": false,
-   "size": "L — V1 read-only foundation + V1B-0 owner spine + V1B-1 location drafts SHIPPED, merged 2026-07-19 as migs 0238/0243; spine 0243 UNDEPLOYED by design; publish pipeline planned",
+   "size": "L — COMPLETE: four-domain authoring, V1.5 audit + History, unified revert and lifecycle catalog SHIPPED as migs 0238/0243/0244/0245/0246/0247/0248/0249/0250/0252/0254/0255/0256/0263/0264/0265/0266/0267/0268/0269/0270/0271 — mutation paths proven by CI apply-proof on real Postgres; the production closure smoke was READ-ONLY by design",
    "file": "docs/FULL_CAPACITY_PLAN.md",
-   "detail": "### WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it *(L — V1 read-only foundation + V1B-0 owner spine + V1B-1 location drafts SHIPPED, merged 2026-07-19 as migs 0238/0243; spine 0243 UNDEPLOYED by design; publish pipeline planned)* The owner's in-game world-authoring surface (`src/features/worldeditor/`, arch: `docs/ZONE_TEMPLATES_ARCH.md`). V1: read-only unified map layers — locations, min"
+   "detail": "### WORLDEDIT — the WORLD EDITOR: the owner edits the world from inside it *(L — COMPLETE: four-domain authoring, V1.5 audit + History, unified revert and lifecycle catalog SHIPPED as migs 0238/0243/0244/0245/0246/0247/0248/0249/0250/0252/0254/0255/0256/0263/0264/0265/0266/0267/0268/0269/0270/0271 — mutation paths proven by CI apply-proof on real Postgres; the production closure smoke was READ-ONLY by design)* The"
   },
   {
    "id": "phase:P0",
@@ -16824,6 +17098,106 @@
   {
    "source": "phase:WORLDEDIT",
    "target": "mig:20260618000243",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000244",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000245",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000246",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000247",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000248",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000249",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000250",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000252",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000254",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000255",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000256",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000263",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000264",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000265",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000266",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000267",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000268",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000269",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000270",
+   "type": "delivered-by"
+  },
+  {
+   "source": "phase:WORLDEDIT",
+   "target": "mig:20260618000271",
    "type": "delivered-by"
   },
   {

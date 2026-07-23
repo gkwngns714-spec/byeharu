@@ -20,6 +20,8 @@
 // Fully deterministic — no randomness at all, same graph in → same map out —
 // and O(nodes + edges): 600 nodes place instantly, no cooling ticks needed.
 
+import { functionSystems } from './systems.js'
+
 const GOLDEN = Math.PI * (3 - Math.sqrt(5))
 
 /** k-th of n directions spread evenly over a unit sphere (Fibonacci lattice). */
@@ -30,46 +32,40 @@ function sphereDir(k, n) {
   return [r * Math.cos(a), y, r * Math.sin(a)]
 }
 
+const UNOWNED = null
+
+// Majority vote with a deterministic tie-break, so the result never depends on
+// edge order. Shared by cluster membership and flag placement.
+const winner = (v) => (v && v.size)
+  ? [...v].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0][0]
+  : undefined
+const addVote = (map, key, sys) => {
+  const v = map.get(key) ?? new Map()
+  v.set(sys, (v.get(sys) ?? 0) + 1)
+  map.set(key, v)
+}
+
+// ── cluster membership: who belongs with which system ────────────────────────
+// Exported so the agreement between this and the 조직도 is testable — nothing
+// else in the tool would notice if the two views drifted apart.
+export function clusterMembership(nodes, edges) {
+  const tableSystem = new Map() // table id -> system label, or null
+  for (const n of nodes) if (n.kind === 'table') tableSystem.set(n.id, n.system ?? UNOWNED)
+  // Function membership is not decided here — systems.js decides it once, for
+  // this view and the 조직도 alike.
+  const { system } = functionSystems(nodes, edges)
+  const fnSystem = new Map()
+  for (const n of nodes) if (n.kind === 'function') fnSystem.set(n.id, system.get(n.id) ?? UNOWNED)
+  return { tableSystem, fnSystem }
+}
+
 export function layout(nodes, edges) {
   const pos = new Map() // id -> {x, y, z}
   const put = (id, x, y, z) => pos.set(id, { x, y, z })
   const byKind = (k) => nodes.filter((n) => n.kind === k)
   const byLabel = (a, b) => String(a.label).localeCompare(String(b.label))
 
-  // ── cluster membership: who belongs with which system ──────────────────────
-  const UNOWNED = null
-  const tableSystem = new Map() // table id -> system label, or null
-  for (const n of byKind('table')) tableSystem.set(n.id, n.system ?? UNOWNED)
-
-  // Majority vote with a deterministic tie-break, so the result never depends
-  // on edge order.
-  const winner = (v) => (v && v.size)
-    ? [...v].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0][0]
-    : undefined
-  const addVote = (map, key, sys) => {
-    const v = map.get(key) ?? new Map()
-    v.set(sys, (v.get(sys) ?? 0) + 1)
-    map.set(key, v)
-  }
-
-  // A function belongs with the system whose tables it touches most; failing
-  // that, with the system of the functions it calls; failing that, unclassified.
-  const touchVotes = new Map()
-  for (const e of edges) {
-    if (e.type !== 'touches') continue
-    const sys = tableSystem.get(e.target)
-    if (sys !== undefined) addVote(touchVotes, e.source, sys)
-  }
-  const fnSystem = new Map()
-  for (const n of byKind('function')) fnSystem.set(n.id, winner(touchVotes.get(n.id)))
-  const callVotes = new Map()
-  for (const e of edges) {
-    if (e.type !== 'calls') continue
-    const a = fnSystem.get(e.source), b = fnSystem.get(e.target)
-    if (a === undefined && b !== undefined) addVote(callVotes, e.source, b)
-    if (b === undefined && a !== undefined) addVote(callVotes, e.target, a)
-  }
-  for (const [id, s] of fnSystem) if (s === undefined) fnSystem.set(id, winner(callVotes.get(id)) ?? UNOWNED)
+  const { tableSystem, fnSystem } = clusterMembership(nodes, edges)
 
   const clusters = new Map() // system label (or UNOWNED) -> { node, tables, fns }
   const clusterOf = (sys) => {
