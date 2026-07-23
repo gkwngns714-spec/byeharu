@@ -29,7 +29,7 @@
 --   ECP_PASS_COOLDOWN_BLOCKS             the 30 s cooldown prevents a duplicate spawn, and self-heals
 --   ECP_PASS_FLEET_COMPOSITION           the wave is exactly ONE canary_pirate, per the template
 --   ECP_PASS_REWARD_MATCHES              the reward is metal-only, base 7 (literal 18 at tier 2/danger 1)
---   ECP_PASS_NON_ELITE                   no unit is elite; the plan is tagged elite_policy=disabled_v1
+--   ECP_PASS_NON_ELITE                   no unit is elite (tag may be disabled_v1 @0261 or multiplier_v1 @0272)
 --   ECP_PASS_BINDING_DISABLED_STOPS      disabling the binding stops future spawns
 --   ECP_PASS_RESOLVER_DISABLED_STOPS     disabling the resolver stops ALL resolver behaviour
 --   ECP_PASS_NO_NEW_ACTIVE_CONTENT       at end of transaction nothing authored here is left active
@@ -395,15 +395,29 @@ begin
   end if;
   raise notice 'ECP_PASS_FLEET_COMPOSITION';
 
-  -- ── ECP_PASS_NON_ELITE: elite_chance 0 stays non-elite; the plan is tagged elite_policy=disabled_v1.
+  -- ── ECP_PASS_NON_ELITE: elite_chance 0 stays non-elite.
+  -- The plan's elite_policy tag is VERSION-DEPENDENT and both values are correct:
+  --   'disabled_v1'   — migration 0261 removed the elite roll entirely.
+  --   'multiplier_v1' — migration 0272 (elite stat wiring) reinstated it as a plan SPLIT.
+  -- What must hold in BOTH worlds is the thing this marker is actually about: a member with
+  -- elite_chance = 0 must never produce an elite unit. Under 0272 the resolver marks elite
+  -- entries with `elite: true` and omits the key entirely otherwise (that omission is what makes
+  -- the elite_chance=0 plan byte-identical to 0261's), so asserting the key's ABSENCE is the
+  -- correct, version-independent check. Pinning the tag to 'disabled_v1' would make this proof
+  -- fail the moment 0272 lands — which is exactly what it did.
   if (select elite_chance from public.enemy_fleet_template_members
        where fleet_template_id = (select v from ecfx where k='fleet')) <> 0 then
     raise exception 'ECP FAIL NON_ELITE: the canary template member does not carry elite_chance 0';
   end if;
-  if (v_plan->>'elite_policy') is distinct from 'disabled_v1' then
-    raise exception 'ECP FAIL NON_ELITE: plan elite_policy % <> disabled_v1', v_plan->>'elite_policy';
+  if (v_plan->>'elite_policy') is distinct from 'disabled_v1'
+     and (v_plan->>'elite_policy') is distinct from 'multiplier_v1' then
+    raise exception 'ECP FAIL NON_ELITE: plan elite_policy % is neither disabled_v1 (0261) nor multiplier_v1 (0272)',
+      v_plan->>'elite_policy';
   end if;
   if u ? 'is_elite' then raise exception 'ECP FAIL NON_ELITE: the resolved unit carries an is_elite key: %', u; end if;
+  if coalesce((u->>'elite')::boolean, false) then
+    raise exception 'ECP FAIL NON_ELITE: a unit from an elite_chance=0 member is tagged elite: %', u;
+  end if;
   if exists (select 1 from information_schema.columns
               where table_schema='public' and table_name='combat_units' and column_name='is_elite') then
     raise exception 'ECP FAIL NON_ELITE: combat_units still carries an is_elite column (0261 dropped it)';
