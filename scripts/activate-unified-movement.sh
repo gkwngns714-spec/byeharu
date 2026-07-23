@@ -115,8 +115,9 @@ if [ "$MODE" = "selftest" ]; then
   s2_line="$(grep -n "SWEEP S2 FAIL" "$OP_SQL" | head -1 | cut -d: -f1)"
   s1_line="$(grep -n "SWEEP S1 FAIL" "$OP_SQL" | head -1 | cut -d: -f1)"
   [ -n "$s2_line" ] && [ -n "$s1_line" ] && [ "$s2_line" -lt "$s1_line" ] || fail "S2 must be sequenced BEFORE S1 (S2 at line ${s2_line:-?}, S1 at line ${s1_line:-?})"
-  # NOTE: the write anchor is the loop's VALUES row (the act's ONE real write path) — NOT the
-  # commented ROLLBACK's set_game_config lines at the bottom, which would make this check vacuous.
+  # NOTE: the write anchor is the loop's VALUES row (the act's ONE real write path). (The bottom
+  # ROLLBACK section no longer carries any set_game_config line at all — see the fail-closed checks
+  # further down — so this anchor cannot be satisfied by a commented rollback.)
   sweep_line="$(grep -n "SWEEP S1 FAIL" "$OP_SQL" | head -1 | cut -d: -f1)"
   write_line="$(grep -n "'fleet_movement_unified_enabled',     'true'::jsonb" "$OP_SQL" | head -1 | cut -d: -f1)"
   [ -n "$sweep_line" ] && [ -n "$write_line" ] && [ "$sweep_line" -lt "$write_line" ] || fail "the SWEEP must be sequenced BEFORE the flag writes (sweep at line ${sweep_line:-?}, first write at line ${write_line:-?})"
@@ -144,11 +145,29 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "RE-RUN SEMANTICS" "$OP_SQL"                  || fail "operation must document the re-run no-op semantics"
   grep -qi "ROLLBACK (manual" "$OP_SQL"                 || fail "missing the marked manual ROLLBACK section"
   grep -q "WORLD-EXACT ONLY IF NO UNIFIED GO EVER RAN" "$OP_SQL" || fail "the ROLLBACK section must state its honest scope (flag-exact always; world-exact only if no unified go ever ran)"
+  # ROLLBACK MUST FAIL CLOSED (2026-07-23). The four inverse set_game_config writes that used to be
+  # asserted here are now BANNED from this file: migrations 0231 (dropped
+  # main_ship_instances.spatial_state/space_x/space_y) and 0232 (dropped the 20 legacy movement
+  # functions) made re-lighting the legacy flags destructive rather than restorative — the surviving
+  # command_main_ship_stop_transit (0155 body) would raise "column spatial_state does not exist" on a
+  # live player path instead of rejecting cleanly with feature_disabled. So: no inverse write may be
+  # present ANYWHERE in the file (comments included — a commented rollback is a copy-paste hazard),
+  # and the ROLLBACK section must instead carry a guard that raises before any write.
   for k in "'fleet_movement_unified_enabled',     'false'" "'mainship_send_enabled',              'true'" "'mainship_space_movement_enabled',    'true'" "'mainship_coordinate_travel_enabled', 'true'"; do
-    grep -qF "$k" "$OP_SQL" || fail "the commented ROLLBACK must carry the inverse write for ${k%%,*}"
+    grep -qF "$k" "$OP_SQL" && fail "the retired ROLLBACK must NOT carry the inverse write for ${k%%,*} — re-lighting the legacy movement flags is destructive after 0231/0232" || true
   done
+  grep -qF "LEGACY MOVEMENT ROLLBACK IS RETIRED" "$OP_SQL" || fail "the ROLLBACK section must carry the fail-closed guard's raise message"
+  grep -qF 'do $rollback_retired$' "$OP_SQL" || fail "the ROLLBACK section must be the fail-closed guard DO block (raises before any write)"
+  grep -qF "command_main_ship_stop_transit" "$OP_SQL" || fail "the retired ROLLBACK must name the command_main_ship_stop_transit hazard"
+  grep -qF "NEW FORWARD MIGRATIONS" "$OP_SQL" || fail "the retired ROLLBACK must state that a real rollback needs new forward migrations"
+  # and the guard must RAISE before the first set_game_config mention inside the rollback section.
+  rb_line="$(grep -n "ROLLBACK (manual" "$OP_SQL" | tail -1 | cut -d: -f1)"
+  guard_line="$(grep -n "LEGACY MOVEMENT ROLLBACK IS RETIRED" "$OP_SQL" | head -1 | cut -d: -f1)"
+  begin_line="$(awk -v s="${rb_line:-0}" 'NR>s && /^-- begin;/ {print NR; exit}' "$OP_SQL")"
+  [ -n "$rb_line" ] && [ -n "$guard_line" ] && [ -n "$begin_line" ] && [ "$begin_line" -lt "$guard_line" ] \
+    || fail "the fail-closed guard must be the FIRST statement of the rollback block (begin at ${begin_line:-?}, raise at ${guard_line:-?})"
 
-  echo "UNIFIED-MOVEMENT ACTIVATION SELFTEST: ALL PASSED (set_game_config-only on the 4 approved keys — unified true + three per-ship movement flags false; sweep S2-then-S1 (S1 manifest-scoped, four-status set) sequenced before the writes in one timed UTC BEGIN..COMMIT gated on head >= 0214 + BOTH prosrc-pinned pre-flip obligations (hunt composes the unified leaf; brake carries the sortie guard) + the 4 unified functions + the 4 keys; no meta-commands; no other-window/table/DDL writes; rollback commented with the four inverse writes + its honest world-exact scope)"
+  echo "UNIFIED-MOVEMENT ACTIVATION SELFTEST: ALL PASSED (set_game_config-only on the 4 approved keys — unified true + three per-ship movement flags false; sweep S2-then-S1 (S1 manifest-scoped, four-status set) sequenced before the writes in one timed UTC BEGIN..COMMIT gated on head >= 0214 + BOTH prosrc-pinned pre-flip obligations (hunt composes the unified leaf; brake carries the sortie guard) + the 4 unified functions + the 4 keys; no meta-commands; no other-window/table/DDL writes; the legacy ROLLBACK is RETIRED and FAILS CLOSED — zero inverse writes anywhere in the file, a raise-first guard block naming the 0231 columns / 0232 functions / the command_main_ship_stop_transit hazard, and the new-forward-migrations requirement)"
   exit 0
 fi
 

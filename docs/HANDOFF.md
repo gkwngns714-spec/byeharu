@@ -1,5 +1,34 @@
 # Session Handoff — 2026-07-12
 
+> # ⚠ THIS FILE IS OUT OF DATE — read this banner before anything below it (added 2026-07-23)
+>
+> The snapshot below is from **2026-07-12** and its **movement and live-flag statements are FALSE today.**
+> The rest (dev-method laws, machine setup) is still broadly useful. Corrections are marked inline as
+> **SUPERSEDED 2026-07-23**; the original text is kept so the historical record survives.
+>
+> **The headline correction:** §2 says `mainship_send_enabled=true` and that OSN port-to-port travel +
+> docking are live. On **2026-07-18** the unified-fleet mover was flipped on and the per-ship movement
+> path was closed and then **physically dropped**. In production today:
+>
+> | flag | value | `updated_at` |
+> |---|---|---|
+> | `fleet_movement_unified_enabled` | **true** | 2026-07-17T22:56:59Z |
+> | `mainship_send_enabled` | **false** | 2026-07-17T22:56:59Z |
+> | `mainship_space_movement_enabled` | **false** | 2026-07-17T22:56:59Z |
+> | `mainship_coordinate_travel_enabled` | **false** | 2026-07-17T22:56:59Z |
+>
+> The per-ship travel path is **not merely gated — it is dropped** (`0231` dropped the columns, `0232`
+> dropped 20 functions). Consequently **the documented rollback is broken**: see
+> **`docs/MOVEMENT_ROLLBACK_DEFECT.md`**.
+>
+> **The cutover was an ACT SCRIPT, not a migration.** All four flag writes are in
+> `scripts/activate-unified-movement.sql:242-256` (`set_game_config`, one transaction), commit `56a84c3`
+> (2026-07-18). Grepping `supabase/migrations/` for the flag change will find **nothing**.
+>
+> Current movement truth lives in **`docs/MOVEMENT_UNIFICATION_CHARTER.md`** (true heads, post-flip
+> cleanup actual state, live pirate-intercept characteristic, and the **classification-B** verification
+> status — no live gameplay has been observed).
+
 Snapshot of where development stands, so work can continue on another computer. This file is committed
 to the repo (it travels via GitHub); the per-machine plan/memory files do NOT travel.
 
@@ -10,6 +39,11 @@ to the repo (it travels via GitHub); the per-machine plan/memory files do NOT tr
    (or recreate it from the Supabase dashboard). It contains: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
    `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_ID`
    (project ref `dlkbwztrdvnnjlvaydut`). Without it, the app + verify/activation scripts can't reach the DB.
+   > **⚠ MACHINE-SPECIFIC (noted 2026-07-23):** the contents listed above are what *one* machine had. On
+   > the machine that ran the 2026-07-23 movement audit, `.env.local` held exactly two lines —
+   > `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` — i.e. **anon only, no prod credentials**. Read the
+   > file and test before assuming service-role/Management-API access. (Same correction applies to
+   > `MOVEMENT_UNIFICATION_CHARTER.md`'s "DB access" section.)
 4. Tooling: **Node.js LTS** (`winget install -e --id OpenJS.NodeJS.LTS`), **Supabase CLI** (standalone
    binary from GitHub releases, add to PATH), **GitHub CLI** (`winget install -e --id GitHub.cli` then
    `gh auth login` → github.com / HTTPS / browser). `psql` is NOT required (the OSN runbook is CI-only;
@@ -23,15 +57,28 @@ to the repo (it travels via GitHub); the per-machine plan/memory files do NOT tr
   2026-07-12; the Deploy workflow's production-environment gate is the approval mechanism).
 - **Pages deploy is live** — players see the new **Mission Control UI** (renewal R0–R4).
 
-### Live game (port-centric — activated 2026-07-08)
+### Live game (port-centric — activated 2026-07-08) — ⚠ **MOVEMENT LINES SUPERSEDED 2026-07-23**
+> The two movement flags below are **FALSE in prod today** (both since 2026-07-17T22:56:59Z) and the
+> per-ship path they gated has been **dropped**, not just darkened. Movement is now the unified fleet
+> mover (`fleet_movement_unified_enabled=true`). The port reveals and `station_storage_enabled` lines are
+> unaffected. The rollback line at the end of this block is **broken** —
+> see `docs/MOVEMENT_ROLLBACK_DEFECT.md`. Original text kept below.
+
 On the LIVE prod DB (`game_config`):
-- `mainship_space_movement_enabled = true` — OSN port-to-port travel + docking is ON.
+- ~~`mainship_space_movement_enabled = true` — OSN port-to-port travel + docking is ON.~~
+  **FALSE since 2026-07-17T22:56:59Z.**
 - 3 starter ports REVEALED (active on the map): **Haven** (`b1a00001-…`), **Slagworks** (`…02`),
   **Driftmarch** (`…03`). Reveal is one-way.
 - `station_storage_enabled = true` — per-port, per-player storage (the docked-port "Hangar").
-- `mainship_send_enabled = true` — the legacy expedition send loop.
-- Rollback (flags only; port reveal persists): flip flags false via the `set_game_config` RPC
-  (pattern: `scripts/dev-mainship-flag.mjs`).
+- ~~`mainship_send_enabled = true` — the legacy expedition send loop.~~
+  **FALSE since 2026-07-17T22:56:59Z.** The legacy expedition RPCs it gated
+  (`send_main_ship_expedition`, `move_main_ship_to_location`, `request_main_ship_return`, and the whole
+  OSN coordinate command surface) were **dropped** by `20260618000232_movement_function_drop.sql:231-264`.
+- ~~Rollback (flags only; port reveal persists): flip flags false via the `set_game_config` RPC
+  (pattern: `scripts/dev-mainship-flag.mjs`).~~ **⚠ NOT VALID for the movement flags.** Flag-only rollback
+  cannot restore dropped functions/columns, and re-lighting `mainship_send_enabled` would turn
+  `command_main_ship_stop_transit`'s clean `feature_disabled` reject into a runtime
+  `column does not exist` raise. **See `docs/MOVEMENT_ROLLBACK_DEFECT.md`.**
 
 ### Built DARK — the complete inventory (all merged + deployed, nothing player-visible)
 Every system below is implemented, proven by its verify script / disposable proof, and gated
@@ -51,7 +98,7 @@ server-side (reject-before-read) + client-side (compile-time or server-lit UI). 
 | Location investment (P18) | invest command | `location_investment_enabled` |
 | World balance (P19) | price drift | `world_balance_enabled` |
 | World events / Phase-20 polish | world-events writer + read surface, UI asset catalog | `phase20_polish_enabled` |
-| OSN free coordinate travel | arbitrary-coordinate movement | `mainship_coordinate_travel_enabled` + `OSN_COORDINATE_TRAVEL_ENABLED` |
+| ~~OSN free coordinate travel~~ **SUPERSEDED 2026-07-23** — the per-ship coordinate surface was dropped by `0232`; free-coordinate travel is now a property of the unified fleet mover (`command_ship_group_go`, true head `20260618000233_…:589`), not of this dark slice | arbitrary-coordinate movement | `mainship_coordinate_travel_enabled` = **false** since 2026-07-17T22:56:59Z + `OSN_COORDINATE_TRAVEL_ENABLED` |
 
 ## 3. THE ONE NEXT STEP — team-command activation
 The dark build is complete; nothing is in flight. What remains is the **human-gated activation** per
