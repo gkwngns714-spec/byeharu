@@ -35,7 +35,6 @@ import { entityNavigation, type EntityMatch } from './worldEditorSearch'
 import type { FocusDomain } from './worldEditorCoordinates'
 import {
   DEFERRED_OPERATIONS,
-  DEFERRED_OPERATION_REASON,
   type DeferredOperation,
   type InspectorField,
   type LayerId,
@@ -73,6 +72,17 @@ import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { CombatContentPanel } from './CombatContentPanel'
 import { worldToViewBox } from '../map/openSpaceTransform'
 import { Button } from '../../components/ui'
+import { WorldEditorDock, WorldEditorToolRail } from './WorldEditorDock'
+import {
+  INITIAL_WORLD_EDITOR_CHROME,
+  collapsePanel,
+  dismissChrome,
+  openTool as openChromeTool,
+  toggleChrome,
+  toggleTool as toggleChromeTool,
+  type WorldEditorChromeState,
+  type WorldEditorTool,
+} from './worldEditorChrome'
 
 // WORLD EDITOR — Foundation V1 shell + V1B-1 "Location Drafts & Preview". ONE owner-only surface on
 // the REAL game map: it renders on the SHARED map primitives — the fixed `worldToViewBox` projection
@@ -107,6 +117,17 @@ import { Button } from '../../components/ui'
 // never store state) that write EXCLUSIVELY through store.patchDraft. Zone drafts are equally
 // local-only: zero danger_zones writes, zero pirate_zone_* RPCs (locked), NO publish (PR-3). The
 // locations/mining/exploration domains' behavior is unchanged.
+//
+// UX COMFORT PASS (client-only): the shell's LAYOUT was rebuilt around the owner's map-UX law — the map
+// is the product, so it fills the viewport and every control floats over a CORNER or EDGE of it. The old
+// permanent 320px side rail (eight stacked, non-collapsible sections) became ONE summonable dock driven
+// by the pure worldEditorChrome model: nothing is parked over the map by default, a single tool panel
+// opens at a time on the right edge, and it both folds back to the rail and dismisses entirely
+// (double-click the map to toggle all chrome). The build-slice status badges are gone from owner-visible
+// text. NOTHING functional moved: the same panels, stores, guards, commands and adapters mount, just in
+// a different chrome. Chrome is VIEW state only — it can never touch a draft, and neither the unsaved-
+// draft dialog nor the unpublished-drafts indicator lives inside the dismissible chrome
+// (tests/worldEditorChrome.spec.ts pins all of that).
 //
 // Gate: identical to ZoneEditor — renders null unless game_config.dev_zone_editor_enabled is exactly
 // jsonb `true` (fetchDevZoneEditorEnabled, fail-closed). Reached only by navigating to /dev/world.
@@ -184,6 +205,16 @@ export function WorldEditor() {
   const [selected, setSelected] = useState<Selection | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const [authoringDomain, setAuthoringDomain] = useState<AuthoringDomain>('locations')
+
+  // UX COMFORT PASS — the chrome state (which tool panel is summoned; is the corner rail showing).
+  // PURE VIEW STATE, decided entirely by the worldEditorChrome model: it holds no draft, publishes
+  // nothing, and dismissing it can never touch authoring state (the draft guard stays the ONE
+  // authority for unsaved work). Default = a clean map with nothing parked over it.
+  const [chrome, setChrome] = useState<WorldEditorChromeState>(INITIAL_WORLD_EDITOR_CHROME)
+  const toggleTool = useCallback((tool: WorldEditorTool) => setChrome((c) => toggleChromeTool(c, tool)), [])
+  const collapseChrome = useCallback(() => setChrome(collapsePanel), [])
+  const hideChrome = useCallback(() => setChrome(dismissChrome), [])
+  const toggleAllChrome = useCallback(() => setChrome(toggleChrome), [])
 
   // V1B-1 draft store — a SEPARATE structure (localStorage-backed); live locations are passed ONLY
   // for the mandatory staleness re-validation. Never merged into the read snapshot.
@@ -414,13 +445,20 @@ export function WorldEditor() {
       setSelected(nav.selection)
       userMovedRef.current = true
       setView(nav.camera)
+      setChrome((c) => openChromeTool(c, 'inspect'))
     })
   }, [])
 
   // V5 GUARD — every map/inspector selection change (picking another entity, or deselecting) routes
   // through the guard: it would move away from an in-progress dirty draft. Clean context selects at once.
+  // UX COMFORT PASS — picking an entity SUMMONS the Details panel (map-UX law #2: the UI arrives when
+  // you ask for it, instead of being parked). Deselecting leaves the chrome exactly as it is, so a
+  // dismissed map stays clean. Chrome is view state only — it never touches a draft.
   const requestSelect = useCallback((next: Selection | null) => {
-    guardRef.current.requestAction('select-entity', () => setSelected(next))
+    guardRef.current.requestAction('select-entity', () => {
+      setSelected(next)
+      if (next) setChrome((c) => openChromeTool(c, 'inspect'))
+    })
   }, [])
 
   // V5 — COORDINATE JUMP: frame the camera on a raw world point the owner typed. The Camera comes
@@ -524,6 +562,8 @@ export function WorldEditor() {
   const jumpToPendingDomain = useCallback(() => {
     const target = nextPendingDomain(pendingDrafts, authoringDomain)
     if (target) switchAuthoringDomain(target)
+    // …and SUMMON the Edit panel so the pending work is actually on screen (view state only).
+    setChrome((c) => openChromeTool(c, 'author'))
   }, [pendingDrafts, authoringDomain, switchAuthoringDomain])
 
   // V5 LIFECYCLE — the catalog row backing the current selection (active OR inactive). An INACTIVE
@@ -612,41 +652,16 @@ export function WorldEditor() {
     <MiningDraftsContext.Provider value={miningDraftStore}>
     <ExplorationDraftsContext.Provider value={explorationDraftStore}>
     <ZoneDraftsContext.Provider value={zoneDraftStore}>
-    <div className="flex min-h-screen flex-col gap-3 bg-app p-4 text-ink">
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-bold">World Editor</h1>
-        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-ink-muted">dev · owner-only</span>
-        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">Foundation V1 · read-only live</span>
-        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V1B-1 · local drafts (no publish)</span>
-        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V2A-2 · mining drafts (no publish)</span>
-        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V2C · exploration drafts (no publish)</span>
-        <span className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-accent">V3A-2 · zone drafts (no publish)</span>
-
-        {/* V5 — the GLOBAL unpublished-drafts indicator: ONE compact badge showing the TOTAL pending
-            (local, unpublished) drafts across ALL four domains. Rendered ONLY when something is pending
-            (zero state stays clean — no intrusive badge). Clicking jumps the active domain to the next
-            one with pending work (reuses the existing domain-switch); it NEVER publishes or discards. */}
-        {pendingDrafts.total > 0 && (
-          <button
-            type="button"
-            onClick={jumpToPendingDomain}
-            className="ml-auto rounded-md border border-warning/60 bg-warning-soft px-2 py-0.5 text-xs font-semibold text-warning hover:border-warning"
-            title="Local drafts not yet published. Click to jump to a domain with pending work."
-            data-testid="worldeditor-pending-drafts"
-          >
-            {pendingDrafts.total} unpublished draft{pendingDrafts.total === 1 ? '' : 's'}
-          </button>
-        )}
-      </header>
-
-      <div className="flex flex-1 flex-wrap items-start gap-4">
-        {/* ── the ONE real map (shared worldToViewBox + galaxyCamera) ── */}
-        <div className="relative aspect-square min-w-[320px] flex-1 basis-[520px] overflow-hidden rounded-card border border-edge bg-app shadow-card">
+    {/* UX COMFORT PASS — the map is the SURFACE (map-UX law #1): it fills the viewport and every
+        control floats over a corner/edge of it. Nothing is parked in the middle; the whole chrome is
+        summonable and dismissible (laws #2/#3/#6). */}
+    <div className="relative h-screen w-full overflow-hidden bg-app text-ink" data-testid="worldeditor-shell">
+        {/* ── the ONE real map (shared worldToViewBox + galaxyCamera) — full bleed ── */}
           <svg
             ref={svgRef}
             viewBox={`0 0 ${VIEW} ${VIEW}`}
             preserveAspectRatio="xMidYMid meet"
-            className="h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
+            className="absolute inset-0 h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
             role="img"
             aria-label="World editor map"
             onPointerDown={onPointerDown}
@@ -656,6 +671,11 @@ export function WorldEditor() {
             onPointerCancel={endDrag}
             onClick={(e) => {
               if (e.target === svgRef.current) requestSelect(null)
+            }}
+            // Map-UX law #2 — SUMMON the UI: a double-click on empty map toggles all chrome away and
+            // back. View state only (worldEditorChrome); it never reads or writes a draft.
+            onDoubleClick={(e) => {
+              if (e.target === svgRef.current) toggleAllChrome()
             }}
           >
             <defs>
@@ -819,15 +839,63 @@ export function WorldEditor() {
             </g>
           </svg>
 
-          <div className="absolute right-2 top-2 flex flex-col gap-1">
+      {/* ── TOP-LEFT corner: identity chip + the ONE summon rail (icons, no captions) ── */}
+      <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-col items-start gap-2">
+        {chrome.railVisible && (
+          <div className="pointer-events-auto rounded-lg border border-edge bg-surface/90 px-2.5 py-1 shadow-overlay backdrop-blur">
+            <h1 className="text-sm font-semibold text-ink">
+              World Editor <span className="ml-1 text-xs font-normal text-ink-muted">Owner only</span>
+            </h1>
+          </div>
+        )}
+        <WorldEditorToolRail
+          chrome={chrome}
+          onToggleTool={toggleTool}
+          onDismissAll={hideChrome}
+          badges={{ author: pendingDrafts.total }}
+        />
+      </div>
+
+      {/* ── BOTTOM-LEFT corner: unsaved-work indicator + camera controls ──
+          The pending-drafts indicator is deliberately OUTSIDE the dismissible chrome: you must never be
+          able to hide your way into forgetting unpublished work. Clicking it summons the Edit panel on
+          the next domain with pending drafts; it NEVER publishes or discards (unchanged behaviour). */}
+      <div className="pointer-events-none absolute bottom-3 left-3 z-30 flex flex-col items-start gap-2">
+        {pendingDrafts.total > 0 && (
+          <button
+            type="button"
+            onClick={jumpToPendingDomain}
+            className="pointer-events-auto rounded-md border border-warning/60 bg-warning-soft px-2 py-1 text-xs font-semibold text-warning shadow-overlay backdrop-blur hover:border-warning"
+            title="Local drafts not yet published. Click to open the ones waiting."
+            data-testid="worldeditor-pending-drafts"
+          >
+            {pendingDrafts.total} unpublished draft{pendingDrafts.total === 1 ? '' : 's'}
+          </button>
+        )}
+        {chrome.railVisible && (
+          <div className="pointer-events-auto flex flex-col gap-1">
             <Button size="icon" onClick={() => zoomByFactor(1.25)} aria-label="Zoom in">+</Button>
             <Button size="icon" onClick={() => zoomByFactor(1 / 1.25)} aria-label="Zoom out">−</Button>
             <Button size="icon" onClick={resetView} aria-label="Reset view" className="text-xs">⟲</Button>
           </div>
-        </div>
+        )}
+      </div>
 
-        {/* ── side rail: layer toggles + read-only inspector ── */}
-        <aside className="flex w-full basis-[320px] flex-col gap-3 md:w-[320px] md:flex-none">
+      {/* The only affordance left on a fully dismissed map — how to get the chrome back (law #2). */}
+      {!chrome.railVisible && (
+        <p
+          className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 text-xs text-ink-faint"
+          data-testid="worldeditor-summon-hint"
+        >
+          Double-click the map for controls
+        </p>
+      )}
+
+      {/* ── RIGHT EDGE: the dock. Renders ONLY while a tool is summoned; folds back to the rail and
+             dismisses entirely from its own header. The centre of the map is never covered. ── */}
+      <WorldEditorDock chrome={chrome} onCollapse={collapseChrome} onDismissAll={hideChrome}>
+        {chrome.openTool === 'layers' && (
+          <>
           <section className="rounded-card border border-edge bg-surface p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Layers</div>
             <div className="flex flex-col gap-1.5">
@@ -857,7 +925,7 @@ export function WorldEditor() {
                 counts, and the side-panel inspector. Default 'Active'. */}
             <div className="mt-3 flex items-center justify-between gap-2 border-t border-edge/50 pt-2.5">
               <label htmlFor="we-status-filter" className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                Lifecycle
+                Show
               </label>
               <select
                 id="we-status-filter"
@@ -873,11 +941,13 @@ export function WorldEditor() {
                 ))}
               </select>
             </div>
-            <p className="mt-1.5 text-xs text-ink-faint">
-              Narrows every domain by lifecycle status. View only — nothing is written.
-            </p>
+            <p className="mt-1.5 text-xs text-ink-faint">Applies to every layer. Nothing is written.</p>
           </section>
+          </>
+        )}
 
+        {chrome.openTool === 'find' && (
+          <>
           {/* V5 Search — find any authored entity by NAME across every searchable domain, then SELECT
               it + JUMP the camera to it. Read-only navigation: reuses the shell's `selected` model and
               the SAME galaxyCamera fit the Focus buttons use (via worldEditorSearch.entityNavigation). */}
@@ -905,14 +975,17 @@ export function WorldEditor() {
               ))}
             </div>
             <p className="mt-1.5 text-xs text-ink-faint">
-              Frames the camera on one domain. Display only — stored world coordinates never change.
+              Frames the camera only — stored world coordinates never change.
             </p>
           </section>
+          </>
+        )}
 
+        {chrome.openTool === 'inspect' && (
           <section className="rounded-card border border-edge bg-surface p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Inspector</div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Selected</div>
             {!selected ? (
-              <p className="text-sm text-ink-faint">Select any item on the map to inspect its typed fields.</p>
+              <p className="text-sm text-ink-faint">Pick anything on the map to see its details here.</p>
             ) : selectedIsInactive && selectedCatalogRow ? (
               // V5 LIFECYCLE — an INACTIVE selection: catalog-sourced detail + Reactivate ONLY (no
               // active-only edit/publish controls). `key` resets the reactivate state per entity.
@@ -923,7 +996,7 @@ export function WorldEditor() {
                 onReloadLive={reloadLive}
               />
             ) : !inspectorFields ? (
-              <p className="text-sm text-ink-faint">Select any item on the map to inspect its typed fields.</p>
+              <p className="text-sm text-ink-faint">Pick anything on the map to see its details here.</p>
             ) : (
               <div className="flex flex-col gap-2">
                 <div className="text-xs text-accent">{selectedTitle}</div>
@@ -940,21 +1013,20 @@ export function WorldEditor() {
                     ACTIVE authoring domain (zero live mutation). publish/enable/disable/archive
                     stay EXPLICITLY DISABLED (§WE.2). */}
                 <div className="mt-2">
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Authoring</div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">Draft</div>
                   <div className="flex flex-wrap gap-1.5">
                     <Button
                       size="sm"
-                      onClick={() =>
-                        authoringDomain === 'locations'
-                          ? draftStore.beginCreateDraft()
-                          : authoringDomain === 'mining'
-                            ? miningDraftStore.beginCreateDraft()
-                            : authoringDomain === 'exploration'
-                              ? explorationDraftStore.beginCreateDraft()
-                              : zoneDraftStore.beginCreateDraft()
-                      }
+                      onClick={() => {
+                        if (authoringDomain === 'locations') draftStore.beginCreateDraft()
+                        else if (authoringDomain === 'mining') miningDraftStore.beginCreateDraft()
+                        else if (authoringDomain === 'exploration') explorationDraftStore.beginCreateDraft()
+                        else zoneDraftStore.beginCreateDraft()
+                        // …and summon the Edit panel so the new draft's form is actually on screen.
+                        setChrome((c) => openChromeTool(c, 'author'))
+                      }}
                     >
-                      Create draft
+                      New
                     </Button>
                     {authoringDomain === 'locations' ? (
                       <Button
@@ -962,12 +1034,16 @@ export function WorldEditor() {
                         disabled={!selectedLocation}
                         title={
                           selectedLocation
-                            ? 'Fork this location into a local edit draft.'
-                            : 'Edit drafts fork off a selected LOCATION in this slice.'
+                            ? 'Copy this location into a draft you can change.'
+                            : 'Select a location first.'
                         }
-                        onClick={() => selectedLocation && draftStore.forkEditDraft(selectedLocation)}
+                        onClick={() => {
+                          if (!selectedLocation) return
+                          draftStore.forkEditDraft(selectedLocation)
+                          setChrome((c) => openChromeTool(c, 'author'))
+                        }}
                       >
-                        Edit as draft
+                        Edit
                       </Button>
                     ) : authoringDomain === 'mining' ? (
                       <Button
@@ -975,14 +1051,16 @@ export function WorldEditor() {
                         disabled={!selectedMiningField}
                         title={
                           selectedMiningField
-                            ? 'Fork this mining field into a local edit draft.'
-                            : 'Edit drafts fork off a selected MINING FIELD in this domain.'
+                            ? 'Copy this mining field into a draft you can change.'
+                            : 'Select a mining field first.'
                         }
-                        onClick={() =>
-                          selectedMiningField && miningDraftStore.forkEditDraft(selectedMiningField)
-                        }
+                        onClick={() => {
+                          if (!selectedMiningField) return
+                          miningDraftStore.forkEditDraft(selectedMiningField)
+                          setChrome((c) => openChromeTool(c, 'author'))
+                        }}
                       >
-                        Edit as draft
+                        Edit
                       </Button>
                     ) : authoringDomain === 'exploration' ? (
                       <Button
@@ -990,15 +1068,16 @@ export function WorldEditor() {
                         disabled={!selectedExplorationSite}
                         title={
                           selectedExplorationSite
-                            ? 'Fork this exploration site into a local edit draft.'
-                            : 'Edit drafts fork off a selected EXPLORATION SITE in this domain.'
+                            ? 'Copy this exploration site into a draft you can change.'
+                            : 'Select an exploration site first.'
                         }
-                        onClick={() =>
-                          selectedExplorationSite &&
+                        onClick={() => {
+                          if (!selectedExplorationSite) return
                           explorationDraftStore.forkEditDraft(selectedExplorationSite)
-                        }
+                          setChrome((c) => openChromeTool(c, 'author'))
+                        }}
                       >
-                        Edit as draft
+                        Edit
                       </Button>
                     ) : (
                       <Button
@@ -1006,19 +1085,23 @@ export function WorldEditor() {
                         disabled={!selectedZone}
                         title={
                           selectedZone
-                            ? 'Fork this zone into a local edit draft (its ring materializes to editable vertices).'
-                            : 'Edit drafts fork off a selected ZONE in this domain.'
+                            ? 'Copy this zone into a draft you can reshape on the map.'
+                            : 'Select a zone first.'
                         }
-                        onClick={() => selectedZone && zoneDraftStore.forkEditDraft(selectedZone)}
+                        onClick={() => {
+                          if (!selectedZone) return
+                          zoneDraftStore.forkEditDraft(selectedZone)
+                          setChrome((c) => openChromeTool(c, 'author'))
+                        }}
                       >
-                        Edit as draft
+                        Edit
                       </Button>
                     )}
                     {DEFERRED_OPERATIONS.filter((op) => !LIVE_DRAFT_OPERATIONS.includes(op)).map((op) => (
                       <button
                         key={op}
                         disabled
-                        title={DEFERRED_OPERATION_REASON}
+                        title="Not available from here — do this from the Edit panel."
                         className="cursor-not-allowed rounded-md border border-edge bg-surface-2 px-2 py-1 text-xs capitalize text-ink-faint opacity-60"
                       >
                         {op}
@@ -1026,8 +1109,8 @@ export function WorldEditor() {
                     ))}
                   </div>
                   <p className="mt-1.5 text-xs text-ink-faint">
-                    Create/edit open a LOCAL draft (browser-only, never written to the live world).{' '}
-                    {DEFERRED_OPERATION_REASON}
+                    New and Edit open a draft in your browser. The live world only changes when you
+                    publish it from the Edit panel.
                   </p>
                 </div>
 
@@ -1046,28 +1129,35 @@ export function WorldEditor() {
               </div>
             )}
           </section>
+        )}
 
-          {/* V1.5 — read-only History (owner audit ledger, via the world_editor_audit_list RPC only).
-              Inherits the /dev/world + RequireAuth + owner + dev_zone_editor_enabled gate (it renders
-              inside WorldEditor). Historical map focus reuses the ONE camera authority and never mutates
-              the live `selected` authoring model. */}
+        {/* V1.5 — read-only History (owner audit ledger, via the world_editor_audit_list RPC only).
+            Inherits the /dev/world + RequireAuth + owner + dev_zone_editor_enabled gate (it renders
+            inside WorldEditor). Historical map focus reuses the ONE camera authority and never mutates
+            the live `selected` authoring model. */}
+        {chrome.openTool === 'history' && (
           <WorldEditorHistoryPanel
             onFocusHistorical={focusHistorical}
             onClearHistorical={clearHistorical}
             onRevert={onRevertHistory}
             onReloadLive={reloadLive}
           />
+        )}
 
-          {/* E4 — Combat content: ONE foldable rail section (collapsed by default) for owner-only
-              authoring of enemies/rewards/fleets/encounters/placements via the existing E0-E2 owner
-              RPCs. Frontend-only; reads through the already-built read adapters, writes through the ONE
-              command path (useCombatAuthoring). Fail-closed: it never reads or flips any *_enabled flag. */}
-          <CombatContentPanel locations={data?.locations ?? []} />
+        {/* E4 — Combat content: ONE foldable rail section for owner-only authoring of
+            enemies/rewards/fleets/encounters/placements via the existing E0-E2 owner RPCs.
+            Frontend-only; reads through the already-built read adapters, writes through the ONE
+            command path (useCombatAuthoring). Fail-closed: it never reads or flips any *_enabled flag. */}
+        {chrome.openTool === 'combat' && (
+          <CombatContentPanel locations={data?.locations ?? []} defaultOpen />
+        )}
 
+        {chrome.openTool === 'author' && (
+          <>
           {/* V2A-2/V2C/V3A-2: the authoring-domain toggle — picks which draft panel + preview is
               active. Every store stays mounted; switching never discards another domain's drafts. */}
           <section className="rounded-card border border-edge bg-surface p-3">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">Authoring domain</div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">What you are editing</div>
             <div className="grid grid-cols-2 gap-1.5">
               {(['locations', 'mining', 'exploration', 'zones'] as const).map((d) => {
                 // V5 — per-domain pending-drafts dot: a small count on any tab whose store holds
@@ -1118,12 +1208,14 @@ export function WorldEditor() {
               onGestureModeChange={setZoneGestureMode}
             />
           )}
-        </aside>
-      </div>
+          </>
+        )}
+      </WorldEditorDock>
 
       {/* V5 — the ONE unsaved-draft confirm dialog (Keep editing / Discard and continue). Rendered once
-          here; it reads the shared guard from context and shows only when a context-changing action was
-          intercepted because it would abandon a dirty draft. */}
+          here, OUTSIDE the dismissible chrome, so no amount of hiding panels can suppress it; it reads
+          the shared guard from context and shows only when a context-changing action was intercepted
+          because it would abandon a dirty draft. */}
       <PendingDraftsDialog />
     </div>
     </ZoneDraftsContext.Provider>

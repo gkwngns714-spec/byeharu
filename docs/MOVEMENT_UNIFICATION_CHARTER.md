@@ -96,6 +96,20 @@ routes the fleet into the existing combat path, inside the same transaction.
 Recorded history worth knowing: a canary driven through the spatial-combat damage path destroyed a real
 player fleet (empty player `weapons_json` → 0 damage → the fleet was lost); the fix was migration `0262`.
 
+### The near-certain intercept rate is INTENDED — do not "repair" it (added 2026-07-23)
+
+This was briefly mis-reported as a defect. It is not one.
+`20260618000236_pirate_intercept_reliable_ambush.sql` deliberately set the four knobs —
+`pirate_intercept_base_risk = 1.0` (`:51`), `min_risk = 0.98` (`:52`), `max_risk = 1.0` (`:53`),
+`exposure_floor = 1.0` (`:54`) — per an **explicit owner directive** recorded in the migration header
+(`:15`: *"owner expects RELIABLE combat on entry, not a rare roll"*). The prior defaults
+(`0.35 / 0.02 / 0.9 / 0.15`) meant entering a danger zone did nothing ~90–97% of the time.
+
+Consequence, **by design**: any leg touching an **active** danger zone is intercepted with probability
+**∈ [0.98, 1.0] regardless of fleet strength**. The ~2% escape is retained deliberately ("there is ALWAYS
+a risk", the owner's own earlier words, quoted at `:27`). A future reader who finds a strong fleet still being
+intercepted is looking at the intended behaviour — **do not "fix" it into a strength-scaled roll.**
+
 **No flag change is proposed here.** This is stated as a live characteristic of the movement path so the
 owner can decide, not as a recommendation.
 

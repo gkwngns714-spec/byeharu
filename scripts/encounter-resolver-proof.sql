@@ -27,8 +27,15 @@
 -- PASS markers: ER_PASS_VERBATIM, ER_PASS_FLAGOFF_ROWS, ER_PASS_FLAGOFF_REWARD, ER_PASS_RESOLVED_PLAN,
 -- ER_PASS_MULTIWAVE, ER_PASS_NULL_FLAGS, ER_PASS_NULL_BINDING, ER_PASS_NULL_INACTIVE_LOC, ER_PASS_CAP,
 -- ER_PASS_COOLDOWN, ER_PASS_DETERMINISM, ER_PASS_REWARD_SHARED, ER_PASS_UNIT_CLAMP, ER_PASS_SKIP_ZERO,
--- ER_PASS_REWARD_UNTOUCHED, ER_PASS_E5_VARIETY, ER_PASS_E5_SEED_STABLE, ER_PASS_E5_NO_ELITE,
--- ER_PASS_E5_ELITE_GUARD, "ENCOUNTER-RESOLVER PROOF PASSED".
+-- ER_PASS_REWARD_UNTOUCHED, ER_PASS_E5_VARIETY, ER_PASS_E5_SEED_STABLE, ER_PASS_ELITE_WIRED,
+-- "ENCOUNTER-RESOLVER PROOF PASSED".
+--
+-- 0272 (ELITE STAT WIRING): ER_PASS_E5_NO_ELITE and ER_PASS_E5_ELITE_GUARD are RETIRED and replaced by
+-- ER_PASS_ELITE_WIRED. They asserted the E5 zero-elite posture (the resolver ignoring elite_chance, and
+-- the activation act refusing to flip while a live binding reached elite_chance>0). 0272 wires elite for
+-- real, so both assertions are intentionally superseded — this is the slice landing, not a regression.
+-- The deeper elite proofs (real-chain spawn stats, legacy byte-parity, the weapons_json/damage
+-- regression guard) live in scripts/elite-stat-wiring-proof.sql.
 
 \set ON_ERROR_STOP on
 
@@ -770,60 +777,64 @@ begin
   raise notice 'ER_PASS_E5_SEED_STABLE';
 end $$;
 
--- ER_PASS_E5_NO_ELITE: no resolved unit carries an is_elite key; the plan tags elite_policy=disabled_v1;
---   the resolver source carries no is_elite token.
+-- ER_PASS_ELITE_WIRED (0272; SUPERSEDES ER_PASS_E5_NO_ELITE and ER_PASS_E5_ELITE_GUARD, both of which
+--   asserted the E5 zero-elite POSTURE — the resolver ignoring elite_chance, and the activation act
+--   refusing to flip while any live binding reached elite_chance>0. 0272 wires elite for real, so those
+--   two assertions are deliberately RETIRED, not broken):
+--   * a resolved plan tags elite_policy=multiplier_v1 (never the retired disabled_v1);
+--   * no resolved unit carries the retired is_elite key, and the resolver source carries no is_elite token;
+--   * an elite_chance>0 fixture really DOES produce elite plan entries across seeds, and every elite
+--     entry's base_difficulty is exactly encounter_elite_difficulty_multiplier x the archetype's.
 do $$
-declare v_loc uuid := (select v from erfx where k='loc_var'); p jsonb; u jsonb; v_res text;
+declare uZ uuid := (select v from erfx where k='uZ'); r jsonb;
+  v_loc_var uuid := (select v from erfx where k='loc_var');
+  v_loc_elite uuid := (select v from erfx where k='loc_elite'); v_ep_elite uuid := (select v from erfx where k='ep_elite');
+  p jsonb; u jsonb; v_res text; g int; v_seen_elite int := 0; v_mult double precision;
+  v_bd_arch double precision;
 begin
-  p := public.resolve_location_encounter(v_loc, 'ne');
-  if p is null then raise exception 'ER PROOF FAIL E5_NO_ELITE: variety fixture did not resolve'; end if;
+  v_mult := coalesce(public.cfg_num('encounter_elite_difficulty_multiplier'), 2);
+  select base_difficulty into v_bd_arch from public.enemy_archetypes where id = (select v from erfx where k='arch');
+
+  p := public.resolve_location_encounter(v_loc_var, 'ne');
+  if p is null then raise exception 'ER PROOF FAIL ELITE_WIRED: variety fixture did not resolve'; end if;
   for u in select value from jsonb_array_elements(p -> 'units') loop
-    if u ? 'is_elite' then raise exception 'ER PROOF FAIL E5_NO_ELITE: a resolved unit still carries is_elite: %', u; end if;
+    if u ? 'is_elite' then raise exception 'ER PROOF FAIL ELITE_WIRED: a resolved unit carries the retired is_elite key: %', u; end if;
   end loop;
-  if (p ->> 'elite_policy') is distinct from 'disabled_v1' then
-    raise exception 'ER PROOF FAIL E5_NO_ELITE: plan elite_policy % <> disabled_v1', (p ->> 'elite_policy');
+  if (p ->> 'elite_policy') is distinct from 'multiplier_v1' then
+    raise exception 'ER PROOF FAIL ELITE_WIRED: plan elite_policy % <> multiplier_v1', (p ->> 'elite_policy');
   end if;
   select pg_get_functiondef(oid) into v_res from pg_proc where proname='resolve_location_encounter' and pronamespace='public'::regnamespace;
-  if v_res ilike '%is_elite%' then raise exception 'ER PROOF FAIL E5_NO_ELITE: resolver source still references is_elite'; end if;
-  raise notice 'ER_PASS_E5_NO_ELITE';
-end $$;
+  if v_res ilike '%is_elite%' then raise exception 'ER PROOF FAIL ELITE_WIRED: resolver source still references the retired is_elite'; end if;
+  if v_res not ilike '%:enc:elite:%' then raise exception 'ER PROOF FAIL ELITE_WIRED: resolver source carries no '':enc:elite:'' salt — elite is not wired'; end if;
 
--- ER_PASS_E5_ELITE_GUARD: the activate-encounter-resolver section-2b readiness SELECT reads 0 over the
---   elite_chance=0 fixtures, and > 0 once an elite_chance>0 fleet is bound active.
-do $$
-declare uZ uuid := (select v from erfx where k='uZ'); r jsonb; v_n int;
-  v_loc_elite uuid := (select v from erfx where k='loc_elite'); v_ep_elite uuid := (select v from erfx where k='ep_elite');
-begin
-  select count(*) into v_n
-    from public.location_encounter_bindings b
-    join public.locations l                      on l.id = b.location_id and l.status = 'active'
-    join public.encounter_profiles ep            on ep.id = b.encounter_profile_id and ep.active is true
-    join public.encounter_profile_members epm     on epm.encounter_profile_id = ep.id
-    join public.enemy_fleet_templates ft          on ft.id = epm.fleet_template_id and ft.active is true
-    join public.enemy_fleet_template_members fm   on fm.fleet_template_id = ft.id
-    join public.enemy_archetypes a                on a.id = fm.enemy_archetype_id and a.active is true
-   where b.active is true and fm.elite_chance > 0;
-  if v_n <> 0 then
-    raise exception 'ER PROOF FAIL E5_ELITE_GUARD: readiness guard counted % elite binding(s) before any elite fixture was bound (want 0)', v_n;
-  end if;
-
+  -- bind the elite_chance=0.5 fixture and walk seeds: elite entries must APPEAR, and each must carry
+  -- the multiplied base_difficulty.
   r := pg_temp.call_as(uZ, format('public.location_encounter_binding_create(%L, %L::jsonb)', 'erp-bind-elite',
          jsonb_build_object('location_id', v_loc_elite::text, 'encounter_profile_id', v_ep_elite::text, 'weight', 1)::text));
   if (r->>'ok')::boolean is not true then raise exception 'BIND FAIL elite: %', r; end if;
 
-  select count(*) into v_n
-    from public.location_encounter_bindings b
-    join public.locations l                      on l.id = b.location_id and l.status = 'active'
-    join public.encounter_profiles ep            on ep.id = b.encounter_profile_id and ep.active is true
-    join public.encounter_profile_members epm     on epm.encounter_profile_id = ep.id
-    join public.enemy_fleet_templates ft          on ft.id = epm.fleet_template_id and ft.active is true
-    join public.enemy_fleet_template_members fm   on fm.fleet_template_id = ft.id
-    join public.enemy_archetypes a                on a.id = fm.enemy_archetype_id and a.active is true
-   where b.active is true and fm.elite_chance > 0;
-  if v_n < 1 then
-    raise exception 'ER PROOF FAIL E5_ELITE_GUARD: readiness guard did NOT trip after an elite_chance>0 binding went active (got %)', v_n;
+  for g in 0 .. 31 loop
+    p := public.resolve_location_encounter(v_loc_elite, 'e' || g::text);
+    if p is null then raise exception 'ER PROOF FAIL ELITE_WIRED: elite fixture did not resolve at seed %', g; end if;
+    for u in select value from jsonb_array_elements(p -> 'units') loop
+      if (u->>'elite')::boolean is true then
+        v_seen_elite := v_seen_elite + 1;
+        if abs((u->>'base_difficulty')::double precision - v_bd_arch * v_mult) > 0.000001 then
+          raise exception 'ER PROOF FAIL ELITE_WIRED: elite unit base_difficulty % <> % x archetype % : %',
+            (u->>'base_difficulty')::double precision, v_mult, v_bd_arch, u;
+        end if;
+      else
+        if abs((u->>'base_difficulty')::double precision - v_bd_arch) > 0.000001 then
+          raise exception 'ER PROOF FAIL ELITE_WIRED: NON-elite unit base_difficulty % <> the archetype''s % : %',
+            (u->>'base_difficulty')::double precision, v_bd_arch, u;
+        end if;
+      end if;
+    end loop;
+  end loop;
+  if v_seen_elite = 0 then
+    raise exception 'ER PROOF FAIL ELITE_WIRED: an elite_chance=0.5 fixture produced ZERO elite entries across 32 seeds — elite_chance is still ignored';
   end if;
-  raise notice 'ER_PASS_E5_ELITE_GUARD';
+  raise notice 'ER_PASS_ELITE_WIRED';
 end $$;
 
 do $$ begin raise notice 'ENCOUNTER-RESOLVER PROOF PASSED'; end $$;
