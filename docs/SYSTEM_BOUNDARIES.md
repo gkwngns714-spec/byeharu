@@ -449,3 +449,55 @@ These keep every architecture law enforceable with a single-writer-per-table rul
 - [ ] `reward_grants` remains the only reward-application path.
 - [ ] `combat_reports` remains history only, never source of truth.
 - [ ] No client write path to any game-state table.
+
+---
+
+## 6. Function-level ownership — **World Editor** (owner-gated authoring)
+
+The World Editor is a **system that owns no table**. It is the owner-gated authoring and
+publishing surface over the world's static content, and it owns **functions**, not tables.
+
+**This section does NOT transfer table ownership.** `sectors`, `zones`, `locations` stay owned by
+**Map** (§1), `mining_fields` / `exploration_sites` stay **Reference/Config**, `danger_zones` stays
+with its §1 owner. The World Editor writes those Map-owned / config tables **only** through the
+owner-gated `SECURITY DEFINER` RPCs listed below — every one of them authorizes in-body via
+`is_owner()`, is `authenticated`-EXECUTE only (no `anon`, no `PUBLIC`), and writes an audit row to
+`world_editor_audit`. There is still exactly one *client* write path per table: none. The sole-writer
+law of §1 is unchanged — these RPCs are the **only** sanctioned server-side mutation route into that
+static world data, and no second authoring path may be added beside them.
+
+The table below is the machine-readable ownership statement: one row per function, the function name
+backticked in the first column, the owning system bolded in the second — the same shape §1 uses for
+tables, so a scanner can read function ownership the same way it reads table ownership.
+
+| Function | Owner (system) | Migration(s) | Role |
+|---|---|---|---|
+| `is_owner` | **World Editor** | 0243 | the owner predicate — the single authorization authority for every row below (backed by `app_owners`) |
+| `world_editor_ping` | **World Editor** | 0243 | owner-gated liveness probe of the security spine |
+| `location_create` | **World Editor** | 0252 *(redefined 0264, 0265)* | publish a new `locations` row + its active `space_anchors` coordinate |
+| `location_update` | **World Editor** | 0249 *(redefined 0264, 0265)* | edit a `locations` row; also the **location reactivation** path (status) — there is no `location_set_active` |
+| `mining_field_create` | **World Editor** | 0246 *(redefined 0265)* | publish a `mining_fields` row |
+| `mining_field_update` | **World Editor** | 0248 *(redefined 0265)* | edit a `mining_fields` row |
+| `mining_field_set_active` | **World Editor** | 0250 | mining-field lifecycle flip (unpublish / reactivate) |
+| `exploration_site_create` | **World Editor** | 0244 *(redefined 0265)* | publish an `exploration_sites` row |
+| `exploration_site_update` | **World Editor** | 0247 *(redefined 0265)* | edit an `exploration_sites` row |
+| `exploration_site_set_active` | **World Editor** | 0250 | exploration-site lifecycle flip (unpublish / reactivate) |
+| `zone_create` | **World Editor** | 0254 | publish a `danger_zones` row (geometry materialized from the draft) |
+| `zone_update` | **World Editor** | 0266 | edit a `danger_zones` row — the last missing edge of the publish matrix |
+| `zone_unpublish` | **World Editor** | 0255 | zone → `inactive` |
+| `zone_set_active` | **World Editor** | 0268 | zone → `active`; closes zone **lifecycle parity** with the other three domains |
+| `world_editor_audit_list` | **World Editor** | 0256 | owner-only, sanitized, keyset-paginated read of `world_editor_audit` (the History surface) |
+| `world_editor_revert` | **World Editor** | 0267 | the ONE unified revert — replays an audit record's `before` snapshot back through the domain's own `*_update` command (location · mining field · exploration site · zone); never a direct table write |
+| `world_editor_entity_catalog` | **World Editor** | 0269 *(enriched 0271)* | owner-only **lifecycle catalog** — lists active AND inactive entities across all four domains (every other world read is active-only). 0271 adds the four location marker-style fields so the editor map can be sourced from this catalog alone |
+| `world_editor_entity_detail` | **World Editor** | 0270 | owner-only inactive-entity detail read, supplying the optimistic-concurrency `expected` fields a reactivation command demands |
+| `canonical_coord_violation` | **World Editor** | 0265 | the ONE canonical ±10000 point-coordinate **validation authority** — pure/`IMMUTABLE`, owns nothing, called by the six point-coordinate-writing RPCs above in place of their previously duplicated inline checks |
+
+> **Coordinate authority.** `space_anchors` is the sole location-coordinate authority for both READ
+> (`get_world_map`, cut over in 0263) and WRITE (`location_create` / `location_update`, 0264) — the
+> World Editor never writes `locations.x/y` as a second coordinate source. The read helper
+> `get_location_anchor_points` (0245) is a plain anchor read and is **not** owner-gated.
+
+> **Not in this system.** The owner-gated *encounter-content* authoring RPCs (`enemy_archetype_*`,
+> `reward_profile_*`, `enemy_fleet_template_*`, `encounter_profile_*`, `location_encounter_binding_*`
+> — 0257–0259) also authorize through `is_owner()`, but they belong to the combat-content registry,
+> not to the World Editor's four world-authoring domains.
