@@ -17,11 +17,19 @@ Management-API node runner, NOT the .sh). Preconditions + poison-sweep passed; V
 anywhere, redirectable); per-ship movement is dark. The canary (`scripts/canary-mgmt-api.mjs`) confirmed the
 Mgmt-API endpoint is one-transaction + surfaces RAISE before the flip.
 
-**ROLLBACK (one command, reversible):** run the 4 inverse `set_game_config` writes in the commented section
-at the bottom of `scripts/activate-unified-movement.sql` via the node runner (unified→false, the 3 legacy
-movers→true). Residual after a rollback: members of any group that already ran a unified go read
-`contradictory_state`/hidden until re-flip (the go dissolved their per-ship fleets) — flag-exact always,
-world-exact only if no go ran. See M2 in the flip-ACT review.
+**ROLLBACK — ⛔ RETIRED (corrected 2026-07-23). THERE IS NO ONE-COMMAND ROLLBACK.** This paragraph used to
+promise the 4 inverse `set_game_config` writes at the bottom of `scripts/activate-unified-movement.sql`.
+That promise died when the server drops landed: migration `0231` dropped
+`main_ship_instances.spatial_state/space_x/space_y` (and `'stationary'` from the status CHECK) and `0232`
+dropped all 20 legacy movement functions. Re-lighting `mainship_send_enabled` today is **destructive, not
+restorative** — `command_main_ship_stop_transit` deliberately survived `0232` and its deployed `0155` body
+still reads `spatial_state` / writes `space_x`/`space_y`, so the flag flip turns today's clean
+`feature_disabled` reject into a live `column "spatial_state" does not exist` error for every player who
+presses Stop mid-transit. The script's rollback section is now a **fail-closed guard**: uncomment and run it
+and it raises before any write. A real rollback now requires **new forward migrations** re-creating the
+`0231` columns/CHECK and the `0232` functions, plus reconciling members whose per-ship fleets a unified go
+dissolved (they read `contradictory_state`/hidden — world-exact only if no go ran; see M2 in the flip-ACT
+review). Only after that may the flags be reconsidered.
 
 **POST-FLIP CLEANUP (planned, NOT built — do AFTER a soak):** 4a-post (delete dead per-ship client, #11) →
 0216-drop (drop legacy movers, drain-asserted, #9) → 4c (signal retirement, 2 migs, #5 — the audit found 5
