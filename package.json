@@ -51,7 +51,8 @@
     "db:cleanup:dry-run": "node scripts/db-cleanup.mjs",
     "db:cleanup": "node scripts/db-cleanup.mjs --confirm",
     "verify:cleanup:dry-run": "node scripts/verify-cleanup.mjs",
-    "verify:cleanup": "node scripts/verify-cleanup.mjs --confirm"
+    "verify:cleanup": "node scripts/verify-cleanup.mjs --confirm",
+    "verify:0272-postdeploy": "node scripts/verify-0272-postdeploy-snapshot.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
