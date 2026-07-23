@@ -33,8 +33,15 @@
 --   canary.min_cooldown_seconds  default 1     (a profile with cooldown 0 has NO throttle — binding A
 --                                               was rejected for exactly this)
 --   canary.max_active_cap        default 1     (the canary must admit at most ONE concurrent encounter)
---   canary.elite_migration       default 20260618000272  (the elite stat-wiring migration; an
---                                               elite_chance>0 member is a BLOCKER until head >= this)
+--   canary.elite_migration       default 20260618000272  (the elite stat-wiring migration. TWO roles:
+--                                               a head BELOW it is a hard BLOCKER (CH01), and an
+--                                               elite_chance>0 member below it is a BLOCKER (CH18).
+--                                               '' disables both — a deliberate pre-elite canary.)
+--   canary.expect_runtime_active_count    default 2   ('' unpins) — the KNOWN residual active_count
+--   canary.expect_runtime_last_spawn_at   default 2026-07-22T06:03:27.318703+00:00 ('' unpins)
+--                                               Together these make CH22 fail closed on runtime state
+--                                               this packet cannot explain, while NOT rejecting the
+--                                               intentionally retained harmless residual row.
 --
 -- ── THE CHOSEN CHAIN (production, read live 2026-07-23) ────────────────────────────────────────────
 --   binding 2f7bcf88-… (active=false, rev 2)
@@ -54,9 +61,23 @@
 --   incremented, never decremented, and it is NOT the cap authority. The cap authority is DERIVED at
 --   resolve time by counting combat_encounters at the location in status active/retreating whose
 --   resolved_plan_json->>'encounter_profile_id' equals the profile (0261 resolver, step (e)). This
---   verifier therefore checks the DERIVED cap and treats active_count as INFO only. The row's
---   last_spawn_at IS load-bearing: it is the cooldown anchor, and a last_spawn_at newer than
---   cooldown_seconds ago WOULD suppress the very first canary spawn — that is checked as CH22.
+--   verifier therefore checks the DERIVED cap and treats active_count as INFO-and-PIN only, never as a
+--   cap input. The row's last_spawn_at IS load-bearing: it is the cooldown anchor, and a last_spawn_at
+--   newer than cooldown_seconds ago WOULD suppress the very first canary spawn — that is checked as CH22.
+--   The full writer/reader matrix behind these statements (one writer, one reader; no decrement, no
+--   cleanup, no reaction to binding deactivation or resolver disablement) is
+--   docs/ENCOUNTER_RUNTIME_STATE_AUDIT.md, which classifies the residual row HISTORICAL-HARMLESS. It is
+--   INTENTIONALLY RETAINED — this verifier PINS it (CH22) rather than rejecting it, and NEVER cleans it
+--   up. This file contains no cleanup path and must never gain one.
+--
+-- ── FAIL-CLOSED RUNTIME/ENCOUNTER CHECKS ADDED BY THE AUDIT ────────────────────────────────────────
+--   CH01 head below canary.elite_migration                         BLOCK
+--   CH22 canary-pair runtime state differing from the pinned residual   BLOCK
+--   CH24 runtime state referencing a MISSING binding (a true orphan)    BLOCK
+--        (an INACTIVE binding is the intended pre-activation state — deliberately NOT flagged)
+--   CH24 ANOTHER (location, profile) pair carrying LIVE resolved state  BLOCK
+--   CH26 ANY unresolved combat_encounters at the canary location        BLOCK
+--   CH27 ANY live resolver-produced encounter anywhere while dark       BLOCK
 --
 -- ── PASS/FAIL MARKERS (greppable) ──────────────────────────────────────────────────────────────────
 --   CANARY_FINDING [BLOCK|WARN|INFO] <code> …   one line per finding (every blocking row, not just #1)
@@ -122,6 +143,15 @@ begin
     coalesce(v_head, '(none)'), coalesce(nullif(current_setting('canary.elite_migration', true), ''), '20260618000272');
   if v_head is null or v_head < '20260618000261' then
     raise notice 'CANARY_FINDING [BLOCK] CH01_MIGRATION_HEAD head=% :: E3/E5 (0260/0261) not deployed — the resolver does not exist yet', coalesce(v_head, '(none)');
+    v_b := v_b + 1;
+  -- CH01 ELITE-WIRING FLOOR: the canary must not be run against a resolver older than the elite
+  -- stat-wiring migration. Below it the resolver is zero-elite (0261) and silently drops any elite
+  -- intent, so what fires is NOT the chain the packet describes. Set canary.elite_migration='' to
+  -- deliberately run a pre-elite canary.
+  elsif nullif(current_setting('canary.elite_migration', true), '') is distinct from ''
+        and v_head < coalesce(nullif(current_setting('canary.elite_migration', true), ''), '20260618000272') then
+    raise notice 'CANARY_FINDING [BLOCK] CH01_BELOW_ELITE_MIGRATION head=% needs=% :: the production migration head is BELOW the elite stat-wiring migration — deploy it before running the canary',
+      coalesce(v_head, '(none)'), coalesce(nullif(current_setting('canary.elite_migration', true), ''), '20260618000272');
     v_b := v_b + 1;
   end if;
 
@@ -582,12 +612,64 @@ begin
         round(v_elapsed::numeric, 1), v_cd, ceil(v_cd - v_elapsed);
       v_b := v_b + 1;
     end if;
+    -- CH22 UNEXPLAINED RUNTIME STATE. The KNOWN residual (from the 2026-07-22 live window) is
+    -- intentionally retained and must NOT be rejected — so it is PINNED rather than forbidden. Any
+    -- OTHER value means the pair moved since the audit, i.e. state this packet cannot explain.
+    -- Set canary.expect_runtime_active_count='' / canary.expect_runtime_last_spawn_at='' to unpin.
+    declare
+      v_exp_ac  text := coalesce(current_setting('canary.expect_runtime_active_count', true), '2');
+      v_exp_ls  text := coalesce(current_setting('canary.expect_runtime_last_spawn_at', true), '2026-07-22T06:03:27.318703+00:00');
+    begin
+      if v_exp_ac <> '' and r.active_count::text <> v_exp_ac then
+        raise notice 'CANARY_FINDING [BLOCK] CH22_UNEXPLAINED_ACTIVE_COUNT got=% want=% :: the canary pair carries runtime state this packet cannot explain — active_count moved since the audit, so a spawn happened that was not accounted for. Re-audit before activating.',
+          r.active_count, v_exp_ac;
+        v_b := v_b + 1;
+      end if;
+      if v_exp_ls <> '' and r.last_spawn_at is distinct from v_exp_ls::timestamptz then
+        raise notice 'CANARY_FINDING [BLOCK] CH22_UNEXPLAINED_LAST_SPAWN got=% want=% :: last_spawn_at moved since the audit — an unaccounted resolution happened. Re-audit before activating.',
+          r.last_spawn_at, v_exp_ls;
+        v_b := v_b + 1;
+      end if;
+    end;
   end if;
-  -- any runtime rows for OTHER (location, profile) pairs are informational drift.
+
+  -- CH24 ORPHANED / OTHER-PAIR RUNTIME STATE.
+  --   (a) ORPHAN: a runtime row whose (location, profile) pair has NO location_encounter_bindings row
+  --       at all. Nothing in the codebase ever deletes a runtime-state row (no cleanup, no decrement,
+  --       no reaction to binding deactivation), so an orphan means the binding was deleted underneath
+  --       it and the chain the packet describes no longer matches reality. BLOCK.
+  --       An INACTIVE binding is NOT an orphan — that is the intended pre-activation state and is
+  --       deliberately not flagged.
+  --   (b) OTHER PAIR WITH LIVE RESOLVED STATE: another pair whose profile still has live tagged
+  --       combat_encounters is a second, unaudited encounter source. BLOCK. A merely historical row
+  --       for another pair stays a WARN.
+  for r in
+    select s.location_id, s.encounter_profile_id, s.last_spawn_at, s.active_count,
+           exists (select 1 from public.location_encounter_bindings b
+                    where b.location_id = s.location_id and b.encounter_profile_id = s.encounter_profile_id) as has_binding,
+           (select count(*) from public.combat_encounters ce
+             where ce.location_id = s.location_id and ce.status in ('active','retreating')
+               and ce.resolved_plan_json->>'encounter_profile_id' = s.encounter_profile_id::text) as live_tagged
+      from public.encounter_runtime_state s
+     order by s.location_id::text collate pg_catalog."C", s.encounter_profile_id::text collate pg_catalog."C"
+  loop
+    if not r.has_binding then
+      raise notice 'CANARY_FINDING [BLOCK] CH24_RUNTIME_STATE_ORPHAN location=% profile=% active_count=% :: this runtime-state row references a (location, profile) pair with NO binding row — the binding was removed underneath it. Nothing in the codebase cleans runtime state, so this is drift the packet cannot account for.',
+        r.location_id, r.encounter_profile_id, r.active_count;
+      v_b := v_b + 1;
+    end if;
+    if r.live_tagged > 0 and not (r.location_id = v_loc and r.encounter_profile_id = v_ep) then
+      raise notice 'CANARY_FINDING [BLOCK] CH24_OTHER_PAIR_LIVE location=% profile=% live_tagged=% :: ANOTHER (location, profile) pair carries LIVE resolved encounters — the canary would not be the only live encounter source',
+        r.location_id, r.encounter_profile_id, r.live_tagged;
+      v_b := v_b + 1;
+    end if;
+  end loop;
+
+  -- any remaining runtime rows for OTHER pairs are historical drift only (informational).
   select count(*) into v_any from public.encounter_runtime_state s
    where not (s.location_id = v_loc and s.encounter_profile_id = v_ep);
   if v_any > 0 then
-    raise notice 'CANARY_FINDING [WARN] CH22_RUNTIME_STATE_OTHER rows=% :: encounter_runtime_state carries rows for other (location, profile) pairs', v_any;
+    raise notice 'CANARY_FINDING [WARN] CH22_RUNTIME_STATE_OTHER rows=% :: encounter_runtime_state carries rows for other (location, profile) pairs (historical; CH24 blocks the ones that are live or orphaned)', v_any;
     perform set_config('canary.warns', (current_setting('canary.warns')::int + 1)::text, true);
   end if;
 
@@ -601,6 +683,29 @@ begin
   if v_live >= v_cap then
     raise notice 'CANARY_FINDING [BLOCK] CH23_CAP_VIOLATION tagged_live=% cap=% :: the derived cap is ALREADY reached — the resolver would return NULL and the canary would never spawn', v_live, v_cap;
     v_b := v_b + 1;
+  end if;
+
+  -- CH26 UNRESOLVED ENCOUNTERS AT THE CANARY LOCATION. Even an UNTAGGED (legacy synthetic) live
+  -- encounter at the canary location means combat is already in progress there: the canary's outcome
+  -- would not be attributable, and the fleet the owner sends could join an existing fight. FAIL CLOSED.
+  if v_any > 0 then
+    raise notice 'CANARY_FINDING [BLOCK] CH26_UNRESOLVED_ENCOUNTERS location=% live=% tagged=% :: combat_encounters at the canary location are still unresolved (status active/retreating). Let them finish before activating — a canary run must start from a quiet location.',
+      v_loc, v_any, v_live;
+    v_b := v_b + 1;
+  else
+    raise notice 'CANARY_FINDING [INFO] CH26_LOCATION_QUIET location=% :: no unresolved combat_encounters at the canary location', v_loc;
+  end if;
+
+  -- CH27 LIVE RESOLVED ENCOUNTER ANYWHERE while the resolver is dark. The resolved arm cannot run
+  -- with encounter_resolver_enabled=false, so a live tagged encounter anywhere is unaccounted state.
+  select count(*) into v_any from public.combat_encounters ce
+   where ce.status in ('active','retreating') and ce.resolved_plan_json is not null;
+  if v_any > 0 then
+    raise notice 'CANARY_FINDING [BLOCK] CH27_LIVE_RESOLVED_ANYWHERE rows=% :: resolved (resolver-produced) encounters are LIVE somewhere in the world while the resolver is supposed to be dark — the pre-activation state is not clean',
+      v_any;
+    v_b := v_b + 1;
+  else
+    raise notice 'CANARY_FINDING [INFO] CH27_NO_LIVE_RESOLVED :: no live resolver-produced encounter exists anywhere';
   end if;
 
   -- CH21 the EXPECTED plan + combat outcome (informational, computed from the live chain + live config).

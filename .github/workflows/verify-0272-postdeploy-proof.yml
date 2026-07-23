@@ -1,0 +1,146 @@
+name: 0272 POST-DEPLOY — read-only verifier selftest (disposable stack, no production)
+
+# Proves scripts/verify-0272-postdeploy.sql on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain through 0272, so the verifier is parsed and
+#     EXECUTED against real Postgres here (Docker/psql are unavailable on the authoring machine, so
+#     this workflow is the only place a DB-level claim about this file can be made).
+#   * Both phases are run in --expect-blocked mode. The disposable database has none of the production
+#     canary content and none of the production runtime state, so BOTH phases MUST report
+#     PD0272_BLOCKED — that is the verifier's SELFTEST: it proves the thing fails CLOSED rather than
+#     passing vacuously. `phase=before` additionally must block on a database where 0272 IS applied.
+#   * The read-only posture is asserted textually the same way the canary readiness verifier's is.
+#   * The PATCHED scripts/encounter-canary-readiness.sql is re-selftested here too (its own workflow
+#     only triggers on slice-encounter-canary** branches), so the CH01/CH22/CH24/CH26/CH27 additions
+#     are proven to parse and still fail closed.
+#
+# NO `environment:` key on any job => no job here can read production secrets. NOTHING in this
+# workflow deploys a migration, approves a deployment, flips a flag, activates a binding or writes
+# anything to any production database.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-0272-postdeploy**'
+      - 'slice-encounter-canary**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-0272-postdeploy-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Shell syntax gate (bash -n)
+        run: |
+          bash -n scripts/verify-0272-postdeploy.sh
+          bash -n scripts/encounter-canary-readiness.sh
+          node --check scripts/verify-0272-postdeploy-snapshot.mjs
+          echo 'syntax ok'
+
+      - name: READ-ONLY posture assertion (no write verb anywhere in either verifier)
+        run: |
+          for f in scripts/verify-0272-postdeploy.sql scripts/encounter-canary-readiness.sql; do
+            # strip SQL comments first, then look for ANY write verb in the executable text.
+            if sed 's/--.*$//' "$f" \
+               | grep -nEi '(insert +into|update +[a-z_."]+ +set|delete +from|truncate|create +(temp +)?(table|index|function|view)|create +or +replace|alter +table|drop +(table|function)|grant +|revoke +|set_game_config)'; then
+              echo "READ-ONLY VIOLATION: $f contains a write verb outside a comment"; exit 1
+            fi
+            grep -q 'begin transaction read only;' "$f" \
+              || { echo "READ-ONLY VIOLATION: $f does not open a read-only transaction"; exit 1; }
+          done
+          # the .mjs must only ever issue GETs.
+          if grep -nE "method: *'(POST|PATCH|PUT|DELETE)'|\.rpc\(|\.insert\(|\.update\(|\.delete\(|set_game_config" scripts/verify-0272-postdeploy-snapshot.mjs; then
+            echo 'READ-ONLY VIOLATION: the snapshot script contains a write verb'; exit 1
+          fi
+          echo 'ALL THREE VERIFIERS ARE READ-ONLY'
+
+      - name: Start disposable local Supabase (applies the full chain through 0272)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+
+      - name: 0272 VERIFIER SELFTEST (phase=before) — must FAIL CLOSED where 0272 IS applied
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          chmod +x scripts/verify-0272-postdeploy.sh
+          out="$(DB_URL="$DB_URL" ./scripts/verify-0272-postdeploy.sh --expect-blocked before 2>&1)" || {
+            echo "$out"; echo '0272 BEFORE-PHASE SELFTEST FAILED'; exit 1; }
+          echo "$out"
+          for marker in \
+            'PD0272_FINDING [BLOCK] PD01_BEFORE_ALREADY_APPLIED' \
+            'PD0272_FINDING [BLOCK] PD03_BEFORE_KEY_PRESENT' \
+            'PD0272_BLOCKED phase=before' \
+            'PD0272_SELFTEST_PASS'; do
+            echo "$out" | grep -qF "$marker" || { echo "MISSING SELFTEST MARKER: $marker"; exit 1; }
+          done
+          echo 'THE BEFORE PHASE FAILS CLOSED AS REQUIRED'
+
+      - name: 0272 VERIFIER SELFTEST (phase=after) — must FAIL CLOSED with no production content
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(DB_URL="$DB_URL" ./scripts/verify-0272-postdeploy.sh --expect-blocked after 2>&1)" || {
+            echo "$out"; echo '0272 AFTER-PHASE SELFTEST FAILED'; exit 1; }
+          echo "$out"
+          # the disposable DB carries the 0272 body + config but NONE of the production content/runtime
+          # state, so the content checks must be the things that block.
+          for marker in \
+            'PD0272_FINDING [INFO] PD03_KEY_OK' \
+            'PD0272_FINDING [BLOCK] PD09_BINDING_COUNT' \
+            'PD0272_FINDING [BLOCK] PD12_ROW_COUNT' \
+            'PD0272_BLOCKED phase=after' \
+            'PD0272_SELFTEST_PASS'; do
+            echo "$out" | grep -qF "$marker" || { echo "MISSING SELFTEST MARKER: $marker"; exit 1; }
+          done
+          # the deployed-body check must be satisfied by the real 0272 body on this stack.
+          echo "$out" | grep -qF 'PD02A_RESOLVER_BODY elite_policy=multiplier_v1' \
+            || { echo 'the deployed resolve_location_encounter did not report the 0272 elite body'; exit 1; }
+          echo 'THE AFTER PHASE FAILS CLOSED AS REQUIRED, AND READS THE REAL 0272 BODY'
+
+      - name: SNAPSHOT DIGEST — both phases must emit a diffable digest
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          DB_URL="$DB_URL" ./scripts/verify-0272-postdeploy.sh --expect-blocked before > /tmp/pd.before.log 2>&1 || true
+          DB_URL="$DB_URL" ./scripts/verify-0272-postdeploy.sh --expect-blocked after  > /tmp/pd.after.log  2>&1 || true
+          for f in /tmp/pd.before.log /tmp/pd.after.log; do
+            n="$(grep -c 'PD0272_SNAPSHOT ' "$f" || true)"
+            [ "$n" -gt 10 ] || { echo "digest too small in $f ($n lines)"; exit 1; }
+            grep -q 'PD0272_SNAPSHOT must_not_change\.'      "$f" || { echo "no must_not_change lines in $f"; exit 1; }
+            grep -q 'PD0272_SNAPSHOT expected_to_change\.'   "$f" || { echo "no expected_to_change lines in $f"; exit 1; }
+          done
+          # identical phases against one unchanged database => the diff must FAIL (nothing moved),
+          # proving the diff engine does not pass vacuously.
+          if ./scripts/verify-0272-postdeploy.sh diff /tmp/pd.before.log /tmp/pd.after.log; then
+            echo 'DIFF SELFTEST FAILED: the diff passed on two snapshots of an UNCHANGED database'; exit 1
+          fi
+          echo 'THE DIGEST IS EMITTED IN BOTH PHASES AND THE DIFF ENGINE DOES NOT PASS VACUOUSLY'
+
+      - name: PATCHED CANARY READINESS VERIFIER — must still FAIL CLOSED (CH01/CH22/CH24/CH26/CH27)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          chmod +x scripts/encounter-canary-readiness.sh
+          out="$(DB_URL="$DB_URL" ./scripts/encounter-canary-readiness.sh --expect-blocked 2>&1)" || {
+            echo "$out"; echo 'READINESS SELFTEST FAILED AFTER THE PATCH'; exit 1; }
+          echo "$out"
+          for marker in \
+            'CANARY_FINDING [BLOCK] CH04_BINDING_MISSING' \
+            'CANARY_READY_BLOCKED' \
+            'CANARY_READINESS_SELFTEST_PASS'; do
+            echo "$out" | grep -qF "$marker" || { echo "MISSING SELFTEST MARKER: $marker"; exit 1; }
+          done
+          echo 'THE PATCHED READINESS VERIFIER STILL FAILS CLOSED'
