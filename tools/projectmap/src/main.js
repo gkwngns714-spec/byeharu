@@ -86,7 +86,9 @@ const canvas = document.getElementById('scene')
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
 const scene = new THREE.Scene()
-scene.fog = new THREE.FogExp2(0x07090f, 0.0016)
+// NO FOG. Distance fog (was FogExp2 0x07090f @ 0.0016) faded the whole graph into the
+// background as you zoomed out — exactly when you most want the overview. The owner asked
+// for it gone: the far view must stay fully legible. Do not reintroduce depth-fade here.
 const camera = new THREE.PerspectiveCamera(58, 1, 1, 6000)
 scene.add(new THREE.AmbientLight(0xffffff, 1.5))
 const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(1, 1, 1); scene.add(key)
