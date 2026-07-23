@@ -17,15 +17,23 @@ Management-API node runner, NOT the .sh). Preconditions + poison-sweep passed; V
 anywhere, redirectable); per-ship movement is dark. The canary (`scripts/canary-mgmt-api.mjs`) confirmed the
 Mgmt-API endpoint is one-transaction + surfaces RAISE before the flip.
 
-**~~ROLLBACK (one command, reversible)~~ — ⚠ SUPERSEDED 2026-07-23: THE ROLLBACK IS BROKEN.**
+**~~ROLLBACK (one command, reversible)~~ — ⛔ RETIRED 2026-07-23. THERE IS NO ONE-COMMAND ROLLBACK.**
 The paragraph below described running the 4 inverse `set_game_config` writes in the commented section at
 the bottom of `scripts/activate-unified-movement.sql` (`:310-319`) via the node runner. **That is no longer
-possible.** `0232` hard-dropped every function those three legacy flags gated and `0231` dropped the
-columns they used, so re-lighting a flag cannot restore the path. Worse: `command_main_ship_stop_transit`
-SURVIVED the drop and today rejects cleanly with `feature_disabled`, but its body still reads
-`spatial_state` and writes `space_x`/`space_y` — re-lighting `mainship_send_enabled` would turn that clean
-reject into a runtime `column does not exist` raise. **The rollback is documentation debt, not a live
-escape hatch.** A true rollback would now require new forward migrations.
+possible.** `0232` hard-dropped all 20 legacy movement functions and `0231` dropped
+`main_ship_instances.spatial_state/space_x/space_y` — and also removed `'stationary'` from the status
+CHECK (`0231:1552-1556`) — so re-lighting a flag cannot restore the path. Worse, re-lighting it is
+**destructive, not restorative**: `command_main_ship_stop_transit` deliberately SURVIVED the drop
+(`0232:67`, and `0232:354-355` self-asserts that it must exist) and today rejects cleanly with
+`feature_disabled`, but its deployed `0155` body still reads `spatial_state` and writes
+`space_x`/`space_y`. Re-lighting `mainship_send_enabled` would turn that clean reject into a live
+`column "spatial_state" does not exist` error for every player who presses Stop mid-transit.
+
+The script's rollback section is now a **fail-closed guard**: the four inverse writes are deleted, and if
+the remaining commented block is uncommented and run it raises on its first statement, before any write.
+A real rollback now requires **new forward migrations** re-creating the `0231` columns/CHECK and the
+`0232` functions, plus reconciling members whose per-ship fleets a unified go dissolved. Only after that
+may the flags be reconsidered.
 **→ full record: `docs/MOVEMENT_ROLLBACK_DEFECT.md`.**
 *(historical text, kept for the record: "run the 4 inverse `set_game_config` writes … Residual after a
 rollback: members of any group that already ran a unified go read `contradictory_state`/hidden until

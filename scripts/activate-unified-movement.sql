@@ -95,13 +95,13 @@
 -- ACTUNI_FLAGS_ATOMIC / ACTUNI_PASS_CLEAN markers land in scripts/fleetgo-proof.{sql,sh} (owned by
 -- that workstream) and prove this act's behavior on the disposable real chain.
 --
--- ── ROLLBACK ──────────────────────────────────────────────────────────────────────────────────────
---   See the marked ROLLBACK section at the BOTTOM (commented out). FLAG-EXACT, always: the four
---   inverse writes restore the exact pre-flip flag state. WORLD-EXACT ONLY IF NO UNIFIED GO EVER
---   RAN: a unified go dissolves members' per-ship fleets + presences (0208), and flag-off
---   re-darkens the resolver — those members then read contradictory_state/hidden with NO per-ship
---   fleet for the re-lit legacy movers to drive. Members of never-moved groups are untouched and
---   revert cleanly. See the honest scope note in the ROLLBACK section itself.
+-- ── ROLLBACK — ⛔ RETIRED. THERE IS NO ONE-COMMAND ROLLBACK ANY MORE ⛔ ─────────────────────────────
+--   The four-inverse-write rollback this header used to promise was DESTROYED BY THE SERVER DROPS
+--   (migrations 0231 + 0232) that landed after the flip. Re-lighting the legacy flags today does
+--   not restore the legacy movement path — it re-opens a path whose schema and functions no longer
+--   exist. The ROLLBACK section at the BOTTOM is now a FAIL-CLOSED GUARD: uncomment and run it and
+--   it RAISES on its first statement, before any write. Full explanation there.
+--   Restoring legacy movement now requires NEW FORWARD MIGRATIONS, not a flag flip.
 
 begin;
 set local time zone 'UTC';
@@ -292,28 +292,66 @@ commit;
 -- (an error anywhere aborts the rest of the batch, so this select never runs on a failed act).
 select 'UNIFIED-MOVEMENT ACTIVATION PASS — the fleet is the ONLY unit of movement. Unified mover LIVE (go/stop/resolver/oracle); the three per-ship movement surfaces are dark (send/space/coordinate). Coordinate travel continues on the fleet coordinate-go surface (0208). Rollback: the commented section at the bottom of this file.' as result;
 
--- ════════════════════════════════ ROLLBACK (manual; commented out) ════════════════════════════════
--- Copy-paste recovery: the four inverse writes below. HONEST SCOPE — read before relying on it:
---   • FLAG-EXACT, always: the four writes restore the exact pre-flip flag state, and the per-ship
---     movers answer again on the client's next poll. In-flight unified movements still settle
---     server-side (movement_settle_arrival + the cron read no flag — 0208); only NEW unified
---     go/stop calls reject.
---   • WORLD-EXACT ONLY IF NO UNIFIED GO EVER RAN. A unified go DISSOLVES its members' per-ship
---     fleets + presences (0208) — that is §2 working as designed — and flipping the flag off
---     re-darkens mainship_resolve_fleet's group branch, so members of any group that moved read
---     contradictory_state/hidden with NO per-ship fleet left for the re-lit legacy movers to
---     drive. Rolling back after real unified movement therefore needs MANUAL reconciliation of
---     those members (re-mint per-ship present fleets, or route the owner's cleanup) — this file
---     does not pretend otherwise. Members of groups that never issued a unified go are untouched
---     and revert cleanly.
+-- ═══════════ ROLLBACK (manual) — ⛔ RETIRED: THE FLAG ROLLBACK IS GONE AND FAILS CLOSED ⛔ ═════════
+--
+-- ██ DO NOT RE-LIGHT mainship_send_enabled / mainship_space_movement_enabled /
+--    mainship_coordinate_travel_enabled. ██  The four inverse set_game_config writes that used to
+-- live here were deleted on purpose. They are no longer a recovery; they are an OUTAGE TRIGGER.
+--
+-- WHY (the drops that landed AFTER the flip — this is not speculation, it is deployed schema):
+--   • 20260618000231_movement_schema_drop.sql §6 (:1559-1562) DROPPED the columns
+--     main_ship_instances.spatial_state, .space_x and .space_y. The same migration's §5
+--     (:1552-1556) also removed 'stationary' from main_ship_instances_status_check.
+--   • 20260618000232_movement_function_drop.sql §1 (:231-264) DROPPED all 20 legacy movement
+--     functions — send_main_ship_expedition, move_main_ship_to_location, request_main_ship_return,
+--     the command_main_ship_space_* surface, the mainship_space_* engine, the legacy settle pair,
+--     process_mainship_space_arrivals, get_osn_movement_readiness, normalize_main_ship_dock,
+--     dev_set_main_ship_destroyed, send_ship_group_expedition, move_ship_group_to_location.
+--     A flag cannot un-drop a function. Re-lighting the flags re-opens client entry points whose
+--     server functions do not exist (PostgREST 404 / "function does not exist").
+--   • THE SPECIFIC HAZARD — command_main_ship_stop_transit(uuid) SURVIVED the 0232 drop on purpose
+--     (0232:67, and its post-drop self-assert at 0232:354-355 requires it to still exist, because
+--     the stop-trio retirement is deferred until client PR #189 ships). Its deployed body is the
+--     0155 one, and that body still READS spatial_state (20260618000155…:104) and still WRITES
+--     status='stationary', spatial_state, space_x, space_y (…:148-153) — all of which 0231 removed.
+--     TODAY it is harmless: its very first gate is `if not cfg_bool('mainship_send_enabled')`
+--     (…:79-81), so with the flag FALSE it returns a clean {ok:false, code:'feature_disabled'} and
+--     touches nothing. RE-LIGHTING mainship_send_enabled CONVERTS THAT CLEAN REJECT INTO A RUNTIME
+--     `column "spatial_state" does not exist` RAISE ON A LIVE PRODUCTION PATH — for every player
+--     who presses Stop mid-transit. That is the whole reason this section now fails closed.
+--
+-- WHAT A REAL ROLLBACK WOULD REQUIRE NOW (forward migrations, reviewed and deployed — never a flip):
+--   1. re-add main_ship_instances.spatial_state / space_x / space_y and re-widen the status CHECK
+--      to accept 'stationary' (undo 0231 §5/§6), plus a backfill decision for every existing row;
+--   2. re-create the 20 dropped functions from their last-known bodies with their grants (undo 0232);
+--   3. reconcile the world: a unified go DISSOLVES its members' per-ship fleets + presences (0208),
+--      so — WORLD-EXACT ONLY IF NO UNIFIED GO EVER RAN — members of any group that moved would read
+--      contradictory_state/hidden with no per-ship fleet for the re-lit legacy movers to drive;
+--   4. only THEN consider the flag values. The flags are the last step of a rollback, not the whole
+--      rollback. (Historical note, kept so the record is not lost: before the drops this section was
+--      four inverse set_game_config writes and was genuinely flag-exact.)
+--
+-- The block below is the ONLY thing that remains here. If you uncomment and run it — and someone
+-- eventually will — it RAISES on its first statement, before any write of any kind.
 --
 -- begin;
--- select public.set_game_config('fleet_movement_unified_enabled',     'false'::jsonb);
--- select public.set_game_config('mainship_send_enabled',              'true'::jsonb);
--- select public.set_game_config('mainship_space_movement_enabled',    'true'::jsonb);
--- select public.set_game_config('mainship_coordinate_travel_enabled', 'true'::jsonb);
--- select key, value from public.game_config
---  where key in ('fleet_movement_unified_enabled', 'mainship_send_enabled',
---                'mainship_space_movement_enabled', 'mainship_coordinate_travel_enabled')
---  order by key;
+-- do $rollback_retired$
+-- begin
+--   raise exception using
+--     errcode = 'raise_exception',
+--     message = 'LEGACY MOVEMENT ROLLBACK IS RETIRED — REFUSING TO RUN (no write was made)',
+--     detail  = 'Flipping mainship_send_enabled / mainship_space_movement_enabled / '
+--               'mainship_coordinate_travel_enabled back to true does NOT restore legacy movement. '
+--               'Migration 0231 dropped main_ship_instances.spatial_state/space_x/space_y (and '
+--               'removed ''stationary'' from the status CHECK); migration 0232 dropped all 20 legacy '
+--               'movement functions. command_main_ship_stop_transit(uuid) deliberately SURVIVED 0232 '
+--               'and its deployed 0155 body still reads spatial_state and writes space_x/space_y — '
+--               'today mainship_send_enabled=false makes it reject cleanly with feature_disabled, but '
+--               're-lighting that flag turns the clean reject into a live "column spatial_state does '
+--               'not exist" error for every player who presses Stop mid-transit.',
+--     hint    = 'Restoring the legacy movement path requires NEW FORWARD MIGRATIONS that re-create the '
+--               '0231 columns/CHECK and the 0232 functions (and reconcile members whose per-ship fleets '
+--               'a unified go dissolved). Only after those deploy may the flags be reconsidered.';
+-- end
+-- $rollback_retired$;
 -- commit;
