@@ -1,7 +1,9 @@
 # How Byeharu Is Built
 
 *A explainer of the development method behind this repository — for a reader who didn't build it
-and wants to know how ~220 migrations, a dozen game systems, and a solo-owner/AI-assistant team
+and wants to know how ~265 migrations (266 files on `main` as of 2026-07-23, highest version `0272`;
+the numbering has deliberate gaps — `0253` is a reserved, unused slot), a dozen game systems, and a
+solo-owner/AI-assistant team
 shipped a live multiplayer game without it turning into a mess.*
 
 This is not a tour of the game's features. It's a tour of the **process** that produced them: the
@@ -281,10 +283,15 @@ widening set of systems:
    legacy mover per member, and readiness rules that had diverged between them (§1 of the movement
    charter). The owner called it spaghetti; the charter that followed is the fullest single
    articulation of the no-spaghetti law in the repo, and the fix followed the law to the letter:
-   one fleet-level mover (`command_ship_group_go`, migration `0207`) that **writes nothing to the
-   per-ship table** — that omission *is* the new model — built dark, CI-proven on real Postgres,
-   soaked in production behind a flag, and finally flipped live on 2026-07-18, with the legacy
-   per-ship movers scheduled for deletion afterward, never left running in parallel forever. The
+   one fleet-level mover (`command_ship_group_go`, introduced in migration `0207` — its **TRUE head is
+   now `20260618000233_…:589`**, and citing `0207`/`0208` as the live body is a mistake this repo has
+   already made once) that **writes nothing to the per-ship table** — that omission *is* the new model —
+   built dark, CI-proven on real Postgres, soaked in production behind a flag, and finally flipped live
+   on 2026-07-18. The legacy per-ship movers were then **actually deleted**, not merely darkened:
+   `0231` dropped the `spatial_state`/`space_x`/`space_y` columns and `0232` dropped **20** legacy
+   movement functions — never left running in parallel forever. The honest sequel is that deletion made
+   the *documented* flag-only rollback impossible, a defect caught and written up in
+   `docs/MOVEMENT_ROLLBACK_DEFECT.md` and made **fail-closed** rather than quietly wrong. The
    berth model (§5, opened the same day) is the next turn of the same crank applied to *location*:
    one column, one CHECK constraint, one resolver, replacing what had been three or four
    independently-drifted "where is this ship" reads.

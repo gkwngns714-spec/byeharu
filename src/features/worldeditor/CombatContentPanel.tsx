@@ -36,8 +36,16 @@ function countFor(sub: SubPanel, data: CombatContentData | null): number {
   }
 }
 
-export function CombatContentPanel({ locations }: { locations: readonly MapLocation[] }) {
-  const [open, setOpen] = useState(false) // whole section collapsed by default (map-UX)
+export function CombatContentPanel({
+  locations,
+  defaultOpen = false,
+}: {
+  locations: readonly MapLocation[]
+  /** The shell passes `true` when the section is ALREADY the summoned dock tool (the owner asked for it
+   *  explicitly, so a second click to unfold would be pure friction). Default stays collapsed. */
+  defaultOpen?: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen) // collapsed by default (map-UX), unless summoned
   const [sub, setSub] = useState<SubPanel | null>(null) // one sub-panel open at a time
   const [data, setData] = useState<CombatContentData | null>(null)
 

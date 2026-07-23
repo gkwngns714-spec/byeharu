@@ -1,0 +1,79 @@
+name: ELITE STAT WIRING — dark resolver-only elite split + real-chain disposable proof (no production)
+
+# Proves migration 0272 (encounter elite stat wiring) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0272, so 0272's own in-migration
+#     self-assert block runs here against real Postgres (lands DARK; the new tunable seeded and
+#     readable; process_combat_ticks NOT re-created and still carrying every 0234/0261 anchor with
+#     exactly 2 random( calls and NO elite token; the resolver keeps the 0041 determinism law and gains
+#     the ':enc:elite:' salt; the 0261 count-roll expression byte-identical; no elite column on any
+#     combat/runtime table; engine-only ACL). Any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the REAL combat chain against the running disposable DB:
+#     content authored through the owner RPCs (reward_profile_create / enemy_archetype_create /
+#     enemy_fleet_template_create with elite_chance / encounter_profile_create /
+#     location_encounter_binding_create), ships provisioned through the real RPCs
+#     (commission_first_main_ship / commission_additional_main_ship / reward_grant / craft_module /
+#     fit_module_to_ship / upsert_ship_group / assign_ship_to_group / set_fleet_command_ship /
+#     send_ship_group_hunt / movement_settle_arrival), all four resolver flags flipped INSIDE the
+#     transaction, then process_combat_ticks ticked. Asserts: elite combat_units really spawn at
+#     multiplier x the non-elite ship_hp; the unit ceiling still binds; elite_chance=0 content resolves
+#     BYTE-EQUAL to the independently recomputed pre-0272 (0261) plan; the resolver flag off still gives
+#     the verbatim synthetic wave; two resolves of one (location, seed) are identical; and — the FLEET-1
+#     REGRESSION GUARD — every combat unit on both sides carries a non-empty, powered weapons_json and
+#     real damage flows in both directions (an empty weapons_json silently dealing 0 damage is the exact
+#     failure that destroyed the owner's Fleet 1).
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on encounter-resolver-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-elite-**'
+      - 'osn3-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: elite-stat-wiring-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0272 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: ELITE-STAT-WIRING real-chain proof (source pins / legacy parity / determinism / split plan / flag-off / spawn stats / weapons+damage)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          # capture without aborting so the psql output (incl. any RAISE) is always printed for diagnosis;
+          # the marker loop below is the pass/fail gate.
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/elite-stat-wiring-proof.sql 2>&1)" || true
+          echo "$out"
+          for marker in \
+            ELITE_PASS_SOURCE \
+            ELITE_PASS_LEGACY_PARITY \
+            ELITE_PASS_DETERMINISM \
+            ELITE_PASS_SPLIT_PLAN \
+            ELITE_PASS_FLAGOFF_SYNTHETIC \
+            ELITE_PASS_SPAWN_STATS \
+            ELITE_PASS_WEAPONS_DAMAGE \
+            'ELITE STAT WIRING PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL ELITE-STAT-WIRING PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
