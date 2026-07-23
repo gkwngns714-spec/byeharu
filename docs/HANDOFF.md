@@ -1,6 +1,90 @@
-# Session Handoff — 2026-07-12
+# Session Handoff — historical snapshot 2026-07-12, **current state refreshed 2026-07-23**
 
-> # ⚠ THIS FILE IS OUT OF DATE — read this banner before anything below it (added 2026-07-23)
+> # ⚠ READ **§0 — CURRENT STATE (2026-07-23)** FIRST. Everything from §1 onward is the 2026-07-12 snapshot.
+>
+> §0 is the live handoff. §1 (machine setup) and §4–§5 (dev-method laws, process) are still accurate and
+> still worth reading. **§2 and §3 are historical** — superseded by §0, kept so the record survives.
+
+---
+
+## 0. CURRENT STATE (verified 2026-07-23)
+
+### Repo
+
+| | |
+|---|---|
+| `main` head | **`ce26486`** (merge of PR **#287**) |
+| Open PRs | **#163** only (PROJECTMAP tool, branch `feat-project-map` — **intentionally not on `main`**) |
+| Merged this session | **#282** `68ea475` · **#283** `86c2c73` · **#286** `b9e2560` · **#288** `a086800` · **#285** `2279b45` · **#284** `b11b3bd` (mig `0272`) · **#287** `ce26486` |
+| Closed unmerged | **#162** (edits an already-applied migration → guaranteed prod no-op; re-author as a *forward* migration) · **#245** (×17 coordinate normalize — rejected direction; slot `0253` is intentionally reserved and absent from `main`) · **#221** (Zone Templates plan — predates the whole V1→V5 program; rewrite against current architecture) |
+
+### Migrations — **`main` and production are NOT in sync**
+
+| | |
+|---|---|
+| Highest migration on `main` | **`0272`** (`20260618000272_encounter_elite_stat_wiring.sql`) |
+| **Production migration head** | **`0271`** |
+| Why | The `Deploy Supabase migrations` run for the `0272` merge (**`29979341800`**) is **`waiting` at the `production` environment approval gate.** The owner **deliberately deferred** the approval. |
+
+> **`0272` is MERGED TO `main` BUT NOT DEPLOYED.** Nothing in it is live. Do not describe elite
+> encounters as a production behaviour. Deployment is pending owner approval at the production gate.
+
+### Movement — **classification B, evidence incomplete**
+
+Unified fleet movement is live (`fleet_movement_unified_enabled = true` since 2026-07-17T22:56:59Z), and
+its *code-level* correctness is proven. What is **not** proven is any **runtime observation** — `fleets`,
+`fleet_movements`, `main_ship_instances`, `ship_groups` and `location_presence` are all RLS-scoped and
+return zero rows to an anonymous reader, and the real-Postgres `osn3-fleetgo-realchain-proof` could not
+run (no Docker / Supabase CLI / `psql` on this machine).
+
+> **The unified-movement production smoke has NOT been performed.**
+> `docs/MOVEMENT_SMOKE_PACKET.md` is a **prepared, unexecuted** packet. Running it requires the owner to
+> name an **expendable** fleet and explicitly authorise a production write.
+
+Two corrections worth carrying forward:
+
+- **The canonical mover's TRUE HEAD is `20260618000233_…:589`**, not `0207` / `0208` (superseded bodies).
+- **`fleet_control_enabled = false` is VALID** alongside unified movement — `0204:24-25` records that it
+  gates only the command-ship-required movement check and the 8-ship assign cap, neither of which the
+  unified mover reads.
+
+### Pirate interception is INTENDED — do not "fix" it
+
+`20260618000236_pirate_intercept_reliable_ambush.sql` deliberately set `base_risk = 1.0` (`:51`),
+`min_risk = 0.98` (`:52`), `max_risk = 1.0` (`:53`), `exposure_floor = 1.0` (`:54`) per an explicit owner
+directive in the migration header (`:15`). Any leg touching an active danger zone is intercepted with
+probability ∈ **[0.98, 1.0] regardless of fleet strength**, by design; the ~2% escape is deliberate.
+Live-verified: `pirate_intercept_enabled = true`, `spatial_combat_enabled = true`.
+
+### The rollback story (superseding §2's rollback line)
+
+The legacy per-ship movement path is **dropped, not merely darkened** (`0231` dropped the columns, `0232`
+dropped 20 functions), so a flag-only rollback cannot restore it. **PR #288 made that rollback fail
+closed**: the four inverse `set_game_config` writes are deleted and the remaining commented block raises
+on its first statement if run. The **activation path is unchanged** (proven byte-identical). Full
+analysis: **`docs/MOVEMENT_ROLLBACK_DEFECT.md`**.
+
+### Combat content — what is lit in production
+
+`enemy_content_registry_enabled`, `encounter_authoring_enabled` and `encounter_binding_authoring_enabled`
+are **`true`** (owner authoring surfaces only). **`encounter_resolver_enabled` is `false`** — the one
+behaviour-changing flag. Two encounter bindings exist, both inactive; the `canary_encounter` chain
+(binding `2f7bcf88`) is the selected canary. See `docs/COMBAT_CONTENT_PROGRAM.md` §7.
+
+### THE NEXT STEPS (this supersedes §3)
+
+1. **Approve the `production` gate for `0272`** — owner-only; until then prod stays at `0271`.
+2. **Execute the unified-movement smoke** (`docs/MOVEMENT_SMOKE_PACKET.md`) with an owner-named
+   **expendable** fleet — moves movement from classification **B** to **A**.
+3. **Encounter canary** — activate the `canary_encounter` chain, **not** `pirate_basic` (its
+   `cooldown_seconds = 0`, i.e. no spawn throttle).
+4. **Team-command activation** (the old §3) is still an open human gate, still per
+   `docs/TEAM_COMMAND.md` + `docs/TEAM_ACTIVATION_PACKET.md`, but it is **no longer "THE ONE next step"**
+   — items 1–3 above sit in front of it.
+
+---
+
+> # ⚠ EVERYTHING BELOW IS THE 2026-07-12 SNAPSHOT — read §0 above first (banner added 2026-07-23)
 >
 > The snapshot below is from **2026-07-12** and its **movement and live-flag statements are FALSE today.**
 > The rest (dev-method laws, machine setup) is still broadly useful. Corrections are marked inline as
@@ -51,10 +135,16 @@ to the repo (it travels via GitHub); the per-machine plan/memory files do NOT tr
 5. Run: `npm run dev` → `http://localhost:5173/byeharu/` (base path `/byeharu/` is required). Live site:
    `https://gkwngns714-spec.github.io/byeharu/` (auto-deploys from `main` via Pages).
 
-## 2. Current state — repo & prod (verified 2026-07-12)
+## 2. Current state — repo & prod (verified 2026-07-12) — ⚠ **SUPERSEDED 2026-07-23 by §0**
+> The head, PR and migration numbers in this section are **eleven days stale**. Current truth is in §0:
+> `main` @ **`ce26486`**, one open PR (**#163**), highest migration on `main` **`0272`**, **production
+> head `0271`** with the `0272` deploy **waiting at the production approval gate**. Original text kept.
+
 - **`main` @ `9a292ed`** (merge of PR #97). **Zero open PRs.** Everything below is merged.
+  **SUPERSEDED 2026-07-23** — see §0.
 - **Prod migration head = `20260618000169`** (the owner approved 0165 + 0166–0169 to production
   2026-07-12; the Deploy workflow's production-environment gate is the approval mechanism).
+  **SUPERSEDED 2026-07-23** — prod head is **`0271`**; `main` carries **`0272`**, undeployed.
 - **Pages deploy is live** — players see the new **Mission Control UI** (renewal R0–R4).
 
 ### Live game (port-centric — activated 2026-07-08) — ⚠ **MOVEMENT LINES SUPERSEDED 2026-07-23**
@@ -100,7 +190,11 @@ server-side (reject-before-read) + client-side (compile-time or server-lit UI). 
 | World events / Phase-20 polish | world-events writer + read surface, UI asset catalog | `phase20_polish_enabled` |
 | ~~OSN free coordinate travel~~ **SUPERSEDED 2026-07-23** — the per-ship coordinate surface was dropped by `0232`; free-coordinate travel is now a property of the unified fleet mover (`command_ship_group_go`, true head `20260618000233_…:589`), not of this dark slice | arbitrary-coordinate movement | `mainship_coordinate_travel_enabled` = **false** since 2026-07-17T22:56:59Z + `OSN_COORDINATE_TRAVEL_ENABLED` |
 
-## 3. THE ONE NEXT STEP — team-command activation
+## 3. THE ONE NEXT STEP — team-command activation — ⚠ **SUPERSEDED 2026-07-23 by §0**
+> Still an open human gate and still accurate about *how* to do it, but it is **no longer the single next
+> step**: the `0272` production-gate approval, the unified-movement smoke, and the encounter canary all
+> sit in front of it (§0). "Nothing is in flight" was true on 2026-07-12 and is **false today**.
+
 The dark build is complete; nothing is in flight. What remains is the **human-gated activation** per
 `docs/TEAM_COMMAND.md` → **"ACTIVATION CHECKLIST — the single source of truth"**: the flag flips
 (`team_command_enabled`, `TEAM_COMMAND_ENABLED`, optionally `captain_assignment_enabled`), the deferred

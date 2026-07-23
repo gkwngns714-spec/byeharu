@@ -8,6 +8,13 @@ which are still `false`, not the deploy state.) This document is the reviewer- a
 owner-facing map of the whole program: what it is, the exact merge/deploy/flag-flip order, the
 byte-identity guarantee, and the deferred items.
 
+> **Deploy state (2026-07-23).** `0257`–`0271` are deployed; **production migration head is `0271`.**
+> **`0272` (elite stat wiring) is merged to `main` but NOT deployed** — its `Deploy Supabase migrations`
+> run (`29979341800`) is waiting at the `production` approval gate, deferred by the owner. In production
+> today `enemy_content_registry_enabled` / `encounter_authoring_enabled` /
+> `encounter_binding_authoring_enabled` are **`true`** (owner authoring surfaces only) and
+> **`encounter_resolver_enabled` is `false`** — combat is unchanged. See §7 / §7a.
+
 The activation scripts that flip these flags are authored (not run) in `scripts/activate-*.sql`
 (one per flag, plus a combined runner). They are **AUTHORED-NOT-RUN** — the owner runs them at
 go-live, in order.
@@ -209,18 +216,66 @@ resolved branch goes inert and combat is byte-identical again on the next tick. 
 - **Composition variety** — ~~E3's resolver salts its weighted pick location-static~~ **DONE in E5
   (0261)**: `resolve_location_encounter` folds a per-encounter seed (`e.id::text`) into every salt, so
   encounters at one location vary (still fully deterministic). Time-varying variety remains out of scope.
-- **ELITE stat wiring** — ~~deferred~~ **DONE in 0272** (`encounter_elite_stat_wiring`):
-  `enemy_fleet_template_members.elite_chance` is rolled again, once, at materialization, and amplifies
-  the plan's `base_difficulty` for the elite subset. The `activate-encounter-resolver` /
-  `activate-combat-content-all` elite refusal is removed (now an informational notice). **Still deferred
-  here:** *decoupled* elite stats (hp-only or attack-only elites — would require re-creating
-  `process_combat_ticks`) and **elite-scaled rewards** (an elite wave is harder for the same loot until a
-  reward-adapter slice lands).
+- **ELITE stat wiring** — ~~deferred~~ **BUILT AND MERGED in `0272`** (`encounter_elite_stat_wiring`,
+  PR #284, `b11b3bd`) — **but NOT DEPLOYED.** See the deploy-state box below.
+  `enemy_fleet_template_members.elite_chance` is rolled once, at materialization, and amplifies the
+  plan's `base_difficulty` for the elite subset. The `activate-encounter-resolver` /
+  `activate-combat-content-all` elite **refusal is removed** (now the informational
+  `ACTE3_PASS_ELITE_WIRED` notice; a new `ELITE-WIRING FAIL` raise fires only if the *deployed* resolver
+  lacks the `':enc:elite:'` salt, i.e. if someone tries to activate before `0272` is deployed).
+  Honest note: that old refusal **was not blocking anything today** — production has **0** members with
+  `elite_chance > 0`.
+
+  > ### ⚠ DEPLOY STATE — `0272` is MERGED but NOT DEPLOYED
+  > `main` carries `0272`. **Production migration head is `0271`.** The `Deploy Supabase migrations` run
+  > for the `0272` merge (**`29979341800`**) is **`waiting` at the `production` environment approval
+  > gate** — deployment is **deferred, pending owner approval**. **Nothing about elite is live.**
+
+  **Two honest v1 tradeoffs (still deferred, by design):**
+  1. **Elite is a COUPLED buff.** `base_difficulty` scales **hp AND attack AND range AND speed**
+     together (`0260:658-665`), so a v1 elite is uniformly stronger, never *differently* shaped.
+     *Decoupled* elite stats (hp-only or attack-only) would require re-creating `process_combat_ticks`,
+     which `0272` deliberately does not do (only `resolve_location_encounter` is `create or replace`d).
+  2. **Rewards do NOT scale with elites.** The resolved reward is derived from the reward profile /
+     `reward_tier` / danger (`0261:818`), **not** from `units[]`. **An elite wave is harder for the same
+     loot** until a reward-adapter slice lands. Decide this before flipping
+     `encounter_resolver_enabled` on a binding whose fleet carries `elite_chance > 0`.
+- **`stat_overrides` is a DEAD authored field** — `enemy_archetypes.stat_overrides` (`0257:120`) is
+  validated on write, carried through the resolver into the plan JSON (`0260:279`, `0260:320`;
+  `0272:247`, `0272:304`) — and then **read by nothing at spawn**. The spawn arm computes every enemy
+  stat from `base_difficulty` alone (`0260:658-665`). Authoring a `stat_overrides` object today has
+  **zero runtime effect**. Either wire it (which means touching `process_combat_ticks`) or stop offering
+  it in the editor; do not assume it works.
 - **Deactivation-trigger typed envelope** — the cross-slice deactivation guards (E1/E2 triggers on
   E0/E1 tables) RAISE a raw Postgres exception rather than returning the typed `{ok:false, error, details[]}`
   envelope the RPCs use. Fine as defense-in-depth; a typed surface is deferred.
-- **Write-only `active_count` telemetry** — `encounter_runtime_state.active_count` is written by the
-  resolved spawn arm but not yet read back into any cap/observability surface (write-only for now).
+- **`active_count` is a CUMULATIVE SPAWN COUNTER, not a live gauge** — `encounter_runtime_state.active_count`
+  is incremented by the resolved spawn arm and **never decremented**, and it is read by no cap or
+  observability surface. **The live-encounter cap authority derives from `combat_encounters`, not from
+  this column.** Document it as a cumulative spawn counter; **do not build on it** as if it were a count
+  of currently-active encounters.
+
+---
+
+## 7a. Encounter-binding audit (read live from production, 2026-07-23)
+
+Two bindings exist. **Both are inactive**, and `encounter_resolver_enabled` is `false`.
+
+| Binding | Location | Encounter profile | Verdict |
+|---|---|---|---|
+| **`2f7bcf88`** | Reaver | **`canary_encounter`** — difficulty 1, cap 1, **cooldown 30 s** | **SELECTED as the canary.** Complete chain: template `canary_fleet` → archetype `canary_pirate` (`base_difficulty = 1`, `elite_chance = 0`) → reward `canary_reward` (metal-only, base 7). Activation-ready. |
+| `2d491cde` | Snare | `pirate_basic` | **REJECTED as first canary** — `cooldown_seconds = 0`, i.e. **no spawn throttle at all**. |
+
+**This is not a clean slate.** `encounter_runtime_state` shows the canary chain **already ran**:
+`last_spawn_at = 2026-07-22T06:03:27Z`, `active_count = 2` — about four minutes before
+`encounter_resolver_enabled` was set `false` at `06:07:02Z`. Expect pre-existing rows and a non-zero
+`active_count` on the next activation; per §7 above, `active_count` is cumulative, so a non-zero value
+proves nothing about what is live.
+
+**E0–E2 authoring flags are LIVE in production:** `enemy_content_registry_enabled`,
+`encounter_authoring_enabled` and `encounter_binding_authoring_enabled` are all `true`. Only
+`encounter_resolver_enabled` (E3, the behaviour-changing flag) remains `false`. The canary decision
+packet is a forthcoming `docs/ENCOUNTER_CANARY_PACKET.md`.
 
 ---
 
