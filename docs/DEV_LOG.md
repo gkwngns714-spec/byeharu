@@ -5,6 +5,49 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-23 — World Editor roadmap CLOSURE: chain `0263`→`0271` deployed (prod head **0271**) + client V5 shipped
+
+**Migration chain deployed (0263→0271).** Production migration head is **`0271`**. Recorded from the
+**deploy workflow's Supabase CLI log** — this is *not* a direct production database read; nothing in this
+entry was read off prod SQL from this machine.
+
+| Migration | File | What it did |
+|---|---|---|
+| `0263` | `20260618000263_worldeditor_v1c_pr_d_read_cutover.sql` | `get_world_map()` READ-cutover onto `space_anchors` (authority only — byte-identical rendered world, no coordinate moved) |
+| `0264` | `20260618000264_worldeditor_v1c_anchor_write_authority.sql` | `space_anchors` becomes the SOLE location-coordinate authority for **write** too (`location_create` / `location_update`); the 0263 fail-safe fallback tightened to fail-closed |
+| `0265` | `20260618000265_canonical_coord_validation_authority.sql` | `canonical_coord_violation` — the ONE canonical ±10000 point-coordinate **validation authority**; the six point-coordinate-writing RPCs redefined to call it instead of six duplicated inline checks |
+| `0266` | `20260618000266_worldeditor_publish_zone_update.sql` | `zone_update` — the zone EDIT command, the last missing edge of the publish domain matrix |
+| `0267` | `20260618000267_worldeditor_unified_revert.sql` | `world_editor_revert` — ONE unified revert across all four domains, replaying an audit `before` snapshot through the domain's own `*_update` command (never a direct table write) |
+| `0268` | `20260618000268_worldeditor_zone_setactive.sql` | `zone_set_active` — zone RE-ACTIVATE, closing **lifecycle parity** across all four domains |
+| `0269` | `20260618000269_worldeditor_entity_catalog.sql` | `world_editor_entity_catalog` — the owner-only lifecycle catalog (active **and** inactive entities; every other world read is active-only) |
+| `0270` | `20260618000270_worldeditor_entity_detail.sql` | `world_editor_entity_detail` — owner-only inactive-entity detail read supplying the optimistic-concurrency `expected` fields reactivation demands |
+| `0271` | `20260618000271_worldeditor_catalog_markerstyle.sql` | catalog **marker-style enrichment** — the four location styling fields (`location_type` / `activity_type` / `reward_tier` / `base_difficulty`), so the editor map can be sourced from the catalog alone |
+
+**Client V5 (no migration).** Entity search + camera jump · coordinate jump · a global lifecycle filter
+(active / inactive) · a pending-drafts indicator · an unsaved-draft navigation guard · inactive-entity
+selection and reactivation.
+
+**Lifecycle-parity note.** All four domains now have create · update · lifecycle flip. Location
+reactivation runs through `location_update` (status) — **there is no `location_set_active`**, by design.
+
+**Verification posture — read this before quoting the closure.**
+
+- Production closure verification was a **READ-ONLY smoke**: the owner-gated editor loaded, the entity
+  catalog listed, search and the lifecycle filters returned, and the History panel read back. **No writes
+  were performed against production** in that smoke.
+- **Mutation paths (create / update / set_active / unpublish / revert) are covered by the CI disposable
+  apply-proofs, NOT by a live production mutation smoke.** The disposable proofs apply the full migration
+  chain to a throwaway Postgres and run each migration's own self-asserts. That is a different and weaker
+  claim than "mutated live production and observed the result" — do not merge the two.
+- **Live `game_config` flag values were NOT verified.** They were not readable from this machine; no claim
+  is made about any flag's current production value.
+
+**Ownership.** `docs/SYSTEM_BOUNDARIES.md` §6 now records the World Editor as a **function-owning,
+table-owning-nothing** system. `sectors` / `zones` / `locations` remain **Map**-owned; the World Editor
+reaches them only through owner-gated `SECURITY DEFINER` RPCs, which transfers no table ownership.
+
+---
+
 ## 2026-07-21 — Combat-content program (E0–E4) **activation-prep authored (NOT run)**
 
 Authored the go-live tooling for the E0–E4 combat-content program (PRs #257–#261, migrations
