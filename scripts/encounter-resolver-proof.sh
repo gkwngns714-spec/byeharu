@@ -33,8 +33,7 @@ for marker in \
   ER_PASS_CAP \
   ER_PASS_E5_VARIETY \
   ER_PASS_E5_SEED_STABLE \
-  ER_PASS_E5_NO_ELITE \
-  ER_PASS_E5_ELITE_GUARD \
+  ER_PASS_ELITE_WIRED \
   'ENCOUNTER-RESOLVER PROOF PASSED'; do
   echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
 done
