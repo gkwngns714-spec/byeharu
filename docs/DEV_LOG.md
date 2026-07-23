@@ -5,6 +5,201 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-23 — Movement-truth audit, dead-wrapper retirement, rollback fail-closed, elite stat wiring (`0272` merged, **deploy deferred**), PROJECTMAP function-ownership authority
+
+> **DEPLOY STATE — read this first.** `main` carries migration **`0272`**. **Production is still `0271`.**
+> The `Deploy Supabase migrations` run for the `0272` merge (`29979341800`) is **`waiting` at the
+> `production` environment approval gate** — the owner deliberately deferred the approval. **Nothing in
+> `0272` is live.** Every statement below about elite behaviour describes merged code, not production.
+>
+> **The unified-movement production smoke has NOT been performed.** Movement verification remains
+> **classification B — evidence incomplete**. `docs/MOVEMENT_SMOKE_PACKET.md` is a *prepared, unexecuted*
+> packet requiring an owner-named expendable fleet and an explicit production-write authorisation.
+
+**Merged to `main` this session** (in merge order):
+
+| PR | SHA | What |
+|---|---|---|
+| **#282** | `68ea475` | World Editor roadmap closure doc (`docs/WORLD_EDITOR_ROADMAP_CLOSURE.md`) |
+| **#283** | `86c2c73` | World Editor **function-level** ownership section in `docs/SYSTEM_BOUNDARIES.md` + the first `## 2026-07-23` DEV_LOG closure entry (below) |
+| **#286** | `b9e2560` | Movement cutover documentation truth + new `docs/MOVEMENT_ROLLBACK_DEFECT.md` |
+| **#288** | `a086800` | Legacy movement rollback made **fail closed** (activation path proven byte-identical) |
+| **#285** | `2279b45` | Retired two dead client wrappers `sendShipGroup` / `moveShipGroup` |
+| **#284** | `b11b3bd` | **Elite stat wiring — migration `0272`** (DARK; merged, **not deployed**) |
+| **#287** | `ce26486` | World Editor UX comfort pass (client-only) — current `main` head |
+
+**Closed without merging** (disposition comments posted; branches preserved):
+
+- **#162** — edited an **already-applied** migration (`0205`). A migration that has already run is never
+  re-run, so the change was a guaranteed production **no-op**. Must be re-authored as a *forward*
+  migration if the intent is still wanted.
+- **#245** — the **×17 coordinate normalize**. Rejected direction (see the coordinate program). Slot
+  `0253` is **intentionally reserved and absent from `main`** — do not fill it casually.
+- **#221** — Zone Templates plan. Predates the entire V1→V5 World Editor program; should be rewritten
+  against the current architecture rather than merged.
+
+**Still open:** **#163** (PROJECTMAP tool branch, `feat-project-map` — intentionally not on `main`).
+
+---
+
+### 1. Movement verification — classification **B**, and the true head correction
+
+An audit of the unified-movement cutover established what is and is not proven.
+
+**Proven (code + live PostgREST probes):**
+
+- **Exactly ONE movement authority.** Every legacy per-ship mover is *physically absent* from production
+  — probed by distinguishing `PGRST202` (function does not exist) from `42501` (exists but revoked).
+- **The canonical mover is `command_ship_group_go`, TRUE HEAD `20260618000233_…:589`** — **not** `0207`
+  or `0208`, which are superseded bodies. (`docs/MOVEMENT_UNIFICATION_CHARTER.md` §true-heads table.)
+- **One fleet ⇒ one movement by construction** — `0233:768-786` keys the fleet on
+  `group_id + main_ship_id IS NULL`, takes `FOR UPDATE`, and returns `fleet_ambiguous` rather than
+  picking one when more than one live unified fleet matches.
+- **Replay is a redirect, not a duplicate.**
+- **`fleet_control_enabled = false` is VALID alongside unified movement.** `0204:24-25` records that the
+  flag gates **only** (a) the command-ship-required movement check and (b) the 8-ship assign cap —
+  neither of which the unified mover reads. A false `fleet_control_enabled` is therefore *not* evidence
+  that movement is broken.
+- `tsc -b` clean; **1160** frontend specs pass; `scripts/fleetgo-proof.sh selftest` green.
+
+**NOT proven — the whole of the runtime:** `fleets`, `fleet_movements`, `main_ship_instances`,
+`ship_groups` and `location_presence` are all RLS-scoped and return **zero rows to an anonymous reader**,
+so no live movement was observed. The real-Postgres `osn3-fleetgo-realchain-proof` **did not run** (no
+Docker / Supabase CLI / `psql` on this machine). Hence **classification B — evidence incomplete**.
+
+**Cutover provenance.** The four movement flags were written by an **act script**, not a migration:
+`scripts/activate-unified-movement.sql:242-256` (the four `set_game_config` writes at `:246-249`), commit
+`56a84c3`. Grepping `supabase/migrations/` for the flag change finds **nothing** — a trap that has
+already misled one reader.
+
+### 2. The rollback defect (#286 documented it, #288 fixed it)
+
+`0232` dropped all **20** legacy movement functions; `0231:1559-1562` dropped
+`main_ship_instances.spatial_state` / `space_x` / `space_y`, and `0231:1552-1556` removed `'stationary'`
+from the status CHECK constraint.
+
+`command_main_ship_stop_transit` **survives by design** (`0232:67` defers the stop-trio; `0232:354-355`
+self-asserts it must still exist) — but its `0155` body still **reads** `spatial_state` (`0155:102-103`)
+and **writes** `space_x` / `space_y` (`0155:152-154`). Consequence: re-lighting `mainship_send_enabled`
+would convert a clean `feature_disabled` reject into a runtime **`column does not exist`** error. The
+"flip the flags back" rollback in the older handoff was therefore **not a rollback at all**.
+
+**#288's fix: make it fail closed.** The four inverse `set_game_config` writes were deleted from the
+rollback block; what remains is a commented block that **raises on its first statement** if anyone runs
+it. The **activation path is unchanged** — proven byte-identical (comment-stripped executable SQL
+identical to `main`).
+
+### 3. Pirate interception is **INTENDED**, not a defect
+
+Recorded explicitly because it was briefly mis-reported as a bug this session.
+
+`20260618000236_pirate_intercept_reliable_ambush.sql` deliberately set
+`pirate_intercept_base_risk = 1.0` (`:51`), `min_risk = 0.98` (`:52`), `max_risk = 1.0` (`:53`) and
+`exposure_floor = 1.0` (`:54`), per an explicit owner directive recorded in the migration header
+(`:15` — *"owner expects RELIABLE combat on entry, not a rare roll"*). Any leg touching an **active**
+danger zone is intercepted with probability **∈ [0.98, 1.0] regardless of fleet strength**, **by design**;
+the ~2% escape is retained deliberately ("there is ALWAYS a risk"). Live-verified:
+`pirate_intercept_enabled = true`, `spatial_combat_enabled = true`.
+
+> **Do not "repair" this.** A future reader who finds strong fleets still being intercepted is looking at
+> the intended behaviour, not a balance bug.
+
+### 4. Dead client wrappers retired (#285)
+
+`sendShipGroup` and `moveShipGroup` had **zero callers**, and their target RPCs
+(`send_ship_group_expedition`, `move_ship_group_to_location`) were **dropped from production by `0232`**
+— so they could only ever have returned `unavailable`. Deleted rather than left as decoration.
+
+### 5. Elite stat wiring — migration `0272` (#284) — **merged, deployment deferred**
+
+**Design.** The elite roll happens **once, at encounter materialization**, inside
+`resolve_location_encounter` (the sole `create or replace function` in the file, `0272:90`). The elite
+subset is emitted as its **own `units[]` entry** carrying
+`base_difficulty × encounter_elite_difficulty_multiplier` (`0272:208`, default `2`). Because the tick
+derives every enemy stat of a resolved wave from that one `base_difficulty` field, the existing spawn arm
+materialises both entries through its **identical existing insert** — so **`process_combat_ticks` is NOT
+re-created** and the damage resolver never learns what "elite" means.
+
+**Blast radius.** No new flag (elite rides the existing `encounter_resolver_enabled` quad-gate). The sole
+`game_config` write is an additive `insert … on conflict (key) do nothing` of the numeric multiplier
+(`0272:75-82`). **Zero `DROP` / `ALTER` / `DELETE` / `TRUNCATE` statements in the file.**
+
+**CI proof markers, all green:** `ELITE_PASS_SOURCE`, `ELITE_PASS_LEGACY_PARITY`,
+`ELITE_PASS_DETERMINISM`, `ELITE_PASS_SPLIT_PLAN`, `ELITE_PASS_FLAGOFF_SYNTHETIC`,
+`ELITE_PASS_SPAWN_STATS`, `ELITE_PASS_WEAPONS_DAMAGE`.
+
+**Two honest v1 tradeoffs, recorded so nobody is surprised at go-live:**
+
+1. **Elite is a COUPLED buff.** `base_difficulty` scales hp **and** attack **and** range **and** speed
+   together (`0260:658-665`). Decoupling (hp-only or attack-only elites) would require re-creating
+   `process_combat_ticks` — deliberately not done.
+2. **Rewards do NOT scale with elites.** The resolved reward is derived from the reward
+   profile / `reward_tier` / danger (`0261:818`), **not** from `units[]`. An elite wave is therefore
+   *harder for the same loot* until a reward-adapter slice lands.
+
+**What it unblocks.** The `ELITE-READINESS FAIL` refusal in `scripts/activate-encounter-resolver.sql`
+(duplicated in `scripts/activate-combat-content-all.sql`) is repointed by this PR to an informational
+`ACTE3_PASS_ELITE_WIRED` notice, with a new `ELITE-WIRING FAIL` raise if the *deployed* resolver lacks
+the `':enc:elite:'` salt (i.e. if someone tries to activate before `0272` is deployed).
+**Honest note: that refusal was not blocking anything today** — production has **0** members with
+`elite_chance > 0`.
+
+### 6. Encounter content audit (read live from production)
+
+**Two bindings exist; both are inactive.**
+
+- **Binding `2f7bcf88`** → Reaver → profile **`canary_encounter`** (difficulty 1, cap 1,
+  **cooldown 30 s**) → template `canary_fleet` → archetype `canary_pirate`
+  (`base_difficulty = 1`, `elite_chance = 0`) → reward `canary_reward` (metal-only, base 7).
+  **Complete and activation-ready — selected as the canary chain.**
+- **Binding `2d491cde`** → Snare → profile `pirate_basic`. Structurally complete but
+  **`cooldown_seconds = 0`** — no spawn throttle at all. **Rejected as the first canary.**
+
+**It is NOT a clean slate.** `encounter_runtime_state` shows the canary chain **already ran**:
+`last_spawn_at = 2026-07-22T06:03:27Z`, `active_count = 2` — roughly four minutes before
+`encounter_resolver_enabled` was set `false` at `06:07:02Z`. Note `active_count` **only ever increments**
+and is **not** the live-encounter authority (the cap authority derives from `combat_encounters`).
+
+**E0–E2 authoring flags are LIVE in production:** `enemy_content_registry_enabled`,
+`encounter_authoring_enabled` and `encounter_binding_authoring_enabled` are all `true`. Only
+`encounter_resolver_enabled` is `false`. (A forthcoming `docs/ENCOUNTER_CANARY_PACKET.md` carries the
+canary decision packet.)
+
+### 7. PROJECTMAP — a real ownership defect found and fixed
+
+The scanner now parses **function-level** ownership as a concern **separate from table ownership**. All
+**19** World Editor RPCs resolve to a `World Editor` system, while `locations` / `sectors` / `zones`
+remain owned by **Map** — ownership of a *function* transfers no ownership of a *table*.
+
+Graph deltas: systems **29 → 30**, nodes **741 → 742**, edges **2159 → 2198**, timeline **236 → 240**
+entries, now reaching `2026-07-23`. Drift guard clean, `--allow-shrink` never used, `graph.json`
+byte-reproducible.
+
+**The defect.** `src/tree.js` and `src/layout.js` inferred function ownership **differently** — four
+bidirectional call-vote passes versus one, plus different handling of unowned-table votes. **49 of 274
+functions silently disagreed** between the 조직도 Tree and the 3D map, and **no test could detect it**,
+because each file was internally consistent. Fixed by extracting **ONE authority**, `src/systems.js`,
+consumed by both; divergence is now **0**. This is the no-spaghetti law in miniature: two readers of the
+same concept is one reader too many.
+
+Also removed the distance fog (`src/main.js:89`, `FogExp2(0x07090f, 0.0016)`), which faded the graph into
+the background at exactly the zoom level where you most want to see the whole thing.
+
+**Scanner hardening was load-bearing, not cosmetic.** Against the merged `SYSTEM_BOUNDARIES.md`, the OLD
+parser ingests **90 pairs / 30 owners** versus the new **71 / 29** — **19 function names would have been
+swallowed as phantom tables**.
+
+### 8. What remains (nothing here is done)
+
+1. **Approve the `production` gate for `0272`** — owner-only. Until then prod stays at `0271` and elite
+   is not live anywhere.
+2. **Execute the unified-movement smoke** (`docs/MOVEMENT_SMOKE_PACKET.md`) with an owner-named
+   **expendable** fleet, to move movement from classification **B** to **A**.
+3. **Encounter canary** — activate the `canary_encounter` chain (binding `2f7bcf88`), not `pirate_basic`.
+4. **Reward-adapter slice** if elite waves should pay more than non-elite waves.
+
+---
+
 ## 2026-07-23 — World Editor roadmap CLOSURE: chain `0263`→`0271` deployed (prod head **0271**) + client V5 shipped
 
 **Migration chain deployed (0263→0271).** Production migration head is **`0271`**. Recorded from the
