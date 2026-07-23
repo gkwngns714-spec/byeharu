@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-23T02:50:23.291Z",
+  "generatedAt": "2026-07-23T02:53:29.237Z",
   "source": "open pull requests on gkwngns714-spec/byeharu",
   "count": 2,
   "items": [
@@ -24,7 +24,7 @@
       "title": "CMDBUFF-ONE: one command buff per fleet — the first command ship's (amends 0205, still DARK)",
       "branch": "slice-cmdbuff-one",
       "stamp": null,
-      "color": "#c04bff",
+      "color": "#ff7a00",
       "touches": {
         "functions": [],
         "tables": []

@@ -5,12 +5,12 @@
   "functions": 274,
   "tables": 95,
   "flags": 41,
-  "systems": 29,
+  "systems": 30,
   "phases": 28,
   "rungs": 9,
-  "jobs": 239,
-  "nodes": 741,
-  "edges": 2179
+  "jobs": 240,
+  "nodes": 742,
+  "edges": 2198
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -4626,22 +4626,22 @@
    "id": "fn:is_owner",
    "kind": "function",
    "label": "is_owner",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:world_editor_ping",
    "kind": "function",
    "label": "world_editor_ping",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:exploration_site_create",
    "kind": "function",
    "label": "exploration_site_create",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:get_location_anchor_points",
@@ -4654,71 +4654,71 @@
    "id": "fn:mining_field_create",
    "kind": "function",
    "label": "mining_field_create",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:exploration_site_update",
    "kind": "function",
    "label": "exploration_site_update",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:mining_field_update",
    "kind": "function",
    "label": "mining_field_update",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:location_update",
    "kind": "function",
    "label": "location_update",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:exploration_site_set_active",
    "kind": "function",
    "label": "exploration_site_set_active",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:mining_field_set_active",
    "kind": "function",
    "label": "mining_field_set_active",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:location_create",
    "kind": "function",
    "label": "location_create",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:zone_create",
    "kind": "function",
    "label": "zone_create",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:zone_unpublish",
    "kind": "function",
    "label": "zone_unpublish",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:world_editor_audit_list",
    "kind": "function",
    "label": "world_editor_audit_list",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:_reward_grants_valid_details",
@@ -4892,43 +4892,43 @@
    "id": "fn:canonical_coord_violation",
    "kind": "function",
    "label": "canonical_coord_violation",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:zone_update",
    "kind": "function",
    "label": "zone_update",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:world_editor_revert",
    "kind": "function",
    "label": "world_editor_revert",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:zone_set_active",
    "kind": "function",
    "label": "zone_set_active",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:world_editor_entity_catalog",
    "kind": "function",
    "label": "world_editor_entity_catalog",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "fn:world_editor_entity_detail",
    "kind": "function",
    "label": "world_editor_entity_detail",
-   "system": null,
-   "detail": "Postgres function"
+   "system": "World Editor",
+   "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
    "id": "table:profiles",
@@ -6014,6 +6014,12 @@
    "kind": "system",
    "label": "Ship Soul",
    "detail": "system owner (SYSTEM_BOUNDARIES)"
+  },
+  {
+   "id": "system:World Editor",
+   "kind": "system",
+   "label": "World Editor",
+   "detail": "system owner (SYSTEM_BOUNDARIES) — owns functions, no table of its own"
   },
   {
    "id": "phase:FLEET",
@@ -16916,6 +16922,101 @@
    "type": "owned-by"
   },
   {
+   "source": "fn:is_owner",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:world_editor_ping",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:location_create",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:location_update",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:mining_field_create",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:mining_field_update",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:mining_field_set_active",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:exploration_site_create",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:exploration_site_update",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:exploration_site_set_active",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:zone_create",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:zone_update",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:zone_unpublish",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:zone_set_active",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:world_editor_audit_list",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:world_editor_revert",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:world_editor_entity_catalog",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:world_editor_entity_detail",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
+   "source": "fn:canonical_coord_violation",
+   "target": "system:World Editor",
+   "type": "owned-by-fn"
+  },
+  {
    "source": "phase:FLEET",
    "target": "mig:20260618000204",
    "type": "delivered-by"
@@ -18799,6 +18900,11 @@
   {
    "date": "2026-07-21",
    "title": "Combat-content program (E0–E4) **activation-prep authored (NOT run)**",
+   "migs": []
+  },
+  {
+   "date": "2026-07-23",
+   "title": "World Editor roadmap CLOSURE: chain `0263`→`0271` deployed (prod head **0271**) + client V5 shipped",
    "migs": []
   }
  ]
