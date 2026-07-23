@@ -170,7 +170,9 @@ jobs:
           done
           # the CH24 loop must have run without error over the (empty) runtime-state table, and the
           # verifier must not have blown up mid-file.
-          if echo "$out" | grep -q 'ERROR:'; then
-            echo 'the readiness verifier raised a Postgres ERROR — a new check is broken'; exit 1
+          # the verifier's OWN closing raise is an expected ERROR line (that is how it exits non-zero);
+          # any OTHER Postgres error means a new check is broken.
+          if echo "$out" | grep 'ERROR:' | grep -v 'ENCOUNTER CANARY READINESS FAILED'; then
+            echo 'the readiness verifier raised an UNEXPECTED Postgres error — a new check is broken'; exit 1
           fi
           echo 'CH22/CH24/CH26/CH27 EXECUTED AGAINST REAL POSTGRES AND THE VERIFIER STILL FAILS CLOSED'
