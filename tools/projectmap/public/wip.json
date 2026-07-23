@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-07-23T02:53:29.237Z",
+  "generatedAt": "2026-07-23T03:55:36.558Z",
   "source": "open pull requests on gkwngns714-spec/byeharu",
-  "count": 2,
+  "count": 1,
   "items": [
     {
       "pr": 284,
       "title": "combat-content: elite stat wiring (migration 0272, DARK — resolver-only, tick untouched)",
       "branch": "slice-elite-stat-wiring",
       "stamp": "20260618000272",
-      "color": "#ff2d95",
+      "color": "#00e5ff",
       "touches": {
         "functions": [
           "resolve_location_encounter"
@@ -17,20 +17,6 @@
       },
       "nodes": [
         "fn:resolve_location_encounter"
-      ]
-    },
-    {
-      "pr": 162,
-      "title": "CMDBUFF-ONE: one command buff per fleet — the first command ship's (amends 0205, still DARK)",
-      "branch": "slice-cmdbuff-one",
-      "stamp": null,
-      "color": "#ff7a00",
-      "touches": {
-        "functions": [],
-        "tables": []
-      },
-      "nodes": [
-        "system:Fleet"
       ]
     }
   ]
