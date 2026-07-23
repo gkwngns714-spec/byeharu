@@ -48,6 +48,13 @@ export interface LayerItem {
   readonly tone: string
   /** Point glyph; unused for polygon representations. */
   readonly glyph: PointGlyph
+  /** V5 lifecycle — the item's normalized lifecycle status ('active' | 'inactive') from the 0269
+   *  catalog (the ONE nav index across all four domains). The shared lifecycle filter matches on it;
+   *  an item with no status only ever passes the 'all' filter. */
+  readonly status?: string
+  /** V5 marker-style — a dockable-port "hub" ring (markerStyle.hubRing). Set only for LOCATION items
+   *  whose type is a dockable port; the map draws a second ring around the glyph. Undefined elsewhere. */
+  readonly hubRing?: boolean
 }
 
 /** One typed field in the read-only inspector (§WE.2 shared inspector shell). Value is pre-formatted

@@ -31,14 +31,45 @@
  *  (a bad materialized ring is a typed validation_failed detail {invalid_geometry}; a bad attach
  *  target {invalid_attach}); NO conflict code (danger_zones.name has no unique constraint). NOT the
  *  0239-locked pirate_zone_create — a new 0243-spine surface;
+ *  zone_update is the zone EDIT command (0266, owner-gated): the last missing edge of the publish
+ *  matrix — re-materializes an edit draft's geometry onto the SAME danger_zones row (payload =
+ *  {target_id: the zone uuid, expected: the fork-time {name, zone_kind, attach_location_id, geometry}
+ *  snapshot, fields: {name, attach_location_id, geometry}}) under the same optimistic-concurrency
+ *  contract as location_update (name/attach/geometry drift → stale_revision). A seeded source<>'drawn'
+ *  target is a typed validation_failed {protected_zone}; invalid_geometry / invalid_attach ride the
+ *  same details[] pipeline; NO conflict code;
  *  zone_unpublish is the zone UNPUBLISH command and twin of zone_create (0255, owner-gated): flips
  *  ONE danger_zones row from status 'active' to 'inactive' (the canonical safe unpublish — the row,
  *  geometry, name and attach survive for a future republish; NO hard delete) under the same
  *  optimistic-concurrency contract (payload = {target_id: the zone uuid, expected: {name, source,
  *  location_id}}). Ineligible targets are a typed not_unpublishable (protected_zone for seeded
- *  source<>'drawn' zones; already_inactive for non-active zones); a vanished target is not_found. */
+ *  source<>'drawn' zones; already_inactive for non-active zones); a vanished target is not_found;
+ *  zone_set_active is the owner-gated zone RE-ACTIVATE command (0268): it flips ONE danger_zones row's
+ *  status from 'inactive' back to 'active' — the restore-half of the 0250 exploration/mining set_active
+ *  toggles, adapted to the zone status column — closing the lifecycle-parity gap the one-way
+ *  zone_unpublish left open. REACTIVATE-ONLY: it REQUIRES the target to be currently inactive; an
+ *  already-active zone is a typed validation_failed {already_active} (nothing written). Payload =
+ *  {target_id: the zone uuid, expected: {name, source, location_id}} under the SAME optimistic-concurrency
+ *  contract (drift → stale_revision/source_changed). A seeded source<>'drawn' target is a typed
+ *  validation_failed {protected_zone} (the 0266 idiom); a vanished target is not_found. It COMPLEMENTS
+ *  zone_unpublish (which stays the SOLE deactivate path, unchanged), never supersedes it: the client's
+ *  Unpublish button still calls zone_unpublish, and the new Reactivate button (inactive zones only) calls
+ *  this command;
+ *  world_editor_revert is the ONE cross-domain REVERT authority (0267, owner-gated): it restores an
+ *  AUDITED entity to its recorded before_snapshot across ALL four update domains (location / mining /
+ *  exploration / zone). Its server signature is UNIQUE — public.world_editor_revert(p_request_id text,
+ *  p_audit_id uuid): it takes an AUDIT ID, not the usual {target_id, expected, fields} bag (the server
+ *  reads the RAW audit row — carrying server-only reward_bundle_json + WKT zone geometry the reader
+ *  strips — and re-applies it). INTENTIONAL OVERWRITE: guarded ONLY by owner + existence, NOT optimistic
+ *  concurrency (the `expected` baseline is derived server-side from the current live row). It writes ONE
+ *  new audit row whose command_type is the DOMAIN's update command (so History shows a normal,
+ *  itself-revertable update — the ledger NEVER carries a 'world_editor_revert' command_type). Refusals:
+ *  not_revertable (create/set_active/unpublish/malformed) | not_found (no such audit id) | source_missing
+ *  (the live row is gone) | validation_failed (a historical value is now invalid) | conflict (a restored
+ *  unique name re-collides). See worldEditorHistoryRevert.ts for the envelope builder. */
 export type WorldEditorCommandType =
   | 'world_editor_ping'
+  | 'world_editor_revert'
   | 'exploration_site_create'
   | 'mining_field_create'
   | 'exploration_site_update'
@@ -46,9 +77,50 @@ export type WorldEditorCommandType =
   | 'location_update'
   | 'location_create'
   | 'zone_create'
+  | 'zone_update'
   | 'zone_unpublish'
+  | 'zone_set_active'
   | 'exploration_site_set_active'
   | 'mining_field_set_active'
+  // ENEMY CONTENT REGISTRY (0257, owner-gated, DARK behind enemy_content_registry_enabled): the six
+  // net-new owner-authored catalog commands over reward_profiles + enemy_archetypes. create carries
+  // the content fields; update/set_active address the live row by p_payload.target_id (the key) with
+  // optimistic concurrency on p_payload.expected_revision. No runtime combat path reads these tables.
+  | 'reward_profile_create'
+  | 'reward_profile_update'
+  | 'reward_profile_set_active'
+  | 'enemy_archetype_create'
+  | 'enemy_archetype_update'
+  | 'enemy_archetype_set_active'
+  // FLEET TEMPLATES + ENCOUNTER PROFILES (0258, owner-gated, DARK behind BOTH enemy_content_registry_enabled
+  // AND encounter_authoring_enabled): the six net-new owner-authored composition commands over
+  // enemy_fleet_templates + encounter_profiles (each with a normalized members child, REPLACE-ALL keyed to
+  // the parent revision). create carries content + members; update/set_active address the live row by
+  // p_payload.target_id (the key) with optimistic concurrency on p_payload.expected_revision. The new
+  // per-member failure codes (invalid_archetype_ref / archetype_inactive / invalid_fleet_ref /
+  // fleet_inactive / invalid_reward_override / invalid_count_range / duplicate_member / members_required …)
+  // live in WorldEditorFailureDetail.code (free-text) inside details[] — NOT the top-level error union. No
+  // runtime combat path reads these tables.
+  | 'enemy_fleet_template_create'
+  | 'enemy_fleet_template_update'
+  | 'enemy_fleet_template_set_active'
+  | 'encounter_profile_create'
+  | 'encounter_profile_update'
+  | 'encounter_profile_set_active'
+  // LOCATION → ENCOUNTER BINDINGS (0259, owner-gated, DARK behind the TRI-FLAG chain
+  // enemy_content_registry_enabled AND encounter_authoring_enabled AND encounter_binding_authoring_enabled):
+  // the three net-new owner-authored commands over location_encounter_bindings — a join table binding a
+  // live location (locations, 0002) to an E1 encounter_profile (0258). create carries {location_id,
+  // encounter_profile_id, weight?}; update/set_active address the live row by p_payload.target_id (the
+  // binding UUID) with optimistic concurrency on p_payload.expected_revision (only weight/notes/active
+  // mutate — the (location, encounter) address is stable). PRECONFIGURE SEMANTICS: create requires the
+  // location to EXIST but not to be active (liveness is E3's runtime filter), so there is NO
+  // location_inactive code. The per-binding failure codes (invalid_location / invalid_encounter_ref /
+  // encounter_inactive / invalid_weight / duplicate_binding) live in WorldEditorFailureDetail.code
+  // (free-text) inside details[] — NOT the top-level error union. No runtime combat path reads this table.
+  | 'location_encounter_binding_create'
+  | 'location_encounter_binding_update'
+  | 'location_encounter_binding_set_active'
 
 /**
  * The typed command envelope every World Editor command is issued with. `requestId` is the idempotency
@@ -73,6 +145,9 @@ export type WorldEditorErrorCode =
   | 'not_found' // the update target no longer exists (0247; details carry source_missing)
   | 'conflict' // a unique natural key (exploration_sites.name / mining_fields.name / locations unique(zone_id,name)) is already taken (0244/0246/0249)
   | 'not_unpublishable' // the zone exists but may not be unpublished (0255; details carry protected_zone | already_inactive)
+  | 'not_revertable' // the audit row is not a revertable UPDATE-with-before_snapshot (0267; create/set_active/unpublish/malformed)
+  | 'source_missing' // the live row a revert would overwrite no longer exists (0267 world_editor_revert)
+  | 'not_enabled' // the fail-closed feature flag is off (0257 enemy_content_registry_enabled — reject-before-any-read)
   | 'transport_error' // client-side: the RPC call itself failed (network / permission)
 
 /** One structured issue inside a failure envelope (the 0244 details[] vocabulary — e.g. a
@@ -123,11 +198,34 @@ export function newRequestId(): string {
   return crypto.randomUUID()
 }
 
+/** The payload a world_editor_revert command carries: the AUDIT ID to restore (server signature takes
+ *  p_audit_id, NOT the usual {target_id, expected, fields} bag). request_id is minted fresh per attempt. */
+export interface RevertCommandPayload {
+  readonly audit_id: string
+}
+
+/**
+ * Build the named RPC argument object for a command's supabase.rpc call. EVERY command shares the
+ * `{ p_request_id, p_payload }` shape EXCEPT world_editor_revert (0267), whose server signature is
+ * `world_editor_revert(p_request_id text, p_audit_id uuid)` — it takes the audit id directly as
+ * `p_audit_id`, never a p_payload bag. This is the ONE place that shape divergence is expressed, so the
+ * transport binding (commandClient) stays a thin, uniform pass-through. Pure + unit-testable (no network).
+ */
+export function commandRpcArgs(envelope: WorldEditorCommandEnvelope<unknown>): Record<string, unknown> {
+  if (envelope.commandType === 'world_editor_revert') {
+    const auditId = (envelope.payload as RevertCommandPayload | undefined)?.audit_id ?? null
+    return { p_request_id: envelope.requestId, p_audit_id: auditId }
+  }
+  return { p_request_id: envelope.requestId, p_payload: envelope.payload ?? {} }
+}
+
 /** Map a command kind to its server RPC entrypoint. One entrypoint per command, no client dispatch logic. */
 export function commandRpcName(commandType: WorldEditorCommandType): string {
   switch (commandType) {
     case 'world_editor_ping':
       return 'world_editor_ping'
+    case 'world_editor_revert':
+      return 'world_editor_revert'
     case 'exploration_site_create':
       return 'exploration_site_create'
     case 'mining_field_create':
@@ -142,12 +240,46 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
       return 'location_create'
     case 'zone_create':
       return 'zone_create'
+    case 'zone_update':
+      return 'zone_update'
     case 'zone_unpublish':
       return 'zone_unpublish'
+    case 'zone_set_active':
+      return 'zone_set_active'
     case 'exploration_site_set_active':
       return 'exploration_site_set_active'
     case 'mining_field_set_active':
       return 'mining_field_set_active'
+    case 'reward_profile_create':
+      return 'reward_profile_create'
+    case 'reward_profile_update':
+      return 'reward_profile_update'
+    case 'reward_profile_set_active':
+      return 'reward_profile_set_active'
+    case 'enemy_archetype_create':
+      return 'enemy_archetype_create'
+    case 'enemy_archetype_update':
+      return 'enemy_archetype_update'
+    case 'enemy_archetype_set_active':
+      return 'enemy_archetype_set_active'
+    case 'enemy_fleet_template_create':
+      return 'enemy_fleet_template_create'
+    case 'enemy_fleet_template_update':
+      return 'enemy_fleet_template_update'
+    case 'enemy_fleet_template_set_active':
+      return 'enemy_fleet_template_set_active'
+    case 'encounter_profile_create':
+      return 'encounter_profile_create'
+    case 'encounter_profile_update':
+      return 'encounter_profile_update'
+    case 'encounter_profile_set_active':
+      return 'encounter_profile_set_active'
+    case 'location_encounter_binding_create':
+      return 'location_encounter_binding_create'
+    case 'location_encounter_binding_update':
+      return 'location_encounter_binding_update'
+    case 'location_encounter_binding_set_active':
+      return 'location_encounter_binding_set_active'
     default:
       // exhaustiveness: adding a command kind without an entrypoint is a compile error.
       return assertNever(commandType)
@@ -180,6 +312,18 @@ export function normalizeEnvelope<R>(
   }
 }
 
+/** Normalize a raw FAILURE envelope ({ok:false, error, details}) — as returned by the owner-only
+ *  READ RPCs that share the 0243 error vocabulary (world_editor_entity_detail, 0270) — into the typed
+ *  {ok:false, error, details} shape. A missing/unknown error code folds to transport_error
+ *  (fail-closed). Pure, no network. */
+export function normalizeEnvelopeError(raw: {
+  error?: unknown
+  details?: ReadonlyArray<WorldEditorFailureDetail>
+}): { readonly ok: false; readonly error: WorldEditorErrorCode; readonly details?: ReadonlyArray<WorldEditorFailureDetail> } {
+  const error = typeof raw.error === 'string' ? (raw.error as WorldEditorErrorCode) : 'transport_error'
+  return { ok: false, error, details: raw.details }
+}
+
 /** Human-readable, exhaustive description of every error code (compile-enforces the union stays covered). */
 export function describeWorldEditorError(code: WorldEditorErrorCode): string {
   switch (code) {
@@ -201,6 +345,12 @@ export function describeWorldEditorError(code: WorldEditorErrorCode): string {
       return 'The name is already taken in the live world.'
     case 'not_unpublishable':
       return 'This zone cannot be unpublished — it is a seeded zone or is already inactive.'
+    case 'not_revertable':
+      return 'This history entry cannot be reverted — only edits to a location, mining field, exploration site or zone can be restored.'
+    case 'source_missing':
+      return 'The item this change edited no longer exists — there is nothing to revert onto.'
+    case 'not_enabled':
+      return 'The enemy content registry is not enabled — an owner must turn it on first.'
     case 'transport_error':
       return 'The command could not reach the server.'
     default:

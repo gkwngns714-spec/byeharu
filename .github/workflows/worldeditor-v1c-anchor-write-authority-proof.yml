@@ -1,0 +1,69 @@
+name: WORLD-EDITOR V1C ANCHOR WRITE-AUTHORITY — space_anchors sole coordinate authority disposable proof (no production)
+
+# Proves migration 0264 (worldeditor_v1c_anchor_write_authority) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0263 + 0264. 0264's own in-migration self-assert
+#     runs here against real Postgres (every location has exactly one active anchor == its (x,y); get_world_map
+#     fail-closed on the anchor with NO coalesce; location_create/update write the anchor) — any regression
+#     ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then re-verifies end to end: the migration modified no existing row
+#     (empty backfill, nothing retired, empty audit); byte-identity of the seeded world vs legacy locations.x/y;
+#     a location_create() RPC yields exactly one active anchor at the created coords and get_world_map follows;
+#     a coordinate location_update() RPC retires the old anchor and inserts exactly one new active (never two);
+#     a non-coordinate update keeps the same anchor; one active anchor per active location; 0264 after 0262.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, mutates NO persisted row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on worldeditor-v1c-pr-d-read-cutover-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-v1c-pr-d-readcutover**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-v1c-anchor-write-authority-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0264 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR V1C anchor write-authority proof (create/update anchor atomicity + fail-closed read)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          set +e
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-v1c-anchor-write-authority-proof.sql 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -ne 0 ]; then echo "PROOF psql FAILED (exit $code)"; exit 1; fi
+          for marker in \
+            WAUTH_PASS_MIGRATION_INERT \
+            WAUTH_PASS_MIGRATION_ORDER \
+            WAUTH_PASS_BYTE_IDENTICAL \
+            WAUTH_PASS_CREATE_ANCHORED \
+            WAUTH_PASS_UPDATE_RETIRE_INSERT \
+            WAUTH_PASS_NONCOORD_UPDATE_KEEPS_ANCHOR \
+            WAUTH_PASS_ONE_ACTIVE_PER_LOCATION \
+            'WORLD-EDITOR V1C ANCHOR WRITE-AUTHORITY PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL V1C ANCHOR WRITE-AUTHORITY PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

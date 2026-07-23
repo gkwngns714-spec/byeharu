@@ -1,0 +1,75 @@
+name: WORLD-EDITOR UNIFIED REVERT — cross-domain revert authority disposable proof (no production)
+
+# Proves migration 0267 (worldeditor_unified_revert) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0267. 0267's own in-migration self-assert
+#     runs here against real Postgres (0243 spine + snapshot columns present, world_editor_revert SECURITY
+#     DEFINER + search_path='' + authenticated-only, body writes the four target tables only / never
+#     pirate_zone_*, the four *_update RPCs + canonical_coord_violation intact, no client write grant on
+#     the target tables with SELECT intact, 0239 pirate-zone lockdown intact incl. the service_role grant)
+#     — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives world_editor_revert end to end against the running
+#     disposable DB across ALL FOUR domains: LOCATION (all 11 fields restored + the moved anchor
+#     retired+re-inserted + get_world_map shows the reverted coords + a new before/after audit row),
+#     MINING + EXPLORATION (coords AND the server-only reward_bundle_json restored from the RAW snapshot),
+#     ZONE (boundary geometry restored via ST_Equals to the pre-update boundary + name/attach); non-owner
+#     (not_authorized) + anon (not_authenticated) rejected with no side effects; request_id idempotent
+#     replay; the intentional-overwrite semantic (a row changed after the update still reverts to
+#     before_snapshot); not_revertable (a create audit) + not_found (a bogus audit id) + source_missing (a
+#     deleted live row); the 0239 pirate-zone lockdown intact.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-publish-zone-update-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-unified-revert-rpc**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-unified-revert-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0267 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR UNIFIED REVERT real-chain proof (four domains / rejections / idempotent / overwrite / not-revertable / source-missing / lockdown-intact)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-unified-revert-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            REVERT_PASS_LOCATION \
+            REVERT_PASS_MINING \
+            REVERT_PASS_EXPLORATION \
+            REVERT_PASS_ZONE \
+            REVERT_PASS_REJECTIONS \
+            REVERT_PASS_IDEMPOTENT \
+            REVERT_PASS_INTENTIONAL_OVERWRITE \
+            REVERT_PASS_NOT_REVERTABLE \
+            REVERT_PASS_SOURCE_MISSING \
+            REVERT_PASS_PIRATE_ZONE_LOCKDOWN_INTACT \
+            'WORLD-EDITOR UNIFIED REVERT PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL UNIFIED-REVERT PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

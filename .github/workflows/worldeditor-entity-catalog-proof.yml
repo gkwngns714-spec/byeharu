@@ -1,0 +1,75 @@
+name: WORLD-EDITOR ENTITY-CATALOG — owner lifecycle catalog disposable proof (no production)
+
+# Proves migration 0269 (worldeditor_entity_catalog) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0269. 0269's own in-migration self-assert
+#     runs here against real Postgres (world_editor_entity_catalog SECURITY DEFINER + search_path pinned +
+#     authenticated-only with anon revoked; read-only — no table write in the body; reads the active
+#     space_anchor and NEVER locations.x/y; all 4 gameplay readers intact with their client grants; no
+#     source-table write grant added) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives the WHOLE catalog contract end to end against the running
+#     disposable DB: active/inactive/all across all 4 domains; the union has no duplicate entity_id and is in
+#     the deterministic (domain, lower(name), entity_id) order; a zone unpublish moves it active->inactive and
+#     a reactivate moves it back with the SAME entity_id; a location's point follows its ACTIVE anchor (not
+#     locations.x/y); mining/exploration points are their native space_x/space_y; a zone's geometry is
+#     byte-identical to get_danger_zones' ring; a missing location anchor fails CLOSED; a non-owner and an
+#     anonymous caller are rejected; the gameplay readers stay byte-identical and nothing is mutated.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
+# NO `environment:` on any job => none can read production secrets. Modeled on
+# worldeditor-publish-zone-setactive-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-worldeditor-entity-catalog**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worldeditor-entity-catalog-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0269 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: WORLD-EDITOR ENTITY-CATALOG real-chain proof (active/inactive/all · union · lifecycle round-trip · anchor coords · zone geometry · fail-closed · authz · readers-intact · no-mutation)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-entity-catalog-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            WE_CATALOG_SETUP_OK \
+            WE_CATALOG_PASS_UNAUTHORIZED_AND_ANON_REJECTED \
+            WE_CATALOG_PASS_ACTIVE_ALL_DOMAINS \
+            WE_CATALOG_PASS_INACTIVE_ALL_DOMAINS \
+            WE_CATALOG_PASS_ALL_UNION_NO_DUP \
+            WE_CATALOG_PASS_LOCATION_POINT_FROM_ANCHOR \
+            WE_CATALOG_PASS_MINING_EXPLORATION_NATIVE_COORDS \
+            WE_CATALOG_PASS_ZONE_GEOMETRY_ROUNDTRIP \
+            WE_CATALOG_PASS_UNPUBLISH_MOVES_ACTIVE_TO_INACTIVE \
+            WE_CATALOG_PASS_REACTIVATE_MOVES_BACK_SAME_ID \
+            WE_CATALOG_PASS_FAILCLOSED_MISSING_ANCHOR \
+            WE_CATALOG_PASS_GAMEPLAY_READERS_BYTE_IDENTICAL \
+            WE_CATALOG_PASS_NO_ROWS_MUTATED \
+            'WORLD-EDITOR ENTITY-CATALOG PROOF PASSED'; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL ENTITY-CATALOG PASS MARKERS PRESENT'
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true

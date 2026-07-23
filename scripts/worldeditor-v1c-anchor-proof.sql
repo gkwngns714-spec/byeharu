@@ -76,7 +76,15 @@ begin
   raise notice 'V1C_PASS_ONE_ACTIVE_PER_LOCATION';
 end $$;
 
--- ── PROOF 4 — get_world_map() UNCHANGED: signature, body pins, grants ───────────────────────────────
+-- ── PROOF 4 — get_world_map() CONTRACT: signature, hidden-invisibility pins, grants ─────────────────
+-- NOTE (updated by V1C PR-D / migration 0263): the READ-CUTOVER slice (0263) redefined get_world_map so
+-- location coordinates come from the active space_anchor and the function became SECURITY DEFINER (to read
+-- the server-private space_anchors). This proof runs after the FULL chain, so on any branch that includes
+-- 0263 the live function IS the cut-over version. What must hold FOREVER (both before and after the cutover)
+-- is the CONTRACT: jsonb/sql/stable signature, the three status='active' hidden-invisibility filters, the
+-- 0217 territory_radius field, and the anon/authenticated execute grants. Post-0263 it additionally reads
+-- space_anchors and is SECURITY DEFINER — asserted here so a regression that silently reverts the cutover
+-- (or drops the security context that lets anon read anchors) is caught.
 do $$
 declare v_src text;
 begin
@@ -85,7 +93,7 @@ begin
   end if;
   select p.prosrc into v_src
     from pg_proc p where p.oid = to_regprocedure('public.get_world_map()')::oid;
-  -- signature: zero args, returns jsonb, language sql, stable, NOT security definer (the 0217 head).
+  -- signature: zero args, returns jsonb, language sql, stable.
   if (select pg_get_function_identity_arguments(to_regprocedure('public.get_world_map()')::oid)) <> '' then
     raise exception 'V1C PROOF FAIL: get_world_map() signature gained arguments';
   end if;
@@ -96,27 +104,30 @@ begin
   if (select l.lanname from pg_proc p join pg_language l on l.oid = p.prolang
        where p.oid = to_regprocedure('public.get_world_map()')::oid) <> 'sql'
      or (select p.provolatile from pg_proc p
-          where p.oid = to_regprocedure('public.get_world_map()')::oid) <> 's'
-     or (select p.prosecdef from pg_proc p
-          where p.oid = to_regprocedure('public.get_world_map()')::oid) then
-    raise exception 'V1C PROOF FAIL: get_world_map() language/volatility/security changed';
+          where p.oid = to_regprocedure('public.get_world_map()')::oid) <> 's' then
+    raise exception 'V1C PROOF FAIL: get_world_map() language/volatility changed';
   end if;
-  -- body pins: the three hidden-invisibility filters + the 0217 field, and NO anchor read.
+  -- post-0263 cutover: SECURITY DEFINER (so anon/authenticated can read the private space_anchors).
+  if not (select p.prosecdef from pg_proc p
+           where p.oid = to_regprocedure('public.get_world_map()')::oid) then
+    raise exception 'V1C PROOF FAIL: get_world_map() is not SECURITY DEFINER — the 0263 read-cutover was reverted';
+  end if;
+  -- body pins: the three hidden-invisibility filters + the 0217 field, and (post-0263) the anchor read.
   if position('l.zone_id = z.id and l.status = ''active''' in v_src) = 0
      or position('z.sector_id = se.id and z.status = ''active''' in v_src) = 0
      or position('se.status = ''active''' in v_src) = 0
      or position('''territory_radius'', l.territory_radius' in v_src) = 0 then
     raise exception 'V1C PROOF FAIL: get_world_map() body drifted from the 0217 head';
   end if;
-  if position('space_anchors' in v_src) > 0 then
-    raise exception 'V1C PROOF FAIL: get_world_map() reads space_anchors — the cutover must be a later slice';
+  if position('space_anchors' in v_src) = 0 then
+    raise exception 'V1C PROOF FAIL: get_world_map() no longer reads space_anchors — the 0263 read-cutover was reverted';
   end if;
   -- exposure unchanged.
   if not has_function_privilege('anon', 'public.get_world_map()', 'execute')
      or not has_function_privilege('authenticated', 'public.get_world_map()', 'execute') then
     raise exception 'V1C PROOF FAIL: get_world_map() lost a client execute grant';
   end if;
-  raise notice 'V1C_PASS_GET_WORLD_MAP_UNCHANGED';
+  raise notice 'V1C_PASS_GET_WORLD_MAP_CONTRACT';
 end $$;
 
 -- ── PROOF 5 — the 0245 backfill is IDEMPOTENT: re-running it inserts NOTHING ────────────────────────

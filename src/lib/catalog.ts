@@ -142,3 +142,15 @@ export async function fetchDevZoneEditorEnabled(): Promise<boolean> {
   if (error) return false
   return strictConfigFlag((data as GameConfigFoldRow[]) ?? [], 'dev_zone_editor_enabled')
 }
+
+// OWNER STATUS — the ONE authoritative World-Editor owner check, reusing the DEPLOYED public.is_owner()
+// RPC (0243: SECURITY DEFINER, keyed in-body on auth.uid() vs app_owners; granted to authenticated).
+// This is the SAME predicate every backend World Editor command/read enforces server-side — no second
+// ownership concept, no email/metadata/flag inference. The client call adds NO authority; it only decides
+// whether to RENDER the owner-only editor surface. FAIL-CLOSED: any transport error or non-true result
+// (including an unauthenticated caller, who has no execute grant) resolves to false.
+export async function fetchIsOwner(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('is_owner')
+  if (error) return false
+  return data === true
+}

@@ -46,6 +46,20 @@ const COMMAND_PATH_FILES = [
   'LocationDraftPanel.tsx',
   'ZoneDraftPanel.tsx',
   'ZoneInspectorActions.tsx',
+  // E4 combat-authoring: useCombatAuthoring.ts is the SOLE new module that talks to the command client;
+  // every other E4 file (combatPayloads/combatErrorMap/combatMemberValidation/combatContentData + the
+  // *Authoring.tsx sub-panels + MemberSetEditor + CombatContentPanel) stays command-free.
+  'useCombatAuthoring.ts',
+  // V4 revert cutover (0267 world_editor_revert): WorldEditor.tsx (the shell) is the sanctioned surface
+  // that invokes the ONE cross-domain revert command on behalf of the read-only History panel — the
+  // History UI files themselves stay transport-free (proven by worldEditorAuditGuards.spec.ts). The pure
+  // command envelope is built in worldEditorHistoryRevert.ts (contract only, no command client).
+  'WorldEditor.tsx',
+  // V5 lifecycle (0269/0270): WorldEditorInactiveInspector.tsx is the sanctioned REACTIVATE surface — the
+  // command that acts on a selected INACTIVE catalog entity (zone/location via the 0270 detail
+  // reactivation_expected, mining/exploration straight from the catalog row). The pure per-domain command
+  // envelopes are built in worldEditorReactivate.ts (contract only, no command client).
+  'WorldEditorInactiveInspector.tsx',
 ]
 test('no file in src/features/worldeditor outside the sanctioned command path references a command client', () => {
   for (const name of readdirSync(WE_DIR)) {

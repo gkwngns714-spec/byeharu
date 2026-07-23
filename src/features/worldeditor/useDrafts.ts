@@ -32,6 +32,7 @@ import {
   beginCreate,
   draftSourceStatus,
   forkEdit,
+  forkEditWithPayload,
   parseStoredDraft,
   patch,
 } from './draftModel'
@@ -141,6 +142,11 @@ export interface DraftsStore<TPayload, TLive, TReport> {
   readonly reportById: ReadonlyMap<string, TReport>
   beginCreateDraft(): void
   forkEditDraft(live: TLive): void
+  /** Fork an edit draft off `live` AND seed its payload in ONE step, returning the new draftId. The
+   *  fork source stays the CURRENT live row (so `expected`/optimistic concurrency is the live row);
+   *  only the editable payload is overlaid. The V4 revert flow's ONE net-new primitive — a plain
+   *  forkEditDraft+patchDraft can't work here (the new draft is not yet in state for the patch). */
+  forkEditWithPayload(live: TLive, payload: Partial<TPayload>): string
   patchDraft(draftId: string, partial: Partial<TPayload>): void
   discardDraft(draftId: string): void
   selectDraft(draftId: string | null): void
@@ -186,6 +192,17 @@ export function useDraftsStore<TPayload, TLive, TReport>(
       const draft = forkEdit(descriptor, liveRow, crypto.randomUUID(), Date.now())
       persistDraft(descriptor, draft)
       dispatch({ type: 'upsert', draft })
+    },
+    [descriptor],
+  )
+
+  const forkEditWithPayloadDraft = useCallback(
+    (liveRow: TLive, payload: Partial<TPayload>): string => {
+      const draftId = crypto.randomUUID()
+      const draft = forkEditWithPayload(descriptor, liveRow, payload, draftId, Date.now())
+      persistDraft(descriptor, draft)
+      dispatch({ type: 'upsert', draft }) // upsert selects it → it becomes the active draft
+      return draftId
     },
     [descriptor],
   )
@@ -254,11 +271,12 @@ export function useDraftsStore<TPayload, TLive, TReport>(
       reportById,
       beginCreateDraft,
       forkEditDraft,
+      forkEditWithPayload: forkEditWithPayloadDraft,
       patchDraft,
       discardDraft,
       selectDraft,
     }),
-    [state.drafts, activeDraft, statusById, reportById, beginCreateDraft, forkEditDraft, patchDraft, discardDraft, selectDraft],
+    [state.drafts, activeDraft, statusById, reportById, beginCreateDraft, forkEditDraft, forkEditWithPayloadDraft, patchDraft, discardDraft, selectDraft],
   )
 }
 

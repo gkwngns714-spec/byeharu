@@ -5,6 +5,12 @@ import {
   type RawServerEnvelope,
   type WorldEditorCommandEnvelope,
 } from '../src/features/worldeditor/commandContract'
+import {
+  isZoneToggleable,
+  zoneLifecycleAction,
+  zoneStatusCommandPayload,
+} from '../src/features/worldeditor/zoneLifecycle'
+import type { DangerZoneLite } from '../src/features/map/pirateApi'
 
 // WORLD EDITOR PUBLISH SLICE (0254) — client contract unit tests for the zone command union member:
 // the RPC-name mapping and envelope normalization for zone_create (the 4th/final publish domain —
@@ -263,4 +269,277 @@ test('normalizeEnvelope: a zone_unpublish not_unpublishable carries protected_zo
   })
   if (alreadyInactive.ok) throw new Error('unreachable')
   expect(alreadyInactive.details?.[0]?.code).toBe('already_inactive')
+})
+
+// ── the 0266 zone_update (zone EDIT command) envelope ─────────────────────────────────────────────
+// zone_update re-materializes an edit draft's geometry onto the SAME danger_zones row. Payload =
+// {target_id: the zone uuid, expected: the fork-time {name, zone_kind, attach_location_id, geometry}
+// snapshot, fields: {name, attach_location_id, geometry}}. Its server behavior is proven by
+// scripts/worldeditor-publish-zone-update-proof.sql; here we only pin the RPC mapping + the envelope
+// normalization for its result and its typed rejections (stale_revision, the authoritative
+// invalid_geometry, and the seeded-zone protected_zone — all riding the existing pipelines, NO new
+// error code).
+const UPDATE_ENVELOPE: WorldEditorCommandEnvelope = {
+  requestId: 'req-zoneupd-1',
+  commandType: 'zone_update',
+  payload: {
+    target_id: '2f8a1b3c-0000-4000-8000-000000000099',
+    // the fork-time sourceSnapshot (zoneDraftModel.projectFromLive) — geometry is an OPEN polygon ring.
+    expected: {
+      name: 'Crimson Reach',
+      zone_kind: 'pirate',
+      attach_location_id: null,
+      geometry: {
+        kind: 'polygon',
+        vertices: [
+          { x: 0, y: 0 },
+          { x: 300, y: 0 },
+          { x: 300, y: 300 },
+          { x: 0, y: 300 },
+        ],
+      },
+    },
+    // only the MUTABLE slice goes over the wire (zone_kind is fixed 'pirate', never edited); the server
+    // materializes the geometry (here re-seeded as a circle) and re-validates everything.
+    fields: {
+      name: 'Crimson Reach (edited)',
+      attach_location_id: '7c4d2e1a-0000-4000-8000-000000000031',
+      geometry: { kind: 'circle', center: { x: 1000, y: 1000 }, radius: 200 },
+    },
+    source_revision: 'zoneupd-rev-1',
+  },
+}
+
+test('commandRpcName maps zone_update to its server entrypoint', () => {
+  expect(commandRpcName('zone_update')).toBe('zone_update')
+})
+
+test('normalizeEnvelope: a zone_update success carries {updated,id,name} + command_type through', () => {
+  const raw: RawServerEnvelope = {
+    ok: true,
+    request_id: 'req-zoneupd-1',
+    command_type: 'zone_update',
+    result: { updated: true, id: '2f8a1b3c-0000-4000-8000-000000000099', name: 'Crimson Reach (edited)' },
+  }
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, raw)
+  expect(r.ok).toBe(true)
+  if (!r.ok) throw new Error('unreachable')
+  expect(r.commandType).toBe('zone_update')
+  expect(r.result).toEqual({
+    updated: true,
+    id: '2f8a1b3c-0000-4000-8000-000000000099',
+    name: 'Crimson Reach (edited)',
+  })
+  expect(r.replayed).toBeUndefined()
+})
+
+test('normalizeEnvelope: a zone_update idempotent replay keeps replayed + duplicate_request code', () => {
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: true,
+    request_id: 'req-zoneupd-1',
+    command_type: 'zone_update',
+    replayed: true,
+    code: 'duplicate_request',
+    result: { updated: true, id: '2f8a1b3c-0000-4000-8000-000000000099', name: 'Crimson Reach (edited)' },
+  })
+  if (!r.ok) throw new Error('replay must normalize as ok')
+  expect(r.replayed).toBe(true)
+  expect(r.code).toBe('duplicate_request')
+})
+
+test('normalizeEnvelope: a zone_update stale_revision carries per-field source_changed details (name/geometry)', () => {
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneupd-1',
+    error: 'stale_revision',
+    details: [
+      { code: 'source_changed', field: 'name' },
+      { code: 'source_changed', field: 'geometry' },
+    ],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('stale_revision')
+  expect(r.details?.map((d) => d.field)).toEqual(['name', 'geometry'])
+})
+
+test('normalizeEnvelope: a zone_update not_found carries the source_missing detail through', () => {
+  const r = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneupd-1',
+    error: 'not_found',
+    details: [{ code: 'source_missing', field: null }],
+  })
+  if (r.ok) throw new Error('unreachable')
+  expect(r.error).toBe('not_found')
+  expect(r.details?.[0]?.code).toBe('source_missing')
+})
+
+test('normalizeEnvelope: the zone_update invalid_geometry + protected_zone rejections ride validation_failed details', () => {
+  const invalidGeom = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneupd-1',
+    error: 'validation_failed',
+    details: [{ code: 'invalid_geometry', field: 'geometry', message: 'untangle the ring' }],
+  })
+  if (invalidGeom.ok) throw new Error('unreachable')
+  expect(invalidGeom.error).toBe('validation_failed')
+  expect(invalidGeom.details?.[0]?.code).toBe('invalid_geometry')
+
+  // a seeded source<>'drawn' zone is not editable — a DETAIL under validation_failed, not a new code.
+  const protectedZone = normalizeEnvelope(UPDATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zoneupd-1',
+    error: 'validation_failed',
+    details: [{ code: 'protected_zone', field: 'source' }],
+  })
+  if (protectedZone.ok) throw new Error('unreachable')
+  expect(protectedZone.error).toBe('validation_failed')
+  expect(protectedZone.details?.[0]?.code).toBe('protected_zone')
+})
+
+// ── the 0268 zone_set_active (zone RE-ACTIVATE command) envelope ───────────────────────────────────
+// zone_set_active flips ONE danger_zones row from status 'inactive' back to 'active' — the restore-half
+// that closes the lifecycle-parity gap (zone_unpublish is the unchanged deactivate path it COMPLEMENTS).
+// REACTIVATE-ONLY: an already-active zone is a typed validation_failed {already_active}. Payload =
+// {target_id: the zone uuid, expected: {name, source, location_id}}. Its server behaviour is proven by
+// scripts/worldeditor-publish-zone-setactive-proof.sql; here we pin the RPC mapping + the envelope
+// normalization for its result and its typed rejections (already_active / protected_zone ride the
+// existing validation_failed details pipeline — NO new error code).
+const REACTIVATE_ENVELOPE: WorldEditorCommandEnvelope = {
+  requestId: 'req-zonereact-1',
+  commandType: 'zone_set_active',
+  payload: {
+    target_id: '2f8a1b3c-0000-4000-8000-000000000099',
+    expected: { name: 'Crimson Reach', source: 'drawn', location_id: null },
+  },
+}
+
+test('commandRpcName maps zone_set_active to its server entrypoint', () => {
+  expect(commandRpcName('zone_set_active')).toBe('zone_set_active')
+})
+
+test('normalizeEnvelope: a zone_set_active success carries {set_active,id,name,status:active} + command_type through', () => {
+  const raw: RawServerEnvelope = {
+    ok: true,
+    request_id: 'req-zonereact-1',
+    command_type: 'zone_set_active',
+    result: {
+      set_active: true,
+      id: '2f8a1b3c-0000-4000-8000-000000000099',
+      name: 'Crimson Reach',
+      status: 'active',
+    },
+  }
+  const r = normalizeEnvelope(REACTIVATE_ENVELOPE, raw)
+  expect(r.ok).toBe(true)
+  if (!r.ok) throw new Error('unreachable')
+  expect(r.commandType).toBe('zone_set_active')
+  expect(r.result).toEqual({
+    set_active: true,
+    id: '2f8a1b3c-0000-4000-8000-000000000099',
+    name: 'Crimson Reach',
+    status: 'active',
+  })
+  expect(r.replayed).toBeUndefined()
+})
+
+test('normalizeEnvelope: a zone_set_active idempotent replay keeps replayed + duplicate_request code', () => {
+  const r = normalizeEnvelope(REACTIVATE_ENVELOPE, {
+    ok: true,
+    request_id: 'req-zonereact-1',
+    command_type: 'zone_set_active',
+    replayed: true,
+    code: 'duplicate_request',
+    result: { set_active: true, id: '2f8a1b3c-0000-4000-8000-000000000099', name: 'Crimson Reach', status: 'active' },
+  })
+  if (!r.ok) throw new Error('replay must normalize as ok')
+  expect(r.replayed).toBe(true)
+  expect(r.code).toBe('duplicate_request')
+})
+
+test('normalizeEnvelope: a zone_set_active already_active / protected_zone rejection rides validation_failed details', () => {
+  const alreadyActive = normalizeEnvelope(REACTIVATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zonereact-1',
+    error: 'validation_failed',
+    details: [{ code: 'already_active', field: 'status' }],
+  })
+  if (alreadyActive.ok) throw new Error('unreachable')
+  expect(alreadyActive.error).toBe('validation_failed')
+  expect(alreadyActive.details?.[0]?.code).toBe('already_active')
+
+  const protectedZone = normalizeEnvelope(REACTIVATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zonereact-1',
+    error: 'validation_failed',
+    details: [{ code: 'protected_zone', field: 'source' }],
+  })
+  if (protectedZone.ok) throw new Error('unreachable')
+  expect(protectedZone.details?.[0]?.code).toBe('protected_zone')
+})
+
+test('normalizeEnvelope: a zone_set_active not_found / stale_revision rejection carries its details through', () => {
+  const notFound = normalizeEnvelope(REACTIVATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zonereact-1',
+    error: 'not_found',
+    details: [{ code: 'source_missing', field: null }],
+  })
+  if (notFound.ok) throw new Error('unreachable')
+  expect(notFound.error).toBe('not_found')
+  expect(notFound.details?.[0]?.code).toBe('source_missing')
+
+  const stale = normalizeEnvelope(REACTIVATE_ENVELOPE, {
+    ok: false,
+    request_id: 'req-zonereact-1',
+    error: 'stale_revision',
+    details: [{ code: 'source_changed', field: 'name' }],
+  })
+  if (stale.ok) throw new Error('unreachable')
+  expect(stale.error).toBe('stale_revision')
+  expect(stale.details?.[0]).toEqual({ code: 'source_changed', field: 'name' })
+})
+
+// ── the pure zone lifecycle decision model (zoneLifecycle.ts) ──────────────────────────────────────
+// The inspector's button-visibility + command routing is a PURE function of the zone's presentational
+// status, so it is unit-testable with zero React: active → Unpublish (zone_unpublish, the unchanged
+// deactivate path); inactive → Reactivate (zone_set_active). Both share the {target_id, expected} payload.
+const ACTIVE_DRAWN_ZONE: DangerZoneLite = {
+  id: '2f8a1b3c-0000-4000-8000-000000000099',
+  name: 'Crimson Reach',
+  source: 'drawn',
+  location_id: null,
+  ring: [
+    [0, 0],
+    [300, 0],
+    [300, 300],
+    [0, 300],
+    [0, 0],
+  ],
+}
+
+test('zoneLifecycleAction: an ACTIVE zone shows Unpublish and routes to zone_unpublish', () => {
+  const a = zoneLifecycleAction('active')
+  expect(a.commandType).toBe('zone_unpublish')
+  expect(a.nextStatus).toBe('inactive')
+  expect(a.label).toBe('Unpublish zone')
+})
+
+test('zoneLifecycleAction: an INACTIVE zone shows Reactivate ONLY and routes to zone_set_active', () => {
+  const a = zoneLifecycleAction('inactive')
+  expect(a.commandType).toBe('zone_set_active')
+  expect(a.nextStatus).toBe('active')
+  expect(a.label).toBe('Reactivate zone')
+})
+
+test('zoneStatusCommandPayload: both directions carry {target_id, expected:{name,source,location_id}}', () => {
+  expect(zoneStatusCommandPayload(ACTIVE_DRAWN_ZONE)).toEqual({
+    target_id: '2f8a1b3c-0000-4000-8000-000000000099',
+    expected: { name: 'Crimson Reach', source: 'drawn', location_id: null },
+  })
+})
+
+test('isZoneToggleable: only editor-created (drawn) zones are toggleable; seeded circle zones are not', () => {
+  expect(isZoneToggleable(ACTIVE_DRAWN_ZONE)).toBe(true)
+  expect(isZoneToggleable({ ...ACTIVE_DRAWN_ZONE, source: 'circle' })).toBe(false)
 })

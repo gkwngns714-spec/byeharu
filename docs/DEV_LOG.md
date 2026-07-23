@@ -5,6 +5,53 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-21 — Combat-content program (E0–E4) **activation-prep authored (NOT run)**
+
+Authored the go-live tooling for the E0–E4 combat-content program (PRs #257–#261, migrations
+`0257`–`0260`, all DARK/seeded-false): four dependency-guarded per-flag `scripts/activate-*.sql`
+(+ matching `.sh` runners) and a combined `scripts/activate-combat-content-all.sql`, plus the program
+summary. Scripts are **AUTHORED-NOT-RUN** — the owner flips them at go-live in order E0→E1→E2→E3.
+Full architecture, merge/deploy/flag-flip order, the E3 byte-identity guarantee, and deferred items:
+see **[docs/COMBAT_CONTENT_PROGRAM.md](COMBAT_CONTENT_PROGRAM.md)**.
+
+---
+
+## 2026-07-21 — OPERATIONAL RECORD: **World Editor V1.5 audit-read backend DEPLOYED & PRODUCTION-PROVEN** (migration `0256`, prod head **0256**)
+
+**Deployed migration:** `20260618000256_worldeditor_audit_read.sql` (owner-only audit reader `public.world_editor_audit_list(jsonb)`). **PRs:** docs closure `#252` (merge `335d948`) + backend `#253` (merge `5e234e1`), both admin-merged 2026-07-21. **Deployment run:** `29792617330` @ `5e234e1` → `success` (job `88517404749`, 26s). **Production migration head:** `0256` (recorded once; `0253` remains reserved/absent).
+
+**Function security & privilege posture (verified on target):** `SECURITY DEFINER`; `search_path=''`; volatility `STABLE`; owner role `postgres`; in-body `is_owner()` authorization. EXECUTE: `PUBLIC` none, `anon` none, `authenticated` only. `world_editor_audit` remains RLS-enabled with **0 policies** and **no client SELECT** (anon/authenticated) — the reader is the sole read path; no table grant, no unrelated grant/policy change.
+
+**Bounded read-only production proof — PASS:** anonymous → `not_authenticated`; authenticated non-owner → `not_authorized`; owner small-limit → bounded page; exact request-ID lookup on the two existing canary audit rows; empty filter → clean empty page; keyset cursor continuation (page 1 → page 2) with no repeated item. Sanitization (key-level): **0** snapshots contain `reward_bundle_json`, `created_by`, or raw `actor` — `actor_is_owner` + `redactions[]` returned instead (`created_by` appears only as a redaction label, never a field); create record `before = null`; unpublish record sanitized before/after (`active`→`inactive`); `boundary_wkt` present as the intended owner-visible geometry. **Read-only invariance:** `world_editor_audit` row count `2 → 2` (the reader wrote nothing).
+
+**Before/after audit row count:** 2 → 2. **Not observable in current production dataset (covered by disposable proof):** a *second* full pagination page beyond 2 rows; edit-command (non-zone) snapshots — the disposable proof covers both.
+
+**Verdict:** `WORLD EDITOR V1.5 AUDIT-READ BACKEND: PRODUCTION-PROVEN`.
+
+**Residual risks:** no index on `world_editor_audit(created_at, command_type)` — fine at single-owner tens-to-hundreds-of-rows scale, revisit if the ledger grows; the reader returns `boundary_wkt`/coords (owner-visible, needed for the upcoming history→map focus). Next: the read-only frontend History UI on a separate branch (no migration).
+
+---
+
+## 2026-07-20 — MILESTONE: **WORLD EDITOR FOUR-DOMAIN AUTHORING V1 — COMPLETE** (full owner-gated publish surface deployed, migrations 0244→0255, prod head **0255**; reversible zone lifecycle proven live in production)
+
+**What this entry is.** The close-out of the World Editor publishing program: every publish domain is now an owner-gated, server-authoritative write RPC through the `0243` spine, deployed live, and the zone lifecycle (create → live → unpublish → inert) was proven end-to-end against production under a controlled canary. This completes **World Editor four-domain authoring V1**.
+
+**Coordinate direction — DECIDED: keep physical gameplay coordinates.** After a 6-agent C0 audit, the physical `×17` DB normalize (migration `0253`, PR #245, k=17) was **rejected** as the coordinate direction and is held as historical research only — a physical rescale would change gameplay, invert intended near/far content tiering, detach frozen danger-zone polygons, and need a coordinated migration of active movement / parked fleets / anchors / ranges / radii / speeds / combat / verifiers. Migration slot `0253` remains intentionally reserved/absent from the deployed chain. The approved direction is the **C1 display-adapter contract** below.
+
+**Point-domain publish RPCs (migrations 0244–0252, deployed).** The exploration / mining / location domains each got owner-gated create + edit (+ set-active) commands, all following the one contract (authn → `is_owner()` authz → `request_id` idempotency → server re-validation → optimistic concurrency for updates → atomic apply + one `world_editor_audit` row with before/after snapshots → typed `{ok,request_id,result|error}` envelope; EXECUTE to `authenticated` only, table client-write revoked, deploy-time self-assert): `0244` exploration_site_create, `0246` mining_field_create, `0247` exploration_site_update, `0248` mining_field_update, `0249` location_update, `0250` exploration/mining `set_active` (the canonical **soft unpublish/restore** via an `is_active` flag — no hard delete), `0252` location_create.
+
+**PR #249 — C1 canonical coordinate + display-adapter contract (merged, client-only, no migration).** Stored gameplay coordinates never change; the editor's view of the world is controlled by typed display adapters + the **camera only**. `worldEditorCoordinates.ts` re-exports the ONE `worldToViewBox` projection (no second transform authority); `worldEditorFocus.ts` frames one domain at a time via the shared `galaxyCamera` fit; the legacy `/dev/zones` `ZoneEditor` + its bespoke `makeFit` were retired; the mining/exploration overlap radii are threaded from `game_config` into the pure validators (750 demoted to a labeled fallback). Structural guard tests (`tests/worldEditorC1Guards.spec.ts`) prove stored coords are unwritten, there is no second projection, and ZoneEditor is gone.
+
+**PR #248 + #250 — zone_create (migration `0254`, deployed) and its ACL fix.** `zone_create(p_request_id, p_payload)` materializes a zone draft's seed geometry (circle `ST_Buffer` / polygon closed-ring `ST_MakePolygon`) into ONE `public.danger_zones` row (`source='drawn'`, `status='active'`) with server-side PostGIS as the geometry authority (`ST_IsValid` + `ST_Area>0` → typed `invalid_geometry`; bad attach → `invalid_attach`). **Prod grant-drift caught by 0254's own self-assert:** production `danger_zones` carried a Supabase project-default `GRANT ALL` (anon/authenticated INSERT/UPDATE/DELETE) that no migration had revoked — the fresh-chain CI apply-proof never reproduced the default, so the assert had passed *vacuously* in CI and the first deploy fail-closed rolled back (prod untouched). **Fix = PR #250:** 0254 now REVOKES client write on `danger_zones` before asserting it (mirroring the sibling publish slices), then deployed clean (prod head 0254). Lesson recorded: publish migrations must **establish** their table-write lockdown, not assume it.
+
+**PR #251 — zone_unpublish (migration `0255`, deployed; prod head → 0255).** The zone UNPUBLISH twin of `zone_create`: flips ONE `danger_zones` row from `status='active'` to `'inactive'` (the CHECK already models `'inactive'` — no schema change, no hard delete). All three player-active reads (`danger_zones_select_when_lit` RLS, `get_danger_zones()`, and the interception leaf `pirate_intercept_leg_zone_hits()`) gate on `status='active'`, so the flip removes the zone from the player map + flag-gated read + pirate interception at once, while the row (geometry / name / attach / `created_by`) is preserved for a future republish. Mirrors the `0250` set_active contract, plus two zone guards: a **protected-zone** rule (only `source='drawn'` editor zones are unpublishable — the seeded `'circle'` zones Blackden/Reaver/Snare can never be targeted → `not_unpublishable`/`protected_zone`) and `already_inactive`. Client: `commandContract` gained the `zone_unpublish` member + `not_unpublishable` code; `ZoneInspectorActions.tsx` issues the real owner-gated command from the live-zone inspector (no client-side success simulation). Adversarial security review = SECURE (no CRITICAL/HIGH/MED); disposable proof + build + 900/900 frontend specs green.
+
+**Controlled production live proof — PASS (four-domain V1 complete).** Under a controlled canary (`CANARY-0255-LIVEPROOF`, drawn circle centre `(-900,-900)` r25, provably isolated: nearest content 1100+ world units, zero unfinished movement legs), the full lifecycle ran against production: owner **create** → the zone was active, in the player read, and interception-relevant → owner **unpublish** → gone from the player read AND interception, row retained inert — all inside a **529 ms** active window. Then, with the canary inactive: create + unpublish **replays** were idempotent (no second row/audit); **non-owner** → `not_authorized` and **anonymous** → `not_authenticated` for both calls (authorization precedes replay disclosure — no owner-result leak); the three seeded zones rejected unpublish as `protected_zone` and stayed active. Final prod state: 4 zones (3 seeded active + 1 canary inactive), exactly 1 `zone_create` + 1 `zone_unpublish` audit row (zero from the rejected attempts), `pirate_zone_create`/`delete` still client-locked, `danger_zones` client-write revoked, RLS + SELECT-only policy intact, flags unchanged. The inert canary row is retained as the audit artifact (no SQL cleanup, no hard delete).
+
+**World Editor four-domain V1 — verified capabilities:** unified owner editor (`/dev/world`, flag-gated, `is_owner()`-authoritative); Location + Mining + Exploration create / edit / unpublish; Zone geometry authoring + create + unpublish; owner authorization, server validation, idempotency, optimistic concurrency, auditing (before/after snapshots), player-read isolation, and a **reversible production lifecycle proof**.
+
+---
+
 ## 2026-07-20 — SESSION WRAP: World Editor V1A (merged) + V1B-0 Owner Security Spine (merged, mig 0243 — **DEPLOYED LIVE**) + V1B-1 Location Drafts (merged); V1B-2 validation in progress; V1C coordinate-authority inventory open
 
 **What this entry is.** A consolidated close-out for the overnight 2026-07-19→20 World Editor program
