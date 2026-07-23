@@ -17,26 +17,129 @@ Management-API node runner, NOT the .sh). Preconditions + poison-sweep passed; V
 anywhere, redirectable); per-ship movement is dark. The canary (`scripts/canary-mgmt-api.mjs`) confirmed the
 Mgmt-API endpoint is one-transaction + surfaces RAISE before the flip.
 
-**ROLLBACK — ⛔ RETIRED (corrected 2026-07-23). THERE IS NO ONE-COMMAND ROLLBACK.** This paragraph used to
-promise the 4 inverse `set_game_config` writes at the bottom of `scripts/activate-unified-movement.sql`.
-That promise died when the server drops landed: migration `0231` dropped
-`main_ship_instances.spatial_state/space_x/space_y` (and `'stationary'` from the status CHECK) and `0232`
-dropped all 20 legacy movement functions. Re-lighting `mainship_send_enabled` today is **destructive, not
-restorative** — `command_main_ship_stop_transit` deliberately survived `0232` and its deployed `0155` body
-still reads `spatial_state` / writes `space_x`/`space_y`, so the flag flip turns today's clean
-`feature_disabled` reject into a live `column "spatial_state" does not exist` error for every player who
-presses Stop mid-transit. The script's rollback section is now a **fail-closed guard**: uncomment and run it
-and it raises before any write. A real rollback now requires **new forward migrations** re-creating the
-`0231` columns/CHECK and the `0232` functions, plus reconciling members whose per-ship fleets a unified go
-dissolved (they read `contradictory_state`/hidden — world-exact only if no go ran; see M2 in the flip-ACT
-review). Only after that may the flags be reconsidered.
+**~~ROLLBACK (one command, reversible)~~ — ⛔ RETIRED 2026-07-23. THERE IS NO ONE-COMMAND ROLLBACK.**
+The paragraph below described running the 4 inverse `set_game_config` writes in the commented section at
+the bottom of `scripts/activate-unified-movement.sql` (`:310-319`) via the node runner. **That is no longer
+possible.** `0232` hard-dropped all 20 legacy movement functions and `0231` dropped
+`main_ship_instances.spatial_state/space_x/space_y` — and also removed `'stationary'` from the status
+CHECK (`0231:1552-1556`) — so re-lighting a flag cannot restore the path. Worse, re-lighting it is
+**destructive, not restorative**: `command_main_ship_stop_transit` deliberately SURVIVED the drop
+(`0232:67`, and `0232:354-355` self-asserts that it must exist) and today rejects cleanly with
+`feature_disabled`, but its deployed `0155` body still reads `spatial_state` and writes
+`space_x`/`space_y`. Re-lighting `mainship_send_enabled` would turn that clean reject into a live
+`column "spatial_state" does not exist` error for every player who presses Stop mid-transit.
 
-**POST-FLIP CLEANUP (planned, NOT built — do AFTER a soak):** 4a-post (delete dead per-ship client, #11) →
-0216-drop (drop legacy movers, drain-asserted, #9) → 4c (signal retirement, 2 migs, #5 — the audit found 5
-live breaks incl. a client PostgREST select that would blank the map; ALL captured in the task) → 4d
-(reconciler delete, BUILT + banked on `slice-4d-reconciler-delete`, held for 4c, #6) → 4e (bootstrap
-deletion, #12). WATCH post-flip: the map, the Port tab, hunts, trade dock reads — all now resolve through
-the unified fleet. The pipeline + lessons that built this are recorded below and in [[byeharu-autopilot-loop]].
+The script's rollback section is now a **fail-closed guard**: the four inverse writes are deleted, and if
+the remaining commented block is uncommented and run it raises on its first statement, before any write.
+A real rollback now requires **new forward migrations** re-creating the `0231` columns/CHECK and the
+`0232` functions, plus reconciling members whose per-ship fleets a unified go dissolved. Only after that
+may the flags be reconsidered.
+**→ full record: `docs/MOVEMENT_ROLLBACK_DEFECT.md`.**
+*(historical text, kept for the record: "run the 4 inverse `set_game_config` writes … Residual after a
+rollback: members of any group that already ran a unified go read `contradictory_state`/hidden until
+re-flip (the go dissolved their per-ship fleets) — flag-exact always, world-exact only if no go ran. See M2
+in the flip-ACT review." That residual caveat still stands, on top of the defect above.)*
+
+**~~POST-FLIP CLEANUP (planned, NOT built)~~ — SUPERSEDED 2026-07-23: MOST OF IT SHIPPED.** See
+"POST-FLIP CLEANUP — ACTUAL STATE" immediately below. WATCH post-flip: the map, the Port tab, hunts, trade
+dock reads — all now resolve through the unified fleet. The pipeline + lessons that built this are recorded
+below and in [[byeharu-autopilot-loop]].
+
+## POST-FLIP CLEANUP — ACTUAL STATE (verified against the repo 2026-07-23)
+
+Shipped and deployed:
+- `20260618000221_movement_signal_repoint.sql` — read repoint.
+- `20260618000222_movement_writer_repoint.sql` — write repoint.
+- `20260618000231_movement_schema_drop.sql` — schema drop. Drops
+  `main_ship_instances.spatial_state`/`space_x`/`space_y` (`:1559-1562`) and unschedules the dead
+  `process-mainship-space-arrivals` cron (`:1580-1586`).
+- `20260618000232_movement_function_drop.sql` — legacy function drop: **20** `drop function if exists`
+  statements (`:231-264`).
+
+Genuinely still NOT shipped:
+- **4d (reconciler delete)** — BUILT but banked on branch `slice-4d-reconciler-delete` with a
+  **PLACEHOLDER migration number** `20260618000299_fleetgo_reconciler_delete.sql`. Never PR'd; the number
+  must be re-stamped to a real sequential head before it can land.
+- **4e (bootstrap/fallback deletion)** — not built.
+
+## THE CUTOVER WAS AN ACT SCRIPT, NOT A MIGRATION (recorded 2026-07-23)
+
+Grepping `supabase/migrations/` for the flag change finds **nothing**. All four flag writes live in
+`scripts/activate-unified-movement.sql:242-256` — one `do $$ … $$` block, one transaction, four
+`set_game_config` calls (`:246-249`). The file's header explicitly forbids moving it into
+`supabase/migrations/` ("██ THIS IS AN ACT SCRIPT, NOT A MIGRATION — DO NOT MOVE IT INTO
+supabase/migrations/ ██"), because a migration that RAISES wedges the deploy pipeline. Landed by commit
+`56a84c3` "FLEET-GO 4b-flip hardening" (2026-07-18).
+
+## THE CANONICAL MOVEMENT SURFACE — TRUE HEADS (grep-verified 2026-07-23)
+
+The charter's own inventory has been wrong before; these were re-derived by grep at this head.
+
+| Function | TRUE head | Superseded by that head |
+|---|---|---|
+| `public.command_ship_group_go(uuid, uuid, double precision, double precision)` | `20260618000233_pirate_intercept_danger_zones.sql:589` | `0207:61`, `0208:180`, `0218:210`, `0219:312` |
+| `public.command_ship_group_stop(uuid)` | `20260618000218_position_territory_leaves.sql:635` | `0209:28`, `0215:44` |
+| `public.command_ship_group_dock(uuid)` | `20260618000219_timed_docking.sql:115` | — |
+| `public.command_ship_group_go_route(...)` | `20260618000233_…:1011` | — |
+| `public.movement_settle_arrival(uuid)` | `20260618000208_fleetgo_coordinate_targets.sql:90` | `0151:45`, `0153:214` |
+
+Arrival settles via `movement_settle_arrival`, driven by the `process-fleet-movements` cron every 30s.
+**Do not cite 0207/0208 as the mover head** — they are superseded.
+
+## LIVE CHARACTERISTIC OF THE MOVEMENT PATH — pirate intercept (recorded 2026-07-23, NOT a recommendation)
+
+In prod today `pirate_intercept_enabled=true` and `spatial_combat_enabled=true`. Every unified go rolls
+`public.pirate_intercept_evaluate_leg` (defined `0233:377`, called from the mover at `0233:975`, and from
+`command_ship_group_go_route` at `0233:1209`). On a hit it **cancels the leg the RPC just minted** and
+routes the fleet into the existing combat path, inside the same transaction.
+
+Recorded history worth knowing: a canary driven through the spatial-combat damage path destroyed a real
+player fleet (empty player `weapons_json` → 0 damage → the fleet was lost); the fix was migration `0262`.
+
+**No flag change is proposed here.** This is stated as a live characteristic of the movement path so the
+owner can decide, not as a recommendation.
+
+## `fleet_control_enabled=false` IS VALID ALONGSIDE UNIFIED MOVEMENT — DO NOT "FIX" IT
+
+Per `20260618000204_fleetctrl_command_ship.sql:24-25`, `fleet_control_enabled` gates **only** (a) the
+command-ship-required movement check and (b) the 8-ship assign cap. `command_ship_group_go` never reads
+it. Two of the four RPCs it originally gated (`send_ship_group_expedition`, `move_ship_group_to_location`)
+no longer exist — `0232` dropped them. Its being false is correct, not drift.
+
+## VERIFICATION STATUS — **CLASSIFICATION B: EVIDENCE INCOMPLETE** (2026-07-23)
+
+**No live gameplay was observed.** Nothing below should be read as "the game was watched working".
+
+**PROVEN (by static/grep/CI evidence at this head):**
+- **One movement authority.** No per-ship movement authority remains in the deployed surface.
+- **One fleet ⇒ one movement, by construction.** `0233:768-786` keys the fleet on
+  `group_id + main_ship_id IS NULL` (not `group_id` alone), takes `FOR UPDATE` on the group (`0233:684`)
+  and on the fleet row (`0233:782`), and returns `fleet_ambiguous` rather than picking one when >1 live
+  unified fleet exists.
+- **A replay is a redirect, not a duplicate.** The live leg is cancelled at its interpolated point under
+  the same lock (`0233:829-849`) and the cancelled leg is retired before the fleet is re-pointed
+  (`0233:929-932`).
+- **Live flag config is internally valid** (unified on; the three legacy movers off;
+  `fleet_control_enabled=false` correct per the section above).
+- `tsc -b` clean; **1160 frontend specs pass**; `fleetgo-proof.sh selftest` green.
+
+**NOT PROVEN — no runtime observation whatsoever:**
+- `fleets`, `fleet_movements`, `main_ship_instances`, `ship_groups`, `location_presence` are **all
+  RLS-blocked to the anon key**, which was the only credential available. Therefore:
+  - **no stuck-movement census** was taken, and
+  - **no confirmation that a real player fleet moves and arrives.**
+- The real-Postgres `osn3-fleetgo-realchain-proof` **did NOT run** — no Docker, no Supabase CLI, no `psql`
+  on the auditing machine. Per [[ci-apply-proof-is-the-net]] that is the layer that catches vacuous
+  self-asserts and constraint coupling; its absence is why this is B and not A.
+
+## CLEANUP DEBT — dead client wrappers (recorded, NOT deleted here)
+
+`src/features/command/teamApi.ts` still exports two wrappers with **zero callers anywhere in `src/`**,
+targeting RPCs that no longer exist in prod:
+- `sendShipGroup` (`:184-191`) → `send_ship_group_expedition` (dropped by `0232`)
+- `moveShipGroup` (`:199-206`) → `move_ship_group_to_location` (dropped by `0232`)
+
+Left in place deliberately: this record is docs-only.
 
 ## (historical) PRE-FLIP COMPLETE (2026-07-18) — everything merged + dark; the flip was the owner's to run
 
@@ -61,6 +164,10 @@ space → go), brake-client (no Stop button on a hunt). Script: `scripts/activat
    with the offending rows if any), then flips 4 flags: unified ON + the 3 legacy movers OFF. REVERSIBLE:
    the 4 inverse `update game_config` writes are the commented ROLLBACK at the bottom of the .sql.
 4. **SOAK** (days, owner-paced), then the POST-FLIP cleanup below.
+
+**⚠ SUPERSEDED 2026-07-23 — the paragraph below is STALE.** `0221`/`0222`/`0231`/`0232` all shipped and are
+deployed; only 4d (banked, placeholder migration number) and 4e remain. See "POST-FLIP CLEANUP — ACTUAL
+STATE" above. Historical text kept verbatim:
 
 **POST-FLIP work (all planned, NOT yet built — sequenced AFTER the flip + soak):** 4a-post (delete the dead
 per-ship client, task #11) → 4b-DROP/0216 (drop the legacy movers, drain-asserted, task #9) → 4c (signal
@@ -305,6 +412,13 @@ WRONG 8 times — re-derive by grep at each slice head.
   arrived and are parked. This is §2 proving itself from live data: the fleet holds the truth, the
   per-ship status is orphaned wreckage of the retired layer. **Step 4 is therefore a plain status
   reset to match what the fleet already says — NOT a movement fix, no settle, no cron.**
+
+**⚠ MACHINE-SPECIFIC AND FALSE HERE — corrected 2026-07-23.** The "DB access" claim below is **not true on
+every machine**, and was **false on the machine that ran the 2026-07-23 movement audit**: there
+`.env.local` contained exactly two lines — `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. No
+`SUPABASE_SECRET_KEY`, no `SUPABASE_ACCESS_TOKEN`, no `SUPABASE_DB_PASSWORD`. Treat the paragraph below as
+a note about *one* machine's environment, never as a repo-wide guarantee: **read `.env.local` and test
+before assuming you have prod credentials.** (Historical text kept:)
 
 **DB access — the earlier claim in this section was WRONG; corrected 2026-07-16 by direct test:**
 - The assistant does **NOT** hold only the anon key. `.env.local` in the repo root carries
