@@ -1,23 +1,6 @@
 {
-  "generatedAt": "2026-07-23T04:14:33.572Z",
+  "generatedAt": "2026-07-23T04:36:32.397Z",
   "source": "open pull requests on gkwngns714-spec/byeharu",
-  "count": 1,
-  "items": [
-    {
-      "pr": 284,
-      "title": "combat-content: elite stat wiring (migration 0272, DARK — resolver-only, tick untouched)",
-      "branch": "slice-elite-stat-wiring",
-      "stamp": "20260618000272",
-      "color": "#00e5ff",
-      "touches": {
-        "functions": [
-          "resolve_location_encounter"
-        ],
-        "tables": []
-      },
-      "nodes": [
-        "fn:resolve_location_encounter"
-      ]
-    }
-  ]
+  "count": 0,
+  "items": []
 }

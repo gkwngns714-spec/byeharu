@@ -1,16 +1,16 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 265,
+  "migrations": 266,
   "functions": 274,
   "tables": 95,
   "flags": 41,
   "systems": 30,
   "phases": 28,
   "rungs": 9,
-  "jobs": 240,
-  "nodes": 742,
-  "edges": 2198
+  "jobs": 241,
+  "nodes": 743,
+  "edges": 2204
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -3010,6 +3010,17 @@
    "addedAt": "2026-07-23T00:21:59+09:00",
    "file": "supabase/migrations/20260618000271_worldeditor_catalog_markerstyle.sql",
    "detail": "Byeharu — WORLD EDITOR: enrich world_editor_entity_catalog with the four location marker-style fields. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE GAP THIS CLOSES: the World Editor map is now sourced SOLELY from world_editor_entity_catalog (0269), but that catalog row does NOT carry the four fields the client marker policy (src/features/map/m",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000272",
+   "kind": "migration",
+   "label": "0272 encounter_elite_stat_wiring",
+   "stamp": "20260618000272",
+   "seq": "0272",
+   "addedAt": "2026-07-23T11:35:29+09:00",
+   "file": "supabase/migrations/20260618000272_encounter_elite_stat_wiring.sql",
+   "detail": "Byeharu — ELITE STAT WIRING (migration 0272). Resolver-only, DARK, rides the EXISTING quad-flag (enemy_content_registry_enabled AND encounter_authoring_enabled AND encounter_binding_authoring_enabled AND encounter_resolver_enabled — all still seeded false). NO new flag: elite cannot go live independently of the resolver, and the resolver is not live. ═══════════════════════════════════════════════",
    "seedsFlag": []
   },
   {
@@ -11352,6 +11363,31 @@
    "type": "creates"
   },
   {
+   "source": "mig:20260618000272",
+   "target": "fn:resolve_location_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000272",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000272",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000272",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000272",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -12586,6 +12622,12 @@
    "target": "mig:20260618000269",
    "type": "supersedes",
    "note": "world_editor_entity_catalog"
+  },
+  {
+   "source": "mig:20260618000272",
+   "target": "mig:20260618000261",
+   "type": "supersedes",
+   "note": "resolve_location_encounter"
   },
   {
    "source": "mig:20260616000007",
@@ -18905,6 +18947,11 @@
   {
    "date": "2026-07-23",
    "title": "World Editor roadmap CLOSURE: chain `0263`→`0271` deployed (prod head **0271**) + client V5 shipped",
+   "migs": []
+  },
+  {
+   "date": "2026-07-23",
+   "title": "Movement-truth audit, dead-wrapper retirement, rollback fail-closed, elite stat wiring (`0272` merged, **deploy deferred**), PROJECTMAP function-ownership authority",
    "migs": []
   }
  ]
