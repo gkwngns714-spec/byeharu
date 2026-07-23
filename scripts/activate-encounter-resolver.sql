@@ -136,14 +136,19 @@ begin
   raise notice 'ACTE3_PASS_DEPENDENCY ok: E0 + E1 + E2 are already true — flipping E3 completes the quad-flag and the resolver goes LIVE';
 end $$;
 
--- ══════════ 2b. ZERO-ELITE READINESS GUARD (read-only; RAISE if any live binding reaches elite_chance>0) ══
--- E5 (0261) removed the inert is_elite roll from the resolver: elite produces NO combat effect until the
--- elite stat-wiring slice, and the resolver no longer even reads elite_chance. If an owner has authored a
--- fleet member with elite_chance>0 and bound it active, flipping E3 now would SILENTLY drop that authored
--- intent (the resolver ignores it). Refuse the flip until every reachable active binding is elite-free — the
--- owner either zeroes elite_chance (making the intent explicit) or waits for the elite stat-wiring slice.
+-- ══════════ 2b. ELITE WIRING NOTICE (read-only; informational — the refusal is GONE) ══════════════════
+-- E5 (0261) had made the resolver ZERO-ELITE (it did not read elite_chance at all), so this section used
+-- to REFUSE the flip while any active binding reached a fleet member with elite_chance>0 — flipping then
+-- would have silently dropped that authored intent. Migration 0272 (ELITE STAT WIRING) wires elite for
+-- real: the resolver rolls elite ONCE at materialization and emits the elite subset as its own plan
+-- units[] entry carrying base_difficulty x encounter_elite_difficulty_multiplier, which the EXISTING
+-- spawn arm materialises through its identical insert (process_combat_ticks is unchanged and stays
+-- elite-blind). Authored elite_chance is therefore honoured, and the refusal is removed. What remains is
+-- a NOTICE so the operator sees, at flip time, exactly how much elite content is about to go live and on
+-- what terms (a v1 elite is a COUPLED buff — base_difficulty scales hp/attack/range/speed together — and
+-- rewards do NOT scale with elites yet).
 do $$
-declare v_n integer;
+declare v_n integer; v_mult double precision;
 begin
   select count(*) into v_n
     from public.location_encounter_bindings b
@@ -154,10 +159,16 @@ begin
     join public.enemy_fleet_template_members fm  on fm.fleet_template_id = ft.id
     join public.enemy_archetypes a               on a.id = fm.enemy_archetype_id and a.active is true
    where b.active is true and fm.elite_chance > 0;
-  if v_n > 0 then
-    raise exception 'ELITE-READINESS FAIL: % active binding(s) reach a fleet member with elite_chance>0, but E5 (0261) made the resolver zero-elite (is_elite dropped; elite has no combat effect yet). Set those elite_chance values to 0 (making the no-elite posture explicit) or wait for the elite stat-wiring slice, then re-run.', v_n;
+  if to_regprocedure('public.resolve_location_encounter(uuid,text)') is null then
+    raise exception 'PRECONDITION FAIL: resolve_location_encounter(uuid,text) missing';
   end if;
-  raise notice 'ACTE3_PASS_ELITE_READINESS ok: no active binding reaches an elite_chance>0 fleet member — the zero-elite resolver drops no authored intent';
+  if not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname='public' and p.proname='resolve_location_encounter'
+                    and position(':enc:elite:' in p.prosrc) > 0) then
+    raise exception 'ELITE-WIRING FAIL: the deployed resolver carries no '':enc:elite:'' salt — migration 0272 is not applied, so authored elite_chance would be silently dropped. Deploy 0272 first.';
+  end if;
+  v_mult := coalesce(public.cfg_num('encounter_elite_difficulty_multiplier'), 2);
+  raise notice 'ACTE3_PASS_ELITE_WIRED ok: elite is WIRED (0272). % active binding(s) reach a fleet member with elite_chance>0; each elite unit will spawn at base_difficulty x % — a COUPLED buff (hp+attack+range+speed) whose rewards do NOT scale yet.', v_n, v_mult;
 end $$;
 
 -- ══════════ 3. THE WRITE — ██ COMBAT BEHAVIOR CHANGES ON THIS COMMIT ██ (via set_game_config, 0046) ══

@@ -1,8 +1,10 @@
 # Combat-Content Program (E0–E4) — architecture, ship order, and go-live
 
-Status: **built and stacked, DARK, UNDEPLOYED.** Every migration in this program is seeded `false`
-and read by nothing at runtime; existing pirate combat is **byte-identical** until the owner both
-deploys the migrations and runs the activation scripts. This document is the reviewer- and
+Status: **built and stacked, DARK.** Every migration in this program is seeded `false` and read by
+nothing at runtime; existing pirate combat is **byte-identical** until the owner runs the activation
+scripts. (Merge/deploy state is tracked by the approval-gated `deploy-migrations.yml` runs, not by
+this document — an earlier "UNDEPLOYED" here went stale. What keeps the program inert is the flags,
+which are still `false`, not the deploy state.) This document is the reviewer- and
 owner-facing map of the whole program: what it is, the exact merge/deploy/flag-flip order, the
 byte-identity guarantee, and the deferred items.
 
@@ -75,8 +77,32 @@ enemy archetypes + reward profiles        (E0 — the reusable enemy TEMPLATES +
   the resolver **drops the inert `is_elite` roll** (elite has no combat effect until the elite stat-wiring
   slice); no `is_elite` is persisted and the plan carries a single honest marker `elite_policy=disabled_v1`.
   `process_combat_ticks` is re-emitted **byte-identical** except the one seeded resolver-call line, so combat
-  is unchanged while the flag is off. The `activate-encounter-resolver` act gains a **zero-elite readiness
-  guard** that refuses to flip while any active binding reaches a fleet member with `elite_chance>0`.
+  is unchanged while the flag is off. The `activate-encounter-resolver` act gained a **zero-elite readiness
+  guard** that refused to flip while any active binding reached a fleet member with `elite_chance>0` —
+  **removed again by 0272**, which wires elite for real (below).
+
+- **COMBAT-FALLBACK — player basic weapon** (migration `0262_combat_player_fallback_weapon.sql`).
+  Not an E-slice, but it sits in this program's blast radius: in spatial combat a player ship with no
+  fitted range-weapon module landed `weapons_json='[]'` and dealt **zero damage** while still being shot
+  at. 0262 redefines `combat_create_group_encounter` to synthesize ONE fallback basic weapon from the
+  ship's `attack_snapshot` at combat-unit creation. `process_combat_ticks` is untouched (it stays a pure
+  consumer of `weapons_json`). This is the regression the elite proof guards against re-introducing.
+
+- **ELITE STAT WIRING** (migration `0272_encounter_elite_stat_wiring.sql`; branch
+  `slice-elite-stat-wiring`). Resolver-only, DARK, **no new flag** — elite rides the same
+  `encounter_resolver_enabled` quad-flag. The elite roll happens **once, at encounter materialization**,
+  inside `resolve_location_encounter`: each of a member's rolled units takes one deterministic
+  `':enc:elite:'` roll against the authored `elite_chance`, and the elite subset is emitted as its **own
+  `units[]` entry** carrying `base_difficulty x encounter_elite_difficulty_multiplier` (default `2`).
+  Because `process_combat_ticks` derives every enemy stat of a resolved wave from that single
+  `base_difficulty` field, the existing spawn arm materialises both entries through its **identical
+  existing insert** — so **`process_combat_ticks` is NOT re-created** and the damage resolver never learns
+  what "elite" means. The plan tag becomes `elite_policy=multiplier_v1`; an elite entry carries an
+  informational `elite: true` (display/audit only, never a combat input). With `elite_chance = 0` the
+  emitted `units[]` is **byte-identical to 0261's**. Two honest v1 tradeoffs: elite is a **coupled buff**
+  (`base_difficulty` scales hp *and* attack *and* range *and* speed together — decoupling would require
+  re-creating `process_combat_ticks`), and **rewards do not scale** with elites (the reward comes from
+  `reward_profile`/`reward_tier`/danger, not `units[]`).
 
 ---
 
@@ -183,11 +209,13 @@ resolved branch goes inert and combat is byte-identical again on the next tick. 
 - **Composition variety** — ~~E3's resolver salts its weighted pick location-static~~ **DONE in E5
   (0261)**: `resolve_location_encounter` folds a per-encounter seed (`e.id::text`) into every salt, so
   encounters at one location vary (still fully deterministic). Time-varying variety remains out of scope.
-- **ELITE stat wiring** — `enemy_fleet_template_members.elite_chance` is authored but **no longer rolled**
-  by the resolver (E5/0261 dropped the inert `is_elite` roll; the plan carries `elite_policy=disabled_v1`).
-  Elite still produces **no combat effect** — the elite stat-wiring slice (with the actual combat hook) is
-  the deferred item. Until then, `activate-encounter-resolver` refuses to flip while any active binding
-  reaches an `elite_chance>0` fleet member.
+- **ELITE stat wiring** — ~~deferred~~ **DONE in 0272** (`encounter_elite_stat_wiring`):
+  `enemy_fleet_template_members.elite_chance` is rolled again, once, at materialization, and amplifies
+  the plan's `base_difficulty` for the elite subset. The `activate-encounter-resolver` /
+  `activate-combat-content-all` elite refusal is removed (now an informational notice). **Still deferred
+  here:** *decoupled* elite stats (hp-only or attack-only elites — would require re-creating
+  `process_combat_ticks`) and **elite-scaled rewards** (an elite wave is harder for the same loot until a
+  reward-adapter slice lands).
 - **Deactivation-trigger typed envelope** — the cross-slice deactivation guards (E1/E2 triggers on
   E0/E1 tables) RAISE a raw Postgres exception rather than returning the typed `{ok:false, error, details[]}`
   envelope the RPCs use. Fine as defense-in-depth; a typed surface is deferred.
