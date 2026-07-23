@@ -5,12 +5,15 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-07-23 — Movement-truth audit, dead-wrapper retirement, rollback fail-closed, elite stat wiring (`0272` merged, **deploy deferred**), PROJECTMAP function-ownership authority
+## 2026-07-23 — Movement-truth audit, dead-wrapper retirement, rollback fail-closed, elite stat wiring (`0272` **DEPLOYED, dark**), PROJECTMAP function-ownership authority
 
-> **DEPLOY STATE — read this first.** `main` carries migration **`0272`**. **Production is still `0271`.**
-> The `Deploy Supabase migrations` run for the `0272` merge (`29979341800`) is **`waiting` at the
-> `production` environment approval gate** — the owner deliberately deferred the approval. **Nothing in
-> `0272` is live.** Every statement below about elite behaviour describes merged code, not production.
+> **DEPLOY STATE — read this first.** **Production migration head is `0272`.** The owner approved the
+> `production` gate and the `Deploy Supabase migrations` run (`29979341800`) completed **`success`** at
+> **2026-07-23T06:48:43Z**. `main` and production are back **in sync**. Full record in **§9** below.
+>
+> **`0272` landed DARK.** `encounter_resolver_enabled` is still `false`, both encounter bindings are still
+> inactive, and **no member carries `elite_chance > 0`** — so **no player-visible behaviour became
+> reachable**. Elite is deployed *code*, not observed *behaviour*.
 >
 > **The unified-movement production smoke has NOT been performed.** Movement verification remains
 > **classification B — evidence incomplete**. `docs/MOVEMENT_SMOKE_PACKET.md` is a *prepared, unexecuted*
@@ -25,7 +28,7 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 | **#286** | `b9e2560` | Movement cutover documentation truth + new `docs/MOVEMENT_ROLLBACK_DEFECT.md` |
 | **#288** | `a086800` | Legacy movement rollback made **fail closed** (activation path proven byte-identical) |
 | **#285** | `2279b45` | Retired two dead client wrappers `sendShipGroup` / `moveShipGroup` |
-| **#284** | `b11b3bd` | **Elite stat wiring — migration `0272`** (DARK; merged, **not deployed**) |
+| **#284** | `b11b3bd` | **Elite stat wiring — migration `0272`** (DARK; **deployed to production later the same day — §9**) |
 | **#287** | `ce26486` | World Editor UX comfort pass (client-only) — current `main` head |
 
 **Closed without merging** (disposition comments posted; branches preserved):
@@ -110,7 +113,7 @@ the ~2% escape is retained deliberately ("there is ALWAYS a risk"). Live-verifie
 (`send_ship_group_expedition`, `move_ship_group_to_location`) were **dropped from production by `0232`**
 — so they could only ever have returned `unavailable`. Deleted rather than left as decoration.
 
-### 5. Elite stat wiring — migration `0272` (#284) — **merged, deployment deferred**
+### 5. Elite stat wiring — migration `0272` (#284) — **merged, and later deployed (§9)**
 
 **Design.** The elite roll happens **once, at encounter materialization**, inside
 `resolve_location_encounter` (the sole `create or replace function` in the file, `0272:90`). The elite
@@ -140,7 +143,8 @@ re-created** and the damage resolver never learns what "elite" means.
 **What it unblocks.** The `ELITE-READINESS FAIL` refusal in `scripts/activate-encounter-resolver.sql`
 (duplicated in `scripts/activate-combat-content-all.sql`) is repointed by this PR to an informational
 `ACTE3_PASS_ELITE_WIRED` notice, with a new `ELITE-WIRING FAIL` raise if the *deployed* resolver lacks
-the `':enc:elite:'` salt (i.e. if someone tries to activate before `0272` is deployed).
+the `':enc:elite:'` salt (i.e. if someone tries to activate before `0272` is deployed — no longer the
+case in production, see §9).
 **Honest note: that refusal was not blocking anything today** — production has **0** members with
 `elite_chance > 0`.
 
@@ -191,18 +195,84 @@ swallowed as phantom tables**.
 
 ### 8. What remains (nothing here is done)
 
-1. **Approve the `production` gate for `0272`** — owner-only. Until then prod stays at `0271` and elite
-   is not live anywhere.
+1. ~~**Approve the `production` gate for `0272`**~~ — **DONE**, see §9. Production head is `0272`.
 2. **Execute the unified-movement smoke** (`docs/MOVEMENT_SMOKE_PACKET.md`) with an owner-named
-   **expendable** fleet, to move movement from classification **B** to **A**.
+   **expendable** fleet, to move movement from classification **B** to **A**. **Still not performed.**
 3. **Encounter canary** — activate the `canary_encounter` chain (binding `2f7bcf88`), not `pirate_basic`.
+   One prerequisite is still open: the owner must run the **SELECT-only cap-audit packet**
+   (`docs/ENCOUNTER_CANARY_PACKET.md` §3A) — see §9's residual item.
 4. **Reward-adapter slice** if elite waves should pay more than non-elite waves.
+
+### 9. Migration `0272` DEPLOYED — and verified before/after
+
+**Production migration head is now `0272`** (was `0271`). This is a *deployment* record, not a code
+change.
+
+| | |
+|---|---|
+| Deployment | **`5566872965`**, created **2026-07-23T04:21:27Z**, ref `main`, from commit **`b11b3bd`** |
+| Workflow run | **`29979341800`** — completed **`success`** at **2026-07-23T06:48:43Z** |
+| Who approved | **the owner** approved the `production` environment gate. The assistant did not. |
+| Deploy log | `Applying migration 20260618000272_encounter_elite_stat_wiring.sql…` → `Finished supabase db push.` |
+
+**The migration's in-transaction self-assert PASSED on live Postgres.** That is the strongest single
+piece of evidence here: it is not a CI claim, it ran inside the production transaction and would have
+aborted the deploy on any failure. What it asserted:
+
+- **Lands DARK.** `encounter_resolver_enabled` still `false`; **no new flag**;
+  `encounter_elite_difficulty_multiplier` seeded and readable.
+- **`process_combat_ticks` NOT re-created and unchanged** — pinned `v_resolver_engaged`, the seeded
+  resolver call, the `0234` synthetic-wave anchors, the **verbatim** reward formula, the reward adapter,
+  **exactly 2 `random(` calls**, and **no elite token**: the tick stays elite-blind.
+- **Determinism law intact.** The resolver keeps the `0041` law (`hashtextextended` / `p_seed`, no
+  `random()`, no `setseed`) and adds only the `':enc:elite:'` salt.
+- **`0261` parity.** The count-roll expression is **byte-identical**; all elite work is guarded on
+  `elite_chance > 0` / `elite_count > 0`; the plan is tagged `elite_policy=multiplier_v1`.
+- **No elite column** on any combat or runtime table; the multiplier has **ONE** config authority, read
+  once at materialization.
+- **Dark-path behaviour.** The resolver returns `NULL` under the dark quad-flag, and two identical calls
+  agree.
+- **Neighbours untouched.** `combat_create_group_encounter` / `report_create` / `reward_grant` /
+  `base_add_resources` not redefined and elite-free. ACL unchanged: engine-only, `service_role` execute,
+  no client grant.
+
+**Before/after verifier: `PD0272S_DIFF_PASS` — 2 intended changes, 0 unintended.** Baseline was
+`docs/snapshots/pd0272-production-before.json`, captured while the gate was still closed.
+
+| Bucket | Result |
+|---|---|
+| `must_not_change.*` | **every value byte-identical** |
+| `expected_to_change.cfg.encounter_elite_difficulty_multiplier` | absent → **`2`** |
+| `expected_to_change.cfg.row_count` | **139 → 140** |
+
+After-phase posture check: **`PD0272S_PASS phase=after blockers=0 warnings=2`**. **Nothing was written
+by any verifier** — every phase is read-only.
+
+**No player-visible behaviour became reachable.** Both encounter bindings remain **inactive**; **no**
+member gained `elite_chance > 0`; all movement, pirate-intercept, content, reward, archetype, template,
+profile and runtime-state values are unchanged.
+
+**Independent third confirmation.** The PROJECTMAP live scan now reads `game_config: 140 rows, 41 flags`,
+with **19** flags lit — unchanged from before the deploy. Three independent readers (in-migration
+self-assert, before/after verifier, PROJECTMAP scan) agree on the same `140`.
+
+**What this deploy does NOT settle — do not read more into it than is there:**
+
+- **Movement is still classification `B` — evidence incomplete.** The production movement smoke has
+  **not** been performed. `0272` has nothing to do with movement.
+- **The residual `encounter_runtime_state` row is still classified `HISTORICAL-HARMLESS` on one
+  unexecuted read.** That classification rests on a `combat_encounters` question that is **RLS-blocked**
+  to the anon key: *are there `active`/`retreating` rows at Reaver tagged with the `canary_encounter`
+  profile?* The owner must run the SELECT-only packet in
+  **`docs/ENCOUNTER_CANARY_PACKET.md` §3A** as `service_role`. `cap_consuming_encounter_count = 0`
+  confirms the classification and clears the canary; `≥ 1` means the derived cap is already consumed and
+  a canary would be silently suppressed — a `combat_encounters` defect, **not** a runtime-state one.
 
 ---
 
 ## 2026-07-23 — World Editor roadmap CLOSURE: chain `0263`→`0271` deployed (prod head **0271**) + client V5 shipped
 
-**Migration chain deployed (0263→0271).** Production migration head is **`0271`**. Recorded from the
+**Migration chain deployed (0263→0271).** Production migration head is **`0271`** — *as of this entry; later the same day `0272` deployed and the head is now `0272`, see the entry above*. Recorded from the
 **deploy workflow's Supabase CLI log** — this is *not* a direct production database read; nothing in this
 entry was read off prod SQL from this machine.
 
