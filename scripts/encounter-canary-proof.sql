@@ -340,7 +340,7 @@ declare
   v_arch uuid := (select v from ecfx where k='arch'); v_rp uuid := (select v from ecfx where k='rp');
   v_enc uuid; g uuid; n integer; v_plan jsonb; u jsonb; v_hp double precision; v_exp double precision;
   v_lx double precision; v_ly double precision; v_px double precision; v_py double precision;
-  v_rows integer; v_ac integer; v_grants jsonb; k text;
+  v_rows integer; v_ac integer; v_grants jsonb; v_reskey text;
 begin
   select x, y into v_lx, v_ly from public.locations where id = v_loc;
   g := pg_temp.new_armed_player('s3');
@@ -366,7 +366,7 @@ begin
    where location_id = v_loc and encounter_profile_id = v_ep;
   if v_ac is null then raise exception 'ECP FAIL ONE_RUNTIME_ROW: the single row is not for (canary location, canary profile)'; end if;
   if v_ac <> 1 then raise exception 'ECP FAIL ONE_RUNTIME_ROW: active_count % (want 1 on the first spawn)', v_ac; end if;
-  update ecfn set v = 1 where k = 'ledger_baseline';
+  update ecfn set v = 1 where ecfn.k = 'ledger_baseline';
   raise notice 'ECP_PASS_ONE_RUNTIME_ROW';
 
   -- ── ECP_PASS_FLEET_COMPOSITION: the plan and the spawned units are EXACTLY one canary_pirate.
@@ -415,8 +415,8 @@ begin
   if (v_plan->'reward_profile'->>'id') <> v_rp::text then
     raise exception 'ECP FAIL REWARD: the plan resolved reward profile % (want canary_reward %)', v_plan->'reward_profile'->>'id', v_rp;
   end if;
-  for k in select jsonb_object_keys(v_grants) loop
-    if k <> 'metal' then raise exception 'ECP FAIL REWARD: resource_grants carries an unsupported resource %: %', k, v_grants; end if;
+  for v_reskey in select jsonb_object_keys(v_grants) loop
+    if v_reskey <> 'metal' then raise exception 'ECP FAIL REWARD: resource_grants carries an unsupported resource %: %', v_reskey, v_grants; end if;
   end loop;
   if (v_grants->'metal'->>'base')::double precision <> 7 then
     raise exception 'ECP FAIL REWARD: metal base % (want 7)', v_grants->'metal'->>'base';
