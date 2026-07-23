@@ -1,0 +1,129 @@
+name: ENCOUNTER CANARY — read-only readiness verifier selftest + disposable exact-chain proof (no production)
+
+# Proves the ENCOUNTER CANARY packet on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain (0257 E0 → 0271), so every in-migration
+#     self-assert runs here against real Postgres before anything else executes.
+#   * scripts/encounter-canary-readiness.sh --expect-blocked runs the READ-ONLY readiness verifier
+#     against that disposable DB. The disposable DB has NO canary content, so the verifier MUST report
+#     CANARY_READY_BLOCKED — this is the verifier's SELFTEST: it proves the thing fails CLOSED instead
+#     of vacuously passing. The verifier opens `begin transaction read only`, so PostgreSQL itself
+#     rejects any write it might ever contain.
+#   * scripts/encounter-canary-proof.sh then reproduces the EXACT production canary chain
+#     (canary_reward metal base 7 → canary_pirate base_difficulty 1 → canary_fleet 1x elite_chance 0 →
+#     canary_encounter cap 1 / cooldown 30 s → an INACTIVE binding at a Reaver-shaped hunt location) and
+#     drives it end to end through the REAL owner RPCs and the REAL combat tick, proving twelve
+#     behaviours plus a post-rollback cleanliness check.
+#
+# The proof SQL is self-rolling-back (begin;…rollback;): every flag flip happens INSIDE the transaction
+# and is discarded; it commits no flag and keeps no row. NO `environment:` key on any job ⇒ none of them
+# can read production secrets. Modeled on .github/workflows/encounter-resolver-proof.yml.
+#
+# NOTHING in this workflow activates the production canary binding or flips a production flag. The two
+# activation scripts (scripts/activate-canary-binding.sql and
+# scripts/activate-encounter-resolver-canary.sql) are OWNER-RUN ONLY and are never invoked here.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-encounter-canary**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encounter-canary-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0257-0271 self-asserts)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+
+      - name: READINESS VERIFIER SELFTEST — must FAIL CLOSED on a database with no canary content
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          chmod +x scripts/encounter-canary-readiness.sh
+          out="$(DB_URL="$DB_URL" ./scripts/encounter-canary-readiness.sh --expect-blocked 2>&1)" || {
+            echo "$out"; echo 'READINESS SELFTEST FAILED'; exit 1; }
+          echo "$out"
+          for marker in \
+            'CANARY_FINDING [BLOCK] CH04_BINDING_MISSING' \
+            'CANARY_READY_BLOCKED' \
+            'CANARY_READINESS_SELFTEST_PASS'; do
+            echo "$out" | grep -qF "$marker" || { echo "MISSING SELFTEST MARKER: $marker"; exit 1; }
+          done
+          echo 'READINESS VERIFIER FAILS CLOSED AS REQUIRED'
+
+      - name: READINESS VERIFIER — read-only posture assertion (no write verb anywhere in the file)
+        run: |
+          # strip SQL comments first, then look for ANY write verb in the executable text.
+          if sed 's/--.*$//' scripts/encounter-canary-readiness.sql \
+             | grep -nEi '(insert +into|update +[a-z_."]+ +set|delete +from|truncate|create +(temp +)?(table|index|function|view)|create +or +replace|alter +table|drop +(table|function)|grant +|revoke +|set_game_config)'; then
+            echo 'READ-ONLY VIOLATION: the readiness verifier contains a write verb outside a comment'; exit 1
+          fi
+          grep -q 'begin transaction read only;' scripts/encounter-canary-readiness.sql \
+            || { echo 'READ-ONLY VIOLATION: the readiness verifier does not open a read-only transaction'; exit 1; }
+          echo 'READINESS VERIFIER IS READ-ONLY (read-only transaction + no write verbs)'
+
+      - name: ENCOUNTER-CANARY exact-chain proof (inactive binding / resolver off / activation / cap / cooldown / composition / reward / non-elite / disable / rollback)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          chmod +x scripts/encounter-canary-proof.sh
+          # capture without aborting so the psql output (incl. any RAISE) is always printed for
+          # diagnosis; the marker loop below is the pass/fail gate.
+          out="$(DB_URL="$DB_URL" ./scripts/encounter-canary-proof.sh 2>&1)" || true
+          echo "$out"
+          for marker in \
+            ECP_PASS_INACTIVE_BINDING_NO_SPAWN \
+            ECP_PASS_RESOLVER_OFF_NO_SPAWN \
+            ECP_PASS_BINDING_ONLY_NO_SPAWN \
+            ECP_PASS_ACTIVATED_SPAWN \
+            ECP_PASS_ONE_RUNTIME_ROW \
+            ECP_PASS_COOLDOWN_BLOCKS \
+            ECP_PASS_FLEET_COMPOSITION \
+            ECP_PASS_REWARD_MATCHES \
+            ECP_PASS_NON_ELITE \
+            ECP_PASS_BINDING_DISABLED_STOPS \
+            ECP_PASS_RESOLVER_DISABLED_STOPS \
+            ECP_PASS_NO_NEW_ACTIVE_CONTENT \
+            ECP_PASS_ROLLBACK_CLEAN \
+            'ENCOUNTER-CANARY PROOF PASSED' \
+            'ALL ENCOUNTER-CANARY PASS MARKERS PRESENT'; do
+            echo "$out" | grep -qF "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
+          done
+          echo 'ALL ENCOUNTER-CANARY PASS MARKERS PRESENT'
+
+      - name: ACTIVATION SCRIPTS — must exist, be separate, and never be executed by CI
+        run: |
+          test -f scripts/activate-canary-binding.sql || { echo 'missing Script A'; exit 1; }
+          test -f scripts/activate-encounter-resolver-canary.sql || { echo 'missing Script B'; exit 1; }
+          # Script A must not flip the resolver flag; Script B must not activate a binding.
+          if grep -qi "set_game_config('encounter_resolver_enabled'" scripts/activate-canary-binding.sql; then
+            echo 'SEPARATION VIOLATION: Script A flips the resolver flag'; exit 1; fi
+          if grep -qiE 'update +public\.location_encounter_bindings' scripts/activate-encounter-resolver-canary.sql; then
+            echo 'SEPARATION VIOLATION: Script B writes location_encounter_bindings'; exit 1; fi
+          for f in scripts/activate-canary-binding.sql scripts/activate-encounter-resolver-canary.sql; do
+            grep -q 'OWNER-RUN ONLY' "$f" || { echo "missing OWNER-RUN ONLY header in $f"; exit 1; }
+            grep -q 'MUST NOT BE EXECUTED BY AN AGENT' "$f" || { echo "missing agent prohibition in $f"; exit 1; }
+            grep -q 'ROLLBACK' "$f" || { echo "missing ROLLBACK section in $f"; exit 1; }
+          done
+          echo 'ACTIVATION SCRIPTS ARE SEPARATE, OWNER-GATED, AND UNEXECUTED'
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
