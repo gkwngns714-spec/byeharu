@@ -1,16 +1,16 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 249,
-  "functions": 243,
-  "tables": 87,
-  "flags": 37,
+  "migrations": 265,
+  "functions": 274,
+  "tables": 95,
+  "flags": 41,
   "systems": 29,
   "phases": 28,
   "rungs": 9,
-  "jobs": 236,
-  "nodes": 682,
-  "edges": 1933
+  "jobs": 239,
+  "nodes": 741,
+  "edges": 2159
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -2829,6 +2829,190 @@
    "seedsFlag": []
   },
   {
+   "id": "mig:20260618000256",
+   "kind": "migration",
+   "label": "worldeditor_audit_read",
+   "stamp": "20260618000256",
+   "seq": null,
+   "addedAt": "2026-07-21T02:44:39+09:00",
+   "file": "supabase/migrations/20260618000256_worldeditor_audit_read.sql",
+   "detail": "Byeharu — WORLD EDITOR V1.5 (Operations & Audit UX): world_editor_audit_list — the owner-only READ boundary over the world_editor_audit ledger, through the 0243 spine. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the FIRST client-reachable read over public.world_editor_audit. The ledger is RLS deny-all + no client grant (0243:107-108",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000257",
+   "kind": "migration",
+   "label": "enemy_content_registry",
+   "stamp": "20260618000257",
+   "seq": null,
+   "addedAt": "2026-07-21T16:46:17+09:00",
+   "file": "supabase/migrations/20260618000257_enemy_content_registry.sql",
+   "detail": "Byeharu — E0: ENEMY CONTENT REGISTRY — a NET-NEW, DARK, fail-closed, ADDITIVE authoring surface. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: two net-new owner-authored CATALOG tables — public.reward_profiles (the reusable reward-formula parameterization) and public.enemy_archetypes (the reusable enemy TEMPLATE) — plus SIX owner-gate",
+   "seedsFlag": [
+    "enemy_content_registry_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000258",
+   "kind": "migration",
+   "label": "fleet_templates_encounter_profiles",
+   "stamp": "20260618000258",
+   "seq": null,
+   "addedAt": "2026-07-21T17:46:47+09:00",
+   "file": "supabase/migrations/20260618000258_fleet_templates_encounter_profiles.sql",
+   "detail": "Byeharu — E1: FLEET TEMPLATES + ENCOUNTER PROFILES — a NET-NEW, DARK, fail-closed, ADDITIVE surface. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: four net-new owner-authored tables that COMPOSE the E0 catalog into reusable encounter content — public.enemy_fleet_templates (a named group of archetype references) with its normalized chi",
+   "seedsFlag": [
+    "encounter_authoring_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000259",
+   "kind": "migration",
+   "label": "location_encounter_bindings",
+   "stamp": "20260618000259",
+   "seq": null,
+   "addedAt": "2026-07-21T18:12:03+09:00",
+   "file": "supabase/migrations/20260618000259_location_encounter_bindings.sql",
+   "detail": "Byeharu — E2: LOCATION → ENCOUNTER BINDINGS — a NET-NEW, DARK, fail-closed, ADDITIVE surface. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: ONE net-new owner-authored join table — public.location_encounter_bindings — that BINDS a live world location (public.locations, 0002) to a reusable E1 encounter profile (public.encounter_profiles",
+   "seedsFlag": [
+    "encounter_binding_authoring_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000260",
+   "kind": "migration",
+   "label": "0260 encounter_runtime_resolver",
+   "stamp": "20260618000260",
+   "seq": "0260",
+   "addedAt": "2026-07-21T19:16:28+09:00",
+   "file": "supabase/migrations/20260618000260_encounter_runtime_resolver.sql",
+   "detail": "Byeharu — E3: ENCOUNTER RUNTIME RESOLVER — the RISK-INFLECTION slice (migration 0260). It MODIFIES the live combat function process_combat_ticks (0234). DARK behind the fail-closed quad-flag encounter_resolver_enabled (seeded false). ═══════════════════════════════════════════════════════════════════════════════════════════════ THE HARD GUARANTEE: with encounter_resolver_enabled=false (the default",
+   "seedsFlag": [
+    "encounter_resolver_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000261",
+   "kind": "migration",
+   "label": "0261 encounter_variety_zero_elite",
+   "stamp": "20260618000261",
+   "seq": "0261",
+   "addedAt": "2026-07-21T21:20:31+09:00",
+   "file": "supabase/migrations/20260618000261_encounter_variety_zero_elite.sql",
+   "detail": "Byeharu — E5: RESOLVER PER-ENCOUNTER VARIETY + ZERO-ELITE READINESS (migration 0261). Resolver-only, DARK, flag-gated behind the SAME quad-flag as E3 (encounter_resolver_enabled seeded false). It does two things, both inert while the resolver is off: (1) VARIETY — resolve_location_encounter gains a per-encounter seed p_seed folded into every sampling salt. process_combat_ticks passes e.id::text (a",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000262",
+   "kind": "migration",
+   "label": "0262 combat_player_fallback_weapon",
+   "stamp": "20260618000262",
+   "seq": "0262",
+   "addedAt": "2026-07-22T14:05:17+09:00",
+   "file": "supabase/migrations/20260618000262_combat_player_fallback_weapon.sql",
+   "detail": "Byeharu — COMBAT-FALLBACK: spatial-mode player ships with NO fitted weapon module fire a SYNTHESIZED basic weapon (migration 0262). Forward-only; redefines combat_create_group_encounter (the 0234 HEAD) with ONE marked additive hunk. The tick (process_combat_ticks) is UNTOUCHED — it stays a pure consumer of combat_units.weapons_json. ══ THE BUG (confirmed on production, spatial_combat_enabled=true)",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000263",
+   "kind": "migration",
+   "label": "worldeditor_v1c_pr_d_read_cutover",
+   "stamp": "20260618000263",
+   "seq": null,
+   "addedAt": "2026-07-22T17:10:23+09:00",
+   "file": "supabase/migrations/20260618000263_worldeditor_v1c_pr_d_read_cutover.sql",
+   "detail": "Byeharu — WORLD-EDITOR V1C PR-D: get_world_map() READ-CUTOVER to space_anchors (authority only). BYTE-IDENTICAL — the rendered world is unchanged after this migration. NO physical rescale, NO point moved, NO stored coordinate touched. This slice changes ONLY the READ AUTHORITY for the map's location coordinates: get_world_map() now emits each active location's (x, y) from its ACTIVE space_anchor (",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000264",
+   "kind": "migration",
+   "label": "worldeditor_v1c_anchor_write_authority",
+   "stamp": "20260618000264",
+   "seq": null,
+   "addedAt": "2026-07-22T17:38:58+09:00",
+   "file": "supabase/migrations/20260618000264_worldeditor_v1c_anchor_write_authority.sql",
+   "detail": "Byeharu — WORLD-EDITOR V1C PR-D+ : make public.space_anchors the SOLE location-coordinate AUTHORITY (read AND write). This closes the split-brain gap PR-D (0263) left open and tightens the read from a fail-SAFE fallback into a fail-CLOSED authority. ── THE GAP THIS CLOSES ─────────────────────────────────────────────────────────────────────────────── 0263 relocated get_world_map()'s READ authority",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000265",
+   "kind": "migration",
+   "label": "canonical_coord_validation_authority",
+   "stamp": "20260618000265",
+   "seq": null,
+   "addedAt": "2026-07-22T18:51:03+09:00",
+   "file": "supabase/migrations/20260618000265_canonical_coord_validation_authority.sql",
+   "detail": "Byeharu — WORLD EDITOR: ONE canonical point-coordinate-validation AUTHORITY. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: a single shared, pure validation helper — public.canonical_coord_violation — that expresses the ±10000 navigable-square coordinate-frame invariant ONCE, and the SIX owner-gated point-coordinate-write RPCs REDEFINE",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000266",
+   "kind": "migration",
+   "label": "worldeditor_publish_zone_update",
+   "stamp": "20260618000266",
+   "seq": null,
+   "addedAt": "2026-07-22T19:46:48+09:00",
+   "file": "supabase/migrations/20260618000266_worldeditor_publish_zone_update.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE: zone_update — the zone EDIT command, the last missing edge of the publish domain matrix (zones were the only domain with create+unpublish but no UPDATE). ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: the exact twin of location_update (0249) crossed with the geometry materialization of zone_crea",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000267",
+   "kind": "migration",
+   "label": "worldeditor_unified_revert",
+   "stamp": "20260618000267",
+   "seq": null,
+   "addedAt": "2026-07-22T20:39:44+09:00",
+   "file": "supabase/migrations/20260618000267_worldeditor_unified_revert.sql",
+   "detail": "Byeharu — WORLD EDITOR: the ONE server-authoritative REVERT authority — world_editor_revert. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS IS: a single owner-gated SECURITY DEFINER command that reverts an AUDITED entity to its recorded before_snapshot state, across ALL FOUR editable domains (location / mining_field / exploration_site / zo",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000268",
+   "kind": "migration",
+   "label": "worldeditor_zone_setactive",
+   "stamp": "20260618000268",
+   "seq": null,
+   "addedAt": "2026-07-22T22:39:01+09:00",
+   "file": "supabase/migrations/20260618000268_worldeditor_zone_setactive.sql",
+   "detail": "Byeharu — WORLD EDITOR PUBLISHING SLICE: zone_set_active — the owner-gated zone RE-ACTIVATE command that closes the zone lifecycle-parity gap (a zone could be unpublished by 0255 zone_unpublish but never re-activated). REACTIVATE-ONLY, COMPLEMENTING zone_unpublish — it does NOT supersede it. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS I",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000269",
+   "kind": "migration",
+   "label": "worldeditor_entity_catalog",
+   "stamp": "20260618000269",
+   "seq": null,
+   "addedAt": "2026-07-22T23:07:32+09:00",
+   "file": "supabase/migrations/20260618000269_worldeditor_entity_catalog.sql",
+   "detail": "Byeharu — WORLD EDITOR SLICE 1.5: world_editor_entity_catalog — the owner-only LIFECYCLE CATALOG read. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE GAP THIS CLOSES: every existing World Editor read is ACTIVE-ONLY — get_world_map (0264) filters l.status='active', get_active_mining_fields (0226) filters is_active, get_danger_zones (0233) filters",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000270",
+   "kind": "migration",
+   "label": "worldeditor_entity_detail",
+   "stamp": "20260618000270",
+   "seq": null,
+   "addedAt": "2026-07-22T23:37:21+09:00",
+   "file": "supabase/migrations/20260618000270_worldeditor_entity_detail.sql",
+   "detail": "Byeharu — WORLD EDITOR SLICE 1.75: world_editor_entity_detail — the owner-only INACTIVE-DETAIL / REACTIVATION reader that lets the editor REACTIVATE a ZONE or LOCATION selected from the 0269 lifecycle catalog WITHOUT fabricating the optimistic-concurrency `expected` fields those two reactivation commands demand. ══════════════════════════════════════════════════════════════════════════════════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000271",
+   "kind": "migration",
+   "label": "worldeditor_catalog_markerstyle",
+   "stamp": "20260618000271",
+   "seq": null,
+   "addedAt": "2026-07-23T00:21:59+09:00",
+   "file": "supabase/migrations/20260618000271_worldeditor_catalog_markerstyle.sql",
+   "detail": "Byeharu — WORLD EDITOR: enrich world_editor_entity_catalog with the four location marker-style fields. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE GAP THIS CLOSES: the World Editor map is now sourced SOLELY from world_editor_entity_catalog (0269), but that catalog row does NOT carry the four fields the client marker policy (src/features/map/m",
+   "seedsFlag": []
+  },
+  {
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
@@ -4287,6 +4471,192 @@
    "detail": "Postgres function"
   },
   {
+   "id": "fn:world_editor_audit_list",
+   "kind": "function",
+   "label": "world_editor_audit_list",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:_reward_grants_valid_details",
+   "kind": "function",
+   "label": "_reward_grants_valid_details",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:reward_profile_create",
+   "kind": "function",
+   "label": "reward_profile_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:reward_profile_update",
+   "kind": "function",
+   "label": "reward_profile_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:reward_profile_set_active",
+   "kind": "function",
+   "label": "reward_profile_set_active",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:enemy_archetype_create",
+   "kind": "function",
+   "label": "enemy_archetype_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:enemy_archetype_update",
+   "kind": "function",
+   "label": "enemy_archetype_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:enemy_archetype_set_active",
+   "kind": "function",
+   "label": "enemy_archetype_set_active",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:_guard_archetype_deactivation",
+   "kind": "function",
+   "label": "_guard_archetype_deactivation",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:_guard_reward_profile_deactivation",
+   "kind": "function",
+   "label": "_guard_reward_profile_deactivation",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:_guard_fleet_template_deactivation",
+   "kind": "function",
+   "label": "_guard_fleet_template_deactivation",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:_fleet_members_valid_details",
+   "kind": "function",
+   "label": "_fleet_members_valid_details",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:_encounter_members_valid_details",
+   "kind": "function",
+   "label": "_encounter_members_valid_details",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:enemy_fleet_template_create",
+   "kind": "function",
+   "label": "enemy_fleet_template_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:enemy_fleet_template_update",
+   "kind": "function",
+   "label": "enemy_fleet_template_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:enemy_fleet_template_set_active",
+   "kind": "function",
+   "label": "enemy_fleet_template_set_active",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:encounter_profile_create",
+   "kind": "function",
+   "label": "encounter_profile_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:encounter_profile_update",
+   "kind": "function",
+   "label": "encounter_profile_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:encounter_profile_set_active",
+   "kind": "function",
+   "label": "encounter_profile_set_active",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:_guard_encounter_profile_deactivation",
+   "kind": "function",
+   "label": "_guard_encounter_profile_deactivation",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:location_encounter_binding_create",
+   "kind": "function",
+   "label": "location_encounter_binding_create",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:location_encounter_binding_update",
+   "kind": "function",
+   "label": "location_encounter_binding_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:location_encounter_binding_set_active",
+   "kind": "function",
+   "label": "location_encounter_binding_set_active",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:resolve_encounter_reward_inputs",
+   "kind": "function",
+   "label": "resolve_encounter_reward_inputs",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:resolve_location_encounter",
+   "kind": "function",
+   "label": "resolve_location_encounter",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:canonical_coord_violation",
+   "kind": "function",
+   "label": "canonical_coord_violation",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:zone_update",
+   "kind": "function",
+   "label": "zone_update",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:world_editor_revert",
+   "kind": "function",
+   "label": "world_editor_revert",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:zone_set_active",
+   "kind": "function",
+   "label": "zone_set_active",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:world_editor_entity_catalog",
+   "kind": "function",
+   "label": "world_editor_entity_catalog",
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:world_editor_entity_detail",
+   "kind": "function",
+   "label": "world_editor_entity_detail",
+   "detail": "Postgres function"
+  },
+  {
    "id": "table:profiles",
    "kind": "table",
    "label": "profiles",
@@ -4896,6 +5266,62 @@
    "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
   },
   {
+   "id": "table:reward_profiles",
+   "kind": "table",
+   "label": "reward_profiles",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:enemy_archetypes",
+   "kind": "table",
+   "label": "enemy_archetypes",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:enemy_fleet_templates",
+   "kind": "table",
+   "label": "enemy_fleet_templates",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:enemy_fleet_template_members",
+   "kind": "table",
+   "label": "enemy_fleet_template_members",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:encounter_profiles",
+   "kind": "table",
+   "label": "encounter_profiles",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:encounter_profile_members",
+   "kind": "table",
+   "label": "encounter_profile_members",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:location_encounter_bindings",
+   "kind": "table",
+   "label": "location_encounter_bindings",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:encounter_runtime_state",
+   "kind": "table",
+   "label": "encounter_runtime_state",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
    "id": "flag:runtime_cleanup_enabled",
    "kind": "flag",
    "label": "runtime_cleanup_enabled",
@@ -5115,6 +5541,30 @@
    "id": "flag:dev_zone_editor_enabled",
    "kind": "flag",
    "label": "dev_zone_editor_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:enemy_content_registry_enabled",
+   "kind": "flag",
+   "label": "enemy_content_registry_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:encounter_authoring_enabled",
+   "kind": "flag",
+   "label": "encounter_authoring_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:encounter_binding_authoring_enabled",
+   "kind": "flag",
+   "label": "encounter_binding_authoring_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:encounter_resolver_enabled",
+   "kind": "flag",
+   "label": "encounter_resolver_enabled",
    "detail": "game_config feature flag"
   },
   {
@@ -10187,6 +10637,441 @@
    "type": "creates"
   },
   {
+   "source": "mig:20260618000256",
+   "target": "fn:world_editor_audit_list",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "fn:_reward_grants_valid_details",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "fn:reward_profile_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "fn:reward_profile_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "fn:reward_profile_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "fn:enemy_archetype_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "fn:enemy_archetype_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "fn:enemy_archetype_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "table:reward_profiles",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "table:enemy_archetypes",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "table:reward_profiles",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "table:enemy_archetypes",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000257",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:_guard_archetype_deactivation",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:_guard_reward_profile_deactivation",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:_guard_fleet_template_deactivation",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:_fleet_members_valid_details",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:_encounter_members_valid_details",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:enemy_fleet_template_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:enemy_fleet_template_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:enemy_fleet_template_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:encounter_profile_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:encounter_profile_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "fn:encounter_profile_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "table:enemy_fleet_templates",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "table:enemy_fleet_template_members",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "table:encounter_profiles",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "table:encounter_profile_members",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "table:enemy_fleet_templates",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "table:enemy_fleet_template_members",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "table:encounter_profiles",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "table:encounter_profile_members",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000258",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "fn:_guard_encounter_profile_deactivation",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "fn:location_encounter_binding_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "fn:location_encounter_binding_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "fn:location_encounter_binding_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "table:location_encounter_bindings",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "table:location_encounter_bindings",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000259",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "fn:resolve_encounter_reward_inputs",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "fn:resolve_location_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "table:encounter_runtime_state",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "table:combat_encounters",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "table:encounter_runtime_state",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "fn:resolve_location_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "fn:resolve_location_encounter",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000262",
+   "target": "fn:combat_create_group_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000262",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000263",
+   "target": "fn:get_world_map",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000264",
+   "target": "fn:location_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000264",
+   "target": "fn:location_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000264",
+   "target": "fn:get_world_map",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "fn:canonical_coord_violation",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "fn:exploration_site_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "fn:exploration_site_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "fn:mining_field_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "fn:mining_field_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "fn:location_create",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "fn:location_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000266",
+   "target": "fn:zone_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000267",
+   "target": "fn:world_editor_revert",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000268",
+   "target": "fn:zone_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000269",
+   "target": "fn:world_editor_entity_catalog",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000270",
+   "target": "fn:world_editor_entity_detail",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000271",
+   "target": "fn:world_editor_entity_catalog",
+   "type": "creates"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -11333,6 +12218,96 @@
    "note": "process_combat_ticks"
   },
   {
+   "source": "mig:20260618000260",
+   "target": "mig:20260618000242",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "mig:20260618000260",
+   "type": "supersedes",
+   "note": "resolve_location_encounter"
+  },
+  {
+   "source": "mig:20260618000261",
+   "target": "mig:20260618000260",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000262",
+   "target": "mig:20260618000234",
+   "type": "supersedes",
+   "note": "combat_create_group_encounter"
+  },
+  {
+   "source": "mig:20260618000263",
+   "target": "mig:20260618000217",
+   "type": "supersedes",
+   "note": "get_world_map"
+  },
+  {
+   "source": "mig:20260618000264",
+   "target": "mig:20260618000252",
+   "type": "supersedes",
+   "note": "location_create"
+  },
+  {
+   "source": "mig:20260618000264",
+   "target": "mig:20260618000249",
+   "type": "supersedes",
+   "note": "location_update"
+  },
+  {
+   "source": "mig:20260618000264",
+   "target": "mig:20260618000263",
+   "type": "supersedes",
+   "note": "get_world_map"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "mig:20260618000244",
+   "type": "supersedes",
+   "note": "exploration_site_create"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "mig:20260618000247",
+   "type": "supersedes",
+   "note": "exploration_site_update"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "mig:20260618000246",
+   "type": "supersedes",
+   "note": "mining_field_create"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "mig:20260618000248",
+   "type": "supersedes",
+   "note": "mining_field_update"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "mig:20260618000264",
+   "type": "supersedes",
+   "note": "location_create"
+  },
+  {
+   "source": "mig:20260618000265",
+   "target": "mig:20260618000264",
+   "type": "supersedes",
+   "note": "location_update"
+  },
+  {
+   "source": "mig:20260618000271",
+   "target": "mig:20260618000269",
+   "type": "supersedes",
+   "note": "world_editor_entity_catalog"
+  },
+  {
    "source": "mig:20260616000007",
    "target": "mig:20260616000006",
    "type": "extends",
@@ -11679,6 +12654,12 @@
    "target": "mig:20260618000243",
    "type": "extends",
    "note": "world_editor_audit"
+  },
+  {
+   "source": "mig:20260618000260",
+   "target": "mig:20260616000014",
+   "type": "extends",
+   "note": "combat_encounters"
   },
   {
    "source": "fn:base_reserve_units",
@@ -14696,6 +15677,621 @@
    "type": "touches"
   },
   {
+   "source": "fn:reward_profile_create",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:reward_profile_create",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:reward_profile_create",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:reward_profile_create",
+   "target": "fn:_reward_grants_valid_details",
+   "type": "calls"
+  },
+  {
+   "source": "fn:reward_profile_create",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:reward_profile_update",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:reward_profile_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:reward_profile_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:reward_profile_update",
+   "target": "fn:_reward_grants_valid_details",
+   "type": "calls"
+  },
+  {
+   "source": "fn:reward_profile_update",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:reward_profile_set_active",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:reward_profile_set_active",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:reward_profile_set_active",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:reward_profile_set_active",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_archetype_create",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_archetype_create",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_archetype_create",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_archetype_create",
+   "target": "table:unit_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_archetype_create",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_archetype_create",
+   "target": "table:enemy_archetypes",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_archetype_update",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_archetype_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_archetype_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_archetype_update",
+   "target": "table:unit_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_archetype_update",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_archetype_update",
+   "target": "table:enemy_archetypes",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_archetype_deactivation",
+   "target": "table:enemy_fleet_template_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_archetype_deactivation",
+   "target": "table:enemy_fleet_templates",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_reward_profile_deactivation",
+   "target": "table:encounter_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_fleet_template_deactivation",
+   "target": "table:encounter_profile_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_fleet_template_deactivation",
+   "target": "table:encounter_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_fleet_template_deactivation",
+   "target": "fn:_guard_archetype_deactivation",
+   "type": "calls"
+  },
+  {
+   "source": "fn:_guard_fleet_template_deactivation",
+   "target": "fn:_guard_reward_profile_deactivation",
+   "type": "calls"
+  },
+  {
+   "source": "fn:_guard_fleet_template_deactivation",
+   "target": "table:enemy_archetypes",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_fleet_template_deactivation",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_fleet_template_deactivation",
+   "target": "table:enemy_fleet_templates",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_fleet_template_deactivation",
+   "target": "table:game_config",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_create",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_fleet_template_create",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_fleet_template_create",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_create",
+   "target": "fn:_fleet_members_valid_details",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_fleet_template_create",
+   "target": "table:enemy_archetypes",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_create",
+   "target": "table:enemy_fleet_templates",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_create",
+   "target": "table:enemy_fleet_template_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_update",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_fleet_template_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_fleet_template_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_update",
+   "target": "fn:_fleet_members_valid_details",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_fleet_template_update",
+   "target": "table:enemy_archetypes",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_update",
+   "target": "table:enemy_fleet_templates",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_update",
+   "target": "table:enemy_fleet_template_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_set_active",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_fleet_template_set_active",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:enemy_fleet_template_set_active",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_set_active",
+   "target": "table:enemy_fleet_templates",
+   "type": "touches"
+  },
+  {
+   "source": "fn:enemy_fleet_template_set_active",
+   "target": "table:enemy_fleet_template_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_create",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:encounter_profile_create",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:encounter_profile_create",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_create",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_create",
+   "target": "fn:_encounter_members_valid_details",
+   "type": "calls"
+  },
+  {
+   "source": "fn:encounter_profile_create",
+   "target": "table:enemy_fleet_templates",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_create",
+   "target": "table:encounter_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_create",
+   "target": "table:encounter_profile_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_update",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:encounter_profile_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:encounter_profile_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_update",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_update",
+   "target": "fn:_encounter_members_valid_details",
+   "type": "calls"
+  },
+  {
+   "source": "fn:encounter_profile_update",
+   "target": "table:enemy_fleet_templates",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_update",
+   "target": "table:encounter_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:encounter_profile_update",
+   "target": "table:encounter_profile_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_encounter_profile_deactivation",
+   "target": "table:location_encounter_bindings",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_encounter_profile_deactivation",
+   "target": "table:encounter_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:_guard_encounter_profile_deactivation",
+   "target": "table:game_config",
+   "type": "touches"
+  },
+  {
+   "source": "fn:location_encounter_binding_create",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:location_encounter_binding_create",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:location_encounter_binding_create",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:location_encounter_binding_create",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:location_encounter_binding_create",
+   "target": "table:encounter_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:location_encounter_binding_create",
+   "target": "table:location_encounter_bindings",
+   "type": "touches"
+  },
+  {
+   "source": "fn:location_encounter_binding_update",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:location_encounter_binding_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:location_encounter_binding_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:location_encounter_binding_update",
+   "target": "table:location_encounter_bindings",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_encounter_reward_inputs",
+   "target": "fn:cfg_num",
+   "type": "calls"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:location_encounter_bindings",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:encounter_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:combat_encounters",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:encounter_runtime_state",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:encounter_profile_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:enemy_fleet_templates",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:enemy_fleet_template_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:enemy_archetypes",
+   "type": "touches"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "fn:cfg_num",
+   "type": "calls"
+  },
+  {
+   "source": "fn:resolve_location_encounter",
+   "target": "table:reward_profiles",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_create_group_encounter",
+   "target": "table:game_config",
+   "type": "touches"
+  },
+  {
+   "source": "fn:exploration_site_create",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:exploration_site_create",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:exploration_site_create",
+   "target": "fn:canonical_coord_violation",
+   "type": "calls"
+  },
+  {
+   "source": "fn:exploration_site_create",
+   "target": "table:exploration_sites",
+   "type": "touches"
+  },
+  {
+   "source": "fn:exploration_site_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:exploration_site_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:exploration_site_update",
+   "target": "table:exploration_sites",
+   "type": "touches"
+  },
+  {
+   "source": "fn:exploration_site_update",
+   "target": "fn:canonical_coord_violation",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mining_field_create",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mining_field_create",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mining_field_create",
+   "target": "fn:canonical_coord_violation",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mining_field_create",
+   "target": "table:mining_fields",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mining_field_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mining_field_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mining_field_update",
+   "target": "table:mining_fields",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mining_field_update",
+   "target": "fn:canonical_coord_violation",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_update",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_update",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:world_editor_revert",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:world_editor_revert",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:zone_set_active",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_set_active",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:world_editor_entity_catalog",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:world_editor_entity_catalog",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
    "source": "table:profiles",
    "target": "system:Auth",
    "type": "owned-by"
@@ -16813,6 +18409,23 @@
    "migs": [
     "20260618000243"
    ]
+  },
+  {
+   "date": "2026-07-20",
+   "title": "MILESTONE: **WORLD EDITOR FOUR-DOMAIN AUTHORING V1 — COMPLETE** (full owner-gated publish surface deployed, migrations 0244→0255, prod head **0255**; reversible zone lifecycle proven live in production)",
+   "migs": [
+    "20260618000244"
+   ]
+  },
+  {
+   "date": "2026-07-21",
+   "title": "OPERATIONAL RECORD: **World Editor V1.5 audit-read backend DEPLOYED & PRODUCTION-PROVEN** (migration `0256`, prod head **0256**)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-21",
+   "title": "Combat-content program (E0–E4) **activation-prep authored (NOT run)**",
+   "migs": []
   }
  ]
 }
