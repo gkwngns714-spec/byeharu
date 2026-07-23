@@ -8,8 +8,10 @@ change.
 
 ## Production state
 
-**Production migration head: `0271`.** Migrations `0263`–`0271` are all deployed to production, each
-with a disposable `supabase start` apply-proof on real Postgres:
+**Migrations `0263`–`0271` are all deployed to production**, each with a disposable `supabase start`
+apply-proof on real Postgres. (`0271` was the production head when this document was written; the head
+is now **`0272`** — the DARK elite stat-wiring migration, deployed 2026-07-23, outside the World Editor
+program. See `docs/DEV_LOG.md` §9.)
 
 | Migration | Change |
 |---|---|

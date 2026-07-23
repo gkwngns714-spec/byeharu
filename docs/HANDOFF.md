@@ -18,16 +18,22 @@
 | Merged this session | **#282** `68ea475` · **#283** `86c2c73` · **#286** `b9e2560` · **#288** `a086800` · **#285** `2279b45` · **#284** `b11b3bd` (mig `0272`) · **#287** `ce26486` |
 | Closed unmerged | **#162** (edits an already-applied migration → guaranteed prod no-op; re-author as a *forward* migration) · **#245** (×17 coordinate normalize — rejected direction; slot `0253` is intentionally reserved and absent from `main`) · **#221** (Zone Templates plan — predates the whole V1→V5 program; rewrite against current architecture) |
 
-### Migrations — **`main` and production are NOT in sync**
+### Migrations — **`main` and production ARE in sync**
 
 | | |
 |---|---|
 | Highest migration on `main` | **`0272`** (`20260618000272_encounter_elite_stat_wiring.sql`) |
-| **Production migration head** | **`0271`** |
-| Why | The `Deploy Supabase migrations` run for the `0272` merge (**`29979341800`**) is **`waiting` at the `production` environment approval gate.** The owner **deliberately deferred** the approval. |
+| **Production migration head** | **`0272`** |
+| How | The owner approved the `production` gate. Deployment **`5566872965`** (created 2026-07-23T04:21:27Z, ref `main`, commit **`b11b3bd`**) / workflow run **`29979341800`** completed **`success`** at **2026-07-23T06:48:43Z**. The deploy log shows `Applying migration 20260618000272_encounter_elite_stat_wiring.sql…` then `Finished supabase db push.` |
 
-> **`0272` is MERGED TO `main` BUT NOT DEPLOYED.** Nothing in it is live. Do not describe elite
-> encounters as a production behaviour. Deployment is pending owner approval at the production gate.
+> **`0272` IS DEPLOYED — and it landed DARK.** Its in-transaction self-assert **passed on live
+> Postgres**: `encounter_resolver_enabled` still `false`, no new flag, `process_combat_ticks` not
+> re-created, no elite column anywhere, ACL unchanged. The before/after verifier returned
+> **`PD0272S_DIFF_PASS` — 2 intended changes, 0 unintended** (`encounter_elite_difficulty_multiplier`
+> absent → `2`; `game_config` row count `139 → 140`); every `must_not_change.*` value was byte-identical.
+> **No player-visible behaviour became reachable** — both bindings are still inactive and no member has
+> `elite_chance > 0`. Elite is deployed *code*, not observed *behaviour*: do not describe elite
+> encounters as something players can meet today. Full record: `docs/DEV_LOG.md` §9.
 
 ### Movement — **classification B, evidence incomplete**
 
@@ -73,11 +79,13 @@ behaviour-changing flag. Two encounter bindings exist, both inactive; the `canar
 
 ### THE NEXT STEPS (this supersedes §3)
 
-1. **Approve the `production` gate for `0272`** — owner-only; until then prod stays at `0271`.
+1. ~~**Approve the `production` gate for `0272`**~~ — **DONE 2026-07-23**; production head is `0272`.
 2. **Execute the unified-movement smoke** (`docs/MOVEMENT_SMOKE_PACKET.md`) with an owner-named
-   **expendable** fleet — moves movement from classification **B** to **A**.
+   **expendable** fleet — moves movement from classification **B** to **A**. **Still not performed.**
 3. **Encounter canary** — activate the `canary_encounter` chain, **not** `pirate_basic` (its
-   `cooldown_seconds = 0`, i.e. no spawn throttle).
+   `cooldown_seconds = 0`, i.e. no spawn throttle). **First**, the owner must run the SELECT-only
+   cap-audit packet (`docs/ENCOUNTER_CANARY_PACKET.md` §3A) as `service_role`: it is the one
+   RLS-blocked read that settles whether the derived cap at Reaver is already consumed.
 4. **Team-command activation** (the old §3) is still an open human gate, still per
    `docs/TEAM_COMMAND.md` + `docs/TEAM_ACTIVATION_PACKET.md`, but it is **no longer "THE ONE next step"**
    — items 1–3 above sit in front of it.
@@ -137,14 +145,15 @@ to the repo (it travels via GitHub); the per-machine plan/memory files do NOT tr
 
 ## 2. Current state — repo & prod (verified 2026-07-12) — ⚠ **SUPERSEDED 2026-07-23 by §0**
 > The head, PR and migration numbers in this section are **eleven days stale**. Current truth is in §0:
-> `main` @ **`ce26486`**, one open PR (**#163**), highest migration on `main` **`0272`**, **production
-> head `0271`** with the `0272` deploy **waiting at the production approval gate**. Original text kept.
+> `main` @ **`ce26486`**, one open PR (**#163**), highest migration on `main` **`0272`**, and **production
+> head `0272`** — the `0272` deploy was approved by the owner and completed `success` on 2026-07-23.
+> Original text kept.
 
 - **`main` @ `9a292ed`** (merge of PR #97). **Zero open PRs.** Everything below is merged.
   **SUPERSEDED 2026-07-23** — see §0.
 - **Prod migration head = `20260618000169`** (the owner approved 0165 + 0166–0169 to production
   2026-07-12; the Deploy workflow's production-environment gate is the approval mechanism).
-  **SUPERSEDED 2026-07-23** — prod head is **`0271`**; `main` carries **`0272`**, undeployed.
+  **SUPERSEDED 2026-07-23** — prod head is **`0272`**, in sync with `main`.
 - **Pages deploy is live** — players see the new **Mission Control UI** (renewal R0–R4).
 
 ### Live game (port-centric — activated 2026-07-08) — ⚠ **MOVEMENT LINES SUPERSEDED 2026-07-23**
@@ -192,8 +201,8 @@ server-side (reject-before-read) + client-side (compile-time or server-lit UI). 
 
 ## 3. THE ONE NEXT STEP — team-command activation — ⚠ **SUPERSEDED 2026-07-23 by §0**
 > Still an open human gate and still accurate about *how* to do it, but it is **no longer the single next
-> step**: the `0272` production-gate approval, the unified-movement smoke, and the encounter canary all
-> sit in front of it (§0). "Nothing is in flight" was true on 2026-07-12 and is **false today**.
+> step**: the unified-movement smoke and the encounter canary still sit in front of it (§0). (The `0272`
+> production-gate approval, previously listed here, is **done** — prod head is `0272`.) "Nothing is in flight" was true on 2026-07-12 and is **false today**.
 
 The dark build is complete; nothing is in flight. What remains is the **human-gated activation** per
 `docs/TEAM_COMMAND.md` → **"ACTIVATION CHECKLIST — the single source of truth"**: the flag flips

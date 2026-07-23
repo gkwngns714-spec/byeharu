@@ -25,7 +25,9 @@ written.
 Flag posture read live (2026-07-23): `encounter_resolver_enabled=false`;
 `enemy_content_registry_enabled` / `encounter_authoring_enabled` /
 `encounter_binding_authoring_enabled` all **true** (E0–E2 authoring is live);
-`spatial_combat_enabled=true`; `pirate_intercept_enabled=true`. Migration head **0271**.
+`spatial_combat_enabled=true`; `pirate_intercept_enabled=true`. **Production migration head `0272`**
+(the DARK elite stat-wiring migration deployed 2026-07-23 — `docs/DEV_LOG.md` §9; the flag posture above
+is unchanged by it, and `canary_pirate` still carries `elite_chance = 0`).
 
 > **Correction to the working notes:** the `canary_pirate` archetype is at **revision 2**, not 1. The
 > readiness verifier's default `canary.expect_archetype_rev` is therefore `2`. Everything else in the
@@ -71,12 +73,257 @@ This chain was briefly live on 2026-07-22 before `encounter_resolver_enabled` wa
 (0261, resolved-spawn arm: `on conflict … do update set … active_count = active_count + 1`) and is never
 decremented when an encounter ends. It is a **cumulative spawn counter**. The **cap authority** is
 derived at resolve time by counting rows in `combat_encounters` at the location with status
-`active`/`retreating` whose `resolved_plan_json->>'encounter_profile_id'` equals the profile.
+`active`/`retreating` whose `resolved_plan_json->>'encounter_profile_id'` equals the profile. **§3A below
+is the SELECT-only packet the owner runs to settle exactly that count.**
 
 What *is* load-bearing on that row is **`last_spawn_at`**: it is the cooldown anchor. If it were newer
 than `cooldown_seconds` ago, the first canary spawn after activation would be silently suppressed. Both
 the readiness verifier (`CH22_COOLDOWN_VIOLATION`) and Script B refuse in that case and print the
 remaining wait. Given `last_spawn_at` is a day old and the cooldown is 30 s, the anchor is clear.
+
+---
+
+## 3A. The owner cap-audit SQL packet — **SELECT-only**, run before the canary
+
+**Why this exists.** §3's classification of the residual `encounter_runtime_state` row as
+`HISTORICAL-HARMLESS` rests on one question that **cannot be answered from this machine**:
+`combat_encounters` is RLS-blocked to the anon key, so an empty result proves nothing. The owner must
+run the queries below as `service_role` (Supabase **SQL Editor**, or `psql` with the service-role
+connection string).
+
+**Posture.** Every statement below is a **`SELECT`**. There is no `INSERT` / `UPDATE` / `DELETE` /
+`TRUNCATE` / DDL / `set_game_config` anywhere in this section — nothing here writes to production.
+Paste and run as-is; the identifiers are inlined so nothing has to be edited.
+
+### 3A.1 The predicate, quoted from the DEPLOYED resolver
+
+The cap is **derived**, not stored. Production migration head is **`0272`**, and `0272` re-emits the
+`0261` resolver body verbatim at this point, so the deployed derived-cap query is
+`supabase/migrations/20260618000272_encounter_elite_stat_wiring.sql:168-172`
+(identical text at `supabase/migrations/20260618000261_encounter_variety_zero_elite.sql:126-130`):
+
+```sql
+  select count(*) into v_active_cnt
+    from public.combat_encounters ce
+   where ce.location_id = p_location_id
+     and ce.status in ('active', 'retreating')
+     and ce.resolved_plan_json->>'encounter_profile_id' = v_ep_id::text;
+```
+
+and its enforcing branch, `…0272…:173-175` (`…0261…:131-133`):
+
+```sql
+  if v_active_cnt >= v_cap then
+    return null;
+  end if;
+```
+
+**The exact status set is therefore `('active', 'retreating')` — and nothing else.** The other three
+`combat_encounters` statuses (`escaped`, `defeat`, `completed`, per
+`supabase/migrations/20260616000014_combat_tables.sql:16-17`) **do not** consume the cap. Do not broaden
+this set: an audit that counted `completed` rows would report a phantom blockage, and one that dropped
+`retreating` would miss a real one.
+
+The full cap-consuming predicate is the **conjunction** of all three lines:
+
+1. `location_id` = the Reaver location `75baf5d7-6b06-4567-84c9-de97938aa251`, **and**
+2. `status in ('active','retreating')`, **and**
+3. `resolved_plan_json->>'encounter_profile_id'` = the `canary_encounter` profile
+   `4d8bd4ee-4b61-454f-b0bc-fbf058ee4dd9` (text comparison — the resolver casts with `::text`).
+
+### 3A.2 Query 1 — every associated encounter, with the predicate evaluated per row
+
+Deliberately matched on `location OR profile` (wider than the cap predicate) so nothing associated with
+either identifier is hidden; the `satisfies_cap_predicate` column then applies the **exact** predicate.
+
+```sql
+-- PD0272 OWNER CAP AUDIT — Query 1. SELECT ONLY. Safe to run on production.
+with target as (
+  select '75baf5d7-6b06-4567-84c9-de97938aa251'::uuid as location_id,   -- Reaver
+         '4d8bd4ee-4b61-454f-b0bc-fbf058ee4dd9'::uuid as profile_id     -- canary_encounter
+),
+chain as (
+  select t.location_id,
+         t.profile_id,
+         b.id                   as binding_id,
+         b.active               as binding_active,
+         b.revision             as binding_revision,
+         ep.key                 as profile_key,
+         ep.active              as profile_active,
+         ep.active_encounter_cap,
+         ep.cooldown_seconds,
+         (select array_agg(eft.id order by eft.id)
+            from public.encounter_profile_members epm
+            join public.enemy_fleet_templates eft on eft.id = epm.fleet_template_id
+           where epm.encounter_profile_id = t.profile_id) as fleet_template_ids,
+         (select array_agg(distinct eftm.enemy_archetype_id order by eftm.enemy_archetype_id)
+            from public.encounter_profile_members epm
+            join public.enemy_fleet_template_members eftm
+              on eftm.fleet_template_id = epm.fleet_template_id
+           where epm.encounter_profile_id = t.profile_id) as archetype_ids
+    from target t
+    left join public.location_encounter_bindings b
+           on b.location_id = t.location_id
+          and b.encounter_profile_id = t.profile_id
+    left join public.encounter_profiles ep
+           on ep.id = t.profile_id
+)
+select ce.id                                                as encounter_id,
+       c.binding_id,
+       c.binding_active,
+       c.binding_revision,
+       ce.location_id,
+       ce.resolved_plan_json->>'encounter_profile_id'       as plan_profile_id,
+       c.profile_key,
+       c.active_encounter_cap,
+       c.fleet_template_ids,
+       c.archetype_ids,
+       ce.resolved_plan_json->'units'                       as plan_units,
+       ce.status,
+       ce.created_at,
+       ce.updated_at,
+       ce.started_at,
+       ce.last_resolved_at,
+       ce.retreat_started_at,
+       ce.ended_at                                          as closed_at,
+       ce.report_created_at,
+       -- THE EXACT DEPLOYED CAP PREDICATE (…0272…:168-172), evaluated per row:
+       coalesce(ce.location_id = c.location_id
+                and ce.status in ('active','retreating')
+                and ce.resolved_plan_json->>'encounter_profile_id' = c.profile_id::text,
+                false)                                      as satisfies_cap_predicate,
+       ce.fleet_id                                          as player_fleet_id,
+       (select count(*) from public.combat_units cu
+         where cu.encounter_id = ce.id and cu.side = 'enemy')            as enemy_unit_rows,
+       (select coalesce(sum(cu.alive_count), 0) from public.combat_units cu
+         where cu.encounter_id = ce.id and cu.side = 'enemy')            as enemy_units_alive,
+       (select count(*) from public.combat_units cu
+         where cu.encounter_id = ce.id and cu.side = 'player')           as player_unit_rows,
+       (select coalesce(sum(cu.alive_count), 0) from public.combat_units cu
+         where cu.encounter_id = ce.id and cu.side = 'player')           as player_units_alive,
+       case
+         when ce.location_id = c.location_id
+              and ce.status in ('active','retreating')
+              and ce.resolved_plan_json->>'encounter_profile_id' = c.profile_id::text
+           then 'CAP-CONSUMING: counted by the deployed derived cap at Reaver for canary_encounter'
+         when ce.resolved_plan_json is null
+           then 'LEGACY/SYNTHETIC: resolved_plan_json is NULL (pre-E3 encounter) — never cap-counted'
+         when ce.location_id = c.location_id
+              and ce.resolved_plan_json->>'encounter_profile_id' = c.profile_id::text
+           then 'HISTORICAL: right location + right profile, but status ' || ce.status
+                || ' is outside (active, retreating) — not cap-counted'
+         when ce.location_id = c.location_id
+           then 'OTHER PROFILE AT REAVER: tagged with a different encounter profile — not cap-counted '
+                || 'for canary_encounter (but see CH26: any live encounter at the canary location is a '
+                || 'canary-isolation concern)'
+         else 'CANARY PROFILE ELSEWHERE: same profile, different location — not cap-counted at Reaver'
+       end                                                  as classification_reason
+  from public.combat_encounters ce
+ cross join chain c
+ where ce.location_id = c.location_id
+    or ce.resolved_plan_json->>'encounter_profile_id' = c.profile_id::text
+ order by satisfies_cap_predicate desc, ce.created_at;
+```
+
+**Zero rows is a valid and good result** — it means nothing at Reaver and nothing carrying the
+`canary_encounter` tag has ever been written to `combat_encounters` that survives today.
+
+### 3A.3 Query 2 — the chain and the residual runtime-state row, side by side
+
+```sql
+-- PD0272 OWNER CAP AUDIT — Query 2. SELECT ONLY.
+select b.id                   as binding_id,
+       b.active               as binding_active,
+       b.revision             as binding_revision,
+       l.id                   as location_id,
+       l.name                 as location_name,
+       l.status               as location_status,
+       ep.id                  as encounter_profile_id,
+       ep.key                 as profile_key,
+       ep.active              as profile_active,
+       ep.active_encounter_cap,
+       ep.cooldown_seconds,
+       eft.id                 as fleet_template_id,
+       eft.key                as fleet_template_key,
+       eft.active             as template_active,
+       eftm.enemy_archetype_id,
+       ea.key                 as archetype_key,
+       eftm.min_count,
+       eftm.max_count,
+       eftm.elite_chance,
+       s.last_spawn_at        as runtime_last_spawn_at,
+       s.active_count         as runtime_active_count,
+       now() - s.last_spawn_at as since_last_spawn
+  from public.location_encounter_bindings b
+  join public.locations           l    on l.id  = b.location_id
+  join public.encounter_profiles  ep   on ep.id = b.encounter_profile_id
+  left join public.encounter_profile_members epm on epm.encounter_profile_id = ep.id
+  left join public.enemy_fleet_templates     eft on eft.id = epm.fleet_template_id
+  left join public.enemy_fleet_template_members eftm on eftm.fleet_template_id = eft.id
+  left join public.enemy_archetypes          ea  on ea.id = eftm.enemy_archetype_id
+  left join public.encounter_runtime_state   s
+         on s.location_id = b.location_id and s.encounter_profile_id = b.encounter_profile_id
+ where b.location_id = '75baf5d7-6b06-4567-84c9-de97938aa251'::uuid
+    or b.encounter_profile_id = '4d8bd4ee-4b61-454f-b0bc-fbf058ee4dd9'::uuid
+ order by b.id, eft.key, ea.key;
+```
+
+```sql
+-- PD0272 OWNER CAP AUDIT — Query 3: every residual runtime-state row, world-wide. SELECT ONLY.
+select s.location_id,
+       s.encounter_profile_id,
+       s.last_spawn_at,
+       s.active_count,
+       now() - s.last_spawn_at as since_last_spawn,
+       ep.key                  as profile_key,
+       ep.cooldown_seconds,
+       (now() - s.last_spawn_at) < make_interval(secs => ep.cooldown_seconds)
+                               as inside_cooldown_window
+  from public.encounter_runtime_state s
+  left join public.encounter_profiles ep on ep.id = s.encounter_profile_id
+ order by s.last_spawn_at desc;
+```
+
+```sql
+-- PD0272 OWNER CAP AUDIT — Query 4: resolved encounters world-wide, so no OTHER pair
+-- carries live resolved state. SELECT ONLY.
+select ce.location_id,
+       ce.resolved_plan_json->>'encounter_profile_id' as profile_id,
+       ce.status,
+       count(*) as n
+  from public.combat_encounters ce
+ where ce.resolved_plan_json is not null
+ group by 1, 2, 3
+ order by 1, 2, 3;
+```
+
+### 3A.4 Query 5 — the single scalar that settles it
+
+```sql
+-- PD0272 OWNER CAP AUDIT — Query 5: THE ANSWER. SELECT ONLY.
+-- Byte-faithful to the deployed derived-cap query (…0272…:168-172 / …0261…:126-130).
+select count(*)::bigint as cap_consuming_encounter_count
+  from public.combat_encounters ce
+ where ce.location_id = '75baf5d7-6b06-4567-84c9-de97938aa251'::uuid
+   and ce.status in ('active', 'retreating')
+   and ce.resolved_plan_json->>'encounter_profile_id' = '4d8bd4ee-4b61-454f-b0bc-fbf058ee4dd9';
+```
+
+### 3A.5 How to read `cap_consuming_encounter_count`
+
+| Value | Meaning | Action |
+|---|---|---|
+| **`0`** | The derived cap at Reaver is **clear**. The residual `encounter_runtime_state` row is **confirmed `HISTORICAL-HARMLESS`** — its `active_count = 2` is a cumulative spawn counter that nothing reads. | **The canary is clear to proceed** on the cap dimension. Continue with §4's readiness verifier, which re-checks this and everything else. |
+| **`≥ 1`** | The derived cap (`active_encounter_cap = 1`) is **already consumed**. `resolve_location_encounter` would return `NULL` and the canary would **silently never fire** — no error, no spawn, nothing to observe. | **Do not activate.** This is a **`combat_encounters` defect** — a stuck `active`/`retreating` row — and it must be handled through the **combat-encounter lifecycle**. It is **not** a runtime-state problem: **do not** edit or delete `encounter_runtime_state`, which would not change the count by even one. |
+
+In both cases the runtime-state row itself stays `HISTORICAL-HARMLESS`; the scalar decides whether the
+**cap** is clear, not whether the row is harmful. Query 1's `classification_reason` column explains each
+row's disposition, so a `≥ 1` result is immediately actionable.
+
+The readiness verifier tests the same thing at `CH23_CAP_VIOLATION`
+(`scripts/encounter-canary-readiness.sql:676-686`) when run with a role that can read the table, plus
+the stricter `CH26` / `CH27`. This packet exists so the owner can settle the question in the Supabase
+SQL Editor without a `psql` connection string.
 
 ---
 
@@ -110,7 +357,7 @@ It **fails closed** on every one of:
 | `CH15_TEMPLATE_MISSING` / `_INACTIVE` / `_REVISION` | the fleet template |
 | `CH16_TEMPLATE_MEMBERSHIP_EMPTY` / `CH16_MEMBER_COUNTS` / `CH16_FLEET_CAP_VIOLATION` | empty template membership, unusable count range, or a max-count sum above `enemy_synthetic_max_units` (it would be silently clamped) |
 | `CH17_ARCHETYPE_MISSING` / `_INACTIVE` / `_REVISION` / `_UNIT_TYPE` / `_DIFFICULTY` | invalid or inactive archetype |
-| `CH18_ELITE_WITHOUT_0272` | a reachable member has `elite_chance > 0` while migration `20260618000272` is **not** deployed |
+| `CH18_ELITE_WITHOUT_0272` | a reachable member has `elite_chance > 0` while migration `20260618000272` is **not** deployed — *cannot fire in production today: head is `0272`* |
 | `CH19_REWARD_CONFLICT` / `_MISSING` / `_INVALID` / `_INACTIVE` / `_REVISION` | reward profile cannot be resolved, or is missing/inactive |
 | `CH20_REWARD_NO_METAL` / `_UNSUPPORTED_RESOURCE` / `_BASE` / `_DANGER_COEFF` / `_MULTIPLIER_REF` | unsupported reward resource type or malformed grant (`resolve_encounter_reward_inputs` honours **metal only**) |
 | `CH22_COOLDOWN_VIOLATION` | the residual `last_spawn_at` is inside the cooldown window |
@@ -192,8 +439,8 @@ commit;
 
 Flips `encounter_resolver_enabled` to true. Refuses unless **exactly one** binding is active **and it is
 the canary**; refuses if any active binding reaches `elite_chance > 0` while migration
-`20260618000272` is undeployed; refuses if the residual cooldown anchor or the derived cap would block
-the first spawn. Prints the expected combat result before writing.
+`20260618000272` is undeployed (**satisfied since 2026-07-23 — head is `0272`**); refuses if the residual
+cooldown anchor or the derived cap would block the first spawn. Prints the expected combat result before writing.
 
 **Rollback (in the file, commented):**
 ```sql
@@ -331,4 +578,5 @@ Script B immediately.
 | `.github/workflows/encounter-canary-proof.yml` | CI: selftest + read-only assertion + proof + activation-script separation checks |
 | `scripts/activate-canary-binding.sql` | **Script A — owner-run only, unexecuted** |
 | `scripts/activate-encounter-resolver-canary.sql` | **Script B — owner-run only, unexecuted** |
+| `docs/ENCOUNTER_CANARY_PACKET.md` §3A | the **owner cap-audit SQL packet** — SELECT-only, owner-run, returns `cap_consuming_encounter_count` |
 | `docs/ENCOUNTER_CANARY_PACKET.md` | this document |

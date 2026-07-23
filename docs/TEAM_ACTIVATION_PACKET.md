@@ -11,8 +11,8 @@ open PRs. Team command A → D4 fully built and DARK (`team_command_enabled=fals
 `TEAM_COMMAND_ENABLED=false`). Pre-activation blockers: **all closed** (M1 fixed in 0169).
 
 > **⚠ BASELINE IS STALE (noted 2026-07-23).** The *baseline line above* is eleven days old: `main` is now
-> **`ce26486`**, **production migration head is `0271`** (with `0272` merged and **waiting at the
-> production approval gate**), and one PR is open (#163). Crucially, **movement changed underneath this
+> **`ce26486`**, **production migration head is `0272`** (the `0272` deploy was approved by the owner and
+> completed `success` on 2026-07-23; it landed DARK), and one PR is open (#163). Crucially, **movement changed underneath this
 > packet** — the per-ship movers were dropped (`0231`/`0232`) and movement is now the unified fleet mover.
 > **Re-derive any movement-dependent balance number before acting on it.** The computed balance/economics
 > figures below were read from shipped migrations and are not invalidated wholesale, but they were

@@ -1,6 +1,15 @@
 # `encounter_runtime_state` — authority audit + residual-row classification
 
 **Date:** 2026-07-23 · **Repo head audited:** `main` @ `8270142` · **Production migration head at audit time:** `0271`
+
+> **Update 2026-07-23 (post-deploy).** **Production migration head is now `0272`** — the DARK elite
+> stat-wiring migration deployed successfully (`docs/DEV_LOG.md` §9). This audit's conclusions are
+> **unaffected**: §6 already establishes that `0272` contains **no DML** against
+> `encounter_runtime_state`, and the before/after verifier confirmed every `must_not_change.*` value —
+> including the residual runtime-state row — **byte-identical** across the deploy. The classification
+> stays **`HISTORICAL-HARMLESS`**, and it still rests on the **one RLS-blocked read the owner must
+> run** (§5). That read is now packaged copy-paste-ready as
+> **`docs/ENCOUNTER_CANARY_PACKET.md` §3A**, which returns the scalar `cap_consuming_encounter_count`.
 **Posture of this document:** READ-ONLY investigation. Nothing here was written to production. No cleanup
 script accompanies it (see [§6](#6-classification)) and none is permitted at this classification.
 
@@ -142,6 +151,10 @@ question, not a runtime-state question:
 "none exist"), and this machine holds no service-role key and no access token. **The owner must run,
 as `service_role` (Supabase SQL editor or `psql`) — both are SELECTs, neither writes:**
 
+> The fuller, copy-paste-ready version of exactly this read — with the cap predicate quoted from the
+> **deployed** resolver and a final `cap_consuming_encounter_count` scalar — is
+> **`docs/ENCOUNTER_CANARY_PACKET.md` §3A**. Either settles the question; §3A also names the chain.
+
 ```sql
 -- (A) the row that settles the classification
 select ce.id, ce.status, ce.created_at, ce.updated_at, ce.player_id,
@@ -170,7 +183,8 @@ Reading the result:
   the combat-encounter lifecycle — **not** by editing `encounter_runtime_state`.
 
 The readiness verifier already tests exactly this at `CH23_CAP_VIOLATION`
-(`scripts/encounter-canary-readiness.sql:594-604`) when run with a role that can read the table, and
+(`scripts/encounter-canary-readiness.sql:676-686` — corrected 2026-07-23; the previously cited
+`:594-604` is the CH22 cooldown block, not CH23) when run with a role that can read the table, and
 this PR additionally makes it fail closed on *any* live encounter at the canary location (CH26/CH27,
 [§7](#7-readiness-verifier-gaps-closed)).
 
@@ -223,7 +237,7 @@ without adding any write:
 | **another** pair carrying live resolved state | `CH22_RUNTIME_STATE_OTHER` WARN only | **CH24** BLOCK when another pair has live tagged `combat_encounters`; still WARN when it is merely historical. |
 | **unresolved encounters** at the canary location | `CH23` reported `all_live_at_location` as INFO | **CH26** BLOCK — any `active`/`retreating` encounter at the canary location, tagged or not. |
 | live **resolved** encounter anywhere while the resolver is dark | not checked | **CH27** BLOCK. |
-| migration head **below 0272** | `CH01` blocked only below `0261`; `CH18` blocked only if elite content existed — vacuous at the live posture (0 of 2 members carry `elite_chance > 0`) | **CH01** BLOCK when head < `canary.elite_migration` (default `20260618000272`). |
+| migration head **below 0272** | `CH01` blocked only below `0261`; `CH18` blocked only if elite content existed — vacuous at the live posture (0 of 2 members carry `elite_chance > 0`) | **CH01** BLOCK when head < `canary.elite_migration` (default `20260618000272`). *Satisfied in production since 2026-07-23: head is `0272`.* |
 | canary pair carrying **unexplained** runtime state | `CH22` INFO always | **CH22** BLOCK when `active_count` / `last_spawn_at` differ from the pinned expectation (`canary.expect_runtime_active_count` = 2, `canary.expect_runtime_last_spawn_at`). The *known* residual therefore still passes — intentionally retained harmless state is not rejected. |
 
 Unchanged and deliberately so: `active_count` remains INFO-and-pin only, never a cap input; the file
