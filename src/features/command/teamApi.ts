@@ -179,31 +179,10 @@ export async function deleteShipGroup(groupId: string): Promise<TeamRpcResult> {
   return data as TeamRpcResult
 }
 
-// send_ship_group_expedition (0163) — all-or-nothing team send to an active, non-combat location.
-// Success carries { sent: [...] }; the server re-validates the destination and each member.
-export async function sendShipGroup(groupId: string, locationId: string): Promise<TeamRpcResult> {
-  const { data, error } = await supabase.rpc('send_ship_group_expedition', {
-    p_group_id: groupId,
-    p_location: locationId,
-  })
-  if (error) return { ok: false, reason: 'unavailable' }
-  return data as TeamRpcResult
-}
-
-// move_ship_group_to_location (0190) — all-or-nothing ONWARD move of a fully-DOCKED team to another
-// active, non-combat location (the other half of "docked or move as a whole"). Server-side it composes
-// the live per-ship move_main_ship_to_location (0156) once per member; success carries { sent: [...] }
-// (one per-ship envelope per member, each with fleet_id/movement_id/arrive_at). Rejects arrive as the
-// 0163-family vocabulary plus member_not_ready (the team is not docked together — the 0168 phrasing);
-// a per-member failure (bad destination, already there, …) surfaces as member_send_failed.
-export async function moveShipGroup(groupId: string, locationId: string): Promise<TeamRpcResult> {
-  const { data, error } = await supabase.rpc('move_ship_group_to_location', {
-    p_group_id: groupId,
-    p_location_id: locationId,
-  })
-  if (error) return { ok: false, reason: 'unavailable' }
-  return data as TeamRpcResult
-}
+// RETIRED 2026-07-23 — `sendShipGroup` (send_ship_group_expedition, 0163) and `moveShipGroup`
+// (move_ship_group_to_location, 0190) were deleted here. Both were exported with ZERO callers,
+// and migration 0232 DROPPED both RPCs from production, so either call could only ever have
+// returned `unavailable`. The fleet is the ONLY mover now — use `commandShipGroupGo` below.
 
 // ── FLEET-GO 4a-1 — the UNIFIED mover/brake wrappers (charter §2: the fleet is the ONLY mover). ──
 // Thin, normalize-don't-throw (the file's write style, verbatim). Both RPCs are DARK behind
