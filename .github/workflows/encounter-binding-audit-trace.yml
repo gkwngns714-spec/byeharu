@@ -1,0 +1,58 @@
+name: ENCOUNTER BINDING — audit trace (READ-ONLY, gated)
+
+# Manually-dispatched, production-Environment-gated, STRICTLY READ-ONLY forensic trace of who
+# activated / edited the canary encounter binding 2f7bcf88-… and when, by reading the
+# world_editor_audit ledger (0243/0244). The readiness verifier found the binding active=true rev=3
+# where docs/ENCOUNTER_CANARY_PACKET.md recorded active=false rev=2 and the owner does not recall the
+# change; this run settles who/when/what.
+#
+# Reuses the generic scripts/prod-readonly-sql.sh runner, which REFUSES any SQL file that is not
+# provably read-only. The target scripts/encounter-binding-audit-trace.sql opens
+# `begin transaction read only` and ends in `rollback`. NOTHING here writes, deploys, flips a flag,
+# or activates anything.
+#
+# Trigger: workflow_dispatch ONLY. The production job is pinned to main and gated by the protected
+# `production` Environment — a human must approve before any production connection is made.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encounter-binding-audit-trace
+  cancel-in-progress: false
+
+jobs:
+  static_safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static safety self-test (NO database, no secrets)
+        run: bash scripts/prod-readonly-sql.sh selftest scripts/encounter-binding-audit-trace.sql
+
+  production_audit_trace:
+    needs: static_safety
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          psql --version
+      - name: Production READ-ONLY audit trace
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: bash scripts/prod-readonly-sql.sh production scripts/encounter-binding-audit-trace.sql
