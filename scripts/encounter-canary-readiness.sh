@@ -34,8 +34,19 @@ SQL="$SCRIPT_DIR/encounter-canary-readiness.sql"
 
 MODE="${1:-}"
 
-opts=""
-add() { [ -n "${2:-}" ] && opts="$opts -c $1=$2"; return 0; }
+# Overrides are applied as real `SET` statements executed on the SAME psql session BEFORE the -f file
+# (session-level GUCs, which persist into the file's read-only transaction). This deliberately does NOT
+# use PGOPTIONS/startup `-c`: the Supabase session pooler drops the startup `options` field, so custom
+# GUCs passed that way silently never reach the backend (the readiness verifier's overrides then fall
+# back to their SQL defaults). A `SET` query, sent after connect, IS forwarded by the pooler. A `SET`
+# is not a data write, so it is fine ahead of the read-only transaction. On a direct (unpooled) DB it
+# behaves identically. Empty overrides ⇒ no -c args ⇒ behaviour unchanged (the CI selftest path).
+setargs=()
+add() {
+  [ -n "${2:-}" ] || return 0
+  case "$2" in *"'"*|*';'*|*'\'*) echo "refusing unsafe override value for $1" >&2; exit 2;; esac
+  setargs+=( -c "set $1 = '$2'" ); return 0;
+}
 add canary.binding_id           "${CANARY_BINDING_ID:-}"
 add canary.profile_key          "${CANARY_PROFILE_KEY:-}"
 add canary.expect_binding_rev   "${CANARY_EXPECT_BINDING_REV:-}"
@@ -50,7 +61,7 @@ add canary.elite_migration      "${CANARY_ELITE_MIGRATION:-}"
 
 # capture without aborting so every CANARY_FINDING line is printed for diagnosis; the marker checks
 # below are the pass/fail gate.
-out="$(PGOPTIONS="$opts" psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$SQL" 2>&1)"
+out="$(psql "$DB_URL" -X -v ON_ERROR_STOP=1 "${setargs[@]}" -f "$SQL" 2>&1)"
 echo "$out"
 echo '────────────────────────────────────────────────────────────────────────────'
 
