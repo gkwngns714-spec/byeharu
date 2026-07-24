@@ -1,0 +1,133 @@
+name: ENCOUNTER RESOLVER DAMAGE CANARY — disposable-DB EXECUTION proof (no production)
+
+# EXECUTES the ROLLBACK-ONLY resolver+damage canary (scripts/encounter-resolver-damage-canary.sql) against
+# a THROWAWAY local Supabase — NEVER prod. This is the missing layer: the canary's assertions have a static
+# selftest but have NEVER actually run against a database. This workflow closes that gap so every assertion
+# is PROVEN before any owner-gated production run.
+#
+#   * `supabase start` applies the FULL migration chain (every in-migration self-assert runs against real
+#     Postgres), giving a prod-shaped disposable DB.
+#   * A BYSTANDER SEED (scripts/encounter-resolver-damage-canary-bystander-seed.sql) COMMITS a second,
+#     unrelated player with a REAL, ACTIVE combat encounter through the same real RPC chain the canary uses.
+#     Without it the canary's isolation/fence assertion ("ZERO non-canary rows changed") would be VACUOUS on
+#     an empty DB. The bystander encounter is parked far in the future so the disposable stack's pg_cron
+#     combat tick never touches it. The seed also commits the four movement gates the canary assumes-but-
+#     never-flips (prod-parity), leaving encounter_resolver_enabled committed-FALSE.
+#   * The canary then runs via `psql -v ON_ERROR_STOP=1 -f` against the LOCAL disposable DB. Because the
+#     canary RAISEs on any failed assertion (→ non-zero exit) and always ends in `rollback;`, SUCCESS is
+#     BOTH: psql exits 0 AND stdout contains `CANARY_RESULT: PASS`. Any raised assertion → red job.
+#   * After the canary's rollback the harness proves, from OUTSIDE the transaction, that the bystander's
+#     rows are BYTE-IDENTICAL to before (belt-and-suspenders isolation) and that encounter_resolver_enabled
+#     is still committed-FALSE (the in-txn flip did not persist).
+#
+# NO `environment:` key on any job ⇒ this workflow CANNOT read production secrets. It touches NO production
+# and NO real players. The production-gated workflow (encounter-resolver-damage-canary.yml) is unchanged.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'osn3-resolver-damage-canary'
+      - 'osn3-resolver-damage**'
+      - 'autopilot/**'
+      - 'slice-resolver-damage-canary**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encounter-resolver-damage-canary-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-canary-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Static write-canary contract gate (NO database, no secrets) — the exact selftest the production
+      # workflow uses. If the SQL is not a rollback-only, no-commit write-canary, fail before any DB spins up.
+      - name: Static write-canary contract self-test (no database)
+        run: bash scripts/encounter-resolver-damage-canary.sh selftest scripts/encounter-resolver-damage-canary.sql
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start disposable local Supabase (applies the full migration chain incl. every self-assert)
+        run: supabase start
+
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+
+      - name: Seed a committed BYSTANDER (unrelated player + REAL active encounter) so isolation is non-vacuous
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f scripts/encounter-resolver-damage-canary-bystander-seed.sql 2>&1)"; rc=$?
+          echo "$out"
+          [ "$rc" -eq 0 ] || { echo "BYSTANDER SEED psql exit $rc"; exit 1; }
+          echo "$out" | grep -qF 'BYSTANDER_SEED: PASS' || { echo "MISSING MARKER: BYSTANDER_SEED: PASS"; exit 1; }
+          # Prove the bystander really is a committed, ACTIVE combat encounter (else the isolation test is vacuous).
+          n="$(psql "$DB_URL" -X -t -A -c "select count(*) from public.combat_encounters where status='active'")"
+          echo "committed active encounters after seed: $n"
+          [ "$n" -ge 1 ] || { echo "BYSTANDER SEED did not commit an active encounter"; exit 1; }
+          # The bystander must own real player-side combat_units too (non-vacuous over combat_units).
+          u="$(psql "$DB_URL" -X -t -A -c "select count(*) from public.combat_units")"
+          echo "committed combat_units after seed: $u"
+          [ "$u" -ge 1 ] || { echo "BYSTANDER SEED produced no combat_units"; exit 1; }
+
+      - name: Snapshot the bystander (all combat/fleet/ship rows) BEFORE the canary
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          DIGEST_SQL="select md5(coalesce(string_agg(d,'|' order by d),'')) from ( \
+            select 'ce:'||to_jsonb(ce.*)::text d from public.combat_encounters ce \
+            union all select 'cu:'||to_jsonb(cu.*)::text from public.combat_units cu \
+            union all select 'fl:'||to_jsonb(f.*)::text from public.fleets f \
+            union all select 'ms:'||to_jsonb(m.*)::text from public.main_ship_instances m ) s"
+          echo "$DIGEST_SQL" > /tmp/digest.sql
+          psql "$DB_URL" -X -t -A -f /tmp/digest.sql > /tmp/digest_before.txt
+          echo "bystander digest BEFORE = $(cat /tmp/digest_before.txt)"
+          resolver_before="$(psql "$DB_URL" -X -t -A -c "select public.cfg_bool('encounter_resolver_enabled')")"
+          echo "encounter_resolver_enabled BEFORE (committed) = $resolver_before"
+          [ "$resolver_before" = "f" ] || { echo "PRECONDITION FAIL: resolver flag not committed-FALSE before the canary"; exit 1; }
+
+      - name: EXECUTE the ROLLBACK-ONLY resolver+damage canary against the disposable DB
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          # Run exactly as production would (minus the pooler binding): the SQL owns its begin;…rollback;.
+          # ON_ERROR_STOP=1 so any RAISEd assertion aborts non-zero. Capture output for diagnosis, then gate.
+          out="$(psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f scripts/encounter-resolver-damage-canary.sql 2>&1)"; rc=$?
+          echo "$out"
+          echo "──────── canary psql exit code: $rc ────────"
+          # SUCCESS requires BOTH a clean exit AND the terminal PASS line.
+          [ "$rc" -eq 0 ] || { echo "CANARY FAILED: psql exited $rc (an assertion RAISEd → aborted → rolled back)"; exit 1; }
+          echo "$out" | grep -qF 'CANARY_RESULT: PASS' || { echo "CANARY FAILED: no 'CANARY_RESULT: PASS' in output"; exit 1; }
+          # Defence in depth: the individual A/B PASS lines must also be present.
+          for marker in 'CANARY_A: PASS' 'CANARY_B: PASS' 'CANARY_RESULT: PASS'; do
+            echo "$out" | grep -qF "$marker" || { echo "MISSING CANARY MARKER: $marker"; exit 1; }
+          done
+          echo 'CANARY EXECUTED AND PASSED AGAINST THE DISPOSABLE DB'
+
+      - name: Prove the canary rolled back cleanly — bystander byte-identical + resolver flag still FALSE
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -X -t -A -f /tmp/digest.sql > /tmp/digest_after.txt
+          echo "bystander digest AFTER  = $(cat /tmp/digest_after.txt)"
+          echo "bystander digest BEFORE = $(cat /tmp/digest_before.txt)"
+          if ! diff -q /tmp/digest_before.txt /tmp/digest_after.txt >/dev/null; then
+            echo 'ISOLATION FAIL: bystander combat/fleet/ship rows CHANGED across the canary run'; exit 1; fi
+          echo 'ISOLATION OK: bystander rows are byte-identical after the canary rollback'
+          resolver_after="$(psql "$DB_URL" -X -t -A -c "select public.cfg_bool('encounter_resolver_enabled')")"
+          echo "encounter_resolver_enabled AFTER (committed) = $resolver_after"
+          [ "$resolver_after" = "f" ] || { echo "PERSIST FAIL: the in-txn resolver flip PERSISTED (flag not committed-FALSE)"; exit 1; }
+          echo 'NO-PERSIST OK: encounter_resolver_enabled is still committed-FALSE — the in-txn flip did not commit'
+          echo 'DISPOSABLE_CANARY_PROOF_PASS'
+
+      - name: Stop disposable stack (always)
+        if: always()
+        run: supabase stop --no-backup || true
