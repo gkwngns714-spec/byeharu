@@ -1,0 +1,62 @@
+name: ENCOUNTER RESOLVER — pre-flip preflight audit (READ-ONLY, gated)
+
+# Manually-dispatched, production-Environment-gated, STRICTLY READ-ONLY run of
+# scripts/encounter-resolver-preflight-audit.sql against production.
+#
+# WHY: before the OWNER flips encounter_resolver_enabled (currently false) the world must be proven safe
+# for the pirate-encounter resolver — in particular that no resolver-eligible player unit would snapshot
+# to an empty weapons_json that 0262's fallback cannot rescue (the destroyed-fleet zero-damage class),
+# that the fixed code (0260 resolver + 0262 player-fallback) is actually applied, and that there is no
+# unresolved / residual resolver runtime state. This workflow settles that with the read-only audit,
+# delegating to the same prod-readonly-sql.sh gate the repo already uses.
+#
+# This workflow NEVER flips encounter_resolver_enabled, NEVER activates a binding, never deploys a
+# migration, never approves a deployment, and writes nothing: the delegated .sql opens
+# `begin transaction read only` and ends in `rollback`, so PostgreSQL itself rejects any write.
+#
+# Trigger: workflow_dispatch ONLY. The production job is pinned to main and gated by the protected
+# `production` Environment — a human must approve before any production connection is made. A
+# static-safety selftest (no DB, no secrets) gates the production job.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encounter-resolver-preflight-audit
+  cancel-in-progress: false
+
+jobs:
+  static_safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static safety self-test (NO database, no secrets)
+        run: bash scripts/encounter-resolver-preflight-audit.sh selftest
+
+  production_audit:
+    needs: static_safety
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          psql --version
+      - name: Production READ-ONLY resolver preflight audit
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: bash scripts/encounter-resolver-preflight-audit.sh production
