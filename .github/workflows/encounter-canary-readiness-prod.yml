@@ -20,6 +20,15 @@ name: ENCOUNTER CANARY — production readiness verify (READ-ONLY, gated)
 
 on:
   workflow_dispatch:
+    inputs:
+      expect_active:
+        description: "post-activation mode: 'true' if the binding is legitimately already active (Script A ran, audited); 'false' = original pre-activation gate"
+        required: false
+        default: "false"
+      expect_binding_rev:
+        description: "expected binding revision (2 = pre-activation packet pin; 3 = current post-Script-A state)"
+        required: false
+        default: "2"
 
 permissions:
   contents: read
@@ -59,4 +68,6 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          CANARY_EXPECT_ACTIVE: ${{ github.event.inputs.expect_active }}
+          CANARY_EXPECT_BINDING_REV: ${{ github.event.inputs.expect_binding_rev }}
         run: bash scripts/encounter-canary-readiness-prod.sh production
