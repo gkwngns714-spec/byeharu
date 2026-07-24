@@ -1,0 +1,64 @@
+name: ENCOUNTER RESOLVER DAMAGE CANARY — production (ROLLBACK-ONLY, gated)
+
+# Manually-dispatched, production-Environment-gated run of the ROLLBACK-ONLY resolver+damage canary
+# (scripts/encounter-resolver-damage-canary.sql) against production, via the write-canary runner
+# scripts/encounter-resolver-damage-canary.sh.
+#
+# WHY: encounter_resolver_enabled is committed-FALSE; flipping it globally fires the pirate-encounter
+# resolver for every live player (OWNER-GATED, out of scope). A prior canary destroyed the owner's main
+# fleet because an empty player weapons_json fired zero shots -> 0 damage -> guaranteed loss (fixed by
+# migration 0262). This workflow runs the PRE-FLIP damage-path proof: it flips the flag ONLY inside ONE
+# uncommitted transaction, drives the REAL resolver + combat-damage engine against a UNIQUELY-TAGGED
+# synthetic expendable fleet, asserts the damage/reward/isolation properties, and ALWAYS ends in
+# `rollback;`. It NEVER flips a real flag, NEVER commits, NEVER deploys a migration, writes NOTHING.
+#
+# The runner enforces the write-canary contract statically (begin; ... rollback; last; NO commit;
+# anywhere; both SET LOCAL timeouts; only the in-txn encounter_resolver_enabled flip) BEFORE it connects,
+# and a DB-free selftest (no secrets) gates the production job. The production job is pinned to main and
+# gated by the protected `production` Environment — a human must approve before any production connection
+# is made. It prints NO_PRODUCTION_COMMIT_PERFORMED=true after the run.
+#
+# Trigger: workflow_dispatch ONLY.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encounter-resolver-damage-canary
+  cancel-in-progress: false
+
+jobs:
+  static_safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static write-canary contract self-test (NO database, no secrets)
+        run: bash scripts/encounter-resolver-damage-canary.sh selftest scripts/encounter-resolver-damage-canary.sql
+
+  production_canary:
+    needs: static_safety
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          psql --version
+      - name: Production ROLLBACK-ONLY resolver+damage canary
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: bash scripts/encounter-resolver-damage-canary.sh production scripts/encounter-resolver-damage-canary.sql
