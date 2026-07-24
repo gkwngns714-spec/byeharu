@@ -13,7 +13,7 @@ written.
 
 | Layer | Id | Key / name | Active | Rev | Notes |
 |---|---|---|---|---|---|
-| Binding | `2f7bcf88-d810-47b4-8e04-748655688b55` | Reaver ↔ canary_encounter | **false** | 2 | weight 1 |
+| Binding | `2f7bcf88-d810-47b4-8e04-748655688b55` | Reaver ↔ canary_encounter | **true** (was false) | **3** (was 2) | weight 1 — see §1A |
 | Location | `75baf5d7-6b06-4567-84c9-de97938aa251` | **Reaver** | status `active` | — | `activity_type=hunt_pirates`, `base_difficulty` 15, `reward_tier` 2, pos (−135, 120), `min_power_required` 0 |
 | Encounter profile | `4d8bd4ee-4b61-454f-b0bc-fbf058ee4dd9` | `canary_encounter` | true | 1 | difficulty 1, `active_encounter_cap` **1**, `cooldown_seconds` **30**, `reward_override_id` null |
 | Profile member | `7ec49abe-3b70-46ae-8e89-a748b23c7129` | → canary_fleet | — | — | weight 1 |
@@ -21,6 +21,37 @@ written.
 | Template member | `16172dce-dc82-41eb-a97d-ae3f336f6755` | → canary_pirate | — | — | `min_count` 1, `max_count` 1, weight 1, **`elite_chance` 0** |
 | Archetype | `b7f4a217-939e-4532-ba08-72f3dabba926` | `canary_pirate` | true | **2** | `unit_type_id` `pirate_synthetic`, `behavior_key` `spatial_synthetic`, `base_difficulty` **1**, `stat_overrides` `{}` |
 | Reward profile | `b742b762-f902-48c8-bf98-a3791559b497` | `canary_reward` | true | 1 | metal only — base **7**, `danger_coeff` 0.25, `multiplier_ref` `reward_multiplier` |
+
+## 1A. Binding status correction — Script A already ran (audited 2026-07-24)
+
+The gated read-only readiness run `30061472276` (2026-07-24) reported the binding as **active=true,
+revision=3**, not the `false / 2` this table originally recorded. The gated read-only audit trace
+`30065508687` (workflow `encounter-binding-audit-trace`) then read `world_editor_audit` and resolved
+exactly what happened — every edit by the **same authorized owner** (`actor_is_owner=true`, actor
+`218500ff-9cf6-408f-b3cd-5e92b4562168`):
+
+| created_at (UTC) | command | result | request_id |
+|---|---|---|---|
+| 2026-07-21 16:22:06 | `location_encounter_binding_create` | → active, rev 1 | `578a626f-0914-4025-aa85-24e6749f430b` |
+| 2026-07-22 06:11:30 | `location_encounter_binding_set_active` | active → **false**, rev 2 | `capstone-deactivate-binding-20260722` |
+| 2026-07-23 08:25:59 | `location_encounter_binding_set_active` | false → **active**, rev 3 | `canary-scriptA-2026-07-23-activate-binding` |
+
+**This is not unexplained drift and not a security concern.** The 07-22 deactivate is the rollback
+after the Fleet-1 loss; the 07-23 re-activate is **canary Script A** (the request_id says so). So the
+binding is legitimately, recordedly active. The pre-activation readiness gate (`CH05_BINDING_ALREADY_
+ACTIVE`) blocks by design once active — that is correct, not a defect.
+
+To validate the chain in its **already-active** state, the readiness verifier now has a
+**post-activation mode**: run the `encounter-canary-readiness-prod` workflow with
+`expect_active=true` and `expect_binding_rev=3`. CH05 then records `CH05_BINDING_ACTIVE_EXPECTED`
+(INFO) instead of blocking, and CH06 expects revision 3. The default (`expect_active=false`,
+`expect_binding_rev=2`) is unchanged — the original pre-activation gate still fails closed on a
+new chain.
+
+**What remains for the canary is now ONLY Script B** — flip `encounter_resolver_enabled`. That is a
+live-production behaviour flip (CH07: the canary would be the sole live encounter source), it is
+owner-gated, and per the working ordering the unified-movement smoke (`docs/MOVEMENT_SMOKE_PACKET.md`)
+sits in front of it. It has **not** been run.
 
 Flag posture read live (2026-07-23): `encounter_resolver_enabled=false`;
 `enemy_content_registry_enabled` / `encounter_authoring_enabled` /

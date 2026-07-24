@@ -231,18 +231,27 @@ declare
   v_b integer := current_setting('canary.blockers')::int;
   v_binding uuid := nullif(current_setting('canary.binding', true), '')::uuid;
   v_exp text := coalesce(current_setting('canary.expect_binding_rev', true), '2');
+  -- POST-ACTIVATION MODE (default off = pre-activation gate, unchanged). When 'true', an ALREADY-ACTIVE
+  -- binding is the EXPECTED state (Script A has legitimately run — audited via world_editor_audit), so
+  -- CH05 records INFO instead of blocking; and an INACTIVE binding then becomes the anomaly.
+  v_expect_active boolean := coalesce(nullif(current_setting('canary.expect_active', true), ''), 'false')::boolean;
   r record; n integer := 0;
 begin
   if v_binding is not null then
     select b.id, b.active, b.revision, b.weight, b.location_id, b.encounter_profile_id
       into r from public.location_encounter_bindings b where b.id = v_binding;
-    raise notice 'CANARY_FINDING [INFO] CH05_BINDING binding=% active=% revision=% weight=% :: the target binding', r.id, r.active, r.revision, r.weight;
-    if r.active then
+    raise notice 'CANARY_FINDING [INFO] CH05_BINDING binding=% active=% revision=% weight=% expect_active=% :: the target binding', r.id, r.active, r.revision, r.weight, v_expect_active;
+    if r.active and not v_expect_active then
       raise notice 'CANARY_FINDING [BLOCK] CH05_BINDING_ALREADY_ACTIVE binding=% :: the canary binding is ALREADY active — Script A has already run (or someone activated it); this is not a pre-activation state', r.id;
+      v_b := v_b + 1;
+    elsif r.active and v_expect_active then
+      raise notice 'CANARY_FINDING [INFO] CH05_BINDING_ACTIVE_EXPECTED binding=% :: binding is active and expect_active=true — POST-ACTIVATION mode; the chain is validated in its already-live state (Script A audited)', r.id;
+    elsif (not r.active) and v_expect_active then
+      raise notice 'CANARY_FINDING [BLOCK] CH05_BINDING_INACTIVE_UNEXPECTED binding=% :: expect_active=true but the binding is INACTIVE — it was deactivated since activation; re-audit before proceeding', r.id;
       v_b := v_b + 1;
     end if;
     if v_exp <> '' and r.revision::text <> v_exp then
-      raise notice 'CANARY_FINDING [BLOCK] CH06_BINDING_REVISION binding=% got=% want=% :: the binding was edited since the packet was written — re-audit the chain before activating', r.id, r.revision, v_exp;
+      raise notice 'CANARY_FINDING [BLOCK] CH06_BINDING_REVISION binding=% got=% want=% :: the binding revision differs from the expected pin — re-audit the chain (or pass the current revision as canary.expect_binding_rev)', r.id, r.revision, v_exp;
       v_b := v_b + 1;
     end if;
   end if;
