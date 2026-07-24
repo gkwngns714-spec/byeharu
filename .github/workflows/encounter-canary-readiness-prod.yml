@@ -1,0 +1,62 @@
+name: ENCOUNTER CANARY — production readiness verify (READ-ONLY, gated)
+
+# Manually-dispatched, production-Environment-gated, STRICTLY READ-ONLY run of the EXISTING
+# scripts/encounter-canary-readiness.sql against production.
+#
+# WHY: docs/ENCOUNTER_CANARY_PACKET.md §3A currently asks the OWNER to paste ~300 lines of SELECT
+# into the Supabase SQL Editor, because the authoring machine has no service-role key and no psql.
+# CI has the secrets. This workflow settles the same question (CH23 derived cap at Reaver, plus
+# CH01/CH22/CH24/CH26/CH27) with the very verifier that verify-0272-postdeploy-proof.yml already
+# selftests on a disposable database.
+#
+# This workflow adds NO new checks. It supplies a production DB_URL to the proven runner and nothing
+# else. It NEVER activates the canary binding, NEVER flips encounter_resolver_enabled, never deploys
+# a migration, never approves a deployment, and writes nothing: the delegated .sql opens
+# `begin transaction read only` and ends in `rollback`, so PostgreSQL itself rejects any write.
+#
+# Trigger: workflow_dispatch ONLY. The production job is pinned to main and gated by the protected
+# `production` Environment — a human must approve before any production connection is made. A
+# static-safety selftest (no DB, no secrets) gates the production job.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encounter-canary-readiness-prod
+  cancel-in-progress: false
+
+jobs:
+  static_safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Static safety self-test (NO database, no secrets)
+        run: bash scripts/encounter-canary-readiness-prod.sh selftest
+
+  production_readiness:
+    needs: static_safety
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install psql client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          psql --version
+      - name: Production READ-ONLY canary readiness verification
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: bash scripts/encounter-canary-readiness-prod.sh production
