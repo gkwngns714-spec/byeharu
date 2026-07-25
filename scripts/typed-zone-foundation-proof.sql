@@ -90,8 +90,10 @@ begin
   end if;
 
   for v_s in
-    select * from (values (0,0.0),(10,0.05),(60,0.25),(120,0.5),(400,0.9),(5000,1.0))
-      as s(stats double precision, exposure double precision)
+    -- a table alias may NOT carry column TYPES; cast inside the VALUES list instead
+    select * from (values (0::double precision, 0.0::double precision),
+                          (10, 0.05), (60, 0.25), (120, 0.5), (400, 0.9), (5000, 1.0))
+      as s(stats, exposure)
   loop
     v_live := public.pirate_intercept_compute_risk(v_s.stats, v_s.exposure);
     v_resolved := greatest(v_effective.min_risk,

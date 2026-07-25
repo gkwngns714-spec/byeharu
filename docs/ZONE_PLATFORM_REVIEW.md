@@ -1,6 +1,6 @@
 # Typed-Zone Platform — architecture review (2026-07-25)
 
-**Status: SLICE 1 AUTHORED + AMENDED, NOT DEPLOYED.** Migration `0273` exists on the branch
+**Status: SLICES 1-8 + PROVENANCE + UNLOCK + PRECEDENCE + KIND CHANGE AUTHORED, NONE DEPLOYED.** Migration `0273` exists on the branch
 `slice-typed-zone-foundation`; production head is still `0272`. Slices 2–9 are unwritten.
 Deploying and flipping remain the owner's alone. See **§9** for what slice 1 actually is.
 
@@ -384,3 +384,202 @@ A TS dispatcher was written speculatively and **deleted** on this verdict.
 **[VERIFIED]** Change 4 was a real hole, not a formality: Postgres orders `NaN` above every other
 double, so `stat_reference > 0` is TRUE for both `'NaN'` and `'Infinity'`. Both would have stored
 cleanly under the original CHECKs.
+
+
+## 11. Build log — slices 1-4 (all authored, none deployed)
+
+Production migration head is still `0272`. Every slice below is on a stacked branch
+awaiting the owner's deploy. **No flag has been flipped and no live row has changed.**
+
+| Slice | Migration | PR | What it is |
+|---|---|---|---|
+| 1 | `0273` | #303 | typed-zone effect foundation — `zone_effect_pirate_intercept`, behaviour-neutral backfill, 2 flags seeded false |
+| 2 | `0274` | #304 | pure effect dispatcher V1 + risk helper (PostgreSQL), TypeScript contract types only |
+| 3 | `0275` | #305 | read-only shadow comparison + `danger_zones.revision`; the candidate builder |
+| 4 | `0276` | #306 | pirate runtime cutover behind `typed_zone_pirate_intercept_runtime_enabled` |
+
+### The decisions that shaped them
+
+**Language (slice 2).** The dispatcher is **PostgreSQL, not TypeScript** — Byeharu is
+server-authoritative, the live runtime is already PL/pgSQL, and slice 3's shadow must
+compare inside the database. A TS dispatcher was written first and **deleted** on this
+reasoning. `src/` now holds contract types only, and a test fails if risk mathematics or
+knob coalescing reappear there under any name.
+
+**Purity as a testable property (slice 2).** The dispatcher reads no table, no
+`game_config`, no clock; writes nothing; rolls nothing; calls no 0233 function; does no
+geometry. Both the migration self-assert and a contract test enforce each of those, so
+"pure" is checked rather than asserted in a comment.
+
+**Unknown effects are typed failures, never silent skips (slice 2).** Silently ignoring
+one would turn a newly introduced effect into an invisible gameplay omission the day an
+older dispatcher received it.
+
+**Comparison compares decisions, not outcomes (slice 3).**
+`pirate_intercept_evaluate_leg` rolls, writes, cancels the movement and can mint an
+encounter — so the shadow must never call it. It reproduces the decision from that
+evaluator's own pure parts. The proof counts `pirate_intercepts` rows to prove
+write-freedom rather than trusting a code read.
+
+**Configured divergence ≠ planner fault (slice 3).** A zone carrying a real override is
+*supposed* to produce a different number. The verdict reports
+`risk_diverged_by_override` separately, so the shadow cannot cry wolf the first time a
+zone is tuned.
+
+**One decider, fail closed (slice 4).** The cutover flag is read once into a local; the
+branches are mutually exclusive; the self-assert counts exactly one `random()` and one
+log insert. A planner failure leaves the leg **uninterrupted** rather than falling back to
+legacy — a silent fallback would make the cutover unobservable.
+
+**Splice, don't retype (slice 4).** The 0233 evaluator body was copied programmatically
+and altered in exactly two places, with a test asserting distinctive original lines
+survive character-for-character.
+
+### Still not verified anywhere
+Every migration and SQL proof is validated by disposable-stack CI workflows. **None has
+been executed locally** — this machine has no psql or docker. That limitation is stated
+in each PR rather than papered over.
+
+### Remaining
+Slices 5-9 (typed-zone editor core, first new non-live kind, mining shadow migration,
+exploration shadow migration, legacy retirement) are unstarted. The marker-over-polygon
+hit-testing fix is also still open as its own client-only slice.
+
+
+## 12. Build log continued — slices 5-6 and the hit-test fix
+
+| Slice | Migration | PR | What |
+|---|---|---|---|
+| 5a | `0277` | #307 | owner-gated effect authoring — **separate intents**, behaviour only |
+| — | — | #308 | **marker-over-polygon hit-test fix** (client-only) |
+| 6 | `0278` | #309 | combat effect + the dual-gate capability |
+| 6b | `0279` | #309 | dispatcher **V2** — combat beside pirate, V1 frozen |
+
+### Decisions
+
+**Separate intents (5a).** A zone has four independent concerns — geometry, identity,
+behaviour, lifecycle. One `zone_update(payload)` accepting all four would let a careless
+request silently alter three and collapse four different acts into one audit event. The
+behaviour commands **cannot** write `boundary`, `zone_kind`, `status`, `name` or
+`location_id`; the only `danger_zones` write either makes is the revision bump. Kind
+conversion is deliberately absent — converting a kind while stale effect config remains is
+a real hazard needing its own rules.
+
+**Hit-testing (#308).** Raising the polygon would only invert the bug, so the map now
+returns **all** candidates under the cursor and asks when there is more than one. Points
+lead the ordering (a marker is a small deliberate target; a polygon merely contains it).
+
+**Effect types resolve independently, but each selects one zone (6b).** A zone carrying
+both effects yields two planned entries — neither suppresses the other. Yet each type still
+picks a single zone, because spawning from every overlapping combat zone would multiply
+encounters by however many polygons intersect. **Overlap changes WHICH zone acts, never HOW
+MANY.**
+
+**Combat is gated by an input, not a read (6b).** A pure planner cannot consult a flag, so
+the caller resolves the dual-gate AND and passes it in. Absent means false means combat
+plans nothing.
+
+### Three bugs found by testing rather than reasoning
+
+1. **Hit radius** converted by camera scale only, leaving it in viewBox units — a click
+   landing *exactly* on a marker missed it. Seen live in the running editor.
+2. **A V2 in-body comment named a function the self-assert forbids.**
+   `pg_get_functiondef` includes comments, so the assert would have matched its own
+   documentation and aborted the deploy.
+3. **The V2 self-assert grepped the prefix `zone_effect_`**, which occurs inside
+   `typed_zone_effect_dispatch_v2` — the function's own name. **Every deploy would have
+   failed on itself.**
+
+A regression test now guards class 2/3 across V1, V2 and the shadow: no typed-zone function
+body may name a token its own self-assert forbids, comments included. That failure mode is
+invisible until a deploy fails.
+
+### Still open
+Slices 7-9 (mining shadow migration, exploration shadow migration, legacy retirement), the
+typed-zone editor UI, kind conversion, and the immutable `provenance` column from the
+Appendix. **Production head remains `0272`.**
+
+
+## 13. Build log — slices 7-8 and the provenance split
+
+| Slice | Migration | PR | What |
+|---|---|---|---|
+| 7 | `0280` | #310 | mining successors — INACTIVE, footprint = `mining_extract_radius` |
+| 8 | `0281` | #311 | exploration successors — own gate, own radius key |
+| — | `0282` | #312 | **`provenance` split out of `source`**, immutable |
+
+### The finding that shaped slices 7-8
+
+`pirate_intercept_leg_zone_hits` filters `status = 'active'` and **ignores `zone_kind`
+entirely**. Under the legacy path — still authoritative — **any** active `danger_zones` row
+is a pirate interception zone whatever it calls itself. Creating "mining" or "exploration"
+zones as active rows would have carpeted the map with new pirate ambush regions around every
+ore field and survey site, silently, on deploy.
+
+Every successor is therefore born **inactive**, and both migrations capture a pre-image of
+the active zone set to prove the count is unchanged. A test pins the precondition: **if
+`leg_zone_hits` ever gains a `zone_kind` filter, this rationale changes.**
+
+### Independence, proven rather than intended
+Exploration does not share mining's gate, its radius key, or its successor set — sharing any
+of those because two systems happen to use point tables would couple two independent
+gameplay decisions. Both migrations assert the other's flag is undisturbed and that no zone
+carries both point-successor effects.
+
+### The provenance split (`0282`)
+`source` was answering geometry-representation **and** protection-provenance at once. Any
+"adopt a seeded zone" feature must set `source='drawn'`, after which the row is
+indistinguishable from owner content — so its flag could never be rolled back. `provenance`
+is now a separate, **immutable** column (trigger-enforced, with the trigger proven to fire).
+The classification is a **one-time** snapshot, and the migration proves **zero disagreement**
+with the source-based classification the live guards still use — which makes re-pointing
+those guards a later two-line diff of already-demonstrated safety.
+
+### Remaining
+- **Re-point the three guards** (`zone_update`, `zone_unpublish`, `zone_set_active`) at
+  `provenance`. Proven safe; not yet done.
+- Then the seeded zones can be unlocked behind a **genuinely reversible** flag.
+- Slice 9 (legacy retirement) is premature — no authority has moved.
+- Typed-zone editor UI, and kind conversion with explicit conversion rules.
+
+**Production head remains `0272`. Nothing deployed.**
+
+
+## 14. Build log — the authoring intents completed
+
+| Migration | PR | What |
+|---|---|---|
+| `0283` | #313 | seeded-zone unlock — guards re-pointed at `provenance`, two flags, both dark |
+| `0284` | #314 | **error precedence fixed** — eligibility decides before the concurrency compare |
+| `0285` | #315 | **kind conversion** — the fourth intent; refuses rather than deletes |
+| — | #316 | client mirror of the conversion rule; all four effects registered |
+
+### The four separate authoring intents are now complete
+geometry (`zone_update`) · behaviour (`zone_effect_set` / `_remove`) · lifecycle
+(`zone_unpublish` / `zone_set_active`) · **identity** (`zone_kind_change`). One intent per
+command, so no single request can silently alter three concerns and the audit log gets four
+distinguishable event types.
+
+### Why kind conversion refuses instead of deleting
+A zone converted from pirate to mining that keeps its `pirate_intercept` effect is a "mining"
+zone that **still intercepts fleets**. Nothing in the schema forbids it — effects key on
+`zone_id`, not kind, precisely so they compose. So the conversion is refused while a
+non-permitted effect remains, naming each one. Deleting them to satisfy a rename would
+destroy authored configuration and recreate the exact bug this platform exists to remove:
+something happening because of what a row *is* rather than what it *declares*.
+
+The permitted-effect map is a **table**, not a `CASE` in the command — letting a mining zone
+also spawn later is one INSERT. A self-assert proves no dispatcher reads that table, because
+a kind/effect map sitting near a planner is how identity starts dispatching by accident.
+
+### The precedence fix, and what did NOT move with it
+`stale_revision` before `protected_zone` is what sent the owner hunting a concurrent edit
+that never happened. Eligibility now runs first — but **idempotent replay still precedes it**
+(a lost-response retry must return its recorded result, not a fresh verdict) and **the row
+lock still precedes both** (so they read the same committed state). Both are asserted.
+
+### Remaining
+The typed-zone **editor UI** (server commands exist; nothing drives them yet). Slice 9
+(legacy retirement) stays premature — no authority has moved.
+
+**Production head remains `0272`. Nothing deployed, no flag flipped, no live row changed.**
