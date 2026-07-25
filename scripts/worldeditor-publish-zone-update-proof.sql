@@ -603,12 +603,16 @@ begin
   -- drop the closing duplicate exactly as zoneDraftModel.openRingFromLive does, and rebuild the
   -- {x,y} vertex objects the draft carries as its fork-time snapshot.
   v_n := jsonb_array_length(v_ring);
-  for v_i in 0 .. v_n - 2 loop
-    v_verts := v_verts || jsonb_build_array(jsonb_build_object(
-                 'x', (v_ring->v_i->>0)::double precision,
-                 'y', (v_ring->v_i->>1)::double precision));
-  end loop;
-  v_verts := (select jsonb_agg(e->0) from jsonb_array_elements(v_verts) e);
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'x', (elem->>0)::double precision,
+           'y', (elem->>1)::double precision) order by ord), '[]'::jsonb)
+    into v_verts
+    from jsonb_array_elements(v_ring) with ordinality as t(elem, ord)
+   where ord <= v_n - 1;   -- drop the closing duplicate (openRingFromLive)
+  if jsonb_array_length(v_verts) <> v_n - 1 then
+    raise exception 'ZONE UPDATE ROUND-TRIP FAIL: rebuilt % vertices from a %-point ring',
+      jsonb_array_length(v_verts), v_n;
+  end if;
 
   -- (3) publish an edit that changes ONLY the name. `expected` is the transported ring verbatim.
   r := public.zone_update('zoneupd-roundtrip-1', jsonb_build_object(
