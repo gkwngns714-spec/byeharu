@@ -341,6 +341,14 @@ export function WorldEditor() {
   const [historicalFocus, setHistoricalFocus] = useState<HistoricalFocus | null>(null)
 
   const svgRef = useRef<SVGSVGElement | null>(null)
+  // The SAME element, held BOTH ways on purpose: the ref for the imperative readers that run inside
+  // event handlers (screenToWorld, toSvgUnits — they must not re-render anything), and the state for
+  // effects that need to react to it MOUNTING. One assignment site keeps them from diverging.
+  const [svgEl, setSvgEl] = useState<SVGSVGElement | null>(null)
+  const attachSvg = useCallback((el: SVGSVGElement | null) => {
+    svgRef.current = el
+    setSvgEl(el)
+  }, [])
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
   const userMovedRef = useRef(false)
   const fittedRef = useRef(false)
@@ -461,16 +469,24 @@ export function WorldEditor() {
     })
   }, [])
 
+  // WHEEL ZOOM must attach to the SVG ELEMENT ITSELF, non-passively: React routes onWheel through a
+  // PASSIVE root listener, where preventDefault is ignored — so the browser would page-zoom (or
+  // scroll) instead of the map zooming. That is why this is a manual addEventListener.
+  //
+  // It is keyed off the mounted element rather than svgRef.current: the map renders behind the
+  // owner + flag gate and a data fetch, so on first run the ref is still null. Depending on the ref
+  // alone, this effect bailed once and never re-ran when the SVG finally appeared — the listener was
+  // never attached and every wheel gesture fell through to the browser. The ref callback below makes
+  // the element a reactive value, so attachment happens exactly when the SVG exists.
   useEffect(() => {
-    const svg = svgRef.current
-    if (!svg) return
+    if (!svgEl) return
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
+      e.preventDefault() // also swallows ctrl+wheel, so the page never zooms over the map
       zoomByFactor(e.deltaY < 0 ? 1.15 : 1 / 1.15)
     }
-    svg.addEventListener('wheel', onWheel, { passive: false })
-    return () => svg.removeEventListener('wheel', onWheel)
-  }, [zoomByFactor])
+    svgEl.addEventListener('wheel', onWheel, { passive: false })
+    return () => svgEl.removeEventListener('wheel', onWheel)
+  }, [svgEl, zoomByFactor])
 
   // Reset stays the ALL-domains content fit (cameraForDomain 'all' — identical camera; empty world
   // yields the identity camera via the fit's own empty rule).
@@ -840,7 +856,7 @@ export function WorldEditor() {
     <div className="relative h-screen w-full overflow-hidden bg-app text-ink" data-testid="worldeditor-shell">
         {/* ── the ONE real map (shared worldToViewBox + galaxyCamera) — full bleed ── */}
           <svg
-            ref={svgRef}
+            ref={attachSvg}
             viewBox={`0 0 ${VIEW} ${VIEW}`}
             preserveAspectRatio="xMidYMid meet"
             className="absolute inset-0 h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
@@ -1360,17 +1376,18 @@ export function WorldEditor() {
               zoneOptions (0252): the create-location zone picker's source — the zone refs the raw
               get_world_map tree already carries (WorldEditorData.zoneRefs; no extra server read). */}
           {authoringDomain === 'locations' ? (
-            <LocationDraftPanel zoneOptions={data?.zoneRefs ?? []} />
+            <LocationDraftPanel zoneOptions={data?.zoneRefs ?? []} onReloadLive={reloadLive} />
           ) : authoringDomain === 'mining' ? (
-            <MiningDraftPanel />
+            <MiningDraftPanel onReloadLive={reloadLive} />
           ) : authoringDomain === 'exploration' ? (
-            <ExplorationDraftPanel />
+            <ExplorationDraftPanel onReloadLive={reloadLive} />
           ) : (
             <ZoneDraftPanel
               locations={data?.locations ?? []}
               zones={data?.zones ?? []}
               gestureMode={zoneGestureMode}
               onGestureModeChange={setZoneGestureMode}
+              onReloadLive={reloadLive}
             />
           )}
           </>

@@ -110,7 +110,7 @@ function ValidationNotices({ report }: { report: ExplorationValidationReport }) 
   )
 }
 
-export function ExplorationDraftPanel() {
+export function ExplorationDraftPanel({ onReloadLive }: { onReloadLive: () => void }) {
   const {
     drafts,
     activeDraft,
@@ -212,6 +212,7 @@ export function ExplorationDraftPanel() {
       // The change is live now — the local draft has served its purpose.
       setPublishAttempt(null)
       discardDraft(draft.draftId)
+      onReloadLive() // …and the editor must SHOW it, without a manual refresh
       return
     }
     setPublishAttempt({ draftId: draft.draftId, requestId, phase: 'failed', failure: result })
