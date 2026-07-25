@@ -26,6 +26,7 @@ const zone = (over: Partial<LiveDangerZone> = {}): LiveDangerZone => ({
   name: 'Crimson Reach',
   source: 'drawn',
   location_id: null,
+  revision: 7,
   ring: [
     [0, 0],
     [400, 0],
@@ -49,7 +50,12 @@ test('forkEdit materializes the live ring to an OPEN polygon, pins the uuid + re
   if (d.mode.kind !== 'edit') throw new Error('unreachable')
   // danger_zones exposes a REAL uuid — the live id is NOT a natural-key name
   expect(d.mode.sourceId).toBe('a3d2b1c0-0000-4000-8000-000000000001')
-  expect(d.mode.sourceRevision).toBe(
+  // The zone domain pins the SERVER's revision, NOT a payload fingerprint. A boundary reaches the
+  // client only through get_danger_zones, which emits coordinates at 15 significant digits, so a
+  // fingerprint over them can never be reproduced from the stored doubles — it marked every
+  // buffer-derived zone permanently drifted. The token is carried verbatim, never interpreted.
+  expect(d.mode.sourceRevision).toBe('7')
+  expect(d.mode.sourceRevision).not.toBe(
     computeSourceFingerprint(ZONE_DRAFT_DESCRIPTOR.projectFromLive(zone())),
   )
   // the CLOSED live ring materializes to an OPEN editable ring (closing duplicate dropped)
@@ -178,9 +184,17 @@ test('fingerprint is stable across calls and extra properties, and moves on any 
 test('draftSourceStatus: current when live matches the forked revision; changed when the ring moved; missing when gone', () => {
   const d = forkEdit(zone(), 'draft-a', T0)
   expect(draftSourceStatus(d, zone())).toBe('current')
+  // The REVISION decides, not the coordinates. A row whose revision advanced is drifted…
+  expect(draftSourceStatus(d, zone({ revision: 8 }))).toBe('source_changed')
+  // …and a moved ring at the SAME revision is NOT drift as far as this client is concerned: the
+  // server bumps revision on every applied edit, so an unchanged revision means an unchanged row.
+  // This is the whole point — coordinates arrive rounded and cannot be compared for equality.
   expect(
     draftSourceStatus(d, zone({ ring: [[0, 0], [999, 0], [400, 400], [0, 400], [0, 0]] })),
-  ).toBe('source_changed')
+  ).toBe('current')
+  // A row read from a server that predates the revision exposure carries no usable token → drifted,
+  // never silently publishable against an unknown baseline (fail-closed).
+  expect(draftSourceStatus(d, zone({ revision: null }))).toBe('source_changed')
   expect(draftSourceStatus(d, undefined)).toBe('source_missing')
   // a create draft has no source — always current
   expect(draftSourceStatus(beginCreate('draft-new', T0), undefined)).toBe('current')
