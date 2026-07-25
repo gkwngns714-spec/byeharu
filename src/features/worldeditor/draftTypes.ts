@@ -75,6 +75,20 @@ export interface DomainDraftDescriptor<TPayload, TLive, TReport> {
   projectFromLive(live: TLive): TPayload
   /** The live row's server id (an edit draft's fork source). */
   liveId(live: TLive): string
+  /** OPTIONAL — the live row's SERVER-ISSUED revision token, when the domain's table carries one.
+   *
+   *  Domains without one leave this undefined and keep the default: `sourceRevision` is a fingerprint
+   *  computed over the projected payload (computeSourceFingerprint). That default is only sound when
+   *  the payload round-trips EXACTLY. The zone domain proved it does not — a boundary reaches the
+   *  client only through get_danger_zones, which emits coordinates through jsonb at 15 significant
+   *  digits, so a fingerprint over those values can never be reproduced from the stored doubles and
+   *  every seeded zone read as permanently drifted (tests: PROOF 11, worldeditor-publish-zone-update).
+   *
+   *  When a domain supplies this, the server's own token becomes the ONE staleness authority on both
+   *  sides — the client compares tokens instead of re-deriving a fingerprint from lossy values, and
+   *  the same token is what the command sends as `source_revision`. It is deliberately a STRING: the
+   *  client never interprets it, it only carries it back. */
+  liveRevision?(live: TLive): string
   /** Structural payload check for rehydration (presence + primitive kinds; domain unions are trusted
    *  as strings — a stale value renders honestly and simply fails any FUTURE server validation). */
   isPayloadShaped(p: unknown): boolean

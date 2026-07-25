@@ -139,6 +139,15 @@ export const ZONE_DRAFT_DESCRIPTOR: DomainDraftDescriptor<
   }),
   // danger_zones exposes a REAL uuid through the read (unlike mining/exploration's name keys).
   liveId: (z) => z.id,
+  // THE ZONE STALENESS AUTHORITY — the server's own revision, never a fingerprint over the payload.
+  // A zone's geometry reaches the client only through get_danger_zones, which emits coordinates as
+  // jsonb numbers at 15 significant digits; a fingerprint over those values cannot be reproduced from
+  // the stored doubles, so the generic default marked every buffer-derived zone permanently drifted
+  // (reproduced on a disposable stack: an UNCHANGED zone rejected as stale_revision {geometry}).
+  // The revision is exact and opaque — carried, never interpreted. A row from a server that predates
+  // its exposure yields '' , which no live revision equals, so such a draft reads as stale rather
+  // than silently publishing against an unknown baseline (fail-closed).
+  liveRevision: (z) => (z.revision === null || z.revision === undefined ? '' : String(z.revision)),
   isPayloadShaped,
   toLayerItem: (draftId, payload) => ({
     layer: 'zones',
