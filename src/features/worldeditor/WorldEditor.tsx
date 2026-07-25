@@ -72,7 +72,9 @@ import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { CombatContentPanel } from './CombatContentPanel'
 import { worldToViewBox } from '../map/openSpaceTransform'
 import { Button } from '../../components/ui'
-import { WorldEditorDock, WorldEditorToolRail } from './WorldEditorDock'
+import { WorldEditorDock, WorldEditorFirstRunHint, WorldEditorToolRail } from './WorldEditorDock'
+import { shouldShowFirstRunHint, worldEditorHintDismissKey } from './worldEditorFirstRunHint'
+import { useAuthStore } from '../../store/authStore'
 import {
   INITIAL_WORLD_EDITOR_CHROME,
   collapsePanel,
@@ -187,6 +189,25 @@ export function Glyph({ x, y, r, glyph, tone }: { x: number; y: number; r: numbe
   return <circle cx={x} cy={y} r={r} fill={tone} {...stroke} />
 }
 
+// FIRST-RUN HINT dismissal — pure UI preference, ONE per-user versioned boolean holding '1'. Both
+// directions are try/catch-guarded so a blocked storage (private mode, disabled cookies) degrades to a
+// session-only dismissal rather than throwing. Authoring state is never persisted through here.
+function readHintDismissed(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeHintDismissed(key: string): void {
+  try {
+    window.localStorage.setItem(key, '1')
+  } catch {
+    /* storage unavailable → dismissal lives only for this session's state */
+  }
+}
+
 export function WorldEditor() {
   const [enabled, setEnabled] = useState<boolean | null>(null)
   // OWNER GATE (client exposure control): null=resolving, true=owner, false=not owner / lookup failed
@@ -215,6 +236,21 @@ export function WorldEditor() {
   const collapseChrome = useCallback(() => setChrome(collapsePanel), [])
   const hideChrome = useCallback(() => setChrome(dismissChrome), [])
   const toggleAllChrome = useCallback(() => setChrome(toggleChrome), [])
+
+  // FIRST-RUN HINT — the one affordance that keeps the clean-map default (law #1) from reading as a
+  // broken surface: a cold editor shows six icon-only rail buttons and nothing else, so a first-time
+  // owner has no visible cue that the rail is the summon surface. Dismissal is pure UI preference,
+  // persisted per user under ONE versioned boolean (the firstOrdersDismissKey idiom); storage IO is
+  // try/catch-guarded so blocked storage degrades to a session-only dismissal. Rendering it can never
+  // open a tool or touch a draft — worldEditorChrome and the draft guard keep their authorities.
+  // RequireAuth guarantees a stable user for this mount, so the key is fixed for the editor's life;
+  // lazy init reads storage exactly once (no effect, no flicker) — the FirstOrdersCard idiom.
+  const hintKey = worldEditorHintDismissKey(useAuthStore((s) => s.user?.id ?? null))
+  const [hintDismissed, setHintDismissed] = useState(() => readHintDismissed(hintKey))
+  const dismissHint = useCallback(() => {
+    setHintDismissed(true)
+    writeHintDismissed(hintKey)
+  }, [hintKey])
 
   // V1B-1 draft store — a SEPARATE structure (localStorage-backed); live locations are passed ONLY
   // for the mandatory staleness re-validation. Never merged into the read snapshot.
@@ -854,6 +890,13 @@ export function WorldEditor() {
           onDismissAll={hideChrome}
           badges={{ author: pendingDrafts.total }}
         />
+        {/* Sits BESIDE the rail, in the same top-left corner stack — never parked over the map (law #1
+            and #3 both hold). Self-retires the moment any tool is summoned or any draft exists. */}
+        {shouldShowFirstRunHint({
+          chrome,
+          pendingDraftTotal: pendingDrafts.total,
+          dismissed: hintDismissed,
+        }) && <WorldEditorFirstRunHint onDismiss={dismissHint} />}
       </div>
 
       {/* ── BOTTOM-LEFT corner: unsaved-work indicator + camera controls ──

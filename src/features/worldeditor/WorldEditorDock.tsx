@@ -18,6 +18,7 @@ import {
   type WorldEditorChromeState,
   type WorldEditorTool,
 } from './worldEditorChrome'
+import { WORLD_EDITOR_HINT_BODY, WORLD_EDITOR_HINT_TITLE } from './worldEditorFirstRunHint'
 
 interface RailProps {
   readonly chrome: WorldEditorChromeState
@@ -74,6 +75,40 @@ export function WorldEditorToolRail({ chrome, onToggleTool, onDismissAll, badges
         className="flex h-9 w-9 items-center justify-center rounded-md text-ink-faint transition hover:bg-surface-2 hover:text-ink"
       >
         <Icon name="close" size={16} />
+      </button>
+    </div>
+  )
+}
+
+interface FirstRunHintProps {
+  readonly onDismiss: () => void
+}
+
+/** The first-run pointer — a single dismissable line that sits BESIDE the rail (never over the map), so
+ *  a cold, empty editor states its one gesture instead of reading as broken. Presentation only: it owns
+ *  no state and cannot summon a tool; whether it renders at all is decided by
+ *  worldEditorFirstRunHint.shouldShowFirstRunHint. */
+export function WorldEditorFirstRunHint({ onDismiss }: FirstRunHintProps) {
+  return (
+    <div
+      className="pointer-events-auto flex max-w-[15rem] items-start gap-2 rounded-lg border border-accent/40 bg-surface/95 px-2.5 py-2 shadow-overlay backdrop-blur"
+      data-testid="worldeditor-first-run-hint"
+      role="note"
+    >
+      <Icon name="edit" size={14} className="mt-0.5 shrink-0 text-accent" />
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-semibold text-ink">{WORLD_EDITOR_HINT_TITLE}</span>
+        <span className="text-[11px] leading-snug text-ink-muted">{WORLD_EDITOR_HINT_BODY}</span>
+      </div>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss hint"
+        title="Dismiss hint"
+        data-testid="worldeditor-first-run-hint-dismiss"
+        className="-mr-0.5 -mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-faint transition hover:bg-surface-2 hover:text-ink"
+      >
+        <Icon name="close" size={12} />
       </button>
     </div>
   )
