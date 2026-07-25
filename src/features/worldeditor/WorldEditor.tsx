@@ -74,6 +74,12 @@ import { worldToViewBox } from '../map/openSpaceTransform'
 import { Button } from '../../components/ui'
 import { WorldEditorDock, WorldEditorFirstRunHint, WorldEditorToolRail } from './WorldEditorDock'
 import { shouldShowFirstRunHint, worldEditorHintDismissKey } from './worldEditorFirstRunHint'
+import {
+  authoringEditLabel,
+  authoringEditTitle,
+  editPlanNeedsGuard,
+  planSelectedEdit,
+} from './worldEditorAuthoringIntent'
 import { useAuthStore } from '../../store/authStore'
 import {
   INITIAL_WORLD_EDITOR_CHROME,
@@ -659,6 +665,74 @@ export function WorldEditor() {
     [data, selected],
   )
 
+  // ── SELECTION-DERIVED EDIT (V5.1) ───────────────────────────────────────────────────────────────
+  // The live fork source behind the CURRENT selection, whichever domain it belongs to. Exactly one of
+  // the four memos above can be non-null for a given selection (the layer vocabulary is disjoint).
+  const selectedForkSource = useMemo(
+    () =>
+      selected?.layer === 'locations'
+        ? selectedLocation
+        : selected?.layer === 'mining'
+          ? selectedMiningField
+          : selected?.layer === 'exploration'
+            ? selectedExplorationSite
+            : selected?.layer === 'zones'
+              ? selectedZone
+              : null,
+    [selected, selectedLocation, selectedMiningField, selectedExplorationSite, selectedZone],
+  )
+
+  // What would Edit do right now? Decided by the ONE pure planner — the shell never re-derives it, and
+  // the planner is deliberately given NO dirty-state input (that stays the guard's alone).
+  const selectedEditPlan = useMemo(
+    () =>
+      planSelectedEdit({
+        selectedDomain: selected?.layer ?? null,
+        hasLiveRow: selectedForkSource !== null,
+        activeDomain: authoringDomain,
+      }),
+    [selected, selectedForkSource, authoringDomain],
+  )
+
+  // Fork the selected live row into ITS OWN domain's store. Kept as one lookup so the commit below can
+  // never fork into the wrong store when the domain is changing in the same tick.
+  const forkSelectedInto = useCallback(
+    (domain: AuthoringDomain) => {
+      if (domain === 'locations' && selectedLocation) draftStore.forkEditDraft(selectedLocation)
+      else if (domain === 'mining' && selectedMiningField) miningDraftStore.forkEditDraft(selectedMiningField)
+      else if (domain === 'exploration' && selectedExplorationSite)
+        explorationDraftStore.forkEditDraft(selectedExplorationSite)
+      else if (domain === 'zones' && selectedZone) zoneDraftStore.forkEditDraft(selectedZone)
+    },
+    [
+      selectedLocation,
+      selectedMiningField,
+      selectedExplorationSite,
+      selectedZone,
+      draftStore,
+      miningDraftStore,
+      explorationDraftStore,
+      zoneDraftStore,
+    ],
+  )
+
+  // Press Edit. A same-domain edit forks immediately (nothing is being left, so the switch-domain guard
+  // must NOT fire). A cross-domain edit hands the guard ONE closure that switches the workspace AND
+  // forks — the guard runs it whole or not at all, so there is no half-applied transition and no draft
+  // is touched before the owner confirms. forkEditDraft mints a NEW draftId and upserts, so an existing
+  // dirty draft in the target domain is preserved beside it, never overwritten.
+  const requestEditSelected = useCallback(() => {
+    const plan = selectedEditPlan
+    if (plan.kind === 'disabled') return
+    const commit = () => {
+      if (plan.kind === 'switch-then-edit') switchAuthoringDomain(plan.domain)
+      forkSelectedInto(plan.domain)
+      setChrome((c) => openChromeTool(c, 'author'))
+    }
+    if (editPlanNeedsGuard(plan)) guardRef.current.requestAction('switch-domain', commit)
+    else commit()
+  }, [selectedEditPlan, forkSelectedInto, switchAuthoringDomain])
+
   // DARK by default (fail-closed). Render nothing while the flag is loading or off (exposure gate), and
   // nothing while owner status is still resolving. An authenticated NON-OWNER gets a controlled
   // "Not authorized" surface — the editor and the History panel never render for them. (The backend
@@ -1071,75 +1145,19 @@ export function WorldEditor() {
                     >
                       New
                     </Button>
-                    {authoringDomain === 'locations' ? (
-                      <Button
-                        size="sm"
-                        disabled={!selectedLocation}
-                        title={
-                          selectedLocation
-                            ? 'Copy this location into a draft you can change.'
-                            : 'Select a location first.'
-                        }
-                        onClick={() => {
-                          if (!selectedLocation) return
-                          draftStore.forkEditDraft(selectedLocation)
-                          setChrome((c) => openChromeTool(c, 'author'))
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    ) : authoringDomain === 'mining' ? (
-                      <Button
-                        size="sm"
-                        disabled={!selectedMiningField}
-                        title={
-                          selectedMiningField
-                            ? 'Copy this mining field into a draft you can change.'
-                            : 'Select a mining field first.'
-                        }
-                        onClick={() => {
-                          if (!selectedMiningField) return
-                          miningDraftStore.forkEditDraft(selectedMiningField)
-                          setChrome((c) => openChromeTool(c, 'author'))
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    ) : authoringDomain === 'exploration' ? (
-                      <Button
-                        size="sm"
-                        disabled={!selectedExplorationSite}
-                        title={
-                          selectedExplorationSite
-                            ? 'Copy this exploration site into a draft you can change.'
-                            : 'Select an exploration site first.'
-                        }
-                        onClick={() => {
-                          if (!selectedExplorationSite) return
-                          explorationDraftStore.forkEditDraft(selectedExplorationSite)
-                          setChrome((c) => openChromeTool(c, 'author'))
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        disabled={!selectedZone}
-                        title={
-                          selectedZone
-                            ? 'Copy this zone into a draft you can reshape on the map.'
-                            : 'Select a zone first.'
-                        }
-                        onClick={() => {
-                          if (!selectedZone) return
-                          zoneDraftStore.forkEditDraft(selectedZone)
-                          setChrome((c) => openChromeTool(c, 'author'))
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    )}
+                    {/* SELECTION-DERIVED edit (not authoringDomain-derived). The control names the
+                        entity the owner actually picked, so it can never contradict the header above
+                        it. Crossing a domain boundary commits the switch AND the fork as ONE guarded
+                        action — cancel leaves both untouched; confirm performs both exactly once. */}
+                    <Button
+                      size="sm"
+                      disabled={selectedEditPlan.kind === 'disabled'}
+                      title={authoringEditTitle(selectedEditPlan)}
+                      data-testid="worldeditor-inspector-edit"
+                      onClick={requestEditSelected}
+                    >
+                      {authoringEditLabel(selectedEditPlan)}
+                    </Button>
                     {DEFERRED_OPERATIONS.filter((op) => !LIVE_DRAFT_OPERATIONS.includes(op)).map((op) => (
                       <button
                         key={op}
