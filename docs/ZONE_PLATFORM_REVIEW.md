@@ -1,6 +1,6 @@
 # Typed-Zone Platform — architecture review (2026-07-25)
 
-**Status: SLICES 1-4 AUTHORED, NONE DEPLOYED.** Migration `0273` exists on the branch
+**Status: SLICES 1-6 AUTHORED, NONE DEPLOYED.** Migration `0273` exists on the branch
 `slice-typed-zone-foundation`; production head is still `0272`. Slices 2–9 are unwritten.
 Deploying and flipping remain the owner's alone. See **§9** for what slice 1 actually is.
 
@@ -444,3 +444,57 @@ in each PR rather than papered over.
 Slices 5-9 (typed-zone editor core, first new non-live kind, mining shadow migration,
 exploration shadow migration, legacy retirement) are unstarted. The marker-over-polygon
 hit-testing fix is also still open as its own client-only slice.
+
+
+## 12. Build log continued — slices 5-6 and the hit-test fix
+
+| Slice | Migration | PR | What |
+|---|---|---|---|
+| 5a | `0277` | #307 | owner-gated effect authoring — **separate intents**, behaviour only |
+| — | — | #308 | **marker-over-polygon hit-test fix** (client-only) |
+| 6 | `0278` | #309 | combat effect + the dual-gate capability |
+| 6b | `0279` | #309 | dispatcher **V2** — combat beside pirate, V1 frozen |
+
+### Decisions
+
+**Separate intents (5a).** A zone has four independent concerns — geometry, identity,
+behaviour, lifecycle. One `zone_update(payload)` accepting all four would let a careless
+request silently alter three and collapse four different acts into one audit event. The
+behaviour commands **cannot** write `boundary`, `zone_kind`, `status`, `name` or
+`location_id`; the only `danger_zones` write either makes is the revision bump. Kind
+conversion is deliberately absent — converting a kind while stale effect config remains is
+a real hazard needing its own rules.
+
+**Hit-testing (#308).** Raising the polygon would only invert the bug, so the map now
+returns **all** candidates under the cursor and asks when there is more than one. Points
+lead the ordering (a marker is a small deliberate target; a polygon merely contains it).
+
+**Effect types resolve independently, but each selects one zone (6b).** A zone carrying
+both effects yields two planned entries — neither suppresses the other. Yet each type still
+picks a single zone, because spawning from every overlapping combat zone would multiply
+encounters by however many polygons intersect. **Overlap changes WHICH zone acts, never HOW
+MANY.**
+
+**Combat is gated by an input, not a read (6b).** A pure planner cannot consult a flag, so
+the caller resolves the dual-gate AND and passes it in. Absent means false means combat
+plans nothing.
+
+### Three bugs found by testing rather than reasoning
+
+1. **Hit radius** converted by camera scale only, leaving it in viewBox units — a click
+   landing *exactly* on a marker missed it. Seen live in the running editor.
+2. **A V2 in-body comment named a function the self-assert forbids.**
+   `pg_get_functiondef` includes comments, so the assert would have matched its own
+   documentation and aborted the deploy.
+3. **The V2 self-assert grepped the prefix `zone_effect_`**, which occurs inside
+   `typed_zone_effect_dispatch_v2` — the function's own name. **Every deploy would have
+   failed on itself.**
+
+A regression test now guards class 2/3 across V1, V2 and the shadow: no typed-zone function
+body may name a token its own self-assert forbids, comments included. That failure mode is
+invisible until a deploy fails.
+
+### Still open
+Slices 7-9 (mining shadow migration, exploration shadow migration, legacy retirement), the
+typed-zone editor UI, kind conversion, and the immutable `provenance` column from the
+Appendix. **Production head remains `0272`.**
