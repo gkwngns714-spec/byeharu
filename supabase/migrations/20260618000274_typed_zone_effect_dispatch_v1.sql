@@ -476,8 +476,11 @@ begin
     'exposure_floor', coalesce(public.cfg_num('pirate_intercept_exposure_floor'), 0.15),
     'stat_reference', coalesce(public.cfg_num('pirate_intercept_stat_reference'), 120));
 
-  for v_s in select * from (values (0,0.0),(10,0.05),(60,0.25),(120,0.5),(400,0.9),(5000,1.0))
-    as s(stats double precision, expo double precision)
+  -- NOTE: a table alias may NOT carry column TYPES — `as s(col type)` is invalid Postgres and
+  -- aborts the migration. Cast inside the VALUES list instead.
+  for v_s in select * from (values (0::double precision, 0.0::double precision),
+                                   (10, 0.05), (60, 0.25), (120, 0.5), (400, 0.9), (5000, 1.0))
+    as s(stats, expo)
   loop
     v_live := public.pirate_intercept_compute_risk(v_s.stats, v_s.expo);
     v_new  := public.typed_zone_pirate_intercept_risk_v1(
