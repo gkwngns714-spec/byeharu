@@ -286,13 +286,39 @@ export function commandRpcName(commandType: WorldEditorCommandType): string {
   }
 }
 
+/** Describe an off-contract server response WITHOUT leaking a whole payload into the UI: the JSON
+ *  shape and its top-level keys are what identify the mismatch (e.g. a set-returning RPC answering
+ *  with an ARRAY rather than the single envelope object). Pure, total, never throws. */
+export function describeRawEnvelope(raw: unknown): string {
+  if (raw === null || raw === undefined) return 'The server returned an empty response body.'
+  if (Array.isArray(raw))
+    return `The server returned an array of ${raw.length} row(s), not a single command envelope.`
+  if (typeof raw !== 'object') return `The server returned a ${typeof raw}, not a command envelope.`
+  const keys = Object.keys(raw as Record<string, unknown>)
+  const shown = keys.slice(0, 8).join(', ')
+  const more = keys.length > 8 ? `, +${keys.length - 8} more` : ''
+  return keys.length === 0
+    ? 'The server returned an empty object with no `ok` field.'
+    : `The server response has no boolean \`ok\` field (keys: ${shown}${more}).`
+}
+
 /** Normalize the raw snake_case server envelope into the typed camelCase result. */
 export function normalizeEnvelope<R>(
   envelope: WorldEditorCommandEnvelope<unknown>,
   raw: RawServerEnvelope | null,
 ): WorldEditorCommandResult<R> {
   if (!raw || typeof raw.ok !== 'boolean') {
-    return { ok: false, requestId: envelope.requestId, error: 'transport_error' }
+    // The server ANSWERED (HTTP 200) but not in the envelope shape. That is a different failure from
+    // "the call never landed", and reporting both as a bare transport_error made the editor claim the
+    // server was unreachable while it was demonstrably replying. The typed code stays transport_error
+    // (fail-closed, union unchanged); WHAT arrived rides details[] — the worldEditorAuditNormalize
+    // `malformed_response` idiom, so no consumer needs a new branch to surface it.
+    return {
+      ok: false,
+      requestId: envelope.requestId,
+      error: 'transport_error',
+      details: [{ code: 'malformed_response', message: describeRawEnvelope(raw) }],
+    }
   }
   if (raw.ok) {
     return {
@@ -352,7 +378,9 @@ export function describeWorldEditorError(code: WorldEditorErrorCode): string {
     case 'not_enabled':
       return 'The enemy content registry is not enabled — an owner must turn it on first.'
     case 'transport_error':
-      return 'The command could not reach the server.'
+      // Deliberately NOT "could not reach the server": this code also covers a server that answered
+      // and was simply not understood. The accompanying details[] carries what actually happened.
+      return 'The command did not complete — see the reason below.'
     default:
       return assertNever(code)
   }
