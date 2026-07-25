@@ -459,13 +459,34 @@ export function WorldEditor() {
     drag.current = null
   }
 
-  const zoomByFactor = useCallback((factor: number) => {
+  /** Screen point → VIEWBOX point. The ONE screen→viewBox projection: pointerToWorld undoes the camera
+   *  on top of this, and wheel-zoom anchors on it. Depends on nothing but the element, so the camera
+   *  can move without re-binding it. */
+  const pointerToViewBox = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number } | null => {
+      const rect = svgRef.current?.getBoundingClientRect()
+      if (!rect || rect.width === 0 || rect.height === 0) return null
+      // the svg is xMidYMid meet, so the rendered viewBox is a centred square of side = min(w,h)
+      const side = Math.min(rect.width, rect.height)
+      const originX = rect.left + (rect.width - side) / 2
+      const originY = rect.top + (rect.height - side) / 2
+      return { x: ((clientX - originX) / side) * VIEW, y: ((clientY - originY) / side) * VIEW }
+    },
+    [],
+  )
+
+  /** Zoom about an ANCHOR in viewBox space — the cursor for a wheel gesture, the viewport centre for
+   *  the +/- buttons. The point under the anchor keeps its world position, which is what makes
+   *  wheel-zoom feel like it is pulling the map toward the pointer instead of drifting away from it.
+   *  (clampPan may still pull the result back at the world edges; the anchor is honoured up to that.) */
+  const zoomByFactor = useCallback((factor: number, anchor?: { x: number; y: number } | null) => {
     userMovedRef.current = true
     setView((v) => {
       const k = clampK(v.k * factor)
       const ratio = k / v.k
-      const c = VIEW / 2
-      return { k, ...clampPan(c - (c - v.tx) * ratio, c - (c - v.ty) * ratio, k) }
+      const ax = anchor?.x ?? VIEW / 2
+      const ay = anchor?.y ?? VIEW / 2
+      return { k, ...clampPan(ax - (ax - v.tx) * ratio, ay - (ay - v.ty) * ratio, k) }
     })
   }, [])
 
@@ -486,11 +507,16 @@ export function WorldEditor() {
     const WHEEL_ZOOM_STEP = 1.07
     const onWheel = (e: WheelEvent) => {
       e.preventDefault() // also swallows ctrl+wheel, so the page never zooms over the map
-      zoomByFactor(e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP)
+      // Anchor on the CURSOR: the world point under the pointer stays put, so the map zooms toward
+      // what you are looking at rather than toward the viewport centre.
+      zoomByFactor(
+        e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP,
+        pointerToViewBox(e.clientX, e.clientY),
+      )
     }
     svgEl.addEventListener('wheel', onWheel, { passive: false })
     return () => svgEl.removeEventListener('wheel', onWheel)
-  }, [svgEl, zoomByFactor])
+  }, [svgEl, zoomByFactor, pointerToViewBox])
 
   // Reset stays the ALL-domains content fit (cameraForDomain 'all' — identical camera; empty world
   // yields the identity camera via the fit's own empty rule).
@@ -784,18 +810,12 @@ export function WorldEditor() {
   /** Screen point → world point, undoing the viewBox mapping and then the camera transform. */
   const pointerToWorld = useCallback(
     (clientX: number, clientY: number): WorldPoint | null => {
-      const rect = svgRef.current?.getBoundingClientRect()
-      if (!rect || rect.width === 0 || rect.height === 0) return null
-      // the svg is xMidYMid meet, so the rendered viewBox is a centred square of side = min(w,h)
-      const side = Math.min(rect.width, rect.height)
-      const originX = rect.left + (rect.width - side) / 2
-      const originY = rect.top + (rect.height - side) / 2
-      const vbX = ((clientX - originX) / side) * VIEW
-      const vbY = ((clientY - originY) / side) * VIEW
+      const vb = pointerToViewBox(clientX, clientY)
+      if (!vb) return null
       // undo translate(tx ty) scale(k)
-      return viewBoxToWorld({ x: (vbX - view.tx) / view.k, y: (vbY - view.ty) / view.k })
+      return viewBoxToWorld({ x: (vb.x - view.tx) / view.k, y: (vb.y - view.ty) / view.k })
     },
-    [view.tx, view.ty, view.k],
+    [view.tx, view.ty, view.k, pointerToViewBox],
   )
 
   const pickAtPointer = useCallback(
