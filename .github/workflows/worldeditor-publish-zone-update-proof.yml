@@ -55,8 +55,19 @@ jobs:
         run: |
           set -a; . /tmp/sbenv; set +a
           : "${DB_URL:?DB_URL (disposable stack) required}"
+          # Capture WITHOUT letting `bash -e` kill the step on a psql failure: the assignment used to
+          # abort before `echo "$out"` ran, so an ON_ERROR_STOP abort (exit 3) printed the exit code and
+          # NOTHING ELSE — the raise message that says WHICH proof failed was swallowed. A proof that
+          # hides its own failure output cannot be diagnosed from CI.
+          set +e
           out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/worldeditor-publish-zone-update-proof.sql 2>&1)"
+          rc=$?
+          set -e
           echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "PROOF SQL FAILED (psql exit $rc) — the raise message is immediately above."
+            exit "$rc"
+          fi
           for marker in \
             PUBLISH_ZONE_UPD_PASS_OWNER_UPDATES \
             PUBLISH_ZONE_UPD_PASS_NONOWNER_REJECTED \

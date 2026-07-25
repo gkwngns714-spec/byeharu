@@ -355,17 +355,27 @@ begin
   raise notice 'PUBLISH_ZONE_UPD_PASS_INVALID_GEOMETRY_REJECTED';
 end $$;
 
--- ── PROOF 7 — a SEEDED source='circle' zone is PROTECTED from edit (validation_failed {protected_zone}) ─
--- Insert a source='circle' zone (superuser — zone_create only writes 'drawn'); it must be location-backed
--- per the coherence CHECK. The expected MATCHES it (circle geometry → ST_Equals passes), so we reach the
--- protection guard rather than a stale rejection.
+-- ── PROOF 7 — a SEEDED zone is PROTECTED from edit (validation_failed {protected_zone}) ───────────────
+-- Insert a seeded zone (superuser — zone_create only writes provenance='owner'); it must be
+-- location-backed per the coherence CHECK. The expected MATCHES it (circle geometry → ST_Equals passes),
+-- so we reach the protection guard rather than a stale rejection.
+--
+-- provenance IS THE AUTHORITY, NOT source (0282). This fixture used to set only source='circle' and rely
+-- on the pre-0282 rule "seeded == source='circle'". 0282 split the two: `source` is the geometry kind,
+-- `provenance` is the creation/protection class — and its column DEFAULT is 'owner', with the one-time
+-- backfill classifying only the rows that already existed. So a freshly inserted source='circle' row is
+-- provenance='owner', the guard correctly declines to protect it, and this proof failed while the guard
+-- was working exactly as specified. Set provenance explicitly (INSERT is allowed; 0282's immutability
+-- trigger only blocks UPDATE) so the proof tests the rule that actually exists.
+-- Protection is gated by seeded_zone_edit_enabled, which 0283 seeds 'false' — so a fresh disposable
+-- stack takes the protected branch here.
 do $$
 declare v_owner uuid; v_hostile uuid; v_id uuid; r jsonb; n int; v_row record;
 begin
   select v into v_owner from pubids where k = 'owner';
   select v into v_hostile from publoc where k = 'hostile';
-  insert into public.danger_zones (name, zone_kind, source, location_id, boundary, status, created_by)
-    values ('ZUpd Seeded Circle', 'pirate', 'circle', v_hostile,
+  insert into public.danger_zones (name, zone_kind, source, provenance, location_id, boundary, status, created_by)
+    values ('ZUpd Seeded Circle', 'pirate', 'circle', 'seeded', v_hostile,
             ST_Buffer(ST_MakePoint(1000, 1000), 100, 32), 'active', v_owner)
     returning id into v_id;
 
