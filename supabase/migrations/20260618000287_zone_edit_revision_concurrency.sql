@@ -407,7 +407,9 @@ begin
            name        = v_name,
            location_id = v_attach,
            updated_at  = now(),
-           revision    = revision + 1,   -- the concurrency token advances on every applied edit
+           -- the concurrency token advances on every applied edit (0284 never bumped it, so the
+           -- token was inert; a second edit off the same fork could have passed unnoticed)
+           revision    = revision + 1
      where id = v_live.id
      returning jsonb_build_object(
                  'id', id, 'name', name, 'zone_kind', zone_kind, 'source', source,
