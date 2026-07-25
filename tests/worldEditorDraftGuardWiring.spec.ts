@@ -39,9 +39,15 @@ test('the shell builds the guard, provides it via context, and renders the confi
 // ── every in-page context change routes through the guard with its action kind ────────────────────────
 test('map selection (and deselection) routes through the guard, not a raw setSelected', () => {
   expect(shell).toContain("requestAction('select-entity'")
-  // both map clicks + the background deselect go through requestSelect
-  expect(shell).toContain('requestSelect({ layer: it.layer, id: it.id })')
+  // Map picking now has ONE entry point (pickAtPointer) instead of a per-shape onClick on every
+  // polygon and marker — that duplication is what let a co-located location steal a zone's clicks.
+  // Both outcomes of a pick, and the empty-map deselect, still go through requestSelect.
+  expect(shell).toContain('onClick={(e) => pickAtPointer(e.clientX, e.clientY)}')
+  expect(shell).toContain('requestSelect({ layer: only.layer, id: only.id })')
+  expect(shell).toContain('requestSelect({ layer: c.layer, id: c.id })')
   expect(shell).toContain('requestSelect(null)')
+  // and no shape may select on its own any more
+  expect(shell).not.toContain('e.stopPropagation(); requestSelect(')
 })
 
 test('search jump, camera jump, tab switch and filter change each route through the guard', () => {

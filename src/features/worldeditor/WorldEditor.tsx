@@ -75,6 +75,17 @@ import { Button } from '../../components/ui'
 import { WorldEditorDock, WorldEditorFirstRunHint, WorldEditorToolRail } from './WorldEditorDock'
 import { shouldShowFirstRunHint, worldEditorHintDismissKey } from './worldEditorFirstRunHint'
 import {
+  hitTestAt,
+  markerRadiusInWorld,
+  needsDisambiguation,
+  primaryCandidate,
+  type HitCandidate,
+} from './worldEditorHitTest'
+import { WORLD_TO_VIEWBOX_SCALE, viewBoxToWorld } from './worldEditorCoordinates'
+import type { WorldPoint } from './worldEditorTypes'
+/** The marker hit radius the point layer draws (r = 19 / k). One constant, shared by draw and pick. */
+const MARKER_HIT_RADIUS = 19
+import {
   authoringEditLabel,
   authoringEditTitle,
   editPlanNeedsGuard,
@@ -733,6 +744,67 @@ export function WorldEditor() {
     else commit()
   }, [selectedEditPlan, forkSelectedInto, switchAuthoringDomain])
 
+  // ── MAP PICKING (hit-test + disambiguation) ─────────────────────────────────────────────────────
+  // A pirate_hunt location and its danger zone are CO-LOCATED, and polygons draw under points. While
+  // every shape carried its own onClick+stopPropagation, the marker always won and the zone could not
+  // be selected at all near its own label. Raising the polygon would merely invert that, so instead
+  // ONE handler asks the pure hit-test what is under the cursor and, when that is more than one
+  // thing, ASKS rather than guessing.
+  const [pick, setPick] = useState<{ x: number; y: number; candidates: HitCandidate[] } | null>(null)
+
+  /** Screen point → world point, undoing the viewBox mapping and then the camera transform. */
+  const pointerToWorld = useCallback(
+    (clientX: number, clientY: number): WorldPoint | null => {
+      const rect = svgRef.current?.getBoundingClientRect()
+      if (!rect || rect.width === 0 || rect.height === 0) return null
+      // the svg is xMidYMid meet, so the rendered viewBox is a centred square of side = min(w,h)
+      const side = Math.min(rect.width, rect.height)
+      const originX = rect.left + (rect.width - side) / 2
+      const originY = rect.top + (rect.height - side) / 2
+      const vbX = ((clientX - originX) / side) * VIEW
+      const vbY = ((clientY - originY) / side) * VIEW
+      // undo translate(tx ty) scale(k)
+      return viewBoxToWorld({ x: (vbX - view.tx) / view.k, y: (vbY - view.ty) / view.k })
+    },
+    [view.tx, view.ty, view.k],
+  )
+
+  const pickAtPointer = useCallback(
+    (clientX: number, clientY: number) => {
+      const world = pointerToWorld(clientX, clientY)
+      if (!world) return
+      // the marker hit circle is drawn at a fixed SCREEN radius (19/k), so its world radius is that
+      // divided by the scale again — otherwise markers become unhittable as you zoom in.
+      const candidates = hitTestAt(
+        visibleItems,
+        world,
+        markerRadiusInWorld(MARKER_HIT_RADIUS, view.k, WORLD_TO_VIEWBOX_SCALE),
+      )
+      if (candidates.length === 0) {
+        setPick(null)
+        requestSelect(null)
+        return
+      }
+      if (!needsDisambiguation(candidates)) {
+        setPick(null)
+        const only = primaryCandidate(candidates)
+        if (only) requestSelect({ layer: only.layer, id: only.id })
+        return
+      }
+      // AMBIGUOUS — do not guess. Summon a small chooser at the cursor (map-UX law #2).
+      setPick({ x: clientX, y: clientY, candidates })
+    },
+    [visibleItems, view.k, pointerToWorld, requestSelect],
+  )
+
+  const choosePick = useCallback(
+    (c: HitCandidate) => {
+      setPick(null)
+      requestSelect({ layer: c.layer, id: c.id })
+    },
+    [requestSelect],
+  )
+
   // DARK by default (fail-closed). Render nothing while the flag is loading or off (exposure gate), and
   // nothing while owner status is still resolving. An authenticated NON-OWNER gets a controlled
   // "Not authorized" surface — the editor and the History panel never render for them. (The backend
@@ -779,9 +851,7 @@ export function WorldEditor() {
             onPointerUp={endDrag}
             onPointerLeave={endDrag}
             onPointerCancel={endDrag}
-            onClick={(e) => {
-              if (e.target === svgRef.current) requestSelect(null)
-            }}
+            onClick={(e) => pickAtPointer(e.clientX, e.clientY)}
             // Map-UX law #2 — SUMMON the UI: a double-click on empty map toggles all chrome away and
             // back. View state only (worldEditorChrome); it never reads or writes a draft.
             onDoubleClick={(e) => {
@@ -812,7 +882,10 @@ export function WorldEditor() {
                 if (!d) return null
                 const isSel = selected?.layer === it.layer && selected.id === it.id
                 return (
-                  <g key={`${it.layer}:${it.id}`} onClick={(e) => { e.stopPropagation(); requestSelect({ layer: it.layer, id: it.id }) }} style={{ cursor: 'pointer' }}>
+                  // NO per-shape onClick: a polygon that stopped propagation is exactly what made a
+                  // co-located location steal every click on its zone. Selection is decided ONCE, at
+                  // the svg level, from the pure hit-test over ALL shapes under the cursor.
+                  <g key={`${it.layer}:${it.id}`} style={{ cursor: 'pointer' }}>
                     <path d={d} fill={it.tone} opacity={isSel ? 0.22 : 0.1} />
                     <path
                       d={d}
@@ -834,11 +907,9 @@ export function WorldEditor() {
                 const isSel = selected?.layer === it.layer && selected.id === it.id
                 const r = 8 / k
                 return (
-                  <g
-                    key={`${it.layer}:${it.id}`}
-                    onClick={(e) => { e.stopPropagation(); requestSelect({ layer: it.layer, id: it.id }) }}
-                    style={{ cursor: 'pointer' }}
-                  >
+                  // NO per-shape onClick — see the polygon layer above. The marker no longer wins by
+                  // being drawn on top; it wins (or shares) by what the hit-test finds.
+                  <g key={`${it.layer}:${it.id}`} style={{ cursor: 'pointer' }}>
                     <circle cx={x} cy={y} r={19 / k} fill="transparent" />
                     {isSel && (
                       <circle cx={x} cy={y} r={r * 2.2} fill="var(--color-map-halo)" stroke="var(--color-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
@@ -997,6 +1068,39 @@ export function WorldEditor() {
           </div>
         )}
       </div>
+
+      {/* ── DISAMBIGUATION CHOOSER — summoned ONLY when a click hit more than one entity ──
+          A co-located location and zone are both legitimate targets at the same coordinate, so the
+          map asks instead of silently preferring whichever is drawn on top. It appears at the
+          cursor, dismisses on any choice or on a click elsewhere, and is never parked (law #2). */}
+      {pick && (
+        <div
+          className="pointer-events-auto absolute z-40 min-w-[11rem] overflow-hidden rounded-lg border border-edge bg-surface/95 shadow-overlay backdrop-blur"
+          style={{ left: Math.max(8, pick.x - 8), top: Math.max(8, pick.y - 8) }}
+          data-testid="worldeditor-pick-chooser"
+          role="menu"
+          aria-label="Pick one of the overlapping entities"
+        >
+          <div className="border-b border-edge px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+            {pick.candidates.length} here
+          </div>
+          {pick.candidates.map((c) => (
+            <button
+              key={`${c.layer}:${c.id}`}
+              type="button"
+              role="menuitem"
+              onClick={() => choosePick(c)}
+              data-testid={`worldeditor-pick-${c.layer}`}
+              className="flex w-full items-center justify-between gap-3 px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-surface-2"
+            >
+              <span className="truncate">{c.label}</span>
+              <span className="shrink-0 text-[10px] uppercase tracking-wide text-ink-faint">
+                {AUTHORING_DOMAIN_LABELS[c.layer as AuthoringDomain] ?? c.layer}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* The only affordance left on a fully dismissed map — how to get the chrome back (law #2). */}
       {!chrome.railVisible && (
