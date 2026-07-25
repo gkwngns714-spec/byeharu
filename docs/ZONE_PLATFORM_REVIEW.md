@@ -1,6 +1,6 @@
 # Typed-Zone Platform — architecture review (2026-07-25)
 
-**Status: SLICES 1-8 + PROVENANCE AUTHORED, NONE DEPLOYED.** Migration `0273` exists on the branch
+**Status: SLICES 1-8 + PROVENANCE + UNLOCK + PRECEDENCE + KIND CHANGE AUTHORED, NONE DEPLOYED.** Migration `0273` exists on the branch
 `slice-typed-zone-foundation`; production head is still `0272`. Slices 2–9 are unwritten.
 Deploying and flipping remain the owner's alone. See **§9** for what slice 1 actually is.
 
@@ -543,3 +543,43 @@ those guards a later two-line diff of already-demonstrated safety.
 - Typed-zone editor UI, and kind conversion with explicit conversion rules.
 
 **Production head remains `0272`. Nothing deployed.**
+
+
+## 14. Build log — the authoring intents completed
+
+| Migration | PR | What |
+|---|---|---|
+| `0283` | #313 | seeded-zone unlock — guards re-pointed at `provenance`, two flags, both dark |
+| `0284` | #314 | **error precedence fixed** — eligibility decides before the concurrency compare |
+| `0285` | #315 | **kind conversion** — the fourth intent; refuses rather than deletes |
+| — | #316 | client mirror of the conversion rule; all four effects registered |
+
+### The four separate authoring intents are now complete
+geometry (`zone_update`) · behaviour (`zone_effect_set` / `_remove`) · lifecycle
+(`zone_unpublish` / `zone_set_active`) · **identity** (`zone_kind_change`). One intent per
+command, so no single request can silently alter three concerns and the audit log gets four
+distinguishable event types.
+
+### Why kind conversion refuses instead of deleting
+A zone converted from pirate to mining that keeps its `pirate_intercept` effect is a "mining"
+zone that **still intercepts fleets**. Nothing in the schema forbids it — effects key on
+`zone_id`, not kind, precisely so they compose. So the conversion is refused while a
+non-permitted effect remains, naming each one. Deleting them to satisfy a rename would
+destroy authored configuration and recreate the exact bug this platform exists to remove:
+something happening because of what a row *is* rather than what it *declares*.
+
+The permitted-effect map is a **table**, not a `CASE` in the command — letting a mining zone
+also spawn later is one INSERT. A self-assert proves no dispatcher reads that table, because
+a kind/effect map sitting near a planner is how identity starts dispatching by accident.
+
+### The precedence fix, and what did NOT move with it
+`stale_revision` before `protected_zone` is what sent the owner hunting a concurrent edit
+that never happened. Eligibility now runs first — but **idempotent replay still precedes it**
+(a lost-response retry must return its recorded result, not a fresh verdict) and **the row
+lock still precedes both** (so they read the same committed state). Both are asserted.
+
+### Remaining
+The typed-zone **editor UI** (server commands exist; nothing drives them yet). Slice 9
+(legacy retirement) stays premature — no authority has moved.
+
+**Production head remains `0272`. Nothing deployed, no flag flipped, no live row changed.**
