@@ -1,0 +1,83 @@
+name: TYPED-ZONE FOUNDATION — 0273 disposable proof (no production)
+
+# Proves migration 0273 (typed_zone_effect_foundation) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL migration chain incl. 0273, so 0273's own in-migration
+#     self-assert runs here against real Postgres (both flags seeded false; the live danger_zones
+#     rows byte-identical across id/status/source/zone_kind/location_id/name/EWKB boundary; exactly
+#     one all-NULL zone_effect_pirate row per pirate zone with no orphans; the 0233 pirate runtime
+#     NOT re-created and blind to the new table; RLS on with no policy and no client grant;
+#     danger_zones grew no effect column) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then exercises the foundation against the running disposable DB:
+#     PARITY computed (an all-NULL effect row resolves to the global knobs and reproduces
+#     pirate_intercept_compute_risk bit-for-bit over an input sweep); DARKNESS demonstrated (a real
+#     per-zone override is storable yet moves nothing live); the CHECKs reject out-of-range and
+#     inverted risk bands; effect presence is row existence (composability); FK cascade cannot
+#     strand an effect row; anon/authenticated can neither read nor write the table.
+# Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
+# NO `environment:` on any job ⇒ none can read production secrets. Modeled on
+# worldeditor-publish-zone-create-proof.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-typed-zone-foundation**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typed-zone-foundation-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0273 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: TYPED-ZONE FOUNDATION real-chain proof (parity / darkness / constraints / composability / cascade / ACL)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/typed-zone-foundation-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            TZ_PASS_BACKFILL_ALL_NULL \
+            TZ_PASS_PARITY_NEUTRAL \
+            TZ_PASS_CONSTRAINTS \
+            TZ_PASS_DARK_NO_RUNTIME_EFFECT \
+            TZ_PASS_COMPOSABLE_PRESENCE_IS_ROW \
+            TZ_PASS_CASCADE \
+            TZ_PASS_ACL_FAIL_CLOSED \
+            TZ_PASS_FLAGS_DARK \
+            TZ_PASS_ROLLED_BACK ; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING MARKER: $marker"; exit 1; }
+          done
+          echo "$out" | grep -q 'TZ_FAIL' && { echo "A TZ_FAIL marker was emitted"; exit 1; }
+          echo "ALL TYPED-ZONE FOUNDATION MARKERS PRESENT"
+      - name: Assert the disposable world is unchanged (nothing committed)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
+            do \$\$
+            begin
+              if exists (select 1 from public.danger_zones where name = 'TZP Proof Zone') then
+                raise exception 'PROOF LEAKED: a fixture zone was committed';
+              end if;
+              if coalesce(public.cfg_bool('typed_zone_authoring_enabled'), true)
+                 or coalesce(public.cfg_bool('typed_zone_pirate_runtime_enabled'), true) then
+                raise exception 'PROOF LEAKED: a typed-zone flag is not false after the proof';
+              end if;
+              raise notice 'TZ_PASS_NO_LEAK';
+            end \$\$;"
