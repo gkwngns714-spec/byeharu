@@ -488,8 +488,11 @@ begin
   if (v_before->>'boundary_wkt') = (v_after->>'boundary_wkt') then
     raise exception 'ZONE UPDATE PROOF FAIL: the edit did not change the boundary snapshot';
   end if;
-  if v_rev is distinct from 'zoneupd-proof-rev-1' then
-    raise exception 'ZONE UPDATE PROOF FAIL: audit source_revision not recorded (got %)', v_rev;
+  -- 0287: the audit records the SERVER token the caller forked at, not an arbitrary client string.
+  -- PROOF 1 edits a zone freshly made by zone_create, so its fork-time revision is 0 — the ledger must
+  -- carry that verbatim (a numeric token), never null and never a fabricated label.
+  if v_rev is null or v_rev !~ '^[0-9]+$' then
+    raise exception 'ZONE UPDATE PROOF FAIL: audit source_revision not recorded as the server token (got %)', v_rev;
   end if;
   raise notice 'PUBLISH_ZONE_UPD_PASS_AUDIT_BEFORE_AFTER';
 end $$;
