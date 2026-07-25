@@ -796,12 +796,6 @@ export function WorldEditor() {
 
   const pickAtPointer = useCallback(
     (clientX: number, clientY: number) => {
-      // WHILE A ZONE GESTURE IS ARMED THE POINTER BELONGS TO ZoneGeometryHandles. A click is then a
-      // vertex placement, a grip drag or a ring close — never an attempt to select something. Routing
-      // it through selection also routed it through the unsaved-draft guard, so AUTHORING A POLYGON
-      // RAISED ONE MODAL PER VERTEX. The gesture layer stays the single owner of the pointer for the
-      // duration of the gesture; selection resumes the moment the mode returns to idle.
-      if (zoneGestureMode !== 'idle') return
       const world = pointerToWorld(clientX, clientY)
       if (!world) return
       // the marker hit circle is drawn at a fixed SCREEN radius (19/k), so its world radius is that
@@ -825,7 +819,26 @@ export function WorldEditor() {
       // AMBIGUOUS — do not guess. Summon a small chooser at the cursor (map-UX law #2).
       setPick({ x: clientX, y: clientY, candidates })
     },
-    [visibleItems, view.k, pointerToWorld, requestSelect, zoneGestureMode],
+    [visibleItems, view.k, pointerToWorld, requestSelect],
+  )
+
+  // THE ONE MAP-CLICK ROUTER: does this click belong to SELECTION or to AUTHORING? The shell owns that
+  // decision — pickAtPointer is a generic hit test and must not learn about zone gesture modes, and the
+  // gesture layer cannot settle it either (its pointerdown and this click are separate events, so
+  // stopPropagation on the grip does not stop the click reaching the svg).
+  //
+  // While a zone gesture is armed the pointer belongs to ZoneGeometryHandles: the click is a vertex
+  // placement, a grip drag or a ring close, never a selection attempt. Routing it through selection also
+  // routed it through the unsaved-draft guard, so AUTHORING A POLYGON RAISED ONE MODAL PER VERTEX.
+  // `zoneActiveDraft` is part of the condition deliberately: a gesture mode with no draft behind it is a
+  // stale state, and it must not leave the map permanently unselectable.
+  const onMapClick = useCallback(
+    (clientX: number, clientY: number) => {
+      // reads the store directly — `zoneActiveDraft` is bound further down the render body
+      if (zoneDraftStore.activeDraft && zoneGestureMode !== 'idle') return
+      pickAtPointer(clientX, clientY)
+    },
+    [zoneDraftStore.activeDraft, zoneGestureMode, pickAtPointer],
   )
 
   const choosePick = useCallback(
@@ -882,7 +895,7 @@ export function WorldEditor() {
             onPointerUp={endDrag}
             onPointerLeave={endDrag}
             onPointerCancel={endDrag}
-            onClick={(e) => pickAtPointer(e.clientX, e.clientY)}
+            onClick={(e) => onMapClick(e.clientX, e.clientY)}
             // Map-UX law #2 — SUMMON the UI: a double-click on empty map toggles all chrome away and
             // back. View state only (worldEditorChrome); it never reads or writes a draft.
             onDoubleClick={(e) => {

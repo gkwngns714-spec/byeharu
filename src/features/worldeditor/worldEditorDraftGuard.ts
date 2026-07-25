@@ -31,7 +31,11 @@ export type DirtyDraftsByDomain = Record<PendingDraftDomain, readonly string[]>
 
 /** The context-changing actions the guard protects. Each names an owner intent that would move away
  *  from — or tear down — the current authoring context:
- *    • select-entity  — pick another entity from the map (or deselect);
+ *    • select-entity  — pick a DIFFERENT entity from the map. NOT a deselect: clearing the selection
+ *                      writes no draft, discards none, closes no panel and changes no domain, so it
+ *                      endangers nothing and is never routed here (it would otherwise offer to
+ *                      DISCARD the draft to authorise a no-op — and a click on empty map deselects,
+ *                      so that prompt fired on every miss while drawing);
  *    • search-jump     — pick a search result (WorldEditorSearchBox);
  *    • camera-jump     — coordinate-jump selection (WorldEditorGotoBox);
  *    • switch-domain   — switch the authoring-domain tabs;

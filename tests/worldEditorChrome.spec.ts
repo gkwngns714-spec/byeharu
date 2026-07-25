@@ -240,3 +240,40 @@ test('the chrome files stay inside the worldeditor feature and add no command pa
   expect(names).toContain('worldEditorChrome.ts')
   expect(names).toContain('WorldEditorDock.tsx')
 })
+
+// ── the map-click router: selection vs authoring (the "modal per vertex" defect) ─────────────────────
+// Drawing a polygon means clicking empty space repeatedly. Each of those clicks used to run the hit
+// test, find nothing, call requestSelect(null) and — because the draft is dirty — raise the full-screen
+// unsaved-work modal. One modal PER VERTEX. Two independent faults produced it, and BOTH must stay
+// fixed: a half-fix still prompts (A1 alone leaves the idle empty-map click; A2 alone leaves every
+// in-gesture click running a pointless hit test).
+
+test('a click is routed by ONE shell-owned router, not by the generic hit test', () => {
+  // the router exists and the svg goes through it
+  expect(shell).toContain('const onMapClick = useCallback(')
+  expect(shell).toContain('onClick={(e) => onMapClick(e.clientX, e.clientY)}')
+  // the svg must NOT call the hit test directly any more — that bypasses the gate
+  expect(
+    shell.includes('onClick={(e) => pickAtPointer('),
+    'the svg must route clicks through onMapClick, never straight into pickAtPointer',
+  ).toBe(false)
+})
+
+test('while a zone gesture is armed the pointer belongs to the gesture layer, not to selection', () => {
+  const router = shell.slice(shell.indexOf('const onMapClick = useCallback('))
+  // the gate reads BOTH the armed mode and the draft behind it: a mode with no draft is stale state
+  // and must not leave the map permanently unselectable.
+  expect(router).toContain("zoneGestureMode !== 'idle'")
+  expect(router).toMatch(/zoneDraftStore\.activeDraft\s*&&\s*zoneGestureMode !== 'idle'/)
+})
+
+test('a DESELECT is never routed through the unsaved-draft guard', () => {
+  const sel = shell.slice(shell.indexOf('const requestSelect = useCallback('))
+  const body = sel.slice(0, sel.indexOf('}, [])'))
+  // null clears the selection directly and returns BEFORE the guard is consulted…
+  expect(body).toMatch(/if \(next === null\)[\s\S]*setSelected\(null\)[\s\S]*return/)
+  // …while a real selection change still goes through it.
+  expect(body).toContain("guardRef.current.requestAction('select-entity'")
+  // and the guard's own vocabulary must not still claim deselect is guarded
+  expect(src('worldEditorDraftGuard.ts')).not.toContain('(or deselect)')
+})
