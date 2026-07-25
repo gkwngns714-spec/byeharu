@@ -524,9 +524,18 @@ export function WorldEditor() {
   // you ask for it, instead of being parked). Deselecting leaves the chrome exactly as it is, so a
   // dismissed map stays clean. Chrome is view state only — it never touches a draft.
   const requestSelect = useCallback((next: Selection | null) => {
+    // A DESELECT IS NOT AN ABANDONMENT. Clearing the selection writes no draft, discards no draft,
+    // closes no authoring panel and changes no authoring domain — the draft store is untouched by
+    // `selected`. Guarding it put a destructive choice ("Discard and continue" DISCARDS the draft) in
+    // front of an action that risked nothing, and because a click on empty map deselects, the owner
+    // got that dialog for every miss. Only a real selection CHANGE is routed through the guard.
+    if (next === null) {
+      setSelected(null)
+      return
+    }
     guardRef.current.requestAction('select-entity', () => {
       setSelected(next)
-      if (next) setChrome((c) => openChromeTool(c, 'inspect'))
+      setChrome((c) => openChromeTool(c, 'inspect'))
     })
   }, [])
 
@@ -787,6 +796,12 @@ export function WorldEditor() {
 
   const pickAtPointer = useCallback(
     (clientX: number, clientY: number) => {
+      // WHILE A ZONE GESTURE IS ARMED THE POINTER BELONGS TO ZoneGeometryHandles. A click is then a
+      // vertex placement, a grip drag or a ring close — never an attempt to select something. Routing
+      // it through selection also routed it through the unsaved-draft guard, so AUTHORING A POLYGON
+      // RAISED ONE MODAL PER VERTEX. The gesture layer stays the single owner of the pointer for the
+      // duration of the gesture; selection resumes the moment the mode returns to idle.
+      if (zoneGestureMode !== 'idle') return
       const world = pointerToWorld(clientX, clientY)
       if (!world) return
       // the marker hit circle is drawn at a fixed SCREEN radius (19/k), so its world radius is that
@@ -810,7 +825,7 @@ export function WorldEditor() {
       // AMBIGUOUS — do not guess. Summon a small chooser at the cursor (map-UX law #2).
       setPick({ x: clientX, y: clientY, candidates })
     },
-    [visibleItems, view.k, pointerToWorld, requestSelect],
+    [visibleItems, view.k, pointerToWorld, requestSelect, zoneGestureMode],
   )
 
   const choosePick = useCallback(
