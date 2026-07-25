@@ -84,7 +84,9 @@ begin
   -- fields carry a NEW circle geometry + a rename + an attach to the hostile site.
   r := public.zone_update('zoneupd-owner-1', jsonb_build_object(
          'target_id', v_id::text,
-         'source_revision', 'zoneupd-proof-rev-1',
+         -- 0287: source_revision is the SERVER's danger_zones.revision, not an arbitrary client
+         -- string. Read it the way the client does — off the live row it forked.
+         'source_revision', (select revision::text from public.danger_zones where id = v_id),
          'expected', jsonb_build_object(
            'name','ZUpd Origin','zone_kind','pirate','attach_location_id', null,
            'geometry', jsonb_build_object('kind','polygon','vertices', jsonb_build_array(
@@ -205,6 +207,7 @@ begin
 
   r1 := public.zone_update('zoneupd-idem-1', jsonb_build_object(
           'target_id', v_id::text,
+          'source_revision', (select revision::text from public.danger_zones where id = v_id),
           'expected', jsonb_build_object('name','ZUpd Idem Origin','zone_kind','pirate','attach_location_id', null,
             'geometry', jsonb_build_object('kind','polygon','vertices', jsonb_build_array(
               jsonb_build_object('x', -100, 'y', -100),
@@ -214,8 +217,11 @@ begin
           'fields', jsonb_build_object('name','ZUpd Idem First','attach_location_id', null,
             'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',500,'y',500),'radius',80))));
   -- same request_id, DIFFERENT fields — must NOT re-apply, must return the prior result.
+  -- The replay carries a DIFFERENT (now-current) revision as well as different fields: the request_id
+  -- short-circuit must fire BEFORE any concurrency reasoning, or idempotency would be revision-fragile.
   r2 := public.zone_update('zoneupd-idem-1', jsonb_build_object(
           'target_id', v_id::text,
+          'source_revision', (select revision::text from public.danger_zones where id = v_id),
           'expected', jsonb_build_object('name','ZUpd Idem First','zone_kind','pirate','attach_location_id', null,
             'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',500,'y',500),'radius',80)),
           'fields', jsonb_build_object('name','ZUpd Idem SECOND','attach_location_id', null,
@@ -240,11 +246,15 @@ begin
   raise notice 'PUBLISH_ZONE_UPD_PASS_IDEMPOTENT';
 end $$;
 
--- ── PROOF 5 — OPTIMISTIC CONCURRENCY: a stale `expected` is REJECTED (stale_revision), no write ─────
--- Both a NAME drift and a GEOMETRY drift (the ST_Equals compare) are proven. The drift is simulated by
--- a direct superuser UPDATE (a concurrent editor); the caller still holds the OLD `expected`.
+-- ── PROOF 5 — OPTIMISTIC CONCURRENCY: a stale REVISION is REJECTED (stale_revision), no write ───────
+-- 0287: the authority is danger_zones.revision, not a value-by-value compare of `expected`. Drift is
+-- simulated by a direct superuser UPDATE that also advances the revision — which is what every zone
+-- command does — while the caller still holds the fork-time token. Both a name drift and a geometry
+-- drift are proven, PLUS the converse: an UNMOVED revision publishes even when the boundary is a
+-- buffer arc whose coordinates could never survive an exact round-trip.
 do $$
 declare v_owner uuid; v_id uuid; r jsonb; n int; v_row record; v_expected jsonb; v_fields jsonb;
+        v_fork_rev text;
 begin
   select v into v_owner from pubids where k = 'owner';
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
@@ -266,11 +276,21 @@ begin
                     jsonb_build_object('x', 0,   'y', 400))));
   v_fields := jsonb_build_object('name','ZUpd Stale Attempt','attach_location_id', null,
                 'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',0,'y',0),'radius',120));
+  -- the token the draft pinned at fork time, exactly as the client carries it
+  select revision::text into v_fork_rev from public.danger_zones where id = v_id;
 
-  -- (a) NAME drift: a concurrent editor renamed the zone; the boundary is untouched.
-  update public.danger_zones set name = 'Concurrently Renamed' where id = v_id;
+  -- 0287: the REVISION is the concurrency authority, so a concurrent write must advance it — which is
+  -- exactly what every zone command now does. These fixtures therefore bump revision alongside the
+  -- field change, reproducing a real concurrent editor rather than a hand-edited column.
+  --
+  -- (a) NAME drift: a concurrent editor renamed the zone; the boundary is untouched. The draft still
+  -- holds the PRE-drift revision, so it is stale.
+  update public.danger_zones
+     set name = 'Concurrently Renamed', revision = revision + 1
+   where id = v_id;
   r := public.zone_update('zoneupd-stale-name-1', jsonb_build_object(
-         'target_id', v_id::text, 'expected', v_expected, 'fields', v_fields));
+         'target_id', v_id::text, 'source_revision', v_fork_rev,
+         'expected', v_expected, 'fields', v_fields));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'stale_revision' then
     raise exception 'ZONE UPDATE PROOF FAIL: a name drift was not rejected as stale_revision: %', r;
   end if;
@@ -279,21 +299,29 @@ begin
     raise exception 'ZONE UPDATE PROOF FAIL: name-drift stale_revision did not name the field: %', r->'details';
   end if;
 
-  -- (b) GEOMETRY drift: restore the name, then reshape the boundary to a DIFFERENT triangle. The
-  -- expected still carries the ORIGINAL square ring → ST_Equals is false → geometry drift.
+  -- (b) GEOMETRY drift: restore the name, then reshape the boundary to a DIFFERENT triangle, again
+  -- advancing the revision as a real editor would. The draft's stale token is what rejects it.
+  --
+  -- The rejection is NO LONGER field-attributed for geometry, and that is the point of 0287: the
+  -- boundary cannot be compared for equality at all, because the ring only ever reaches a client at 15
+  -- significant digits. Attributing drift to 'geometry' required exactly the ST_Equals compare that
+  -- made every buffer-derived zone permanently unpublishable. What survives is an honest, unattributed
+  -- statement that the row moved — which is all the revision can truthfully say.
   update public.danger_zones set name = 'ZUpd Stale Origin' where id = v_id;
   update public.danger_zones
      set boundary = ST_MakePolygon(ST_MakeLine(ARRAY[
-       ST_MakePoint(-500,-500), ST_MakePoint(-300,-500), ST_MakePoint(-400,-300), ST_MakePoint(-500,-500)]))
+       ST_MakePoint(-500,-500), ST_MakePoint(-300,-500), ST_MakePoint(-400,-300), ST_MakePoint(-500,-500)])),
+         revision = revision + 1
    where id = v_id;
   r := public.zone_update('zoneupd-stale-geom-1', jsonb_build_object(
-         'target_id', v_id::text, 'expected', v_expected, 'fields', v_fields));
+         'target_id', v_id::text, 'source_revision', v_fork_rev,
+         'expected', v_expected, 'fields', v_fields));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'stale_revision' then
     raise exception 'ZONE UPDATE PROOF FAIL: a geometry drift was not rejected as stale_revision: %', r;
   end if;
   if not exists (select 1 from jsonb_array_elements(r->'details') d
-                 where d->>'code' = 'source_changed' and d->>'field' = 'geometry') then
-    raise exception 'ZONE UPDATE PROOF FAIL: geometry-drift stale_revision did not name the field: %', r->'details';
+                 where d->>'code' = 'source_changed') then
+    raise exception 'ZONE UPDATE PROOF FAIL: geometry-drift stale_revision carried no source_changed detail: %', r->'details';
   end if;
 
   -- nothing the caller attempted was written; no audit rows for the stale requests.
@@ -306,6 +334,27 @@ begin
   if n <> 0 then
     raise exception 'ZONE UPDATE PROOF FAIL: a stale-rejected update wrote % audit row(s)', n;
   end if;
+
+  -- (c) THE CONVERSE — run LAST because it deliberately succeeds and writes. A row whose revision has
+  -- NOT moved publishes, even though its boundary is a buffer arc whose coordinates could never
+  -- survive an exact round-trip. Without this case the suite would still pass with the old lossy
+  -- ST_Equals compare in place, which is precisely how the defect shipped.
+  update public.danger_zones
+     set boundary = ST_Buffer(ST_MakePoint(2000.1234, 3000.5678), 149.9753, 8)
+   where id = v_id;   -- revision deliberately NOT bumped
+  r := public.zone_update('zoneupd-fresh-rev-1', jsonb_build_object(
+         'target_id', v_id::text,
+         'source_revision', (select revision::text from public.danger_zones where id = v_id),
+         'expected', v_expected, 'fields', v_fields));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'ZONE UPDATE PROOF FAIL: a CURRENT revision was rejected — the gate is not the revision: %', r;
+  end if;
+  -- and the applied edit ADVANCED the token, or a second publish off the same fork could slip through.
+  select revision into n from public.danger_zones where id = v_id;
+  if n::text = (select revision::text from public.danger_zones where id = v_id and revision::text = v_fork_rev) then
+    raise exception 'ZONE UPDATE PROOF FAIL: revision did not advance on an applied edit';
+  end if;
+
   raise notice 'PUBLISH_ZONE_UPD_PASS_STALE_REVISION_REJECTED';
 end $$;
 
@@ -327,6 +376,7 @@ begin
 
   r := public.zone_update('zoneupd-bowtie-1', jsonb_build_object(
          'target_id', v_id::text,
+         'source_revision', (select revision::text from public.danger_zones where id = v_id),
          'expected', jsonb_build_object('name','ZUpd Bowtie Origin','zone_kind','pirate','attach_location_id', null,
            'geometry', jsonb_build_object('kind','polygon','vertices', jsonb_build_array(
              jsonb_build_object('x', 700, 'y', 700),
@@ -560,6 +610,7 @@ begin
   -- (3) publish an edit that changes ONLY the name. `expected` is the transported ring verbatim.
   r := public.zone_update('zoneupd-roundtrip-1', jsonb_build_object(
          'target_id', v_id::text,
+         'source_revision', (select revision::text from public.danger_zones where id = v_id),
          'expected', jsonb_build_object(
            'name','ZUpd RoundTrip','zone_kind','pirate','attach_location_id', v_hostile::text,
            'geometry', jsonb_build_object('kind','polygon','vertices', v_verts)),
