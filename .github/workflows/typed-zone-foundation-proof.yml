@@ -4,7 +4,7 @@ name: TYPED-ZONE FOUNDATION — 0273 disposable proof (no production)
 #   * `supabase start` applies the FULL migration chain incl. 0273, so 0273's own in-migration
 #     self-assert runs here against real Postgres (both flags seeded false; the live danger_zones
 #     rows byte-identical across id/status/source/zone_kind/location_id/name/EWKB boundary; exactly
-#     one all-NULL zone_effect_pirate row per pirate zone with no orphans; the 0233 pirate runtime
+#     one all-NULL zone_effect_pirate_intercept row per pirate zone with no orphans; the 0233 pirate runtime
 #     NOT re-created and blind to the new table; RLS on with no policy and no client grant;
 #     danger_zones grew no effect column) — any regression ABORTS `supabase start` red.
 #   * a self-rolling-back SQL proof then exercises the foundation against the running disposable DB:
@@ -56,6 +56,7 @@ jobs:
             TZ_PASS_BACKFILL_ALL_NULL \
             TZ_PASS_PARITY_NEUTRAL \
             TZ_PASS_CONSTRAINTS \
+            TZ_PASS_SPECIAL_FLOATS_REJECTED \
             TZ_PASS_DARK_NO_RUNTIME_EFFECT \
             TZ_PASS_COMPOSABLE_PRESENCE_IS_ROW \
             TZ_PASS_CASCADE \
@@ -76,7 +77,7 @@ jobs:
                 raise exception 'PROOF LEAKED: a fixture zone was committed';
               end if;
               if coalesce(public.cfg_bool('typed_zone_authoring_enabled'), true)
-                 or coalesce(public.cfg_bool('typed_zone_pirate_runtime_enabled'), true) then
+                 or coalesce(public.cfg_bool('typed_zone_pirate_intercept_runtime_enabled'), true) then
                 raise exception 'PROOF LEAKED: a typed-zone flag is not false after the proof';
               end if;
               raise notice 'TZ_PASS_NO_LEAK';

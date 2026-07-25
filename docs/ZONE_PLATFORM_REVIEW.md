@@ -1,6 +1,6 @@
 # Typed-Zone Platform — architecture review (2026-07-25)
 
-**Status: SLICE 1 AUTHORED, NOT DEPLOYED.** Migration `0273` exists on the branch
+**Status: SLICE 1 AUTHORED + AMENDED, NOT DEPLOYED.** Migration `0273` exists on the branch
 `slice-typed-zone-foundation`; production head is still `0272`. Slices 2–9 are unwritten.
 Deploying and flipping remain the owner's alone. See **§9** for what slice 1 actually is.
 
@@ -157,7 +157,7 @@ imported from documented world-design data.
 | 1 | **Typed-zone schema foundation, fully dark** | Additive, deploy-inert. Kind-specific config tables; pirate config rows for the 3 existing zones; pure config types + validators; DB assertions linking `zone_kind='pirate'` to pirate config; authoring + runtime flags all seeded false. |
 | 2 | **Pure effect-dispatch authority** | One pure module: event + candidate zones → applicable effects → deterministic resolution **plan**. Knows nothing of React, PostGIS IO, or RPC. Returns a plan; does not execute combat or grant rewards. Only pirate needs a real implementation initially. |
 | 3 | **Pirate shadow comparison** | Read-only shadow path comparing current resolver vs new dispatcher. No duplicate encounters, no writes. Compare candidate zone IDs, intersection result, exposure, selected ambush zone, cooldown/eligibility, encounter input. Proves the general model reproduces pirate behaviour exactly. |
-| 4 | **Pirate runtime cutover** | Behind `typed_zone_pirate_runtime_enabled`. False → current logic authoritative; true → dispatcher authoritative. **Never run both for side effects.** |
+| 4 | **Pirate runtime cutover** | Behind `typed_zone_pirate_intercept_runtime_enabled`. False → current logic authoritative; true → dispatcher authoritative. **Never run both for side effects.** |
 | 5 | **Typed-zone editor core** | Geometry editor, kind selector, kind-specific config projection, pure validation, unified zone draft authority. Separate intents — `update-zone-geometry`, `update-zone-behavior`, `change-zone-kind`, `change-zone-lifecycle` — not one giant payload. |
 | 6 | **First new non-live kind — combat** | Encounter content already exists, resolver already gated, no live point authority to migrate, can stay fully dark. Requires **both** `typed_zone_combat_runtime_enabled` AND `encounter_resolver_enabled`, with the AND in ONE pure capability module. Enabling typed combat zones must not implicitly enable the resolver. |
 | 7 | **Mining shadow migration** | Dark successor zones for existing mining fields. Prove reward-payload equivalence, action-eligibility equivalence, no double grants, deterministic choice on overlap, exact idempotency. Then switch mining authority independently. |
@@ -230,13 +230,13 @@ the owner's call.**
 
 | File | Role |
 |---|---|
-| `supabase/migrations/20260618000273_typed_zone_effect_foundation.sql` | `zone_effect_pirate` side table, behaviour-neutral backfill, two flags seeded false, self-assert |
+| `supabase/migrations/20260618000273_typed_zone_effect_foundation.sql` | `zone_effect_pirate_intercept` side table, behaviour-neutral backfill, two flags seeded false, self-assert |
 | `src/features/worldeditor/zoneEffects.ts` | pure effect registry, config types, knob resolution, risk curve, advisory validator |
 | `tests/zoneEffects.spec.ts` | 16 tests — parity, validation, structural |
 | `scripts/typed-zone-foundation-proof.sql` | self-rolling-back disposable-Postgres proof |
 | `.github/workflows/typed-zone-foundation-proof.yml` | runs the proof on a throwaway stack |
 
-**How composability is expressed.** `zone_effect_pirate` is keyed
+**How composability is expressed.** `zone_effect_pirate_intercept` is keyed
 `zone_id uuid primary key references danger_zones(id) on delete cascade`. An effect is
 *present* iff its row exists. A future effect is a **sibling table** — adding one edits no
 existing table, and a zone may hold rows in several at once. The core row never grows
@@ -334,3 +334,53 @@ runs — so editing a seeded zone reports *"the live row changed since this draf
 forked"* instead of *"this is a seeded zone"*. **[REVIEW]** Eligibility should precede the
 revision compare, but **after** idempotent-replay resolution and row lock, or a retried
 request could return a different result instead of the recorded original success.
+
+
+## 10. Slice 2 contract (reviewer, prescriptive) — and the slice 1 amendments it forced
+
+**[REVIEW]** *"Build Slice 2 as a **server-side pure PostgreSQL planner**, not as a TypeScript
+dispatcher. Byeharu is server-authoritative, the live geometry and interception runtime are already
+in PostgreSQL, and Slice 3 must compare the new planner against 0233 inside the database. A
+TypeScript implementation would either become a second authority or be discarded."*
+
+A TS dispatcher was written speculatively and **deleted** on this verdict.
+
+### Slice 2 shape
+- migration `0274`; **two pure versioned PostgreSQL functions**; a SQL proof; TypeScript **contract
+  types only**; no runtime wiring. It is **not** a client-only slice.
+- The dispatcher: receives all data as input; **no table reads, no writes, no random roll, no clock,
+  no `game_config` read, calls no existing runtime function**; returns a plan or a typed validation
+  failure.
+- Slice 2 must **not**: replace a 0233 function, be called from live runtime, read `danger_zones` /
+  `zone_effect_pirate_intercept` / `game_config`, write any table, create an externally callable RPC,
+  add an editor surface, or flip any flag.
+- **V1 supports exactly `fleet_leg_traversal → pirate_intercept`.** Any other effect type must return
+  `unsupported_effect_type` — *"do not silently ignore an unknown effect; silent ignoring would turn
+  newly introduced effects into invisible gameplay omissions."* No fake mining/exploration variants
+  "merely to demonstrate genericity".
+- Selection policy is named data: `max_exposure_then_zone_id_asc` — exactly 0233's
+  `order by exposure_fraction desc, zone_id asc`. **[VERIFIED]** that ORDER BY is real in
+  `pirate_intercept_evaluate_leg`, despite the code comment calling the tie-break "not load-bearing".
+- Idempotency identity = `event_id + zone_id + effect_type + behavior_version` — all four, *"otherwise
+  two effects on the same zone could collide when both happen to use behavior version 1."*
+- **`behavior_version` comes from the versioned implementation, not a schema column.** Never
+  `CREATE OR REPLACE` V1 to change semantics; ship `typed_zone_effect_dispatch_v2` instead. Do **not**
+  add a `behavior_version` column to the effect table — it describes executable semantics, not content.
+- `zone_kind` rides on candidates for rendering/traceability/audit only and **must not participate in
+  effect applicability or selection**.
+- Inactive zones are *ignored*, not invalid. A candidate with an empty effect set is valid and plans
+  nothing. Resolved-config validation is separate from per-value validation: each value can be in
+  range while the resolved pair is inverted → `invalid_resolved_effect_config`.
+
+### Slice 1 amendments — all applied
+| # | Change | Status |
+|---|---|---|
+| 1 | `zone_effect_pirate` → **`zone_effect_pirate_intercept`** (name the behaviour, not the identity) | done |
+| 2 | flag → **`typed_zone_pirate_intercept_runtime_enabled`** (name the executable capability) | done |
+| 3 | **remove `resolvePirateKnobs` / `computePirateRisk` from `src/`** — no second runtime authority | done |
+| 4 | **explicit NaN / ±Infinity rejection** in SQL for all five knobs | done |
+| 5 | backfill is a **one-time parity step**, never a standing "identity implies effect" invariant | done |
+
+**[VERIFIED]** Change 4 was a real hole, not a formality: Postgres orders `NaN` above every other
+double, so `stat_reference > 0` is TRUE for both `'NaN'` and `'Infinity'`. Both would have stored
+cleanly under the original CHECKs.

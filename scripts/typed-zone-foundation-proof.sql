@@ -35,6 +35,8 @@ declare
   v_resolved  double precision;
   v_s         record;
   v_denied    boolean;
+  v_knob      text;
+  v_bad       text;
 begin
   -- ── fixture: our own zone, so the proof never depends on seed data ────────────────────────────
   insert into public.danger_zones (name, zone_kind, source, location_id, boundary, status)
@@ -50,12 +52,12 @@ begin
   returning id into v_zone;
 
   -- ── 1. a fresh effect row is all-NULL (the backfill shape) ────────────────────────────────────
-  insert into public.zone_effect_pirate (zone_id) values (v_zone);
+  insert into public.zone_effect_pirate_intercept (zone_id) values (v_zone);
 
-  select count(*) into v_n from public.zone_effect_pirate where zone_id = v_zone;
+  select count(*) into v_n from public.zone_effect_pirate_intercept where zone_id = v_zone;
   if v_n <> 1 then raise exception 'TZ_FAIL_BACKFILL: expected exactly 1 effect row, got %', v_n; end if;
 
-  select * into v_eff from public.zone_effect_pirate where zone_id = v_zone;
+  select * into v_eff from public.zone_effect_pirate_intercept where zone_id = v_zone;
   if v_eff.base_risk is not null or v_eff.min_risk is not null or v_eff.max_risk is not null
      or v_eff.exposure_floor is not null or v_eff.stat_reference is not null then
     raise exception 'TZ_FAIL_BACKFILL: a fresh effect row is not all-NULL';
@@ -77,7 +79,7 @@ begin
          coalesce(e.exposure_floor, v_globals.exposure_floor) as exposure_floor,
          coalesce(e.stat_reference, v_globals.stat_reference) as stat_reference
     into v_effective
-    from public.zone_effect_pirate e where e.zone_id = v_zone;
+    from public.zone_effect_pirate_intercept e where e.zone_id = v_zone;
 
   if v_effective.base_risk      is distinct from v_globals.base_risk
      or v_effective.min_risk       is distinct from v_globals.min_risk
@@ -107,31 +109,52 @@ begin
   -- ── 3. CONSTRAINTS reject the bad, accept the good ────────────────────────────────────────────
   v_denied := false;
   begin
-    update public.zone_effect_pirate set base_risk = 1.5 where zone_id = v_zone;
+    update public.zone_effect_pirate_intercept set base_risk = 1.5 where zone_id = v_zone;
   exception when check_violation then v_denied := true;
   end;
   if not v_denied then raise exception 'TZ_FAIL_CONSTRAINT: base_risk > 1 was accepted'; end if;
 
   v_denied := false;
   begin
-    update public.zone_effect_pirate set stat_reference = 0 where zone_id = v_zone;
+    update public.zone_effect_pirate_intercept set stat_reference = 0 where zone_id = v_zone;
   exception when check_violation then v_denied := true;
   end;
   if not v_denied then raise exception 'TZ_FAIL_CONSTRAINT: stat_reference = 0 was accepted'; end if;
 
   v_denied := false;
   begin
-    update public.zone_effect_pirate set min_risk = 0.8, max_risk = 0.2 where zone_id = v_zone;
+    update public.zone_effect_pirate_intercept set min_risk = 0.8, max_risk = 0.2 where zone_id = v_zone;
   exception when check_violation then v_denied := true;
   end;
   if not v_denied then raise exception 'TZ_FAIL_CONSTRAINT: an inverted min/max risk band was accepted'; end if;
   raise notice 'TZ_PASS_CONSTRAINTS';
 
+  -- ── 3b. SPECIAL FLOATS: proven on the real Postgres, per knob ─────────────────────────────────
+  -- This is NOT covered by the range checks: Postgres orders NaN ABOVE every other double, so
+  -- `stat_reference > 0` is TRUE for both 'NaN' and 'Infinity'. Without the finite constraint these
+  -- would store cleanly and poison the risk curve the moment a dispatcher read them.
+  for v_knob in select unnest(array['base_risk','min_risk','max_risk','exposure_floor','stat_reference'])
+  loop
+    foreach v_bad in array array['NaN','Infinity','-Infinity'] loop
+      v_denied := false;
+      begin
+        execute format(
+          'update public.zone_effect_pirate_intercept set %I = %L::double precision where zone_id = %L',
+          v_knob, v_bad, v_zone);
+      exception when check_violation then v_denied := true;
+      end;
+      if not v_denied then
+        raise exception 'TZ_FAIL_SPECIAL_FLOAT: % accepted % — the finite constraint is not holding', v_knob, v_bad;
+      end if;
+    end loop;
+  end loop;
+  raise notice 'TZ_PASS_SPECIAL_FLOATS_REJECTED';
+
   -- ── 4. DARKNESS: a REAL override is storable, and still moves nothing live ────────────────────
-  update public.zone_effect_pirate
+  update public.zone_effect_pirate_intercept
      set base_risk = 0.5, min_risk = 0.01, max_risk = 0.95
    where zone_id = v_zone;
-  if (select base_risk from public.zone_effect_pirate where zone_id = v_zone) is distinct from 0.5 then
+  if (select base_risk from public.zone_effect_pirate_intercept where zone_id = v_zone) is distinct from 0.5 then
     raise exception 'TZ_FAIL_CONSTRAINT: a valid override did not persist';
   end if;
 
@@ -144,25 +167,25 @@ begin
   if v_live is distinct from v_resolved then
     raise exception 'TZ_FAIL_DARK: a per-zone override moved the live risk function — the slice is not dark';
   end if;
-  update public.zone_effect_pirate
+  update public.zone_effect_pirate_intercept
      set base_risk = null, min_risk = null, max_risk = null
    where zone_id = v_zone;
   raise notice 'TZ_PASS_DARK_NO_RUNTIME_EFFECT';
 
   -- ── 5. COMPOSABILITY: effect presence is row existence; the core row is untouched ─────────────
-  delete from public.zone_effect_pirate where zone_id = v_zone;
+  delete from public.zone_effect_pirate_intercept where zone_id = v_zone;
   if not exists (select 1 from public.danger_zones where id = v_zone) then
     raise exception 'TZ_FAIL_COMPOSABLE: removing an effect deleted the zone';
   end if;
-  if exists (select 1 from public.zone_effect_pirate where zone_id = v_zone) then
+  if exists (select 1 from public.zone_effect_pirate_intercept where zone_id = v_zone) then
     raise exception 'TZ_FAIL_COMPOSABLE: the effect row survived its own delete';
   end if;
-  insert into public.zone_effect_pirate (zone_id) values (v_zone);
+  insert into public.zone_effect_pirate_intercept (zone_id) values (v_zone);
   raise notice 'TZ_PASS_COMPOSABLE_PRESENCE_IS_ROW';
 
   -- ── 6. CASCADE: retiring a zone cannot strand an effect row ───────────────────────────────────
   delete from public.danger_zones where id = v_zone;
-  if exists (select 1 from public.zone_effect_pirate where zone_id = v_zone) then
+  if exists (select 1 from public.zone_effect_pirate_intercept where zone_id = v_zone) then
     raise exception 'TZ_FAIL_CASCADE: an effect row outlived its zone';
   end if;
   raise notice 'TZ_PASS_CASCADE';
@@ -175,31 +198,31 @@ begin
   v_denied := false;
   begin
     set local role anon;
-    perform 1 from public.zone_effect_pirate limit 1;
+    perform 1 from public.zone_effect_pirate_intercept limit 1;
   exception when insufficient_privilege then v_denied := true;
   end;
   reset role;
-  if not v_denied then raise exception 'TZ_FAIL_ACL: anon can read zone_effect_pirate'; end if;
+  if not v_denied then raise exception 'TZ_FAIL_ACL: anon can read zone_effect_pirate_intercept'; end if;
 
   v_denied := false;
   begin
     set local role authenticated;
-    perform 1 from public.zone_effect_pirate limit 1;
+    perform 1 from public.zone_effect_pirate_intercept limit 1;
   exception when insufficient_privilege then v_denied := true;
   end;
   reset role;
-  if not v_denied then raise exception 'TZ_FAIL_ACL: authenticated can read zone_effect_pirate'; end if;
+  if not v_denied then raise exception 'TZ_FAIL_ACL: authenticated can read zone_effect_pirate_intercept'; end if;
 
   v_denied := false;
   begin
     set local role authenticated;
-    insert into public.zone_effect_pirate (zone_id)
+    insert into public.zone_effect_pirate_intercept (zone_id)
       values ('00000000-0000-0000-0000-000000000000'::uuid);
   exception when insufficient_privilege then v_denied := true;
              when others then v_denied := true;  -- FK/RLS also acceptable; a client must not write
   end;
   reset role;
-  if not v_denied then raise exception 'TZ_FAIL_ACL: authenticated can write zone_effect_pirate'; end if;
+  if not v_denied then raise exception 'TZ_FAIL_ACL: authenticated can write zone_effect_pirate_intercept'; end if;
 
   raise notice 'TZ_PASS_ACL_FAIL_CLOSED';
 end $acl$;
@@ -209,8 +232,8 @@ do $flags$
 begin
   if coalesce(public.cfg_bool('typed_zone_authoring_enabled'), true) then
     raise exception 'TZ_FAIL_FLAGS: typed_zone_authoring_enabled is not false'; end if;
-  if coalesce(public.cfg_bool('typed_zone_pirate_runtime_enabled'), true) then
-    raise exception 'TZ_FAIL_FLAGS: typed_zone_pirate_runtime_enabled is not false'; end if;
+  if coalesce(public.cfg_bool('typed_zone_pirate_intercept_runtime_enabled'), true) then
+    raise exception 'TZ_FAIL_FLAGS: typed_zone_pirate_intercept_runtime_enabled is not false'; end if;
   raise notice 'TZ_PASS_FLAGS_DARK';
 end $flags$;
 
