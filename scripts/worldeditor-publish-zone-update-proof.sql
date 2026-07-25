@@ -505,6 +505,79 @@ begin
   raise notice 'PUBLISH_ZONE_UPD_PASS_PIRATE_ZONE_LOCKDOWN_INTACT';
 end $$;
 
+-- ── PROOF 11 — THE ROUND-TRIP: a boundary the client can only READ THROUGH get_danger_zones must
+-- still satisfy the optimistic-concurrency compare when NOTHING has changed. ───────────────────────
+-- This is the exact production failure: editing a seeded zone returns stale_revision {geometry} while
+-- the live row is provably unchanged. Every earlier proof here builds its fixture from LITERAL integer
+-- coordinates (0, 300 …) created through zone_create, so the client's `expected` re-materializes to a
+-- bit-identical boundary and ST_Equals passes trivially. Real seeded zones are ST_Buffer arcs whose
+-- coordinates are irrational-ish doubles — and the ONLY channel the client has is get_danger_zones,
+-- which emits them through jsonb_build_array(ST_X(...), ST_Y(...)).
+--
+-- The proof therefore does exactly what the app does, with NO privileged shortcut:
+--   1. create a buffer-derived boundary (the seeded-zone shape),
+--   2. read the ring back THROUGH get_danger_zones (the client's only view),
+--   3. feed that ring back verbatim as `expected` to zone_update, changing ONLY the name.
+-- If the transported ring cannot reconstitute a boundary ST_Equals accepts, the edit is impossible for
+-- every zone of this shape — permanently, because re-forking re-reads the same lossy channel.
+do $$
+declare
+  v_owner uuid; v_hostile uuid; v_id uuid; r jsonb; v_ring jsonb; v_verts jsonb := '[]'::jsonb;
+  v_i int; v_read jsonb; v_n int; v_exact boolean;
+begin
+  select v into v_owner from pubids where k = 'owner';
+  select v into v_hostile from publoc where k = 'hostile';
+
+  -- (1) a DRAWN zone whose boundary is a BUFFER ARC — the seeded-zone geometry class. provenance is
+  -- left at its 'owner' default on purpose: this proof is about the geometry round-trip, NOT about the
+  -- seeded guard (PROOF 7 owns that), so nothing here can be confused with protection.
+  insert into public.danger_zones (name, zone_kind, source, location_id, boundary, status, created_by)
+    values ('ZUpd RoundTrip', 'pirate', 'drawn', v_hostile,
+            ST_Buffer(ST_MakePoint(1234.5678, -987.6543), 321.0987, 8), 'active', v_owner)
+    returning id into v_id;
+
+  -- (2) read the ring back through the CLIENT'S ONLY CHANNEL.
+  perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+  insert into public.game_config(key, value, description)
+    values ('pirate_intercept_enabled', 'true'::jsonb, 'proof-local')
+    on conflict (key) do update set value = 'true'::jsonb;
+  v_read := public.get_danger_zones();
+  select (e->'ring') into v_ring from jsonb_array_elements(v_read) e where (e->>'id') = v_id::text;
+  if v_ring is null then
+    raise exception 'ZONE UPDATE ROUND-TRIP FAIL: the zone is not visible through get_danger_zones';
+  end if;
+
+  -- drop the closing duplicate exactly as zoneDraftModel.openRingFromLive does, and rebuild the
+  -- {x,y} vertex objects the draft carries as its fork-time snapshot.
+  v_n := jsonb_array_length(v_ring);
+  for v_i in 0 .. v_n - 2 loop
+    v_verts := v_verts || jsonb_build_array(jsonb_build_object(
+                 'x', (v_ring->v_i->>0)::double precision,
+                 'y', (v_ring->v_i->>1)::double precision));
+  end loop;
+  v_verts := (select jsonb_agg(e->0) from jsonb_array_elements(v_verts) e);
+
+  -- (3) publish an edit that changes ONLY the name. `expected` is the transported ring verbatim.
+  r := public.zone_update('zoneupd-roundtrip-1', jsonb_build_object(
+         'target_id', v_id::text,
+         'expected', jsonb_build_object(
+           'name','ZUpd RoundTrip','zone_kind','pirate','attach_location_id', v_hostile::text,
+           'geometry', jsonb_build_object('kind','polygon','vertices', v_verts)),
+         'fields', jsonb_build_object(
+           'name','ZUpd RoundTrip Renamed','attach_location_id', v_hostile::text,
+           'geometry', jsonb_build_object('kind','polygon','vertices', v_verts))));
+
+  if (r->>'ok')::boolean is not true then
+    raise exception E'ZONE UPDATE ROUND-TRIP FAIL: an UNCHANGED zone was rejected as drifted.\n'
+      '  ring points read back: %\n'
+      '  server said: %\n'
+      '  MEANING: the client cannot round-trip this boundary through get_danger_zones, so every zone '
+      'of this geometry class is permanently unpublishable via edit.', v_n, r;
+  end if;
+
+  raise notice 'PUBLISH_ZONE_UPD_PASS_GEOMETRY_ROUND_TRIP';
+end $$;
+
 do $$ begin raise notice 'WORLD-EDITOR PUBLISH-ZONE-UPDATE PROOF PASSED'; end $$;
 
 rollback;   -- leave ZERO persisted state (the pirate_intercept_enabled flip included).
