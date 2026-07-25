@@ -28,7 +28,7 @@ import {
 } from './worldEditorFilters'
 import { WorldEditorInactiveInspector } from './WorldEditorInactiveInspector'
 import { resolveToViewBox } from './worldEditorGeometry'
-import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
+import { DEFAULT_FRAME_DOMAIN, cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
 import { WorldEditorSearchBox } from './WorldEditorSearchBox'
 import { WorldEditorGotoBox } from './WorldEditorGotoBox'
 import { entityNavigation, type EntityMatch } from './worldEditorSearch'
@@ -425,12 +425,19 @@ export function WorldEditor() {
   )
 
   // Content-fit the camera ONCE when data first arrives (unless the user already took camera control) —
-  // via the SHARED galaxyCamera fit over every item's canonical world points (§WE.11), collected
-  // through the ONE C1 framing helper (worldEditorFocus, domain 'all'). The retired ZoneEditor's
-  // bespoke fit is gone. Auto-fit-once semantics are unchanged: 'all' is and stays the default frame.
+  // via the SHARED galaxyCamera fit over the canonical world points, collected through the ONE C1
+  // framing helper (worldEditorFocus). The retired ZoneEditor's bespoke fit is gone.
+  //
+  // The frame is DEFAULT_FRAME_DOMAIN, not 'all', so the editor opens at the SAME SCALE as the player's
+  // map. Both surfaces call the same fitCameraToWorldPoints; they diverged only in WHAT they framed —
+  // the game frames its locations (galaxyCamera.focusWorldPoints), while 'all' additionally pulled in
+  // every zone RING VERTEX, which reach well past the locations. Measured against live data that was a
+  // 1.28x difference (game k=46.67, editor k=36.57), so a zone drawn to look right in the editor read
+  // noticeably different in game. Every layer still RENDERS; the zones simply no longer drive the fit.
+  // Framing everything is still one click away on the Focus control ('all').
   useEffect(() => {
     if (fittedRef.current || userMovedRef.current) return
-    const pts = focusPointsForDomain(itemsByLayer, 'all')
+    const pts = focusPointsForDomain(itemsByLayer, DEFAULT_FRAME_DOMAIN)
     if (pts.length === 0) return
     fittedRef.current = true
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -522,7 +529,7 @@ export function WorldEditor() {
   // yields the identity camera via the fit's own empty rule).
   const resetView = () => {
     userMovedRef.current = false
-    setView(cameraForDomain(itemsByLayer, 'all'))
+    setView(cameraForDomain(itemsByLayer, DEFAULT_FRAME_DOMAIN))
   }
 
   // C1 Focus — CAMERA-ONLY domain framing: derive the fit for one domain's points and set the view.
