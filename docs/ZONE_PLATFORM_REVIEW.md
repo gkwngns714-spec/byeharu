@@ -1,6 +1,6 @@
 # Typed-Zone Platform — architecture review (2026-07-25)
 
-**Status: SLICES 1-6 AUTHORED, NONE DEPLOYED.** Migration `0273` exists on the branch
+**Status: SLICES 1-8 + PROVENANCE AUTHORED, NONE DEPLOYED.** Migration `0273` exists on the branch
 `slice-typed-zone-foundation`; production head is still `0272`. Slices 2–9 are unwritten.
 Deploying and flipping remain the owner's alone. See **§9** for what slice 1 actually is.
 
@@ -498,3 +498,48 @@ invisible until a deploy fails.
 Slices 7-9 (mining shadow migration, exploration shadow migration, legacy retirement), the
 typed-zone editor UI, kind conversion, and the immutable `provenance` column from the
 Appendix. **Production head remains `0272`.**
+
+
+## 13. Build log — slices 7-8 and the provenance split
+
+| Slice | Migration | PR | What |
+|---|---|---|---|
+| 7 | `0280` | #310 | mining successors — INACTIVE, footprint = `mining_extract_radius` |
+| 8 | `0281` | #311 | exploration successors — own gate, own radius key |
+| — | `0282` | #312 | **`provenance` split out of `source`**, immutable |
+
+### The finding that shaped slices 7-8
+
+`pirate_intercept_leg_zone_hits` filters `status = 'active'` and **ignores `zone_kind`
+entirely**. Under the legacy path — still authoritative — **any** active `danger_zones` row
+is a pirate interception zone whatever it calls itself. Creating "mining" or "exploration"
+zones as active rows would have carpeted the map with new pirate ambush regions around every
+ore field and survey site, silently, on deploy.
+
+Every successor is therefore born **inactive**, and both migrations capture a pre-image of
+the active zone set to prove the count is unchanged. A test pins the precondition: **if
+`leg_zone_hits` ever gains a `zone_kind` filter, this rationale changes.**
+
+### Independence, proven rather than intended
+Exploration does not share mining's gate, its radius key, or its successor set — sharing any
+of those because two systems happen to use point tables would couple two independent
+gameplay decisions. Both migrations assert the other's flag is undisturbed and that no zone
+carries both point-successor effects.
+
+### The provenance split (`0282`)
+`source` was answering geometry-representation **and** protection-provenance at once. Any
+"adopt a seeded zone" feature must set `source='drawn'`, after which the row is
+indistinguishable from owner content — so its flag could never be rolled back. `provenance`
+is now a separate, **immutable** column (trigger-enforced, with the trigger proven to fire).
+The classification is a **one-time** snapshot, and the migration proves **zero disagreement**
+with the source-based classification the live guards still use — which makes re-pointing
+those guards a later two-line diff of already-demonstrated safety.
+
+### Remaining
+- **Re-point the three guards** (`zone_update`, `zone_unpublish`, `zone_set_active`) at
+  `provenance`. Proven safe; not yet done.
+- Then the seeded zones can be unlocked behind a **genuinely reversible** flag.
+- Slice 9 (legacy retirement) is premature — no authority has moved.
+- Typed-zone editor UI, and kind conversion with explicit conversion rules.
+
+**Production head remains `0272`. Nothing deployed.**
