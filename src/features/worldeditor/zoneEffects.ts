@@ -29,13 +29,24 @@
  *  gate and its own slice — adding a kind never edits an existing one.
  *  Named for the BEHAVIOUR, not the zone's identity: 'pirate' is faction language, while
  *  'pirate_intercept' is the thing those five risk knobs actually do. */
-export const ZONE_EFFECT_KINDS = ['pirate_intercept'] as const
+//  Each entry has a `zone_effect_<name>` table server-side; the registry and those tables must stay
+//  1:1, because "an effect is present iff its row exists" is only true of effects the client knows
+//  about. An effect table without an entry here is invisible to the editor.
+export const ZONE_EFFECT_KINDS = [
+  'pirate_intercept',
+  'combat',
+  'mining',
+  'exploration',
+] as const
 
 export type ZoneEffectKind = (typeof ZONE_EFFECT_KINDS)[number]
 
 /** Plain-language nouns (map-UX law #4/#5: the owner's words, no schema keys). */
 export const ZONE_EFFECT_LABELS: Record<ZoneEffectKind, string> = {
   pirate_intercept: 'Pirate interception',
+  combat: 'Combat encounters',
+  mining: 'Mining yield',
+  exploration: 'Exploration rewards',
 }
 
 // ── the pirate-interception effect ──────────────────────────────────────────────────────────────
