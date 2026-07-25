@@ -480,9 +480,13 @@ export function WorldEditor() {
   // the element a reactive value, so attachment happens exactly when the SVG exists.
   useEffect(() => {
     if (!svgEl) return
+    // Per-notch step. Kept gentle on purpose: a wheel gesture is many notches, so a step that feels
+    // right for ONE click of the +/- buttons (1.25) overshoots badly here. 1.07 needs ~10 notches to
+    // double, which is roughly one comfortable scroll.
+    const WHEEL_ZOOM_STEP = 1.07
     const onWheel = (e: WheelEvent) => {
       e.preventDefault() // also swallows ctrl+wheel, so the page never zooms over the map
-      zoomByFactor(e.deltaY < 0 ? 1.15 : 1 / 1.15)
+      zoomByFactor(e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP)
     }
     svgEl.addEventListener('wheel', onWheel, { passive: false })
     return () => svgEl.removeEventListener('wheel', onWheel)
