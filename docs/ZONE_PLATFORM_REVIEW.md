@@ -1,6 +1,6 @@
 # Typed-Zone Platform — architecture review (2026-07-25)
 
-**Status: SLICE 1 AUTHORED + AMENDED, NOT DEPLOYED.** Migration `0273` exists on the branch
+**Status: SLICES 1-4 AUTHORED, NONE DEPLOYED.** Migration `0273` exists on the branch
 `slice-typed-zone-foundation`; production head is still `0272`. Slices 2–9 are unwritten.
 Deploying and flipping remain the owner's alone. See **§9** for what slice 1 actually is.
 
@@ -384,3 +384,63 @@ A TS dispatcher was written speculatively and **deleted** on this verdict.
 **[VERIFIED]** Change 4 was a real hole, not a formality: Postgres orders `NaN` above every other
 double, so `stat_reference > 0` is TRUE for both `'NaN'` and `'Infinity'`. Both would have stored
 cleanly under the original CHECKs.
+
+
+## 11. Build log — slices 1-4 (all authored, none deployed)
+
+Production migration head is still `0272`. Every slice below is on a stacked branch
+awaiting the owner's deploy. **No flag has been flipped and no live row has changed.**
+
+| Slice | Migration | PR | What it is |
+|---|---|---|---|
+| 1 | `0273` | #303 | typed-zone effect foundation — `zone_effect_pirate_intercept`, behaviour-neutral backfill, 2 flags seeded false |
+| 2 | `0274` | #304 | pure effect dispatcher V1 + risk helper (PostgreSQL), TypeScript contract types only |
+| 3 | `0275` | #305 | read-only shadow comparison + `danger_zones.revision`; the candidate builder |
+| 4 | `0276` | #306 | pirate runtime cutover behind `typed_zone_pirate_intercept_runtime_enabled` |
+
+### The decisions that shaped them
+
+**Language (slice 2).** The dispatcher is **PostgreSQL, not TypeScript** — Byeharu is
+server-authoritative, the live runtime is already PL/pgSQL, and slice 3's shadow must
+compare inside the database. A TS dispatcher was written first and **deleted** on this
+reasoning. `src/` now holds contract types only, and a test fails if risk mathematics or
+knob coalescing reappear there under any name.
+
+**Purity as a testable property (slice 2).** The dispatcher reads no table, no
+`game_config`, no clock; writes nothing; rolls nothing; calls no 0233 function; does no
+geometry. Both the migration self-assert and a contract test enforce each of those, so
+"pure" is checked rather than asserted in a comment.
+
+**Unknown effects are typed failures, never silent skips (slice 2).** Silently ignoring
+one would turn a newly introduced effect into an invisible gameplay omission the day an
+older dispatcher received it.
+
+**Comparison compares decisions, not outcomes (slice 3).**
+`pirate_intercept_evaluate_leg` rolls, writes, cancels the movement and can mint an
+encounter — so the shadow must never call it. It reproduces the decision from that
+evaluator's own pure parts. The proof counts `pirate_intercepts` rows to prove
+write-freedom rather than trusting a code read.
+
+**Configured divergence ≠ planner fault (slice 3).** A zone carrying a real override is
+*supposed* to produce a different number. The verdict reports
+`risk_diverged_by_override` separately, so the shadow cannot cry wolf the first time a
+zone is tuned.
+
+**One decider, fail closed (slice 4).** The cutover flag is read once into a local; the
+branches are mutually exclusive; the self-assert counts exactly one `random()` and one
+log insert. A planner failure leaves the leg **uninterrupted** rather than falling back to
+legacy — a silent fallback would make the cutover unobservable.
+
+**Splice, don't retype (slice 4).** The 0233 evaluator body was copied programmatically
+and altered in exactly two places, with a test asserting distinctive original lines
+survive character-for-character.
+
+### Still not verified anywhere
+Every migration and SQL proof is validated by disposable-stack CI workflows. **None has
+been executed locally** — this machine has no psql or docker. That limitation is stated
+in each PR rather than papered over.
+
+### Remaining
+Slices 5-9 (typed-zone editor core, first new non-live kind, mining shadow migration,
+exploration shadow migration, legacy retirement) are unstarted. The marker-over-polygon
+hit-testing fix is also still open as its own client-only slice.
