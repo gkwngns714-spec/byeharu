@@ -1,0 +1,64 @@
+name: Activate typed-zone authoring
+
+# OWNER-TRIGGERED FLAG ACTIVATION. Runs exactly ONE checked-in script:
+#   scripts/activate-typed-zone-authoring.sql
+# There is no input, no parameter, and no way to pass SQL to this workflow — the script path is a
+# literal. This is deliberate: a workflow that accepts arbitrary SQL would be a standing
+# arbitrary-execution path against production, which is strictly worse than having no workflow.
+#
+# The script itself is the safety authority, not this file. It refuses to run against an
+# un-migrated database, flips ONLY the three AUTHORING flags, verifies all three actually landed,
+# and aborts if any RUNTIME flag is lit. Player-facing behaviour is untouched either way.
+#
+# Gate: `environment: production`, the same approval gate deploy-migrations.yml uses. The approval
+# recorded there (approver + commit) IS the authorization record for the flag flip.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-typed-zone-activation
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout the triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify the script is the one in the repo
+        run: |
+          test -f scripts/activate-typed-zone-authoring.sql
+          echo "sha256: $(sha256sum scripts/activate-typed-zone-authoring.sql | cut -d' ' -f1)"
+
+      - name: Run activation
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          psql \
+            "postgresql://postgres@db.${PROJECT_ID}.supabase.co:5432/postgres?sslmode=require" \
+            -v ON_ERROR_STOP=1 \
+            -f scripts/activate-typed-zone-authoring.sql
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Typed-zone authoring activation"
+            echo ""
+            echo "* commit: \`${{ github.sha }}\`"
+            echo "* run: ${{ github.run_id }}"
+            echo "* outcome: ${{ job.status }}"
+            echo ""
+            echo "Flips \`typed_zone_authoring_enabled\`, \`seeded_zone_edit_enabled\`,"
+            echo "\`seeded_zone_lifecycle_enabled\`. No runtime flag is touched."
+          } >> "$GITHUB_STEP_SUMMARY"
