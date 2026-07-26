@@ -83,7 +83,17 @@ export function FleetCommandPanel({
     const res = await op()
     if (!res.ok) setNotice({ tone: 'warning', text: teamReasonMessage(res.reason) })
     else {
-      setNotice({ tone: 'success', text: summarize(res) })
+      // A SUCCESS can still carry an outcome the caller's summary cannot know about. 0292 lets an
+      // order issued mid-combat start a RETREAT instead of an ordinary course — same ok:true, very
+      // different thing happening to the fleet. Summarising it as a normal move would tell the player
+      // their fleet is travelling when it is actually disengaging under fire, so the server's own
+      // outcome wins here and reads as a warning, not a success.
+      const outcome = 'reason' in res ? (res as { reason?: string }).reason : undefined
+      if (outcome && outcome.startsWith('retreat_')) {
+        setNotice({ tone: 'warning', text: teamReasonMessage(outcome) })
+      } else {
+        setNotice({ tone: 'success', text: summarize(res) })
+      }
       onCommanded() // shell reads (movements/fleets/ships) — non-optimistic, the server answered
     }
   }

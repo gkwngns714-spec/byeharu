@@ -34,7 +34,16 @@ const REASON_MESSAGES: Record<string, string> = {
   // mapping the copy now costs nothing dark and makes the lit world speak player, not code.
   unified_movement_disabled: 'Fleet movement isn’t available right now.',
   member_busy: 'A ship in this fleet is still flying its own course — wait for it to arrive.',
-  group_on_sortie: 'This fleet is committed to a hunt — it can’t take a new course until combat resolves.',
+  // 0292 narrowed this: a fleet IN COMBAT can now be ordered away and will retreat under fire. This
+  // refusal survives only for a sortie with no encounter behind it, so the copy no longer claims that
+  // combat blocks every order — it did, and saying so while the retreat path exists would be a lie.
+  group_on_sortie: 'This fleet is out on a sortie and can’t take a new course yet.',
+  // ── 0292 RETREAT-UNDER-FIRE — ordering a move mid-combat starts a retreat toward it ──
+  // These are OUTCOMES, not refusals; without them the client fell through to the generic
+  // "Fleet order unavailable." and a working retreat looked like a rejected order.
+  retreat_started: 'Retreating under fire — the fleet is disengaging toward your destination and will keep taking damage until it breaks off.',
+  retreat_destination_updated: 'New destination set — the fleet is still retreating; the clock did not restart.',
+  retreat_needs_port_destination: 'Pick a PORT to retreat to — a fleet already in combat can’t break off toward open space.',
   fleet_ambiguous: 'This fleet’s position is unclear — try again in a moment.',
   group_scattered: 'The fleet’s ships are split across ports — dock them together once to gather the fleet.',
   no_origin: 'The fleet has nowhere to depart from yet.',
