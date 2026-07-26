@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { WorldCoord } from './openSpaceTransform'
 import { commandShipGroupCancelRoute, commandShipGroupGoRoute } from './pirateApi'
+import { teamReasonMessage } from '../command/teamReasonMessage'
 import { Badge, Button, OverlayPanel } from '../../components/ui'
 
 // PIRATE INTERCEPT — the player-facing ROUTE planner: plot 1-3 waypoints + a final open-space point to
@@ -53,7 +54,11 @@ export function PirateInterceptPanel({
       onModeChange('off')
       onCommanded()
     } else {
-      setMessage(`Could not send route: ${result.reason}`)
+      // The ONE reject-copy map (teamReasonMessage) — this used to print the RAW server code at the
+      // player ("Could not send route: invalid_waypoint_point"). It is the right map even though it
+      // is named for the team surfaces: leg 1 of a route COMPOSES command_ship_group_go, so this
+      // RPC's rejects ARE that vocabulary, and a second map would have to duplicate all of it.
+      setMessage(teamReasonMessage(result.reason))
     }
   }
 
@@ -62,7 +67,7 @@ export function PirateInterceptPanel({
     setBusy(true)
     const result = await commandShipGroupCancelRoute(groupId)
     setBusy(false)
-    setMessage(result.ok ? `Cleared ${String(result.cleared ?? 0)} queued leg(s).` : `Could not clear route: ${result.reason}`)
+    setMessage(result.ok ? `Cleared ${String(result.cleared ?? 0)} queued leg(s).` : teamReasonMessage(result.reason))
   }
 
   // Arm/disarm the route-plotting tap mode. Toggling clears any in-progress draft so a stale plot never

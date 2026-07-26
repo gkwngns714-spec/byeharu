@@ -6,6 +6,7 @@ import {
   type GroupPreviewResult,
   type GroupTotalsResult,
 } from './teamApi'
+import { teamReasonMessage } from './teamReasonMessage'
 import { ADDITIVE_STAT_KEYS, aggregateTeamStats, groupPreviewAvailability } from './teamSkillset'
 import { isPreviewActivity, PREVIEW_ACTIVITY_TYPES } from './teamCaptains'
 
@@ -112,12 +113,15 @@ export function TeamPreviewSection({
         </Button>
       </div>
 
+      {/* The ONE reject-copy map (teamReasonMessage) — both notices used to interpolate the RAW
+          server code into player text ("Couldn't preview this fleet (stats_invalid)."). The lead-in
+          keeps the two apart, since they sit side by side under their own buttons. */}
       {current && !current.ok && (
-        <Notice tone="warning">Couldn’t preview this fleet ({current.reason}).</Notice>
+        <Notice tone="warning">Couldn’t preview this fleet. {teamReasonMessage(current.reason)}</Notice>
       )}
 
       {currentTotals && !currentTotals.ok && (
-        <Notice tone="warning">Couldn’t fetch server totals ({currentTotals.reason}).</Notice>
+        <Notice tone="warning">Couldn’t fetch server totals. {teamReasonMessage(currentTotals.reason)}</Notice>
       )}
 
       {currentTotals && currentTotals.ok && (

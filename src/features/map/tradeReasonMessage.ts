@@ -14,6 +14,11 @@ const REASON_MESSAGES: Record<string, string> = {
   insufficient_volume: 'Not enough cargo space.',
   insufficient_cargo: 'Not enough cargo to sell.',
   invalid_qty: 'Enter a whole quantity of 1 or more.',
+  // market_buy / market_sell's two argument guards (0089/0090 → the 0138 head, :111-112, :197-198).
+  // invalid_good is ALSO the "this good has no unit volume" arm (0138:138) — an unknown good either
+  // way. Distinct from offer_unavailable, which means a real good this port simply doesn't trade.
+  invalid_good: 'That good isn’t recognized — pick one from the market list.',
+  invalid_request: 'That order didn’t reach the market — try it again.',
 }
 
 /** A short player-facing message for a server/transport trade reason; unknown → generic "Trade unavailable." */

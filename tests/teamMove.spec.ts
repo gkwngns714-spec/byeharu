@@ -4,6 +4,7 @@ import {
   teamMapSendAction,
   unifiedMapSendAction,
   buildCommandShipGroupGoArgs,
+  fleetRetreatOutcomeMessage,
   type GroupGoTarget,
 } from '../src/features/command/teamMove'
 
@@ -169,4 +170,23 @@ test('GO ARGS: a coordinate target goes RAW — no client-side rounding (0208 ro
   const args = buildCommandShipGroupGoArgs('g1', { x: 3.7, y: -2.2 })
   expect(args).toEqual({ p_group_id: 'g1', p_target_x: 3.7, p_target_y: -2.2 })
   expect('p_location_id' in args).toBe(false)
+})
+
+// ── RETREAT-DESTINATION (0292) — the mover's combat-time outcomes get their OWN copy. ──────────────
+
+test('RETREAT: the two 0292 outcomes each get their own message, naming the fleet and the port', () => {
+  expect(fleetRetreatOutcomeMessage('retreat_started', 'Alpha', 'Haven')).toBe(
+    'Alpha is breaking off the fight and heading for Haven.',
+  )
+  expect(fleetRetreatOutcomeMessage('retreat_destination_updated', 'Alpha', 'Haven')).toBe(
+    'Alpha will retreat to Haven instead.',
+  )
+})
+
+test('RETREAT: an ordinary move yields null, so the caller keeps its own "Sent …" summary', () => {
+  // The envelope key is absent on a normal leg, and `unknown` by TeamRpcResult's shape — anything
+  // that is not one of the two 0292 outcomes must fall through, never produce retreat copy.
+  for (const outcome of [undefined, null, '', 'moving', 42, {}]) {
+    expect(fleetRetreatOutcomeMessage(outcome, 'Alpha', 'Haven')).toBeNull()
+  }
 })
