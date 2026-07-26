@@ -18,7 +18,21 @@ import { isServerLit, useActivityPanelGuards } from '../../lib/useActivityPanelG
 import { captainsForShip, fittingsForShip } from './shipDossierView'
 import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
-import { FittingDetail } from './FittingDetail'
+import { FittingDetail, type ShipRecoveryView } from './FittingDetail'
+import {
+  canRepair,
+  canTow,
+  isAdriftError,
+  repairErrorMessage,
+  repairGate,
+  repairGateNote,
+  towReasonMessage,
+  towSuccessMessage,
+  REPAIR_LABEL,
+  TOW_LABEL,
+  type DisabledShipRow,
+} from './shipRecovery'
+import { emergencyTowMainShip, fetchMyDisabledShips } from './shipRecoveryApi'
 import { CaptainsPanel } from '../captains/CaptainsPanel'
 import { RecruitCaptainPanel } from '../captains/RecruitCaptainPanel'
 import { InventoryPanel } from '../inventory/InventoryPanel'
@@ -60,9 +74,13 @@ import {
 //     `ungrouped` bucket IS the berthed set (the 0216 XOR: group_id NULL ⇔ berth set).
 //   · SELECTION — the shell's ONE selection (selection.selectShip); no local selected-ship state.
 //
-// NO-SOFTLOCK: the free repair CTA (repair_main_ship — server-side deliberately UNGATED, 0052)
-// renders on EVERY destroyed ship's row (and again in the detail): a disabled ship must always
-// have its recovery path on screen, independent of selection and of every feature flag.
+// NO-SOFTLOCK, POSITION-GATED (0297): every destroyed ship's row (and the detail) always carries A
+// RECOVERY ACTION — never none. Which one is decided by the ONE pure gate (shipRecovery.repairGate)
+// over get_my_disabled_ships, the same authority repair_main_ship gates on server-side:
+//   · in port  → "Repair ship"  (the free 0052 safelock — unchanged, no cost, no flag)
+//   · adrift   → "Tow to the nearest port" (the free 0297 tow), Repair disabled with the reason
+//   · unknown  → Repair, enabled: the readiness read failed or the client is ahead of the migration,
+//                and the SERVER is the enforcer. The UI never hides recovery it cannot rule out.
 //
 // Fan-out (the brief's measured budget): the shared roster facts are ~6 requests total regardless
 // of ship count (ships 1 + groups 1 + group-map 2 + fittings 1 + captains 1; location costs 0 —
@@ -87,6 +105,13 @@ export function ShipScreen() {
   const [captainsRes, setCaptainsRes] = useState<GetMyCaptainInstancesResult | null>(null)
   const [repairNote, setRepairNote] = useState<Record<string, string | null>>({})
   const [repairPending, setRepairPending] = useState<Record<string, boolean>>({})
+  // 0297 RECOVERY — where each disabled ship is (null = read unavailable → the gate says 'unknown'),
+  // the tow's own per-ship command state, and the ships the SERVER has told us are adrift (a repair
+  // that came back ship_not_at_port outranks a stale/absent readiness read).
+  const [disabledShips, setDisabledShips] = useState<DisabledShipRow[] | null>(null)
+  const [towPending, setTowPending] = useState<Record<string, boolean>>({})
+  const [towNote, setTowNote] = useState<Record<string, string | null>>({})
+  const [adriftSeen, setAdriftSeen] = useState<Record<string, boolean>>({})
   // The hull catalog (public-read Reference/Config) — fetched ONCE per mount (static data), so
   // every ship's class name resolves from ITS OWN hull_type_id. REVIEW FIX (S6 major 1): the
   // first cut read game.mainShip.hull — the NO-ID sole-ship view, which at N≥2 fail-closes to the
@@ -97,12 +122,15 @@ export function ShipScreen() {
   const { activeRef } = guards
 
   const refreshShared = useCallback(async () => {
-    const [myShips, g, m, fit, cap] = await Promise.all([
+    const [myShips, g, m, fit, cap, disabled] = await Promise.all([
       fetchMyMainShips(),
       fetchMyShipGroups(),
       fetchMyShipGroupMap(),
       getMyShipFittings(),
       getMyCaptainInstances(),
+      // 0297: the recovery readiness of every disabled ship — rides the SAME batched wave (one more
+      // owner-read, no new poll). null on error/pre-deploy → the gate degrades to 'unknown'.
+      fetchMyDisabledShips(),
     ])
     if (!activeRef.current) return
     setShips(myShips)
@@ -110,6 +138,7 @@ export function ShipScreen() {
     setGroupMap(m)
     setFittingsRes(fit)
     setCaptainsRes(cap)
+    setDisabledShips(disabled)
   }, [activeRef])
 
   // readRefreshKey is a deliberate re-fetch trigger (the ShipDossier dep idiom).
@@ -129,23 +158,57 @@ export function ShipScreen() {
     }
   }, [])
 
-  // NO-SOFTLOCK — the row-level free repair (see header). Throw-style wrapper → try/catch, the
-  // ShipStatusCard doRepair shape, keyed per ship so rows never share pending state.
+  // NO-SOFTLOCK — the ONE free-repair implementation in this screen (see header). The detail
+  // composes this same function rather than carrying a second copy. Throw-style wrapper → try/catch,
+  // keyed per ship so rows never share pending state. 0297: the raw raise NEVER reaches the screen —
+  // repairErrorMessage turns it into player words, and a ship_not_at_port reject flips this ship to
+  // 'adrift' so the tow appears in place of the button that just failed.
   async function repairShip(shipId: string) {
     const key = `repair:${shipId}`
     if (!guards.tryClaim(key)) return
     setRepairPending((p) => ({ ...p, [shipId]: true }))
     setRepairNote((n) => ({ ...n, [shipId]: null }))
+    setTowNote((n) => ({ ...n, [shipId]: null }))
     try {
       await repairMainShip(shipId) // explicit ship id; server asserts ownership
+      if (activeRef.current) setAdriftSeen((a) => ({ ...a, [shipId]: false }))
       await Promise.all([game.refresh(), map.refresh(), selection.refresh(), refreshShared()])
     } catch (e) {
       if (activeRef.current) {
-        setRepairNote((n) => ({ ...n, [shipId]: e instanceof Error ? e.message : String(e) }))
+        setRepairNote((n) => ({ ...n, [shipId]: repairErrorMessage(e) }))
+        if (isAdriftError(e)) setAdriftSeen((a) => ({ ...a, [shipId]: true }))
       }
     } finally {
       guards.release(key)
       if (activeRef.current) setRepairPending((p) => ({ ...p, [shipId]: false }))
+    }
+  }
+
+  // 0297 — THE RECOVERY ROUTE. The free emergency tow: hauls an adrift wreck to the nearest port and
+  // berths it there, which is what unlocks the position-gated repair. Envelope-style RPC (never
+  // throws), so every outcome maps through the ONE reason→copy table.
+  async function towShip(shipId: string) {
+    const key = `tow:${shipId}`
+    if (!guards.tryClaim(key)) return
+    setTowPending((p) => ({ ...p, [shipId]: true }))
+    setTowNote((n) => ({ ...n, [shipId]: null }))
+    setRepairNote((n) => ({ ...n, [shipId]: null }))
+    try {
+      const res = await emergencyTowMainShip(shipId)
+      if (!activeRef.current) return
+      if (res.ok) {
+        setTowNote((n) => ({ ...n, [shipId]: towSuccessMessage(res.location_name) }))
+        setAdriftSeen((a) => ({ ...a, [shipId]: false }))
+      } else {
+        setTowNote((n) => ({ ...n, [shipId]: towReasonMessage(res.reason) }))
+        // 'already_at_port' means our view was stale — clear the override and let the refetch decide.
+        if (res.reason === 'already_at_port') setAdriftSeen((a) => ({ ...a, [shipId]: false }))
+      }
+      // Non-optimistic: the new berth arrives from the server, never patched locally.
+      await Promise.all([game.refresh(), map.refresh(), selection.refresh(), refreshShared()])
+    } finally {
+      guards.release(key)
+      if (activeRef.current) setTowPending((p) => ({ ...p, [shipId]: false }))
     }
   }
 
@@ -190,6 +253,8 @@ export function ShipScreen() {
     const row = shipRowById.get(s.main_ship_id)
     const meters = row ? shipMeterPair(row) : null
     const isDisabled = s.status === 'destroyed'
+    // 0297 — the ONE gate decision for this ship (pure; specs in tests/shipRecovery.spec.ts).
+    const gate = repairGate(s.status, disabledShips, s.main_ship_id, adriftSeen[s.main_ship_id] ?? false)
     const locLabel = fleetPositionLocationLabel(posByShip.get(s.main_ship_id), game.locations)
     // Fleet-aware state (same selector the Command roster uses): a moving/docked ship no longer
     // reads the raw 'home' status as "Ready to launch" — that shows only when genuinely idle.
@@ -251,21 +316,47 @@ export function ShipScreen() {
             Captains · {rowCaptains.map((c) => c.name).join(', ')}
           </p>
         )}
-        {/* NO-SOFTLOCK — the UNGATED free repair on the ROW: a destroyed ship's recovery path is
-            always on screen, whatever is selected. stopPropagation: repairing must not double as
-            a selection change. */}
+        {/* NO-SOFTLOCK — a destroyed ship's recovery path is ALWAYS on screen, whatever is selected.
+            0297: which action that is comes from the gate — Repair in port, Tow when adrift — so the
+            row never shows a button the server would refuse without saying why.
+            stopPropagation: recovering must not double as a selection change. */}
         {isDisabled && (
           <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-            <Button
-              variant="warning"
-              size="sm"
-              data-testid={`fitting-row-repair-${s.main_ship_id}`}
-              busy={repairPending[s.main_ship_id] ?? false}
-              busyLabel="Repairing…"
-              onClick={() => void repairShip(s.main_ship_id)}
+            <p
+              data-testid={`fitting-row-recovery-note-${s.main_ship_id}`}
+              className="mb-1 text-[11px] text-ink-muted"
             >
-              Repair ship
-            </Button>
+              {repairGateNote(gate)}
+            </p>
+            {canTow(gate) ? (
+              <Button
+                variant="warning"
+                size="sm"
+                data-testid={`fitting-row-tow-${s.main_ship_id}`}
+                busy={towPending[s.main_ship_id] ?? false}
+                busyLabel="Towing…"
+                onClick={() => void towShip(s.main_ship_id)}
+              >
+                {TOW_LABEL}
+              </Button>
+            ) : (
+              <Button
+                variant="warning"
+                size="sm"
+                data-testid={`fitting-row-repair-${s.main_ship_id}`}
+                disabled={!canRepair(gate)}
+                busy={repairPending[s.main_ship_id] ?? false}
+                busyLabel="Repairing…"
+                onClick={() => void repairShip(s.main_ship_id)}
+              >
+                {REPAIR_LABEL}
+              </Button>
+            )}
+            {towNote[s.main_ship_id] && (
+              <Notice tone="neutral" className="mt-1" data-testid={`fitting-row-tow-note-${s.main_ship_id}`}>
+                {towNote[s.main_ship_id]}
+              </Notice>
+            )}
             {note && (
               <Notice tone="danger" className="mt-1" data-testid={`fitting-row-repair-error-${s.main_ship_id}`}>
                 {note}
@@ -380,6 +471,22 @@ export function ShipScreen() {
               hullName={selectedHullName}
               position={selectedPos}
               locations={game.locations}
+              /* 0297 — the detail COMPOSES this screen's one recovery implementation (it no longer
+                 carries a second copy of the repair command). */
+              recovery={{
+                gate: repairGate(
+                  selectedShip.status,
+                  disabledShips,
+                  selectedShip.main_ship_id,
+                  adriftSeen[selectedShip.main_ship_id] ?? false,
+                ),
+                repairing: repairPending[selectedShip.main_ship_id] ?? false,
+                repairError: repairNote[selectedShip.main_ship_id] ?? null,
+                towing: towPending[selectedShip.main_ship_id] ?? false,
+                towNote: towNote[selectedShip.main_ship_id] ?? null,
+                onRepair: () => repairShip(selectedShip.main_ship_id),
+                onTow: () => towShip(selectedShip.main_ship_id),
+              } satisfies ShipRecoveryView}
               allFittings={litFittingRows}
               shipCaptains={litCaptainRows ? captainsForShip(litCaptainRows, selectedShip.main_ship_id) : null}
               refreshKey={readRefreshKey}

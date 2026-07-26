@@ -13,6 +13,7 @@ import {
   type ShipGroupMapEntry,
   type TeamRpcResult,
 } from './teamApi'
+import { teamReasonMessage } from './teamReasonMessage'
 import { deriveDockedTeamRollups } from './teamRollup'
 import {
   buildTeamRoster,
@@ -159,7 +160,10 @@ export function TeamRosterPanel() {
     setNotice(null)
     try {
       const res = await op()
-      if (!res.ok) setNotice({ tone: 'warning', text: `Couldn’t complete that action (${res.reason}).` })
+      // The ONE reject-copy map (teamReasonMessage). This line used to interpolate the RAW server
+      // code into player text — "Couldn't complete that action (group_fleet_elsewhere)." — which is
+      // the exact leak the map exists to prevent; an unmapped code degrades to its generic sentence.
+      if (!res.ok) setNotice({ tone: 'warning', text: teamReasonMessage(res.reason) })
       else if (summarize) setNotice({ tone: 'success', text: summarize(res) })
       await reload()
     } finally {

@@ -114,14 +114,6 @@ export function MapScreen() {
   }
   const openPiratePanel = () => setHubView('pirate')
   const openMiningPanel = () => setHubView('mining')
-  // Back arrow → the button menu: drop the crosshair/target and disarm any pirate draft so the menu is
-  // a clean slate again (re-choosing Send re-places the destination).
-  const backToMenu = () => {
-    setHubView('menu')
-    setPointTarget(null)
-    setPirateMode('off')
-    setPirateDraftPoints([])
-  }
   // The ONE dismissal: ✕ closes the hub AND returns the map to plain navigation (clear the point/
   // crosshair and disarm any pirate tap mode + draft).
   const closeHub = () => {
@@ -129,6 +121,23 @@ export function MapScreen() {
     setHubView('menu')
     setHubPoint(null)
     setHubScreen(null)
+    setPointTarget(null)
+    // PORT-SEND: a port summon's destination IS the marker selection, so the ONE dismissal has to
+    // clear that too — otherwise ✕ would leave a live destination with no surface left to act on it.
+    setSelectedId(null)
+    setPirateMode('off')
+    setPirateDraftPoints([])
+  }
+  // Back arrow → the button menu: drop the crosshair/target and disarm any pirate draft so the menu is
+  // a clean slate again (re-choosing Send re-places the destination). A PORT summon has NO icon menu
+  // behind it (nothing was double-tapped, so hubScreen is null) — there the same control is simply the
+  // dismissal, and the header renders no arrow at all (see the stage-2 header below).
+  const backToMenu = () => {
+    if (hubScreen === null) {
+      closeHub()
+      return
+    }
+    setHubView('menu')
     setPointTarget(null)
     setPirateMode('off')
     setPirateDraftPoints([])
@@ -142,11 +151,31 @@ export function MapScreen() {
   // already clears the selection on GalaxyMap's own svg click path — the two stay exclusive by
   // construction. NB the svg click that FOLLOWS a space tap calls onSelect(null), so clearing the
   // point target here is gated on an actual (non-null) marker selection.
+  //
+  // PORT-SEND (owner play-test, verbatim: "i cannot even send any ship to a city — haven, slagworks,
+  // driftwatch because there is no UI"): TAPPING A PORT IS NOW A SUFFICIENT GESTURE. It was not
+  // before — the send row only mounts while the hub is on its fleet stage, and the ONLY way there was
+  // double-tap EMPTY SPACE → Send icon → then tap the port, because openHubAt clears the selection, so
+  // the obvious order (pick the port first) could never work. The fix COMPOSES the same ONE hub
+  // authority rather than forking a second command surface: no new state, no button in the read-only
+  // aside — the port target still DERIVES from selectedId exactly as before, and this only opens the
+  // hub on the stage that consumes it. hubPoint/hubScreen are cleared because a port summon has no
+  // double-tapped map point behind it (no crosshair to place, no icon menu to go back to), and any
+  // armed pirate draft is disarmed so the map's tap handling matches the stage that is now showing.
   const handleSelect = (id: string | null) => {
     setSelectedId(id)
     if (id !== null) {
       setPointTarget(null)
       setSelectedFieldName(null)
+      const loc = locations.find((l) => l.id === id)
+      if (TEAM_COMMAND_ENABLED && loc && teamDestinationKind(loc) !== null) {
+        setHubPoint(null)
+        setHubScreen(null)
+        setPirateMode('off')
+        setPirateDraftPoints([])
+        setHubView('fleet')
+        setHubOpen(true)
+      }
     }
   }
   const handleSelectMiningField = (name: string | null) => {
@@ -370,6 +399,10 @@ export function MapScreen() {
               <OverlayRail slot="bottom-right" className="max-h-[85%] max-w-[calc(100vw-1.5rem)] overflow-y-auto">
                   <>
                     <OverlayPanel data-testid="map-command-panel-header" className="flex w-72 max-w-full items-center gap-2">
+                      {/* PORT-SEND: the arrow only exists when there IS an icon menu behind this stage
+                          (a double-tap summon). A port summon opens straight on the fleet stage, so a
+                          "back" there would lead to an empty menu — the ✕ is the only exit it needs. */}
+                      {hubScreen !== null && (
                       <button
                         type="button"
                         onClick={backToMenu}
@@ -380,6 +413,7 @@ export function MapScreen() {
                       >
                         ←
                       </button>
+                      )}
                       <p className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
                         {hubView === 'fleet' ? 'Send fleet' : hubView === 'mining' ? 'Mine here' : 'Pirate intercept'}
                       </p>

@@ -17,6 +17,10 @@ test('every known server reason maps to specific player text (not the fallback)'
     insufficient_volume: 'Not enough cargo space.',
     insufficient_cargo: 'Not enough cargo to sell.',
     invalid_qty: 'Enter a whole quantity of 1 or more.',
+    // market_buy / market_sell argument guards (0138:111-112, :197-198, :138) — previously unmapped,
+    // so a real reject rendered as the generic "Trade unavailable."
+    invalid_good: 'That good isn’t recognized — pick one from the market list.',
+    invalid_request: 'That order didn’t reach the market — try it again.',
   }
   for (const [reason, msg] of Object.entries(known)) {
     expect(tradeReasonMessage(reason)).toBe(msg)
