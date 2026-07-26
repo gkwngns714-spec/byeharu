@@ -122,6 +122,71 @@ export function resolveFireLines(
 
 const SIDE_COLOR = { player: 'var(--color-accent)', enemy: 'var(--color-danger)' } as const
 
+/** One damage number to float over the unit that took it — the OSRS hitsplat read. */
+export interface HitSplatView {
+  key: string
+  x: number
+  y: number
+  /** the damage the SERVER dealt; never computed here */
+  damage: number
+  /** the side that TOOK the hit, so the splat is coloured by who is hurting */
+  side: 'player' | 'enemy'
+  destroyed: boolean
+}
+
+/** PURE: combat_events + current unit positions → this tick's damage numbers.
+ *
+ *  The server already emits everything needed and has since 0234: `hull_damage` carries
+ *  {unit_id, damage} and `unit_destroyed` carries {unit_id, count} (0261:777-789). Nothing is
+ *  derived here — no damage is computed, no hit is rolled, no total is re-summed. This is the same
+ *  latest-tick-only rule resolveFireLines uses, so splats appear with the salvo that caused them and
+ *  clear as the poll advances rather than piling up.
+ *
+ *  A splat whose unit no longer resolves to a position draws nothing: a number floating over empty
+ *  space is worse than no number. The aggregate (non-spatial) damage events carry `group` instead of
+ *  `unit_id`, so they are naturally ignored — they have no position to float over. */
+export function resolveHitSplats(
+  events: readonly CombatEvent[],
+  units: readonly SpatialUnitView[],
+): HitSplatView[] {
+  const posById = new Map(units.map((u) => [u.id, u]))
+  let latestTick = -Infinity
+  for (const e of events) {
+    if (
+      (e.event_type === 'hull_damage' || e.event_type === 'unit_destroyed') &&
+      e.payload_json &&
+      e.payload_json['unit_id'] != null &&
+      e.tick_number > latestTick
+    ) {
+      latestTick = e.tick_number
+    }
+  }
+  if (!Number.isFinite(latestTick)) return []
+
+  // A unit can take a damage event AND a destroyed event in the same tick; show ONE splat carrying
+  // both facts rather than two numbers stacked on the same pixel.
+  const byUnit = new Map<string, HitSplatView>()
+  for (const e of events) {
+    if (e.tick_number !== latestTick) continue
+    if (e.event_type !== 'hull_damage' && e.event_type !== 'unit_destroyed') continue
+    const p = e.payload_json ?? {}
+    const id = String(p['unit_id'] ?? '')
+    const u = posById.get(id)
+    if (!u) continue
+    const prev = byUnit.get(id)
+    const dmg = e.event_type === 'hull_damage' ? Number(p['damage'] ?? 0) : (prev?.damage ?? 0)
+    byUnit.set(id, {
+      key: `splat-${id}-${latestTick}`,
+      x: u.x,
+      y: u.y,
+      damage: Number.isFinite(dmg) ? dmg : 0,
+      side: u.side,
+      destroyed: e.event_type === 'unit_destroyed' || (prev?.destroyed ?? false),
+    })
+  }
+  return [...byUnit.values()]
+}
+
 /** The pure, hook-free GalaxyMap spatial-combat layer (the element-helper convention). Returns element
  *  DESCRIPTORS only — no hooks — so the unit spec calls this SAME function and inspects the tree. No
  *  spatial units → [] (the map is byte-identical to today; dark by data). Order: range rings first
@@ -215,6 +280,42 @@ export function spatialCombatLayer(args: {
           strokeWidth: 1,
           vectorEffect: 'non-scaling-stroke' as const,
         }),
+      ),
+    )
+  }
+
+  // ── 4) HITSPLATS on very top: this tick's damage numbers, floating over whoever took them ──
+  // Screen-constant (/k) like every glyph: a damage number is UI, not geometry, so it must stay
+  // legible at any zoom. Drawn last so a number is never hidden behind the ship it belongs to.
+  for (const s of resolveHitSplats(args.events, views)) {
+    const p = args.norm({ x: s.x, y: s.y })
+    // Coloured by who is BLEEDING — red on your own ship is the OSRS read: this is hurting you.
+    const color = s.side === 'player' ? 'var(--color-danger)' : 'var(--color-accent)'
+    const dy = 10 / args.k
+    out.push(
+      createElement(
+        'g',
+        {
+          key: `spatial-splat-${s.key}`,
+          'data-testid': `spatial-combat-splat-${s.key}`,
+          style: { pointerEvents: 'none' as const },
+        },
+        // a small filled disc so the number stays readable over any background
+        createElement('circle', { cx: p.x, cy: p.y - dy, r: 7 / args.k, fill: color, opacity: 0.9 }),
+        createElement(
+          'text',
+          {
+            x: p.x,
+            y: p.y - dy + 3.2 / args.k,
+            fontSize: 9 / args.k,
+            textAnchor: 'middle',
+            fill: 'var(--color-app)',
+            fontWeight: 700,
+            style: { userSelect: 'none' as const },
+          },
+          // a destroying blow reads as a kill mark, not a number to interpret
+          s.destroyed ? '✕' : String(Math.round(s.damage)),
+        ),
       ),
     )
   }
