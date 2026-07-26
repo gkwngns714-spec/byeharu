@@ -459,12 +459,29 @@ begin
     end if;
   end loop;
 
-  -- (7) the capability flag is untouched and still dark.
-  if coalesce((select (value)::text::boolean from public.game_config
-                where key = 'typed_zone_authoring_enabled'), true) then
-    raise exception '0288: typed_zone_authoring_enabled is not false — this migration must land dark';
+  -- (7) THE CAPABILITY FLAG IS UNTOUCHED — which is NOT the same as "the flag is false".
+  --
+  -- This assert originally demanded typed_zone_authoring_enabled = false and FAILED THE PRODUCTION
+  -- DEPLOY, because the owner had already lit it. It passed every disposable run only because a fresh
+  -- stack seeds the flag dark. That is the bug in the assertion, not in the world: a migration must
+  -- assert what IT does, never what state the operator happens to have chosen.
+  --
+  -- What 0288 actually promises is that it does not WRITE the flag. Assert exactly that, statically,
+  -- against this migration's own effect: the two functions it re-emits must not contain a game_config
+  -- write, and neither does the migration body (it has no insert/update on game_config at all).
+  if position('game_config' in pg_get_functiondef(to_regprocedure('public.zone_effect_set(text, jsonb)'))) <> 0
+     and position('cfg_bool' in pg_get_functiondef(to_regprocedure('public.zone_effect_set(text, jsonb)'))) = 0 then
+    raise exception '0288: zone_effect_set touches game_config outside the cfg_bool read — it must never write a flag';
+  end if;
+  if position('game_config' in pg_get_functiondef(to_regprocedure('public.zone_effect_remove(text, jsonb)'))) <> 0
+     and position('cfg_bool' in pg_get_functiondef(to_regprocedure('public.zone_effect_remove(text, jsonb)'))) = 0 then
+    raise exception '0288: zone_effect_remove touches game_config outside the cfg_bool read — it must never write a flag';
+  end if;
+  -- the capability GATE itself must still be read (removing it would silently un-dark the commands)
+  if position('typed_zone_authoring_enabled' in pg_get_functiondef(to_regprocedure('public.zone_effect_set(text, jsonb)'))) = 0 then
+    raise exception '0288: zone_effect_set lost its typed_zone_authoring_enabled gate';
   end if;
 
-  raise notice '0288 OK: zone_effect_set/remove gate on danger_zones.revision; the expected-snapshot compare is gone; still dark, still behaviour-only';
+  raise notice '0288 OK: zone_effect_set/remove gate on danger_zones.revision; the expected-snapshot compare is gone; still behaviour-only; the capability gate is intact and no flag was written';
 end $$;
 
