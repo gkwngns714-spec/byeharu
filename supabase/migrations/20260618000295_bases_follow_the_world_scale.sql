@@ -42,7 +42,6 @@ set x = x * 3,
 do $$
 declare
   v_mismatch integer;
-  v_origin_moved integer;
 begin
   -- (1) every base that shares a name with a location now sits ON that location. This is the whole
   --     point of the migration, and it is the assertion that would have caught 0227's false premise.
@@ -55,12 +54,13 @@ begin
     raise exception '0295: % base(s) still disagree with their namesake location''s coordinates', v_mismatch;
   end if;
 
-  -- (2) the origin base is a FIXED POINT — scaling must not have displaced a base that had no offset.
-  select count(*) into v_origin_moved
-    from public.bases where x = 0 and y = 0;
-  if v_origin_moved = 0 then
-    raise exception '0295: the origin base moved — 0 * 3 must still be 0';
-  end if;
+  -- (2) DELIBERATELY ABSENT: an assert that "a base exists at (0,0)".
+  --     I wrote one, and it failed the disposable stack — which seeds no origin base. That is the
+  --     SAME defect as 0288's production failure: asserting the state of the WORLD rather than the
+  --     effect of the MIGRATION. A row at the origin maps to the origin under any scaling; that is
+  --     arithmetic, not something a proof needs to witness, and asserting a base must be there makes
+  --     this migration depend on seed data it does not own.
+  --     Assert (1) above is the real invariant and holds on any dataset, including an empty one.
 
   -- (3) coordinates stay finite and inside the charted square (the ONE navigable bound, +/-10000).
   if exists (select 1 from public.bases
