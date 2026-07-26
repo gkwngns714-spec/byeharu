@@ -938,8 +938,12 @@ begin
 
   -- ── (7) NO FLAG FLIPPED. This migration writes no game_config row; the gates it depends on are left
   --        exactly as 0290/0291 left them. ──────────────────────────────────────────────────────────
-  if coalesce((select value #>> '{}' from public.game_config where key = 'encounter_resolver_enabled'), 'false') <> 'false' then
-    raise exception '0293 FAIL: encounter_resolver_enabled is no longer seeded false — this migration flips nothing';
+  --        Asserted as THIS MIGRATION'S OWN EFFECT, never as operator state: the earlier form
+  --        demanded encounter_resolver_enabled = 'false', a value the OWNER controls and intends to
+  --        light, which would have failed this deploy the moment they did. 0288 failed production in
+  --        exactly that way. What 0293 promises is that it writes no flag.
+  if position('game_config' in v_eval) <> 0 and position('cfg_bool' in v_eval) = 0 then
+    raise exception '0293 FAIL: the evaluator touches game_config outside its cfg_bool reads — this migration writes no flag';
   end if;
 
   raise notice '0293 OK: the intercept teleport is dead — the location-linked ambush branch no longer calls the docked-arrival leaf on ANY path, and all FOUR ambush exits (standalone stub, vanished location, the location-linked combat path, empty manifest) park the fleet at the computed ambush point via fleet_set_in_space, so no exit writes a position the fleet did not travel to; process_pirate_route_legs inherits the identical rule without an edit because it parks nothing itself and calls this same evaluator for legs 2..N; encounter POSITION is now separate from encounter IDENTITY (combat_encounters.engagement_x/engagement_y added; combat_create_group_encounter is the ONE resolver — p_engagement_x/y first, the linked location''s centre otherwise, exactly one read of locations — and the intercept restates the ambush point on the row it created, while the linked location still owns the presence and all encounter content); the 0290 zero-manifest guard SURVIVES, still sited before presence_create; the 0276 cutover, both deciders, the fail-closed exits, the single roll, the single pirate_intercepts insert, the race check and the raise-free `exception when others` contract all survive; 0291''s creation-time sticky-mode flag gate, 0262''s fallback weapon and 0234''s spatial append survive in the creator; fleet_set_returning and fleet_destroy each learned exactly ONE new from-state (a fleet parked in open space) so an ambushed fleet can retreat and can die instead of wedging its encounter in the tick forever; grants unchanged (service_role only, never anon/authenticated); no flag flipped; process_combat_ticks deliberately NOT touched — its three locations.x/y reads (later-wave enemy seeding x2, retreat movement origin) are the named 0294 follow-up';

@@ -967,9 +967,14 @@ begin
     raise exception '0291 self-assert FAIL: process_combat_ticks carries % random( call(s) (want exactly 2)', v_n;
   end if;
 
-  -- ── (5) NO FLAG WAS FLIPPED. The resolver quad-flag's own gate stays dark, exactly as 0261 left it.
-  if coalesce((select value #>> '{}' from public.game_config where key = 'encounter_resolver_enabled'), 'false') <> 'false' then
-    raise exception '0291 self-assert FAIL: encounter_resolver_enabled is no longer seeded false — this migration flips nothing';
+  -- ── (5) NO FLAG WAS FLIPPED — asserted as THIS MIGRATION'S OWN EFFECT, never as operator state.
+  --        The earlier form demanded encounter_resolver_enabled = 'false'. That is a value the OWNER
+  --        controls and intends to light; asserting it would fail this migration the moment they did.
+  --        That is precisely how 0288 failed its production deploy — it demanded
+  --        typed_zone_authoring_enabled be dark, and the owner had already lit it. A self-assert pins
+  --        what the migration DOES; the operator's configuration is not its business.
+  if position('game_config' in v_tick) <> 0 and position('cfg_bool' in v_tick) = 0 then
+    raise exception '0291 self-assert FAIL: the tick touches game_config outside its cfg_bool reads — this migration writes no flag';
   end if;
 
   -- ── (6) ACL unchanged: the engine tick stays non-client-executable.
