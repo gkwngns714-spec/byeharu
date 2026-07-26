@@ -116,6 +116,7 @@ export function ZoneDraftPanel({
   zones,
   gestureMode,
   onGestureModeChange,
+  onReloadLive,
 }: {
   /** The read snapshot's locations slice — the attach select + affected-locations advisory input. */
   locations: readonly MapLocation[]
@@ -124,6 +125,11 @@ export function ZoneDraftPanel({
   /** SHELL-owned gesture mode (never store state) — this panel's draw buttons set it. */
   gestureMode: ZoneGestureMode
   onGestureModeChange: (mode: ZoneGestureMode) => void
+  /** Re-read the live snapshot after a command APPLIES. The panel owns no data of its own: the map,
+   *  the catalog and this panel's own `zones` prop all come from the shell's read, so without this the
+   *  editor keeps rendering the pre-publish world until a manual refresh. Same ONE authority
+   *  (WorldEditor.reloadLive) the History panel and ZoneInspectorActions already use. */
+  onReloadLive: () => void
 }) {
   const {
     drafts,
@@ -206,6 +212,7 @@ export function ZoneDraftPanel({
       setPublishAttempt(null)
       onGestureModeChange('idle')
       discardDraft(draft.draftId)
+      onReloadLive() // …and the editor must SHOW the world it just changed, without a manual refresh
       return
     }
     setPublishAttempt({ draftId: draft.draftId, requestId, phase: 'failed', failure: result })

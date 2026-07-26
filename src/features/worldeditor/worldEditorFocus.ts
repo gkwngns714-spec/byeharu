@@ -11,6 +11,19 @@ import { representationWorldPoints } from './worldEditorGeometry'
 import type { FocusDomain } from './worldEditorCoordinates'
 import type { LayerId, LayerItem, WorldPoint } from './worldEditorTypes'
 
+/** The domain the editor's DEFAULT frame (auto-fit-once + Reset) uses, so the editor opens at the same
+ *  scale as the player's map. The game frames its locations (galaxyCamera.focusWorldPoints returns
+ *  `[...locations]` when the player is not in open space); framing 'all' here additionally pulled in
+ *  every zone ring vertex, which reach past the locations, so the two surfaces showed the same world at
+ *  different sizes and a zone drawn to look right in the editor read differently in game.
+ *
+ *  It is a NAMED CONSTANT rather than a literal because both call sites must agree: an auto-fit that
+ *  differs from Reset means the owner cannot get back to the frame they started in.
+ *
+ *  Parity holds for the not-in-open-space case only — the game's focus is player-priority and frames the
+ *  ship or its movement segment when in transit. The editor has no ship, so that case has no counterpart. */
+export const DEFAULT_FRAME_DOMAIN: FocusDomain = 'locations'
+
 /** Optional focus refinements. `selected` includes ONE item's world points in the frame even when
  *  its layer is outside the chosen domain (so a cross-domain selection stays visible). */
 export interface FocusOptions {

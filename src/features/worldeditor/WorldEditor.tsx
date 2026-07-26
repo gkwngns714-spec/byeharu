@@ -28,7 +28,7 @@ import {
 } from './worldEditorFilters'
 import { WorldEditorInactiveInspector } from './WorldEditorInactiveInspector'
 import { resolveToViewBox } from './worldEditorGeometry'
-import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
+import { DEFAULT_FRAME_DOMAIN, cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
 import { WorldEditorSearchBox } from './WorldEditorSearchBox'
 import { WorldEditorGotoBox } from './WorldEditorGotoBox'
 import { entityNavigation, type EntityMatch } from './worldEditorSearch'
@@ -341,6 +341,14 @@ export function WorldEditor() {
   const [historicalFocus, setHistoricalFocus] = useState<HistoricalFocus | null>(null)
 
   const svgRef = useRef<SVGSVGElement | null>(null)
+  // The SAME element, held BOTH ways on purpose: the ref for the imperative readers that run inside
+  // event handlers (screenToWorld, toSvgUnits — they must not re-render anything), and the state for
+  // effects that need to react to it MOUNTING. One assignment site keeps them from diverging.
+  const [svgEl, setSvgEl] = useState<SVGSVGElement | null>(null)
+  const attachSvg = useCallback((el: SVGSVGElement | null) => {
+    svgRef.current = el
+    setSvgEl(el)
+  }, [])
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
   const userMovedRef = useRef(false)
   const fittedRef = useRef(false)
@@ -417,12 +425,19 @@ export function WorldEditor() {
   )
 
   // Content-fit the camera ONCE when data first arrives (unless the user already took camera control) —
-  // via the SHARED galaxyCamera fit over every item's canonical world points (§WE.11), collected
-  // through the ONE C1 framing helper (worldEditorFocus, domain 'all'). The retired ZoneEditor's
-  // bespoke fit is gone. Auto-fit-once semantics are unchanged: 'all' is and stays the default frame.
+  // via the SHARED galaxyCamera fit over the canonical world points, collected through the ONE C1
+  // framing helper (worldEditorFocus). The retired ZoneEditor's bespoke fit is gone.
+  //
+  // The frame is DEFAULT_FRAME_DOMAIN, not 'all', so the editor opens at the SAME SCALE as the player's
+  // map. Both surfaces call the same fitCameraToWorldPoints; they diverged only in WHAT they framed —
+  // the game frames its locations (galaxyCamera.focusWorldPoints), while 'all' additionally pulled in
+  // every zone RING VERTEX, which reach well past the locations. Measured against live data that was a
+  // 1.28x difference (game k=46.67, editor k=36.57), so a zone drawn to look right in the editor read
+  // noticeably different in game. Every layer still RENDERS; the zones simply no longer drive the fit.
+  // Framing everything is still one click away on the Focus control ('all').
   useEffect(() => {
     if (fittedRef.current || userMovedRef.current) return
-    const pts = focusPointsForDomain(itemsByLayer, 'all')
+    const pts = focusPointsForDomain(itemsByLayer, DEFAULT_FRAME_DOMAIN)
     if (pts.length === 0) return
     fittedRef.current = true
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -451,32 +466,70 @@ export function WorldEditor() {
     drag.current = null
   }
 
-  const zoomByFactor = useCallback((factor: number) => {
+  /** Screen point → VIEWBOX point. The ONE screen→viewBox projection: pointerToWorld undoes the camera
+   *  on top of this, and wheel-zoom anchors on it. Depends on nothing but the element, so the camera
+   *  can move without re-binding it. */
+  const pointerToViewBox = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number } | null => {
+      const rect = svgRef.current?.getBoundingClientRect()
+      if (!rect || rect.width === 0 || rect.height === 0) return null
+      // the svg is xMidYMid meet, so the rendered viewBox is a centred square of side = min(w,h)
+      const side = Math.min(rect.width, rect.height)
+      const originX = rect.left + (rect.width - side) / 2
+      const originY = rect.top + (rect.height - side) / 2
+      return { x: ((clientX - originX) / side) * VIEW, y: ((clientY - originY) / side) * VIEW }
+    },
+    [],
+  )
+
+  /** Zoom about an ANCHOR in viewBox space — the cursor for a wheel gesture, the viewport centre for
+   *  the +/- buttons. The point under the anchor keeps its world position, which is what makes
+   *  wheel-zoom feel like it is pulling the map toward the pointer instead of drifting away from it.
+   *  (clampPan may still pull the result back at the world edges; the anchor is honoured up to that.) */
+  const zoomByFactor = useCallback((factor: number, anchor?: { x: number; y: number } | null) => {
     userMovedRef.current = true
     setView((v) => {
       const k = clampK(v.k * factor)
       const ratio = k / v.k
-      const c = VIEW / 2
-      return { k, ...clampPan(c - (c - v.tx) * ratio, c - (c - v.ty) * ratio, k) }
+      const ax = anchor?.x ?? VIEW / 2
+      const ay = anchor?.y ?? VIEW / 2
+      return { k, ...clampPan(ax - (ax - v.tx) * ratio, ay - (ay - v.ty) * ratio, k) }
     })
   }, [])
 
+  // WHEEL ZOOM must attach to the SVG ELEMENT ITSELF, non-passively: React routes onWheel through a
+  // PASSIVE root listener, where preventDefault is ignored — so the browser would page-zoom (or
+  // scroll) instead of the map zooming. That is why this is a manual addEventListener.
+  //
+  // It is keyed off the mounted element rather than svgRef.current: the map renders behind the
+  // owner + flag gate and a data fetch, so on first run the ref is still null. Depending on the ref
+  // alone, this effect bailed once and never re-ran when the SVG finally appeared — the listener was
+  // never attached and every wheel gesture fell through to the browser. The ref callback below makes
+  // the element a reactive value, so attachment happens exactly when the SVG exists.
   useEffect(() => {
-    const svg = svgRef.current
-    if (!svg) return
+    if (!svgEl) return
+    // Per-notch step. Kept gentle on purpose: a wheel gesture is many notches, so a step that feels
+    // right for ONE click of the +/- buttons (1.25) overshoots badly here. 1.07 needs ~10 notches to
+    // double, which is roughly one comfortable scroll.
+    const WHEEL_ZOOM_STEP = 1.07
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      zoomByFactor(e.deltaY < 0 ? 1.15 : 1 / 1.15)
+      e.preventDefault() // also swallows ctrl+wheel, so the page never zooms over the map
+      // Anchor on the CURSOR: the world point under the pointer stays put, so the map zooms toward
+      // what you are looking at rather than toward the viewport centre.
+      zoomByFactor(
+        e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP,
+        pointerToViewBox(e.clientX, e.clientY),
+      )
     }
-    svg.addEventListener('wheel', onWheel, { passive: false })
-    return () => svg.removeEventListener('wheel', onWheel)
-  }, [zoomByFactor])
+    svgEl.addEventListener('wheel', onWheel, { passive: false })
+    return () => svgEl.removeEventListener('wheel', onWheel)
+  }, [svgEl, zoomByFactor, pointerToViewBox])
 
   // Reset stays the ALL-domains content fit (cameraForDomain 'all' — identical camera; empty world
   // yields the identity camera via the fit's own empty rule).
   const resetView = () => {
     userMovedRef.current = false
-    setView(cameraForDomain(itemsByLayer, 'all'))
+    setView(cameraForDomain(itemsByLayer, DEFAULT_FRAME_DOMAIN))
   }
 
   // C1 Focus — CAMERA-ONLY domain framing: derive the fit for one domain's points and set the view.
@@ -508,9 +561,18 @@ export function WorldEditor() {
   // you ask for it, instead of being parked). Deselecting leaves the chrome exactly as it is, so a
   // dismissed map stays clean. Chrome is view state only — it never touches a draft.
   const requestSelect = useCallback((next: Selection | null) => {
+    // A DESELECT IS NOT AN ABANDONMENT. Clearing the selection writes no draft, discards no draft,
+    // closes no authoring panel and changes no authoring domain — the draft store is untouched by
+    // `selected`. Guarding it put a destructive choice ("Discard and continue" DISCARDS the draft) in
+    // front of an action that risked nothing, and because a click on empty map deselects, the owner
+    // got that dialog for every miss. Only a real selection CHANGE is routed through the guard.
+    if (next === null) {
+      setSelected(null)
+      return
+    }
     guardRef.current.requestAction('select-entity', () => {
       setSelected(next)
-      if (next) setChrome((c) => openChromeTool(c, 'inspect'))
+      setChrome((c) => openChromeTool(c, 'inspect'))
     })
   }, [])
 
@@ -755,18 +817,12 @@ export function WorldEditor() {
   /** Screen point → world point, undoing the viewBox mapping and then the camera transform. */
   const pointerToWorld = useCallback(
     (clientX: number, clientY: number): WorldPoint | null => {
-      const rect = svgRef.current?.getBoundingClientRect()
-      if (!rect || rect.width === 0 || rect.height === 0) return null
-      // the svg is xMidYMid meet, so the rendered viewBox is a centred square of side = min(w,h)
-      const side = Math.min(rect.width, rect.height)
-      const originX = rect.left + (rect.width - side) / 2
-      const originY = rect.top + (rect.height - side) / 2
-      const vbX = ((clientX - originX) / side) * VIEW
-      const vbY = ((clientY - originY) / side) * VIEW
+      const vb = pointerToViewBox(clientX, clientY)
+      if (!vb) return null
       // undo translate(tx ty) scale(k)
-      return viewBoxToWorld({ x: (vbX - view.tx) / view.k, y: (vbY - view.ty) / view.k })
+      return viewBoxToWorld({ x: (vb.x - view.tx) / view.k, y: (vb.y - view.ty) / view.k })
     },
-    [view.tx, view.ty, view.k],
+    [view.tx, view.ty, view.k, pointerToViewBox],
   )
 
   const pickAtPointer = useCallback(
@@ -795,6 +851,25 @@ export function WorldEditor() {
       setPick({ x: clientX, y: clientY, candidates })
     },
     [visibleItems, view.k, pointerToWorld, requestSelect],
+  )
+
+  // THE ONE MAP-CLICK ROUTER: does this click belong to SELECTION or to AUTHORING? The shell owns that
+  // decision — pickAtPointer is a generic hit test and must not learn about zone gesture modes, and the
+  // gesture layer cannot settle it either (its pointerdown and this click are separate events, so
+  // stopPropagation on the grip does not stop the click reaching the svg).
+  //
+  // While a zone gesture is armed the pointer belongs to ZoneGeometryHandles: the click is a vertex
+  // placement, a grip drag or a ring close, never a selection attempt. Routing it through selection also
+  // routed it through the unsaved-draft guard, so AUTHORING A POLYGON RAISED ONE MODAL PER VERTEX.
+  // `zoneActiveDraft` is part of the condition deliberately: a gesture mode with no draft behind it is a
+  // stale state, and it must not leave the map permanently unselectable.
+  const onMapClick = useCallback(
+    (clientX: number, clientY: number) => {
+      // reads the store directly — `zoneActiveDraft` is bound further down the render body
+      if (zoneDraftStore.activeDraft && zoneGestureMode !== 'idle') return
+      pickAtPointer(clientX, clientY)
+    },
+    [zoneDraftStore.activeDraft, zoneGestureMode, pickAtPointer],
   )
 
   const choosePick = useCallback(
@@ -840,7 +915,7 @@ export function WorldEditor() {
     <div className="relative h-screen w-full overflow-hidden bg-app text-ink" data-testid="worldeditor-shell">
         {/* ── the ONE real map (shared worldToViewBox + galaxyCamera) — full bleed ── */}
           <svg
-            ref={svgRef}
+            ref={attachSvg}
             viewBox={`0 0 ${VIEW} ${VIEW}`}
             preserveAspectRatio="xMidYMid meet"
             className="absolute inset-0 h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
@@ -851,7 +926,7 @@ export function WorldEditor() {
             onPointerUp={endDrag}
             onPointerLeave={endDrag}
             onPointerCancel={endDrag}
-            onClick={(e) => pickAtPointer(e.clientX, e.clientY)}
+            onClick={(e) => onMapClick(e.clientX, e.clientY)}
             // Map-UX law #2 — SUMMON the UI: a double-click on empty map toggles all chrome away and
             // back. View state only (worldEditorChrome); it never reads or writes a draft.
             onDoubleClick={(e) => {
@@ -1360,17 +1435,18 @@ export function WorldEditor() {
               zoneOptions (0252): the create-location zone picker's source — the zone refs the raw
               get_world_map tree already carries (WorldEditorData.zoneRefs; no extra server read). */}
           {authoringDomain === 'locations' ? (
-            <LocationDraftPanel zoneOptions={data?.zoneRefs ?? []} />
+            <LocationDraftPanel zoneOptions={data?.zoneRefs ?? []} onReloadLive={reloadLive} />
           ) : authoringDomain === 'mining' ? (
-            <MiningDraftPanel />
+            <MiningDraftPanel onReloadLive={reloadLive} />
           ) : authoringDomain === 'exploration' ? (
-            <ExplorationDraftPanel />
+            <ExplorationDraftPanel onReloadLive={reloadLive} />
           ) : (
             <ZoneDraftPanel
               locations={data?.locations ?? []}
               zones={data?.zones ?? []}
               gestureMode={zoneGestureMode}
               onGestureModeChange={setZoneGestureMode}
+              onReloadLive={reloadLive}
             />
           )}
           </>

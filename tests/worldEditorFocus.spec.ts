@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { cameraForDomain, focusPointsForDomain } from '../src/features/worldeditor/worldEditorFocus'
+import { DEFAULT_FRAME_DOMAIN, cameraForDomain, focusPointsForDomain } from '../src/features/worldeditor/worldEditorFocus'
 import { MAX_K, MIN_K, fitCameraToWorldPoints } from '../src/features/map/galaxyCamera'
 import type { LayerId, LayerItem } from '../src/features/worldeditor/worldEditorTypes'
 
@@ -128,4 +128,38 @@ test('determinism: same input → deep-equal points and camera on repeat calls',
   const b = makeItemsByLayer()
   expect(focusPointsForDomain(a, 'all')).toEqual(focusPointsForDomain(b, 'all'))
   expect(cameraForDomain(a, 'exploration')).toEqual(cameraForDomain(b, 'exploration'))
+})
+
+// ── the editor's DEFAULT frame must match the player's map ───────────────────────────────────────────
+// Both surfaces call galaxyCamera.fitCameraToWorldPoints; they differed only in WHAT they framed. The
+// game frames its locations (focusWorldPoints returns [...locations] when the player is not in open
+// space), while the editor framed 'all' — which additionally pulls in every zone RING VERTEX, and those
+// reach past the locations. Live measurement: game k=46.67 vs editor k=36.57, a 1.28x mismatch, so a
+// zone drawn to look right in the editor read differently in game.
+
+test('the editor default frame uses the same domain the player map frames', () => {
+  expect(DEFAULT_FRAME_DOMAIN).toBe('locations')
+})
+
+test('a zone whose ring reaches past every location does not change the default frame', () => {
+  const locations: LayerItem[] = [
+    { layer: 'locations', id: 'a', label: 'A', representation: { kind: 'point', world: { x: -100, y: -100 } }, tone: 't', glyph: 'circle' },
+    { layer: 'locations', id: 'b', label: 'B', representation: { kind: 'point', world: { x: 100, y: 100 } }, tone: 't', glyph: 'circle' },
+  ]
+  // a zone sprawling far outside the settled area — exactly the Blackden-with-a-spike shape
+  const zones: LayerItem[] = [
+    {
+      layer: 'zones', id: 'z', label: 'Z', tone: 't', glyph: 'circle',
+      representation: { kind: 'polygon', ring: [{ x: -5000, y: -5000 }, { x: 5000, y: -5000 }, { x: 0, y: 5000 }] },
+    },
+  ]
+  const withZone = new Map<LayerId, readonly LayerItem[]>([['locations', locations], ['zones', zones]])
+  const withoutZone = new Map<LayerId, readonly LayerItem[]>([['locations', locations]])
+
+  // the default frame ignores the zone entirely…
+  expect(cameraForDomain(withZone, DEFAULT_FRAME_DOMAIN)).toEqual(
+    cameraForDomain(withoutZone, DEFAULT_FRAME_DOMAIN),
+  )
+  // …while 'all' still frames it, so the Focus control keeps its "show me everything" meaning.
+  expect(cameraForDomain(withZone, 'all').k).toBeLessThan(cameraForDomain(withZone, DEFAULT_FRAME_DOMAIN).k)
 })
