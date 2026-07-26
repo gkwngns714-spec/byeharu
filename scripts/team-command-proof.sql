@@ -1699,6 +1699,36 @@ begin
   select count(*) into n from public.combat_reports where encounter_id = v_enc3 and result = 'defeat';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: no defeat report'; end if;
   -- RECOVERY PIN: the 0081 ship-addressed repair revives a combat-destroyed member.
+  -- ── ★ 0297 UPDATE — THE SEAM, not just the half. Repair is now POSITION-GATED: a combat-destroyed
+  --    member is grouped (berth NULL under the 0216 XOR) inside a DESTROYED fleet, so it is at NO
+  --    port and repair_main_ship correctly raises ship_not_at_port. The recovery route that 0297
+  --    ships in the SAME migration is the free tow, so this pin now proves BOTH halves in order:
+  --    (1) the gate actually bites on exactly the shape the owner complained about, and
+  --    (2) the tow un-strands it, after which the free repair still revives it to home @ max_hp.
+  --    If either half were missing this pin would fail — which is the point. ★
+  declare
+    v_gated boolean := false;
+  begin
+    begin
+      r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c1));
+    exception when others then
+      -- the handler must never catch its own raise, so it only classifies and sets the flag.
+      if position('ship_not_at_port' in sqlerrm) = 0 then
+        raise exception 'TEAMSETTLE FAIL: repair rejected a portless wreck for the WRONG reason: %', sqlerrm;
+      end if;
+      v_gated := true;
+    end;
+    if not v_gated then
+      raise exception 'TEAMSETTLE FAIL: repair_main_ship healed a wreck that is at NO port (the 0297 gate did not bite)';
+    end if;
+  end;
+  -- the free, always-available tow berths the wreck at a real port (0297 §3).
+  r := pg_temp.call_as(uC, format('public.mainship_emergency_tow(%L::uuid)', c1));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMSETTLE FAIL: the emergency tow refused a stranded wreck: %', r; end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id = c1 and berth_location_id is not null and group_id is null;
+  if n <> 1 then raise exception 'TEAMSETTLE FAIL: the tow did not berth the wreck (0216 XOR columns)'; end if;
+  -- ── ★ END 0297 UPDATE — the original pin continues verbatim from here ★ ──────────────────────
   r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c1));
   select count(*) into n from public.main_ship_instances
     where main_ship_id = c1 and status = 'home' and hp = max_hp;
@@ -1710,6 +1740,10 @@ begin
 
   -- ── SELF-HEAL PIN: manufactured partial states (fixture surgery) whose manifest fleets are ALL
   -- finished (v_fleet completed / v_fleet3 destroyed) → the reconciler re-homes; never destroys.
+  -- 0297: c2 is the OTHER combat-destroyed member and is equally portless, so it is towed in first —
+  -- the same two-step recovery the player performs. This is setup for the self-heal pin, not the pin.
+  r := pg_temp.call_as(uC, format('public.mainship_emergency_tow(%L::uuid)', c2));
+  if (r->>'ok')::boolean is not true then raise exception 'TEAMSETTLE FAIL: the emergency tow refused the second wreck: %', r; end if;
   r := pg_temp.call_as(uC, format('public.repair_main_ship(%L::uuid)', c2));
   update public.main_ship_instances
      set status = 'returning', updated_at = now()
