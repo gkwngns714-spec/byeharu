@@ -122,3 +122,27 @@ export function buildCommandShipGroupGoArgs(groupId: string, target: GroupGoTarg
   if ('locationId' in target) return { p_group_id: groupId, p_location_id: target.locationId }
   return { p_group_id: groupId, p_target_x: target.x, p_target_y: target.y }
 }
+
+// ── RETREAT-DESTINATION (0292) — the mover's COMBAT-TIME success outcomes. ────────────────────────
+// While the group's encounter is live, command_ship_group_go does NOT start an ordinary leg. It
+// validates the ordered PORT, records it (fleets.retreat_target_location_id) and hands the fleet to
+// the existing retreat verb — `outcome: 'retreat_started'` — or, when the fleet is already
+// retreating, re-points the destination WITHOUT restarting the retreat window —
+// `outcome: 'retreat_destination_updated'`. Both come back ok:true, so the ordinary "Sent X to Y."
+// copy would describe something that did not happen (no leg was minted, and the fleet leaves only
+// when the retreat window expires). ONE authority for that copy, composed by the go arm; returns
+// null for an ordinary move so the caller keeps its own summary. The envelope key is `unknown` by
+// TeamRpcResult's shape, so it is compared, never cast. Pure — proven in tests/teamMove.spec.ts.
+export function fleetRetreatOutcomeMessage(
+  outcome: unknown,
+  fleetName: string,
+  destinationName: string,
+): string | null {
+  if (outcome === 'retreat_started') {
+    return `${fleetName} is breaking off the fight and heading for ${destinationName}.`
+  }
+  if (outcome === 'retreat_destination_updated') {
+    return `${fleetName} will retreat to ${destinationName} instead.`
+  }
+  return null
+}

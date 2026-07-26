@@ -141,6 +141,8 @@ const MESSAGES: Record<string, string> = {
   no_offer: 'This port does not stock that.',
   module_qty_must_be_one: 'Modules are bought one at a time.',
   insufficient_credits: 'Not enough credits for this purchase.',
+  // get_port_shop's own argument guard (0235:340-341) — the offers READ was asked for no port at all.
+  invalid_location: 'No port to shop at — open a port first.',
   unavailable: 'The outfitter is unavailable right now.',
 }
 

@@ -10,6 +10,8 @@ import {
 } from '../command/teamApi'
 import { teamReasonMessage } from '../command/teamReasonMessage'
 import { unifiedStopOutcomeMessage } from '../command/teamStop'
+import { fleetRetreatOutcomeMessage } from '../command/teamMove'
+import { sendableDestinations } from '../command/teamSend'
 import { fleetGoSuccessMessage } from './fleetGoTarget'
 import {
   buildFleetCommandModel,
@@ -72,28 +74,50 @@ export function FleetCommandPanel({
   const [confirmHunt, setConfirmHunt] = useState<{ groupId: string; locationId: string } | null>(null)
   // RETURN-PORT (NO-HOME 0199): the player's chosen dock-after-hunt port, per fleet.
   const [returnChoice, setReturnChoice] = useState<Record<string, string>>({})
+  // RETREAT-DESTINATION (0292): the fleet whose LAST order was refused 'retreat_needs_port_destination'
+  // — a coordinate order given while its combat was live. The server can only record a PORT as a
+  // retreat target, so the message alone ("pick the port to retreat to") would be a DEAD END on this
+  // surface: the destination comes from a map gesture, and the map is behind the panel. Holding the
+  // refused fleet here lets the reject render its OWN port choices, inline. Transient interaction
+  // state, exactly like confirmHunt — not a section (the model stays a pure function of the props).
+  const [retreatPick, setRetreatPick] = useState<{ groupId: string; name: string } | null>(null)
 
   const model = buildFleetCommandModel(inputs)
   const locks = fleetCommandLocks({ busy, stopBusy })
   if (!model.mount) return null
 
   // The shared submit body (ONE notice pair, non-optimistic await→refetch) — the lock discipline
-  // lives in the two runners below, never here.
-  const dispatch = async (op: () => Promise<TeamRpcResult>, summarize: (res: TeamRpcResult & { ok: true }) => string) => {
+  // lives in the two runners below, never here. `fleet` is passed by the ORDER verbs only: it is what
+  // lets the ONE reject arm that needs a follow-up control (0292's retreat) name the fleet it refused.
+  const dispatch = async (
+    op: () => Promise<TeamRpcResult>,
+    summarize: (res: TeamRpcResult & { ok: true }) => string,
+    fleet?: { groupId: string; name: string },
+  ) => {
     const res = await op()
-    if (!res.ok) setNotice({ tone: 'warning', text: teamReasonMessage(res.reason) })
-    else {
+    if (!res.ok) {
+      setNotice({ tone: 'warning', text: teamReasonMessage(res.reason) })
+      // RETREAT-DESTINATION (0292): the ONE reject that the player cannot act on from the copy alone.
+      // Any other reject clears the picker — a stale one must never outlive the order that raised it.
+      setRetreatPick(fleet && res.reason === 'retreat_needs_port_destination' ? fleet : null)
+    } else {
       setNotice({ tone: 'success', text: summarize(res) })
+      setRetreatPick(null)
       onCommanded() // shell reads (movements/fleets/ships) — non-optimistic, the server answered
     }
   }
 
-  const run = async (key: string, op: () => Promise<TeamRpcResult>, summarize: (res: TeamRpcResult & { ok: true }) => string) => {
+  const run = async (
+    key: string,
+    op: () => Promise<TeamRpcResult>,
+    summarize: (res: TeamRpcResult & { ok: true }) => string,
+    fleet?: { groupId: string; name: string },
+  ) => {
     if (locks.verbDisabled) return
     setBusy(key)
     setNotice(null)
     try {
-      await dispatch(op, summarize)
+      await dispatch(op, summarize, fleet)
     } finally {
       setBusy(null) // never wedge the panel, even if a wrapper unexpectedly rejects
     }
@@ -140,11 +164,13 @@ export function FleetCommandPanel({
       case 'prompt':
         // DISCOVERABILITY: has a sendable fleet, no destination picked. Name the gesture so the
         // send flow reads as an intentional step instead of appearing out of nowhere on a tap.
+        // BOTH gestures are named (owner play-test: the copy used to mention only the double-tap,
+        // so a player looking for "send a ship to Haven" was told to tap empty space instead).
         return (
           <div key="prompt" data-testid="fleet-command-prompt">
             <SectionLabel>Send a fleet</SectionLabel>
             <p className="mt-1 text-sm text-ink-muted">
-              Double-tap the map to set a destination, then send a fleet there.
+              Tap a port, or double-tap open space, to set a destination — then send a fleet there.
             </p>
           </div>
         )
@@ -269,10 +295,16 @@ export function FleetCommandPanel({
                               redirected: res.redirected === true,
                             })
                           }
+                          // RETREAT-DESTINATION (0292): a PORT order given while the fleet's combat
+                          // is live mints no leg at all — it arms (or re-points) a retreat. The
+                          // server NAMES which happened; "Sent … to …" would be a lie there.
+                          const retreat = fleetRetreatOutcomeMessage(res.outcome, r.name, dest.locationName)
+                          if (retreat) return retreat
                           const n = shipCount(res)
                           const count = typeof n === 'number' ? ` — ${n} ship${n === 1 ? '' : 's'} —` : ''
                           return `${res.redirected === true ? 'Redirected' : 'Sent'} ${r.name}${count} to ${dest.locationName}.`
                         },
+                        { groupId: r.groupId, name: r.name },
                       )
                     }}
                   >
@@ -421,6 +453,13 @@ export function FleetCommandPanel({
     }
   }
 
+  // RETREAT-DESTINATION (0292): the ports a retreating fleet may be sent to, from the ONE
+  // destination-list authority every other picker on this surface already composes
+  // (sendableDestinations — active + activity 'none', the server's own send predicate). A hunt site
+  // is correctly absent: 0292 validates the retreat target with the mover's ordinary step-6 rules,
+  // which refuse a combat destination.
+  const retreatPorts = retreatPick ? sendableDestinations([...inputs.locations]) : []
+
   // Stop (model-guaranteed FIRST when present) renders OUTSIDE the scroll container so it can never
   // scroll away; every later section shares the capped, scrollable body below it.
   const [first, ...rest] = model.sections
@@ -439,6 +478,63 @@ export function FleetCommandPanel({
         <Notice tone={notice.tone} className="mb-1.5 shrink-0">
           {notice.text}
         </Notice>
+      )}
+      {/* RETREAT-DESTINATION (0292) — the refusal's OWN control. A coordinate order given while the
+          fleet is fighting comes back 'retreat_needs_port_destination', and the destination for the
+          re-order can only be a PORT; the map gesture that would pick one is behind this panel, so
+          the notice on its own is a dead end. Rendering the choices here closes that loop in one tap.
+          Sits OUTSIDE the scroll body (like Stop) so the answer to a live refusal can never scroll
+          away, with its own cap + scroll for a world of many ports. Dismissible — nothing traps the
+          player (the map-UX law); dismissing just leaves the fleet fighting, which is the status quo. */}
+      {retreatPick && (
+        <div data-testid="fleet-retreat-picker" className="mb-1.5 shrink-0 rounded-lg border border-warning/40 bg-surface-2/50 px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <SectionLabel>Retreat {retreatPick.name} to</SectionLabel>
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="fleet-retreat-dismiss"
+              onClick={() => setRetreatPick(null)}
+            >
+              Not now
+            </Button>
+          </div>
+          {retreatPorts.length === 0 ? (
+            <p className="mt-1 text-xs text-ink-faint">No port is reachable right now.</p>
+          ) : (
+            <div className="mt-1.5 max-h-32 space-y-1 overflow-y-auto">
+              {retreatPorts.map((p) => (
+                <Button
+                  key={p.id}
+                  size="sm"
+                  variant="secondary"
+                  className="w-full"
+                  data-testid={`fleet-retreat-to-${p.id}`}
+                  busy={busy === `go:${retreatPick.groupId}:${p.id}`}
+                  busyLabel="Sending…"
+                  disabled={locks.verbDisabled}
+                  onClick={() => {
+                    const fleet = retreatPick
+                    void run(
+                      // The SAME go verb as the row that was refused — this is the identical order
+                      // with a legal target, never a second command path. The key keeps the `go:`
+                      // namespace (one lock for the non-safety verbs) and adds the port so only the
+                      // pressed choice reads as busy.
+                      `go:${fleet.groupId}:${p.id}`,
+                      () => commandShipGroupGo(fleet.groupId, { locationId: p.id }),
+                      (res) =>
+                        fleetRetreatOutcomeMessage(res.outcome, fleet.name, p.name) ??
+                        `Sent ${fleet.name} to ${p.name}.`,
+                      fleet,
+                    )
+                  }}
+                >
+                  {p.name}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
       {stopSection && <div className="shrink-0">{section(stopSection)}</div>}
       {scrollable.length > 0 && (
