@@ -1687,10 +1687,18 @@ begin
     raise exception '0292 self-assert FAIL: the tick carries % random( call(s) (want exactly the 0261 head''s 2)', v_n; end if;
 
   -- ── (7) NO FLAG FLIPPED, no new flag: the retreat path is ungated and stays ungated ────────────
-  if exists (select 1 from public.game_config where key ilike '%retreat%' and key <> 'retreat_delay_seconds') then
-    raise exception '0292 self-assert FAIL: a retreat-related game_config key appeared — this slice introduces no flag'; end if;
-  if coalesce((select value #>> '{}' from public.game_config where key = 'retreat_delay_seconds'), '') <> '8' then
-    raise exception '0292 self-assert FAIL: retreat_delay_seconds is no longer 8 — the window must not move here'; end if;
+  -- Asserted as THIS MIGRATION'S OWN EFFECT, never as operator state. The earlier form required
+  -- retreat_delay_seconds = '8' and that no other retreat-ish key exist — both are the OWNER'S to
+  -- change, and a tuning pass would have failed this deploy for no reason. 0288 failed production
+  -- exactly this way (it demanded typed_zone_authoring_enabled be dark; the owner had lit it).
+  -- What 0292 actually promises: it writes no game_config row and adds no gate of its own.
+  if position('game_config' in v_go) <> 0 and position('cfg_bool' in v_go) = 0 then
+    raise exception '0292 self-assert FAIL: the mover touches game_config outside its cfg_bool reads — this slice writes no flag'; end if;
+  if position('game_config' in v_tick) <> 0 and position('cfg_bool' in v_tick) = 0 then
+    raise exception '0292 self-assert FAIL: the tick touches game_config outside its cfg_bool reads — this slice writes no flag'; end if;
+  -- the window itself must still be READ from config rather than hard-coded into the retreat path
+  if position('retreat_delay_seconds' in v_tick) = 0 then
+    raise exception '0292 self-assert FAIL: the tick no longer reads retreat_delay_seconds — the window must stay tunable'; end if;
 
   -- ── (8) SCHEMA ANCHOR: the recording column is the existing nullable location FK ───────────────
   if not exists (
