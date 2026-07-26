@@ -782,7 +782,6 @@ declare
   v_per_ship_targeting boolean;
   v_target_unit        uuid;
   -- ██ COMBAT-S3 (0234) — the spatial working set ██
-  v_spatial_combat_enabled boolean;  -- read ONCE per invocation, alongside every other one-read knob
   v_is_spatial             boolean;  -- read ONCE per encounter per tick (the null-pos fallback decision)
   v_wave_paused            boolean;
   v_units                  jsonb;    -- frozen pre-move snapshot: id/side/pos/my_range/move_speed/aggro/main_ship_id
@@ -842,7 +841,6 @@ begin
   v_shield_regen  := coalesce(cfg_num('shield_regen_combat_pct'), 0);
   v_per_ship_targeting := cfg_bool('per_ship_targeting_enabled');
   -- COMBAT-S3 (0234): joins the SAME one-read-per-invocation block, never re-read inside the loop.
-  v_spatial_combat_enabled := cfg_bool('spatial_combat_enabled');
   -- E3 (0260): the QUAD-FLAG resolver gate — read ONCE here, never re-read in the loop. INERT unless all
   -- four flags are lit; flag OFF => the resolved branch is unreachable and combat is byte-identical to pre-E3.
   v_resolver_engaged := cfg_bool('enemy_content_registry_enabled')
@@ -861,12 +859,18 @@ begin
     select * into pr from location_presence where id = e.presence_id;
     select base_difficulty, reward_tier, max_presence_seconds into loc from locations where id = e.location_id;
 
-    -- COMBAT-S3 (0234): THE NULL-POS FALLBACK. Read once per encounter per tick, BEFORE the aggregate
-    -- select. An encounter with even one NULL pos_x row (dark at creation time, or created before the
-    -- flag lit) is NEVER spatial, regardless of what the flag reads THIS tick — an in-flight battle is
-    -- never spatialized mid-fight.
-    v_is_spatial := v_spatial_combat_enabled
-      and exists (select 1 from combat_units where encounter_id = e.id and pos_x is not null);
+    -- MODE IS DERIVED FROM PERSISTED DATA ONLY — 0242, restored by 0291, preserved HERE.
+    --
+    -- DO NOT REINTRODUCE A FLAG READ ON THIS LINE. The flag decides whether NEWLY CREATED encounters
+    -- receive spatial data (combat_create_group_encounter reads it once, at creation). Existing
+    -- encounter DATA decides which tick algorithm processes them. Conjoining the live flag here means
+    -- darkening it mid-fight flips a live spatial encounter onto the AGGREGATE arm, whose stat SELECT
+    -- sums every combat_units row with NO side filter — folding enemy rows into the player aggregate.
+    --
+    -- This line has now been reverted THREE times (0260, 0261, and this migration's own first draft),
+    -- every time by re-emitting the tick body from a migration file older than the fix. If you are
+    -- copying this function, copy it from the DEPLOYED pg_proc.prosrc, not from a migration.
+    v_is_spatial := exists (select 1 from combat_units where encounter_id = e.id and pos_x is not null);
 
     -- COMBAT-S3 (0234): THE ONE MARKED AGGREGATE-SELECT HUNK. Dark/no-positions arm is the 0228 head
     -- SELECT, byte-identical (extract-and-diff: the else-arm below is untouched).
@@ -1704,6 +1708,19 @@ begin
   if has_function_privilege('authenticated', 'public.process_combat_ticks()', 'execute')
      or has_function_privilege('anon', 'public.process_combat_ticks()', 'execute') then
     raise exception '0292 self-assert FAIL: process_combat_ticks became client-executable'; end if;
+
+  -- 0242/0291 STICKY SPATIAL MODE — re-stated here because this migration re-emits the tick body.
+  -- An invariant installed in a function body must be re-asserted by EVERY later migration that
+  -- re-emits that body, or it survives only until the next author copies from a stale file. This
+  -- exact line has been reverted three times (0260, 0261, and this migration's own first draft, which
+  -- was built from 0261 and silently undid 0291 hours after it landed). 0291's assert cannot catch it
+  -- because 0291 does not re-run once this migration replaces the function.
+  if position('v_is_spatial := exists (select 1 from combat_units where encounter_id = e.id and pos_x is not null)' in v_tick) = 0 then
+    raise exception '0292 self-assert FAIL: the tick no longer derives spatial mode from persisted rows (0242/0291 reverted a FOURTH time)'; end if;
+  if position('v_is_spatial := v_spatial_combat_enabled' in v_tick) <> 0 then
+    raise exception '0292 self-assert FAIL: the flag-conjoined spatial mode is back — darkening the flag would corrupt a live fight'; end if;
+  if position('cfg_bool(''spatial_combat_enabled'')' in v_tick) <> 0 then
+    raise exception '0292 self-assert FAIL: the tick reads spatial_combat_enabled again; mode must come from data alone'; end if;
 
   raise notice '0292 OK: command_ship_group_go classifies four ways (active -> retreat_started via presence_request_leave; retreating -> retreat_destination_updated, destination REPLACED with no re-arm; terminal -> movement_settled_retry; sortie-without-encounter -> group_on_sortie) and rejects coordinate targets typed; the blanket refusal is gone; the tick''s completion branch reads AND clears fleets.retreat_target_location_id (fleets.return_location_id untouched), re-validates it, and keeps the verbatim origin_base_id fallback; the retreat state machine exists ONLY in presence_request_leave (mover carries none of it, tick arms none of it); the 8s window, the disarm and the reward lock are the 0261 lines byte-identical; mover cfg_bool=2, tick cfg_bool=9 / random=2 (no new gate, no new randomness); no retreat flag introduced; grants unchanged';
 end $retreat_assert$;
