@@ -1676,9 +1676,12 @@ begin
   v_n := (length(v_go) - length(replace(v_go, 'cfg_bool(', ''))) / length('cfg_bool(');
   if v_n <> 2 then
     raise exception '0292 self-assert FAIL: the mover carries % cfg_bool call(s) (want exactly the head''s 2 — the retreat path adds NO gate)', v_n; end if;
+  -- EIGHT, not the 0261 head's nine: 0291 removed the dead cfg_bool('spatial_combat_enabled') read
+  -- when it restored data-derived spatial mode, and this migration preserves that removal. A count of
+  -- nine here means the flag read came back with a stale-base re-emission.
   v_n := (length(v_tick) - length(replace(v_tick, 'cfg_bool(', ''))) / length('cfg_bool(');
-  if v_n <> 9 then
-    raise exception '0292 self-assert FAIL: the tick carries % cfg_bool call(s) (want exactly the 0261 head''s 9)', v_n; end if;
+  if v_n <> 8 then
+    raise exception '0292 self-assert FAIL: the tick carries % cfg_bool call(s) (want 8 = the 0291 head, which dropped the spatial_combat_enabled read)', v_n; end if;
   v_n := (length(v_tick) - length(replace(v_tick, 'random(', ''))) / length('random(');
   if v_n <> 2 then
     raise exception '0292 self-assert FAIL: the tick carries % random( call(s) (want exactly the 0261 head''s 2)', v_n; end if;
@@ -1722,5 +1725,5 @@ begin
   if position('cfg_bool(''spatial_combat_enabled'')' in v_tick) <> 0 then
     raise exception '0292 self-assert FAIL: the tick reads spatial_combat_enabled again; mode must come from data alone'; end if;
 
-  raise notice '0292 OK: command_ship_group_go classifies four ways (active -> retreat_started via presence_request_leave; retreating -> retreat_destination_updated, destination REPLACED with no re-arm; terminal -> movement_settled_retry; sortie-without-encounter -> group_on_sortie) and rejects coordinate targets typed; the blanket refusal is gone; the tick''s completion branch reads AND clears fleets.retreat_target_location_id (fleets.return_location_id untouched), re-validates it, and keeps the verbatim origin_base_id fallback; the retreat state machine exists ONLY in presence_request_leave (mover carries none of it, tick arms none of it); the 8s window, the disarm and the reward lock are the 0261 lines byte-identical; mover cfg_bool=2, tick cfg_bool=9 / random=2 (no new gate, no new randomness); no retreat flag introduced; grants unchanged';
+  raise notice '0292 OK: command_ship_group_go classifies four ways (active -> retreat_started via presence_request_leave; retreating -> retreat_destination_updated, destination REPLACED with no re-arm; terminal -> movement_settled_retry; sortie-without-encounter -> group_on_sortie) and rejects coordinate targets typed; the blanket refusal is gone; the tick''s completion branch reads AND clears fleets.retreat_target_location_id (fleets.return_location_id untouched), re-validates it, and keeps the verbatim origin_base_id fallback; the retreat state machine exists ONLY in presence_request_leave (mover carries none of it, tick arms none of it); the 8s window, the disarm and the reward lock are the 0261 lines byte-identical; mover cfg_bool=2, tick cfg_bool=8 (0291 dropped the spatial flag read) / random=2 (no new gate, no new randomness); no retreat flag introduced; grants unchanged';
 end $retreat_assert$;
