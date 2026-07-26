@@ -13,6 +13,7 @@ import { MiningPanel } from '../mining/MiningPanel'
 import type { MiningField } from '../mining/miningTypes'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { TelegraphBanner } from '../combat/TelegraphBanner'
+import { CombatMapCard } from './CombatMapCard'
 import { distance } from '../../game/movement/travelPreview'
 import type { WorldCoord } from './openSpaceTransform'
 import { Badge, Button, OverlayPanel, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
@@ -257,6 +258,14 @@ export function MapScreen() {
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
+            {/* COMBAT — the fight is a thing happening in SPACE, so its live standing belongs on the
+                MAP, not only on the Command screen. Reads the shell's already-polled combat state, so
+                no new fetch; renders nothing when nothing is fighting (clean-map law #1). A SECOND VIEW
+                of the same server rows — ActiveCombatPanel is untouched and stays the Command-side
+                detail. Pure presentation: every number is the database's, none is derived here. */}
+            <div className="pointer-events-none absolute right-3 top-3 z-30 flex flex-col items-end gap-2">
+              <CombatMapCard encounters={combat.encounters} units={combat.units} />
+            </div>
             {/* COMBAT-S2 TELEGRAPH — the pre-combat warning beat (top-center, urgent). Renders nothing
                 unless the caller has a telegraphed encounter; while combat_telegraph_enabled is dark the
                 pending table is empty so this is invisible (fail-closed by data). Flee withdraws the
