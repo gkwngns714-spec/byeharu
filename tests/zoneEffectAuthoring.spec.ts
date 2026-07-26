@@ -14,8 +14,11 @@ import { fileURLToPath } from 'node:url'
 // Run: `npx playwright test zoneEffectAuthoring.spec.ts`.
 
 const here = dirname(fileURLToPath(import.meta.url))
+// THE TRUE HEAD, not the slice that introduced the commands. 0277 created zone_effect_set/remove; 0288
+// redefined both to gate on danger_zones.revision. Pinning 0277 would keep this spec green while it
+// certified a superseded definition — the exact staleness that let 0284's broken guard ship.
 const migration = readFileSync(
-  join(here, '..', 'supabase', 'migrations', '20260618000277_typed_zone_effect_authoring.sql'),
+  join(here, '..', 'supabase', 'migrations', '20260618000288_zone_effect_revision_concurrency.sql'),
   'utf8',
 )
 
@@ -74,11 +77,31 @@ test('the capability gate sits AFTER authz so a non-owner cannot probe for it', 
   }
 })
 
-test('optimistic concurrency is enforced against an expected snapshot', () => {
+// 0288: the concurrency authority is danger_zones.revision, NOT an `expected` field snapshot. 0287
+// established one token for the aggregate; leaving the older compare here would mean two write paths
+// to the same zone disagreeing about what "stale" means.
+test('optimistic concurrency is enforced against the aggregate revision', () => {
   for (const fn of COMMANDS) {
     const body = bodyOf(fn)
     expect(body).toMatch(/stale_revision/)
     expect(body).toMatch(/source_changed/)
+    // the revision gate is present…
+    expect(body, `${fn} must gate on expected_revision`).toMatch(
+      /v_exp_rev::bigint is distinct from v_live\.revision/,
+    )
+    // …and the superseded field compare is GONE, not merely bypassed
+    expect(body, `${fn} must not still compare the expected snapshot`).not.toMatch(
+      /v_expected->>'(name|source)'/,
+    )
+  }
+})
+
+test('a caller with no usable revision token is stale, never written on an unknown baseline', () => {
+  for (const fn of COMMANDS) {
+    const body = bodyOf(fn)
+    expect(body, `${fn} must fail closed on a missing/non-numeric token`).toMatch(
+      /v_exp_rev is null or v_exp_rev !~ '\^\[0-9\]\+\$'/,
+    )
   }
 })
 
