@@ -1136,6 +1136,13 @@ begin
   gC := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', c1, gC));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: assign c1: %', r; end if;
+  -- ★ 0300 lit fleet_control_enabled, so a fleet with no command ship is INACTIVE and cannot sortie
+  -- ★ (0204: 'a fleet needs >=1 command ship to be active'; the send answered fleet_inactive_no_command).
+  -- ★ Designated through the sole writer set_fleet_command_ship, as a real authenticated sub — this
+  -- ★ fixture is provisioned by real RPCs only, and darkening fleet_control to dodge the gate would
+  -- ★ prove the overlap on a fleet shape players can no longer have.
+  r := pg_temp.call_as(uC, format('public.set_fleet_command_ship(%L::uuid, true)', c1));
+  if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: command c1: %', r; end if;
 
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
@@ -1569,6 +1576,9 @@ begin
   gD := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', d1, gD));
   if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD FAIL: assign d1: %', r; end if;
+  -- ★ Same 0300 lights-on consequence as HUNTOVERLAP: the sortie needs a command ship. Sole writer.
+  r := pg_temp.call_as(uD, format('public.set_fleet_command_ship(%L::uuid, true)', d1));
+  if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD FAIL: command d1: %', r; end if;
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
