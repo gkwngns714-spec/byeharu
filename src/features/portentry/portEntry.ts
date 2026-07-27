@@ -63,22 +63,31 @@ export function parseCommissionResult(raw: unknown): CommissionResult {
 }
 
 // ── The player's own main-ship state signals (owner-read; the input to affordance selection) ───────────
-// A DISPLAY-only summary; every field is server-sourced. `null` for the whole object means "not loaded yet".
+// A DISPLAY-only summary; every field is server-sourced. `null` for the whole object means "we do not
+// know" — either the read has not returned yet, or it FAILED. The two are deliberately ONE state: the
+// panel's rule is that it speaks only from a read that positively established something.
 // 4C-CLIENT: the legacy spatial_state / linked-fleet-shape fields are REPLACED by the ship's
 // get_my_fleet_positions `place` — the same placement truth every other surface reads (SHIPLOC, Port hub).
 export interface PortEntryShipState {
-  hasShip: boolean
-  shipStatus: string | null // main_ship_instances.status
-  /** The ship's fleet-positions `place` ('docked' | 'berthed' | 'transit' | 'in_space' | 'hidden'), or
-   *  null when the projection has no row / could not be read → fail closed to 'indeterminate'. */
+  /** How many main ships the owner-read returned. 0 ⇒ the player has genuinely never claimed one.
+   *  This is a COUNT, never a single-ship resolution — see the classifier note below. */
+  shipCount: number
+  /** The RESOLVED single ship's main_ship_instances.status, or null when no single ship is addressed
+   *  (shipCount 0, or ≥2 with no selection — the resolver fails closed at N≥2 by design). */
+  shipStatus: string | null
+  /** The resolved ship's fleet-positions `place` ('docked' | 'berthed' | 'transit' | 'in_space' |
+   *  'hidden'), or null when no single ship is addressed / the projection has no row / it could not
+   *  be read → fail closed to 'indeterminate'. */
   place: string | null
 }
 
 // ── Affordance: the SINGLE control (or safe explanation) the UI should present ─────────────────────────
-// Only 'commission' carries an action; every other kind is a read-only explanatory state.
+// Only 'commission' carries an action; every other kind is a read-only explanatory state or silence.
 export type PortEntryAffordance =
-  | { kind: 'loading' }
-  | { kind: 'commission' } // no ship → Claim First Ship (commission_first_main_ship)
+  /** Nothing to say: the read has not returned, it failed, or the player owns ships but none is
+   *  singly addressed. Renders NOTHING — one name for one rendering (there is no separate 'loading'). */
+  | { kind: 'unknown' }
+  | { kind: 'commission' } // zero ships → Claim First Ship (commission_first_main_ship)
   | { kind: 'docked' } // at a port (docked with a fleet, or berthed) → no action; ordinary dock experience
   | { kind: 'at_home' } // hidden (idle/undeployed) → explain; travel to a port
   | { kind: 'in_transit' } // traveling → explain; act only from a stable state
@@ -88,6 +97,18 @@ export type PortEntryAffordance =
  * Pure classifier: caller's own main-ship state → the one affordance to show. This decides ONLY which
  * control renders; the authoritative accept/reject is the server RPC. It never mutates or predicts success.
  *
+ * THE FAIL-SAFE DIRECTION (the defect this spec exists to pin). 'commission' is the only arm that
+ * carries an action, and offering it wrongly is the harmful direction: a player with a fleet is told
+ * they own nothing — their fleet reads as vanished — and is invited to write. Suppressing it wrongly is
+ * harmless: the server RPC is idempotent, and a player who genuinely has no ship still reaches the claim
+ * on the next successful read. So 'commission' renders ONLY from a read that positively established
+ * shipCount === 0. Not-read-yet, a failed read, and an unresolvable ship all collapse to 'unknown'.
+ *
+ * WHY THE COUNT AND NOT THE RESOLVER: "do I own any ship?" is a question about the row COUNT. It used
+ * to be answered by resolveOwnedShip, which fails closed to null at N≥2 without a selection — so every
+ * multi-ship player was classified as having NO ship and shown "Claim First Ship" over a live fleet.
+ * The resolver still picks WHICH ship the explanatory arms describe; it never decides WHETHER one exists.
+ *
  * 4C-CLIENT semantics (place-based, replacing the retired spatial_state branch):
  *   docked/berthed → 'docked' (at a port — berth-truth agrees with the Fitting/Port tabs' "Docked at …");
  *   transit → 'in_transit'; in_space → 'unavailable'; hidden → 'at_home' (idle/undeployed);
@@ -95,8 +116,13 @@ export type PortEntryAffordance =
  *   wrong action, never a wrong "travel to a port" claim over a ship that may be docked.
  */
 export function derivePortEntryAffordance(state: PortEntryShipState | null): PortEntryAffordance {
-  if (state === null) return { kind: 'loading' }
-  if (!state.hasShip) return { kind: 'commission' }
+  if (state === null) return { kind: 'unknown' }
+  if (state.shipCount === 0) return { kind: 'commission' }
+
+  // Ships exist, but none is singly addressed (N≥2 with no selection). This surface is the FIRST-ship
+  // onboarding; it has nothing true to say about a fleet, so it says nothing. The fleet's real state
+  // lives on Fitting/Port — never guess at an arbitrary ship's placement here.
+  if (state.shipStatus === null) return { kind: 'unknown' }
 
   // A disabled/destroyed ship is never provisionable/dockable — repair is its own separate path.
   // (Destroyed ships are also excluded from the fleet-positions projection, so this check must

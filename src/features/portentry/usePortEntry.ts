@@ -18,7 +18,8 @@ import { commissionFirstMainShip, fetchPortEntryShipState } from './portEntryApi
 
 export interface UsePortEntryOverrides {
   // Test injection seams (default to the real authenticated server calls).
-  fetchState?: () => Promise<PortEntryShipState>
+  // null ⇒ the read failed / is not known — never "no ship" (see portEntryApi.fetchPortEntryShipState).
+  fetchState?: () => Promise<PortEntryShipState | null>
   commission?: () => Promise<CommissionResult>
   // Notify the parent (e.g. Dashboard.refresh) after a successful commission.
   onChanged?: () => void
@@ -37,7 +38,8 @@ export function usePortEntry(overrides?: UsePortEntryOverrides): UsePortEntry {
   const fetchState = overrides?.fetchState ?? fetchPortEntryShipState
   const commission = overrides?.commission ?? commissionFirstMainShip
 
-  // null ⇒ not loaded yet (affordance renders 'loading' — never a premature action or "unavailable").
+  // null ⇒ not known: not loaded yet, OR the read failed. Both render nothing ('unknown') — never a
+  // premature action, and never a first-run claim over a fleet we simply could not read.
   const [state, setState] = useState<PortEntryShipState | null>(null)
 
   const refresh = useCallback(async () => {
