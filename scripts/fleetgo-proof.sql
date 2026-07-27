@@ -46,6 +46,50 @@ begin
   return v;
 end $$;
 
+-- ★ ARM_GROUP — the ONE place this file gives a group its command ship (added 2026-07-27) ────────────
+-- 0300 lit fleet_control_enabled. Per 0204 that makes is_command_ship load-bearing: a group with no
+-- designated command ship is an INACTIVE fleet, and every group verb answers fleet_inactive_no_command.
+-- That reason is returned BEFORE the specific ones this file asserts, so an unarmed fixture breaks the
+-- NEGATIVE blocks too (member_busy / group_on_sortie / fleet_ambiguous / group_fleet_in_flight would
+-- all be masked) — not just the sends that expect ok. Arming each group once fixes both directions.
+--
+-- Deliberately a helper, not a per-site copy-paste: this is fixture provisioning that ~8 groups need,
+-- and duplicating it at every call site is the thing that turns a proof into spaghetti. It writes
+-- through set_fleet_command_ship, the sole writer (0204), as the owning authenticated sub — never a
+-- direct UPDATE of is_command_ship, which would provision a state no player can reach.
+-- Idempotent: a group that already has a command ship is left exactly as it is.
+-- open_telegraphed — combat_telegraph_enabled (0230) is lit, so activity_start('hunt_pirates') no
+-- longer opens the encounter inline on arrival: it queues a pending_encounters row at
+-- now() + combat_telegraph_seconds and returns. An encounter that used to exist the instant
+-- movement_settle_arrival returned is now one cron tick away. This drives that cron — the same one a
+-- real player's arrival waits on — rather than calling combat_create_encounter, which would fork a
+-- second encounter-opening path. Clock only. No-op when nothing is queued, so it is safe after any
+-- settle, including the ones whose blocks do not care about combat.
+create or replace function pg_temp.open_telegraphed(p_fleet uuid) returns void language plpgsql as $$
+begin
+  update public.pending_encounters set trigger_at = now() - interval '1 second'
+   where fleet_id = p_fleet and status = 'telegraphed';
+  perform public.process_combat_telegraphs();
+end $$;
+
+create or replace function pg_temp.arm_group(p_uid uuid, p_group uuid) returns void language plpgsql as $$
+declare r jsonb; v_ship uuid;
+begin
+  if exists (select 1 from public.main_ship_instances
+              where group_id = p_group and is_command_ship) then
+    return;
+  end if;
+  select main_ship_id into v_ship from public.main_ship_instances
+   where group_id = p_group order by main_ship_id limit 1;
+  if v_ship is null then
+    raise exception 'arm_group: group % has no member to designate — the fixture is not built yet', p_group;
+  end if;
+  r := pg_temp.call_as(p_uid, format('public.set_fleet_command_ship(%L::uuid, true)', v_ship));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'arm_group: set_fleet_command_ship(%) rejected: %', v_ship, r;
+  end if;
+end $$;
+
 -- the ship-state snapshot/diff helpers — the §2 assertion machinery.
 -- S1-BERTH (0216): the snapshot now covers berth_location_id too — under the berth model a ship's
 -- LOCATION for the unfleeted case lives in that column, so the §2 law ("a mover never writes a
@@ -156,9 +200,17 @@ begin
 end $$;
 
 -- ════════ BLOCK DARK: the mover rejects BEFORE any read while fleet_movement_unified_enabled=false ════
--- Run BEFORE any flag flip, as a REAL authenticated sub, with a RANDOM NONEXISTENT group id AND a
--- random nonexistent location. If the gate read group/location state first, these would surface
--- group_not_found / invalid_location instead — so this proves reject-before-read with no existence oracle.
+-- Asserted as a REAL authenticated sub, with a RANDOM NONEXISTENT group id AND a random nonexistent
+-- location. If the gate read group/location state first, these would surface group_not_found /
+-- invalid_location instead — so this proves reject-before-read with no existence oracle.
+--
+-- ★ THE PRECONDITION IS STATED, NOT ASSUMED (repointed 2026-07-27). This block used to rely on the
+-- ★ SEEDED value of fleet_movement_unified_enabled being false. Migration 0300 (lights-on) legitimately
+-- ★ seeds it TRUE, so the ambient default is no longer dark and the first assertion below started
+-- ★ reporting group_not_found — the mover was past its gate, not broken. Every LATER dark sub-scenario
+-- ★ in this same file already sets the flag false explicitly (see the STOPDARK / redirect blocks); this
+-- ★ block was the one place still trusting the seed. Assertions UNCHANGED.
+update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
 do $$
 declare r jsonb; uA uuid := (select v from fg where k='uA'); slag uuid := (select v from fg where k='slag');
 begin
@@ -1128,6 +1180,7 @@ begin
   gC := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', c1, gC));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: assign c1: %', r; end if;
+  perform pg_temp.arm_group(uC, gC);
 
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
@@ -1561,6 +1614,7 @@ begin
   gD := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', d1, gD));
   if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD FAIL: assign d1: %', r; end if;
+  perform pg_temp.arm_group(uD, gD);
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
@@ -2027,6 +2081,7 @@ begin
   gE := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uE, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', e1, gE));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-DARKPARITY FAIL: assign e1: %', r; end if;
+  perform pg_temp.arm_group(uE, gE);
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
@@ -2120,11 +2175,13 @@ begin
   select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
 
   -- settle the sortie leg through the real cron entry point: the fleet docks 'present' AT the hunt
-  -- site, presence_create fires activity_start('hunt_pirates') → a LIVE group encounter.
+  -- site, presence_create fires activity_start('hunt_pirates') → a group encounter.
   update public.fleet_movements
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
    where id = v_huntmv;
   perform public.movement_settle_arrival(v_huntmv);
+
+  perform pg_temp.open_telegraphed(v_huntfleet);
 
   -- vacuity guards: the mid-combat state must REALLY exist, or the rejection below proves nothing.
   select count(*) into n from public.fleets
@@ -2249,6 +2306,12 @@ begin
   --    the three ghost-dock tables (the NOSHIPWRITE idiom widened — the recorded 3a lesson).
   if (select status from public.fleets where id = v_gofleet) is distinct from 'moving' then
     raise exception 'HUNTUNI-INFLIGHT FAIL: the unified fleet is not moving — the in-flight state was not built'; end if;
+  -- gF's first hunt: arm it so the rejects below are the reasons this block is actually about, and
+  -- not fleet_inactive_no_command masking every one of them.
+  -- ★ ORDER MATTERS: arm BEFORE the snapshot. arm_group legitimately writes is_command_ship on
+  -- ★ main_ship_instances, and this block's whole point is that the REJECTED hunt writes nothing —
+  -- ★ so arming after the snapshot books the helper's own write against the hunt and fails the diff.
+  perform pg_temp.arm_group(uF, gF);
   create temp table hu_ships_before as select * from public.main_ship_instances;
   create temp table hu_fleets_before as select * from public.fleets;
   create temp table hu_pres_before  as select * from public.location_presence;
@@ -2504,6 +2567,7 @@ begin
      );
   if n <> 1 then raise exception 'HUNTUNI-BOOTSTRAP FAIL: g1 is not docked (fleet truth) — the 0199 arm would be vacuous'; end if;
 
+  perform pg_temp.arm_group(uG, gG);
   r := pg_temp.call_as(uG, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gG, v_hunt));
   if (r->>'ok')::boolean is not true then
     raise exception 'HUNTUNI-BOOTSTRAP FAIL: lit hunt from a fleetless docked group rejected: % (the =0 arm must fall through to the head)', r; end if;
@@ -2589,6 +2653,7 @@ begin
   end if;
 
   -- ── ★ FROMSPACE ★ the hunt consumes the parked fleet and departs its coordinate. ───────────────
+  perform pg_temp.arm_group(uH, gH);
   r := pg_temp.call_as(uH, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
   if (r->>'ok')::boolean is not true then
     raise exception 'HUNTUNI-FROMSPACE FAIL: hunt from a space-parked fleet rejected: %', r; end if;
@@ -2663,6 +2728,7 @@ begin
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
   if v_hunt is null then raise exception 'STOP-SORTIE FAIL: no active hunt site — the fixture cannot be built'; end if;
+  perform pg_temp.arm_group(uI, gI);
   r := pg_temp.call_as(uI, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gI, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'STOP-SORTIE FAIL: lit hunt rejected: %', r; end if;
   v_huntfleet := (r->>'fleet_id')::uuid;
@@ -2711,6 +2777,7 @@ begin
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
    where id = v_huntmv;
   perform public.movement_settle_arrival(v_huntmv);
+  perform pg_temp.open_telegraphed(v_huntfleet);
   -- vacuity: present AT the hunt site, live encounter, active presence, manifest still open.
   select count(*) into n from public.fleets
    where id = v_huntfleet and status = 'present' and current_location_id = v_hunt;
@@ -3924,6 +3991,7 @@ begin
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
   if v_hunt is null then raise exception 'S4 ONSORTIE FAIL: no active hunt site — the fixture cannot be built'; end if;
+  perform pg_temp.arm_group(uU, gU);
   r := pg_temp.call_as(uU, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gU, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'S4 ONSORTIE FAIL: lit hunt rejected: %', r; end if;
   v_huntfleet := (r->>'fleet_id')::uuid;
@@ -3935,6 +4003,7 @@ begin
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
    where id = v_huntmv;
   perform public.movement_settle_arrival(v_huntmv);
+  perform pg_temp.open_telegraphed(v_huntfleet);
   select count(*) into n from public.fleets
    where id = v_huntfleet and status = 'present' and current_location_id = v_hunt;
   if n <> 1 then raise exception 'S4 ONSORTIE FAIL: the S4 mid-combat sortie state was not built (fleet not present at the hunt site)'; end if;

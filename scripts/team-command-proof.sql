@@ -298,6 +298,51 @@ begin
   return v;
 end $$;
 
+-- ★ THE TWO LIGHTS-ON FIXTURE HELPERS (added 2026-07-27) ────────────────────────────────────────────
+-- 0300 lit every capability this file was written against while dark. Two of them changed what a
+-- VALID fixture is, so they are provisioned once here instead of being patched in at ~10 call sites.
+-- Mirrors of these live in fleetgo-proof.sql; the two proofs are standalone harnesses with no shared
+-- include, so each carries its own copy — deliberately, rather than inventing a shared library for two
+-- callers.
+--
+-- arm_group — fleet_control_enabled (0204): a group with no designated command ship is an INACTIVE
+-- fleet and every group verb answers fleet_inactive_no_command, which is returned BEFORE the specific
+-- reasons this file asserts. So an unarmed fixture silently masks member_not_ready / empty_group /
+-- invalid_location as well as breaking the sends that expect ok. Writes through set_fleet_command_ship,
+-- the sole writer, as the owning sub — never a direct UPDATE. Idempotent.
+-- DO NOT call this for the FLEETCTRL block: that block's whole subject IS fleet_inactive_no_command,
+-- and arming its groups would make every one of its assertions vacuous.
+create or replace function pg_temp.arm_group(p_uid uuid, p_group uuid) returns void language plpgsql as $$
+declare r jsonb; v_ship uuid;
+begin
+  if exists (select 1 from public.main_ship_instances
+              where group_id = p_group and is_command_ship) then
+    return;
+  end if;
+  select main_ship_id into v_ship from public.main_ship_instances
+   where group_id = p_group order by main_ship_id limit 1;
+  if v_ship is null then
+    raise exception 'arm_group: group % has no member to designate — the fixture is not built yet', p_group;
+  end if;
+  r := pg_temp.call_as(p_uid, format('public.set_fleet_command_ship(%L::uuid, true)', v_ship));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'arm_group: set_fleet_command_ship(%) rejected: %', v_ship, r;
+  end if;
+end $$;
+
+-- open_telegraphed — combat_telegraph_enabled (0230): activity_start('hunt_pirates') no longer opens
+-- the encounter inline on arrival. It queues a pending_encounters row at now() + combat_telegraph_seconds
+-- and returns, so an encounter that used to exist the instant movement_settle_arrival returned is now
+-- one cron tick away. This drives that cron — the same one a real player's arrival waits on — rather
+-- than calling combat_create_encounter, which would fork a second encounter-opening path. Clock only.
+-- No-op when nothing is telegraphed, so it is safe after any settle.
+create or replace function pg_temp.open_telegraphed(p_fleet uuid) returns void language plpgsql as $$
+begin
+  update public.pending_encounters set trigger_at = now() - interval '1 second'
+   where fleet_id = p_fleet and status = 'telegraphed';
+  perform public.process_combat_telegraphs();
+end $$;
+
 -- three fresh players: uA (3-ship team ops), uB (foreign-owner gap probe), uC (all-or-nothing pair).
 -- The on-signup triggers auto-create each player's ACTIVE Home Base (required by the live send).
 do $$
@@ -339,10 +384,20 @@ begin
 end $$;
 
 -- ════════ BLOCK DARK: every team RPC rejects-BEFORE-read while team_command_enabled=false ════════
--- Run BEFORE any flag flip, as a REAL authenticated sub, with RANDOM NONEXISTENT ids. If any RPC read
--- group/ship state before its gate, these calls would surface group_not_found / ship_not_found (or the
--- upsert would return ok and write a row) instead of team_command_disabled — so this proves the gate
--- fires before any read, with no existence oracle.
+-- Asserted as a REAL authenticated sub, with RANDOM NONEXISTENT ids. If any RPC read group/ship state
+-- before its gate, these calls would surface group_not_found / ship_not_found (or the upsert would
+-- return ok and write a row) instead of team_command_disabled — so this proves the gate fires before
+-- any read, with no existence oracle.
+--
+-- ★ THE PRECONDITION IS STATED, NOT ASSUMED (repointed 2026-07-27). This block used to rely on the
+-- ★ SEEDED value of team_command_enabled being false, and ran "before any flag flip". Migration 0300
+-- ★ (lights-on) legitimately seeds it TRUE, so the ambient default is no longer dark and this block
+-- ★ failed on every branch. A proof must never depend on a production default it does not own: the
+-- ★ dark scenario now SETS its own precondition in-txn, exactly as every other scenario in this file
+-- ★ already does (and as the flip at the end of this block already did). The assertions themselves
+-- ★ are UNCHANGED and still non-vacuous — the gate is reversible (rolling 0300 back is a set-to-false),
+-- ★ so proving the OFF behaviour still protects a reachable state.
+update public.game_config set value='false'::jsonb where key='team_command_enabled';
 do $$
 declare r jsonb; n int; uA uuid := (select v from tcmd where k='uA'); slag uuid := (select v from tcmd where k='slag');
 begin
@@ -509,7 +564,7 @@ end $$;
 -- (captain +8/+4 deltas, D0 independent sums, D2 snapshot pins) recomputes through the SAME
 -- adapter, so those blocks stay value-independent of the seed by construction.
 do $$
-declare v_hull jsonb; s jsonb; n int;
+declare v_hull jsonb; s jsonb; n int; v_tr_atk numeric; v_tr_def numeric;
   uA uuid := (select v from tcmd where k='uA'); a1 uuid := (select v from tcmd where k='a1');
 begin
   -- every hull row carries the seeded numeric combat stats (today: exactly starter_frigate).
@@ -520,13 +575,37 @@ begin
   if (v_hull->>'attack')::numeric is distinct from 15 or (v_hull->>'defense')::numeric is distinct from 10 then
     raise exception 'HULLSTATS FAIL: starter_frigate base stats % (want attack 15 / defense 10 — the 0170 seed)', v_hull; end if;
 
-  -- the adapter folds the hull stats: a bare ship's combat_power/survival == the hull seed exactly.
-  s := public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none');
-  if (s->>'combat_power')::numeric is distinct from (v_hull->>'attack')::numeric
-     or (s->>'survival')::numeric is distinct from (v_hull->>'defense')::numeric then
-    raise exception 'HULLSTATS FAIL: bare-ship adapter stats (combat_power %, survival %) diverge from the hull seed %', s->>'combat_power', s->>'survival', v_hull; end if;
+  -- The adapter folds the hull stats. This used to read "a bare ship == the hull seed exactly",
+  -- which held only while ship_traits_enabled was dark.
+  --
+  -- ★ THERE IS NO BARE SHIP ANY MORE (repointed 2026-07-27). Migration 0300 lit ship_traits_enabled,
+  -- ★ so SOUL-1's birthmark fold (0193, in 0205's head at the trait-fold hunk) now adds each rolled
+  -- ★ trait's stats_json into the SAME accumulators as the hull. A freshly commissioned ship carries
+  -- ★ traits by construction, so the equality was arithmetically unreachable and the block failed
+  -- ★ (combat_power 13 against a hull seed of 15 — a legitimate −2 birthmark, not a lost hull stat).
+  -- ★
+  -- ★ The INTENT is unchanged and still the point of this block: prove the 0170 hull seed actually
+  -- ★ REACHES the adapter (bare hulls once contributed 0 — that was the original team-command
+  -- ★ blocker). So the expectation now accounts for the one other live fold instead of pretending it
+  -- ★ is absent: hull + traits, summed from the SAME two tables and the SAME keys the adapter reads,
+  -- ★ so this stays a pin on the hull contribution rather than a restatement of the adapter. If the
+  -- ★ hull seed regressed to 0 the assertion still fails, which is what makes it non-vacuous.
+  -- ★ The fixture is deliberately module-free ('[]' loadout, activity 'none'), so hull + traits are
+  -- ★ the only two contributors in play.
+  select coalesce(sum((y.stats_json->>'attack')::numeric), 0),
+         coalesce(sum((y.stats_json->>'defense')::numeric), 0)
+    into v_tr_atk, v_tr_def
+    from public.main_ship_traits mt
+    join public.ship_trait_types y on y.trait_type_id = mt.trait_type_id
+   where mt.main_ship_id = a1;
 
-  raise notice 'TEAMCMD_PASS_HULLSTATS ok: every hull row seeded (starter_frigate 15/10) and the adapter folds hull base stats (bare ship == hull seed exactly)';
+  s := public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none');
+  if (s->>'combat_power')::numeric is distinct from ((v_hull->>'attack')::numeric + v_tr_atk)
+     or (s->>'survival')::numeric is distinct from ((v_hull->>'defense')::numeric + v_tr_def) then
+    raise exception 'HULLSTATS FAIL: adapter stats (combat_power %, survival %) diverge from the hull seed % plus rolled traits (attack %, defense %)',
+      s->>'combat_power', s->>'survival', v_hull, v_tr_atk, v_tr_def; end if;
+
+  raise notice 'TEAMCMD_PASS_HULLSTATS ok: every hull row seeded (starter_frigate 15/10) and the adapter folds hull base stats (hull seed + rolled birthmark traits attack %, defense %)', v_tr_atk, v_tr_def;
 end $$;
 
 -- ════════ BLOCK WRITE: upsert/rename, validation, assign/unassign, and the same-player gap ════════
@@ -941,6 +1020,7 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'COMBATPARITY FAIL settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet);
 
   -- the arrival hook created the encounter; every combat_units row is PURE LEGACY even though the
   -- team flag is ON in-txn: unit_type_id NOT NULL, main_ship_id NULL, snapshots NULL (no D2 writer).
@@ -1162,6 +1242,9 @@ begin
   -- member-readiness check: gA1's members (a1,a2 still traveling — BLOCK STOP's halt attempt now
   -- fails gracefully, see its 4C-MIG-2B rework; a3 destroyed in COMBATPARITY) are all unready either
   -- way (non-'home', non-fleet-truth-docked), yet the answer is the location's (the reject-order pin).
+  -- Armed first: fleet_inactive_no_command outranks both reasons this pin is about, so an unarmed gA1
+  -- would answer that instead and the reject-order pin would silently stop testing reject order.
+  perform pg_temp.arm_group(uA, gA1);
   r := pg_temp.call_as(uA, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gA1, slag));
   if (r->>'reason') is distinct from 'invalid_location' then raise exception 'TEAMHUNT FAIL invalid_location: %', r; end if;
   -- member_not_ready — the same unready team against the REAL hunt destination.
@@ -1208,6 +1291,9 @@ begin
   -- member that died while its team escaped) and must reject member_not_ready at SEND time — dent c1
   -- to 0 via the D1 leaf, assert, restore the fixture hp.
   perform public.mainship_sync_combat_hp(c1, 0);
+  -- gH's first use — armed here so member_not_ready is what this block actually observes, and so every
+  -- later gH send (the real sortie, the double-send pin, the TEAMSETTLE loss run) inherits it.
+  perform pg_temp.arm_group(uC, gH);
   r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
   if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMHUNT FAIL hp-zero send: %', r; end if;
   perform public.mainship_sync_combat_hp(c1, 500);
@@ -1275,6 +1361,7 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'TEAMHUNT FAIL settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet);
 
   -- ONE encounter, routed through the D2 branch into the member creator.
   select count(*) into n from public.combat_encounters where fleet_id = v_fleet;
@@ -1380,6 +1467,9 @@ begin
   perform public.captain_assign_apply(uB, capd, b1);
   r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', b1, gB1));
   if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL degrade assign: %', r; end if;
+  -- gB1 was deliberately EMPTY for the empty_group probe above, so it could not be armed until it had
+  -- a member. Now that b1 is assigned, arm it.
+  perform pg_temp.arm_group(uB, gB1);
   r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB1, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL degrade send: %', r; end if;
   v_fleet2 := (r->>'fleet_id')::uuid; v_mv2 := (r->>'movement_id')::uuid;
@@ -1390,6 +1480,7 @@ begin
   r := public.movement_settle_arrival(v_mv2);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'TEAMHUNT FAIL: settle did NOT succeed despite the degraded member (cron-safety pin): %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet2);
   select id into v_enc2 from public.combat_encounters where fleet_id = v_fleet2 and status = 'active';
   if v_enc2 is null then raise exception 'TEAMHUNT FAIL degrade: no active encounter for the degraded sortie'; end if;
   -- the degraded member row: inserted (never skipped), dead-on-arrival, D1-CHECK-legal (snapshots 0).
@@ -1690,6 +1781,7 @@ begin
    where id = v_mv3;
   r := public.movement_settle_arrival(v_mv3);
   if (r->>'settled')::boolean is not true then raise exception 'TEAMSETTLE FAIL loss settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet3);
   select id into v_enc3 from public.combat_encounters where fleet_id = v_fleet3 and status = 'active';
   if v_enc3 is null then raise exception 'TEAMSETTLE FAIL loss: no active encounter'; end if;
   perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- one-step roster wipe
@@ -3036,6 +3128,7 @@ begin
   gV := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uV, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sV, gV));
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL assign: %', r; end if;
+  perform pg_temp.arm_group(uV, gV);
   r := pg_temp.call_as(uV, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gV, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL send: %', r; end if;
   v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
@@ -3045,6 +3138,7 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'SHIELD1 FAIL settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet);
   select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
   if v_enc is null then raise exception 'SHIELD1 FAIL: no active encounter for the lit sortie'; end if;
 
@@ -3456,6 +3550,7 @@ begin
   gB := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sB, gB));
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL assign: %', r; end if;
+  perform pg_temp.arm_group(uB, gB);
   r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL send: %', r; end if;
   v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
@@ -3465,6 +3560,7 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'SHIELD2 FAIL settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet);
   select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
   if v_enc is null then raise exception 'SHIELD2 FAIL: no active encounter for the exclusion fixture'; end if;
 
