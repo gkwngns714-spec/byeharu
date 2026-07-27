@@ -7,6 +7,7 @@ import {
   fleetRetreatOutcomeMessage,
   type GroupGoTarget,
 } from '../src/features/command/teamMove'
+import { openSpaceDestinationLabel } from '../src/features/map/fleetGoTarget'
 
 // TEAMMOVE-1 — pure specs for the docked-team move availability mirror + the map sheet's ONE
 // expedition-arm action classifier. No I/O, no clock; fixtures are the TEAMMAP rollup shapes.
@@ -172,9 +173,9 @@ test('GO ARGS: a coordinate target goes RAW — no client-side rounding (0208 ro
   expect('p_location_id' in args).toBe(false)
 })
 
-// ── RETREAT-DESTINATION (0292) — the mover's combat-time outcomes get their OWN copy. ──────────────
+// ── RETREAT TO ANY DESTINATION (0292, widened 0298) — the combat-time outcomes get their OWN copy. ─
 
-test('RETREAT: the two 0292 outcomes each get their own message, naming the fleet and the port', () => {
+test('RETREAT: the two outcomes each get their own message, naming the fleet and the destination', () => {
   expect(fleetRetreatOutcomeMessage('retreat_started', 'Alpha', 'Haven')).toBe(
     'Alpha is breaking off the fight and heading for Haven.',
   )
@@ -183,9 +184,27 @@ test('RETREAT: the two 0292 outcomes each get their own message, naming the flee
   )
 })
 
+test('RETREAT: the destination is a LABEL, not a port name — open space reads honestly', () => {
+  // 0298 removed the port-only restriction, so a retreat can be ordered to bare open space. The copy
+  // must never imply a port: it interpolates whatever the caller names the place, and the caller
+  // (FleetCommandPanel's go arm) passes openSpaceDestinationLabel() for a tapped point.
+  const point = openSpaceDestinationLabel({ x: 1204, y: -377 })
+  expect(point).toBe('open space at (1204, -377)')
+  expect(fleetRetreatOutcomeMessage('retreat_started', 'Alpha', point)).toBe(
+    'Alpha is breaking off the fight and heading for open space at (1204, -377).',
+  )
+  expect(fleetRetreatOutcomeMessage('retreat_destination_updated', 'Alpha', point)).toBe(
+    'Alpha will retreat to open space at (1204, -377) instead.',
+  )
+  // and no sentence the function can produce says "port".
+  for (const outcome of ['retreat_started', 'retreat_destination_updated']) {
+    expect(fleetRetreatOutcomeMessage(outcome, 'Alpha', point)).not.toContain('port')
+  }
+})
+
 test('RETREAT: an ordinary move yields null, so the caller keeps its own "Sent …" summary', () => {
   // The envelope key is absent on a normal leg, and `unknown` by TeamRpcResult's shape — anything
-  // that is not one of the two 0292 outcomes must fall through, never produce retreat copy.
+  // that is not one of the two combat-time outcomes must fall through, never produce retreat copy.
   for (const outcome of [undefined, null, '', 'moving', 42, {}]) {
     expect(fleetRetreatOutcomeMessage(outcome, 'Alpha', 'Haven')).toBeNull()
   }

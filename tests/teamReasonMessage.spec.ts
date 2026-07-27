@@ -3,7 +3,7 @@ import { teamReasonMessage } from '../src/features/command/teamReasonMessage'
 
 // Pure unit proof for the fail-closed fleet reason→message map (the tradeReasonMessage.spec.ts
 // idiom). Every mapped server reason — the reject vocabularies of send_ship_group_hunt (0168), the
-// roster writes (0161/0204/0216), the unified mover/brake/dock/retreat (0207/0208/0209/0219/0292),
+// roster writes (0161/0204/0216), the unified mover/brake/dock/retreat (0207/0208/0209/0219/0292/0298),
 // the route planner (0233), and the preview/totals reads (0165/0166) — yields specific player-facing
 // text; any unmapped/unknown reason (incl. the teamApi transport 'unavailable' fallback) hits the
 // generic "Fleet order unavailable." — never a raw code.
@@ -48,8 +48,6 @@ test('every known fleet-RPC reject reason maps to specific player text (not the 
     'not_in_territory',
     'not_dockable',
     'no_fleet',
-    // RETREAT-DESTINATION (0292) — a coordinate order refused while the fleet's combat is live.
-    'retreat_needs_port_destination',
     // ROSTER WRITES — upsert_ship_group (0161), set_fleet_command_ship (0204), the berth-model
     // assign/unassign + delete guards (0216), the hunt's in-flight refusal (0231).
     'invalid_group_index',
@@ -86,4 +84,16 @@ test('an unmapped/unknown reason (incl. the transport fallback) hits the generic
 // (a mapped code no emitter can produce is a second, silent source of truth about the vocabulary).
 test('the retired 0232 code is gone from the map, not left as dead copy', () => {
   expect(teamReasonMessage('member_send_failed')).toBe(FALLBACK)
+})
+
+// RETIREMENT PIN — 'retreat_needs_port_destination' was emitted ONLY by command_ship_group_go's
+// step-8 retreat arm (0292), refusing a COORDINATE order while the fleet's combat was live because
+// the recording column was a location FK. Migration 0298 added the coordinate side of that recording
+// (fleets.retreat_target_x/y, exactly-one-of with the port by CHECK constraint) and DELETED the
+// refusal: a fleet in combat now retreats to anywhere the player orders. No server can return this
+// code any more, so its copy is deleted with it — and the panel's inline port picker, which existed
+// only to answer this reject, is deleted too. A mapped code no emitter can produce is a second,
+// silent source of truth about the vocabulary.
+test('the retired 0298 code is gone from the map, not left as dead copy', () => {
+  expect(teamReasonMessage('retreat_needs_port_destination')).toBe(FALLBACK)
 })
