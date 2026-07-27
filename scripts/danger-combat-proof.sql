@@ -677,7 +677,13 @@ begin
 
   select count(*) into n from public.combat_encounters where fleet_id = v_fleet and status = 'active';
   if n <> 1 then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: % active encounter(s) after the second ambush (want exactly 1)', n;
+    raise exception 'DZCOMBAT FAIL REAMBUSH: % active encounter(s) after the second ambush (want exactly 1). Encounters for this fleet: %. The intercept opened %. Fleet: %.',
+      n,
+      (select string_agg(format('%s=%s', ce.id, ce.status), ', ' order by ce.created_at)
+         from public.combat_encounters ce where ce.fleet_id = v_fleet),
+      pi.encounter_id,
+      (select format('status=%s mode=%s loc=%s', f.status, f.location_mode, f.current_location_id)
+         from public.fleets f where f.id = v_fleet);
   end if;
   select id into v_enc2 from public.combat_encounters where fleet_id = v_fleet and status = 'active';
   if v_enc2 = v_enc1 then
