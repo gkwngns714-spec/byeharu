@@ -97,9 +97,11 @@ export function FleetCommandPanel({
       // A success can still carry a combat-time OUTCOME the caller could otherwise misreport — an
       // order given mid-combat becomes a RETREAT (0292, widened to any destination by 0298), same
       // ok:true, very different thing happening to the fleet. That copy has ONE authority,
-      // `fleetRetreatOutcomeMessage`, composed inside the go arm's own summarize where the name of
-      // the ordered destination is in scope; intercepting it here would be a second authority
-      // producing strictly worse copy.
+      // `fleetRetreatOutcomeMessage`, composed inside each submitting arm's own summarize where the
+      // name of the ordered destination is in scope — the go arm (its picked destination) and the
+      // dock arm (the port it offered). BOTH submit through command_ship_group_go and BOTH can come
+      // back armed as a retreat, so both consult it; intercepting it here instead would be a second
+      // authority producing strictly worse copy (no destination name in scope).
       setNotice({ tone: 'success', text: summarize(res) })
       onCommanded() // shell reads (movements/fleets/ships) — non-optimistic, the server answered
     }
@@ -294,8 +296,14 @@ export function FleetCommandPanel({
                           // fleet's combat is live mints no leg at all — it arms (or re-points) a
                           // retreat toward whatever was ordered. Checked for BOTH destination kinds:
                           // a coordinate order used to come back refused, and 0298 accepts it, so
-                          // "Sent … to (x, y)" would now be a lie on the point arm too.
-                          const retreat = fleetRetreatOutcomeMessage(res.outcome, r.name, destinationLabel)
+                          // "Sent … to (x, y)" would now be a lie on the point arm too. The envelope's
+                          // `carried_rewards` rides along so the copy can say what the order costs.
+                          const retreat = fleetRetreatOutcomeMessage(
+                            res.outcome,
+                            r.name,
+                            destinationLabel,
+                            res.carried_rewards,
+                          )
                           if (retreat) return retreat
                           if (dest.kind === 'point') {
                             return fleetGoSuccessMessage({
@@ -345,10 +353,30 @@ export function FleetCommandPanel({
                         // go-to-port, byte-identical to pre-S4.
                         `dock:${r.groupId}`,
                         () => (timedDockingEnabled ? commandShipGroupDock(r.groupId) : commandShipGroupGo(r.groupId, r.wire)),
-                        () =>
-                          timedDockingEnabled
+                        (res) => {
+                          // RETREAT TO ANY DESTINATION (0298) — the SAME authority the go arm uses,
+                          // because this arm reaches the SAME server branch. A dock row renders for
+                          // any fleet parked in space inside a dockable port's territory
+                          // (fleetCommandModel.ts:178-185), and an AMBUSHED fleet is exactly that:
+                          // it parks status 'idle' / location_mode 'space' at the ambush point, and
+                          // excludeCombatSortieFleets (teamRollup.ts:103-113) only strips a fleet
+                          // 'present' AT a combat location, so it stays in unifiedFleets. Ambushes
+                          // are rolled on legs DEPARTING ports, so a hit inside the origin port's
+                          // own territory is ordinary, not exotic. Press "Dock at Haven" there and
+                          // command_ship_group_go arms a RETREAT (0298:466-487) — a constant
+                          // "Sent … to dock at Haven." would be reporting a docking that is not
+                          // happening. The retreat copy has ONE authority; both call sites consult it.
+                          const retreat = fleetRetreatOutcomeMessage(
+                            res.outcome,
+                            r.name,
+                            r.portName,
+                            res.carried_rewards,
+                          )
+                          if (retreat) return retreat
+                          return timedDockingEnabled
                             ? `${r.name} is docking at ${r.portName}.`
-                            : `Sent ${r.name} to dock at ${r.portName}.`,
+                            : `Sent ${r.name} to dock at ${r.portName}.`
+                        },
                       )
                     }
                   >

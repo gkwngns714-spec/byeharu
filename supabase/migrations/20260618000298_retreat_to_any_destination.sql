@@ -62,8 +62,13 @@
 -- IT KEEPS RETREATING TO THE PORT IT WAS ALREADY HEADING FOR, UNINTERRUPTED. Production is a live
 -- ~30-player game and fleets are mid-retreat right now; this is the load-bearing property of the
 -- slice.
---   * The DDL is purely additive: two NEW nullable columns, NULL on every existing row. Nothing reads
---     or writes retreat_target_location_id during the deploy, and no row is updated by this file.
+--   * The DDL is purely additive: two NEW nullable columns, NULL on every existing row, and NO ROW IS
+--     UPDATED BY THIS FILE. Other things DO read and write retreat_target_location_id throughout the
+--     deploy and are meant to — the 3-second combat cron clears it as retreats complete, the
+--     client-callable mover sets it as players give orders — which is exactly why nothing here may
+--     assert a COUNT of them (see the last bullet). What matters is that none of that traffic is
+--     disturbed: an additive nullable ADD COLUMN takes ACCESS EXCLUSIVE only for the catalog change,
+--     rewrites no heap, and the writers resume against a table whose old columns are untouched.
 --   * The CHECK is satisfied by every pre-existing row by construction — both new columns are NULL,
 --     so `(null is null) = (null is null)` is true and `not (loc is not null and null is not null)` is
 --     true whether or not a location target is set. A plain, validating ADD CONSTRAINT is therefore
@@ -73,9 +78,19 @@
 --     did — re-validate, resolve to the port's coordinate, mint the same 'space' leg — so a fleet with
 --     a location target in flight sees byte-equivalent behaviour. The coordinate arm is unreachable
 --     for it: its retreat_target_x is NULL.
---   * Proven, not argued: this file counts the fleets carrying a location retreat target BEFORE the
---     DDL and re-counts them in the self-assert. The two must be equal. On an empty dataset both are
---     0 and the check still holds.
+--   * NOT proven by a COUNT, deliberately. An earlier draft captured how many fleets carried a
+--     location retreat target before the DDL and demanded the same number after. That check was
+--     WRONG and would have aborted live production deploys on a false premise: process_combat_ticks
+--     runs on pg_cron every THREE SECONDS (20260617000026:7) and legitimately CLEARS
+--     retreat_target_location_id the moment a retreat completes, while command_ship_group_go stays
+--     client-callable throughout the deploy and legitimately sets it. Under READ COMMITTED the
+--     pre-count takes its own snapshot, and the ADD COLUMN's wait for ACCESS EXCLUSIVE is precisely a
+--     wait on the transactions that move that number — so an ordinary tick landing in that window
+--     makes before <> after with nothing wrong. It was also vacuous in CI, where both counts are 0.
+--     A migration may pin its OWN effect; it may never pin a number a concurrent writer is allowed to
+--     change. What IS asserted instead is the SHAPE — self-assert (9): no fleet row anywhere holds an
+--     illegal retreat-target combination. That is this migration's own effect (the CHECK it installs),
+--     it is immune to the cron, and it holds on an empty dataset as well as a busy one.
 --
 -- ── PARITY DISCIPLINE ──────────────────────────────────────────────────────────────────────────────
 -- Both bodies below were spliced mechanically out of their TRUE heads; every byte outside the marked
@@ -124,9 +139,18 @@ begin
   if position('presence_request_leave(v_enc.presence_id)' in v_go) = 0 then
     raise exception '0298: the deployed command_ship_group_go does not compose the retreat verb — refusing to re-emit from an unknown base';
   end if;
-  -- 0292 must be IN the deployed tick.
-  if position('select f.retreat_target_location_id into v_ret_loc from fleets f where f.id = e.fleet_id;' in v_tick) = 0 then
-    raise exception '0298: the deployed process_combat_ticks does not carry 0292''s chosen-destination retreat — refusing to re-emit from an unknown base';
+  -- The chosen-destination retreat must be IN the deployed tick — in EITHER of its two legal shapes.
+  -- 0292's single-column read is the base this file was spliced from; the three-column read below is
+  -- what this file EMITS. Accepting only the first would make this migration reject its own output,
+  -- so a re-run — or a resumed run after a partial apply (`supabase db push` is NOT proven
+  -- transaction-atomic; see .github/workflows/deploy-migrations.yml:9-12) — would abort here and wedge
+  -- every later migration deploy. Every other guard in this file is already re-run-inert (`add column
+  -- if not exists`, the `if not exists` constraint guard, `drop table if exists`); this one was the
+  -- lone deviation, not a deliberate one-shot. What the probe still refuses is a tick that carries
+  -- NEITHER shape — i.e. a base older than 0292, which is the case it exists to catch.
+  if position('select f.retreat_target_location_id into v_ret_loc from fleets f where f.id = e.fleet_id;' in v_tick) = 0
+     and position('into v_ret_loc, v_dest_x, v_dest_y from fleets f where f.id = e.fleet_id;' in v_tick) = 0 then
+    raise exception '0298: the deployed process_combat_ticks does not carry a chosen-destination retreat in either 0292''s or 0298''s shape — refusing to re-emit from an unknown base';
   end if;
   -- 0294 must be IN the deployed tick. Re-emitting 0292's tick over it would revert the engagement
   -- anchor and send every retreat leg departing from a port the fleet never reached, again.
@@ -138,18 +162,6 @@ begin
     raise exception '0298: the deployed process_combat_ticks does not derive spatial mode from persisted rows — 0242/0291 has been reverted AGAIN; fix that first, this migration will not mask it';
   end if;
 end $pre$;
-
-
--- ── 0b. THE IN-FLIGHT RETREATS, COUNTED BEFORE THE DDL ─────────────────────────────────────────────
--- The self-assert re-counts these after everything else has run and refuses to land if the number
--- moved. This is the whole "a fleet already mid-retreat keeps retreating" promise, made checkable
--- instead of merely argued. Session-scoped (set_config ..., false) so it survives the transaction;
--- it is not a game_config row and nothing outside this file reads it.
-do $preflight$
-begin
-  perform set_config('byeharu.mig0298_location_retreats',
-    (select count(*)::text from public.fleets where retreat_target_location_id is not null), false);
-end $preflight$;
 
 
 -- ══ 1. THE COORDINATE SIDE OF THE RETREAT DESTINATION (additive; the XOR made a schema fact) ═══════
@@ -1738,7 +1750,6 @@ declare
   v_bad      integer;
   v_def      text;
   v_caught   boolean;
-  v_before   integer;
 begin
   -- ── (0) THE BODIES ARE THERE AND UNIQUE ──────────────────────────────────────────────────────────
   select count(*) into v_n from pg_proc p join pg_namespace ns on ns.oid = p.pronamespace
@@ -2005,20 +2016,15 @@ begin
   end loop;
   execute 'drop table tmp_0298_xor';
 
-  -- ── (9) THIS MIGRATION'S OWN DATA EFFECT — none, and the in-flight retreats prove it ─────────────
-  -- No row is written by this file. The fleets that were already retreating toward a PORT when it
-  -- deployed must be exactly the fleets that still are: the DDL is additive and nothing here touches
-  -- them, so they keep retreating to the destination they were given, uninterrupted. On an empty
-  -- dataset both counts are 0 and the equality still holds.
-  v_before := coalesce(nullif(current_setting('byeharu.mig0298_location_retreats', true), ''), '-1')::integer;
-  if v_before < 0 then
-    raise exception '0298 FAIL: the pre-DDL count of in-flight port retreats was not captured — the "a fleet mid-retreat keeps retreating" promise cannot be proven';
-  end if;
-  select count(*) into v_n from public.fleets where retreat_target_location_id is not null;
-  if v_n <> v_before then
-    raise exception '0298 FAIL: % fleet(s) carried a port retreat destination before this migration and % do after — a fleet mid-retreat was disturbed', v_before, v_n;
-  end if;
-  -- and no row anywhere violates the new shape (the constraint guarantees it; this states it).
+  -- ── (9) THIS MIGRATION'S OWN DATA EFFECT — the SHAPE of every fleet row, never a COUNT ───────────
+  -- No row is written by this file, so no fleet row may hold a combination the new CHECK forbids.
+  -- This is the constraint's own effect restated over the real table, and it is the RIGHT assertion
+  -- for a live deploy: it is true no matter what the 3-second combat cron and the client-callable
+  -- mover do to individual rows while this runs, and it is equally true (vacuously so, and honestly)
+  -- on CI's empty database. Deliberately NOT a before/after COUNT of in-flight port retreats: the
+  -- cron CLEARS retreat_target_location_id on every completing retreat and the mover SETS it, both
+  -- legitimately and both during the ADD COLUMN's own lock wait, so such a count would abort a live
+  -- production deploy on a false premise. See the "already mid-retreat" section of the header.
   select count(*) into v_bad from public.fleets
    where (retreat_target_x is null) <> (retreat_target_y is null)
       or (retreat_target_location_id is not null and retreat_target_x is not null);
@@ -2026,16 +2032,21 @@ begin
     raise exception '0298 FAIL: % fleet row(s) hold an illegal retreat-target shape', v_bad;
   end if;
 
-  -- ── (10) NO FLAG FLIPPED, NO CONFIG VALUE ASSERTED ───────────────────────────────────────────────
-  -- Stated as THIS MIGRATION'S OWN EFFECT: neither body touches game_config outside its own cfg_bool
-  -- reads, and no game_config row is written anywhere in this file. What the owner has any given flag
-  -- SET to is deliberately not this migration's business — 0288 failed a production deploy by making
-  -- it so.
-  if position('game_config' in v_go) <> 0 and position('cfg_bool' in v_go) = 0 then
-    raise exception '0298 FAIL: the mover touches game_config outside its cfg_bool reads — this slice writes no flag';
+  -- ── (10) NO FLAG WRITTEN — and no game_config access at all in either body ───────────────────────
+  -- Stated as THIS MIGRATION'S OWN EFFECT: NEITHER emitted body names game_config. Every config value
+  -- both functions consult arrives through the cfg_bool/cfg_num leaves, so there is no statement in
+  -- either that could read a flag off-authority or write one. This runs against the comment-stripped
+  -- bodies, so a banner that merely mentions the table cannot satisfy or trip it, and it FIRES the
+  -- moment a future edit inlines a game_config read or an update into either function.
+  -- (The former shape of this probe — `game_config present AND cfg_bool absent` — could never fire:
+  -- cfg_bool is asserted present, =2 in the mover and =8 in the tick, elsewhere in this same block.
+  -- It advertised a property it did not check.) What the owner has any given flag SET to is still
+  -- deliberately not this migration's business — 0288 failed a production deploy by making it so.
+  if position('game_config' in v_go) <> 0 then
+    raise exception '0298 FAIL: the deployed command_ship_group_go names game_config directly — every config read is the cfg_bool leaf''s and this slice writes no flag';
   end if;
-  if position('game_config' in v_tick) <> 0 and position('cfg_bool' in v_tick) = 0 then
-    raise exception '0298 FAIL: the tick touches game_config outside its cfg_bool reads — this slice writes no flag';
+  if position('game_config' in v_tick) <> 0 then
+    raise exception '0298 FAIL: the deployed process_combat_ticks names game_config directly — every config read is the cfg_bool/cfg_num leaves'' and this slice writes no flag';
   end if;
 
   -- ── (11) EXPOSURE UNCHANGED — the mover stays authenticated-only, the tick stays engine-only ─────
@@ -2052,5 +2063,5 @@ begin
     raise exception '0298 FAIL: process_combat_ticks became client-executable';
   end if;
 
-  raise notice '0298 OK: a fleet in combat retreats to ANY destination the player orders. command_ship_group_go step 8 no longer refuses a coordinate order — it records whichever side of the exactly-one-of pair the order carried (fleets.retreat_target_location_id for a port, fleets.retreat_target_x/y for a point in open space) in ONE update that sets one side and clears the other, and the port-only reject token is absent from the deployed body entirely; the four-way classification, the single presence_request_leave call from arm (a) only, arm (b)''s no-restart rule, the settling-race guard, both cfg_bool gates and every 0208/0219/0233 guarantee are the head''s; process_combat_ticks'' completion branch reads BOTH representations, CLEARS both, re-validates only the PORT (a stored point needs no second authority over the world grid), keeps the origin_base_id fallback, and mints the SAME ''space'' return_home leg from the engagement anchor in every case — so an open-space destination adds no leg kind, no arrival branch and no settle path; 0294''s anchor (6 uses, 2 leg origins, locations touched exactly twice), 0242/0291''s data-derived spatial mode, cfg_bool=8 and random=2 all survive; the exactly-one-of CHECK is installed VALIDATED over exactly the three retreat-target columns and was exercised on a scratch table pulled from its own deployed definition — all four legal shapes (none / port / point / the origin point) accepted, all four illegal ones (both, and either half of a coordinate) rejected; no row was written, every fleet already retreating toward a port is still retreating toward it, no game_config VALUE is asserted anywhere in this proof, no flag is written, no gate is added, grants unchanged';
+  raise notice '0298 OK: a fleet in combat retreats to ANY destination the player orders. command_ship_group_go step 8 no longer refuses a coordinate order — it records whichever side of the exactly-one-of pair the order carried (fleets.retreat_target_location_id for a port, fleets.retreat_target_x/y for a point in open space) in ONE update that sets one side and clears the other, and the port-only reject token is absent from the deployed body entirely; the four-way classification, the single presence_request_leave call from arm (a) only, arm (b)''s no-restart rule, the settling-race guard, both cfg_bool gates and every 0208/0219/0233 guarantee are the head''s; process_combat_ticks'' completion branch reads BOTH representations, CLEARS both, re-validates only the PORT (a stored point needs no second authority over the world grid), keeps the origin_base_id fallback, and mints the SAME ''space'' return_home leg from the engagement anchor in every case — so an open-space destination adds no leg kind, no arrival branch and no settle path; 0294''s anchor (6 uses, 2 leg origins, locations touched exactly twice), 0242/0291''s data-derived spatial mode, cfg_bool=8 and random=2 all survive; the exactly-one-of CHECK is installed VALIDATED over exactly the three retreat-target columns and was exercised on a scratch table pulled from its own deployed definition — all four legal shapes (none / port / point / the origin point) accepted, all four illegal ones (both, and either half of a coordinate) rejected; no row was written and no fleet row holds an illegal retreat-target shape (asserted as a SHAPE over the live table, never as a before/after COUNT — the 3-second combat cron legitimately clears a completing retreat''s destination mid-deploy and a count would have failed on that); neither emitted body names game_config at all, so no game_config VALUE is asserted anywhere in this proof and no flag can be written by either function; no gate is added, grants unchanged';
 end $retreat_any_assert$;

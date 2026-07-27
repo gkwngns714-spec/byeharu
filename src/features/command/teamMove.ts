@@ -137,19 +137,57 @@ export function buildCommandShipGroupGoArgs(groupId: string, target: GroupGoTarg
 // caller passes whatever names the place it picked: a port's name, or openSpaceDestinationLabel()
 // for a tapped point. Neither sentence below says "port".
 //
-// ONE authority for that copy, composed by the go arm; returns null for an ordinary move so the
-// caller keeps its own summary. The envelope key is `unknown` by TeamRpcResult's shape, so it is
-// compared, never cast. Pure — proven in tests/teamMove.spec.ts.
+// THE PRICE OF NAMING A DESTINATION — told, not buried in the envelope. Both retreat arms return
+// `carried_rewards`: the loot the fight had already earned (combat_encounters.total_rewards_json).
+// VERIFIED IN THE SERVER SOURCE, not assumed:
+//   · the retreat leg carries the bundle as cargo — movement_attach_cargo (0298:1108, verbatim from
+//     the head), which writes fleet_movements.reward_payload_json;
+//   · that bundle is DEPOSITED in exactly ONE place: movement_settle_arrival's 'base' arm, which
+//     calls reward_grant (20260618000208:153-154). The 'space' arm calls only fleet_set_in_space
+//     (:163-165) and grants nothing, and the 'location' arm (:112-138) grants nothing either;
+//   · a retreat with an ORDERED destination always mints a 'space' leg — port or bare point alike
+//     (0298:1094-1096), because a port destination flies to the port's coordinate and parks in orbit;
+//   · only a retreat with NO destination ordered falls back to the 'base' leg (0298:1098-1099) and
+//     banks it. That is the plain Retreat button in ActiveCombatPanel, whose own copy already says
+//     "secured only after your fleet returns to base";
+//   · nothing re-attaches the bundle afterwards — a later leg starts with an empty
+//     reward_payload_json, so the haul is not merely delayed. It is gone.
+// So the sentence below says "lost", not "at risk", and it names BASE (the word the combat panel
+// already uses) rather than "port" — docking at a port does not bank it, and saying so would be
+// copy describing behaviour the server does not have.
+//
+// ONE authority for all of this copy, composed by every arm that submits a move (the go arm AND the
+// dock arm — the dock arm reaches the same server branch for a fleet ambushed inside a port's
+// territory). Returns null for an ordinary move so the caller keeps its own summary. Both envelope
+// values are `unknown` by TeamRpcResult's shape, so they are compared and inspected, never cast.
+// Pure — proven in tests/teamMove.spec.ts.
+
+/** A reward bundle is "carrying something" iff some entry holds a positive number or a non-empty
+ *  list — the shape 0040 pinned ({ metal: n, items: [...] }), read generically so a future reward
+ *  key is covered without a second authority. Anything else (missing, {}, all-zero, not an object)
+ *  is empty, so the warning can never fire over a fight that earned nothing. */
+export function retreatCarriesLoot(carriedRewards: unknown): boolean {
+  if (carriedRewards === null || typeof carriedRewards !== 'object' || Array.isArray(carriedRewards)) return false
+  return Object.values(carriedRewards as Record<string, unknown>).some((v) =>
+    typeof v === 'number' ? v > 0 : Array.isArray(v) ? v.length > 0 : false,
+  )
+}
+
+const RETREAT_LOOT_LOST =
+  'The rewards this fight had earned are lost — they are secured only by a retreat back to base.'
+
 export function fleetRetreatOutcomeMessage(
   outcome: unknown,
   fleetName: string,
   destination: string,
+  carriedRewards?: unknown,
 ): string | null {
+  const loot = retreatCarriesLoot(carriedRewards) ? ` ${RETREAT_LOOT_LOST}` : ''
   if (outcome === 'retreat_started') {
-    return `${fleetName} is breaking off the fight and heading for ${destination}.`
+    return `${fleetName} is breaking off the fight and heading for ${destination}.${loot}`
   }
   if (outcome === 'retreat_destination_updated') {
-    return `${fleetName} will retreat to ${destination} instead.`
+    return `${fleetName} will retreat to ${destination} instead.${loot}`
   }
   return null
 }
