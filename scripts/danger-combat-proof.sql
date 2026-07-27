@@ -89,6 +89,30 @@ begin
    where movement_id = p_mv and lifecycle_state = 'pending';
 end $$;
 
+-- DRAIN an encounter to a terminal state. A pirate-hunt combat never ends on its own — clearing a wave
+-- spawns the next — so the ONLY way out is the canonical retreat, which the caller arms first (that is
+-- what command_ship_group_go step 8 does against a live encounter). This drives the real engine plus the
+-- movement processor, because the retreat mints its own leg that has to settle before the fleet is
+-- commandable. Deliberately the single process_combat_ticks() site outside PIRATEFIRE, so the harness's
+-- "one combat engine, known call sites" pin stays meaningful.
+create or replace function pg_temp.drain_encounter(p_enc uuid, p_fleet uuid) returns text language plpgsql as $$
+declare v_status text;
+begin
+  for i in 1..60 loop
+    select status into v_status from public.combat_encounters where id = p_enc;
+    exit when v_status not in ('active', 'retreating');
+    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute'
+     where id = p_enc;
+    perform public.process_combat_ticks();
+    update public.fleet_movements set depart_at = depart_at - interval '1 hour',
+                                      arrive_at = arrive_at - interval '1 hour'
+     where fleet_id = p_fleet and status = 'moving';
+    perform public.process_fleet_movements();
+  end loop;
+  select status into v_status from public.combat_encounters where id = p_enc;
+  return v_status;
+end $$;
+
 -- ════════ SETUP: reveal starter ports, one funded fixture player ═════════════════════════════════════
 do $$
 declare r jsonb; uZ uuid;
@@ -650,12 +674,24 @@ begin
   if v_enc is null then
     raise exception 'MANIFESTHELD FAIL: the hunt arrival opened no encounter';
   end if;
-  for i in 1..40 loop
-    exit when (select status from public.combat_encounters where id = v_enc) not in ('active','retreating');
-    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute'
-     where id = v_enc;
-    perform public.process_combat_ticks();
-  end loop;
+  -- A hunt combat spawns ENDLESS waves — clearing one spawns the next — so it cannot be waited out.
+  -- The only exit is the canonical retreat, and the way a player arms it is by giving the fleet a new
+  -- course: step 8 classifies that against the live encounter and returns 'retreat_started'. So the
+  -- first course change here is the RETREAT, not the ambushed leg.
+  r := pg_temp.call_as(uZ, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gR, round(coalesce((select space_x from public.fleets where id = v_fleet), 0)) + 10,
+                                  round(coalesce((select space_y from public.fleets where id = v_fleet), 0))));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'MANIFESTHELD FAIL: could not arm the retreat out of the hunt: %', r;
+  end if;
+  if (r->>'reason') not in ('retreat_started', 'retreat_destination_updated', 'movement_started') then
+    raise exception 'MANIFESTHELD FAIL: unexpected outcome arming the retreat: %', r;
+  end if;
+
+  if pg_temp.drain_encounter(v_enc, v_fleet) in ('active', 'retreating') then
+    raise exception 'MANIFESTHELD FAIL: the hunt encounter is still % after draining — the sortie never ended',
+      (select status from public.combat_encounters where id = v_enc);
+  end if;
 
   perform public.set_game_config('enemy_hp_base',     to_jsonb(v_hp_before));
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_atk_before));
