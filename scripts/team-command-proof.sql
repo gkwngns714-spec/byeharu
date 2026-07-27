@@ -1440,11 +1440,40 @@ begin
       and player_damage is not distinct from
         (select sum(attack_snapshot * alive_count) from public.combat_units where encounter_id = v_enc);
   if n <> 1 then raise exception 'TEAMHUNT FAIL: tick player_damage is distinct from sum(attack_snapshot) (member aggregation pin)'; end if;
-  -- damage distributed over the member rows: both alive rows took hull damage…
+  -- ★ DAMAGE IS FOCUSED NOW, NOT SPLIT (repointed 2026-07-27). This asserted that BOTH member rows
+  -- ★ took hull damage, which was the equal-split arm. 0300 lit per_ship_targeting_enabled, and 0228
+  -- ★ is explicit about what that means: the tick picks ONE alive target per encounter — the lowest
+  -- ★ aggro_priority row, i.e. escorts (0) before the command ship (100) — and routes the WHOLE
+  -- ★ incoming hit onto it, "every other row takes zero from this attack". CI showed exactly that:
+  -- ★ c1 500→488.64, c2 350→350. An untouched second row is now CORRECT, and asserting otherwise
+  -- ★ would be asserting the dark world.
+  -- ★ So the property becomes the real one — focused fire — and it is strictly stronger than the old
+  -- ★ check: the screening row must take damage, the screened row must take NONE, and the screen must
+  -- ★ be the lowest-aggro alive row rather than whichever one happened to be hit.
   select hp_current into v_hp1b from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
   select hp_current into v_hp2b from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
-  if v_hp1b >= v_hp1 or v_hp2b >= v_hp2 then
-    raise exception 'TEAMHUNT FAIL: member rows took no damage on tick 1 (c1 %→%, c2 %→%)', v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+  declare
+    v_screen uuid; v_hit int; v_untouched int;
+  begin
+    select main_ship_id into v_screen from public.combat_units
+     where encounter_id = v_enc and main_ship_id is not null and alive_count > 0
+     order by aggro_priority asc nulls last, main_ship_id asc limit 1;
+    if v_screen is null then
+      raise exception 'TEAMHUNT FAIL: no alive member row to absorb the hit';
+    end if;
+    select count(*) into v_hit from public.combat_units cu
+     where cu.encounter_id = v_enc and cu.main_ship_id = v_screen
+       and cu.hp_current < case when v_screen = c1 then v_hp1 else v_hp2 end;
+    if v_hit <> 1 then
+      raise exception 'TEAMHUNT FAIL: the screening member (lowest aggro, %) took no damage on tick 1 (c1 %→%, c2 %→%)',
+        v_screen, v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+    select count(*) into v_untouched from public.combat_units cu
+     where cu.encounter_id = v_enc and cu.main_ship_id is not null and cu.main_ship_id <> v_screen
+       and cu.hp_current < case when cu.main_ship_id = c1 then v_hp1 else v_hp2 end;
+    if v_untouched <> 0 then
+      raise exception 'TEAMHUNT FAIL: % screened member row(s) also took damage — focused fire is not focused (c1 %→%, c2 %→%)',
+        v_untouched, v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+  end;
   -- …and the D1 sync leaf drove the damage back to the SHIP rows (hp only; still hunting).
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id

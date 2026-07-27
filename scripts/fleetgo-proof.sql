@@ -3453,7 +3453,7 @@ begin
       or (location_type in ('mining_site', 'derelict_station', 'event_site') and territory_radius is not null);
   if n <> 0 then raise exception 'TERRITORY_PASS_SEEDED FAIL: % location(s) off the rebalanced radius map', n; end if;
 
-  raise notice 'TERRITORY_PASS_SEEDED: slag=10, every ACTIVE hunt site=12, world-wide sweep clean (trade 10 / hostile 12 / safe+rally 8 / else NULL — 0220's retune, tripled by 0227 and divided back by 0289)';
+  raise notice 'TERRITORY_PASS_SEEDED: slag=10, every ACTIVE hunt site=12, world-wide sweep clean (trade 10 / hostile 12 / safe+rally 8 / else NULL — the 0220 retune, tripled by 0227 and divided back by 0289)';
 end $$;
 
 -- ════════ BLOCK TERRITORY_PASS_NOOVERLAP (0220): territories are pairwise DISJOINT ════════════════
@@ -3691,7 +3691,7 @@ begin
 
   -- vacuity: S3 composes S2's column — refuse loudly if the radius is not the rebalanced seed.
   if (select territory_radius from public.locations where id = slag) is distinct from 10 then
-    raise exception 'S3 TERRITORY FAIL: slag''s territory_radius is not the retuned 10 (0289 divided 0227's tripled 30 back down) — S2 (0217)/retune (0220) is not on this chain; refusing a vacuous green'; end if;
+    raise exception 'S3 TERRITORY FAIL: slag''s territory_radius is not the retuned 10 (0289 divided the 0227 tripled 30 back down) — S2 (0217)/retune (0220) is not on this chain; refusing a vacuous green'; end if;
   select x, y into v_lx, v_ly from public.locations where id = slag;
 
   -- ── IN: fly to (slag.x+5, slag.y) — INSIDE the radius-30 ring — and settle in open space. ──
