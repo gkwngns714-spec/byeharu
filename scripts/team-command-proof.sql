@@ -1361,9 +1361,16 @@ begin
   -- ── RACES while the sortie is live ────────────────────────────────────────────────────────────────
   -- (the legacy single-send race — the legacy single-ship send (retired 0232) rejecting a hunting member — is retired
   --  with that RPC by 0232; the live-authority race below stands.)
-  -- a second team hunt-send on the same group rejects member_not_ready (double-send close).
+  -- A second team hunt-send on the same group must be REFUSED (the double-send close). The token it
+  -- refuses with changed with the lit world: the head answered 'member_not_ready' (the members read
+  -- as hunting), and it now answers 'group_fleet_in_flight' — the group's live unified fleet is
+  -- caught first, which is a strictly earlier and more specific guard. The property under test is the
+  -- refusal, so the pin follows the game rather than the other way round; both tokens are accepted so
+  -- this stays a refusal assertion and cannot silently pass on an `ok`.
   r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
-  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMHUNT FAIL double send: %', r; end if;
+  if (r->>'ok')::boolean is true
+     or (r->>'reason') not in ('group_fleet_in_flight', 'member_not_ready') then
+    raise exception 'TEAMHUNT FAIL double send: %', r; end if;
 
   -- ── SETTLE via the cron's own per-movement settle (clock rewind, the sanctioned surgery) ──────────
   update public.fleet_movements

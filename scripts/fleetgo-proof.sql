@@ -3442,18 +3442,18 @@ begin
   select count(*) into n from public.locations where id = slag and territory_radius = 10;
   if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not the retuned 10'; end if;
   select count(*) into n from public.locations
-   where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 36;
-  if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=36', n; end if;
+   where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 12;
+  if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=12', n; end if;
 
-  -- the world-wide sweep: every location on the map obeys the rebalanced CASE map (30/36/24/NULL).
+  -- the world-wide sweep: every location on the map obeys the rebalanced CASE map (10/12/8/NULL).
   select count(*) into n from public.locations
    where (location_type = 'trade_outpost' and territory_radius is distinct from 10)
-      or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 36)
-      or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 24)
+      or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 12)
+      or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 8)
       or (location_type in ('mining_site', 'derelict_station', 'event_site') and territory_radius is not null);
   if n <> 0 then raise exception 'TERRITORY_PASS_SEEDED FAIL: % location(s) off the rebalanced radius map', n; end if;
 
-  raise notice 'TERRITORY_PASS_SEEDED: slag=30, every ACTIVE hunt site=36, world-wide sweep clean (trade 30 / hostile 36 / safe+rally 24 / else NULL — the 0220 retune x3 via 0227)';
+  raise notice 'TERRITORY_PASS_SEEDED: slag=10, every ACTIVE hunt site=12, world-wide sweep clean (trade 10 / hostile 12 / safe+rally 8 / else NULL — 0220's retune, tripled by 0227 and divided back by 0289)';
 end $$;
 
 -- ════════ BLOCK TERRITORY_PASS_NOOVERLAP (0220): territories are pairwise DISJOINT ════════════════
