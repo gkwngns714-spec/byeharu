@@ -101,7 +101,14 @@ begin
   for i in 1..60 loop
     select status into v_status from public.combat_encounters where id = p_enc;
     exit when v_status not in ('active', 'retreating');
-    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute'
+    -- Two clocks have to move, and only clocks: the tick cadence (last_resolved_at) and the retreat
+    -- delay, which the engine measures as now() - retreat_started_at >= combat_retreat_delay_seconds
+    -- (0299:541-543). Rewinding only the tick cadence leaves the encounter 'retreating' forever, which
+    -- is exactly how an earlier draft stalled. No status, no outcome, no geometry is written here.
+    update public.combat_encounters
+       set last_resolved_at  = last_resolved_at - interval '1 minute',
+           retreat_started_at = case when retreat_started_at is not null
+                                     then retreat_started_at - interval '1 hour' end
      where id = p_enc;
     perform public.process_combat_ticks();
     update public.fleet_movements set depart_at = depart_at - interval '1 hour',
