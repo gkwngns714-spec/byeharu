@@ -1220,7 +1220,14 @@ begin
   s2 := public.calculate_expedition_stats(uC, c2, '[]'::jsonb, 'pirate_hunt');
   select count(*) into v_active_before from public.fleets
     where player_id = uC and status in ('moving','present','returning');
-  if v_active_before <> 0 then raise exception 'TEAMHUNT FAIL precondition: uC has % active fleets (want 0)', v_active_before; end if;
+  if v_active_before <> 0 then
+    raise exception 'TEAMHUNT FAIL precondition: uC has % active fleets (want 0): %',
+      v_active_before,
+      (select string_agg(format('%s status=%s group=%s main_ship=%s loc=%s',
+                                f.id, f.status, f.group_id, f.main_ship_id, f.current_location_id), ' | ')
+         from public.fleets f
+        where f.player_id = uC and f.status in ('moving','present','returning'));
+  end if;
 
   -- ── SEND ──────────────────────────────────────────────────────────────────────────────────────────
   r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));

@@ -3372,15 +3372,15 @@ begin
   if n = 0 then raise exception 'TERRITORY_SEEDED FAIL: no safe_zone exists — the safe probe would be vacuous'; end if;
 
   -- named probes: the rebalanced (0220 x3) values, on real rows.
-  select count(*) into n from public.locations where id = slag and territory_radius = 30;
-  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not the rebalanced 30'; end if;
+  select count(*) into n from public.locations where id = slag and territory_radius = 10;
+  if n <> 1 then raise exception 'TERRITORY_SEEDED FAIL: slag''s (trade_outpost) territory_radius is not the retuned 10'; end if;
   select count(*) into n from public.locations
    where location_type in ('pirate_hunt', 'pirate_den') and status = 'active' and territory_radius is distinct from 36;
   if n <> 0 then raise exception 'TERRITORY_SEEDED FAIL: % ACTIVE hunt site(s) off territory_radius=36', n; end if;
 
   -- the world-wide sweep: every location on the map obeys the rebalanced CASE map (30/36/24/NULL).
   select count(*) into n from public.locations
-   where (location_type = 'trade_outpost' and territory_radius is distinct from 30)
+   where (location_type = 'trade_outpost' and territory_radius is distinct from 10)
       or (location_type in ('pirate_hunt', 'pirate_den') and territory_radius is distinct from 36)
       or (location_type in ('safe_zone', 'rally_point') and territory_radius is distinct from 24)
       or (location_type in ('mining_site', 'derelict_station', 'event_site') and territory_radius is not null);
@@ -3422,7 +3422,7 @@ end $$;
 -- ════════ BLOCK TERRITORY_PASS_MAPREAD (0217): get_world_map carries territory_radius, ADDITIVELY ═
 -- Three pins: (1) STRUCTURAL — the DEPLOYED body still filters all three levels on status='active';
 -- the 0175 hidden-port pin ran BEFORE the 0217 re-create on this chain, so it cannot vouch for the
--- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 30 (0220's
+-- new body — re-pin it here. (2) VALUE — slag's JSON element carries territory_radius = 10 (0289's
 -- retune of 10, tripled by the 0227 world-geometry rebalance — the map read must serve the
 -- REBALANCED value, not 0217's 25 or 0220's un-rebalanced 10).
 -- (3) NULL-KEY — a NULL-territory ACTIVE location still returns the KEY (json null), never a
@@ -3455,8 +3455,8 @@ begin
     from jsonb_array_elements(v_map->'sectors') as se(sec),
          jsonb_array_elements(sec->'zones') as z(zn),
          jsonb_array_elements(zn->'locations') as l(lc)
-   where lc->>'id' = slag::text and (lc ? 'territory_radius') and (lc->>'territory_radius')::numeric = 30;
-  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag''s map JSON does not carry the rebalanced territory_radius=30'; end if;
+   where lc->>'id' = slag::text and (lc ? 'territory_radius') and (lc->>'territory_radius')::numeric = 10;
+  if n <> 1 then raise exception 'TERRITORY_MAPREAD FAIL: slag''s map JSON does not carry the rebalanced territory_radius=10'; end if;
 
   -- (3) NULL-KEY: an active NULL-territory location returns the key as json null (additive, never
   -- conditional). SURGERY: the fixture insert (see header) — reverted by the txn ROLLBACK.
@@ -3489,7 +3489,7 @@ begin
    where not (lc ? 'territory_radius');
   if n <> 0 then raise exception 'TERRITORY_MAPREAD FAIL: % map location(s) MISSING the territory_radius key — additive means every element', n; end if;
 
-  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries the rebalanced territory_radius=30; a NULL-territory location returns the key as json null; every map element carries the key';
+  raise notice 'TERRITORY_PASS_MAPREAD: three-level active filter re-pinned on the 0217 body; slag carries the rebalanced territory_radius=10; a NULL-territory location returns the key as json null; every map element carries the key';
 end $$;
 
 -- ════════ BLOCK S3 POSLEAF (0218): the position leaves — MIDPOINT / AGREEMENT / PARKED / DOCKED ═══
@@ -3623,8 +3623,8 @@ begin
   update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
 
   -- vacuity: S3 composes S2's column — refuse loudly if the radius is not the rebalanced seed.
-  if (select territory_radius from public.locations where id = slag) is distinct from 30 then
-    raise exception 'S3 TERRITORY FAIL: slag''s territory_radius is not the rebalanced 30 (0227 tripling the retuned 10) — S2 (0217)/retune (0220) is not on this chain; refusing a vacuous green'; end if;
+  if (select territory_radius from public.locations where id = slag) is distinct from 10 then
+    raise exception 'S3 TERRITORY FAIL: slag''s territory_radius is not the retuned 10 (0289 divided 0227's tripled 30 back down) — S2 (0217)/retune (0220) is not on this chain; refusing a vacuous green'; end if;
   select x, y into v_lx, v_ly from public.locations where id = slag;
 
   -- ── IN: fly to (slag.x+5, slag.y) — INSIDE the radius-30 ring — and settle in open space. ──
