@@ -59,6 +59,11 @@ test('every known fleet-RPC reject reason maps to specific player text (not the 
     'fleet_in_flight',
     // PIRATE INTERCEPT route planner (0233) — its leg 1 composes the unified mover, so its rejects
     // share this vocabulary; PirateInterceptPanel routes through THIS map, never a second one.
+    // DEFERRED-ENTRY INTERCEPT (0301) — emitted by BOTH the mover and the brake when the owed
+    // ambush resolves in the same instant the order arrives. Server-side codes with no client copy
+    // are the exact half-slice that made a working retreat read as "Fleet order unavailable."
+    'intercepted_in_transit',
+    'intercept_resolution_failed',
     'pirate_intercept_disabled',
     'invalid_waypoints',
     'invalid_waypoint_count',

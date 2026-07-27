@@ -78,6 +78,16 @@ const REASON_MESSAGES: Record<string, string> = {
   group_fleet_elsewhere: 'The fleet is docked at another port — bring them to the same port first.',
   // Leaving a fleet (0216:413,431) or deleting one (0216:584,608): a ship can only step off in port.
   fleet_in_flight: 'The fleet isn’t in port — dock it at a port first.',
+  // DEFERRED-ENTRY INTERCEPT (0301) — the ambush no longer fires when the order is given; it fires
+  // when the fleet actually reaches the zone boundary. So an order or a stop can now arrive in the
+  // instant the fleet is being jumped: the verb resolves the owed ambush FIRST, and if it fires, the
+  // order is refused because the fleet is no longer travelling — it is fighting. Re-issuing the same
+  // order then lands on the retreat path, which is the right thing to do next, so the copy says so.
+  intercepted_in_transit: 'Ambushed on the way — the fleet is in combat now. Order it again to retreat.',
+  // The resolver raised while deciding whether an owed ambush fires. These verbs are raise-free at
+  // their boundary and deliberately FAIL the order rather than let it through: "the ambush could not
+  // be resolved" must never quietly mean "so you may go".
+  intercept_resolution_failed: 'Couldn’t tell whether the fleet was ambushed — try that order again.',
   // PIRATE INTERCEPT route planner (command_ship_group_go_route / _cancel_route, 0233). Leg 1
   // composes the unified mover, so the mover's rejects above reach this surface unchanged.
   pirate_intercept_disabled: 'Route planning isn’t available right now.',
