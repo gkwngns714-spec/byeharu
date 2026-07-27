@@ -723,8 +723,10 @@ begin
     jsonb_build_array(f_x + 300, f_y - 150),
     jsonb_build_array(f_x + 300, f_y + 150),
     jsonb_build_array(f_x + 100, f_y + 150));
-  r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, null)',
-                                  'DZC Retained Manifest Zone', v_verts::text));
+  -- Attached to a REAL location: the resolver opens the fight AT the zone's linked location, and a
+  -- zone with a null location makes it bail early with note='location_missing' and no encounter.
+  r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Retained Manifest Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'MANIFESTHELD FAIL: zone: %', r; end if;
 
   -- ── 5. THE COURSE CHANGE. This is the owner's action, and the leg that gets ambushed. ────────────
@@ -761,6 +763,11 @@ begin
   -- ── THE ASSERTIONS THE LIVE BUG FAILED ───────────────────────────────────────────────────────────
   if pi.note is not distinct from 'empty_manifest' then
     raise exception 'MANIFESTHELD FAIL: the ambush was logged empty_manifest while % manifest rows exist — the guard is counting the INSERT, not the MANIFEST (the 0303 regression)', n_after;
+  end if;
+  -- Any note at all means the resolver took one of its fail-open exits (location_missing and the
+  -- like) instead of opening combat. Naming it beats inferring it from a null encounter_id.
+  if pi.note is not null then
+    raise exception 'MANIFESTHELD FAIL: the ambush bailed out with note=% instead of opening combat', pi.note;
   end if;
   if pi.encounter_id is null then
     raise exception 'MANIFESTHELD FAIL: the ambush fired but opened NO encounter — the player was parked without a fight';
