@@ -11,6 +11,7 @@ import {
 import { teamReasonMessage } from '../command/teamReasonMessage'
 import { unifiedStopOutcomeMessage } from '../command/teamStop'
 import { fleetRetreatOutcomeMessage } from '../command/teamMove'
+import { fleetGoOrderOutcomeMessage } from '../command/fleetOrderOutcome'
 import { sendableDestinations } from '../command/teamSend'
 import { fleetGoSuccessMessage } from './fleetGoTarget'
 import {
@@ -291,6 +292,13 @@ export function FleetCommandPanel({
                         // The wire target is the model's — RAW point (raw-coords law) or {locationId}.
                         () => commandShipGroupGo(r.groupId, wire),
                         (res) => {
+                          // INTERCEPT DEFERRED ENTRY — `order_outcome` is the mover's word on what
+                          // THIS call did. 'combat_started' (reachable only while deferred entry is
+                          // dark) means no leg survived the transaction, so BOTH summaries below
+                          // would describe a journey that never began. ONE authority for that copy
+                          // (fleetOrderOutcome.ts), which also degrades to today's `intercepted`.
+                          const combat = fleetGoOrderOutcomeMessage(res, r.name)
+                          if (combat) return combat
                           if (dest.kind === 'point') {
                             return fleetGoSuccessMessage({
                               fleetName: r.name,
