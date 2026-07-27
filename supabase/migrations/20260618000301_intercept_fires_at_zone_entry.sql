@@ -98,7 +98,9 @@
 --                                    CRON-GUARD subtransaction, the arrival predicate, the FOR UPDATE
 --                                    SKIP LOCKED and the uncounted-failure posture all survive.
 --   command_main_ship_settle_arrival_legacy  FROM 0151:126-210. ONLY delta: movement_advance.
---   command_ship_group_go            FROM 0292:164-690.  Deltas: plan instead of evaluate; a due-
+--   command_ship_group_go            FROM 0298:220-760 (NOT 0292 — 0298 re-created it to widen the
+--                                    retreat destination to a coordinate; splicing from 0292 would
+--                                    have reverted that). Deltas: plan instead of evaluate; a due-
 --                                    intercept resolution inside the redirect branch (a re-order may
 --                                    not outrun an ambush that is already owed); pending rows
 --                                    cancelled on a legitimate re-order; the new envelope. Steps 1-8
@@ -110,8 +112,11 @@
 --                                    deleted (leg 1 can no longer be intercepted at order time).
 --   process_pirate_route_legs        FROM 0233:1128-1222. ONLY delta: plan instead of evaluate.
 --
---   NOT RE-EMITTED, ON PURPOSE: process_combat_ticks (0292:719 — this slice adds no consumer of it and
---   re-emitting ~1000 lines would risk 0291's sticky-mode guard a fourth time), movement_settle_arrival
+--   NOT RE-EMITTED, ON PURPOSE: process_combat_ticks — its head is now 20260618000299:272 (0298
+--   re-created it for the coordinate retreat destination, 0299 again for combat_encounter_side_power);
+--   this slice adds no consumer of it, and re-emitting ~1000 lines would risk 0291's sticky-mode
+--   guard a fourth time and 0298/0299's work a first. Verified absent: this file contains no
+--   `create or replace function public.process_combat_ticks`. Also not re-emitted: movement_settle_arrival
 --   (0208:90 — byte-untouched; it simply stops being called directly), presence_create (0032:175),
 --   activity_start (0230:98), typed_zone_pirate_candidates_v1 (0275:80 — it selects ambush_x/ambush_y
 --   by name and those names and meanings are preserved), fleet_set_in_space (0231:1146).
@@ -149,6 +154,22 @@ begin
   if position('perform movement_settle_arrival(m.id)' in
               (select prosrc from pg_proc where oid = 'public.process_fleet_movements()'::regprocedure)) = 0 then
     raise exception '0301: the deployed movement processor is not 0206''s shared-helper form — refusing to re-emit from an unknown base';
+  end if;
+  -- 0298 IS A HARD BASE, not an optional predecessor. This migration re-emits command_ship_group_go
+  -- SPLICED FROM 0298, so a chain without it would have this file silently REVERT
+  -- retreat-to-any-destination (and emit a body writing columns that do not exist). The base moved
+  -- under this slice once already; make the next move fail loudly at the door instead of quietly in
+  -- the body. Both halves are checked — the schema 0298 added, and its actual code landing in the
+  -- deployed mover.
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'fleets'
+                    and column_name in ('retreat_target_x', 'retreat_target_y')
+                  having count(*) = 2) then
+    raise exception '0301: fleets.retreat_target_x/retreat_target_y are missing — 0298 (retreat to any destination) must be deployed; this migration re-emits command_ship_group_go from its body';
+  end if;
+  if position('retreat_target_x = case when p_location_id is null then v_t_x end' in
+              (select prosrc from pg_proc where oid = 'public.command_ship_group_go(uuid, uuid, double precision, double precision)'::regprocedure)) = 0 then
+    raise exception '0301: the deployed command_ship_group_go does not carry 0298''s coordinate retreat destination — refusing to re-emit from an unknown base';
   end if;
 end $pre$;
 
@@ -1147,8 +1168,17 @@ begin
      set encounter_id = v_enc, presence_id = v_presence
    where id = v_pi.id;
 
+  -- combat_telegraph_enabled (lit by 0300) makes activity_start record a pending_encounters row and
+  -- return WITHOUT creating the encounter; the telegraph cron opens it a few seconds later. The
+  -- ambush has still FIRED — the leg is cancelled and the fleet is parked at the entry point — there
+  -- is simply no encounter row to record yet. Say which of the two happened rather than reporting a
+  -- null encounter_id as 'combat_started'. When the telegraph cron does open it, the fleet is still
+  -- parked in open space at the entry point, so combat_create_encounter resolves the same engagement
+  -- point this resolution would have.
   return jsonb_build_object(
-    'fired', true, 'reason', 'combat_started', 'intercept_id', v_pi.id, 'zone_id', v_pi.zone_id,
+    'fired', true,
+    'reason', case when v_enc is null then 'combat_telegraphed' else 'combat_started' end,
+    'intercept_id', v_pi.id, 'zone_id', v_pi.zone_id,
     'entry_x', v_pi.entry_x, 'entry_y', v_pi.entry_y,
     'location_id', v_loc.id, 'presence_id', v_presence, 'encounter_id', v_enc);
 end;
@@ -1415,10 +1445,18 @@ revoke execute on function public.command_main_ship_settle_arrival_legacy(uuid) 
 grant  execute on function public.command_main_ship_settle_arrival_legacy(uuid) to authenticated;
 
 
--- ── 12. command_ship_group_go — 0292:164-690 VERBATIM + the deferral deltas ─────────────────────────
+-- ── 12. command_ship_group_go — 0298's TRUE HEAD VERBATIM + the deferral deltas ─────────────────────
+-- ⚠ THE BASE MOVED WHILE THIS SLICE WAS BEING WRITTEN. 0292 is NO LONGER this function's head:
+-- 20260618000298_retreat_to_any_destination.sql:220 re-created it to record a COORDINATE retreat
+-- destination (fleets.retreat_target_x/retreat_target_y, exactly-one-of with
+-- retreat_target_location_id under the fleets_retreat_target_one_of CHECK), deleting 0292's
+-- retreat_needs_port_destination refusal and adding destination_x/destination_y to both retreat
+-- envelopes. This body is spliced from 0298, so that widening survives verbatim; re-emitting from
+-- 0292 would have silently reverted it — the exact stale-base class 0293's header records and 0299
+-- hit again days later.
 -- Steps 1-8 (auth, dark gate, target shape, group lock, members, destination legality incl. the 0219
--- timed-docking translate, the transition guard, and the ENTIRE 0292 mid-combat retreat hunk) are the
--- head, character for character. The deltas are:
+-- timed-docking translate, the transition guard, and the ENTIRE 0292+0298 mid-combat retreat hunk)
+-- are the head, character for character. The deltas are:
 --
 --   [G1] declare: v_intercept -> v_plan, plus v_due for the redirect branch.
 --   [G2] REDIRECT BRANCH — an owed ambush cannot be outrun by re-ordering. Immediately after the
@@ -1546,6 +1584,16 @@ begin
   end if;
 
   -- 6) destination: a port must exist, be active, and be NON-COMBAT.
+  --    The activity_type check is the SAME rule the legacy per-ship move enforces (0156: active +
+  --    non-combat) — composed, not invented. It is a TARGET-legality check, not a readiness branch (§4):
+  --    it asks what the destination IS, never where the fleet is.
+  --    WHY IT IS LOAD-BEARING: the settle creates a presence carrying the target's activity_type
+  --    (0153/this file's location branch), and an activity='hunt_pirates' presence is what
+  --    combat_create_encounter routes on. A unified fleet has NO combat_units — it is not a sortie, it
+  --    has no group_sortie_members manifest — so it would snapshot zero units and the tick's defeat
+  --    branch would DESTROY it on arrival. A move is not a hunt: hunts go through
+  --    send_ship_group_hunt (0168/0204), which builds the manifest. Found by the step-3c/4 recon; the
+  --    3a/3b proofs never flew to a hunt site so they never saw it.
   if v_t_type = 'location' then
     select l.id, l.x, l.y, l.status, l.zone_id, l.activity_type, z.sector_id
       into v_loc
@@ -1559,10 +1607,10 @@ begin
       return jsonb_build_object('ok', false, 'reason', 'combat_destination');
     end if;
     v_t_loc := v_loc.id; v_t_x := v_loc.x; v_t_y := v_loc.y;
-    -- ── ★ THE S4 TRANSLATE HUNK (0219) — TIMED DOCKING: a DOCKABLE port target becomes its        ★ ──
-    -- ── ★ COORDINATE. The fleet parks in orbit inside the port's territory and DOCK is the        ★ ──
-    -- ── ★ separate 45s verb (command_ship_group_dock). Dark -> this if is skipped -> byte-        ★ ──
-    -- ── ★ identical instant dock.                                                                 ★ ──
+    -- ── ★ THE S4 TRANSLATE HUNK (0219, unchanged by this file) — TIMED DOCKING: a DOCKABLE port  ★ ──
+    -- ── ★ target becomes its COORDINATE. The fleet parks in orbit inside the port's territory   ★ ──
+    -- ── ★ and DOCK is the separate 45s verb (command_ship_group_dock). Dark -> this if is       ★ ──
+    -- ── ★ skipped -> byte-identical instant dock.                                                ★ ──
     if public.cfg_bool('timed_docking_enabled')
        and (public.mainship_space_location_target_legal(v_loc.id)->>'ok')::boolean is true then
       v_t_type := 'space'; v_t_loc := null;   -- v_t_x/v_t_y already carry the port's coordinate
@@ -1570,7 +1618,14 @@ begin
     -- ── ★ END OF THE S4 TRANSLATE HUNK — the head continues verbatim from here ★ ────────────────
   end if;
 
-  -- 7) TRANSITION GUARD (delete me at step 4, not before). No member may hold a live per-ship fleet.
+  -- 7) TRANSITION GUARD (delete me at step 4, not before).
+  --    While the per-ship movers still exist and are flag-ON, a member could be flying its OWN
+  --    per-ship fleet. If the group also flew, that ship would be in two places at once — the exact
+  --    duality §2 kills. So: no member may hold a live per-ship fleet.
+  --    This is NOT the "per-command readiness branch" §4 forbids: it does not gate on where the
+  --    fleet IS (there is deliberately no home/docked precondition below). It rejects a state that
+  --    only exists because the OLD layer is still alive, and it becomes unreachable — and must be
+  --    removed — the moment step 4 retires the per-ship movers.
   select count(*) into v_busy
     from public.fleets f
    where f.player_id = v_player
@@ -1580,11 +1635,27 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'member_busy');
   end if;
 
-  -- 8) ── ★ THE MID-COMBAT RE-ORDER HUNK (0292) — verbatim ★ ─────────────────────────────────────
-  --    (a) encounter 'active'     -> validate the target, store the destination, RETREAT.
-  --    (b) encounter 'retreating' -> REPLACE the stored destination ONLY.
-  --    (c) TERMINAL/SETTLING      -> typed 'movement_settled_retry'.
-  --    (d) sortie, NO encounter   -> 'group_on_sortie', unchanged.
+  -- 8) ── ★ THE MID-COMBAT RE-ORDER HUNK (the ONLY delta vs the 0233 head) ★ ──────────────────────
+  --    The head counted the group's live sortie and refused, always: 'group_on_sortie'. It now looks
+  --    the group's encounter up authoritatively and classifies FOUR ways:
+  --      (a) encounter 'active'     -> validate the target, store the destination, and RETREAT via
+  --                                    the ONE existing retreat verb -> ok / 'retreat_started'.
+  --      (b) encounter 'retreating' -> validate the target and REPLACE the stored destination ONLY.
+  --                                    The verb is NOT called again and the window is NOT restarted
+  --                                    -> ok / 'retreat_destination_updated'.
+  --      (c) TERMINAL/SETTLING      -> the encounter has ended but its fleet is still settling its
+  --                                    way out -> typed 'movement_settled_retry' (the head's own
+  --                                    vocabulary for "your view is stale, re-issue").
+  --      (d) sortie, NO encounter   -> the head's 'group_on_sortie' refusal, unchanged: there is no
+  --                                    retreat to compose and steering a committed non-combat sortie
+  --                                    is still out of scope — fail closed rather than guess.
+  --    No sortie at all -> falls through to step 9, byte-identical to the head.
+  --    ORDER MATTERS AND IS UNCHANGED: this is still step 8, so step 6's target legality (the port
+  --    must exist, be active and be NON-COMBAT) and step 7's member_busy have already run. A retreat
+  --    destination is validated by exactly the same rules as any other move; nothing here re-checks
+  --    or relaxes them. The retreat state machine itself is NOT reproduced here — no presence status
+  --    write, no timestamps, no damage rule, no reward lock, no window: those live where they always
+  --    have (presence_request_leave and process_combat_ticks).
   select count(*) into v_hunting
     from public.group_sortie_members gsm
     join public.fleets f on f.id = gsm.fleet_id
@@ -1596,6 +1667,11 @@ begin
     v_enc      record;
     v_settling integer;
   begin
+    -- The encounter is read AND LOCKED before this hunk writes anything, and the destination write +
+    -- the retreat arming below then happen in this SAME transaction — the tick can never observe half
+    -- of it. Lock order combat_encounters -> fleets -> location_presence is the tick's own order, so
+    -- the two can never deadlock; if the tick settled this encounter first, the locked re-read simply
+    -- no longer matches and we fall through to (c)/(d).
     select ce.id, ce.presence_id, ce.fleet_id, ce.status, ce.total_rewards_json
       into v_enc
       from public.combat_encounters ce
@@ -1608,19 +1684,45 @@ begin
      for update of ce;
 
     if v_enc.id is not null then
-      if p_location_id is null then
-        return jsonb_build_object('ok', false, 'reason', 'retreat_needs_port_destination');
-      end if;
+      -- ── (a)/(b) THE COMBAT-TIME REDIRECT ──────────────────────────────────────────────────────
+      -- ANY DESTINATION THE ORDER COULD NAME. 0292 recorded only a port and refused a coordinate
+      -- order typed; 0298 DELETES that refusal and records whichever side of the exactly-one-of pair
+      -- the order carried — fleets.retreat_target_location_id for a port, (retreat_target_x,
+      -- retreat_target_y) for a point in open space. ONE destination concept in two representations:
+      -- one writer (this arm), one reader (the tick's completion branch), and one CHECK constraint
+      -- (fleets_retreat_target_one_of) making the exclusivity a fact of the table rather than a
+      -- convention. Nothing else about the retreat changes — the fleet still breaks off under fire,
+      -- still takes damage for the whole window, and still leaves only when the window expires.
+      -- WHICH SHAPE IT IS is decided by p_location_id alone — the parameter the caller actually sent
+      -- — and never by v_t_type, which step 6's S4 dock-translate rewrites to 'space' for a DOCKABLE
+      -- port under timed_docking_enabled. A port order stays a port order.
+      -- The coordinate stored is v_t_x/v_t_y: bound-checked and canonicalized onto the integer world
+      -- grid by step 3 before anything read it, so the tick consumes it with no second validation and
+      -- the world's edges keep exactly one authority.
+      -- CLASSIFY BEFORE WRITING: presence_request_leave demands an ACTIVE presence, so an encounter
+      -- that reads 'active' against a presence that no longer does is a settling race — answer it
+      -- typed, with NO write left behind, rather than let the verb raise (this RPC returns envelopes,
+      -- never raises, at its boundary).
       if v_enc.status = 'active'
          and not exists (select 1 from public.location_presence lp
                           where lp.id = v_enc.presence_id and lp.status = 'active') then
         return jsonb_build_object('ok', false, 'reason', 'movement_settled_retry');
       end if;
+      -- Store (or REPLACE) the destination — ONE update that sets one side of the exactly-one-of
+      -- pair and clears the other in the SAME statement, so fleets_retreat_target_one_of can never be
+      -- transiently violated and a re-order can freely switch a port target to an open-space one, or
+      -- back. Last write wins; the tick reads it once, at completion.
       update public.fleets
-         set retreat_target_location_id = p_location_id, updated_at = v_now
+         set retreat_target_location_id = p_location_id,
+             retreat_target_x = case when p_location_id is null then v_t_x end,
+             retreat_target_y = case when p_location_id is null then v_t_y end,
+             updated_at = v_now
        where id = v_enc.fleet_id and player_id = v_player;
 
       if v_enc.status = 'active' then
+        -- (a) FIRST order: arm the retreat through presence_request_leave — the sole retreat
+        --     authority (0018:60-69). It is the only thing that may move a presence into retreat, set
+        --     its timestamps and start the window; this hunk reproduces none of that.
         perform public.presence_request_leave(v_enc.presence_id);
         return jsonb_build_object(
           'ok', true,
@@ -1633,9 +1735,18 @@ begin
           'presence_id', v_enc.presence_id,
           'member_count', v_member_n,
           'destination_location_id', p_location_id,
+          'destination_x', case when p_location_id is null then v_t_x end,
+          'destination_y', case when p_location_id is null then v_t_y end,
+          -- Loot earned BEFORE the order rides the leg as cargo but is only ever DEPOSITED by a BASE
+          -- arrival (the settle's base branch, untouched here), so naming a destination forfeits the
+          -- deposit until the fleet later returns to a base. Surfaced, never hidden.
           'carried_rewards', coalesce(v_enc.total_rewards_json, '{}'::jsonb));
       end if;
 
+      -- (b) ALREADY RETREATING: the destination above is the ONLY thing that changed. The retreat
+      --     verb is deliberately not called a second time — re-entering it would re-stamp the retreat
+      --     clock and hand the player a free reset of the damage window. The window keeps running
+      --     from the FIRST order.
       return jsonb_build_object(
         'ok', true,
         'order_outcome', 'retreat_destination_updated',
@@ -1647,10 +1758,16 @@ begin
         'presence_id', v_enc.presence_id,
         'member_count', v_member_n,
         'destination_location_id', p_location_id,
+        'destination_x', case when p_location_id is null then v_t_x end,
+        'destination_y', case when p_location_id is null then v_t_y end,
         'carried_rewards', coalesce(v_enc.total_rewards_json, '{}'::jsonb));
     end if;
 
     if v_hunting > 0 then
+      -- (c) The sortie's encounter is already TERMINAL while its fleet is still on the way out (the
+      --     tick ended the fight and the return leg is in flight). Nothing here can redirect that leg
+      --     — the fleet parks itself at the end of it and is commandable again — so answer with the
+      --     head's own retryable vocabulary rather than the sortie refusal, which would be a lie.
       select count(*) into v_settling
         from public.combat_encounters ce
         join public.fleets f on f.id = ce.fleet_id
@@ -1661,17 +1778,22 @@ begin
       if v_settling > 0 then
         return jsonb_build_object('ok', false, 'reason', 'movement_settled_retry');
       end if;
+      -- (d) a sortie with NO encounter — the head's refusal, unchanged.
       return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
     end if;
   end;
   -- ── ★ END OF THE MID-COMBAT RE-ORDER HUNK — the head continues verbatim from here ★ ────────────
 
   -- 9) THE MOVER: the group's ONE unified fleet.
+  --    Keyed group_id + main_ship_id IS NULL — NOT group_id alone: the legacy expedition send TAGS
+  --    group_id onto PER-MEMBER fleets (0204:316, display-only, "routing never reads it"), so
+  --    group_id alone would match N member envelopes and pick one at random.
   select count(*) into v_unified_n
     from public.fleets
    where group_id = v_group and player_id = v_player and main_ship_id is null
      and status in ('idle', 'moving', 'present', 'returning');
   if v_unified_n > 1 then
+    -- Never silently pick one. Two live unified fleets for one group is a broken invariant.
     return jsonb_build_object('ok', false, 'reason', 'fleet_ambiguous');
   end if;
 
@@ -1685,9 +1807,16 @@ begin
   end if;
 
   -- 10) ORIGIN — "the fleet moves from wherever it is" (§2). No home/docked precondition.
-  --    STRUCTURE NOTE: the `v_fleet is null` bootstrap MUST be the first branch (a field read on an
-  --    unassigned RECORD raises regardless of a guarding AND).
+  --    STRUCTURE NOTE: the `v_fleet is null` bootstrap MUST be the first branch, so the later branches
+  --    only ever touch v_fleet_row once it is assigned. Do NOT rewrite this as
+  --    `if v_fleet is not null and v_fleet_row.status = ...` — SQL's AND does not guarantee
+  --    left-to-right short-circuit, and reading a field of an unassigned RECORD raises
+  --    "record is not assigned yet" regardless of the guard. (The CI proof caught exactly that.)
   if v_fleet is null then
+    -- ── BOOTSTRAP (transition-only): the group has no fleet yet, so its position must be derived
+    --    ONCE from its members' per-ship state — the only place this function reads ship state as a
+    --    position, and only to create the group's first fleet. After step 4 ships have no position
+    --    and a group's fleet is created with the group, so this branch disappears.
     select count(distinct lp.location_id) into v_dock_n
       from public.main_ship_instances s
       join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = v_player and f.status = 'present'
@@ -1714,6 +1843,8 @@ begin
       v_o_type := 'base'; v_o_base := v_base.id; v_o_zone := null; v_o_loc := null;
       v_o_x := v_base.x; v_o_y := v_base.y;
     else
+      -- Members split across ports: the group has no single position to depart from. BOOTSTRAP-only
+      -- (the old world let ships scatter); once the fleet exists it always has exactly one position.
       return jsonb_build_object('ok', false, 'reason', 'group_scattered');
     end if;
 
@@ -1724,6 +1855,8 @@ begin
      where id = v_fleet_row.active_movement_id
      for update;
     if v_mv.id is null or v_mv.status <> 'moving' then
+      -- The settle cron took it between our reads; the fleet is no longer where we thought.
+      -- Fail closed and let the caller re-issue against fresh state rather than guess.
       return jsonb_build_object('ok', false, 'reason', 'movement_settled_retry');
     end if;
 
@@ -1753,7 +1886,8 @@ begin
     -- ██ END HUNK [G2] ████████████████████████████████████████████████████████████████████████████
 
     -- ── ★ THE S3 FOLD HUNK — the inline lerp is a compose of movement_position_at, the ONE      ★ ──
-    -- ── ★ interpolation authority. Output-identical by construction.                            ★ ──
+    -- ── ★ interpolation authority. Output-identical by construction; the self-assert re-proves  ★ ──
+    -- ── ★ it at deploy time — so NO new flag.                                                    ★ ──
     select o_x, o_y into v_o_x, v_o_y
       from public.movement_position_at(v_mv.origin_x, v_mv.origin_y, v_mv.target_x, v_mv.target_y,
                                        v_mv.depart_at, v_mv.arrive_at, v_now);
@@ -1765,6 +1899,8 @@ begin
 
   elsif v_fleet_row.location_mode = 'space' then
     -- ── FLEET-GO 3b: the fleet is PARKED in open space at its own coordinate. Depart from there.
+    --    This is the branch that makes the model closed: a coordinate arrival (the settle's new
+    --    'space' branch) leaves the fleet here, and it can set off again without ever touching a port.
     v_o_type := 'space'; v_o_base := null; v_o_zone := null; v_o_loc := null;
     v_o_x := v_fleet_row.space_x; v_o_y := v_fleet_row.space_y;
 
@@ -1779,7 +1915,9 @@ begin
     v_o_x := v_dock.x; v_o_y := v_dock.y;
 
   else
-    -- Neither in flight, in space, nor docked: its anchor is its origin base.
+    -- The group's fleet exists but is neither in flight, in space, nor docked (idle / returning with
+    -- no leg). Its anchor is its origin base — the same anchor the hunt uses for return mechanics.
+    -- Not a rejection: §2 says the fleet moves from wherever it is, and "at its anchor" is a place.
     select b.id, b.x, b.y, b.sector_id into v_base
       from public.bases b
      where b.player_id = v_player and b.status = 'active'
@@ -1792,19 +1930,25 @@ begin
     v_o_x := v_base.x; v_o_y := v_base.y;
   end if;
 
-  -- 11) SPEED — D0's authoritative group stats (0166).
+  -- 11) SPEED — D0's authoritative group stats (0166): delegates per-member to 0122, sums additive
+  --     keys, takes speed = MIN over members, and raises rather than clamping. Reused, not re-folded.
   begin
     v_stats := public.calculate_group_expedition_stats(v_player, v_group, 'none');
   exception when others then
+    -- 0166 is STRICT by design (refuse-don't-clamp): a member's bad stats raise and refuse the whole
+    -- team context. Caught here and returned as an envelope — this RPC never raises at its boundary.
     return jsonb_build_object('ok', false, 'reason', 'stats_invalid');
   end;
-  -- NOTE: 0166 nests the folds under 'totals'.
+  -- NOTE: 0166 nests the folds under 'totals' — `v_stats->>'speed'` is NULL at the top level and
+  -- silently degrades to stats_invalid. (The CI proof caught exactly that.)
   v_speed := (v_stats->'totals'->>'speed')::double precision;
   if v_speed is null or not (v_speed > 0) then
+    -- fleet_movements_speed_used_check demands > 0; reject rather than feed the spine a bad row.
     return jsonb_build_object('ok', false, 'reason', 'stats_invalid');
   end if;
 
-  -- 12) fleet budget — only when this call would CREATE a fleet.
+  -- 12) fleet budget — only when this call would CREATE a fleet. A redirect/re-launch of the group's
+  --     existing fleet consumes no new slot.
   if v_fleet is null then
     v_max := coalesce(public.cfg_num('max_active_fleets'), 3);
     select count(*) into v_active
@@ -1817,8 +1961,10 @@ begin
 
   -- ── WRITES ─────────────────────────────────────────────────────────────────────────────────────
   -- NOTE FOR EVERY FUTURE READER: there is deliberately NO `update main_ship_instances` below.
+  -- That absence is the charter's §2. If you are here to add one, re-read §2 and §0 first.
 
   -- ★ DISSOLVE THE MEMBERS' OWN DOCKS — the ships leave the port to fly with the fleet. ★
+  -- This is send_ship_group_hunt's block (0204:664-676), composed verbatim rather than re-invented.
   perform public.presence_complete(lp.id)
     from public.fleets f
     join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
@@ -1837,6 +1983,9 @@ begin
   end if;
 
   if v_fleet is null then
+    -- The group's ONE fleet: the hunt's proven shape (main_ship_id NULL + group_id set).
+    -- origin_base_id anchors the existing return-to-base mechanics, exactly as the hunt does.
+    -- Born 'idle' — which is precisely what fleet_set_moving demands below.
     select b.id into v_base
       from public.bases b where b.player_id = v_player and b.status = 'active'
       order by b.created_at limit 1;
@@ -1844,6 +1993,7 @@ begin
       values (v_player, v_base.id, 'idle', 'base', v_base.id, v_group)
       returning id into v_fleet;
   else
+    -- Return the group's EXISTING fleet to 'idle' so fleet_set_moving's frozen precondition holds.
     perform public.presence_complete(lp.id)
       from public.location_presence lp
      where lp.fleet_id = v_fleet and lp.status = 'active';
@@ -1855,7 +2005,9 @@ begin
      where id = v_fleet;
   end if;
 
-  -- ONE movement for the ONE fleet.
+  -- ONE movement for the ONE fleet. mission 'rally' = the spine's generic reposition
+  -- (fleet_movements_mission_type_check). For a 'space' target the location id is NULL and the
+  -- coordinate carries the destination; for a port it is the reverse (0067's target-shape rule).
   v_movement := public.movement_create(
     v_player, v_fleet,
     v_o_type, v_o_base, v_o_zone, v_o_loc, v_o_x, v_o_y,
@@ -1875,10 +2027,13 @@ begin
 
   select arrive_at into v_arrive from public.fleet_movements where id = v_movement;
 
-  -- ██ HUNK [G4] (0301) — THE ENVELOPE. `intercepted` and `intercept_encounter_id` are REMOVED, not
-  -- ██ kept as shims: this call can no longer know either, and returning a predicted ambush would
-  -- ██ leak a random result the player has not lived through yet. Nothing about a planned intercept
-  -- ██ is surfaced here at all.
+  -- ██ HUNK [G4] (0301) — THE ENVELOPE. The two retired ambush fields are REMOVED, not kept as
+  -- ██ shims: this call can no longer know either, and returning a predicted ambush would leak a
+  -- ██ random result the player has not lived through yet. Nothing about a planned intercept is
+  -- ██ surfaced here at all. movement_eta names the same instant arrive_at always did.
+  -- ██ (Their names are deliberately NOT written here: the self-assert greps this very body for them
+  -- ██ as MUST-BE-ABSENT, and a probe matching its own explanatory comment is how 0222 aborted every
+  -- ██ deploy. The comment stripper would handle it; not relying on the stripper is cheaper.)
   return jsonb_build_object(
     'ok', true,
     'order_outcome', 'movement_started',
@@ -1900,7 +2055,8 @@ comment on function public.command_ship_group_go(uuid, uuid, double precision, d
   'FLEET-GO (charter §2): the ONE fleet-level mover. Moves a ship_group as a single atomic fleet to a '
   'port OR a world coordinate, from wherever it is; re-issue to redirect. DARK behind '
   'fleet_movement_unified_enabled. S4 TIMED DOCKING (0219) and the 0292 mid-combat retreat '
-  'classification are unchanged. PIRATE INTERCEPT (0301): the newly-minted leg is PLANNED — rolled '
+  'classification as widened by 0298 (a retreat destination may be a PORT or a COORDINATE, '
+  'exactly-one-of) are unchanged. PIRATE INTERCEPT (0301): the newly-minted leg is PLANNED — rolled '
   'against every zone it truly enters, with at most one ambush SCHEDULED for the moment the fleet '
   'reaches that zone''s edge. This RPC no longer cancels the leg, moves the fleet or opens combat '
   'under any condition, and no longer returns `intercepted`/`intercept_encounter_id` (it cannot know '
@@ -2323,8 +2479,9 @@ comment on table public.fleet_route_legs is
 -- comment it also strips passes vacuously forever).
 do $a301$
 declare
-  v_src   text;
-  v_other text;
+  v_src     text;
+  v_other   text;
+  v_outcols text[];
   r       record;
   n       integer;
   f       double precision;
@@ -2364,14 +2521,25 @@ begin
     raise exception '0301 FAIL: missing after this migration: %', function_missing;
   end if;
 
-  -- The geometry leaf really did gain entry_fraction, and ambush_x/ambush_y really did survive.
-  if (select count(*) from information_schema.parameters
-       where specific_schema = 'public'
-         and specific_name = (select p.proname || '_' || p.oid from pg_proc p
-                               where p.oid = 'public.pirate_intercept_leg_zone_hits(double precision, double precision, double precision, double precision)'::regprocedure)
-         and parameter_mode = 'TABLE'
-         and parameter_name in ('ambush_x', 'ambush_y', 'entry_fraction')) <> 3 then
-    raise exception '0301 FAIL: pirate_intercept_leg_zone_hits does not return ambush_x + ambush_y + entry_fraction';
+  -- The geometry leaf's ENTIRE ordered output list, from the catalog.
+  -- WHY NOT information_schema.parameters: that view maps pg_proc.proargmodes 't' (a RETURNS TABLE
+  -- column) to parameter_mode 'OUT'. It never emits the string 'TABLE', so a probe filtering on
+  -- parameter_mode = 'TABLE' matches zero rows FOR EVERY FUNCTION and raises on every apply no matter
+  -- what the function returns. That is exactly what the first cut of this migration did, and it is
+  -- the 0222 vacuity lesson inverted: a probe that can never be SATISFIED is as bad as one that can
+  -- never FAIL. pg_proc is the authority; read it.
+  -- Pinned as the whole ordered list rather than a set membership, so a RENAME or a REORDER fails too
+  -- — ambush_x/ambush_y must keep those names (0274/0279, two IMMUTABLE typed-zone dispatchers,
+  -- validate them by exactly those keys, and src/features/worldeditor/zoneEffectDispatchContract.ts
+  -- mirrors them) and entry_fraction must exist for the planner to order zones by.
+  select array_agg(p.proargnames[i] order by i)
+    into v_outcols
+    from pg_proc p, generate_subscripts(p.proargnames, 1) i
+   where p.oid = 'public.pirate_intercept_leg_zone_hits(double precision, double precision, double precision, double precision)'::regprocedure
+     and p.proargmodes[i] = 't';
+  if v_outcols is distinct from
+     array['zone_id','location_id','exposure_fraction','ambush_x','ambush_y','entry_fraction']::text[] then
+    raise exception '0301 FAIL: pirate_intercept_leg_zone_hits returns % — want {zone_id, location_id, exposure_fraction, ambush_x, ambush_y, entry_fraction}', v_outcols;
   end if;
 
   -- The engagement parameters are MANDATORY. pronargdefaults counts trailing defaulted params; the
