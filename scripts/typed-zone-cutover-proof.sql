@@ -44,8 +44,10 @@ begin
     'active')
   returning id into v_zone_deep;
 
-  -- ONLY the shallow zone declares the pirate_intercept effect.
-  insert into public.zone_effect_pirate_intercept (zone_id) values (v_zone_shallow);
+  -- ONLY the DEEP zone declares the pirate_intercept effect. 0301 made selection ENTRY-ORDERED,
+  -- so the dark path picks the SHALLOW zone - the one with NO effect row. That is what makes step 1
+  -- a real proof that effects are ignored while dark.
+  insert into public.zone_effect_pirate_intercept (zone_id) values (v_zone_deep);
 
   -- ── 1. DARK: the legacy decision is authoritative — geometry alone decides ───────────────────
   -- The deep zone has no effect row, but the legacy path knows nothing of effects, so it must still
@@ -59,9 +61,11 @@ begin
     raise exception 'TZC_FAIL_FIXTURE: expected both fixture zones on the leg, got %', v_n_before; end if;
 
   -- the decision the dark evaluator would make, reproduced from its own pure parts
+  -- the decision the dark planner makes: FIRST ENTERED wins (0301). A fleet cannot reach the deep
+  -- zone before the shallow one, so the deep zone's greater exposure is irrelevant.
   if (select zone_id from public.pirate_intercept_leg_zone_hits(0, 0, 100, 0)
-       order by exposure_fraction desc, zone_id asc limit 1) is distinct from v_zone_deep then
-    raise exception 'TZC_FAIL_DARK: the legacy decision did not select the deeper zone';
+       order by entry_fraction asc, zone_id asc limit 1) is distinct from v_zone_shallow then
+    raise exception 'TZC_FAIL_DARK: the dark decision did not select the FIRST-ENTERED zone';
   end if;
   raise notice 'TZC_PASS_DARK_LEGACY_DECIDES';
 
@@ -76,13 +80,13 @@ begin
     raise exception 'TZC_FAIL_LIT: the planner rejected a live-built request -> %', v_out; end if;
   if jsonb_array_length(v_out->'plan'->'planned_effects') <> 1 then
     raise exception 'TZC_FAIL_LIT: expected exactly one planned effect -> %', v_out; end if;
-  if (v_out->'plan'->'planned_effects'->0->>'zone_id')::uuid is distinct from v_zone_shallow then
+  if (v_out->'plan'->'planned_effects'->0->>'zone_id')::uuid is distinct from v_zone_deep then
     raise exception 'TZC_FAIL_LIT: the lit path did not select the zone that DECLARES the effect -> %', v_out;
   end if;
   raise notice 'TZC_PASS_LIT_EFFECTS_DECIDE';
 
   -- ── 3. THE FLAG IS THE ONLY DIFFERENCE — give the deep zone an effect and lit agrees again ───
-  insert into public.zone_effect_pirate_intercept (zone_id) values (v_zone_deep);
+  insert into public.zone_effect_pirate_intercept (zone_id) values (v_zone_shallow);
   v_out := public.typed_zone_effect_dispatch_v1(
              public.typed_zone_pirate_candidates_v1(
                '00000000-0000-4000-8000-000000000000'::uuid, 0, 0, 100, 0, 120));
@@ -104,24 +108,24 @@ begin
   select count(*) into v_intercepts from public.pirate_intercepts;
   update public.game_config set value = 'false'::jsonb
    where key = 'typed_zone_pirate_intercept_runtime_enabled';
-  v_out := public.pirate_intercept_evaluate_leg('00000000-0000-4000-8000-0000000000ff'::uuid);
-  if (v_out->>'hit') <> 'false' or (v_out->>'reason') <> 'not_moving' then
-    raise exception 'TZC_FAIL_EVAL_DARK: unexpected verdict for a missing movement -> %', v_out; end if;
+  v_out := public.pirate_intercept_plan_leg('00000000-0000-4000-8000-0000000000ff'::uuid);
+  if (v_out->>'planned') <> 'false' or (v_out->>'reason') <> 'not_moving' then
+    raise exception 'TZC_FAIL_PLAN_DARK: unexpected verdict for a missing movement -> %', v_out; end if;
 
   update public.game_config set value = 'true'::jsonb
    where key = 'typed_zone_pirate_intercept_runtime_enabled';
-  v_out := public.pirate_intercept_evaluate_leg('00000000-0000-4000-8000-0000000000ff'::uuid);
-  if (v_out->>'hit') <> 'false' or (v_out->>'reason') <> 'not_moving' then
-    raise exception 'TZC_FAIL_EVAL_LIT: unexpected verdict for a missing movement -> %', v_out; end if;
+  v_out := public.pirate_intercept_plan_leg('00000000-0000-4000-8000-0000000000ff'::uuid);
+  if (v_out->>'planned') <> 'false' or (v_out->>'reason') <> 'not_moving' then
+    raise exception 'TZC_FAIL_PLAN_LIT: unexpected verdict for a missing movement -> %', v_out; end if;
 
   select count(*) into v_n_after from public.pirate_intercepts;
   if v_n_after <> v_intercepts then
-    raise exception 'TZC_FAIL_EVAL: a non-moving leg logged % row(s)', v_n_after - v_intercepts; end if;
-  raise notice 'TZC_PASS_EVALUATOR_BOTH_STATES';
+    raise exception 'TZC_FAIL_PLAN: a non-moving leg logged % row(s)', v_n_after - v_intercepts; end if;
+  raise notice 'TZC_PASS_PLANNER_BOTH_STATES';
 
   -- ── 5. THE DARK GATE STILL WINS over the cutover flag ────────────────────────────────────────
   update public.game_config set value = 'false'::jsonb where key = 'pirate_intercept_enabled';
-  v_out := public.pirate_intercept_evaluate_leg('00000000-0000-4000-8000-0000000000ff'::uuid);
+  v_out := public.pirate_intercept_plan_leg('00000000-0000-4000-8000-0000000000ff'::uuid);
   if (v_out->>'reason') <> 'dark' then
     raise exception 'TZC_FAIL_DARK_GATE: pirate_intercept_enabled=false did not short-circuit -> %', v_out; end if;
   raise notice 'TZC_PASS_DARK_GATE_WINS';
