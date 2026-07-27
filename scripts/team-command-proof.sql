@@ -519,7 +519,7 @@ end $$;
 -- (captain +8/+4 deltas, D0 independent sums, D2 snapshot pins) recomputes through the SAME
 -- adapter, so those blocks stay value-independent of the seed by construction.
 do $$
-declare v_hull jsonb; s jsonb; n int;
+declare v_hull jsonb; s jsonb; n int; v_tr_atk numeric; v_tr_def numeric;
   uA uuid := (select v from tcmd where k='uA'); a1 uuid := (select v from tcmd where k='a1');
 begin
   -- every hull row carries the seeded numeric combat stats (today: exactly starter_frigate).
@@ -530,13 +530,37 @@ begin
   if (v_hull->>'attack')::numeric is distinct from 15 or (v_hull->>'defense')::numeric is distinct from 10 then
     raise exception 'HULLSTATS FAIL: starter_frigate base stats % (want attack 15 / defense 10 — the 0170 seed)', v_hull; end if;
 
-  -- the adapter folds the hull stats: a bare ship's combat_power/survival == the hull seed exactly.
-  s := public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none');
-  if (s->>'combat_power')::numeric is distinct from (v_hull->>'attack')::numeric
-     or (s->>'survival')::numeric is distinct from (v_hull->>'defense')::numeric then
-    raise exception 'HULLSTATS FAIL: bare-ship adapter stats (combat_power %, survival %) diverge from the hull seed %', s->>'combat_power', s->>'survival', v_hull; end if;
+  -- The adapter folds the hull stats. This used to read "a bare ship == the hull seed exactly",
+  -- which held only while ship_traits_enabled was dark.
+  --
+  -- ★ THERE IS NO BARE SHIP ANY MORE (repointed 2026-07-27). Migration 0300 lit ship_traits_enabled,
+  -- ★ so SOUL-1's birthmark fold (0193, in 0205's head at the trait-fold hunk) now adds each rolled
+  -- ★ trait's stats_json into the SAME accumulators as the hull. A freshly commissioned ship carries
+  -- ★ traits by construction, so the equality was arithmetically unreachable and the block failed
+  -- ★ (combat_power 13 against a hull seed of 15 — a legitimate −2 birthmark, not a lost hull stat).
+  -- ★
+  -- ★ The INTENT is unchanged and still the point of this block: prove the 0170 hull seed actually
+  -- ★ REACHES the adapter (bare hulls once contributed 0 — that was the original team-command
+  -- ★ blocker). So the expectation now accounts for the one other live fold instead of pretending it
+  -- ★ is absent: hull + traits, summed from the SAME two tables and the SAME keys the adapter reads,
+  -- ★ so this stays a pin on the hull contribution rather than a restatement of the adapter. If the
+  -- ★ hull seed regressed to 0 the assertion still fails, which is what makes it non-vacuous.
+  -- ★ The fixture is deliberately module-free ('[]' loadout, activity 'none'), so hull + traits are
+  -- ★ the only two contributors in play.
+  select coalesce(sum((y.stats_json->>'attack')::numeric), 0),
+         coalesce(sum((y.stats_json->>'defense')::numeric), 0)
+    into v_tr_atk, v_tr_def
+    from public.main_ship_traits mt
+    join public.ship_trait_types y on y.trait_type_id = mt.trait_type_id
+   where mt.main_ship_id = a1;
 
-  raise notice 'TEAMCMD_PASS_HULLSTATS ok: every hull row seeded (starter_frigate 15/10) and the adapter folds hull base stats (bare ship == hull seed exactly)';
+  s := public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none');
+  if (s->>'combat_power')::numeric is distinct from ((v_hull->>'attack')::numeric + v_tr_atk)
+     or (s->>'survival')::numeric is distinct from ((v_hull->>'defense')::numeric + v_tr_def) then
+    raise exception 'HULLSTATS FAIL: adapter stats (combat_power %, survival %) diverge from the hull seed % plus rolled traits (attack %, defense %)',
+      s->>'combat_power', s->>'survival', v_hull, v_tr_atk, v_tr_def; end if;
+
+  raise notice 'TEAMCMD_PASS_HULLSTATS ok: every hull row seeded (starter_frigate 15/10) and the adapter folds hull base stats (hull seed + rolled birthmark traits attack %, defense %)', v_tr_atk, v_tr_def;
 end $$;
 
 -- ════════ BLOCK WRITE: upsert/rename, validation, assign/unassign, and the same-player gap ════════

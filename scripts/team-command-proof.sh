@@ -16,7 +16,8 @@
 # re-homes them ONLY once the manifest fleet is finished — mid-combat/in-transit race guards — the
 # manifest is retained, defeat + repair recovery, and the M1 single-send race-closure guard) plus
 # the activation-prep hull-stats block (0170: every hull row carries seeded base attack/defense —
-# starter_frigate 15/10 — and the re-created adapter folds them: bare ship == hull seed exactly)
+# starter_frigate 15/10 — and the re-created adapter folds them: hull seed + rolled traits, since
+# 0300 lit ship_traits_enabled and a freshly commissioned ship is never bare)
 # plus the captains-launch shard-drop block (0171: the once-deferred captain-slot bump now SHIPS as
 # a migration — asserted in setup, no longer fixtured in-txn — and pirate_loot_for_wave's
 # config-gated captain_memory_shard drop: rate-0 byte-parity with the 0041 head, rate-1 wave-2
