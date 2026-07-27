@@ -592,7 +592,7 @@ declare
   uZ      uuid := (select v from dzc where k='uZ');
   gZ      uuid := (select v from dzc where k='gZ');
   v_zone  uuid := (select v from dzc where k='v_zone');
-  m_x double precision; m_y double precision;
+  m_x double precision; m_y double precision; v_atk_before double precision;
   r jsonb; pi record; mv record; fl record; v_mv2 uuid; v_enc2 uuid;
 begin
   -- ── VACUITY GUARD 1: the fleet must ALREADY carry a manifest, or this proves nothing. ────────────
@@ -613,6 +613,16 @@ begin
   -- ('retreat_destination_updated') instead of starting a new leg. Draining to 'active' alone would
   -- therefore never free the fleet. The retreat also mints its own movement, so the movement processor
   -- is driven alongside the combat ticks to settle it.
+  -- ── The fleet must SURVIVE the first fight, or the premise collapses. Draining with live damage
+  --    killed it (encounter 'defeat', fleet 'destroyed'), and command_ship_group_go then minted a
+  --    BRAND NEW fleet for the group — whose manifest is empty, so the second ambush would insert
+  --    rows and never exercise the ON CONFLICT path this block exists to test. The regression needs
+  --    the SAME fleet row ambushed twice, exactly as production recorded it.
+  --    Enemy damage is therefore zeroed for the drain only, through the real set_game_config knob
+  --    (the established in-txn idiom), and restored immediately afterwards.
+  select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_atk_before;
+  perform public.set_game_config('enemy_attack_base', '0'::jsonb);
+
   perform public.presence_request_leave(v_pres);
   for i in 1..60 loop
     exit when (select status from public.combat_encounters where id = v_enc1)
@@ -625,9 +635,17 @@ begin
      where fleet_id = v_fleet and status = 'moving';
     perform public.process_fleet_movements();
   end loop;
+  perform public.set_game_config('enemy_attack_base', to_jsonb(v_atk_before));
+
   if (select status from public.combat_encounters where id = v_enc1) in ('active', 'retreating') then
     raise exception 'DZCOMBAT FAIL REAMBUSH: the first encounter is still % after draining — the fleet cannot be freed',
       (select status from public.combat_encounters where id = v_enc1);
+  end if;
+
+  -- The fleet must be the SAME live fleet, or the second ambush cannot exercise the ON CONFLICT path.
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.status = 'destroyed' then
+    raise exception 'DZCOMBAT FAIL REAMBUSH: the fleet died in the first fight despite zeroed enemy damage — the second ambush would hit a fresh fleet with an empty manifest and prove nothing';
   end if;
 
   -- ── SECOND ORDER, back through the same zone. Real RPC, the same verb the player uses. A refusal
