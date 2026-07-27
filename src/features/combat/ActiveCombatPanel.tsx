@@ -5,6 +5,7 @@ import { RoundLog } from './RoundLog'
 import { requestRetreat } from './combatApi'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
+import { selectCombatPhase, nextWaveSeconds, nextWaveText } from './combatPhase'
 import { Card, Button, Notice, Meter, SectionLabel, type MeterTone } from '../../components/ui'
 import { ItemChip } from '../../components/items'
 
@@ -38,7 +39,11 @@ export function ActiveCombatPanel({
     return () => clearInterval(iv)
   }, [])
 
-  const retreating = encounter.status === 'retreating'
+  // COMBAT PHASE: retreating / between-waves / fighting comes from the ONE shared selector
+  // (combatPhase.ts), which the map card composes too. This panel used to derive it inline; the
+  // derivation moved out unchanged so the two surfaces can never drift apart.
+  const phase = selectCombatPhase(encounter)
+  const retreating = phase.isRetreating
   // Slice D4: tick jsonb keys are coalesce(unit_type_id, main_ship_id::text) since D1 — resolved by
   // the ONE combatUnitLabel helper (catalog name first, uuid-shaped member key → "Team ship" label).
   // Data-dark: member rows/keys can't exist in prod today, so legacy rendering is byte-identical.
@@ -49,10 +54,6 @@ export function ActiveCombatPanel({
     ? (encounter.player_integrity_current / encounter.player_integrity_max) * 100 : 0
   const enemyPct = encounter.enemy_integrity_max > 0
     ? (encounter.enemy_integrity_current / encounter.enemy_integrity_max) * 100 : 0
-
-  const waveCleared = encounter.enemy_integrity_current <= 0
-  const incomingIn = encounter.next_wave_at
-    ? Math.ceil((new Date(encounter.next_wave_at).getTime() - now) / 1000) : 0
 
   const latest = ticks.slice().sort((a, b) => b.tick_number - a.tick_number).find((t) => t.result !== 'next_wave_incoming')
   const lossText = (j: Record<string, number>) => {
@@ -89,9 +90,7 @@ export function ActiveCombatPanel({
             Wave <span className="font-mono tabular-nums text-ink">{encounter.wave_number}</span> · Danger{' '}
             <span className="font-mono tabular-nums text-ink">{encounter.danger_level}</span> ·{' '}
             <span className="font-mono tabular-nums text-ink">{encounter.waves_cleared}</span> waves cleared ·{' '}
-            <span className="text-ink">
-              {retreating ? 'Retreating' : waveCleared ? 'Next wave incoming' : 'In combat'}
-            </span>
+            <span className="text-ink">{phase.label}</span>
           </p>
         </div>
         <Button
@@ -121,11 +120,11 @@ export function ActiveCombatPanel({
       {/* Fleet (total) + pirate wave */}
       <div className="mb-4 space-y-3">
         <Bar label="Fleet integrity" pct={playerPct} text={`${playerPct.toFixed(0)}% · ${Math.round(encounter.player_integrity_current).toLocaleString()} / ${Math.round(encounter.player_integrity_max).toLocaleString()}`} tone="accent" />
-        {waveCleared ? (
+        {phase.betweenWaves ? (
           <div>
             <div className="mb-1 text-xs text-ink-muted">Pirate wave</div>
             <p className="text-xs text-warning/90">
-              {incomingIn > 0 ? `Next wave incoming in ${incomingIn}s…` : 'Next wave incoming…'}
+              {nextWaveText(nextWaveSeconds(encounter, now))}
             </p>
           </div>
         ) : (

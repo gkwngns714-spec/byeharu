@@ -10,6 +10,7 @@
 // Mounted from MapScreen over the already-polled `combat` state (useCombat, ~1.5s = the tick
 // cadence), so it needs no new fetch and no new poll.
 import type { CombatEncounter, CombatUnit } from '../combat/combatTypes'
+import { selectCombatPhase, nextWaveText } from '../combat/combatPhase'
 
 /** One side's live standing, as the server reports it. */
 function SideBar({
@@ -79,6 +80,10 @@ export function CombatMapCard({
         // Positions exist only for spatially-created encounters; say so plainly rather than leaving
         // the player wondering why the map shows no ships for a fight that is clearly happening.
         const spatial = mine.some((u) => u.pos_x !== null && u.pos_x !== undefined)
+        // The SAME phase the Command panel shows, from the one shared selector — never re-derived
+        // here. Between waves the server has already zeroed the whole enemy side, so those numbers
+        // are placeholders and the card must say what is happening instead of printing them.
+        const phase = selectCombatPhase(e)
 
         return (
           <div
@@ -88,7 +93,7 @@ export function CombatMapCard({
           >
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-danger">
-                {e.status === 'retreating' ? 'Retreating' : 'In combat'}
+                {phase.label}
               </span>
               <span className="text-[11px] text-ink-faint">
                 wave {e.wave_number} · tick {e.tick_number}
@@ -104,14 +109,25 @@ export function CombatMapCard({
                 tone="accent"
                 units={aliveOf(mine)}
               />
-              <SideBar
-                label="Enemy"
-                power={e.enemy_power_current}
-                integrity={e.enemy_integrity_current}
-                integrityMax={e.enemy_integrity_max}
-                tone="danger"
-                units={aliveOf(theirs)}
-              />
+              {phase.betweenWaves ? (
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-danger">
+                    Enemy
+                  </span>
+                  {/* null = no countdown here on purpose: this is a 256px corner readout and a
+                      second-by-second number is noise. The Command panel carries the countdown. */}
+                  <p className="text-[11px] text-warning">{nextWaveText(null)}</p>
+                </div>
+              ) : (
+                <SideBar
+                  label="Enemy"
+                  power={e.enemy_power_current}
+                  integrity={e.enemy_integrity_current}
+                  integrityMax={e.enemy_integrity_max}
+                  tone="danger"
+                  units={aliveOf(theirs)}
+                />
+              )}
             </div>
 
             {!spatial && (
