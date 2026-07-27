@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO_ROOT="$(cd "$SC
 tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE"
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -87,14 +87,16 @@ if [ "$MODE" = "selftest" ]; then
   n="$(grep -c 'public\.pirate_intercept_resolve_due_for_movement(' "$SQL" || true)"
   [ "$n" = "1" ] || fail "expected exactly 1 direct resolver call (the negative re-fire probe), found $n"
 
-  # exactly ONE process_combat_ticks() invocation (the first wave spawn + fire pass). The
-  # MANIFESTHELD block deliberately drives NO combat: it reproduces production's shape (a manifest
-  # frozen by a hunt send, then an ambush on that leg) and needs no fight to be fought or survived.
+  # exactly TWO process_combat_ticks() call sites, and no other combat engine:
+  #   1. PIRATEFIRE    — the first wave spawn + fire pass.
+  #   2. MANIFESTHELD  — the drain that FINISHES the hunt sortie, so its manifest becomes a RETAINED
+  #                      one and the later course change is ambushed while holding it (0303).
+  # Still a real pin: a third, unexplained invocation fails here.
   n="$(grep -c 'perform public\.process_combat_ticks();' "$SQL" || true)"
-  [ "$n" = "1" ] || fail "expected exactly 1 process_combat_ticks() call, found $n"
+  [ "$n" = "2" ] || fail "expected exactly 2 process_combat_ticks() call sites (PIRATEFIRE + the MANIFESTHELD hunt-fight drain), found $n"
   # and process_combat_ticks must remain the ONLY combat engine this proof drives.
   n="$(grep -cE 'perform public\.process_(combat|encounter)[a-z_]*\(' "$SQL" || true)"
-  [ "$n" = "1" ] || fail "the proof invokes a combat engine other than process_combat_ticks ($n engine calls)"
+  [ "$n" = "2" ] || fail "the proof invokes a combat engine other than process_combat_ticks ($n engine calls)"
 
   # every property is asserted in assert-form (gutting any block fails here).
   grep -q "the order-time ambush is still cancelling it"          "$SQL" || fail "harness lacks the leg-still-moving assert"
