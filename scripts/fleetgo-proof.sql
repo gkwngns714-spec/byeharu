@@ -2142,11 +2142,19 @@ begin
   select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
 
   -- settle the sortie leg through the real cron entry point: the fleet docks 'present' AT the hunt
-  -- site, presence_create fires activity_start('hunt_pirates') → a LIVE group encounter.
+  -- site, presence_create fires activity_start('hunt_pirates') → a group encounter.
   update public.fleet_movements
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
    where id = v_huntmv;
   perform public.movement_settle_arrival(v_huntmv);
+
+  -- ★ 0300 lit combat_telegraph_enabled, so activity_start no longer opens the encounter inline
+  -- ★ (0230:114-122): it queues pending_encounters at now() + combat_telegraph_seconds and returns.
+  -- ★ The live encounter this block needs is now one cron tick away, so drive that cron — the same
+  -- ★ one a real player's arrival waits on. Clock only; no second encounter-opening path.
+  update public.pending_encounters set trigger_at = now() - interval '1 second'
+    where fleet_id = v_huntfleet and status = 'telegraphed';
+  perform public.process_combat_telegraphs();
 
   -- vacuity guards: the mid-combat state must REALLY exist, or the rejection below proves nothing.
   select count(*) into n from public.fleets
