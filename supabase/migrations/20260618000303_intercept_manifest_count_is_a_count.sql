@@ -58,29 +58,58 @@ set local time zone 'UTC';
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
 
--- ══════════ PRECONDITION: the head this migration claims to copy is the one that is deployed ════════
+-- ══════════ PRECONDITION: FULL-BODY DRIFT GATE ══════════════════════════════════════════════════════
+-- A "does the body still contain the defect?" check is NOT sufficient, and this migration does not
+-- rely on one. Production could carry the defective statement AND legitimate later edits elsewhere in
+-- the same function; re-creating it from this file's copy of the 0301 body would then silently revert
+-- those edits. That is the 0136->0138 failure exactly.
+--
+-- So the gate pins the WHOLE deployed body by hash. The pinned value was read FROM PRODUCTION, not
+-- assumed, via scripts/read-resolver-body-hash.mjs on 2026-07-27:
+--   md5(prosrc) = 5bdf472aa45e16b7489f95ee924cc490, length 10445, owner postgres,
+--   SECURITY DEFINER, volatility v, parallel u, proconfig {search_path=public},
+--   args "p_movement_id uuid", returns jsonb, acl {postgres=X/postgres,service_role=X/postgres}.
+-- A disposable chain that applies 0001..0302 produces the same body (0302 does not touch this
+-- function), so the same pin gates CI and production identically.
+--
+-- If the hash does not match, this migration ABORTS and the whole deploy rolls back. That is the
+-- correct outcome: an unrecognised head means a human must re-derive the diff, not that a migration
+-- should overwrite work it cannot see.
+create temp table if not exists _0303_before (
+  body_md5 text, body_len int, owner text, secdef boolean, volatility "char",
+  parallel "char", proconfig text, args text, result text, acl text
+) on commit drop;
+
 do $pre$
-declare v_src text;
+declare v_before record;
 begin
   if to_regprocedure('public.pirate_intercept_resolve_due_for_movement(uuid)') is null then
     raise exception '0303: pirate_intercept_resolve_due_for_movement(uuid) is missing — 0301 must be deployed first';
   end if;
 
-  v_src := regexp_replace(
-             (select prosrc from pg_proc
-               where oid = 'public.pirate_intercept_resolve_due_for_movement(uuid)'::regprocedure),
-             '--[^\n]*', '', 'g');
+  select md5(p.prosrc)                                  as body_md5,
+         length(p.prosrc)                               as body_len,
+         pg_get_userbyid(p.proowner)                    as owner,
+         p.prosecdef                                    as secdef,
+         p.provolatile                                  as volatility,
+         p.proparallel                                  as parallel,
+         coalesce(array_to_string(p.proconfig, ','), '') as proconfig,
+         pg_get_function_identity_arguments(p.oid)      as args,
+         pg_get_function_result(p.oid)                  as result,
+         coalesce(p.proacl::text, '')                   as acl
+    into v_before
+    from pg_proc p
+   where p.oid = 'public.pirate_intercept_resolve_due_for_movement(uuid)'::regprocedure;
 
-  -- The exact defect being removed must be present in the deployed body. If it is not, this is not
-  -- the head this migration was written against and re-creating from a stale copy would silently
-  -- revert whatever landed in between (the 0136->0138 lesson).
-  if position('get diagnostics v_manifest = row_count' in v_src) = 0 then
-    raise exception '0303: the deployed resolver does not read v_manifest from row_count — refusing to overwrite an unexpected head';
-  end if;
+  insert into _0303_before values (
+    v_before.body_md5, v_before.body_len, v_before.owner, v_before.secdef,
+    v_before.volatility, v_before.parallel, v_before.proconfig,
+    v_before.args, v_before.result, v_before.acl);
 
-  -- And the guard it feeds must still be there, or the fix has nothing to protect.
-  if position('empty_manifest' in v_src) = 0 then
-    raise exception '0303: the deployed resolver carries no empty_manifest guard — refusing to overwrite an unexpected head';
+  if v_before.body_md5 <> '5bdf472aa45e16b7489f95ee924cc490' then
+    raise exception
+      '0303 DRIFT GATE: deployed resolver body md5 % (len %) is not the reviewed head 5bdf472aa45e16b7489f95ee924cc490 (len 10445) — the deployed function has changed since this migration was written. Re-derive the diff by hand; do NOT relax this gate.',
+      v_before.body_md5, v_before.body_len;
   end if;
 end
 $pre$;
@@ -343,5 +372,56 @@ begin
   raise notice '0303 self-assert ok: the ambush manifest guard counts the manifest (not the insert); guard policy, idempotent freeze and composed chain unchanged';
 end
 $post$;
+
+-- ══════════ METADATA PARITY — the swap changed the BODY and nothing else about the function ═════════
+-- A re-created SECURITY DEFINER function is a privilege surface. `create or replace` preserves owner
+-- and grants, but "preserves" is a claim; this asserts it. Every attribute captured before the replace
+-- must be identical after it — owner, SECURITY DEFINER, volatility, parallel safety, search_path
+-- (proconfig), argument types, return type and ACL.
+do $meta$
+declare b record; a record;
+begin
+  select * into b from _0303_before;
+
+  select md5(p.prosrc)                                  as body_md5,
+         length(p.prosrc)                               as body_len,
+         pg_get_userbyid(p.proowner)                    as owner,
+         p.prosecdef                                    as secdef,
+         p.provolatile                                  as volatility,
+         p.proparallel                                  as parallel,
+         coalesce(array_to_string(p.proconfig, ','), '') as proconfig,
+         pg_get_function_identity_arguments(p.oid)      as args,
+         pg_get_function_result(p.oid)                  as result,
+         coalesce(p.proacl::text, '')                   as acl
+    into a
+    from pg_proc p
+   where p.oid = 'public.pirate_intercept_resolve_due_for_movement(uuid)'::regprocedure;
+
+  if a.owner is distinct from b.owner then
+    raise exception '0303 FAIL: function owner changed % -> %', b.owner, a.owner; end if;
+  if a.secdef is distinct from b.secdef then
+    raise exception '0303 FAIL: SECURITY DEFINER changed % -> %', b.secdef, a.secdef; end if;
+  if a.volatility is distinct from b.volatility then
+    raise exception '0303 FAIL: volatility changed % -> %', b.volatility, a.volatility; end if;
+  if a.parallel is distinct from b.parallel then
+    raise exception '0303 FAIL: parallel safety changed % -> %', b.parallel, a.parallel; end if;
+  if a.proconfig is distinct from b.proconfig then
+    raise exception '0303 FAIL: proconfig/search_path changed [%] -> [%]', b.proconfig, a.proconfig; end if;
+  if a.args is distinct from b.args then
+    raise exception '0303 FAIL: argument types changed (%) -> (%)', b.args, a.args; end if;
+  if a.result is distinct from b.result then
+    raise exception '0303 FAIL: return type changed % -> %', b.result, a.result; end if;
+  if a.acl is distinct from b.acl then
+    raise exception '0303 FAIL: execute grants changed % -> %', b.acl, a.acl; end if;
+
+  -- And the body MUST have changed — otherwise the replace was a no-op and the fix did not land.
+  if a.body_md5 = b.body_md5 then
+    raise exception '0303 FAIL: the function body is byte-identical to the head — the fix did not apply';
+  end if;
+
+  raise notice '0303 metadata parity ok: body changed (% -> %), owner/secdef/volatility/parallel/search_path/args/result/acl all identical',
+    b.body_md5, a.body_md5;
+end
+$meta$;
 
 commit;
