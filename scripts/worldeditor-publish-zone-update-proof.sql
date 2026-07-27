@@ -8,8 +8,11 @@
 -- replay); REJECTS a stale `expected` via OPTIMISTIC CONCURRENCY (stale_revision + source_changed for
 -- BOTH a name drift AND a geometry drift — the geometry compared spatially via ST_Equals, nothing
 -- written); REJECTS a self-intersecting polygon at the AUTHORITATIVE ST_IsValid gate (typed
--- validation_failed {invalid_geometry}); PROTECTS seeded source='circle' zones from edit (typed
--- validation_failed {protected_zone}); returns a typed not_found/source_missing for a vanished target and
+-- validation_failed {invalid_geometry}); gates seeded (provenance='seeded') zones on
+-- `seeded_zone_edit_enabled` — DARK protects with a typed validation_failed {protected_zone}, LIT accepts
+-- the edit while provenance stays 'seeded' so the gate remains a genuine toggle (PROOF 7 proves BOTH
+-- postures, txn-locally, and restores whatever posture the deployed chain ships); returns a typed
+-- not_found/source_missing for a vanished target and
 -- invalid_request for a non-uuid target; touches ONLY danger_zones and leaves the 0239 pirate-zone
 -- lockdown intact.
 --
@@ -405,10 +408,9 @@ begin
   raise notice 'PUBLISH_ZONE_UPD_PASS_INVALID_GEOMETRY_REJECTED';
 end $$;
 
--- ── PROOF 7 — a SEEDED zone is PROTECTED from edit (validation_failed {protected_zone}) ───────────────
+-- ── PROOF 7 — SEEDED-ZONE PROTECTION IS FLAG-GATED, AND THE GATE SWINGS BOTH WAYS ────────────────────
 -- Insert a seeded zone (superuser — zone_create only writes provenance='owner'); it must be
--- location-backed per the coherence CHECK. The expected MATCHES it (circle geometry → ST_Equals passes),
--- so we reach the protection guard rather than a stale rejection.
+-- location-backed per the coherence CHECK (0233:195: source='circle' ⇒ location_id not null).
 --
 -- provenance IS THE AUTHORITY, NOT source (0282). This fixture used to set only source='circle' and rely
 -- on the pre-0282 rule "seeded == source='circle'". 0282 split the two: `source` is the geometry kind,
@@ -417,19 +419,73 @@ end $$;
 -- provenance='owner', the guard correctly declines to protect it, and this proof failed while the guard
 -- was working exactly as specified. Set provenance explicitly (INSERT is allowed; 0282's immutability
 -- trigger only blocks UPDATE) so the proof tests the rule that actually exists.
--- Protection is gated by seeded_zone_edit_enabled, which 0283 seeds 'false' — so a fresh disposable
--- stack takes the protected branch here.
+--
+-- ── WHY THIS CASE IS NOW FLAG-AWARE (2026-07-27) ────────────────────────────────────────────────────
+-- Protection is not unconditional: 0287:173-179 (the zone_update head) protects only when
+--     provenance = 'seeded' AND NOT cfg_bool('seeded_zone_edit_enabled')
+-- and 0283 SEEDS that key 'false'. This case used to assert the DARK answer as if it were the only
+-- answer, which was true only for as long as the key stayed dark.
+--
+-- 0300 (`lights_on`) then set 44 capability keys true, `seeded_zone_edit_enabled` among them
+-- (0300:85-86) — a deliberate owner order, not a mistake. On that chain the protection branch no longer
+-- fires, control falls through to the OPTIMISTIC-CONCURRENCY gate at 0287:198-226, and because this
+-- fixture never carried a `source_revision` the fail-closed rule there answered
+--     {ok:false, error:'stale_revision', details:[{code:'source_changed', field:null}]}
+-- The old assertion read that as "protection is broken". It was not: a DIFFERENT gate answered, for a
+-- reason that had nothing to do with provenance. Asserting one posture as universal is what broke.
+--
+-- So this case now proves the INVARIANT rather than one of its two shadows: **the flag is the gate.**
+-- It pins the key txn-locally in BOTH positions (the same idiom this script already uses for
+-- `pirate_intercept_enabled` at PROOF 1 / PROOF 11, and that every sibling proof uses for its own flag
+-- set), asserts the correct answer under each, and restores whatever posture the deployed chain ships.
+-- The ambient value is read FIRST and named in every failure message, so a red log says immediately
+-- which posture production is in — and pinning means neither assertion can ever go dead, which a plain
+-- ambient branch could not promise once 0300 landed.
+--
+--   (a) DARK  → typed validation_failed {protected_zone}; the row is untouched; no audit row.
+--   (b) LIT   → the edit is ACCEPTED on a CURRENT revision and applied to the SAME id, and
+--               `provenance` STAYS 'seeded'. That last clause is the whole reversibility claim of
+--               0283's header ("Because provenance cannot move, flipping a flag off restores protection
+--               exactly") and of 0282's immutability trigger — lighting the key unlocks editing, it
+--               does NOT launder a seeded row into owner content. Also proven here: with the key lit a
+--               draft carrying NO revision token is STILL rejected `stale_revision` — i.e. exactly the
+--               answer the red run saw, now asserted as the concurrency gate it actually is.
+--   (c) DARK again → the SAME row, now owner-reshaped, is protected again. Not a repeat of (a): (a)
+--               proves an untouched seed is protected, (c) proves an EDITED seed re-protects, which is
+--               the one-way-door risk 0282 exists to prevent.
+--
+-- KNOWN SEAM, NOT ASSERTED HERE (named so nobody mistakes silence for a verdict): zone_update preserves
+-- `source` bit-for-bit (0287:397-399), so a seeded 'circle' row hand-reshaped while the key is lit stays
+-- source='circle' and 0296's rematerialize-on-location-edit writer will regenerate over the owner's
+-- shape. 0296:63-70 states this seam and says the fix belongs to zone_update's own slice. This proof
+-- therefore does NOT pin `source` after the lit edit — pinning it would cement the defect.
 do $$
 declare v_owner uuid; v_hostile uuid; v_id uuid; r jsonb; n int; v_row record;
+        v_ambient boolean; v_posture text; v_rev text;
 begin
   select v into v_owner from pubids where k = 'owner';
   select v into v_hostile from publoc where k = 'hostile';
+
+  -- THE AMBIENT POSTURE — read before anything is pinned, so the log names what production ships.
+  if not exists (select 1 from public.game_config where key = 'seeded_zone_edit_enabled') then
+    raise exception 'ZONE UPDATE PROOF FAIL: game_config has no seeded_zone_edit_enabled key — 0283 did not seed the gate this case exercises';
+  end if;
+  v_ambient := coalesce(public.cfg_bool('seeded_zone_edit_enabled'), false);
+  v_posture := case when v_ambient then 'LIT' else 'DARK' end;
+  raise notice 'PUBLISH_ZONE_UPD_SEEDED_GATE_AMBIENT=% (seeded_zone_edit_enabled as the deployed chain leaves it)', v_posture;
+
   insert into public.danger_zones (name, zone_kind, source, provenance, location_id, boundary, status, created_by)
     values ('ZUpd Seeded Circle', 'pirate', 'circle', 'seeded', v_hostile,
             ST_Buffer(ST_MakePoint(1000, 1000), 100, 32), 'active', v_owner)
     returning id into v_id;
 
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+
+  -- ── (a) DARK: the seeded zone is PROTECTED ────────────────────────────────────────────────────────
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_edit_enabled', 'false'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'false'::jsonb;
+
   r := public.zone_update('zoneupd-protected-1', jsonb_build_object(
          'target_id', v_id::text,
          'expected', jsonb_build_object('name','ZUpd Seeded Circle','zone_kind','pirate',
@@ -440,17 +496,115 @@ begin
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
      or not exists (select 1 from jsonb_array_elements(r->'details') d
                     where d->>'code' = 'protected_zone' and d->>'field' = 'source') then
-    raise exception 'ZONE UPDATE PROOF FAIL: a seeded circle zone was not protected with a typed protected_zone: %', r;
+    raise exception 'ZONE UPDATE PROOF FAIL [posture DARK, seeded_zone_edit_enabled pinned false; chain ambient = %]: a seeded circle zone was not protected with a typed protected_zone: %', v_posture, r;
   end if;
   select * into v_row from public.danger_zones where id = v_id;
   if v_row.name <> 'ZUpd Seeded Circle' or v_row.source <> 'circle' then
-    raise exception 'ZONE UPDATE PROOF FAIL: a protected-zone rejection changed the seeded row (%, %)', v_row.name, v_row.source;
+    raise exception 'ZONE UPDATE PROOF FAIL [posture DARK; chain ambient = %]: a protected-zone rejection changed the seeded row (%, %)', v_posture, v_row.name, v_row.source;
   end if;
   select count(*) into n from public.world_editor_audit where request_id = 'zoneupd-protected-1';
   if n <> 0 then
-    raise exception 'ZONE UPDATE PROOF FAIL: a protected-zone rejection wrote % audit row(s)', n;
+    raise exception 'ZONE UPDATE PROOF FAIL [posture DARK; chain ambient = %]: a protected-zone rejection wrote % audit row(s)', v_posture, n;
   end if;
-  raise notice 'PUBLISH_ZONE_UPD_PASS_PROTECTED_ZONE';
+
+  -- ── (b) LIT: the edit is ACCEPTED, and the row stays SEEDED ───────────────────────────────────────
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_edit_enabled', 'true'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'true'::jsonb;
+
+  -- fork a CURRENT revision, the way the client does off the live row (0287:198-205). Without it the
+  -- fail-closed concurrency rule answers stale_revision and the EDIT path is never reached — which is
+  -- precisely the artifact that made a lit chain look like broken protection.
+  select revision::text into v_rev from public.danger_zones where id = v_id;
+  r := public.zone_update('zoneupd-seeded-lit-1', jsonb_build_object(
+         'target_id', v_id::text,
+         'source_revision', v_rev,
+         'expected', jsonb_build_object('name','ZUpd Seeded Circle','zone_kind','pirate',
+           'attach_location_id', v_hostile::text,
+           'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',1000,'y',1000),'radius',100)),
+         'fields', jsonb_build_object('name','Hijacked Seed','attach_location_id', v_hostile::text,
+           'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',1000,'y',1000),'radius',150))));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT, seeded_zone_edit_enabled pinned true; chain ambient = %]: seeded-zone editing is enabled, so a CURRENT-revision edit of a seeded zone must be ACCEPTED: %', v_posture, r;
+  end if;
+  if (r->'result'->>'updated') <> 'true' or (r->'result'->>'id') <> v_id::text
+     or (r->'result'->>'name') <> 'Hijacked Seed' then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: the accepted seeded edit returned a malformed result: %', v_posture, r;
+  end if;
+  select * into v_row from public.danger_zones where id = v_id;
+  if v_row.name <> 'Hijacked Seed' or v_row.location_id is distinct from v_hostile
+     or v_row.status <> 'active' then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: the accepted seeded edit did not apply (%, %, %)', v_posture, v_row.name, v_row.location_id, v_row.status;
+  end if;
+  -- the boundary was re-materialized to the NEW radius (150, not the seeded 100).
+  if not ST_IsValid(v_row.boundary) or not ST_Contains(v_row.boundary, ST_MakePoint(1000, 1000)) then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: the re-materialized seeded boundary is not a valid polygon containing its own center', v_posture;
+  end if;
+  if abs(ST_Area(v_row.boundary) - pi() * 150 * 150) > 0.05 * pi() * 150 * 150 then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: the edited seeded boundary area % is not ~pi*150^2 — the new radius did not take', v_posture, ST_Area(v_row.boundary);
+  end if;
+  -- THE REVERSIBILITY CLAIM: editing a seeded zone must NOT reclassify it. provenance is immutable
+  -- (0282's trigger) and zone_update never writes it, so the row is still protectable material.
+  if v_row.provenance <> 'seeded' then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted edit moved provenance to ''%'' — lighting the key would be a ONE-WAY DOOR, not a toggle', v_posture, v_row.provenance;
+  end if;
+  select count(*) into n from public.world_editor_audit where request_id = 'zoneupd-seeded-lit-1';
+  if n <> 1 then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted seeded edit wrote % audit row(s) (expected exactly 1)', v_posture, n;
+  end if;
+
+  -- …and with the key LIT the concurrency gate is still the one that fails closed: a draft carrying NO
+  -- revision token is rejected stale_revision. This is the exact answer a lit chain gave the old
+  -- assertion; it is asserted here as what it really is, so it can never again be read as lost protection.
+  r := public.zone_update('zoneupd-seeded-lit-norev-1', jsonb_build_object(
+         'target_id', v_id::text,
+         'expected', jsonb_build_object('name','Hijacked Seed','zone_kind','pirate',
+           'attach_location_id', v_hostile::text,
+           'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',1000,'y',1000),'radius',150)),
+         'fields', jsonb_build_object('name','Hijacked Seed II','attach_location_id', v_hostile::text,
+           'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',1000,'y',1000),'radius',160))));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'stale_revision'
+     or not exists (select 1 from jsonb_array_elements(r->'details') d where d->>'code' = 'source_changed') then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: a token-less draft must still fail closed as stale_revision even when seeded editing is enabled: %', v_posture, r;
+  end if;
+  select count(*) into n from public.world_editor_audit where request_id = 'zoneupd-seeded-lit-norev-1';
+  if n <> 0 then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture LIT; chain ambient = %]: a stale-rejected seeded edit wrote % audit row(s)', v_posture, n;
+  end if;
+
+  -- ── (c) DARK again: the EDITED seeded row re-protects exactly ─────────────────────────────────────
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_edit_enabled', 'false'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'false'::jsonb;
+
+  r := public.zone_update('zoneupd-protected-again-1', jsonb_build_object(
+         'target_id', v_id::text,
+         'source_revision', (select revision::text from public.danger_zones where id = v_id),
+         'expected', jsonb_build_object('name','Hijacked Seed','zone_kind','pirate',
+           'attach_location_id', v_hostile::text,
+           'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',1000,'y',1000),'radius',150)),
+         'fields', jsonb_build_object('name','Hijacked Seed III','attach_location_id', v_hostile::text,
+           'geometry', jsonb_build_object('kind','circle','center', jsonb_build_object('x',1000,'y',1000),'radius',170))));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or not exists (select 1 from jsonb_array_elements(r->'details') d
+                    where d->>'code' = 'protected_zone' and d->>'field' = 'source') then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture DARK-after-edit; chain ambient = %]: turning seeded_zone_edit_enabled back off did not RE-PROTECT an already-edited seeded zone — the flag is a one-way door: %', v_posture, r;
+  end if;
+  select count(*) into n from public.world_editor_audit where request_id = 'zoneupd-protected-again-1';
+  if n <> 0 then
+    raise exception 'ZONE UPDATE PROOF FAIL [posture DARK-after-edit; chain ambient = %]: a re-protection rejection wrote % audit row(s)', v_posture, n;
+  end if;
+
+  -- ── restore the posture the deployed chain ships (the whole txn rolls back anyway; this keeps every
+  -- later case reading the REAL chain value rather than this case's last pin). ───────────────────────
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_edit_enabled', to_jsonb(v_ambient), 'proof-txn-local')
+    on conflict (key) do update set value = to_jsonb(v_ambient);
+  if coalesce(public.cfg_bool('seeded_zone_edit_enabled'), false) is distinct from v_ambient then
+    raise exception 'ZONE UPDATE PROOF FAIL: this case did not restore seeded_zone_edit_enabled to the chain''s ambient % posture', v_posture;
+  end if;
+
+  raise notice 'PUBLISH_ZONE_UPD_PASS_PROTECTED_ZONE (gate proven in BOTH postures; chain ambient = %)', v_posture;
 end $$;
 
 -- ── PROOF 8 — the audit row carries BOTH before_snapshot AND after_snapshot (an update, not a create) ─
