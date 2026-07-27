@@ -37,25 +37,30 @@ interface MainShipStateRow {
   status: string
 }
 
-const NO_SHIP: PortEntryShipState = { hasShip: false, shipStatus: null, place: null }
-
 /**
- * Owner-read the DISPLAY state that drives affordance selection: does a ship exist, its status, and its
- * fleet-positions `place`. All owner-reads; no RPC mutation, no writes. Any read error fails closed —
- * a missing ship read → "no ship"; an unreadable projection → place null (→ the 'indeterminate'
- * explanation, never a wrong action).
+ * Owner-read the DISPLAY state that drives affordance selection: HOW MANY ships the player owns, plus
+ * the resolved single ship's status and fleet-positions `place`. All owner-reads; no RPC mutation, no
+ * writes.
+ *
+ * Returns null when the read FAILED — "I could not find out", which is NOT "you own no ships". The
+ * classifier turns null into silence; only a successful read reporting zero rows may offer the claim.
+ * (This function used to return a hardcoded no-ship state on error, and the panel rendered "Claim First
+ * Ship" from it — a transport hiccup made the player's whole fleet read as gone.)
  */
-export async function fetchPortEntryShipState(mainShipId?: string | null): Promise<PortEntryShipState> {
-  // Plural-safe owner-read: read ALL owned ships and resolve deterministically (never `.maybeSingle()`, which
-  // errors at N≥2 → fails closed to "no ship"). Null resolution (none, or ambiguous >1 without a selection)
-  // → the no-ship affordance, never an arbitrary ship's state.
+export async function fetchPortEntryShipState(mainShipId?: string | null): Promise<PortEntryShipState | null> {
+  // Plural-safe owner-read: read ALL owned ships (never `.maybeSingle()`, which errors at N≥2).
   const { data, error } = await supabase
     .from('main_ship_instances')
     .select('main_ship_id, status')
     .order('created_at', { ascending: true }) // stable enumeration only; the pick is resolver-decided, not first-row
-  if (error) return NO_SHIP
-  const ship = resolveOwnedShip((data ?? []) as MainShipStateRow[], mainShipId)
-  if (!ship) return NO_SHIP
+  if (error) return null
+  const ships = (data ?? []) as MainShipStateRow[]
+
+  // WHETHER a ship exists is the row COUNT. WHICH ship the explanatory arms describe is the resolver's
+  // job — and it deliberately fails closed to null at N≥2 without a selection. Those are two different
+  // questions; answering the first with the resolver is what showed "Claim First Ship" to a 5-ship fleet.
+  const ship = resolveOwnedShip(ships, mainShipId)
+  if (!ship) return { shipCount: ships.length, shipStatus: null, place: null }
 
   // The ship's placement, from the ONE projection (get_my_fleet_positions — the same read the map,
   // Port hub, and Fitting tab consume). A destroyed ship has no row (handled by the status check in
@@ -63,5 +68,5 @@ export async function fetchPortEntryShipState(mainShipId?: string | null): Promi
   const positions = await fetchMyFleetPositions()
   const place = positions.find((p) => p.main_ship_id === ship.main_ship_id)?.place ?? null
 
-  return { hasShip: true, shipStatus: ship.status, place }
+  return { shipCount: ships.length, shipStatus: ship.status, place }
 }

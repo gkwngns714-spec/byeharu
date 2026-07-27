@@ -8,10 +8,11 @@ import { Card, Button, Notice } from '../../components/ui'
 // Renders exactly ONE affordance derived from server-authoritative state (the ship's
 // get_my_fleet_positions `place` — 4C-CLIENT repointed this off the retired spatial_state column,
 // and the legacy "Finish Docking" / waypoint arms left with the extinct legacy_present state):
-//   • no ship             → "Claim First Ship"  (commission_first_main_ship)
+//   • zero ships          → "Claim First Ship"  (commission_first_main_ship)
 //   • docked / berthed    → nothing (the ordinary docked experience is the Port destination's DockedPortCard)
 //   • hidden (idle)       → a read-only explanation (travel to a port)
 //   • transit / in_space / destroyed / indeterminate → a read-only safe explanation, no action
+//   • unknown             → nothing (read pending, read failed, or a fleet with no single ship addressed)
 //
 // The action is zero-arg and auth.uid()-scoped; the client sends no ids/coords/status. Duplicate
 // submits are prevented (a synchronous ref guard + the controller's single-in-flight phase guard); the button
@@ -117,7 +118,8 @@ export function PortEntryPanel({ deps }: { deps?: UsePortEntryOverrides }) {
       )
     }
 
-    // 'loading' (not yet read) and 'docked' (ordinary docked experience elsewhere) render nothing.
+    // 'unknown' (not read / read failed / a fleet with no single ship addressed) and 'docked'
+    // (the ordinary docked experience lives elsewhere) render nothing.
     default:
       return null
   }
