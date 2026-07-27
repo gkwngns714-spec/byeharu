@@ -2298,14 +2298,17 @@ begin
   --    the three ghost-dock tables (the NOSHIPWRITE idiom widened — the recorded 3a lesson).
   if (select status from public.fleets where id = v_gofleet) is distinct from 'moving' then
     raise exception 'HUNTUNI-INFLIGHT FAIL: the unified fleet is not moving — the in-flight state was not built'; end if;
+  -- gF's first hunt: arm it so the rejects below are the reasons this block is actually about, and
+  -- not fleet_inactive_no_command masking every one of them.
+  -- ★ ORDER MATTERS: arm BEFORE the snapshot. arm_group legitimately writes is_command_ship on
+  -- ★ main_ship_instances, and this block's whole point is that the REJECTED hunt writes nothing —
+  -- ★ so arming after the snapshot books the helper's own write against the hunt and fails the diff.
+  perform pg_temp.arm_group(uF, gF);
   create temp table hu_ships_before as select * from public.main_ship_instances;
   create temp table hu_fleets_before as select * from public.fleets;
   create temp table hu_pres_before  as select * from public.location_presence;
   select count(*) into n from hu_ships_before;
   if n = 0 then raise exception 'HUNTUNI-INFLIGHT FAIL: empty before-snapshot — the zero-write diff would be vacuous'; end if;
-  -- gF's first hunt: arm it so the rejects below are the reasons this block is actually about, and
-  -- not fleet_inactive_no_command masking every one of them.
-  perform pg_temp.arm_group(uF, gF);
   r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gF, v_hunt));
   if (r->>'reason') is distinct from 'group_fleet_in_flight' then
     raise exception 'HUNTUNI-INFLIGHT FAIL: hunt while the unified fleet is MOVING answered %', r; end if;
