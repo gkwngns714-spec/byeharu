@@ -2045,6 +2045,10 @@ begin
   gE := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uE, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', e1, gE));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-DARKPARITY FAIL: assign e1: %', r; end if;
+  -- ★ Third sortie fixture hitting the lit fleet_control_enabled gate (0204): no command ship ⇒ the
+  -- ★ fleet is inactive and send_ship_group_hunt answers fleet_inactive_no_command. Sole writer, real sub.
+  r := pg_temp.call_as(uE, format('public.set_fleet_command_ship(%L::uuid, true)', e1));
+  if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-DARKPARITY FAIL: command e1: %', r; end if;
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
