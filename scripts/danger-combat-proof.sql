@@ -607,15 +607,27 @@ begin
   if v_pres is null then
     raise exception 'DZCOMBAT FAIL REAMBUSH: the first encounter carries no presence to retreat from';
   end if;
+  -- Drain to a TERMINAL encounter, not merely out of 'active'. presence_request_leave moves the
+  -- encounter to 'retreating', and a retreating encounter is still a live combat commitment: step 8
+  -- classifies a re-order against it as case (b) and only UPDATES the retreat destination
+  -- ('retreat_destination_updated') instead of starting a new leg. Draining to 'active' alone would
+  -- therefore never free the fleet. The retreat also mints its own movement, so the movement processor
+  -- is driven alongside the combat ticks to settle it.
   perform public.presence_request_leave(v_pres);
-  for i in 1..40 loop
-    exit when (select status from public.combat_encounters where id = v_enc1) <> 'active';
+  for i in 1..60 loop
+    exit when (select status from public.combat_encounters where id = v_enc1)
+              not in ('active', 'retreating');
     update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute'
      where id = v_enc1;
     perform public.process_combat_ticks();
+    update public.fleet_movements set depart_at = depart_at - interval '1 hour',
+                                      arrive_at = arrive_at - interval '1 hour'
+     where fleet_id = v_fleet and status = 'moving';
+    perform public.process_fleet_movements();
   end loop;
-  if (select status from public.combat_encounters where id = v_enc1) = 'active' then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the first encounter never left active — cannot re-order the fleet';
+  if (select status from public.combat_encounters where id = v_enc1) in ('active', 'retreating') then
+    raise exception 'DZCOMBAT FAIL REAMBUSH: the first encounter is still % after draining — the fleet cannot be freed',
+      (select status from public.combat_encounters where id = v_enc1);
   end if;
 
   -- ── SECOND ORDER, back through the same zone. Real RPC, the same verb the player uses. A refusal
