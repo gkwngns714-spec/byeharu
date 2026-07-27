@@ -46,6 +46,36 @@ begin
   return v;
 end $$;
 
+-- ★ ARM_GROUP — the ONE place this file gives a group its command ship (added 2026-07-27) ────────────
+-- 0300 lit fleet_control_enabled. Per 0204 that makes is_command_ship load-bearing: a group with no
+-- designated command ship is an INACTIVE fleet, and every group verb answers fleet_inactive_no_command.
+-- That reason is returned BEFORE the specific ones this file asserts, so an unarmed fixture breaks the
+-- NEGATIVE blocks too (member_busy / group_on_sortie / fleet_ambiguous / group_fleet_in_flight would
+-- all be masked) — not just the sends that expect ok. Arming each group once fixes both directions.
+--
+-- Deliberately a helper, not a per-site copy-paste: this is fixture provisioning that ~8 groups need,
+-- and duplicating it at every call site is the thing that turns a proof into spaghetti. It writes
+-- through set_fleet_command_ship, the sole writer (0204), as the owning authenticated sub — never a
+-- direct UPDATE of is_command_ship, which would provision a state no player can reach.
+-- Idempotent: a group that already has a command ship is left exactly as it is.
+create or replace function pg_temp.arm_group(p_uid uuid, p_group uuid) returns void language plpgsql as $$
+declare r jsonb; v_ship uuid;
+begin
+  if exists (select 1 from public.main_ship_instances
+              where group_id = p_group and is_command_ship) then
+    return;
+  end if;
+  select main_ship_id into v_ship from public.main_ship_instances
+   where group_id = p_group order by main_ship_id limit 1;
+  if v_ship is null then
+    raise exception 'arm_group: group % has no member to designate — the fixture is not built yet', p_group;
+  end if;
+  r := pg_temp.call_as(p_uid, format('public.set_fleet_command_ship(%L::uuid, true)', v_ship));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'arm_group: set_fleet_command_ship(%) rejected: %', v_ship, r;
+  end if;
+end $$;
+
 -- the ship-state snapshot/diff helpers — the §2 assertion machinery.
 -- S1-BERTH (0216): the snapshot now covers berth_location_id too — under the berth model a ship's
 -- LOCATION for the unfleeted case lives in that column, so the §2 law ("a mover never writes a
@@ -1136,13 +1166,7 @@ begin
   gC := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', c1, gC));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: assign c1: %', r; end if;
-  -- ★ 0300 lit fleet_control_enabled, so a fleet with no command ship is INACTIVE and cannot sortie
-  -- ★ (0204: 'a fleet needs >=1 command ship to be active'; the send answered fleet_inactive_no_command).
-  -- ★ Designated through the sole writer set_fleet_command_ship, as a real authenticated sub — this
-  -- ★ fixture is provisioned by real RPCs only, and darkening fleet_control to dodge the gate would
-  -- ★ prove the overlap on a fleet shape players can no longer have.
-  r := pg_temp.call_as(uC, format('public.set_fleet_command_ship(%L::uuid, true)', c1));
-  if (r->>'ok')::boolean is not true then raise exception 'HUNTOVERLAP FAIL: command c1: %', r; end if;
+  perform pg_temp.arm_group(uC, gC);
 
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
@@ -1576,9 +1600,7 @@ begin
   gD := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uD, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', d1, gD));
   if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD FAIL: assign d1: %', r; end if;
-  -- ★ Same 0300 lights-on consequence as HUNTOVERLAP: the sortie needs a command ship. Sole writer.
-  r := pg_temp.call_as(uD, format('public.set_fleet_command_ship(%L::uuid, true)', d1));
-  if (r->>'ok')::boolean is not true then raise exception 'ASSIGNGUARD FAIL: command d1: %', r; end if;
+  perform pg_temp.arm_group(uD, gD);
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
@@ -2045,10 +2067,7 @@ begin
   gE := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uE, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', e1, gE));
   if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-DARKPARITY FAIL: assign e1: %', r; end if;
-  -- ★ Third sortie fixture hitting the lit fleet_control_enabled gate (0204): no command ship ⇒ the
-  -- ★ fleet is inactive and send_ship_group_hunt answers fleet_inactive_no_command. Sole writer, real sub.
-  r := pg_temp.call_as(uE, format('public.set_fleet_command_ship(%L::uuid, true)', e1));
-  if (r->>'ok')::boolean is not true then raise exception 'HUNTUNI-DARKPARITY FAIL: command e1: %', r; end if;
+  perform pg_temp.arm_group(uE, gE);
   select id into v_hunt from public.locations
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
@@ -2284,6 +2303,9 @@ begin
   create temp table hu_pres_before  as select * from public.location_presence;
   select count(*) into n from hu_ships_before;
   if n = 0 then raise exception 'HUNTUNI-INFLIGHT FAIL: empty before-snapshot — the zero-write diff would be vacuous'; end if;
+  -- gF's first hunt: arm it so the rejects below are the reasons this block is actually about, and
+  -- not fleet_inactive_no_command masking every one of them.
+  perform pg_temp.arm_group(uF, gF);
   r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gF, v_hunt));
   if (r->>'reason') is distinct from 'group_fleet_in_flight' then
     raise exception 'HUNTUNI-INFLIGHT FAIL: hunt while the unified fleet is MOVING answered %', r; end if;
@@ -2534,6 +2556,7 @@ begin
      );
   if n <> 1 then raise exception 'HUNTUNI-BOOTSTRAP FAIL: g1 is not docked (fleet truth) — the 0199 arm would be vacuous'; end if;
 
+  perform pg_temp.arm_group(uG, gG);
   r := pg_temp.call_as(uG, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gG, v_hunt));
   if (r->>'ok')::boolean is not true then
     raise exception 'HUNTUNI-BOOTSTRAP FAIL: lit hunt from a fleetless docked group rejected: % (the =0 arm must fall through to the head)', r; end if;
@@ -2619,6 +2642,7 @@ begin
   end if;
 
   -- ── ★ FROMSPACE ★ the hunt consumes the parked fleet and departs its coordinate. ───────────────
+  perform pg_temp.arm_group(uH, gH);
   r := pg_temp.call_as(uH, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
   if (r->>'ok')::boolean is not true then
     raise exception 'HUNTUNI-FROMSPACE FAIL: hunt from a space-parked fleet rejected: %', r; end if;
@@ -2693,6 +2717,7 @@ begin
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
   if v_hunt is null then raise exception 'STOP-SORTIE FAIL: no active hunt site — the fixture cannot be built'; end if;
+  perform pg_temp.arm_group(uI, gI);
   r := pg_temp.call_as(uI, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gI, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'STOP-SORTIE FAIL: lit hunt rejected: %', r; end if;
   v_huntfleet := (r->>'fleet_id')::uuid;
@@ -3954,6 +3979,7 @@ begin
    where status = 'active' and activity_type = 'hunt_pirates'
    order by coalesce(min_power_required, 0) asc limit 1;
   if v_hunt is null then raise exception 'S4 ONSORTIE FAIL: no active hunt site — the fixture cannot be built'; end if;
+  perform pg_temp.arm_group(uU, gU);
   r := pg_temp.call_as(uU, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gU, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'S4 ONSORTIE FAIL: lit hunt rejected: %', r; end if;
   v_huntfleet := (r->>'fleet_id')::uuid;
