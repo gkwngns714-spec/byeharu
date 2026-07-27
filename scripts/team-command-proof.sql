@@ -1304,15 +1304,26 @@ begin
   t  := public.calculate_group_expedition_stats(uC, gH, 'pirate_hunt');
   s1 := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'pirate_hunt');
   s2 := public.calculate_expedition_stats(uC, c2, '[]'::jsonb, 'pirate_hunt');
-  select count(*) into v_active_before from public.fleets
-    where player_id = uC and status in ('moving','present','returning');
+  -- ★ WHAT "no active fleet" HAS TO MEAN NOW (repointed 2026-07-27). This guard exists so the send
+  -- ★ below is measured against a clean slate — no sortie already in flight. It used to count any
+  -- ★ fleet in moving/present/returning, which was equivalent while launch_from_dock_enabled was dark.
+  -- ★ 0300 lit it, so a group that is merely DOCKED now legitimately owns a unified fleet sitting
+  -- ★ 'present' at its port (CI found exactly that: a main_ship_id-NULL fleet 'present' at Haven).
+  -- ★ Counting that as an active fleet asserts the dark world, not the game. So the guard now counts
+  -- ★ what it always meant: a fleet in TRANSIT, or one holding an OPEN sortie manifest.
+  select count(*) into v_active_before from public.fleets f
+    where f.player_id = uC
+      and (f.status in ('moving','returning')
+           or exists (select 1 from public.group_sortie_members gsm where gsm.fleet_id = f.id));
   if v_active_before <> 0 then
     raise exception 'TEAMHUNT FAIL precondition: uC has % active fleets (want 0): %',
       v_active_before,
       (select string_agg(format('%s status=%s group=%s main_ship=%s loc=%s',
                                 f.id, f.status, f.group_id, f.main_ship_id, f.current_location_id), ' | ')
          from public.fleets f
-        where f.player_id = uC and f.status in ('moving','present','returning'));
+        where f.player_id = uC
+          and (f.status in ('moving','returning')
+               or exists (select 1 from public.group_sortie_members gsm where gsm.fleet_id = f.id)));
   end if;
 
   -- ── SEND ──────────────────────────────────────────────────────────────────────────────────────────
