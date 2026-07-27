@@ -339,10 +339,20 @@ begin
 end $$;
 
 -- ════════ BLOCK DARK: every team RPC rejects-BEFORE-read while team_command_enabled=false ════════
--- Run BEFORE any flag flip, as a REAL authenticated sub, with RANDOM NONEXISTENT ids. If any RPC read
--- group/ship state before its gate, these calls would surface group_not_found / ship_not_found (or the
--- upsert would return ok and write a row) instead of team_command_disabled — so this proves the gate
--- fires before any read, with no existence oracle.
+-- Asserted as a REAL authenticated sub, with RANDOM NONEXISTENT ids. If any RPC read group/ship state
+-- before its gate, these calls would surface group_not_found / ship_not_found (or the upsert would
+-- return ok and write a row) instead of team_command_disabled — so this proves the gate fires before
+-- any read, with no existence oracle.
+--
+-- ★ THE PRECONDITION IS STATED, NOT ASSUMED (repointed 2026-07-27). This block used to rely on the
+-- ★ SEEDED value of team_command_enabled being false, and ran "before any flag flip". Migration 0300
+-- ★ (lights-on) legitimately seeds it TRUE, so the ambient default is no longer dark and this block
+-- ★ failed on every branch. A proof must never depend on a production default it does not own: the
+-- ★ dark scenario now SETS its own precondition in-txn, exactly as every other scenario in this file
+-- ★ already does (and as the flip at the end of this block already did). The assertions themselves
+-- ★ are UNCHANGED and still non-vacuous — the gate is reversible (rolling 0300 back is a set-to-false),
+-- ★ so proving the OFF behaviour still protects a reachable state.
+update public.game_config set value='false'::jsonb where key='team_command_enabled';
 do $$
 declare r jsonb; n int; uA uuid := (select v from tcmd where k='uA'); slag uuid := (select v from tcmd where k='slag');
 begin

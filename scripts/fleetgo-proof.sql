@@ -156,9 +156,17 @@ begin
 end $$;
 
 -- ════════ BLOCK DARK: the mover rejects BEFORE any read while fleet_movement_unified_enabled=false ════
--- Run BEFORE any flag flip, as a REAL authenticated sub, with a RANDOM NONEXISTENT group id AND a
--- random nonexistent location. If the gate read group/location state first, these would surface
--- group_not_found / invalid_location instead — so this proves reject-before-read with no existence oracle.
+-- Asserted as a REAL authenticated sub, with a RANDOM NONEXISTENT group id AND a random nonexistent
+-- location. If the gate read group/location state first, these would surface group_not_found /
+-- invalid_location instead — so this proves reject-before-read with no existence oracle.
+--
+-- ★ THE PRECONDITION IS STATED, NOT ASSUMED (repointed 2026-07-27). This block used to rely on the
+-- ★ SEEDED value of fleet_movement_unified_enabled being false. Migration 0300 (lights-on) legitimately
+-- ★ seeds it TRUE, so the ambient default is no longer dark and the first assertion below started
+-- ★ reporting group_not_found — the mover was past its gate, not broken. Every LATER dark sub-scenario
+-- ★ in this same file already sets the flag false explicitly (see the STOPDARK / redirect blocks); this
+-- ★ block was the one place still trusting the seed. Assertions UNCHANGED.
+update public.game_config set value='false'::jsonb where key='fleet_movement_unified_enabled';
 do $$
 declare r jsonb; uA uuid := (select v from fg where k='uA'); slag uuid := (select v from fg where k='slag');
 begin
