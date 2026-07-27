@@ -6,8 +6,7 @@
 -- DEFECT A -- "power 0" IS FABRICATED (server side; this migration)
 --   The owner watched a healthy 4-ship team fight and the map card read "4 ships . power 0".
 --   process_combat_ticks wrote player_power_current = fleet_get_power(e.fleet_id) at both of its
---   encounter-update sites (the TRUE head, 20260618000294:930 and :1106). fleet_get_power
---   (20260616000006:101-112) is
+--   encounter-update sites. fleet_get_power (20260616000006:101-112) is
 --       select coalesce(sum(ut.power_score * fu.quantity), 0)
 --         from fleet_units fu join unit_types ut on ut.id = fu.unit_type_id
 --        where fu.fleet_id = p_fleet;
@@ -19,7 +18,7 @@
 --   EVERY tick of EVERY group encounter. src/features/map/CombatMapCard.tsx renders it verbatim.
 --
 --   A SECOND, SMALLER BLEED, verified while auditing: the SPATIAL arm never calls
---   fleet_sync_quantities (the call at 0294:1067 is inside the aggregate arm only). So even a LEGACY
+--   fleet_sync_quantities (that call sits in the aggregate arm only). So even a LEGACY
 --   fleet_units-backed fleet fighting spatially reported its PRE-BATTLE power forever -- the number
 --   never moved as its ships died. Both bleeds close here for the same reason: an encounter's power
 --   must come from the encounter.
@@ -27,7 +26,7 @@
 -- THE FIX -- ONE COMBAT-SIDE AUTHORITY, NO NEW SNAPSHOT COLUMN
 --   public.combat_encounter_side_power(encounter, side) sums the encounter's OWN live combat_units.
 --   It does NOT invent a formula and it does NOT add a second snapshot: it is exactly the two
---   definitions of player_power_start that the two encounter creators already write, unified --
+--   definitions of player_power_start that the two encounter creators already write --
 --     * a MEMBER row (main_ship_id set) contributes attack_snapshot. combat_create_group_encounter
 --       (20260618000293:198-408) sets v_attack := calculate_expedition_stats(...)->>'combat_power',
 --       writes it to attack_snapshot, and writes player_power_start := sum(v_attack). attack_snapshot
@@ -37,7 +36,7 @@
 --       fleet_get_power meant, and what combat_create_encounter (20260618000168:504) writes as
 --       player_power_start for a legacy fleet.
 --   The snapshot-first coalesce(attack_snapshot, catalog stat) shape is the house idiom already used
---   by the tick's own offense fold at 0294:450 -- reused, not reinvented.
+--   by the tick's own offense fold -- reused, not reinvented.
 --
 --   CONSEQUENCE, DELIBERATE: an out-of-combat fleet edit can no longer move a running encounter's
 --   displayed power. That is the point of a snapshot.
@@ -45,7 +44,7 @@
 -- fleet_get_power IS NOT CHANGED, AND HERE IS THE FULL CALLER AUDIT THAT SAYS WHY
 --   Every reference across supabase/migrations, src/, scripts/ and .github/ was enumerated and
 --   attributed to its enclosing function; there are ZERO callers outside SQL. Live callers, at head:
---     1. process_combat_ticks           head 0294:930 / :1106  -- the two sites repointed here.
+--     1. process_combat_ticks           -- the two sites repointed here.
 --     2. combat_create_encounter        head 20260618000168:504 -- the LEGACY branch, reached only
 --        when the fleet has no group_sortie_members manifest. That fleet DOES have fleet_units, so
 --        fleet_get_power is correct there; a manifest fleet is routed to the group creator one line
@@ -61,16 +60,15 @@
 -- ===================================================================================================
 -- DEFECT B -- "ENEMY 0 ships . integrity 0/285" UNEXPLAINED (client side; same slice, no SQL)
 --   That is not a bug in the numbers, it is the 3-second inter-wave pause showing through. The tick
---   clears the enemy side and stamps the timer at 0294:926/929 (enemy_integrity_current =
---   greatest(0, v_e_after) -- zero on a wipe -- and next_wave_at = now() + wave_transition_seconds,
---   default 3s at 0294:377), then pauses at 0294:589-598 until next_wave_at passes.
+--   clears the enemy side on a wipe (enemy_integrity_current = greatest(0, v_e_after)) and stamps
+--   next_wave_at = now() + wave_transition_seconds (default 3s), then pauses until it passes.
 --   src/features/combat/ActiveCombatPanel.tsx ALREADY derived and rendered this; next_wave_at was
 --   already on the wire (src/features/combat/combatTypes.ts:25). The map card simply never got it.
 --   Fixed by EXTRACTING that derivation into ONE shared pure selector,
---   src/features/combat/combatPhase.ts (selectCombatPhase + nextWaveText), and composing it into BOTH
---   ActiveCombatPanel and CombatMapCard -- extracted, never duplicated. Between waves the map card
---   now says "Next wave incoming" and SUPPRESSES the placeholder 0 ships / 0/285 values.
---   Covered by tests/combatPhase.spec.ts (Playwright, pure-unit).
+--   src/features/combat/combatPhase.ts (selectCombatPhase + nextWaveSeconds + nextWaveText), and
+--   composing it into BOTH ActiveCombatPanel and CombatMapCard -- extracted, never duplicated.
+--   Between waves the map card now says "Next wave incoming" and SUPPRESSES the placeholder
+--   0 ships / 0/285 values. Covered by tests/combatPhase.spec.ts (Playwright, pure-unit).
 --
 -- ===================================================================================================
 -- NO FLAG. STATED PLAINLY, BECAUSE DARK-FIRST IS THE STANDING LAW HERE AND THIS DEPARTS FROM IT.
@@ -88,8 +86,8 @@
 --   "4 ships . power 0" reads its true power, with no reload and no interruption of the fight.
 --   Two exact caveats, both verified in the head:
 --     * an encounter sitting inside the 3-second inter-wave PAUSE is refreshed by the first tick
---       AFTER the pause ends -- the paused branch (0294:598) writes tick_number/danger_level/
---       last_resolved_at only and never wrote power, before or after this slice.
+--       AFTER the pause ends -- the paused branch writes tick_number/danger_level/last_resolved_at
+--       only and never wrote power, before or after this slice.
 --     * the value shown will now FALL as ships are destroyed (it is current power, not starting
 --       power). For a legacy aggregate fight that was already true; for a group fight and for any
 --       spatial fight it is new, and it is correct.
@@ -97,23 +95,43 @@
 --   coordinate value is touched, and no encounter is created, ended or re-targeted by this file.
 --
 -- ===================================================================================================
+-- THE BASE MOVED UNDER THIS SLICE, AND THE PROOF CAUGHT IT. READ THIS BEFORE EDITING.
+--   The first draft of 0299 spliced 20260618000294:255-1157, which WAS the true head when this slice
+--   was authored. While it was in flight, 20260618000298_retreat_to_any_destination.sql landed and
+--   re-created process_combat_ticks, making 0298 the true head. The disposable-matrix apply-proof
+--   (run 30229320374, full chain, real Postgres) went RED on THIS migration's own precondition:
+--       ERROR: 0299: the deployed process_combat_ticks does not carry 0292's chosen-destination
+--              retreat -- refusing to re-emit from an unknown base (SQLSTATE P0001)
+--   That was the guard working exactly as designed, and it was load-bearing: had the precondition
+--   been one shade laxer, 0299 would have applied and SILENTLY REVERTED retreat-to-any-destination
+--   -- the owner's most-repeated instruction of the session -- on a live ~30-player game, because the
+--   spliced 0294 body still carried 0292's single-column read.
+--   TWO things were wrong and both are fixed below: the precondition was pinned to a literal 0298
+--   deliberately deleted (it now accepts EITHER shape), and the emitted body was a revert (it is now
+--   spliced from 0298, and the self-assert pins 0298's shape POSITIVELY and pins 0292's superseded
+--   read ABSENT). The lesson is the one this repo keeps paying for: a prosrc precondition is the only
+--   thing that can catch a stale-base re-emission, so it must be WIDE enough to survive a legitimate
+--   change to the base and NARROW enough to reject an unknown one.
+--
+-- ===================================================================================================
 -- PROVENANCE -- WHICH BODY WAS COPIED FROM WHERE, AND EVERY HUNK ENUMERATED
 --   A. public.process_combat_ticks()
---      COPIED FROM: 20260618000294_combat_seeds_at_engagement_point.sql:255-1142 -- the TRUE head.
---      Verified by enumerating every `create or replace function public.process_combat_ticks` in
---      supabase/migrations: 0294 is the newest; 0295/0296/0297 do not re-create it and contain no
---      fleet_get_power reference.
---      WARNING TO THE NEXT AUTHOR: copying 0292 reverts 0294's engagement anchor; copying 0291
---      reverts 0292's chosen-destination retreat AND 0294; copying 0261 reverts all three. The
---      precondition block below refuses to run unless the DEPLOYED body carries 0242/0291, 0292 and
---      0294, so a wrong base fails closed instead of landing a silent revert.
+--      COPIED FROM: 20260618000298_retreat_to_any_destination.sql:802-1706 -- the TRUE head. 0298
+--      re-created this function to widen the completion branch to a coordinate destination; 0294 is
+--      the one before it, 0292 before that.
+--      WARNING TO THE NEXT AUTHOR: copying 0294 reverts 0298's retreat-to-ANY-destination; copying
+--      0292 reverts that AND 0294's engagement anchor; copying 0291 reverts all of it. The
+--      precondition block below refuses to run unless the DEPLOYED body carries 0242/0291, a
+--      chosen-destination retreat read in EITHER the 0292 or the 0298 shape, and 0294's anchor --
+--      and unless fleets.retreat_target_x/y exist, because the body emitted here READS them.
 --      HUNKS: [P1] the two `player_power_current = fleet_get_power(e.fleet_id)` assignments -- one in
 --             the spatial arm, one in the aggregate arm -- become
 --             `public.combat_encounter_side_power(e.id, 'player')`. That is the ENTIRE delta.
---      EVERYTHING ELSE BYTE-IDENTICAL, INCLUDING: 0242/0291's data-derived v_is_spatial, 0292's
---      chosen-destination retreat (read + clear + re-validate + origin_base_id fallback), the 8s
---      window, the reward lock, the v_offense disarm, 0294's ONE-anchor rule
---      (v_anchor_x := coalesce(e.engagement_x, loc.x)) and all six of its consuming sites, the E3
+--      EVERYTHING ELSE BYTE-IDENTICAL, INCLUDING: 0298's three-column retreat-destination read, its
+--      clear of all three columns, its port-only re-validation and BOTH movement_create arms (the
+--      'space' coordinate leg and the 'base' origin fallback); 0242/0291's data-derived v_is_spatial;
+--      the 8s window, the reward lock, the v_offense disarm; 0294's ONE-anchor rule
+--      (v_anchor_x := coalesce(e.engagement_x, loc.x)) and all six of its consuming sites; the E3
 --      resolver wiring and its fresh-resolve ledger, the wave lifecycle and pacing formulas, every
 --      reward formula, the per-ship targeting, the logging and the per-encounter subtransaction
 --      contract. The self-assert re-states each of them, because an invariant that lives in a
@@ -121,6 +139,8 @@
 --
 --   NOT TOUCHED, ON PURPOSE:
 --     * public.fleet_get_power (0006) -- see the caller audit above. Unchanged, still correct.
+--     * public.command_ship_group_go -- 0298 re-created it for the same retreat feature; this
+--       migration does not re-emit it and has no business in it.
 --     * public.pirate_intercept_evaluate_leg -- 0290's zero-manifest guard and 0293's four ambush
 --       parks live there and this migration does not re-emit that function at all. The self-assert
 --       still PROVES they are present, because "I did not touch it" is a claim and a probe is not.
@@ -128,20 +148,21 @@
 --       player_power_start from exactly the definitions this authority unifies. Repointing them
 --       would change nothing and would re-emit two more live bodies for no reason.
 --     * combat_encounters.enemy_power_current -- deliberately NOT repointed. The head defines it as
---       remaining enemy INTEGRITY (0294:927 / :1104, `greatest(0, v_e_after)`), and every synthetic
---       pirate row is FK-anchored to unit_types 'pirate_synthetic', whose power_score is a dummy 0
+--       remaining enemy INTEGRITY (greatest(0, v_e_after)), and every synthetic pirate row is
+--       FK-anchored to unit_types 'pirate_synthetic', whose power_score is a dummy 0
 --       (20260618000234:207-208), so a naive repoint would replace a meaningful bar with a
 --       structural zero. Changing what the enemy number MEANS is a player-visible semantic change
 --       that is not this slice's job. The authority below takes `side` because a side's power is one
 --       concept, not two -- but it is called with 'player' only, and this paragraph is why.
 --
 -- No flag is flipped. No config key is written. No column is added or altered. No row is inserted,
--- updated or deleted by this file. Forward-only: 0294 is not edited in place.
+-- updated or deleted by this file. Forward-only: 0298 is not edited in place.
 
 
 -- -- 0. PRECONDITIONS -- refuse to re-emit over a base we did not build from -------------------------
 -- A prosrc probe of the DEPLOYED bodies is the only thing that catches a stale-base re-emission, and
--- it must run BEFORE the create-or-replace.
+-- it must run BEFORE the create-or-replace. See "THE BASE MOVED UNDER THIS SLICE" above for why every
+-- clause here is shaped the way it is.
 do $pre$
 declare
   v_tick text;
@@ -152,6 +173,16 @@ begin
   end if;
   if to_regprocedure('public.fleet_get_power(uuid)') is null then
     raise exception '0299: fleet_get_power(uuid) is missing -- the head this slice replaces at two call sites is not there';
+  end if;
+
+  -- 0298's COLUMNS. The body emitted below reads fleets.retreat_target_x/y, and plpgsql does not
+  -- resolve table references until run time -- so without this check a chain missing 0298 would
+  -- accept the new body happily and then fail on the first real retreat, in production.
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'fleets'
+                    and column_name in ('retreat_target_x','retreat_target_y')
+                 having count(*) = 2) then
+    raise exception '0299: fleets.retreat_target_x/retreat_target_y are missing -- 0298 must be deployed; the tick body this migration emits reads them';
   end if;
 
   -- the columns the new authority reads must all exist, or it would be born broken.
@@ -181,17 +212,22 @@ begin
   end if;
 
   -- the defect must actually be there. If it is not, something already repointed these sites and
-  -- this migration must not blindly re-emit a 1000-line body over an unknown edit.
+  -- this migration must not blindly re-emit a 900-line body over an unknown edit.
   if position('player_power_current     = fleet_get_power(e.fleet_id)' in v_tick) = 0 then
-    raise exception '0299: the deployed process_combat_ticks does not write player_power_current from fleet_get_power -- the base is not 0294 and this re-emission would clobber an unknown edit';
+    raise exception '0299: the deployed process_combat_ticks does not write player_power_current from fleet_get_power -- the base is not the expected head and this re-emission would clobber an unknown edit';
   end if;
-  -- 0294 must be IN the deployed tick, or the body below (which is 0294's) is not a superset of it.
+  -- THE CHOSEN-DESTINATION RETREAT, IN EITHER SHAPE. 0298 deliberately DELETED 0292's single-column
+  -- read and replaced it with the three-column one that made retreat-to-anywhere possible. Pinning
+  -- the 0292 literal is what turned this migration red on the apply-proof; pinning nothing at all
+  -- would let a body with no retreat destination through. So: one of the two, and no third option.
+  if position('select f.retreat_target_location_id, f.retreat_target_x, f.retreat_target_y' in v_tick) = 0
+     and position('select f.retreat_target_location_id into v_ret_loc from fleets f where f.id = e.fleet_id;' in v_tick) = 0 then
+    raise exception '0299: the deployed process_combat_ticks carries neither 0298''s three-column retreat-destination read nor 0292''s single-column one -- refusing to re-emit from an unknown base';
+  end if;
+  -- 0294 must be IN the deployed tick, or the body below (which is 0298's, itself a superset of
+  -- 0294's) would move the engagement anchor backwards.
   if position('v_anchor_x := coalesce(e.engagement_x, loc.x);' in v_tick) = 0 then
     raise exception '0299: the deployed process_combat_ticks does not carry 0294''s engagement anchor -- refusing to re-emit from an unknown base';
-  end if;
-  -- 0292 must be IN the deployed tick.
-  if position('select f.retreat_target_location_id into v_ret_loc from fleets f where f.id = e.fleet_id;' in v_tick) = 0 then
-    raise exception '0299: the deployed process_combat_ticks does not carry 0292''s chosen-destination retreat -- refusing to re-emit from an unknown base';
   end if;
   -- 0242/0291 must be IN the deployed tick. If it is not, something already reverted it and this
   -- migration must not be the thing that quietly papers over that.
@@ -268,7 +304,7 @@ revoke execute on function public.combat_encounter_side_power(uuid, text) from p
 grant  execute on function public.combat_encounter_side_power(uuid, text) to service_role;
 
 
--- == 2. process_combat_ticks -- the 0294:255-1142 TRUE HEAD verbatim + hunk [P1] (x2) ===============
+-- == 2. process_combat_ticks -- the 0298:802-1706 TRUE HEAD verbatim + hunk [P1] (x2) ===============
 create or replace function public.process_combat_ticks()
 returns integer
 language plpgsql
@@ -520,39 +556,56 @@ begin
              last_resolved_at=now(), updated_at=now() where id=e.id;
       perform report_create(e.id);
       perform presence_complete(e.presence_id);
-      -- ── ★ THE CHOSEN-DESTINATION HUNK (the ONLY delta vs the 0261 head) ★ ──────────────────────
-      -- The head hardcoded the destination: always back to origin_base_id. It now PREFERS the
-      -- destination the player ordered mid-combat (command_ship_group_go step 8 stores it in
-      -- fleets.retreat_target_location_id, a column whose only writer is that order) and falls back to
-      -- origin_base_id when none is stored — or when the stored port is no longer an active location,
-      -- so a destination that went invalid during the window sends the fleet home instead of leaving
-      -- the encounter stuck retreating forever.
-      -- The recording is CONSUMED here — cleared whether or not it was still usable — so it can never
-      -- leak into a later sortie of the same fleet. It is this slice's own column, so clearing it
-      -- disturbs nothing else (NO-HOME's return_location_id is untouched, by design: see the header).
-      -- Nothing else in this branch changes: the window that got us here, the reward
-      -- lock, the encounter update, the report, the presence completion, fleet_set_returning, the
-      -- member marking and the cargo attach are all the head's lines, verbatim. The locals live in a
-      -- nested DECLARE so the head's declaration block stays byte-identical.
+      -- ── ★ THE CHOSEN-DESTINATION HUNK (0292, WIDENED BY 0298) ★ ────────────────────────────────
+      -- The 0261 head hardcoded the destination: always back to origin_base_id. 0292 made it prefer
+      -- the PORT a player ordered mid-combat. 0298 widens that to the destination the player ordered,
+      -- whatever shape it had — command_ship_group_go step 8 records exactly one of
+      --   fleets.retreat_target_location_id            (a port), or
+      --   fleets.retreat_target_x / retreat_target_y   (a point in open space)
+      -- and this branch is their only reader. The exactly-one-of is a CHECK constraint
+      -- (fleets_retreat_target_one_of), so exactly one arm below can be live for any fleet and the
+      -- two can never disagree.
+      --   * a LOCATION target is RE-VALIDATED (must still be an active location) and resolves to that
+      --     port's coordinate. A destination that went invalid during the window therefore falls back
+      --     home instead of leaving the encounter stuck retreating forever — 0292's rule, unchanged.
+      --   * a COORDINATE target is used AS STORED. It is deliberately not re-validated: the mover
+      --     bound-checked it and canonicalized it onto the integer world grid before storing, and a
+      --     point in space — unlike a location — cannot stop existing. A second bounds check here
+      --     would be a second authority over the world's edges.
+      --   * neither -> origin_base_id, exactly as the head did. The fallback is intact.
+      -- BOTH recordings are CONSUMED here — cleared together, whether or not the target was still
+      -- usable — so neither can leak into a later sortie of the same fleet. They are this slice's own
+      -- columns, so clearing them disturbs nothing else (NO-HOME's return_location_id is untouched,
+      -- by design: see 0292's header). Nothing else in this branch changes: the window that got us
+      -- here, the reward lock, the encounter update, the report, the presence completion,
+      -- fleet_set_returning, the member marking and the cargo attach are all the head's lines,
+      -- verbatim, and both movement_create arms still depart from the engagement anchor (0294 [T4]).
+      -- The locals live in a nested DECLARE so the head's declaration block stays byte-identical.
       --
-      -- WHY A 'space' TARGET, not a 'location' one: the arrival must leave the fleet in a state where
-      -- the sortie is OVER. The settle's location branch calls fleet_set_present -> status 'present',
-      -- and every sortie-manifest predicate is live-scoped on 'moving'/'present'/'returning' (0169),
-      -- so the members would stay pinned 'returning' forever and the group would answer
-      -- 'group_on_sortie' to every later order — a permanent wedge. The space branch calls
-      -- fleet_set_in_space -> status 'idle', which is exactly as dead as the base branch's
-      -- fleet_complete as far as the manifest is concerned: the EXISTING reconciler frees the members,
-      -- with no new writer, no manifest delete and no change to the settle. The fleet parks in ORBIT
-      -- at the chosen port — where the mover's own S4 translate parks a port move — and DOCK stays
-      -- its own verb.
+      -- WHY A 'space' TARGET, not a 'location' one — and why a bare coordinate needs no new path:
+      -- the arrival must leave the fleet in a state where the sortie is OVER. The settle's location
+      -- branch calls fleet_set_present -> status 'present', and every sortie-manifest predicate is
+      -- live-scoped on 'moving'/'present'/'returning' (0169), so the members would stay pinned
+      -- 'returning' forever and the group would answer 'group_on_sortie' to every later order — a
+      -- permanent wedge. The space branch calls fleet_set_in_space -> status 'idle', which is exactly
+      -- as dead as the base branch's fleet_complete as far as the manifest is concerned: the EXISTING
+      -- reconciler frees the members, with no new writer, no manifest delete and no change to the
+      -- settle. So 0292 already flew a PORT destination to that port's COORDINATE and parked the
+      -- fleet in orbit — which is why an open-space destination adds NO new leg kind, NO new arrival
+      -- branch and NO new settle path here. It is the identical leg; only the resolution of
+      -- v_dest_x/v_dest_y differs, one step earlier.
       declare
         v_ret_loc uuid;
         v_dest_x  double precision;
         v_dest_y  double precision;
       begin
-        select f.retreat_target_location_id into v_ret_loc from fleets f where f.id = e.fleet_id;
+        select f.retreat_target_location_id, f.retreat_target_x, f.retreat_target_y
+          into v_ret_loc, v_dest_x, v_dest_y from fleets f where f.id = e.fleet_id;
+        if v_ret_loc is not null or v_dest_x is not null then
+          update fleets set retreat_target_location_id = null, retreat_target_x = null,
+                 retreat_target_y = null, updated_at = now() where id = e.fleet_id;
+        end if;
         if v_ret_loc is not null then
-          update fleets set retreat_target_location_id = null, updated_at = now() where id = e.fleet_id;
           select l.x, l.y into v_dest_x, v_dest_y
             from locations l where l.id = v_ret_loc and l.status = 'active';
         end if;
@@ -1169,18 +1222,20 @@ comment on function public.process_combat_ticks() is
   'COMBAT TICK. SNAPSHOT POWER (0299): player_power_current is written from '
   'combat_encounter_side_power(e.id, ''player'') at BOTH encounter-update sites -- the encounter''s own '
   'combat_units, never fleet_units. fleet_get_power summed an empty table for a group-sortie fleet and '
-  'wrote 0 on every tick. ENGAGEMENT ANCHOR (0294): every combat COORDINATE this function decides '
-  'derives from ONE anchor, resolved once per encounter per tick as '
+  'wrote 0 on every tick. RETREAT TO ANY DESTINATION (0298, carried through verbatim): the completion '
+  'branch reads all three of fleets.retreat_target_location_id / retreat_target_x / retreat_target_y, '
+  'clears all three, re-validates only the PORT, and mints the return leg to a stored coordinate when '
+  'there is one, falling back to origin_base_id. ENGAGEMENT ANCHOR (0294): every combat COORDINATE '
+  'this function decides derives from ONE anchor, resolved once per encounter per tick as '
   'coalesce(combat_encounters.engagement_x, locations.x) -- both enemy wave spawns (the synthetic wave '
   'and the E3 resolved wave; the encounter creator writes no enemy row, so wave one is spawned here '
-  'too) and the retreat/forced-extract return leg''s ORIGIN. The location remains the authority for '
-  'encounter CONTENT (base_difficulty, reward_tier, max_presence_seconds) and is read exactly once for '
-  'it. Spatial mode is still derived from PERSISTED DATA ONLY (0242/0291) -- never from a live flag. '
-  'The retreat destination is still fleets.retreat_target_location_id, read-and-cleared with the '
-  'origin_base_id fallback (0292). Engine-only: no client role may execute it.';
+  'too) and BOTH return-leg origins. The location remains the authority for encounter CONTENT '
+  '(base_difficulty, reward_tier, max_presence_seconds) and is read exactly once for it. Spatial mode '
+  'is still derived from PERSISTED DATA ONLY (0242/0291) -- never from a live flag. Engine-only: no '
+  'client role may execute it.';
 
 -- CREATE OR REPLACE preserves the existing ACL; this function has never been client-executable and
--- this migration does not change that. No grant statement is emitted, exactly as 0291/0292/0294
+-- this migration does not change that. No grant statement is emitted, exactly as 0291/0292/0294/0298
 -- emitted none -- the self-assert below proves the posture rather than re-asserting it by DDL.
 
 
@@ -1301,8 +1356,8 @@ begin
     raise exception '0299 FAIL: the enemy side of an unknown encounter returns % rather than 0 -- the side argument is not accepted cleanly', coalesce(v_val::text, 'NULL');
   end if;
 
-  -- -- (3) INVARIANT (a) -- 0242, restored by 0291, preserved by 0292/0294, preserved HERE. This exact
-  --        line has been reverted four times by authors copying a stale body. -----------------------
+  -- -- (3) INVARIANT (a) -- 0242, restored by 0291, preserved by 0292/0294/0298, preserved HERE. This
+  --        exact line has been reverted four times by authors copying a stale body. ----------------
   if position('v_is_spatial := exists (select 1 from combat_units where encounter_id = e.id and pos_x is not null)' in v_tick) = 0 then
     raise exception '0299 FAIL: the tick no longer derives spatial mode from persisted rows (0242/0291 reverted a FIFTH time)';
   end if;
@@ -1312,10 +1367,10 @@ begin
   if position('cfg_bool(''spatial_combat_enabled'')' in v_tick) <> 0 then
     raise exception '0299 FAIL: the tick reads spatial_combat_enabled again; mode must come from data alone';
   end if;
-  -- EIGHT cfg_bool reads, the 0291/0292/0294 count. This slice adds no gate, so the count cannot move.
+  -- EIGHT cfg_bool reads, the 0291/0292/0294/0298 count. This slice adds no gate, so it cannot move.
   v_n := (length(v_tick) - length(replace(v_tick, 'cfg_bool(', ''))) / length('cfg_bool(');
   if v_n <> 8 then
-    raise exception '0299 FAIL: the tick carries % cfg_bool call(s) (want 8 -- the 0291/0292/0294 count; this slice adds no gate)', v_n;
+    raise exception '0299 FAIL: the tick carries % cfg_bool call(s) (want 8 -- the 0291/0292/0294/0298 count; this slice adds no gate)', v_n;
   end if;
   v_n := (length(v_tick) - length(replace(v_tick, 'random(', ''))) / length('random(');
   if v_n <> 2 then
@@ -1337,7 +1392,7 @@ begin
   end if;
   v_n := (length(v_tick) - length(replace(v_tick, 'from locations', ''))) / length('from locations');
   if v_n <> 2 then
-    raise exception '0299 FAIL: the tick touches locations % time(s), want exactly 2 (the content read + 0292''s retreat-destination re-validation)', v_n;
+    raise exception '0299 FAIL: the tick touches locations % time(s), want exactly 2 (the content read + the retreat-destination port re-validation)', v_n;
   end if;
   if strpos(v_tick, 'v_loc_x') <> 0 or strpos(v_tick, 'v_loc_y') <> 0 then
     raise exception '0299 FAIL: the head''s retired v_loc_x/v_loc_y location-coordinate locals are back -- 0294 reverted';
@@ -1350,7 +1405,7 @@ begin
   v_n := (length(v_tick) - length(replace(v_tick, 'e.location_id, v_anchor_x, v_anchor_y,', '')))
          / length('e.location_id, v_anchor_x, v_anchor_y,');
   if v_n <> 2 then
-    raise exception '0299 FAIL: % of 2 retreat/extract return legs depart from the engagement anchor -- 0294 reverted', v_n;
+    raise exception '0299 FAIL: % of 2 return legs depart from the engagement anchor -- 0294 reverted', v_n;
   end if;
   v_n := (length(v_tick) - length(replace(v_tick, 'v_anchor_x', ''))) / length('v_anchor_x');
   if v_n <> 6 then
@@ -1361,28 +1416,48 @@ begin
     raise exception '0299 FAIL: v_anchor_y appears % time(s), want exactly 6', v_n;
   end if;
 
-  -- -- (5) INVARIANT (b) -- 0292's chosen-destination retreat, inside the branch it lives in -------
+  -- -- (5) INVARIANT (b) -- 0298's RETREAT TO ANY DESTINATION. This is the invariant this migration
+  --        very nearly destroyed: its first draft spliced the 0294 head, which still carried 0292's
+  --        single-column read, and only the precondition stopped it landing on a live game. So the
+  --        emitted body is pinned to the 0298 shape POSITIVELY (the three-column read is present)
+  --        and NEGATIVELY (0292's superseded read is absent). Both, because either alone can pass on
+  --        a body that is half-reverted. ------------------------------------------------------------
   v_bstart := strpos(v_tick, 'if v_retreat_done or v_forced then');
   v_bend   := strpos(v_tick, 'perform fleet_set_returning(e.fleet_id, v_mv);');
   if v_bstart = 0 or v_bend = 0 or v_bend < v_bstart then
     raise exception '0299 FAIL: the tick''s completion branch is not recognisable';
   end if;
   v_bwin := substr(v_tick, v_bstart, v_bend - v_bstart);
-  if strpos(v_bwin, 'select f.retreat_target_location_id into v_ret_loc from fleets f where f.id = e.fleet_id;') = 0 then
-    raise exception '0299 FAIL: the completion branch does not read the chosen retreat destination (0292 reverted)';
+  if strpos(v_bwin, 'select f.retreat_target_location_id, f.retreat_target_x, f.retreat_target_y') = 0 then
+    raise exception '0299 FAIL: the completion branch does not read all THREE retreat-destination columns -- 0298''s retreat-to-any-destination is REVERTED, which is exactly what this migration''s first draft would have done';
   end if;
-  if strpos(v_bwin, 'update fleets set retreat_target_location_id = null') = 0 then
-    raise exception '0299 FAIL: the completion branch does not CONSUME (clear) the chosen destination -- it would leak into the next sortie (0292 reverted)';
+  if strpos(v_tick, 'select f.retreat_target_location_id into v_ret_loc from fleets f where f.id = e.fleet_id;') <> 0 then
+    raise exception '0299 FAIL: 0292''s superseded single-column retreat read is back -- this body was spliced from a pre-0298 head and would revert retreat-to-any-destination';
+  end if;
+  if strpos(v_bwin, 'update fleets set retreat_target_location_id = null, retreat_target_x = null,') = 0
+     or strpos(v_bwin, 'retreat_target_y = null') = 0 then
+    raise exception '0299 FAIL: the completion branch does not CLEAR all three retreat-destination columns -- a chosen destination would leak into the next sortie (0298 reverted)';
   end if;
   if strpos(v_bwin, 'l.id = v_ret_loc and l.status = ''active''') = 0 then
-    raise exception '0299 FAIL: the chosen destination is used without re-validating it (0292 reverted)';
+    raise exception '0299 FAIL: the chosen PORT destination is used without re-validating it (0298/0292 reverted)';
   end if;
-  if strpos(v_bwin, '''space'', null, null, null, v_dest_x, v_dest_y, ''return_home'', v_speed);') = 0 then
-    raise exception '0299 FAIL: no leg is minted toward the chosen destination (0292 reverted)';
+  if strpos(v_bwin, 'if v_dest_x is not null and v_dest_y is not null then') = 0
+     or strpos(v_bwin, '''space'', null, null, null, v_dest_x, v_dest_y, ''return_home'', v_speed);') = 0 then
+    raise exception '0299 FAIL: no leg is minted toward a chosen COORDINATE -- retreating anywhere is the whole point of 0298';
   end if;
   if strpos(v_bwin, 'select origin_base_id into v_base_id from fleets where id = e.fleet_id;') = 0
      or strpos(v_bwin, '''base'', v_base_id, null, null, v_base_x, v_base_y, ''return_home'', v_speed);') = 0 then
-    raise exception '0299 FAIL: the origin_base_id fallback was lost (0292 reverted)';
+    raise exception '0299 FAIL: the origin_base_id fallback was lost (0298/0292 reverted)';
+  end if;
+  -- the retreat mints exactly TWO legs and no more: the chosen-destination arm and the fallback.
+  v_n := (length(v_tick) - length(replace(v_tick, 'movement_create(', ''))) / length('movement_create(');
+  if v_n <> 2 then
+    raise exception '0299 FAIL: the tick mints % movement leg(s), want exactly 2 (the chosen-destination arm and the origin_base_id fallback)', v_n;
+  end if;
+  -- the coordinate column is named exactly twice: the read and the clear.
+  v_n := (length(v_tick) - length(replace(v_tick, 'retreat_target_x', ''))) / length('retreat_target_x');
+  if v_n <> 2 then
+    raise exception '0299 FAIL: fleets.retreat_target_x is named % time(s), want exactly 2 (the read and the clear) -- 0298''s coordinate destination is not intact', v_n;
   end if;
   if strpos(v_tick, 'v_retreat_delay := coalesce(cfg_num(''retreat_delay_seconds''), 8);') = 0
      or strpos(v_tick, 'and now() - e.retreat_started_at >= make_interval(secs => v_retreat_delay);') = 0 then
@@ -1489,5 +1564,5 @@ begin
     raise exception '0299 FAIL: fleet_get_power was dropped -- combat_create_encounter''s legacy branch and send_fleet_to_location still call it';
   end if;
 
-  raise notice '0299 OK: a combat encounter now reports its OWN power. combat_encounter_side_power(encounter, side) is the single authority -- it sums the encounter''s live combat_units as coalesce(attack_snapshot, unit_types.power_score) * alive_count, side-filtered, non-positive stacks excluded, returning 0 and never NULL for an unknown encounter (proven by call, on an id that cannot exist, so the probe holds on an empty database); it invents no formula, reusing attack_snapshot (the combat_power combat_create_group_encounter already freezes and sums into player_power_start) and power_score (what fleet_get_power itself summed), and it adds no snapshot column because attack_snapshot already IS the snapshot. process_combat_ticks writes player_power_current from it at BOTH sites -- the spatial arm and the aggregate arm -- and calls fleet_get_power ZERO times, so a group-sortie fleet (which has no fleet_units rows) stops reporting power 0 and a legacy fleet fighting spatially stops reporting its pre-battle power forever; the destroyed-fleet branch still zeroes the column and the tick grew no power arithmetic of its own. fleet_get_power is untouched and still live for its two correct callers. Re-stated through the re-emission: INVARIANT (a) v_is_spatial derived from persisted rows only, flag-conjoined form absent, zero spatial_combat_enabled reads, cfg_bool=8 and random=2 unchanged; INVARIANT (b) 0292''s retreat read/clear/re-validate/mint plus the origin_base_id fallback, the 8s window, the v_offense disarm and the reward lock; 0294''s ONE anchor with its content read carrying x/y, locations touched exactly twice, v_loc_x/v_loc_y still retired and all six anchor sites intact; the inter-wave pause branch and both next_wave_at stamps that the map card''s new copy describes. 0290''s zero-manifest guard still sited before presence_create and 0293''s four ambush parks still present in an evaluator this migration never re-emitted. No game_config VALUE is asserted anywhere in this proof, no flag is written or read, no row is inserted/updated/deleted, no column added or altered, no count taken of anything the 3-second combat cron can move; the tick stays engine-only and the new authority is born revoked from every client role';
+  raise notice '0299 OK: a combat encounter now reports its OWN power. combat_encounter_side_power(encounter, side) is the single authority -- it sums the encounter''s live combat_units as coalesce(attack_snapshot, unit_types.power_score) * alive_count, side-filtered, non-positive stacks excluded, returning 0 and never NULL for an unknown encounter (proven by call, on an id that cannot exist, so the probe holds on an empty database); it invents no formula, reusing attack_snapshot (the combat_power combat_create_group_encounter already freezes and sums into player_power_start) and power_score (what fleet_get_power itself summed), and it adds no snapshot column because attack_snapshot already IS the snapshot. process_combat_ticks writes player_power_current from it at BOTH sites -- the spatial arm and the aggregate arm -- and calls fleet_get_power ZERO times, so a group-sortie fleet (which has no fleet_units rows) stops reporting power 0 and a legacy fleet fighting spatially stops reporting its pre-battle power forever; the destroyed-fleet branch still zeroes the column and the tick grew no power arithmetic of its own. fleet_get_power is untouched and still live for its two correct callers. THE BODY IS SPLICED FROM 0298, NOT 0294: 0298''s retreat-to-ANY-destination survives intact -- the completion branch reads all three retreat-target columns, clears all three, re-validates only the port, mints the coordinate leg with the origin_base_id fallback, exactly 2 movement legs in the whole body, and 0292''s superseded single-column read is provably ABSENT (this migration''s first draft carried it and only the precondition stopped the revert reaching a live game). Also re-stated through the re-emission: INVARIANT (a) v_is_spatial derived from persisted rows only, flag-conjoined form absent, zero spatial_combat_enabled reads, cfg_bool=8 and random=2 unchanged; the 8s window, the v_offense disarm and the reward lock; 0294''s ONE anchor with its content read carrying x/y, locations touched exactly twice, v_loc_x/v_loc_y still retired and all six anchor sites intact; the inter-wave pause branch and both next_wave_at stamps that the map card''s new copy describes. 0290''s zero-manifest guard still sited before presence_create and 0293''s four ambush parks still present in an evaluator this migration never re-emitted. No game_config VALUE is asserted anywhere in this proof, no flag is written or read, no row is inserted/updated/deleted, no column added or altered, no count taken of anything the 3-second combat cron can move; the tick stays engine-only and the new authority is born revoked from every client role';
 end $power_assert$;
