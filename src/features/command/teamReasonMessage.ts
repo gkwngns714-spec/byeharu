@@ -1,7 +1,7 @@
 // THE ONE reject-copy map for every fleet surface — pure and fail-closed (the tradeReasonMessage/
 // haulReasonMessage idiom verbatim). Maps the ACTUAL server reject vocabulary of the fleet RPCs —
 // the hunt send (0168), the roster writes (0161/0204/0216), the unified mover/brake/dock
-// (0207/0208/0209/0219/0292), the route planner (0233), and the totals/preview reads (0165/0166) —
+// (0207/0208/0209/0219/0292/0298), the route planner (0233), and the totals/preview reads (0165/0166) —
 // plus the teamApi transport fallback ('unavailable') to short player-facing text; any unmapped/
 // unknown reason degrades to a generic "Fleet order unavailable." so the UI never surfaces a raw
 // code and never throws. No React/DOM/state — unit-tested in tests/teamReasonMessage.spec.ts.
@@ -42,10 +42,12 @@ const REASON_MESSAGES: Record<string, string> = {
   // refusal survives only for a sortie with no encounter behind it, so the copy no longer claims that
   // combat blocks every order — it did, and saying so while the retreat path exists would be a lie.
   group_on_sortie: 'This fleet is out on a sortie and can’t take a new course yet.',
-  // 0292's ok:true combat-time OUTCOMES (`retreat_started`, `retreat_destination_updated`) are
-  // deliberately NOT mapped here — this map is the REJECT vocabulary. Those two are successes whose
-  // copy must name the destination port, so their one authority is `fleetRetreatOutcomeMessage` in
-  // teamMove.ts, composed where that name is in scope. The retreat REJECT does live here, below.
+  // The combat-time OUTCOMES (`retreat_started`, `retreat_destination_updated`) are deliberately NOT
+  // mapped here — this map is the REJECT vocabulary. Those two are successes whose copy must name the
+  // destination, so their one authority is `fleetRetreatOutcomeMessage` in teamMove.ts, composed
+  // where that name is in scope. THE RETREAT HAS NO REJECT: 0298 removed the port-only restriction,
+  // so a coordinate order given mid-combat is accepted like any other and no reason code is emitted
+  // for the shape of a destination (see the retirement pin in tests/teamReasonMessage.spec.ts).
   fleet_ambiguous: 'This fleet’s position is unclear — try again in a moment.',
   group_scattered: 'The fleet’s ships are split across ports — dock them together once to gather the fleet.',
   no_origin: 'The fleet has nowhere to depart from yet.',
@@ -63,11 +65,6 @@ const REASON_MESSAGES: Record<string, string> = {
   // The dock verb's "the group resolved no live fleet" arm (0219:191-193). The brake's same-named
   // token rides an ok:true envelope (0209/0215/0218) and never reaches this map.
   no_fleet: 'This fleet isn’t out in space — there’s nothing to dock.',
-  // RETREAT-DESTINATION (0292:383-385) — a COORDINATE order refused while the fleet's combat is
-  // live: the server can only record a PORT as a retreat target. FleetCommandPanel answers this
-  // reject by rendering the port choices inline, so the copy names the very thing the picker does.
-  retreat_needs_port_destination:
-    'A fleet already fighting can only break off toward a port — pick the port to retreat to.',
   // ROSTER WRITES — fleet create/rename (upsert_ship_group 0161:73-79).
   invalid_group_index: 'You can have up to three fleets — that slot doesn’t exist.',
   invalid_name: 'Give the fleet a name between 1 and 40 characters.',
@@ -81,6 +78,16 @@ const REASON_MESSAGES: Record<string, string> = {
   group_fleet_elsewhere: 'The fleet is docked at another port — bring them to the same port first.',
   // Leaving a fleet (0216:413,431) or deleting one (0216:584,608): a ship can only step off in port.
   fleet_in_flight: 'The fleet isn’t in port — dock it at a port first.',
+  // DEFERRED-ENTRY INTERCEPT (0301) — the ambush no longer fires when the order is given; it fires
+  // when the fleet actually reaches the zone boundary. So an order or a stop can now arrive in the
+  // instant the fleet is being jumped: the verb resolves the owed ambush FIRST, and if it fires, the
+  // order is refused because the fleet is no longer travelling — it is fighting. Re-issuing the same
+  // order then lands on the retreat path, which is the right thing to do next, so the copy says so.
+  intercepted_in_transit: 'Ambushed on the way — the fleet is in combat now. Order it again to retreat.',
+  // The resolver raised while deciding whether an owed ambush fires. These verbs are raise-free at
+  // their boundary and deliberately FAIL the order rather than let it through: "the ambush could not
+  // be resolved" must never quietly mean "so you may go".
+  intercept_resolution_failed: 'Couldn’t tell whether the fleet was ambushed — try that order again.',
   // PIRATE INTERCEPT route planner (command_ship_group_go_route / _cancel_route, 0233). Leg 1
   // composes the unified mover, so the mover's rejects above reach this surface unchanged.
   pirate_intercept_disabled: 'Route planning isn’t available right now.',

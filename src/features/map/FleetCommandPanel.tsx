@@ -11,8 +11,8 @@ import {
 import { teamReasonMessage } from '../command/teamReasonMessage'
 import { unifiedStopOutcomeMessage } from '../command/teamStop'
 import { fleetRetreatOutcomeMessage } from '../command/teamMove'
-import { sendableDestinations } from '../command/teamSend'
-import { fleetGoSuccessMessage } from './fleetGoTarget'
+import { fleetGoOrderOutcomeMessage } from '../command/fleetOrderOutcome'
+import { fleetGoSuccessMessage, openSpaceDestinationLabel } from './fleetGoTarget'
 import {
   buildFleetCommandModel,
   fleetCommandLocks,
@@ -74,40 +74,36 @@ export function FleetCommandPanel({
   const [confirmHunt, setConfirmHunt] = useState<{ groupId: string; locationId: string } | null>(null)
   // RETURN-PORT (NO-HOME 0199): the player's chosen dock-after-hunt port, per fleet.
   const [returnChoice, setReturnChoice] = useState<Record<string, string>>({})
-  // RETREAT-DESTINATION (0292): the fleet whose LAST order was refused 'retreat_needs_port_destination'
-  // — a coordinate order given while its combat was live. The server can only record a PORT as a
-  // retreat target, so the message alone ("pick the port to retreat to") would be a DEAD END on this
-  // surface: the destination comes from a map gesture, and the map is behind the panel. Holding the
-  // refused fleet here lets the reject render its OWN port choices, inline. Transient interaction
-  // state, exactly like confirmHunt — not a section (the model stays a pure function of the props).
-  const [retreatPick, setRetreatPick] = useState<{ groupId: string; name: string } | null>(null)
+  // RETREAT TO ANY DESTINATION (0298): there is deliberately NO retreat-destination state here. The
+  // 0292-era inline port picker existed only because the server refused a coordinate order during
+  // combat and the player had to be handed a legal (port) target from inside the panel. 0298 removed
+  // that restriction — a retreat goes wherever the ordinary go order points, port or open space — so
+  // the picker was a second destination surface for one command and was DELETED rather than left
+  // beside the map gesture that already owns picking a destination.
 
   const model = buildFleetCommandModel(inputs)
   const locks = fleetCommandLocks({ busy, stopBusy })
   if (!model.mount) return null
 
   // The shared submit body (ONE notice pair, non-optimistic await→refetch) — the lock discipline
-  // lives in the two runners below, never here. `fleet` is passed by the ORDER verbs only: it is what
-  // lets the ONE reject arm that needs a follow-up control (0292's retreat) name the fleet it refused.
+  // lives in the two runners below, never here.
   const dispatch = async (
     op: () => Promise<TeamRpcResult>,
     summarize: (res: TeamRpcResult & { ok: true }) => string,
-    fleet?: { groupId: string; name: string },
   ) => {
     const res = await op()
     if (!res.ok) {
       setNotice({ tone: 'warning', text: teamReasonMessage(res.reason) })
-      // RETREAT-DESTINATION (0292): the ONE reject that the player cannot act on from the copy alone.
-      // Any other reject clears the picker — a stale one must never outlive the order that raised it.
-      setRetreatPick(fleet && res.reason === 'retreat_needs_port_destination' ? fleet : null)
     } else {
-      // A success can still carry a combat-time OUTCOME the caller could otherwise misreport — 0292
-      // turns an order given mid-combat into a retreat, same ok:true, very different thing happening
-      // to the fleet. That copy has ONE authority, `fleetRetreatOutcomeMessage`, composed inside the
-      // go arm's own summarize where the destination port's NAME is in scope; intercepting it here
-      // would be a second authority producing strictly worse copy.
+      // A success can still carry a combat-time OUTCOME the caller could otherwise misreport — an
+      // order given mid-combat becomes a RETREAT (0292, widened to any destination by 0298), same
+      // ok:true, very different thing happening to the fleet. That copy has ONE authority,
+      // `fleetRetreatOutcomeMessage`, composed inside each submitting arm's own summarize where the
+      // name of the ordered destination is in scope — the go arm (its picked destination) and the
+      // dock arm (the port it offered). BOTH submit through command_ship_group_go and BOTH can come
+      // back armed as a retreat, so both consult it; intercepting it here instead would be a second
+      // authority producing strictly worse copy (no destination name in scope).
       setNotice({ tone: 'success', text: summarize(res) })
-      setRetreatPick(null)
       onCommanded() // shell reads (movements/fleets/ships) — non-optimistic, the server answered
     }
   }
@@ -116,13 +112,12 @@ export function FleetCommandPanel({
     key: string,
     op: () => Promise<TeamRpcResult>,
     summarize: (res: TeamRpcResult & { ok: true }) => string,
-    fleet?: { groupId: string; name: string },
   ) => {
     if (locks.verbDisabled) return
     setBusy(key)
     setNotice(null)
     try {
-      await dispatch(op, summarize, fleet)
+      await dispatch(op, summarize)
     } finally {
       setBusy(null) // never wedge the panel, even if a wrapper unexpectedly rejects
     }
@@ -286,11 +281,38 @@ export function FleetCommandPanel({
                       const wire = r.wire
                       if (!wire) return
                       const dest = s.destination
+                      // ONE name for wherever this order points: a port's name, or the open-space
+                      // wording for a tapped point (openSpaceDestinationLabel — the one authority for
+                      // naming a nameless place). The retreat copy needs it for BOTH kinds now.
+                      const destinationLabel =
+                        dest.kind === 'point'
+                          ? openSpaceDestinationLabel(dest.view.canonical)
+                          : dest.locationName
                       void run(
                         `go:${r.groupId}`,
                         // The wire target is the model's — RAW point (raw-coords law) or {locationId}.
                         () => commandShipGroupGo(r.groupId, wire),
                         (res) => {
+                          // RETREAT TO ANY DESTINATION (0292, widened 0298): an order given while the
+                          // fleet's combat is live mints no leg at all — it arms (or re-points) a
+                          // retreat toward whatever was ordered. Checked for BOTH destination kinds:
+                          // a coordinate order used to come back refused, and 0298 accepts it, so
+                          // "Sent … to (x, y)" would now be a lie on the point arm too. The envelope's
+                          // `carried_rewards` rides along so the copy can say what the order costs.
+                          const retreat = fleetRetreatOutcomeMessage(
+                            res.outcome,
+                            r.name,
+                            destinationLabel,
+                            res.carried_rewards,
+                          )
+                          if (retreat) return retreat
+                          // INTERCEPT DEFERRED ENTRY — `order_outcome` is the mover's word on what
+                          // THIS call did. 'combat_started' (reachable only while deferred entry is
+                          // dark) means no leg survived the transaction, so BOTH summaries below
+                          // would describe a journey that never began. ONE authority for that copy
+                          // (fleetOrderOutcome.ts), which also degrades to today's `intercepted`.
+                          const combat = fleetGoOrderOutcomeMessage(res, r.name)
+                          if (combat) return combat
                           if (dest.kind === 'point') {
                             return fleetGoSuccessMessage({
                               fleetName: r.name,
@@ -300,16 +322,10 @@ export function FleetCommandPanel({
                               redirected: res.redirected === true,
                             })
                           }
-                          // RETREAT-DESTINATION (0292): a PORT order given while the fleet's combat
-                          // is live mints no leg at all — it arms (or re-points) a retreat. The
-                          // server NAMES which happened; "Sent … to …" would be a lie there.
-                          const retreat = fleetRetreatOutcomeMessage(res.outcome, r.name, dest.locationName)
-                          if (retreat) return retreat
                           const n = shipCount(res)
                           const count = typeof n === 'number' ? ` — ${n} ship${n === 1 ? '' : 's'} —` : ''
                           return `${res.redirected === true ? 'Redirected' : 'Sent'} ${r.name}${count} to ${dest.locationName}.`
                         },
-                        { groupId: r.groupId, name: r.name },
                       )
                     }}
                   >
@@ -345,10 +361,30 @@ export function FleetCommandPanel({
                         // go-to-port, byte-identical to pre-S4.
                         `dock:${r.groupId}`,
                         () => (timedDockingEnabled ? commandShipGroupDock(r.groupId) : commandShipGroupGo(r.groupId, r.wire)),
-                        () =>
-                          timedDockingEnabled
+                        (res) => {
+                          // RETREAT TO ANY DESTINATION (0298) — the SAME authority the go arm uses,
+                          // because this arm reaches the SAME server branch. A dock row renders for
+                          // any fleet parked in space inside a dockable port's territory
+                          // (fleetCommandModel.ts:178-185), and an AMBUSHED fleet is exactly that:
+                          // it parks status 'idle' / location_mode 'space' at the ambush point, and
+                          // excludeCombatSortieFleets (teamRollup.ts:103-113) only strips a fleet
+                          // 'present' AT a combat location, so it stays in unifiedFleets. Ambushes
+                          // are rolled on legs DEPARTING ports, so a hit inside the origin port's
+                          // own territory is ordinary, not exotic. Press "Dock at Haven" there and
+                          // command_ship_group_go arms a RETREAT (0298:466-487) — a constant
+                          // "Sent … to dock at Haven." would be reporting a docking that is not
+                          // happening. The retreat copy has ONE authority; both call sites consult it.
+                          const retreat = fleetRetreatOutcomeMessage(
+                            res.outcome,
+                            r.name,
+                            r.portName,
+                            res.carried_rewards,
+                          )
+                          if (retreat) return retreat
+                          return timedDockingEnabled
                             ? `${r.name} is docking at ${r.portName}.`
-                            : `Sent ${r.name} to dock at ${r.portName}.`,
+                            : `Sent ${r.name} to dock at ${r.portName}.`
+                        },
                       )
                     }
                   >
@@ -458,13 +494,6 @@ export function FleetCommandPanel({
     }
   }
 
-  // RETREAT-DESTINATION (0292): the ports a retreating fleet may be sent to, from the ONE
-  // destination-list authority every other picker on this surface already composes
-  // (sendableDestinations — active + activity 'none', the server's own send predicate). A hunt site
-  // is correctly absent: 0292 validates the retreat target with the mover's ordinary step-6 rules,
-  // which refuse a combat destination.
-  const retreatPorts = retreatPick ? sendableDestinations([...inputs.locations]) : []
-
   // Stop (model-guaranteed FIRST when present) renders OUTSIDE the scroll container so it can never
   // scroll away; every later section shares the capped, scrollable body below it.
   const [first, ...rest] = model.sections
@@ -483,63 +512,6 @@ export function FleetCommandPanel({
         <Notice tone={notice.tone} className="mb-1.5 shrink-0">
           {notice.text}
         </Notice>
-      )}
-      {/* RETREAT-DESTINATION (0292) — the refusal's OWN control. A coordinate order given while the
-          fleet is fighting comes back 'retreat_needs_port_destination', and the destination for the
-          re-order can only be a PORT; the map gesture that would pick one is behind this panel, so
-          the notice on its own is a dead end. Rendering the choices here closes that loop in one tap.
-          Sits OUTSIDE the scroll body (like Stop) so the answer to a live refusal can never scroll
-          away, with its own cap + scroll for a world of many ports. Dismissible — nothing traps the
-          player (the map-UX law); dismissing just leaves the fleet fighting, which is the status quo. */}
-      {retreatPick && (
-        <div data-testid="fleet-retreat-picker" className="mb-1.5 shrink-0 rounded-lg border border-warning/40 bg-surface-2/50 px-2.5 py-2">
-          <div className="flex items-center justify-between gap-2">
-            <SectionLabel>Retreat {retreatPick.name} to</SectionLabel>
-            <Button
-              size="sm"
-              variant="ghost"
-              data-testid="fleet-retreat-dismiss"
-              onClick={() => setRetreatPick(null)}
-            >
-              Not now
-            </Button>
-          </div>
-          {retreatPorts.length === 0 ? (
-            <p className="mt-1 text-xs text-ink-faint">No port is reachable right now.</p>
-          ) : (
-            <div className="mt-1.5 max-h-32 space-y-1 overflow-y-auto">
-              {retreatPorts.map((p) => (
-                <Button
-                  key={p.id}
-                  size="sm"
-                  variant="secondary"
-                  className="w-full"
-                  data-testid={`fleet-retreat-to-${p.id}`}
-                  busy={busy === `go:${retreatPick.groupId}:${p.id}`}
-                  busyLabel="Sending…"
-                  disabled={locks.verbDisabled}
-                  onClick={() => {
-                    const fleet = retreatPick
-                    void run(
-                      // The SAME go verb as the row that was refused — this is the identical order
-                      // with a legal target, never a second command path. The key keeps the `go:`
-                      // namespace (one lock for the non-safety verbs) and adds the port so only the
-                      // pressed choice reads as busy.
-                      `go:${fleet.groupId}:${p.id}`,
-                      () => commandShipGroupGo(fleet.groupId, { locationId: p.id }),
-                      (res) =>
-                        fleetRetreatOutcomeMessage(res.outcome, fleet.name, p.name) ??
-                        `Sent ${fleet.name} to ${p.name}.`,
-                      fleet,
-                    )
-                  }}
-                >
-                  {p.name}
-                </Button>
-              ))}
-            </div>
-          )}
-        </div>
       )}
       {stopSection && <div className="shrink-0">{section(stopSection)}</div>}
       {scrollable.length > 0 && (

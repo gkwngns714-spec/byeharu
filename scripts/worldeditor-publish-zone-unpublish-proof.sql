@@ -5,7 +5,10 @@
 -- WHOLE lifecycle end to end — owner CREATE a marked canary zone (0254), verify it is player-active
 -- (get_danger_zones while lit) and interception-relevant (the exact leaf predicate status='active' AND
 -- ST_Intersects), REJECT the non-owner (not_authorized) and anonymous (not_authenticated) unpublish
--- with zero side effects, REJECT a seeded source='circle' zone as not_unpublishable/protected_zone,
+-- with zero side effects, gate a seeded (provenance='seeded') zone on `seeded_zone_lifecycle_enabled` in
+-- BOTH postures — dark REJECTS as not_unpublishable/protected_zone, lit ACCEPTS the unpublish while
+-- provenance stays 'seeded', and turning it dark again re-protects the unpublished row (PROOF 5 pins the
+-- key txn-locally both ways and restores whatever posture the deployed chain ships),
 -- REJECT a vanished target (not_found/source_missing) and a drifted draft (stale_revision/
 -- source_changed), then owner UNPUBLISH the canary → the row is PRESERVED with status='inactive', it
 -- disappears from get_danger_zones AND from the interception predicate at once, exactly one create
@@ -55,8 +58,15 @@ begin
     values
       (v_zone, 'Zone Unpub Proof Den', 'pirate_den', 'hunt_pirates', 800, -800, 1, 1, 0, true, null, 'active')
     returning id into v_hostile;
-  insert into public.danger_zones (name, zone_kind, source, location_id, boundary, status)
-    values ('Zone Unpub Proof Seed Circle', 'pirate', 'circle', v_hostile,
+  -- `provenance` IS the protection authority, NOT `source` — 0282 split them and 0286 re-pointed
+  -- zone_unpublish's guard at 0286:497-499 onto `provenance = 'seeded'`. The column DEFAULT is 'owner'
+  -- and 0282's one-time backfill classified only the rows that already existed, so a freshly INSERTed
+  -- source='circle' row is provenance='owner' and the guard correctly declines to protect it. This
+  -- fixture therefore has to declare provenance explicitly (INSERT is allowed; 0282's immutability
+  -- trigger only blocks UPDATE), or PROOF 5 tests a rule that no longer exists. Same correction the
+  -- zone-update proof already carries.
+  insert into public.danger_zones (name, zone_kind, source, provenance, location_id, boundary, status)
+    values ('Zone Unpub Proof Seed Circle', 'pirate', 'circle', 'seeded', v_hostile,
             ST_Buffer(ST_MakePoint(800, -800), 90, 32), 'active')
     returning id into v_circle;
   insert into pubz values ('hostile', v_hostile), ('circle', v_circle);
@@ -157,26 +167,123 @@ begin
   raise notice 'PUBLISH_ZONE_UNPUB_PASS_ANON_REJECTED';
 end $$;
 
--- ── PROOF 5 — a SEEDED source='circle' zone is PROTECTED (not_unpublishable/protected_zone) ─────────
+-- ── PROOF 5 — SEEDED-ZONE LIFECYCLE PROTECTION IS FLAG-GATED, AND THE GATE SWINGS BOTH WAYS ─────────
+-- The head of zone_unpublish (0286:497-503) protects only when
+--     provenance = 'seeded' AND NOT cfg_bool('seeded_zone_lifecycle_enabled')
+-- and 0283 SEEDS that key 'false'. This case used to assert the DARK answer as though it were the only
+-- answer. 0300 (`lights_on`) then set 44 capability keys true, `seeded_zone_lifecycle_enabled` among
+-- them (0300:86) — a deliberate owner order. On that chain the protection branch no longer fires and the
+-- unpublish is simply APPLIED, so the old assertion reports a broken guard when the guard is doing
+-- exactly what the flag tells it to.
+--
+-- So this case now proves the INVARIANT: **the flag is the gate.** It pins the key txn-locally in BOTH
+-- positions (the idiom this script already uses for `pirate_intercept_enabled` at PROOF 2), asserts the
+-- correct answer under each, and restores whatever posture the deployed chain ships. The ambient value
+-- is read FIRST and named in every failure message so a red log says which posture production is in;
+-- pinning means neither assertion can go dead, which a plain ambient branch could not promise.
+--
+--   (a) DARK → not_unpublishable {protected_zone}; the seeded row stays active.
+--   (b) LIT  → the unpublish is ACCEPTED on a SECOND, case-local seeded zone (the shared fixture is left
+--              active because later cases assert it never moved), status flips to 'inactive', ONE audit
+--              row, and `provenance` STAYS 'seeded'.
+--   (c) DARK again → that same, now owner-unpublished zone is protected again. Not a repeat of (a): (a)
+--              proves an untouched seed is protected, (c) proves the key is a TOGGLE and not a one-way
+--              door — which is 0282's entire reason for making provenance immutable.
 do $$
-declare v_owner uuid; v_circle uuid; r jsonb; v_status text;
+declare v_owner uuid; v_hostile uuid; v_circle uuid; v_lit_id uuid; r jsonb; v_status text; n int;
+        v_prov text; v_ambient boolean; v_posture text;
 begin
   select v into v_owner from pubuids where k = 'owner';
+  select v into v_hostile from pubz where k = 'hostile';
   select v into v_circle from pubz where k = 'circle';
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+
+  -- THE AMBIENT POSTURE — read before anything is pinned, so the log names what production ships.
+  if not exists (select 1 from public.game_config where key = 'seeded_zone_lifecycle_enabled') then
+    raise exception 'ZONE UNPUBLISH PROOF FAIL: game_config has no seeded_zone_lifecycle_enabled key — 0283 did not seed the gate this case exercises';
+  end if;
+  v_ambient := coalesce(public.cfg_bool('seeded_zone_lifecycle_enabled'), false);
+  v_posture := case when v_ambient then 'LIT' else 'DARK' end;
+  raise notice 'PUBLISH_ZONE_UNPUB_SEEDED_GATE_AMBIENT=% (seeded_zone_lifecycle_enabled as the deployed chain leaves it)', v_posture;
+
+  -- ── (a) DARK: the seeded zone is PROTECTED ────────────────────────────────────────────────────────
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_lifecycle_enabled', 'false'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'false'::jsonb;
+
   r := public.zone_unpublish('zoneunpub-protected-req-1', jsonb_build_object(
          'target_id', v_circle::text,
          'expected', jsonb_build_object('name','Zone Unpub Proof Seed Circle','source','circle',
                        'location_id', (select location_id from public.danger_zones where id = v_circle))));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'not_unpublishable'
      or (r->'details'->0->>'code') <> 'protected_zone' then
-    raise exception 'ZONE UNPUBLISH PROOF FAIL: a seeded circle zone was not rejected as not_unpublishable/protected_zone: %', r;
+    raise exception 'ZONE UNPUBLISH PROOF FAIL [posture DARK, seeded_zone_lifecycle_enabled pinned false; chain ambient = %]: a seeded circle zone was not rejected as not_unpublishable/protected_zone: %', v_posture, r;
   end if;
   select status into v_status from public.danger_zones where id = v_circle;
   if v_status <> 'active' then
-    raise exception 'ZONE UNPUBLISH PROOF FAIL: the protected circle zone was mutated to %', v_status;
+    raise exception 'ZONE UNPUBLISH PROOF FAIL [posture DARK; chain ambient = %]: the protected circle zone was mutated to %', v_posture, v_status;
   end if;
-  raise notice 'PUBLISH_ZONE_UNPUB_PASS_PROTECTED_ZONE_REJECTED';
+  select count(*) into n from public.world_editor_audit where request_id = 'zoneunpub-protected-req-1';
+  if n <> 0 then
+    raise exception 'ZONE UNPUBLISH PROOF FAIL [posture DARK; chain ambient = %]: a protected-zone rejection wrote % audit row(s)', v_posture, n;
+  end if;
+
+  -- ── (b) LIT: the unpublish is ACCEPTED, and the row stays SEEDED ──────────────────────────────────
+  -- A SECOND seeded zone, local to this case: the shared 'circle' fixture must stay active because the
+  -- closing untouched-zones case asserts exactly that.
+  insert into public.danger_zones (name, zone_kind, source, provenance, location_id, boundary, status)
+    values ('Zone Unpub Proof Seed Circle B', 'pirate', 'circle', 'seeded', v_hostile,
+            ST_Buffer(ST_MakePoint(820, -820), 60, 32), 'active')
+    returning id into v_lit_id;
+
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_lifecycle_enabled', 'true'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'true'::jsonb;
+
+  r := public.zone_unpublish('zoneunpub-seeded-lit-req-1', jsonb_build_object(
+         'target_id', v_lit_id::text,
+         'expected', jsonb_build_object('name','Zone Unpub Proof Seed Circle B','source','circle',
+                       'location_id', v_hostile)));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'ZONE UNPUBLISH PROOF FAIL [posture LIT, seeded_zone_lifecycle_enabled pinned true; chain ambient = %]: seeded-zone lifecycle changes are enabled, so unpublishing a seeded zone must be ACCEPTED: %', v_posture, r;
+  end if;
+  select status, provenance into v_status, v_prov from public.danger_zones where id = v_lit_id;
+  if v_status <> 'inactive' then
+    raise exception 'ZONE UNPUBLISH PROOF FAIL [posture LIT; chain ambient = %]: an accepted seeded unpublish left status at %', v_posture, v_status;
+  end if;
+  if v_prov <> 'seeded' then
+    raise exception 'ZONE UNPUBLISH PROOF FAIL [posture LIT; chain ambient = %]: an accepted unpublish moved provenance to ''%'' — lighting the key would be a ONE-WAY DOOR, not a toggle', v_posture, v_prov;
+  end if;
+  select count(*) into n from public.world_editor_audit where request_id = 'zoneunpub-seeded-lit-req-1';
+  if n <> 1 then
+    raise exception 'ZONE UNPUBLISH PROOF FAIL [posture LIT; chain ambient = %]: an accepted seeded unpublish wrote % audit row(s) (expected exactly 1)', v_posture, n;
+  end if;
+
+  -- ── (c) DARK again: the owner-unpublished seeded row re-protects exactly ──────────────────────────
+  -- protected_zone must precede already_inactive (0286:497 sits above the status check at :534), so the
+  -- answer here is protection, not "already unpublished".
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_lifecycle_enabled', 'false'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'false'::jsonb;
+
+  r := public.zone_unpublish('zoneunpub-protected-again-req-1', jsonb_build_object(
+         'target_id', v_lit_id::text,
+         'expected', jsonb_build_object('name','Zone Unpub Proof Seed Circle B','source','circle',
+                       'location_id', v_hostile)));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'not_unpublishable'
+     or (r->'details'->0->>'code') <> 'protected_zone' then
+    raise exception 'ZONE UNPUBLISH PROOF FAIL [posture DARK-after-unpublish; chain ambient = %]: turning seeded_zone_lifecycle_enabled back off did not RE-PROTECT an already-unpublished seeded zone — the flag is a one-way door: %', v_posture, r;
+  end if;
+
+  -- ── restore the posture the deployed chain ships ──────────────────────────────────────────────────
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_lifecycle_enabled', to_jsonb(v_ambient), 'proof-txn-local')
+    on conflict (key) do update set value = to_jsonb(v_ambient);
+  if coalesce(public.cfg_bool('seeded_zone_lifecycle_enabled'), false) is distinct from v_ambient then
+    raise exception 'ZONE UNPUBLISH PROOF FAIL: this case did not restore seeded_zone_lifecycle_enabled to the chain''s ambient % posture', v_posture;
+  end if;
+
+  raise notice 'PUBLISH_ZONE_UNPUB_PASS_PROTECTED_ZONE_REJECTED (gate proven in BOTH postures; chain ambient = %)', v_posture;
 end $$;
 
 -- ── PROOF 6 — a VANISHED target is not_found/source_missing; a DRIFTED draft is stale_revision ──────

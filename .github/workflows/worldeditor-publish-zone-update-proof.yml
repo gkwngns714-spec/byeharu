@@ -14,8 +14,11 @@ name: WORLD-EDITOR PUBLISH-ZONE-UPDATE — zone EDIT command disposable proof (n
 #     execute grant); request_id idempotent (one apply, one audit row, identical replay); a stale
 #     `expected` REJECTED via optimistic concurrency (stale_revision + source_changed for BOTH a name
 #     drift AND a geometry drift — ST_Equals compare); a self-intersecting new ring REJECTED at the
-#     authoritative ST_IsValid gate (typed invalid_geometry); a seeded source='circle' zone PROTECTED
-#     (typed validation_failed {protected_zone}); audit row carries BOTH before+after snapshots; a
+#     authoritative ST_IsValid gate (typed invalid_geometry); a seeded (provenance='seeded') zone gated
+#     on `seeded_zone_edit_enabled` in BOTH postures — dark PROTECTS (typed validation_failed
+#     {protected_zone}), lit ACCEPTS a current-revision edit while provenance stays 'seeded', and turning
+#     it dark again re-protects the edited row (the key is a toggle, never a one-way door); audit row
+#     carries BOTH before+after snapshots; a
 #     vanished target not_found/source_missing + a non-uuid target invalid_request; the 0239 pirate-zone
 #     lockdown intact and danger_zones the ONLY write path.
 # Read-only proof: self-rolling-back (begin;…rollback;), flips NO committed flag, keeps NO world row.
@@ -79,6 +82,7 @@ jobs:
             PUBLISH_ZONE_UPD_PASS_AUDIT_BEFORE_AFTER \
             PUBLISH_ZONE_UPD_PASS_NOT_FOUND \
             PUBLISH_ZONE_UPD_PASS_PIRATE_ZONE_LOCKDOWN_INTACT \
+            PUBLISH_ZONE_UPD_PASS_GEOMETRY_ROUND_TRIP \
             'WORLD-EDITOR PUBLISH-ZONE-UPDATE PROOF PASSED'; do
             echo "$out" | grep -q "$marker" || { echo "MISSING PASS MARKER: $marker"; exit 1; }
           done

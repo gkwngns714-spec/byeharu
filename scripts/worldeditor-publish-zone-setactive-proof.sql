@@ -7,11 +7,15 @@
 -- status='inactive' and it leaves get_danger_zones), then across the reactivate surface: REJECT the
 -- non-owner (not_authorized) and anonymous (not_authenticated) with zero side effects, REJECT a malformed
 -- payload (invalid_request), a vanished target (not_found/source_missing), a drifted draft (stale_revision/
--- source_changed) and a seeded source='circle' zone (validation_failed/protected_zone) — all with NOTHING
--- written; then owner REACTIVATE the canary → the SAME row flips to status='active' with its boundary
+-- source_changed) — all with NOTHING written; gate a seeded (provenance='seeded') zone on
+-- `seeded_zone_lifecycle_enabled` in BOTH postures — dark REJECTS as validation_failed/protected_zone,
+-- lit ACCEPTS the reactivate while provenance stays 'seeded', and turning it dark again re-protects the
+-- reactivated row (PROOF 7 pins the key txn-locally both ways and restores whatever posture the deployed
+-- chain ships); then owner REACTIVATE the canary → the SAME row flips to status='active' with its boundary
 -- BYTE-IDENTICAL and id/zone_kind/source/location_id/created_by/created_at preserved, it reappears in
--- get_danger_zones AND the interception predicate at once, exactly ONE zone_set_active audit row exists
--- (before status='inactive', after status='active'), an idempotent replay adds NO second audit and does
+-- get_danger_zones AND the interception predicate at once, exactly TWO zone_set_active audit rows exist
+-- (PROOF 7's lit seeded reactivate + the canary's, before status='inactive', after status='active'), an
+-- idempotent replay adds NO second audit and does
 -- NOT re-mutate, a NEW request on the now-active zone is validation_failed/already_active, existing zones
 -- are untouched, and the danger_zones client-write lockdown + the 0239 pirate-zone lockdown are intact.
 --
@@ -61,8 +65,15 @@ begin
     values
       (v_zone, 'Zone React Proof Den', 'pirate_den', 'hunt_pirates', 800, -800, 1, 1, 0, true, null, 'active')
     returning id into v_hostile;
-  insert into public.danger_zones (name, zone_kind, source, location_id, boundary, status)
-    values ('Zone React Proof Seed Circle', 'pirate', 'circle', v_hostile,
+  -- `provenance` IS the protection authority, NOT `source` — 0282 split them and 0286 re-pointed
+  -- zone_set_active's guard at 0286:662-664 onto `provenance = 'seeded'`. The column DEFAULT is 'owner'
+  -- and 0282's one-time backfill classified only the rows that already existed, so a freshly INSERTed
+  -- source='circle' row is provenance='owner' and the guard correctly declines to protect it. This
+  -- fixture therefore has to declare provenance explicitly (INSERT is allowed; 0282's immutability
+  -- trigger only blocks UPDATE), or PROOF 7 tests a rule that no longer exists. Same correction the
+  -- zone-update proof already carries.
+  insert into public.danger_zones (name, zone_kind, source, provenance, location_id, boundary, status)
+    values ('Zone React Proof Seed Circle', 'pirate', 'circle', 'seeded', v_hostile,
             ST_Buffer(ST_MakePoint(800, -800), 90, 32), 'active')
     returning id into v_circle;
   insert into pubz values ('hostile', v_hostile), ('circle', v_circle);
@@ -236,26 +247,123 @@ begin
   raise notice 'PUBLISH_ZONE_REACT_PASS_NOT_FOUND_AND_STALE';
 end $$;
 
--- ── PROOF 7 — a SEEDED source='circle' zone is PROTECTED (validation_failed/protected_zone) ─────────
+-- ── PROOF 7 — SEEDED-ZONE LIFECYCLE PROTECTION IS FLAG-GATED, AND THE GATE SWINGS BOTH WAYS ─────────
+-- The head of zone_set_active (0286:662-668) protects only when
+--     provenance = 'seeded' AND NOT cfg_bool('seeded_zone_lifecycle_enabled')
+-- and 0283 SEEDS that key 'false'. This case used to assert the DARK answer as though it were the only
+-- answer. 0300 (`lights_on`) then set 44 capability keys true, `seeded_zone_lifecycle_enabled` among
+-- them (0300:86) — a deliberate owner order. On that chain the protection branch no longer fires and
+-- control falls through to the already-active check at 0286:697-703, which answers
+-- validation_failed {already_active} — a DIFFERENT gate, for a reason unrelated to provenance. The old
+-- assertion would read that as lost protection. Asserting one posture as universal is what broke.
+--
+-- So this case now proves the INVARIANT: **the flag is the gate.** It pins the key txn-locally in BOTH
+-- positions (the idiom this script already uses for `pirate_intercept_enabled`), asserts the correct
+-- answer under each, and restores whatever posture the deployed chain ships. The ambient value is read
+-- FIRST and named in every failure message so a red log says which posture production is in; pinning
+-- means neither assertion can go dead, which a plain ambient branch could not promise.
+--
+--   (a) DARK → validation_failed {protected_zone}; the seeded row stays active.
+--   (b) LIT  → reactivation is ACCEPTED on a SECOND, case-local seeded zone seeded INACTIVE (this
+--              command only flips inactive→active, and the shared fixture must stay active because
+--              later cases assert it never moved); status flips to 'active', ONE audit row, and
+--              `provenance` STAYS 'seeded'.
+--   (c) DARK again → that same, now owner-reactivated zone is protected again. Not a repeat of (a): (a)
+--              proves an untouched seed is protected, (c) proves the key is a TOGGLE and not a one-way
+--              door — which is 0282's entire reason for making provenance immutable.
 do $$
-declare v_owner uuid; v_circle uuid; r jsonb; v_status text;
+declare v_owner uuid; v_hostile uuid; v_circle uuid; v_lit_id uuid; r jsonb; v_status text; n int;
+        v_prov text; v_ambient boolean; v_posture text;
 begin
   select v into v_owner from pubuids where k = 'owner';
+  select v into v_hostile from pubz where k = 'hostile';
   select v into v_circle from pubz where k = 'circle';
   perform set_config('request.jwt.claims', json_build_object('sub', v_owner::text, 'role','authenticated')::text, true);
+
+  -- THE AMBIENT POSTURE — read before anything is pinned, so the log names what production ships.
+  if not exists (select 1 from public.game_config where key = 'seeded_zone_lifecycle_enabled') then
+    raise exception 'ZONE REACTIVATE PROOF FAIL: game_config has no seeded_zone_lifecycle_enabled key — 0283 did not seed the gate this case exercises';
+  end if;
+  v_ambient := coalesce(public.cfg_bool('seeded_zone_lifecycle_enabled'), false);
+  v_posture := case when v_ambient then 'LIT' else 'DARK' end;
+  raise notice 'PUBLISH_ZONE_REACT_SEEDED_GATE_AMBIENT=% (seeded_zone_lifecycle_enabled as the deployed chain leaves it)', v_posture;
+
+  -- ── (a) DARK: the seeded zone is PROTECTED ────────────────────────────────────────────────────────
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_lifecycle_enabled', 'false'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'false'::jsonb;
+
   r := public.zone_set_active('zonereact-protected-req-1', jsonb_build_object(
          'target_id', v_circle::text,
          'expected', jsonb_build_object('name','Zone React Proof Seed Circle','source','circle',
                        'location_id', (select location_id from public.danger_zones where id = v_circle))));
   if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
      or (r->'details'->0->>'code') <> 'protected_zone' then
-    raise exception 'ZONE REACTIVATE PROOF FAIL: a seeded circle zone was not rejected as validation_failed/protected_zone: %', r;
+    raise exception 'ZONE REACTIVATE PROOF FAIL [posture DARK, seeded_zone_lifecycle_enabled pinned false; chain ambient = %]: a seeded circle zone was not rejected as validation_failed/protected_zone: %', v_posture, r;
   end if;
   select status into v_status from public.danger_zones where id = v_circle;
   if v_status <> 'active' then
-    raise exception 'ZONE REACTIVATE PROOF FAIL: the protected circle zone was mutated to %', v_status;
+    raise exception 'ZONE REACTIVATE PROOF FAIL [posture DARK; chain ambient = %]: the protected circle zone was mutated to %', v_posture, v_status;
   end if;
-  raise notice 'PUBLISH_ZONE_REACT_PASS_PROTECTED_ZONE_REJECTED';
+  select count(*) into n from public.world_editor_audit where request_id = 'zonereact-protected-req-1';
+  if n <> 0 then
+    raise exception 'ZONE REACTIVATE PROOF FAIL [posture DARK; chain ambient = %]: a protected-zone rejection wrote % audit row(s)', v_posture, n;
+  end if;
+
+  -- ── (b) LIT: the reactivation is ACCEPTED, and the row stays SEEDED ───────────────────────────────
+  insert into public.danger_zones (name, zone_kind, source, provenance, location_id, boundary, status)
+    values ('Zone React Proof Seed Circle B', 'pirate', 'circle', 'seeded', v_hostile,
+            ST_Buffer(ST_MakePoint(820, -820), 60, 32), 'inactive')
+    returning id into v_lit_id;
+
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_lifecycle_enabled', 'true'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'true'::jsonb;
+
+  r := public.zone_set_active('zonereact-seeded-lit-req-1', jsonb_build_object(
+         'target_id', v_lit_id::text,
+         'expected', jsonb_build_object('name','Zone React Proof Seed Circle B','source','circle',
+                       'location_id', v_hostile)));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'ZONE REACTIVATE PROOF FAIL [posture LIT, seeded_zone_lifecycle_enabled pinned true; chain ambient = %]: seeded-zone lifecycle changes are enabled, so reactivating an inactive seeded zone must be ACCEPTED: %', v_posture, r;
+  end if;
+  select status, provenance into v_status, v_prov from public.danger_zones where id = v_lit_id;
+  if v_status <> 'active' then
+    raise exception 'ZONE REACTIVATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted seeded reactivate left status at %', v_posture, v_status;
+  end if;
+  if v_prov <> 'seeded' then
+    raise exception 'ZONE REACTIVATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted reactivate moved provenance to ''%'' — lighting the key would be a ONE-WAY DOOR, not a toggle', v_posture, v_prov;
+  end if;
+  select count(*) into n from public.world_editor_audit where request_id = 'zonereact-seeded-lit-req-1';
+  if n <> 1 then
+    raise exception 'ZONE REACTIVATE PROOF FAIL [posture LIT; chain ambient = %]: an accepted seeded reactivate wrote % audit row(s) (expected exactly 1)', v_posture, n;
+  end if;
+
+  -- ── (c) DARK again: the owner-reactivated seeded row re-protects exactly ──────────────────────────
+  -- protected_zone must precede already_active (0286:662 sits above the status check at :697), so the
+  -- answer here is protection, not "already active".
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_lifecycle_enabled', 'false'::jsonb, 'proof-txn-local')
+    on conflict (key) do update set value = 'false'::jsonb;
+
+  r := public.zone_set_active('zonereact-protected-again-req-1', jsonb_build_object(
+         'target_id', v_lit_id::text,
+         'expected', jsonb_build_object('name','Zone React Proof Seed Circle B','source','circle',
+                       'location_id', v_hostile)));
+  if (r->>'ok')::boolean is not false or (r->>'error') <> 'validation_failed'
+     or (r->'details'->0->>'code') <> 'protected_zone' then
+    raise exception 'ZONE REACTIVATE PROOF FAIL [posture DARK-after-reactivate; chain ambient = %]: turning seeded_zone_lifecycle_enabled back off did not RE-PROTECT an already-reactivated seeded zone — the flag is a one-way door: %', v_posture, r;
+  end if;
+
+  -- ── restore the posture the deployed chain ships ──────────────────────────────────────────────────
+  insert into public.game_config(key, value, description)
+    values ('seeded_zone_lifecycle_enabled', to_jsonb(v_ambient), 'proof-txn-local')
+    on conflict (key) do update set value = to_jsonb(v_ambient);
+  if coalesce(public.cfg_bool('seeded_zone_lifecycle_enabled'), false) is distinct from v_ambient then
+    raise exception 'ZONE REACTIVATE PROOF FAIL: this case did not restore seeded_zone_lifecycle_enabled to the chain''s ambient % posture', v_posture;
+  end if;
+
+  raise notice 'PUBLISH_ZONE_REACT_PASS_PROTECTED_ZONE_REJECTED (gate proven in BOTH postures; chain ambient = %)', v_posture;
 end $$;
 
 -- ── PROOF 8 — OWNER REACTIVATES the canary: ok, SAME id, boundary byte-identical, geometry preserved ─
@@ -318,9 +426,13 @@ do $$
 declare v_id uuid; v_before jsonb; v_after jsonb; v_type text; v_ttype text; v_tid text; v_rev text; n int;
 begin
   select id into v_id from public.danger_zones where name = 'CANARY-Zone-React-Proof';
+  -- TWO zone_set_active rows are now correct, and the count is still an exact no-stray-writes pin:
+  -- PROOF 7(b) reactivates a seeded zone with the lifecycle key pinned LIT (one row), and PROOF 8
+  -- reactivates the canary (one row). Every other zone_set_active call in this script is a rejection
+  -- and must write nothing — this count is what proves that.
   select count(*) into n from public.world_editor_audit where command_type = 'zone_set_active';
-  if n <> 1 then
-    raise exception 'ZONE REACTIVATE PROOF FAIL: expected exactly one zone_set_active audit row, got %', n;
+  if n <> 2 then
+    raise exception 'ZONE REACTIVATE PROOF FAIL: expected exactly two zone_set_active audit rows (PROOF 7 lit seeded reactivate + PROOF 8 canary reactivate), got %', n;
   end if;
   select before_snapshot, after_snapshot, command_type, target_type, target_id, source_revision
     into v_before, v_after, v_type, v_ttype, v_tid, v_rev

@@ -23,14 +23,46 @@ test('rpc name is exactly the deployed PORT-ENTRY commission function', () => {
 })
 
 // ── Eligibility rendering: state → the single affordance (place-based, 4C-CLIENT) ──────────────────────
-const base: PortEntryShipState = { hasShip: true, shipStatus: 'stationary', place: null }
+const base: PortEntryShipState = { shipCount: 1, shipStatus: 'stationary', place: null }
 
-test('affordance: null state → loading (never a premature action)', () => {
-  expect(derivePortEntryAffordance(null)).toEqual({ kind: 'loading' })
+test('affordance: null state → unknown (never a premature action)', () => {
+  expect(derivePortEntryAffordance(null)).toEqual({ kind: 'unknown' })
 })
 
-test('affordance: no ship → commission (Claim First Ship)', () => {
-  expect(derivePortEntryAffordance({ ...base, hasShip: false })).toEqual({ kind: 'commission' })
+test('affordance: zero ships → commission (Claim First Ship)', () => {
+  expect(derivePortEntryAffordance({ shipCount: 0, shipStatus: null, place: null }))
+    .toEqual({ kind: 'commission' })
+})
+
+// ── THE FAIL-SAFE DIRECTION — the defect: "Claim First Ship" offered to a player who owns a fleet ──────
+// Live on prod 2026-07-27: a 5-ship player saw the first-run claim card in the same render as their two
+// fleets. Cause: "do I own a ship?" was answered by the SOLE-ship resolver, which fails closed to null at
+// N≥2 without a selection, so every multi-ship player classified as owning nothing. The count answers it.
+test('affordance: a MULTI-SHIP fleet with no single ship addressed is never offered the first-ship claim', () => {
+  // shipStatus/place null is exactly what the resolver yields at N≥2 with no selection.
+  for (const n of [2, 5, 24]) {
+    expect(derivePortEntryAffordance({ shipCount: n, shipStatus: null, place: null }))
+      .toEqual({ kind: 'unknown' })
+  }
+})
+
+test('affordance: a failed read is NOT "you have no ships" (a fleet must never read as vanished)', () => {
+  // fetchPortEntryShipState returns null on a read error; that must never reach the claim arm.
+  expect(derivePortEntryAffordance(null)).not.toEqual({ kind: 'commission' })
+})
+
+test('affordance: commission is the ONLY action arm, and only a positive zero-count reaches it', () => {
+  const nonZero: (PortEntryShipState | null)[] = [
+    null,
+    { shipCount: 1, shipStatus: null, place: null },
+    { shipCount: 2, shipStatus: null, place: null },
+    { shipCount: 1, shipStatus: 'stationary', place: 'docked' },
+    { shipCount: 3, shipStatus: 'destroyed', place: null },
+    { shipCount: 1, shipStatus: 'traveling', place: 'transit' },
+  ]
+  for (const s of nonZero) {
+    expect(derivePortEntryAffordance(s).kind).not.toBe('commission')
+  }
 })
 
 test('affordance: docked → docked (no action; ordinary dock experience)', () => {

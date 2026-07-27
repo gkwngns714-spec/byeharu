@@ -128,5 +128,8 @@ test('the module is PURE and dispatches nothing — rows carry INTENTS, not call
 
 test('it mirrors the server gate rather than inventing a client-only rule', () => {
   expect(source).toMatch(/typed_zone_authoring_enabled/)
-  expect(source).toMatch(/a dark capability must not\n\/\/ present live-looking controls/)
+  // \r?\n, not \n: these files are stored LF and checked out CRLF on Windows (`git ls-files --eol`
+  // reports `i/lf w/crlf`), so a bare \n can never match in a Windows working tree. The assertion is
+  // about the SENTENCE spanning a comment line-break, not about which bytes end the line.
+  expect(source).toMatch(/a dark capability must not\r?\n\/\/ present live-looking controls/)
 })

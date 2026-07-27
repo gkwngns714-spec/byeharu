@@ -153,5 +153,8 @@ test('the effect registry stays 1:1 with the server zone_effect_* tables', () =>
 })
 
 test('it states that the server is the authority, not this file', () => {
-  expect(source).toMatch(/That refusal is the\n\/\/ authority and this module cannot weaken it/)
+  // \r?\n, not \n — see the note in zoneEffectPanelModel.spec.ts: these sources are stored LF and
+  // checked out CRLF on Windows, so a bare \n can never match locally even though CI (Linux) passes.
+  // A spec that asserts a SENTENCE must not depend on which bytes end the line it spans.
+  expect(source).toMatch(/That refusal is the\r?\n\/\/ authority and this module cannot weaken it/)
 })
