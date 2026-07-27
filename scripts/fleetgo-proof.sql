@@ -58,6 +58,20 @@ end $$;
 -- through set_fleet_command_ship, the sole writer (0204), as the owning authenticated sub — never a
 -- direct UPDATE of is_command_ship, which would provision a state no player can reach.
 -- Idempotent: a group that already has a command ship is left exactly as it is.
+-- open_telegraphed — combat_telegraph_enabled (0230) is lit, so activity_start('hunt_pirates') no
+-- longer opens the encounter inline on arrival: it queues a pending_encounters row at
+-- now() + combat_telegraph_seconds and returns. An encounter that used to exist the instant
+-- movement_settle_arrival returned is now one cron tick away. This drives that cron — the same one a
+-- real player's arrival waits on — rather than calling combat_create_encounter, which would fork a
+-- second encounter-opening path. Clock only. No-op when nothing is queued, so it is safe after any
+-- settle, including the ones whose blocks do not care about combat.
+create or replace function pg_temp.open_telegraphed(p_fleet uuid) returns void language plpgsql as $$
+begin
+  update public.pending_encounters set trigger_at = now() - interval '1 second'
+   where fleet_id = p_fleet and status = 'telegraphed';
+  perform public.process_combat_telegraphs();
+end $$;
+
 create or replace function pg_temp.arm_group(p_uid uuid, p_group uuid) returns void language plpgsql as $$
 declare r jsonb; v_ship uuid;
 begin
@@ -2167,13 +2181,7 @@ begin
    where id = v_huntmv;
   perform public.movement_settle_arrival(v_huntmv);
 
-  -- ★ 0300 lit combat_telegraph_enabled, so activity_start no longer opens the encounter inline
-  -- ★ (0230:114-122): it queues pending_encounters at now() + combat_telegraph_seconds and returns.
-  -- ★ The live encounter this block needs is now one cron tick away, so drive that cron — the same
-  -- ★ one a real player's arrival waits on. Clock only; no second encounter-opening path.
-  update public.pending_encounters set trigger_at = now() - interval '1 second'
-    where fleet_id = v_huntfleet and status = 'telegraphed';
-  perform public.process_combat_telegraphs();
+  perform pg_temp.open_telegraphed(v_huntfleet);
 
   -- vacuity guards: the mid-combat state must REALLY exist, or the rejection below proves nothing.
   select count(*) into n from public.fleets
@@ -2769,6 +2777,7 @@ begin
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
    where id = v_huntmv;
   perform public.movement_settle_arrival(v_huntmv);
+  perform pg_temp.open_telegraphed(v_huntfleet);
   -- vacuity: present AT the hunt site, live encounter, active presence, manifest still open.
   select count(*) into n from public.fleets
    where id = v_huntfleet and status = 'present' and current_location_id = v_hunt;
@@ -3994,6 +4003,7 @@ begin
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
    where id = v_huntmv;
   perform public.movement_settle_arrival(v_huntmv);
+  perform pg_temp.open_telegraphed(v_huntfleet);
   select count(*) into n from public.fleets
    where id = v_huntfleet and status = 'present' and current_location_id = v_hunt;
   if n <> 1 then raise exception 'S4 ONSORTIE FAIL: the S4 mid-combat sortie state was not built (fleet not present at the hunt site)'; end if;
