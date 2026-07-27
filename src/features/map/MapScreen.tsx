@@ -14,6 +14,7 @@ import type { MiningField } from '../mining/miningTypes'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { TelegraphBanner } from '../combat/TelegraphBanner'
 import { CombatMapCard } from './CombatMapCard'
+import { ambushEncounterNotices } from './ambushEncounterNotice'
 import { distance } from '../../game/movement/travelPreview'
 import type { WorldCoord } from './openSpaceTransform'
 import { Badge, Button, OverlayPanel, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
@@ -293,6 +294,22 @@ export function MapScreen() {
                 of the same server rows — ActiveCombatPanel is untouched and stays the Command-side
                 detail. Pure presentation: every number is the database's, none is derived here. */}
             <div className="pointer-events-none absolute right-3 top-3 z-30 flex flex-col items-end gap-2">
+              {/* INTERCEPT DEFERRED ENTRY — the ambush notice. It rides in THIS slot, directly above
+                  the combat card, because this slot is already the map's ONE encounter-state surface:
+                  same rows (combat.encounters, polled once by useCombat), same fight, one line saying
+                  WHY that fight exists. Nothing new is fetched, polled or remembered — the pure model
+                  (ambushEncounterNotice.ts) derives it from rows already in hand, and the order RPC's
+                  response has no part in it. Its true final home is inside CombatMapCard's per-
+                  encounter card; that fold is a two-line move once that file is free to edit. */}
+              {ambushEncounterNotices({ encounters: combat.encounters, locations }).map((n) => (
+                <p
+                  key={n.encounterId}
+                  data-testid={`map-ambush-notice-${n.encounterId}`}
+                  className="pointer-events-auto w-64 rounded-card border border-danger/50 bg-surface/95 px-3 py-2 text-xs font-semibold text-danger shadow-overlay backdrop-blur"
+                >
+                  {n.text}
+                </p>
+              ))}
               <CombatMapCard encounters={combat.encounters} units={combat.units} />
             </div>
             {/* COMBAT-S2 TELEGRAPH — the pre-combat warning beat (top-center, urgent). Renders nothing

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { WorldCoord } from './openSpaceTransform'
 import { commandShipGroupCancelRoute, commandShipGroupGoRoute } from './pirateApi'
+import { routeOrderOutcomeMessage } from '../command/fleetOrderOutcome'
 import { teamReasonMessage } from '../command/teamReasonMessage'
 import { Badge, Button, OverlayPanel } from '../../components/ui'
 
@@ -49,7 +50,13 @@ export function PirateInterceptPanel({
     const result = await commandShipGroupGoRoute(groupId, { waypoints, targetX: last.x, targetY: last.y })
     setBusy(false)
     if (result.ok) {
-      setMessage(result.intercepted === true ? 'Route sent — ambushed on the first leg!' : 'Route sent.')
+      // INTERCEPT DEFERRED ENTRY — the order response says what THIS CALL did, never whether an
+      // ambush is coming. It used to claim 'Route sent — ambushed on the first leg!' off
+      // `intercepted`, a sentence that is permanently false once the ambush is deferred to the
+      // movement processor. The outcome→copy decision has ONE authority (fleetOrderOutcome.ts), which
+      // also owns the degradation to today's server. The ambush the player actually meets is rendered
+      // from ENCOUNTER state on the map (ambushEncounterNotice.ts), not from here.
+      setMessage(routeOrderOutcomeMessage(result))
       onClearDraft()
       onModeChange('off')
       onCommanded()
