@@ -567,135 +567,112 @@ begin
   raise notice 'DZCOMBAT_PASS_PIRATEFIRE ok: a synthetic pirate spawned near the engagement point (post-tick dist %), FIRED a spatial missile_salvo, and took real damage (hp %/%)', v_e_dist, v_e_hpcur, v_e_hpmax;
 end $$;
 
--- ════════ DZCOMBAT_PASS_REAMBUSH: the SECOND ambush of the same fleet still opens combat ════════════
+-- ════════ DZCOMBAT_PASS_MANIFESTHELD: an ambush on a fleet that ALREADY has a manifest ══════════════
 -- THE REGRESSION THIS FILE EXISTS TO CATCH FROM NOW ON (added with migration 0303, 2026-07-27).
 --
--- The owner hit this in the live game: combat fires the first time a fleet enters a danger zone and
--- never again, the fleet is yanked to the ambush point, and it is then permanently refused a new
--- course with 'group_on_sortie'. Production recorded it on fleet e2151a71 — a FOUR-row manifest, and
--- two intercepts at 14:57:07Z / 14:57:48Z both hit=true, fired, encounter_id=NULL,
--- note='empty_manifest'.
+-- The owner hit this in the live game: combat fires the first time and never again, the fleet is
+-- yanked to the ambush point, and it is then permanently refused a new course with 'group_on_sortie'.
 --
--- Cause: the manifest freeze is idempotent (ON CONFLICT DO NOTHING) and the zero-manifest guard read
--- its size with `get diagnostics ... row_count` — the number of rows INSERTED, not the number PRESENT.
--- The second ambush of any fleet inserts nothing, reads zero, and the guard parks the fleet and opens
--- no combat. 0303 makes the guard count the manifest.
+-- Cause: the ambush resolver's manifest freeze is idempotent (ON CONFLICT DO NOTHING) and the
+-- zero-manifest guard measured it with `get diagnostics ... row_count` — rows INSERTED, not rows
+-- PRESENT. Any ambush of a fleet that ALREADY carries a sortie manifest therefore inserts nothing,
+-- reads zero, and the guard parks the fleet and opens no combat. 0303 makes the guard count the
+-- manifest.
 --
--- Everything above proves the FIRST ambush. This block is the second one, on the SAME fleet, and it is
--- deliberately built so it CANNOT pass vacuously: it asserts the manifest is already populated before
--- the second resolve (the precondition for the bug) and that the second freeze inserts nothing.
+-- THE FIXTURE IS PRODUCTION'S OWN SHAPE, not an invented one. On fleet e2151a71 the manifest was
+-- frozen by a HUNT SEND at 14:54:33Z (send_ship_group_hunt is the manifest's sole writer), and the
+-- ambushes landed at 14:57:07Z and 14:57:48Z — on the hunt leg, with the manifest already in place.
+-- So this block sends a real hunt through a danger zone. No prior fight has to be survived, which is
+-- what an earlier draft got wrong: draining a first combat killed the fleet, the group was re-issued
+-- a BRAND NEW fleet with an empty manifest, and the ON CONFLICT path was never exercised at all.
+--
+-- Two vacuity guards make a false green impossible:
+--   1. the manifest must be non-empty BEFORE the ambush resolves;
+--   2. the freeze must insert ZERO rows (manifest count identical across the resolve) — otherwise the
+--      pre-0303 code would have passed here too.
 do $$
 declare
-  n int; n_before int; n_after int; v_pres uuid;
-  v_fleet uuid := (select v from dzc where k='v_fleet');
-  v_enc1  uuid := (select v from dzc where k='v_enc');
-  uZ      uuid := (select v from dzc where k='uZ');
-  gZ      uuid := (select v from dzc where k='gZ');
-  v_zone  uuid := (select v from dzc where k='v_zone');
-  m_x double precision; m_y double precision; v_atk_before double precision;
-  r jsonb; pi record; mv record; fl record; v_mv2 uuid; v_enc2 uuid;
+  r jsonb; n int; n_before int; n_after int;
+  uZ uuid := (select v from dzc where k='uZ');
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  s_r uuid; gR uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
+  h_x double precision; h_y double precision; v_verts jsonb;
+  pi record; mv record; fl record;
 begin
-  -- ── VACUITY GUARD 1: the fleet must ALREADY carry a manifest, or this proves nothing. ────────────
+  -- ── A third ship + team, provisioned exactly like the others (real RPCs only). ───────────────────
+  r := pg_temp.call_as(uZ, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'MANIFESTHELD FAIL: commission: %', r; end if;
+  select main_ship_id into s_r from public.main_ship_instances
+   where player_id = uZ
+     and main_ship_id not in ((select v from dzc where k='s_cmd'), (select v from dzc where k='s_b'))
+   limit 1;
+  if s_r is null then raise exception 'MANIFESTHELD FAIL: no third ship materialised'; end if;
+
+  r := pg_temp.call_as(uZ, 'public.upsert_ship_group(3, ''Danger R'')');
+  if (r->>'ok')::boolean is not true then raise exception 'MANIFESTHELD FAIL: group: %', r; end if;
+  gR := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uZ, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s_r, gR));
+  if (r->>'ok')::boolean is not true then raise exception 'MANIFESTHELD FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uZ, format('public.set_fleet_command_ship(%L::uuid, true)', s_r));
+  if (r->>'ok')::boolean is not true then raise exception 'MANIFESTHELD FAIL: designate command: %', r; end if;
+
+  -- ── A zone AROUND THE HUNT SITE, so any inbound leg must cross it before arriving. Drawn with the
+  --    real verb; 0304's trigger gives it the pirate effect row the typed planner requires.
+  select l.x, l.y into h_x, h_y from public.locations l where l.id = v_hunt;
+  v_verts := jsonb_build_array(
+    jsonb_build_array(h_x - 150, h_y - 150),
+    jsonb_build_array(h_x + 150, h_y - 150),
+    jsonb_build_array(h_x + 150, h_y + 150),
+    jsonb_build_array(h_x - 150, h_y + 150));
+  r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Hunt Approach Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'MANIFESTHELD FAIL: zone: %', r; end if;
+
+  -- ── THE HUNT SEND — the manifest's sole writer. This is what production did at 14:54:33Z. ────────
+  r := pg_temp.call_as(uZ, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gR, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'MANIFESTHELD FAIL: hunt send: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid;
+  v_mv    := (r->>'movement_id')::uuid;
+
+  -- ── VACUITY GUARD 1: the manifest must already exist. That is the precondition for the bug. ──────
   select count(*) into n_before from public.group_sortie_members where fleet_id = v_fleet;
   if n_before = 0 then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the fleet carries no manifest before the second ambush — the regression cannot reproduce and this block would pass vacuously';
+    raise exception 'MANIFESTHELD FAIL: the hunt send froze no manifest — the regression cannot reproduce and this block would pass vacuously';
   end if;
 
-  -- ── Leave the first fight through the canonical retreat arm (the one command_ship_group_go step 8
-  --    calls; 0298 pins it as the sole retreat entry point), then tick until the encounter is over.
-  select presence_id into v_pres from public.combat_encounters where id = v_enc1;
-  if v_pres is null then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the first encounter carries no presence to retreat from';
-  end if;
-  -- Drain to a TERMINAL encounter, not merely out of 'active'. presence_request_leave moves the
-  -- encounter to 'retreating', and a retreating encounter is still a live combat commitment: step 8
-  -- classifies a re-order against it as case (b) and only UPDATES the retreat destination
-  -- ('retreat_destination_updated') instead of starting a new leg. Draining to 'active' alone would
-  -- therefore never free the fleet. The retreat also mints its own movement, so the movement processor
-  -- is driven alongside the combat ticks to settle it.
-  -- ── The fleet must SURVIVE the first fight, or the premise collapses. Draining with live damage
-  --    killed it (encounter 'defeat', fleet 'destroyed'), and command_ship_group_go then minted a
-  --    BRAND NEW fleet for the group — whose manifest is empty, so the second ambush would insert
-  --    rows and never exercise the ON CONFLICT path this block exists to test. The regression needs
-  --    the SAME fleet row ambushed twice, exactly as production recorded it.
-  --    Enemy damage is therefore zeroed for the drain only, through the real set_game_config knob
-  --    (the established in-txn idiom), and restored immediately afterwards.
-  select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_atk_before;
-  perform public.set_game_config('enemy_attack_base', '0'::jsonb);
-
-  perform public.presence_request_leave(v_pres);
-  for i in 1..60 loop
-    exit when (select status from public.combat_encounters where id = v_enc1)
-              not in ('active', 'retreating');
-    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute'
-     where id = v_enc1;
-    perform public.process_combat_ticks();
-    update public.fleet_movements set depart_at = depart_at - interval '1 hour',
-                                      arrive_at = arrive_at - interval '1 hour'
-     where fleet_id = v_fleet and status = 'moving';
-    perform public.process_fleet_movements();
-  end loop;
-  perform public.set_game_config('enemy_attack_base', to_jsonb(v_atk_before));
-
-  if (select status from public.combat_encounters where id = v_enc1) in ('active', 'retreating') then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the first encounter is still % after draining — the fleet cannot be freed',
-      (select status from public.combat_encounters where id = v_enc1);
-  end if;
-
-  -- The fleet must be the SAME live fleet, or the second ambush cannot exercise the ON CONFLICT path.
-  select * into fl from public.fleets where id = v_fleet;
-  if fl.status = 'destroyed' then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the fleet died in the first fight despite zeroed enemy damage — the second ambush would hit a fresh fleet with an empty manifest and prove nothing';
-  end if;
-
-  -- ── SECOND ORDER, back through the same zone. Real RPC, the same verb the player uses. A refusal
-  --    here IS the owner's 'group_on_sortie' deadlock, so it is asserted rather than tolerated.
-  select ST_X(ST_Centroid(boundary)), ST_Y(ST_Centroid(boundary)) into m_x, m_y
-    from public.danger_zones where id = v_zone;
-  r := pg_temp.call_as(uZ, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
-                                  gZ, round(m_x), round(m_y)));
-  if (r->>'ok')::boolean is not true then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the fleet could NOT be re-ordered after its first fight: % — this is the group_on_sortie deadlock', r;
-  end if;
-  v_mv2 := (r->>'movement_id')::uuid;
-  if v_mv2 is null then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the re-order started no movement: %', r;
-  end if;
-
-  select * into pi from public.pirate_intercepts where movement_id = v_mv2 order by created_at desc limit 1;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv order by created_at desc limit 1;
   if pi is null or pi.lifecycle_state <> 'pending' then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the second leg scheduled no pending ambush (risk is forced to 1 in this proof)';
+    raise exception 'MANIFESTHELD FAIL: the hunt leg scheduled no pending ambush (risk knobs are 1.0 here, and 0304 gives the new zone its effect row)';
   end if;
 
-  -- ── Fire it.
-  select * into mv from public.fleet_movements where id = v_mv2;
-  perform pg_temp.rewind_leg(v_mv2, (mv.arrive_at - now()) + interval '5 seconds');
+  -- ── Fire it, through the REAL movement processor. ────────────────────────────────────────────────
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
   perform public.process_fleet_movements();
 
-  select * into pi from public.pirate_intercepts where movement_id = v_mv2 order by created_at desc limit 1;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv order by created_at desc limit 1;
   if pi.lifecycle_state <> 'fired' then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the second ambush is % (want fired)', pi.lifecycle_state;
+    raise exception 'MANIFESTHELD FAIL: the ambush is % (want fired)', pi.lifecycle_state;
   end if;
 
-  -- ── VACUITY GUARD 2: the second freeze must have inserted NOTHING. If it inserted rows, the fleet
-  --    did not really carry its manifest and the pre-0303 code would have passed here too.
+  -- ── VACUITY GUARD 2: the freeze must have inserted NOTHING, i.e. the ON CONFLICT path ran. ───────
   select count(*) into n_after from public.group_sortie_members where fleet_id = v_fleet;
   if n_after <> n_before then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: manifest went % -> % across the second ambush — the ON CONFLICT path was not exercised, so this block does not reproduce the regression',
+    raise exception 'MANIFESTHELD FAIL: manifest went % -> % across the ambush — the ON CONFLICT path was not exercised, so this block does not reproduce the regression',
       n_before, n_after;
   end if;
 
   -- ── THE ASSERTIONS THE LIVE BUG FAILED ───────────────────────────────────────────────────────────
   if pi.note is not distinct from 'empty_manifest' then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the second ambush was logged empty_manifest while % manifest rows exist — the guard is counting the INSERT, not the MANIFEST (the 0303 regression)', n_after;
+    raise exception 'MANIFESTHELD FAIL: the ambush was logged empty_manifest while % manifest rows exist — the guard is counting the INSERT, not the MANIFEST (the 0303 regression)', n_after;
   end if;
   if pi.encounter_id is null then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the second ambush fired but opened NO encounter — the player was parked without a fight';
+    raise exception 'MANIFESTHELD FAIL: the ambush fired but opened NO encounter — the player was parked without a fight';
   end if;
 
   select count(*) into n from public.combat_encounters where fleet_id = v_fleet and status = 'active';
   if n <> 1 then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: % active encounter(s) after the second ambush (want exactly 1). Encounters for this fleet: %. The intercept opened %. Fleet: %.',
+    raise exception 'MANIFESTHELD FAIL: % active encounter(s) after the ambush (want exactly 1). Encounters: %. Intercept opened %. Fleet: %.',
       n,
       (select string_agg(format('%s=%s', ce.id, ce.status), ', ' order by ce.created_at)
          from public.combat_encounters ce where ce.fleet_id = v_fleet),
@@ -703,22 +680,21 @@ begin
       (select format('status=%s mode=%s loc=%s', f.status, f.location_mode, f.current_location_id)
          from public.fleets f where f.id = v_fleet);
   end if;
-  select id into v_enc2 from public.combat_encounters where fleet_id = v_fleet and status = 'active';
-  if v_enc2 = v_enc1 then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the "second" encounter is the first one — no new fight was opened';
-  end if;
-  if pi.encounter_id is distinct from v_enc2 then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the second intercept does not record the encounter it opened';
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
+  if pi.encounter_id is distinct from v_enc then
+    raise exception 'MANIFESTHELD FAIL: the intercept does not record the encounter it opened';
   end if;
 
+  -- and it stopped where it was ambushed rather than completing its hunt arrival.
   select * into fl from public.fleets where id = v_fleet;
   if fl.current_location_id is not null then
-    raise exception 'DZCOMBAT FAIL REAMBUSH: the fleet is present at a location after the second ambush';
+    raise exception 'MANIFESTHELD FAIL: the fleet is present at a location — the arrival was settled past the ambush';
   end if;
 
-  raise notice 'DZCOMBAT_PASS_REAMBUSH ok: the SAME fleet, re-ordered after its first fight, was ambushed a second time with its % existing manifest rows untouched (the freeze inserted 0), was NOT logged empty_manifest, and opened a NEW encounter % — the live defect (first entry fights, later entries park the fleet and deadlock it on group_on_sortie) is proven fixed BY OUTCOME',
-    n_after, v_enc2;
+  raise notice 'DZCOMBAT_PASS_MANIFESTHELD ok: a fleet carrying a % row manifest frozen by its hunt send was ambushed on that leg, the freeze inserted 0 rows (the ON CONFLICT path), it was NOT logged empty_manifest, and it opened encounter % — production''s exact shape, and the live defect (parked with no fight, then deadlocked on group_on_sortie) is proven fixed BY OUTCOME',
+    n_after, v_enc;
 end $$;
+
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
 

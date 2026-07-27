@@ -87,16 +87,14 @@ if [ "$MODE" = "selftest" ]; then
   n="$(grep -c 'public\.pirate_intercept_resolve_due_for_movement(' "$SQL" || true)"
   [ "$n" = "1" ] || fail "expected exactly 1 direct resolver call (the negative re-fire probe), found $n"
 
-  # exactly TWO process_combat_ticks() call sites, and no other combat engine:
-  #   1. PIRATEFIRE — the first wave spawn + fire pass.
-  #   2. REAMBUSH   — the retreat drain that ends the first fight so the fleet can be re-ordered
-  #                   (added with 0303; the second-ambush regression needs the first encounter closed).
-  # Still a real pin: a third, unexplained invocation fails here.
+  # exactly ONE process_combat_ticks() invocation (the first wave spawn + fire pass). The
+  # MANIFESTHELD block deliberately drives NO combat: it reproduces production's shape (a manifest
+  # frozen by a hunt send, then an ambush on that leg) and needs no fight to be fought or survived.
   n="$(grep -c 'perform public\.process_combat_ticks();' "$SQL" || true)"
-  [ "$n" = "2" ] || fail "expected exactly 2 process_combat_ticks() call sites (PIRATEFIRE + REAMBUSH drain), found $n"
+  [ "$n" = "1" ] || fail "expected exactly 1 process_combat_ticks() call, found $n"
   # and process_combat_ticks must remain the ONLY combat engine this proof drives.
   n="$(grep -cE 'perform public\.process_(combat|encounter)[a-z_]*\(' "$SQL" || true)"
-  [ "$n" = "2" ] || fail "the proof invokes a combat engine other than process_combat_ticks ($n engine calls)"
+  [ "$n" = "1" ] || fail "the proof invokes a combat engine other than process_combat_ticks ($n engine calls)"
 
   # every property is asserted in assert-form (gutting any block fails here).
   grep -q "the order-time ambush is still cancelling it"          "$SQL" || fail "harness lacks the leg-still-moving assert"
