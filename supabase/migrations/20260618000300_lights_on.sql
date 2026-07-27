@@ -71,7 +71,7 @@ begin
     'mainship_space_movement_enabled',
     'mainship_coordinate_travel_enabled',
     'launch_from_dock_enabled',
-    'timed_docking_enabled',
+    -- 'timed_docking_enabled' is HELD — see the parked block at the bottom of this file.
     -- COMBAT PRESENTATION & RESOLUTION
     'combat_telegraph_enabled',
     'per_ship_targeting_enabled',
@@ -119,6 +119,26 @@ end $$;
 --   it does not ride in with the rest — flip it deliberately, ideally with an expendable canary.
 --   update public.game_config set value = 'true' where key = 'encounter_resolver_enabled';
 --
+-- timed_docking_enabled
+--   HELD because the capability behind it is INCOMPLETE, not merely unlit — and the owner asked for
+--   every dark thing we DEVELOPED to open, which this is not yet.
+--   `command_ship_group_dock` (20260618000219_timed_docking.sql:115-290) carries NO live-encounter
+--   classification. Its sortie guard at :170-178 joins f.status in ('moving','present','returning'),
+--   but an ambushed fleet is parked status='idle', location_mode='space' by 0293's ruling
+--   (0294:1362) while holding a live combat_encounters row and an ACTIVE location_presence. So it
+--   passes every gate — and then at :248-250 calls presence_complete() on that presence, justified
+--   in its own comment as "a no-op for a space-parked fleet". 0293 invalidated that premise. The
+--   verb would COMPLETE THE PRESENCE THAT OWNS THE LIVE ENCOUNTER and set the fleet moving,
+--   orphaning the fight from the row the tick's completion branch keys on.
+--   command_ship_group_go has the identical under-scoped sortie guard and is safe only because its
+--   step-8 encounter classification runs immediately after and catches the fleet regardless of
+--   status. Dock has the guard and not the classification. That is the entire defect.
+--   With this key false the gate at 0219:147 rejects BEFORE any read, lock or write, and the client
+--   (FleetCommandPanel.tsx:347) falls back to command_ship_group_go — which arms a retreat toward
+--   the named port, the CORRECT behaviour. Holding it costs nothing and closes the hole absolutely.
+--   Light it in the 0301 slice that gives both verbs ONE shared combat-order authority.
+--   update public.game_config set value = 'true' where key = 'timed_docking_enabled';
+--
 -- combat_debug_logging / combat_tick_logging
 --   Not capabilities — diagnostic firehoses. The tick runs every 3 seconds against every live
 --   encounter; lighting these writes log rows continuously for all ~30 players. Turn on while
@@ -147,7 +167,7 @@ begin
       'mining_enabled','exploration_enabled','ranking_enabled','world_balance_enabled',
       'team_command_enabled','fleet_control_enabled','fleet_movement_unified_enabled',
       'mainship_send_enabled','mainship_space_movement_enabled','mainship_coordinate_travel_enabled',
-      'launch_from_dock_enabled','timed_docking_enabled','combat_telegraph_enabled',
+      'launch_from_dock_enabled','combat_telegraph_enabled',
       'per_ship_targeting_enabled','spatial_combat_enabled','pirate_intercept_enabled',
       'enemy_content_registry_enabled','encounter_authoring_enabled',
       'encounter_binding_authoring_enabled','typed_zone_authoring_enabled',
