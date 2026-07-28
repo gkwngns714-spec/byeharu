@@ -1951,10 +1951,14 @@ end $$;
 do $$
 declare r jsonb; n int;
 begin
-  -- committed seeds (nothing in-txn has touched these keys): the flag is dark, the knob at seed.
-  if (select value #>> '{}' from public.game_config where key = 'captain_growth_enabled') is distinct from 'false' then
-    raise exception 'CAPXP FAIL: committed captain_growth_enabled is % (want ''false'' — the 0177 dark seed)',
-      (select value #>> '{}' from public.game_config where key = 'captain_growth_enabled'); end if;
+  -- ★ THE DARK ARM STATES ITS OWN PRECONDITION (repointed 2026-07-27). This asserted the COMMITTED
+  -- ★ seed of captain_growth_enabled was 'false' before exercising the reject-before-read arm. That
+  -- ★ was true until 0300 (lights-on) legitimately seeded it TRUE, at which point the block failed on
+  -- ★ a correct chain — it was asserting the dark world, not the no-op property it exists to prove.
+  -- ★ The dark arm is still worth proving (the flag is reversible, and reject-before-read is a
+  -- ★ security-shaped property), so it now SETS the flag dark in-txn like every other scenario in this
+  -- ★ file, and the lit accrual below flips it back on exactly as it always did.
+  update public.game_config set value='false'::jsonb where key='captain_growth_enabled';
   if (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant') is distinct from '10' then
     raise exception 'CAPXP FAIL: committed captain_xp_per_combat_grant is % (want 10 — the 0177 knob seed)',
       (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant'); end if;

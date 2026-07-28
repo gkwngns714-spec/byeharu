@@ -341,8 +341,12 @@ if [ "$MODE" = "selftest" ]; then
   #    recomputed curve; and the re-run exactly-once anti-join pin. ─────────────────────────────────
   grep -qF "public.captain_xp_accrue()" "$SQL" \
     || fail "harness does not exercise captain_xp_accrue"
-  grep -qF "(want ''false'' — the 0177 dark seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed captain_growth_enabled seed is false"
+  # 0300 lit captain_growth_enabled, so the dark arm can no longer assert the committed seed — it sets
+  # the flag dark in-txn instead. What must stay pinned is that the dark arm is still EXERCISED.
+  grep -qF "update public.game_config set value='false'::jsonb where key='captain_growth_enabled';" "$SQL" \
+    || fail "harness does not set captain_growth_enabled dark in-txn before the reject-before-read arm"
+  grep -qF "CAPXP FAIL dark:" "$SQL" \
+    || fail "harness does not ASSERT the dark reject-before-read envelope"
   grep -qF "(want 10 — the 0177 knob seed)" "$SQL" \
     || fail "harness does not ASSERT the committed captain_xp_per_combat_grant seed is 10"
   grep -qF "CAPXP FAIL dark:" "$SQL" \
