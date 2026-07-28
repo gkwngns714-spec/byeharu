@@ -16,7 +16,8 @@
 # re-homes them ONLY once the manifest fleet is finished — mid-combat/in-transit race guards — the
 # manifest is retained, defeat + repair recovery, and the M1 single-send race-closure guard) plus
 # the activation-prep hull-stats block (0170: every hull row carries seeded base attack/defense —
-# starter_frigate 15/10 — and the re-created adapter folds them: bare ship == hull seed exactly)
+# starter_frigate 15/10 — and the re-created adapter folds them: hull seed + rolled traits, since
+# 0300 lit ship_traits_enabled and a freshly commissioned ship is never bare)
 # plus the captains-launch shard-drop block (0171: the once-deferred captain-slot bump now SHIPS as
 # a migration — asserted in setup, no longer fixtured in-txn — and pirate_loot_for_wave's
 # config-gated captain_memory_shard drop: rate-0 byte-parity with the 0041 head, rate-1 wave-2
@@ -278,8 +279,13 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT encounter player_power_start = the independent D0 totals.combat_power"
   grep -qF "(select sum(attack_snapshot * alive_count) from public.combat_units where encounter_id = v_enc)" "$SQL" \
     || fail "harness does not ASSERT tick player_damage = the summed member attack_snapshots"
-  grep -qF "manifest has % rows after unassign (want still 2)" "$SQL" \
-    || fail "harness does not ASSERT the manifest-wins mid-flight-unassign pin"
+  # The manifest-wins pin. 0216 turned a mid-sortie unassign from "allowed, and the frozen manifest
+  # governs anyway" into an outright refusal, so what is pinned is now the refusal itself plus the
+  # untouched manifest — the same law, enforced one step earlier.
+  grep -qF "a mid-sortie unassign was not refused with group_on_sortie" "$SQL" \
+    || fail "harness does not ASSERT that a mid-sortie unassign is refused (the manifest-wins law)"
+  grep -qF "manifest has % rows after the refused unassign (want still 2)" "$SQL" \
+    || fail "harness does not ASSERT the manifest survives a refused mid-sortie unassign"
   # H1 cron-safety pins: the zero-hp member send reject, the settle-succeeds-despite-a-degraded-member
   # assert (the crown jewel — a creator raise inside the cron's one-txn scan would roll back every
   # other arrival AND wedge the movement forever), and the degraded row's dead-on-arrival shape.
@@ -335,8 +341,12 @@ if [ "$MODE" = "selftest" ]; then
   #    recomputed curve; and the re-run exactly-once anti-join pin. ─────────────────────────────────
   grep -qF "public.captain_xp_accrue()" "$SQL" \
     || fail "harness does not exercise captain_xp_accrue"
-  grep -qF "(want ''false'' — the 0177 dark seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed captain_growth_enabled seed is false"
+  # 0300 lit captain_growth_enabled, so the dark arm can no longer assert the committed seed — it sets
+  # the flag dark in-txn instead. What must stay pinned is that the dark arm is still EXERCISED.
+  grep -qF "update public.game_config set value='false'::jsonb where key='captain_growth_enabled';" "$SQL" \
+    || fail "harness does not set captain_growth_enabled dark in-txn before the reject-before-read arm"
+  grep -qF "CAPXP FAIL dark:" "$SQL" \
+    || fail "harness does not ASSERT the dark reject-before-read envelope"
   grep -qF "(want 10 — the 0177 knob seed)" "$SQL" \
     || fail "harness does not ASSERT the committed captain_xp_per_combat_grant seed is 10"
   grep -qF "CAPXP FAIL dark:" "$SQL" \
@@ -396,8 +406,11 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not craft the shield via the real craft_module RPC"
   grep -qF "public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-1'')" "$SQL" \
     || fail "harness does not fit the shield via the real fit_module_to_ship RPC"
-  grep -qF "(want ''false'' — the 0107/0183 dark seeds)" "$SQL" \
-    || fail "harness does not ASSERT the committed module gate seeds are false"
+  # 0300 lit both module gates, so the dark arms SET their precondition instead of asserting the seed.
+  grep -qF "update public.game_config set value='false'::jsonb where key='module_crafting_enabled';" "$SQL" \
+    || fail "harness does not set module_crafting_enabled dark in-txn before its dark arm"
+  grep -qF "update public.game_config set value='false'::jsonb where key='module_fitting_enabled';" "$SQL" \
+    || fail "harness does not set module_fitting_enabled dark in-txn before its dark arm"
   grep -qF "the recipe spend did not land the balance at 0 (exact price)" "$SQL" \
     || fail "harness does not ASSERT the exact-price spend-to-zero"
   grep -qF "(want insufficient_items — the exact-price boundary)" "$SQL" \
@@ -449,10 +462,11 @@ if [ "$MODE" = "selftest" ]; then
   #    appended-last + additive-only pins, and BOTH thresholds (w<8 and the deterministic wave 1).
   #    Plus the catalog sole-writer negatives: the harness never mutates the two Reference/Config
   #    recipe tables (migration-seeded only — the main_ship_hull_types negative-grep convention).
-  grep -qF "(want ''false'' — the 0185 dark seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed shipyard_enabled seed is false"
-  grep -qF "(want 0 — the 0185 faucet seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed blueprint_fragment_drop_rate seed is 0"
+  # 0300 lit shipyard_enabled and opened the faucet to 0.15, so the inert arm sets both dark in-txn.
+  grep -qF "update public.game_config set value='false'::jsonb where key='shipyard_enabled';" "$SQL" \
+    || fail "harness does not set shipyard_enabled dark in-txn before its inert arm"
+  grep -qF "where key='blueprint_fragment_drop_rate';" "$SQL" \
+    || fail "harness does not close the blueprint faucet in-txn before its inert arm"
   grep -viE '^[[:space:]]*--' "$SQL" \
     | grep -qE "set value='true'::jsonb where key='shipyard_enabled'" \
     && fail "harness flips shipyard_enabled (must stay dark even in-txn — no shipyard RPC exists to exercise)" || true
@@ -496,8 +510,9 @@ if [ "$MODE" = "selftest" ]; then
   #    exist only through the real soul_roll_traits_for_ship writer. ────────────────────────────────
   grep -qF "public.soul_roll_traits_for_ship(" "$SQL" \
     || fail "harness does not exercise the SOUL-0 roll writer"
-  grep -qF "(want ''false'' — the 0186 dark seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed ship_traits_enabled seed is false"
+  # 0300 lit ship_traits_enabled, so the dark arm sets its own precondition in-txn.
+  grep -qF "update public.game_config set value='false'::jsonb where key='ship_traits_enabled';" "$SQL" \
+    || fail "harness does not set ship_traits_enabled dark in-txn before its dark arm"
   grep -qF "SOUL0 FAIL dark:" "$SQL" \
     || fail "harness does not ASSERT the dark gate-first reject on the roll writer"
   grep -qF "(want 8 traits exact — the 0186 catalog verbatim)" "$SQL" \

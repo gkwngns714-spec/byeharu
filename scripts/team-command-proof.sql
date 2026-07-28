@@ -298,6 +298,51 @@ begin
   return v;
 end $$;
 
+-- ★ THE TWO LIGHTS-ON FIXTURE HELPERS (added 2026-07-27) ────────────────────────────────────────────
+-- 0300 lit every capability this file was written against while dark. Two of them changed what a
+-- VALID fixture is, so they are provisioned once here instead of being patched in at ~10 call sites.
+-- Mirrors of these live in fleetgo-proof.sql; the two proofs are standalone harnesses with no shared
+-- include, so each carries its own copy — deliberately, rather than inventing a shared library for two
+-- callers.
+--
+-- arm_group — fleet_control_enabled (0204): a group with no designated command ship is an INACTIVE
+-- fleet and every group verb answers fleet_inactive_no_command, which is returned BEFORE the specific
+-- reasons this file asserts. So an unarmed fixture silently masks member_not_ready / empty_group /
+-- invalid_location as well as breaking the sends that expect ok. Writes through set_fleet_command_ship,
+-- the sole writer, as the owning sub — never a direct UPDATE. Idempotent.
+-- DO NOT call this for the FLEETCTRL block: that block's whole subject IS fleet_inactive_no_command,
+-- and arming its groups would make every one of its assertions vacuous.
+create or replace function pg_temp.arm_group(p_uid uuid, p_group uuid) returns void language plpgsql as $$
+declare r jsonb; v_ship uuid;
+begin
+  if exists (select 1 from public.main_ship_instances
+              where group_id = p_group and is_command_ship) then
+    return;
+  end if;
+  select main_ship_id into v_ship from public.main_ship_instances
+   where group_id = p_group order by main_ship_id limit 1;
+  if v_ship is null then
+    raise exception 'arm_group: group % has no member to designate — the fixture is not built yet', p_group;
+  end if;
+  r := pg_temp.call_as(p_uid, format('public.set_fleet_command_ship(%L::uuid, true)', v_ship));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'arm_group: set_fleet_command_ship(%) rejected: %', v_ship, r;
+  end if;
+end $$;
+
+-- open_telegraphed — combat_telegraph_enabled (0230): activity_start('hunt_pirates') no longer opens
+-- the encounter inline on arrival. It queues a pending_encounters row at now() + combat_telegraph_seconds
+-- and returns, so an encounter that used to exist the instant movement_settle_arrival returned is now
+-- one cron tick away. This drives that cron — the same one a real player's arrival waits on — rather
+-- than calling combat_create_encounter, which would fork a second encounter-opening path. Clock only.
+-- No-op when nothing is telegraphed, so it is safe after any settle.
+create or replace function pg_temp.open_telegraphed(p_fleet uuid) returns void language plpgsql as $$
+begin
+  update public.pending_encounters set trigger_at = now() - interval '1 second'
+   where fleet_id = p_fleet and status = 'telegraphed';
+  perform public.process_combat_telegraphs();
+end $$;
+
 -- three fresh players: uA (3-ship team ops), uB (foreign-owner gap probe), uC (all-or-nothing pair).
 -- The on-signup triggers auto-create each player's ACTIVE Home Base (required by the live send).
 do $$
@@ -339,10 +384,20 @@ begin
 end $$;
 
 -- ════════ BLOCK DARK: every team RPC rejects-BEFORE-read while team_command_enabled=false ════════
--- Run BEFORE any flag flip, as a REAL authenticated sub, with RANDOM NONEXISTENT ids. If any RPC read
--- group/ship state before its gate, these calls would surface group_not_found / ship_not_found (or the
--- upsert would return ok and write a row) instead of team_command_disabled — so this proves the gate
--- fires before any read, with no existence oracle.
+-- Asserted as a REAL authenticated sub, with RANDOM NONEXISTENT ids. If any RPC read group/ship state
+-- before its gate, these calls would surface group_not_found / ship_not_found (or the upsert would
+-- return ok and write a row) instead of team_command_disabled — so this proves the gate fires before
+-- any read, with no existence oracle.
+--
+-- ★ THE PRECONDITION IS STATED, NOT ASSUMED (repointed 2026-07-27). This block used to rely on the
+-- ★ SEEDED value of team_command_enabled being false, and ran "before any flag flip". Migration 0300
+-- ★ (lights-on) legitimately seeds it TRUE, so the ambient default is no longer dark and this block
+-- ★ failed on every branch. A proof must never depend on a production default it does not own: the
+-- ★ dark scenario now SETS its own precondition in-txn, exactly as every other scenario in this file
+-- ★ already does (and as the flip at the end of this block already did). The assertions themselves
+-- ★ are UNCHANGED and still non-vacuous — the gate is reversible (rolling 0300 back is a set-to-false),
+-- ★ so proving the OFF behaviour still protects a reachable state.
+update public.game_config set value='false'::jsonb where key='team_command_enabled';
 do $$
 declare r jsonb; n int; uA uuid := (select v from tcmd where k='uA'); slag uuid := (select v from tcmd where k='slag');
 begin
@@ -380,6 +435,21 @@ update public.game_config set value='true'::jsonb where key='team_command_enable
 update public.game_config set value='true'::jsonb where key='mainship_additional_commission_enabled';
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 update public.game_config set value='true'::jsonb where key='captain_assignment_enabled';
+
+-- ★ TRAITS DARK FOR THE STAT BASELINES (added 2026-07-27) ────────────────────────────────────────────
+-- Every exact-stat assertion in this file (HULLSTATS, MOD2, MOD22, CAPLEVEL, DECKS3 …) decomposes a
+-- ship's combat_power/survival into named contributors — hull seed, module, captain — and was written
+-- when ship_traits_enabled was seeded dark, so a commissioned ship had no other contributor.
+-- 0300 lit it. SOUL-1's birthmark fold then adds a rolled trait's attack/defense into the SAME
+-- accumulators, so those baselines drifted by whatever the ship happened to roll: HULLSTATS saw 13 vs
+-- 15, MOD2 saw 15 vs 10, CAPLEVEL saw 29 vs 23. Each is a correct engine answer to a question the
+-- assertion no longer meant to ask.
+-- Rather than teach a dozen unrelated blocks about traits, the fold is held OFF for the file's default
+-- world — which is the world every one of those blocks was written against — and the SOUL0/SOUL1
+-- blocks, whose actual subject IS traits, continue to flip it on and off explicitly around their own
+-- assertions and to re-darken it on exit (they already assert that at entry, 2965/3406).
+-- In-txn only; the committed value is untouched and the ROLLBACK reverts this like everything else.
+update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
 
 -- CAPTAINS-LAUNCH RECONCILIATION (0171 → ROOMS-8 0203): the once-deferred hull bump + instance
 -- backfill ship as migrations, and this disposable chain always runs with ALL migrations applied —
@@ -509,7 +579,7 @@ end $$;
 -- (captain +8/+4 deltas, D0 independent sums, D2 snapshot pins) recomputes through the SAME
 -- adapter, so those blocks stay value-independent of the seed by construction.
 do $$
-declare v_hull jsonb; s jsonb; n int;
+declare v_hull jsonb; s jsonb; n int; v_tr_atk numeric; v_tr_def numeric;
   uA uuid := (select v from tcmd where k='uA'); a1 uuid := (select v from tcmd where k='a1');
 begin
   -- every hull row carries the seeded numeric combat stats (today: exactly starter_frigate).
@@ -520,13 +590,42 @@ begin
   if (v_hull->>'attack')::numeric is distinct from 15 or (v_hull->>'defense')::numeric is distinct from 10 then
     raise exception 'HULLSTATS FAIL: starter_frigate base stats % (want attack 15 / defense 10 — the 0170 seed)', v_hull; end if;
 
-  -- the adapter folds the hull stats: a bare ship's combat_power/survival == the hull seed exactly.
-  s := public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none');
-  if (s->>'combat_power')::numeric is distinct from (v_hull->>'attack')::numeric
-     or (s->>'survival')::numeric is distinct from (v_hull->>'defense')::numeric then
-    raise exception 'HULLSTATS FAIL: bare-ship adapter stats (combat_power %, survival %) diverge from the hull seed %', s->>'combat_power', s->>'survival', v_hull; end if;
+  -- The adapter folds the hull stats. This used to read "a bare ship == the hull seed exactly",
+  -- which held only while ship_traits_enabled was dark.
+  --
+  -- ★ THERE IS NO BARE SHIP ANY MORE (repointed 2026-07-27). Migration 0300 lit ship_traits_enabled,
+  -- ★ so SOUL-1's birthmark fold (0193, in 0205's head at the trait-fold hunk) now adds each rolled
+  -- ★ trait's stats_json into the SAME accumulators as the hull. A freshly commissioned ship carries
+  -- ★ traits by construction, so the equality was arithmetically unreachable and the block failed
+  -- ★ (combat_power 13 against a hull seed of 15 — a legitimate −2 birthmark, not a lost hull stat).
+  -- ★
+  -- ★ The INTENT is unchanged and still the point of this block: prove the 0170 hull seed actually
+  -- ★ REACHES the adapter (bare hulls once contributed 0 — that was the original team-command
+  -- ★ blocker). So the expectation now accounts for the one other live fold instead of pretending it
+  -- ★ is absent: hull + traits, summed from the SAME two tables and the SAME keys the adapter reads,
+  -- ★ so this stays a pin on the hull contribution rather than a restatement of the adapter. If the
+  -- ★ hull seed regressed to 0 the assertion still fails, which is what makes it non-vacuous.
+  -- ★ The fixture is deliberately module-free ('[]' loadout, activity 'none'), so hull + traits are
+  -- ★ the only two contributors in play.
+  -- Gated on the SAME flag the adapter reads, so this holds in either world: with traits dark (the
+  -- file's default, set above) the sum is 0 and the assertion is the original hull-only equality;
+  -- with traits lit — as SOUL0/SOUL1 make it around their own assertions — it accounts for the fold.
+  select case when public.cfg_bool('ship_traits_enabled')
+              then coalesce(sum((y.stats_json->>'attack')::numeric), 0) else 0 end,
+         case when public.cfg_bool('ship_traits_enabled')
+              then coalesce(sum((y.stats_json->>'defense')::numeric), 0) else 0 end
+    into v_tr_atk, v_tr_def
+    from public.main_ship_traits mt
+    join public.ship_trait_types y on y.trait_type_id = mt.trait_type_id
+   where mt.main_ship_id = a1;
 
-  raise notice 'TEAMCMD_PASS_HULLSTATS ok: every hull row seeded (starter_frigate 15/10) and the adapter folds hull base stats (bare ship == hull seed exactly)';
+  s := public.calculate_expedition_stats(uA, a1, '[]'::jsonb, 'none');
+  if (s->>'combat_power')::numeric is distinct from ((v_hull->>'attack')::numeric + v_tr_atk)
+     or (s->>'survival')::numeric is distinct from ((v_hull->>'defense')::numeric + v_tr_def) then
+    raise exception 'HULLSTATS FAIL: adapter stats (combat_power %, survival %) diverge from the hull seed % plus rolled traits (attack %, defense %)',
+      s->>'combat_power', s->>'survival', v_hull, v_tr_atk, v_tr_def; end if;
+
+  raise notice 'TEAMCMD_PASS_HULLSTATS ok: every hull row seeded (starter_frigate 15/10) and the adapter folds hull base stats (hull seed + rolled birthmark traits attack %, defense %)', v_tr_atk, v_tr_def;
 end $$;
 
 -- ════════ BLOCK WRITE: upsert/rename, validation, assign/unassign, and the same-player gap ════════
@@ -941,6 +1040,7 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'COMBATPARITY FAIL settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet);
 
   -- the arrival hook created the encounter; every combat_units row is PURE LEGACY even though the
   -- team flag is ON in-txn: unit_type_id NOT NULL, main_ship_id NULL, snapshots NULL (no D2 writer).
@@ -1162,6 +1262,9 @@ begin
   -- member-readiness check: gA1's members (a1,a2 still traveling — BLOCK STOP's halt attempt now
   -- fails gracefully, see its 4C-MIG-2B rework; a3 destroyed in COMBATPARITY) are all unready either
   -- way (non-'home', non-fleet-truth-docked), yet the answer is the location's (the reject-order pin).
+  -- Armed first: fleet_inactive_no_command outranks both reasons this pin is about, so an unarmed gA1
+  -- would answer that instead and the reject-order pin would silently stop testing reject order.
+  perform pg_temp.arm_group(uA, gA1);
   r := pg_temp.call_as(uA, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gA1, slag));
   if (r->>'reason') is distinct from 'invalid_location' then raise exception 'TEAMHUNT FAIL invalid_location: %', r; end if;
   -- member_not_ready — the same unready team against the REAL hunt destination.
@@ -1208,6 +1311,9 @@ begin
   -- member that died while its team escaped) and must reject member_not_ready at SEND time — dent c1
   -- to 0 via the D1 leaf, assert, restore the fixture hp.
   perform public.mainship_sync_combat_hp(c1, 0);
+  -- gH's first use — armed here so member_not_ready is what this block actually observes, and so every
+  -- later gH send (the real sortie, the double-send pin, the TEAMSETTLE loss run) inherits it.
+  perform pg_temp.arm_group(uC, gH);
   r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
   if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMHUNT FAIL hp-zero send: %', r; end if;
   perform public.mainship_sync_combat_hp(c1, 500);
@@ -1218,9 +1324,27 @@ begin
   t  := public.calculate_group_expedition_stats(uC, gH, 'pirate_hunt');
   s1 := public.calculate_expedition_stats(uC, c1, '[]'::jsonb, 'pirate_hunt');
   s2 := public.calculate_expedition_stats(uC, c2, '[]'::jsonb, 'pirate_hunt');
-  select count(*) into v_active_before from public.fleets
-    where player_id = uC and status in ('moving','present','returning');
-  if v_active_before <> 0 then raise exception 'TEAMHUNT FAIL precondition: uC has % active fleets (want 0)', v_active_before; end if;
+  -- ★ WHAT "no active fleet" HAS TO MEAN NOW (repointed 2026-07-27). This guard exists so the send
+  -- ★ below is measured against a clean slate — no sortie already in flight. It used to count any
+  -- ★ fleet in moving/present/returning, which was equivalent while launch_from_dock_enabled was dark.
+  -- ★ 0300 lit it, so a group that is merely DOCKED now legitimately owns a unified fleet sitting
+  -- ★ 'present' at its port (CI found exactly that: a main_ship_id-NULL fleet 'present' at Haven).
+  -- ★ Counting that as an active fleet asserts the dark world, not the game. So the guard now counts
+  -- ★ what it always meant: a fleet in TRANSIT, or one holding an OPEN sortie manifest.
+  select count(*) into v_active_before from public.fleets f
+    where f.player_id = uC
+      and (f.status in ('moving','returning')
+           or exists (select 1 from public.group_sortie_members gsm where gsm.fleet_id = f.id));
+  if v_active_before <> 0 then
+    raise exception 'TEAMHUNT FAIL precondition: uC has % active fleets (want 0): %',
+      v_active_before,
+      (select string_agg(format('%s status=%s group=%s main_ship=%s loc=%s',
+                                f.id, f.status, f.group_id, f.main_ship_id, f.current_location_id), ' | ')
+         from public.fleets f
+        where f.player_id = uC
+          and (f.status in ('moving','returning')
+               or exists (select 1 from public.group_sortie_members gsm where gsm.fleet_id = f.id)));
+  end if;
 
   -- ── SEND ──────────────────────────────────────────────────────────────────────────────────────────
   r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
@@ -1257,9 +1381,16 @@ begin
   -- ── RACES while the sortie is live ────────────────────────────────────────────────────────────────
   -- (the legacy single-send race — the legacy single-ship send (retired 0232) rejecting a hunting member — is retired
   --  with that RPC by 0232; the live-authority race below stands.)
-  -- a second team hunt-send on the same group rejects member_not_ready (double-send close).
+  -- A second team hunt-send on the same group must be REFUSED (the double-send close). The token it
+  -- refuses with changed with the lit world: the head answered 'member_not_ready' (the members read
+  -- as hunting), and it now answers 'group_fleet_in_flight' — the group's live unified fleet is
+  -- caught first, which is a strictly earlier and more specific guard. The property under test is the
+  -- refusal, so the pin follows the game rather than the other way round; both tokens are accepted so
+  -- this stays a refusal assertion and cannot silently pass on an `ok`.
   r := pg_temp.call_as(uC, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gH, v_hunt));
-  if (r->>'reason') is distinct from 'member_not_ready' then raise exception 'TEAMHUNT FAIL double send: %', r; end if;
+  if (r->>'ok')::boolean is true
+     or (r->>'reason') not in ('group_fleet_in_flight', 'member_not_ready') then
+    raise exception 'TEAMHUNT FAIL double send: %', r; end if;
 
   -- ── SETTLE via the cron's own per-movement settle (clock rewind, the sanctioned surgery) ──────────
   update public.fleet_movements
@@ -1268,6 +1399,7 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'TEAMHUNT FAIL settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet);
 
   -- ONE encounter, routed through the D2 branch into the member creator.
   select count(*) into n from public.combat_encounters where fleet_id = v_fleet;
@@ -1328,11 +1460,40 @@ begin
       and player_damage is not distinct from
         (select sum(attack_snapshot * alive_count) from public.combat_units where encounter_id = v_enc);
   if n <> 1 then raise exception 'TEAMHUNT FAIL: tick player_damage is distinct from sum(attack_snapshot) (member aggregation pin)'; end if;
-  -- damage distributed over the member rows: both alive rows took hull damage…
+  -- ★ DAMAGE IS FOCUSED NOW, NOT SPLIT (repointed 2026-07-27). This asserted that BOTH member rows
+  -- ★ took hull damage, which was the equal-split arm. 0300 lit per_ship_targeting_enabled, and 0228
+  -- ★ is explicit about what that means: the tick picks ONE alive target per encounter — the lowest
+  -- ★ aggro_priority row, i.e. escorts (0) before the command ship (100) — and routes the WHOLE
+  -- ★ incoming hit onto it, "every other row takes zero from this attack". CI showed exactly that:
+  -- ★ c1 500→488.64, c2 350→350. An untouched second row is now CORRECT, and asserting otherwise
+  -- ★ would be asserting the dark world.
+  -- ★ So the property becomes the real one — focused fire — and it is strictly stronger than the old
+  -- ★ check: the screening row must take damage, the screened row must take NONE, and the screen must
+  -- ★ be the lowest-aggro alive row rather than whichever one happened to be hit.
   select hp_current into v_hp1b from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
   select hp_current into v_hp2b from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
-  if v_hp1b >= v_hp1 or v_hp2b >= v_hp2 then
-    raise exception 'TEAMHUNT FAIL: member rows took no damage on tick 1 (c1 %→%, c2 %→%)', v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+  declare
+    v_screen uuid; v_hit int; v_untouched int;
+  begin
+    select main_ship_id into v_screen from public.combat_units
+     where encounter_id = v_enc and main_ship_id is not null and alive_count > 0
+     order by aggro_priority asc nulls last, main_ship_id asc limit 1;
+    if v_screen is null then
+      raise exception 'TEAMHUNT FAIL: no alive member row to absorb the hit';
+    end if;
+    select count(*) into v_hit from public.combat_units cu
+     where cu.encounter_id = v_enc and cu.main_ship_id = v_screen
+       and cu.hp_current < case when v_screen = c1 then v_hp1 else v_hp2 end;
+    if v_hit <> 1 then
+      raise exception 'TEAMHUNT FAIL: the screening member (lowest aggro, %) took no damage on tick 1 (c1 %→%, c2 %→%)',
+        v_screen, v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+    select count(*) into v_untouched from public.combat_units cu
+     where cu.encounter_id = v_enc and cu.main_ship_id is not null and cu.main_ship_id <> v_screen
+       and cu.hp_current < case when cu.main_ship_id = c1 then v_hp1 else v_hp2 end;
+    if v_untouched <> 0 then
+      raise exception 'TEAMHUNT FAIL: % screened member row(s) also took damage — focused fire is not focused (c1 %→%, c2 %→%)',
+        v_untouched, v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+  end;
   -- …and the D1 sync leaf drove the damage back to the SHIP rows (hp only; still hunting).
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
@@ -1340,20 +1501,34 @@ begin
       and msi.hp = round(greatest(0, cu.hp_current))::integer;
   if n <> 2 then raise exception 'TEAMHUNT FAIL: main_ship_instances.hp not synced from the member rows'; end if;
 
-  -- ── MANIFEST WINS: mid-flight unassign (real RPC) must not orphan the sortie ──────────────────────
+  -- ── MANIFEST WINS: a mid-sortie unassign cannot orphan the sortie ────────────────────────────────
+  -- ★ HOW IT WINS CHANGED, AND IT NOW WINS HARDER (repointed 2026-07-27). This block asserted that the
+  -- ★ unassign SUCCEEDS and the frozen manifest governs anyway. 0216 (the berth model) replaced that
+  -- ★ with an outright refusal, in its own words: "nothing steps off it mid-sortie; the reconciler
+  -- ★ docks the manifest, not live membership" — because leaving a fleet means BERTHING, and a ship
+  -- ★ on a sortie has no port under its keel. Those refusal arms are LIT-only, and 0300 lit
+  -- ★ fleet_movement_unified_enabled in the seed, so the disposable chain now takes them.
+  -- ★ The property under test — the frozen manifest beats live membership — is unchanged and is now
+  -- ★ enforced one step earlier, so the assertion follows the game: the unassign must be REFUSED with
+  -- ★ group_on_sortie, and the manifest must be untouched by the attempt.
   r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, null)', c1));
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL manifest-wins unassign: %', r; end if;
+  if (r->>'ok')::boolean is true or (r->>'reason') is distinct from 'group_on_sortie' then
+    raise exception 'TEAMHUNT FAIL manifest-wins: a mid-sortie unassign was not refused with group_on_sortie: %', r; end if;
   select count(*) into n from public.group_sortie_members where fleet_id = v_fleet;
-  if n <> 2 then raise exception 'TEAMHUNT FAIL manifest-wins: manifest has % rows after unassign (want still 2)', n; end if;
-  -- the next tick still drives BOTH members (damage + hp sync), though c1 left the live group.
+  if n <> 2 then raise exception 'TEAMHUNT FAIL manifest-wins: manifest has % rows after the refused unassign (want still 2)', n; end if;
+  -- and the ship is still a live member — the refusal left no half-applied write.
+  select count(*) into n from public.main_ship_instances where main_ship_id = c1 and group_id = gH;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL manifest-wins: the refused unassign still detached c1 from the group'; end if;
+  -- the next tick still drives the sortie (damage + hp sync) with both members on the manifest.
   select hp_current into v_hp1 from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
   select hp_current into v_hp2 from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
   select hp_current into v_hp1b from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
   select hp_current into v_hp2b from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
-  if v_hp1b >= v_hp1 or v_hp2b >= v_hp2 then
-    raise exception 'TEAMHUNT FAIL manifest-wins: a member row took no damage after the unassign (c1 %→%, c2 %→%)', v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+  -- focused fire again (0228, lit by 0300): ONE row absorbs the hit, so "some member took damage".
+  if v_hp1b >= v_hp1 and v_hp2b >= v_hp2 then
+    raise exception 'TEAMHUNT FAIL manifest-wins: no member row took damage after the refused unassign (c1 %→%, c2 %→%)', v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
     where cu.encounter_id = v_enc and msi.hp = round(greatest(0, cu.hp_current))::integer;
@@ -1373,6 +1548,9 @@ begin
   perform public.captain_assign_apply(uB, capd, b1);
   r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', b1, gB1));
   if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL degrade assign: %', r; end if;
+  -- gB1 was deliberately EMPTY for the empty_group probe above, so it could not be armed until it had
+  -- a member. Now that b1 is assigned, arm it.
+  perform pg_temp.arm_group(uB, gB1);
   r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB1, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL degrade send: %', r; end if;
   v_fleet2 := (r->>'fleet_id')::uuid; v_mv2 := (r->>'movement_id')::uuid;
@@ -1383,6 +1561,7 @@ begin
   r := public.movement_settle_arrival(v_mv2);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'TEAMHUNT FAIL: settle did NOT succeed despite the degraded member (cron-safety pin): %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet2);
   select id into v_enc2 from public.combat_encounters where fleet_id = v_fleet2 and status = 'active';
   if v_enc2 is null then raise exception 'TEAMHUNT FAIL degrade: no active encounter for the degraded sortie'; end if;
   -- the degraded member row: inserted (never skipped), dead-on-arrival, D1-CHECK-legal (snapshots 0).
@@ -1612,10 +1791,21 @@ begin
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'returning';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members returning after escape (want 2 — the D3 tick delta)', n; end if;
+  -- ★ SYNC IS THE PROPERTY; "both damaged" WAS AN ARTEFACT OF THE EQUAL SPLIT (repointed 2026-07-27).
+  -- ★ This required BOTH members to satisfy `msi.hp = combat hp AND msi.hp < max_hp`. Under 0228's
+  -- ★ focused fire (lit by 0300) the screened member ends the fight untouched at full hp, so the
+  -- ★ second half of that conjunction can no longer hold and the assertion was demanding the
+  -- ★ equal-split world. The D3 delta under test is that combat hp is PERSISTED onto the ship rows.
+  -- ★ So: every member must be synced, and at least one must actually be damaged — which keeps the
+  -- ★ sync assertion non-vacuous without asserting how the damage was distributed.
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
-    where cu.encounter_id = v_enc and msi.hp = round(greatest(0, cu.hp_current))::integer and msi.hp < msi.max_hp;
-  if n <> 2 then raise exception 'TEAMSETTLE FAIL: member damage not persisted onto the ship rows'; end if;
+    where cu.encounter_id = v_enc and cu.main_ship_id in (c1, c2)
+      and msi.hp = round(greatest(0, cu.hp_current))::integer;
+  if n <> 2 then raise exception 'TEAMSETTLE FAIL: member combat hp not persisted onto the ship rows (want 2 synced, got %)', n; end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id in (c1, c2) and hp < max_hp;
+  if n < 1 then raise exception 'TEAMSETTLE FAIL: no member carries damage after the fight — the persistence assertion above would be vacuous'; end if;
 
   -- ── RACE PIN (in transit home): fleet 'returning' is a LIVE manifest state — the reconciler must
   -- leave the members alone (the D3 legacy-branch guard; the head branch would yank them home).
@@ -1683,14 +1873,30 @@ begin
    where id = v_mv3;
   r := public.movement_settle_arrival(v_mv3);
   if (r->>'settled')::boolean is not true then raise exception 'TEAMSETTLE FAIL loss settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet3);
   select id into v_enc3 from public.combat_encounters where fleet_id = v_fleet3 and status = 'active';
   if v_enc3 is null then raise exception 'TEAMSETTLE FAIL loss: no active encounter'; end if;
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- one-step roster wipe
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc3;
-  perform public.process_combat_ticks();
+  -- ★ A ROSTER WIPE TAKES ONE TICK PER SHIP NOW (repointed 2026-07-27). This fired a single tick with
+  -- ★ a colossal enemy_attack_base and expected the whole roster gone — true under the equal-split
+  -- ★ arm, where one hit was divided across every member. 0300 lit per_ship_targeting_enabled, and
+  -- ★ 0228 routes the WHOLE hit onto ONE row (lowest aggro first), so a wipe now costs one tick per
+  -- ★ member however large the hit is. Ticking until defeat is the same experiment, not a weaker one:
+  -- ★ the boost still guarantees each tick is lethal to its target, and the loop is bounded so a
+  -- ★ genuine failure to defeat still fails here rather than hanging.
+  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- lethal to its target each tick
+  for i in 1..12 loop
+    exit when (select status from public.combat_encounters where id = v_enc3) <> 'active';
+    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc3;
+    perform public.process_combat_ticks();
+  end loop;
   perform public.set_game_config('enemy_attack_base', '1'::jsonb);         -- restore the engine default
   select count(*) into n from public.combat_encounters where id = v_enc3 and status = 'defeat' and ended_at is not null;
-  if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: encounter did not defeat under the boosted enemy'; end if;
+  if n <> 1 then
+    raise exception 'TEAMSETTLE FAIL loss: encounter did not defeat under the boosted enemy (status=%, member rows=%)',
+      (select status from public.combat_encounters where id = v_enc3),
+      (select string_agg(format('%s hp=%s alive=%s', cu.main_ship_id, cu.hp_current, cu.alive_count), ', ')
+         from public.combat_units cu where cu.encounter_id = v_enc3 and cu.main_ship_id is not null);
+  end if;
   select count(*) into n from public.fleets where id = v_fleet3 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: sortie fleet not destroyed'; end if;
   select count(*) into n from public.main_ship_instances
@@ -1776,10 +1982,14 @@ end $$;
 do $$
 declare r jsonb; n int;
 begin
-  -- committed seeds (nothing in-txn has touched these keys): the flag is dark, the knob at seed.
-  if (select value #>> '{}' from public.game_config where key = 'captain_growth_enabled') is distinct from 'false' then
-    raise exception 'CAPXP FAIL: committed captain_growth_enabled is % (want ''false'' — the 0177 dark seed)',
-      (select value #>> '{}' from public.game_config where key = 'captain_growth_enabled'); end if;
+  -- ★ THE DARK ARM STATES ITS OWN PRECONDITION (repointed 2026-07-27). This asserted the COMMITTED
+  -- ★ seed of captain_growth_enabled was 'false' before exercising the reject-before-read arm. That
+  -- ★ was true until 0300 (lights-on) legitimately seeded it TRUE, at which point the block failed on
+  -- ★ a correct chain — it was asserting the dark world, not the no-op property it exists to prove.
+  -- ★ The dark arm is still worth proving (the flag is reversible, and reject-before-read is a
+  -- ★ security-shaped property), so it now SETS the flag dark in-txn like every other scenario in this
+  -- ★ file, and the lit accrual below flips it back on exactly as it always did.
+  update public.game_config set value='false'::jsonb where key='captain_growth_enabled';
   if (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant') is distinct from '10' then
     raise exception 'CAPXP FAIL: committed captain_xp_per_combat_grant is % (want 10 — the 0177 knob seed)',
       (select value #>> '{}' from public.game_config where key = 'captain_xp_per_combat_grant'); end if;
@@ -2027,15 +2237,14 @@ end $$;
 -- never a direct inventory write; modules only via the real craft/fit RPCs — never a direct
 -- module-table write. Both module gates are asserted COMMITTED-dark FIRST (nothing in-txn has
 -- touched them), then flipped in-txn only (rolled back).
-do $$
-begin
-  if (select value #>> '{}' from public.game_config where key = 'module_crafting_enabled') is distinct from 'false' then
-    raise exception 'MOD2 FAIL: committed module_crafting_enabled is % (want ''false'' — the 0107/0183 dark seeds)',
-      (select value #>> '{}' from public.game_config where key = 'module_crafting_enabled'); end if;
-  if (select value #>> '{}' from public.game_config where key = 'module_fitting_enabled') is distinct from 'false' then
-    raise exception 'MOD2 FAIL: committed module_fitting_enabled is % (want ''false'' — the 0107/0183 dark seeds)',
-      (select value #>> '{}' from public.game_config where key = 'module_fitting_enabled'); end if;
-end $$;
+-- ★ THE DARK ARMS STATE THEIR OWN PRECONDITION (repointed 2026-07-27). These asserted the COMMITTED
+-- ★ seeds of module_crafting_enabled / module_fitting_enabled were 'false'. 0300 (lights-on) seeded
+-- ★ both TRUE — verified live in production — so the assertions failed on a correct chain. They were
+-- ★ asserting the dark world rather than the dark BEHAVIOUR. The behaviour is still worth proving
+-- ★ (both flags are reversible), so the arms now set their own precondition in-txn, exactly as every
+-- ★ other scenario in this file does, and the lit flip below is unchanged.
+update public.game_config set value='false'::jsonb where key='module_crafting_enabled';
+update public.game_config set value='false'::jsonb where key='module_fitting_enabled';
 
 update public.game_config set value='true'::jsonb where key='module_crafting_enabled';
 update public.game_config set value='true'::jsonb where key='module_fitting_enabled';
@@ -2324,13 +2533,12 @@ end $$;
 do $$
 declare v_legacy8 jsonb; v_legacy10 jsonb; v_shard jsonb; v_got jsonb; n int;
 begin
-  -- the committed seeds are dark/inert — the 0185 posture (asserted BEFORE the in-txn knob write).
-  if (select value #>> '{}' from public.game_config where key = 'shipyard_enabled') is distinct from 'false' then
-    raise exception 'SHIPYARD0 FAIL: committed shipyard_enabled is % (want ''false'' — the 0185 dark seed)',
-      (select value #>> '{}' from public.game_config where key = 'shipyard_enabled'); end if;
-  if (select value #>> '{}' from public.game_config where key = 'blueprint_fragment_drop_rate') is distinct from '0' then
-    raise exception 'SHIPYARD0 FAIL: committed blueprint_fragment_drop_rate is % (want 0 — the 0185 faucet seed)',
-      (select value #>> '{}' from public.game_config where key = 'blueprint_fragment_drop_rate'); end if;
+  -- ★ The 0185 dark posture is SET here, not asserted (repointed 2026-07-27). 0300 lit
+  -- ★ shipyard_enabled and opened the faucet to 0.15 — both verified live in production — so
+  -- ★ asserting the committed seeds failed on a correct chain. The inert BEHAVIOUR is what this block
+  -- ★ proves, and both keys are reversible, so the arm establishes its own precondition in-txn.
+  update public.game_config set value='false'::jsonb where key='shipyard_enabled';
+  update public.game_config set value='0'::jsonb     where key='blueprint_fragment_drop_rate';
   -- the SHARDDROP fixture carry this block's exact bundles depend on (see header).
   if public.cfg_num('captain_shard_drop_rate') is distinct from 1 then
     raise exception 'SHIPYARD0 FAIL: in-txn captain_shard_drop_rate is % (want 1 — the SHARDDROP block''s fixture carry)',
@@ -2462,9 +2670,10 @@ end $$;
 do $$
 declare r jsonb; n int;
 begin
-  if (select value #>> '{}' from public.game_config where key = 'ship_traits_enabled') is distinct from 'false' then
-    raise exception 'SOUL0 FAIL: committed ship_traits_enabled is % (want ''false'' — the 0186 dark seed)',
-      (select value #>> '{}' from public.game_config where key = 'ship_traits_enabled'); end if;
+  -- ★ Same repoint as MOD2/SHIPYARD0: 0300 seeded ship_traits_enabled TRUE (verified live), so the
+  -- ★ committed-seed assertion failed on a correct chain. The dark reject-before-read behaviour below
+  -- ★ is the property, and the flag is reversible, so the arm sets its own precondition in-txn.
+  update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
   -- gate-first while dark: a RANDOM uuid — a reject-after-read regression would answer
   -- ship_not_found instead (no existence oracle); and nothing may be written.
   r := public.soul_roll_traits_for_ship(gen_random_uuid());
@@ -3029,6 +3238,7 @@ begin
   gV := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uV, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sV, gV));
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL assign: %', r; end if;
+  perform pg_temp.arm_group(uV, gV);
   r := pg_temp.call_as(uV, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gV, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD1 FAIL send: %', r; end if;
   v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
@@ -3038,6 +3248,7 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'SHIELD1 FAIL settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet);
   select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
   if v_enc is null then raise exception 'SHIELD1 FAIL: no active encounter for the lit sortie'; end if;
 
@@ -3449,6 +3660,7 @@ begin
   gB := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uB, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sB, gB));
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL assign: %', r; end if;
+  perform pg_temp.arm_group(uB, gB);
   r := pg_temp.call_as(uB, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gB, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'SHIELD2 FAIL send: %', r; end if;
   v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
@@ -3458,6 +3670,7 @@ begin
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then
     raise exception 'SHIELD2 FAIL settle: %', r; end if;
+  perform pg_temp.open_telegraphed(v_fleet);
   select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
   if v_enc is null then raise exception 'SHIELD2 FAIL: no active encounter for the exclusion fixture'; end if;
 

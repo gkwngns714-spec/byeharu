@@ -530,6 +530,25 @@ begin
   update public.fleet_movements set depart_at = now() - interval '2 minutes', arrive_at = now() - interval '1 minute' where id = v_mv;
   r := public.movement_settle_arrival(v_mv);
   if (r->>'settled')::boolean is not true or (r->>'outcome') is distinct from 'present' then raise exception 'SETTLE FAIL: %', r; end if;
+
+  -- ★ THE TELEGRAPH IS NOW LIT, SO THE ARRIVAL NO LONGER OPENS COMBAT IN THE SAME STATEMENT ★
+  -- (repointed 2026-07-27). This helper was written when combat_telegraph_enabled was seeded false, so
+  -- presence_create → activity_start('hunt_pirates') called combat_create_encounter INLINE and an active
+  -- encounter existed the instant the arrival settled. Migration 0300 (lights-on) seeds the telegraph
+  -- TRUE — verified true in production — so activity_start now takes its LIT branch (0230:115-121):
+  -- it queues a pending_encounters row at trigger_at = now() + combat_telegraph_seconds and returns
+  -- WITHOUT starting the encounter. The helper then found no active encounter and raised.
+  --
+  -- The fix composes the real path rather than bypassing it: this is exactly what a player's arrival
+  -- does, so the proof now drives the SAME cron the live game drives. It does NOT darken the telegraph
+  -- (that would prove the resolver only on a path players no longer take) and it does NOT call
+  -- combat_create_encounter directly (that would fork a second encounter-opening path — the thing this
+  -- whole proof exists to forbid). Only the CLOCK is advanced, which is this file's established idiom
+  -- (the same back-dating drives every combat tick below).
+  update public.pending_encounters set trigger_at = now() - interval '1 second'
+    where fleet_id = v_fleet and status = 'telegraphed';
+  perform public.process_combat_telegraphs();
+
   select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status='active';
   if v_enc is null then raise exception 'SEND FAIL: no active encounter'; end if;
   return v_enc;
