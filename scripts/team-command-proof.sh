@@ -279,8 +279,13 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not ASSERT encounter player_power_start = the independent D0 totals.combat_power"
   grep -qF "(select sum(attack_snapshot * alive_count) from public.combat_units where encounter_id = v_enc)" "$SQL" \
     || fail "harness does not ASSERT tick player_damage = the summed member attack_snapshots"
-  grep -qF "manifest has % rows after unassign (want still 2)" "$SQL" \
-    || fail "harness does not ASSERT the manifest-wins mid-flight-unassign pin"
+  # The manifest-wins pin. 0216 turned a mid-sortie unassign from "allowed, and the frozen manifest
+  # governs anyway" into an outright refusal, so what is pinned is now the refusal itself plus the
+  # untouched manifest — the same law, enforced one step earlier.
+  grep -qF "a mid-sortie unassign was not refused with group_on_sortie" "$SQL" \
+    || fail "harness does not ASSERT that a mid-sortie unassign is refused (the manifest-wins law)"
+  grep -qF "manifest has % rows after the refused unassign (want still 2)" "$SQL" \
+    || fail "harness does not ASSERT the manifest survives a refused mid-sortie unassign"
   # H1 cron-safety pins: the zero-hp member send reject, the settle-succeeds-despite-a-degraded-member
   # assert (the crown jewel — a creator raise inside the cron's one-txn scan would roll back every
   # other arrival AND wedge the movement forever), and the degraded row's dead-on-arrival shape.
