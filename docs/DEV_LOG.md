@@ -5,6 +5,113 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-28 — Ambushes work again: `0303` manifest guard + `0304` pirate-zone effect (**both DEPLOYED & verified live**)
+
+> **DEPLOY STATE — read this first.** **Production migration head is `20260618000304`.** Deploy run
+> `30320251976` completed **`success`**; both migrations applied and were then verified directly
+> against production, not from the green check. `main` and production are in sync.
+>
+> **Verified on target after deploy:** the defective `row_count` read is absent from the deployed
+> resolver *code* (comments stripped), the manifest count is present, body md5 `78e09b9e…` matches
+> exactly what CI produced, `SECURITY DEFINER` / owner / `search_path` / ACL unchanged, the `0304`
+> registration trigger is live, and **0 of 4** pirate zones lack an effect row.
+> Re-run with `node scripts/verify-0303-0304-live.mjs` (read-only).
+
+**Merged this session:** **PR #331** (`19d9847`) — migrations `0303` + `0304`, the new
+`DZCOMBAT_PASS_MANIFESTHELD` regression proof, and the lights-on repointing of `fleetgo-proof` and
+`team-command-proof`.
+
+### 1. The owner's report, and the single defect behind it
+
+> *"moving inside a combat zone, changing course makes this saying and it teleports — This fleet is
+> out on a sortie and can't take a new course yet. Also, fighting starts when entered a zone, but when
+> i go out and back in, it doesnt."*
+
+Production evidence, fleet `e2151a71` (player `218500ff`): a **four-row** `group_sortie_members`
+manifest written 14:54:33Z, and two `pirate_intercepts` at 14:57:07Z / 14:57:48Z both recording
+`hit=true, lifecycle_state='fired', encounter_id=NULL, note='empty_manifest'`. The fleet ended
+`idle` at `(-63, 96)` — exactly that intercept's `entry_x/entry_y`.
+
+**Root cause, `0301:154-159`.** The manifest freeze is deliberately idempotent
+(`ON CONFLICT DO NOTHING`) and the zero-manifest guard measured it with
+`get diagnostics v_manifest = row_count` — the number of rows **INSERTED**, not the number
+**PRESENT**. Any ambush of a fleet already holding manifest rows inserts nothing, reads zero, and the
+`0290` guard does what it was designed to do with a genuinely empty manifest: park the fleet at the
+ambush point (**the teleport**) and return *before* `presence_create`, so **no encounter is created**.
+
+`0303` re-creates the resolver from `0301:988-1185` byte-identical except one hunk that counts the
+manifest. Parity was verified by extracting both bodies and diffing — the diff is exactly that one
+line. It carries a **full-body drift gate**: the precondition pins the entire deployed body by md5
+(`5bdf472a…`, read *from production*) and asserts owner / `SECURITY DEFINER` / volatility / parallel /
+`search_path` / args / result / ACL identical across the swap.
+
+### 2. `0304` — every pirate zone drawn since `0273` was inert
+
+Found while proving `0303`. `0276` cut ambush planning over to the typed-zone planner and `0300` lit
+`typed_zone_pirate_intercept_runtime_enabled`. That planner is deliberately **fail-closed**: a zone
+carrying no `zone_effect_pirate_intercept` row is never planned. `0273` backfilled the zones that
+existed at that moment — but **nothing creates that row for a zone made afterwards**. Both creation
+paths (`0233:1464 pirate_zone_create`, `0254:352 zone_create`) insert into `danger_zones` and stop.
+
+So a zone drawn in the World Editor rendered, read as active, and could never ambush anyone. It is
+also why `danger-combat-proof` had been red since **2026-07-19**.
+
+Fixed with **one trigger** on `danger_zones` rather than patching both RPCs, so any future writer
+inherits it; it also fires on a `zone_kind` conversion. The row is bare (all overrides NULL) —
+identical to `0273`'s backfill, so a new zone gets the global risk curve. Backfills what was stranded
+and self-asserts non-vacuously by inserting a real pirate zone, proving the row appears, then removing
+it.
+
+### 3. What is NOT in this work, deliberately
+
+**No data repair.** An earlier reading of this incident held that affected fleets were permanently
+deadlocked on `group_on_sortie`. That was **wrong**, and it was corrected by reading the source rather
+than assuming: step 8's sortie count is live-scoped (`f.status in ('moving','present','returning')`,
+`0301:1659-1664`), and the affected group has zero such fleets — the fleet is commandable. There was
+nothing to repair, so nothing was written to live player data.
+
+### 4. The proof suite vs. the lit world
+
+`0300` lit 44 capability flags. A large amount of the proof suite was written against the dark world
+and had been red on **every branch** since — meaning the disposable apply-proof, the only layer that
+executes migration self-asserts against real Postgres, was gating nothing.
+
+Repointed (each fix states the precondition it owns, or follows the game, rather than asserting a
+default it does not control):
+
+| Cause (flag lit by `0300`) | What it broke |
+|---|---|
+| `team_command_enabled`, `fleet_movement_unified_enabled` | dark blocks trusted the seeded value |
+| `fleet_control_enabled` | sortie fixtures had no command ship → `fleet_inactive_no_command` |
+| `combat_telegraph_enabled` | arrival queues an 8s telegraph instead of opening combat inline |
+| `per_ship_targeting_enabled` | focused fire: one row absorbs the whole hit, so "both damaged" and one-tick roster wipes are gone |
+| `launch_from_dock_enabled` | a docked group legitimately owns a `present` fleet |
+| `ship_traits_enabled` | the birthmark fold pollutes every hull-only stat baseline |
+| `module_crafting/fitting`, `shipyard_enabled`, `blueprint_fragment_drop_rate` | committed-seed assertions |
+| `0289` territory retune (÷3) | radii are 10/12/8, not 30/36/24 |
+| `0216` berth model | a mid-sortie unassign is now REFUSED, not allowed-with-manifest-winning |
+
+**`FLEET-GO` and `DANGER-ZONE COMBAT` are green.** `TEAM-COMMAND` is not yet — it stops at `SHIELD1`,
+and its remaining failures are the same class. No gameplay impact; it is harness debt.
+
+### 5. Lessons worth keeping
+
+- **`row_count` after `ON CONFLICT DO NOTHING` counts inserts, not rows.** A guard that asks "is this
+  set empty?" must `count(*)` the set.
+- **Never retype a live function body.** The first re-creation of the resolver silently dropped the
+  `not_reached` progress gate, the cancel-pending calls and the fleet-identity revalidation — it would
+  have *reintroduced* the teleport while claiming to fix it. The parity diff caught it.
+- **A proof that asserts an ambient default asserts a world, not a property.** Every repoint above is
+  the same shape.
+- **`gh run watch --exit-status` returned 0 for runs that failed.** Read the run's `conclusion`.
+
+### 6. Known gap in this log
+
+Migrations **`0273`–`0302`** (the typed-zone platform and the combat overhaul) are not written up
+here; the previous entry stops at `0272`. The migration headers and PR bodies carry the detail.
+
+---
+
 ## 2026-07-23 — Movement-truth audit, dead-wrapper retirement, rollback fail-closed, elite stat wiring (`0272` **DEPLOYED, dark**), PROJECTMAP function-ownership authority
 
 > **DEPLOY STATE — read this first.** **Production migration head is `0272`.** The owner approved the
