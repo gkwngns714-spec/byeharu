@@ -2265,6 +2265,13 @@ begin
   end loop;
 
   -- the survival BASELINE decomposes to the hull defense seed exactly (uD is captain/module/loadout-free).
+  -- ★ TRAITS ARE HELD DARK FOR THE BASELINE ONLY (added 2026-07-27). 0300 lit ship_traits_enabled, and
+  -- ★ SOUL-1's birthmark fold adds a rolled trait's defense into the SAME accumulator as the hull, so a
+  -- ★ freshly commissioned ship is no longer "hull-only" and the baseline read 15 against a seed of 10.
+  -- ★ This block's subject is the MODULE delta, not traits, so the unrelated fold is switched off for
+  -- ★ the measurement and restored immediately — the fitted delta below is then a clean hull+module
+  -- ★ comparison, which is exactly what it was written to assert. Reverted with the txn regardless.
+  update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
   select coalesce((h.base_stats_json->>'defense')::numeric, 0) into v_hulldef
     from public.main_ship_instances i join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
     where i.main_ship_id = d1;
