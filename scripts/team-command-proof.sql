@@ -436,6 +436,21 @@ update public.game_config set value='true'::jsonb where key='mainship_additional
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 update public.game_config set value='true'::jsonb where key='captain_assignment_enabled';
 
+-- ★ TRAITS DARK FOR THE STAT BASELINES (added 2026-07-27) ────────────────────────────────────────────
+-- Every exact-stat assertion in this file (HULLSTATS, MOD2, MOD22, CAPLEVEL, DECKS3 …) decomposes a
+-- ship's combat_power/survival into named contributors — hull seed, module, captain — and was written
+-- when ship_traits_enabled was seeded dark, so a commissioned ship had no other contributor.
+-- 0300 lit it. SOUL-1's birthmark fold then adds a rolled trait's attack/defense into the SAME
+-- accumulators, so those baselines drifted by whatever the ship happened to roll: HULLSTATS saw 13 vs
+-- 15, MOD2 saw 15 vs 10, CAPLEVEL saw 29 vs 23. Each is a correct engine answer to a question the
+-- assertion no longer meant to ask.
+-- Rather than teach a dozen unrelated blocks about traits, the fold is held OFF for the file's default
+-- world — which is the world every one of those blocks was written against — and the SOUL0/SOUL1
+-- blocks, whose actual subject IS traits, continue to flip it on and off explicitly around their own
+-- assertions and to re-darken it on exit (they already assert that at entry, 2965/3406).
+-- In-txn only; the committed value is untouched and the ROLLBACK reverts this like everything else.
+update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
+
 -- CAPTAINS-LAUNCH RECONCILIATION (0171 → ROOMS-8 0203): the once-deferred hull bump + instance
 -- backfill ship as migrations, and this disposable chain always runs with ALL migrations applied —
 -- so base_captain_slots is 8 (the ROOMS-8 6→8 raise, 0203) BEFORE any fixture exists. The MIGRATION,
@@ -592,8 +607,13 @@ begin
   -- ★ hull seed regressed to 0 the assertion still fails, which is what makes it non-vacuous.
   -- ★ The fixture is deliberately module-free ('[]' loadout, activity 'none'), so hull + traits are
   -- ★ the only two contributors in play.
-  select coalesce(sum((y.stats_json->>'attack')::numeric), 0),
-         coalesce(sum((y.stats_json->>'defense')::numeric), 0)
+  -- Gated on the SAME flag the adapter reads, so this holds in either world: with traits dark (the
+  -- file's default, set above) the sum is 0 and the assertion is the original hull-only equality;
+  -- with traits lit — as SOUL0/SOUL1 make it around their own assertions — it accounts for the fold.
+  select case when public.cfg_bool('ship_traits_enabled')
+              then coalesce(sum((y.stats_json->>'attack')::numeric), 0) else 0 end,
+         case when public.cfg_bool('ship_traits_enabled')
+              then coalesce(sum((y.stats_json->>'defense')::numeric), 0) else 0 end
     into v_tr_atk, v_tr_def
     from public.main_ship_traits mt
     join public.ship_trait_types y on y.trait_type_id = mt.trait_type_id
@@ -2265,13 +2285,6 @@ begin
   end loop;
 
   -- the survival BASELINE decomposes to the hull defense seed exactly (uD is captain/module/loadout-free).
-  -- ★ TRAITS ARE HELD DARK FOR THE BASELINE ONLY (added 2026-07-27). 0300 lit ship_traits_enabled, and
-  -- ★ SOUL-1's birthmark fold adds a rolled trait's defense into the SAME accumulator as the hull, so a
-  -- ★ freshly commissioned ship is no longer "hull-only" and the baseline read 15 against a seed of 10.
-  -- ★ This block's subject is the MODULE delta, not traits, so the unrelated fold is switched off for
-  -- ★ the measurement and restored immediately — the fitted delta below is then a clean hull+module
-  -- ★ comparison, which is exactly what it was written to assert. Reverted with the txn regardless.
-  update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
   select coalesce((h.base_stats_json->>'defense')::numeric, 0) into v_hulldef
     from public.main_ship_instances i join public.main_ship_hull_types h on h.hull_type_id = i.hull_type_id
     where i.main_ship_id = d1;
