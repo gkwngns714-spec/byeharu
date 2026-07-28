@@ -1481,20 +1481,34 @@ begin
       and msi.hp = round(greatest(0, cu.hp_current))::integer;
   if n <> 2 then raise exception 'TEAMHUNT FAIL: main_ship_instances.hp not synced from the member rows'; end if;
 
-  -- ── MANIFEST WINS: mid-flight unassign (real RPC) must not orphan the sortie ──────────────────────
+  -- ── MANIFEST WINS: a mid-sortie unassign cannot orphan the sortie ────────────────────────────────
+  -- ★ HOW IT WINS CHANGED, AND IT NOW WINS HARDER (repointed 2026-07-27). This block asserted that the
+  -- ★ unassign SUCCEEDS and the frozen manifest governs anyway. 0216 (the berth model) replaced that
+  -- ★ with an outright refusal, in its own words: "nothing steps off it mid-sortie; the reconciler
+  -- ★ docks the manifest, not live membership" — because leaving a fleet means BERTHING, and a ship
+  -- ★ on a sortie has no port under its keel. Those refusal arms are LIT-only, and 0300 lit
+  -- ★ fleet_movement_unified_enabled in the seed, so the disposable chain now takes them.
+  -- ★ The property under test — the frozen manifest beats live membership — is unchanged and is now
+  -- ★ enforced one step earlier, so the assertion follows the game: the unassign must be REFUSED with
+  -- ★ group_on_sortie, and the manifest must be untouched by the attempt.
   r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, null)', c1));
-  if (r->>'ok')::boolean is not true then raise exception 'TEAMHUNT FAIL manifest-wins unassign: %', r; end if;
+  if (r->>'ok')::boolean is true or (r->>'reason') is distinct from 'group_on_sortie' then
+    raise exception 'TEAMHUNT FAIL manifest-wins: a mid-sortie unassign was not refused with group_on_sortie: %', r; end if;
   select count(*) into n from public.group_sortie_members where fleet_id = v_fleet;
-  if n <> 2 then raise exception 'TEAMHUNT FAIL manifest-wins: manifest has % rows after unassign (want still 2)', n; end if;
-  -- the next tick still drives BOTH members (damage + hp sync), though c1 left the live group.
+  if n <> 2 then raise exception 'TEAMHUNT FAIL manifest-wins: manifest has % rows after the refused unassign (want still 2)', n; end if;
+  -- and the ship is still a live member — the refusal left no half-applied write.
+  select count(*) into n from public.main_ship_instances where main_ship_id = c1 and group_id = gH;
+  if n <> 1 then raise exception 'TEAMHUNT FAIL manifest-wins: the refused unassign still detached c1 from the group'; end if;
+  -- the next tick still drives the sortie (damage + hp sync) with both members on the manifest.
   select hp_current into v_hp1 from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
   select hp_current into v_hp2 from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
   select hp_current into v_hp1b from public.combat_units where encounter_id = v_enc and main_ship_id = c1;
   select hp_current into v_hp2b from public.combat_units where encounter_id = v_enc and main_ship_id = c2;
-  if v_hp1b >= v_hp1 or v_hp2b >= v_hp2 then
-    raise exception 'TEAMHUNT FAIL manifest-wins: a member row took no damage after the unassign (c1 %→%, c2 %→%)', v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
+  -- focused fire again (0228, lit by 0300): ONE row absorbs the hit, so "some member took damage".
+  if v_hp1b >= v_hp1 and v_hp2b >= v_hp2 then
+    raise exception 'TEAMHUNT FAIL manifest-wins: no member row took damage after the refused unassign (c1 %→%, c2 %→%)', v_hp1, v_hp1b, v_hp2, v_hp2b; end if;
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
     where cu.encounter_id = v_enc and msi.hp = round(greatest(0, cu.hp_current))::integer;
