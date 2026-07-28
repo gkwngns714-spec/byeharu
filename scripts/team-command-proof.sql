@@ -2217,15 +2217,14 @@ end $$;
 -- never a direct inventory write; modules only via the real craft/fit RPCs — never a direct
 -- module-table write. Both module gates are asserted COMMITTED-dark FIRST (nothing in-txn has
 -- touched them), then flipped in-txn only (rolled back).
-do $$
-begin
-  if (select value #>> '{}' from public.game_config where key = 'module_crafting_enabled') is distinct from 'false' then
-    raise exception 'MOD2 FAIL: committed module_crafting_enabled is % (want ''false'' — the 0107/0183 dark seeds)',
-      (select value #>> '{}' from public.game_config where key = 'module_crafting_enabled'); end if;
-  if (select value #>> '{}' from public.game_config where key = 'module_fitting_enabled') is distinct from 'false' then
-    raise exception 'MOD2 FAIL: committed module_fitting_enabled is % (want ''false'' — the 0107/0183 dark seeds)',
-      (select value #>> '{}' from public.game_config where key = 'module_fitting_enabled'); end if;
-end $$;
+-- ★ THE DARK ARMS STATE THEIR OWN PRECONDITION (repointed 2026-07-27). These asserted the COMMITTED
+-- ★ seeds of module_crafting_enabled / module_fitting_enabled were 'false'. 0300 (lights-on) seeded
+-- ★ both TRUE — verified live in production — so the assertions failed on a correct chain. They were
+-- ★ asserting the dark world rather than the dark BEHAVIOUR. The behaviour is still worth proving
+-- ★ (both flags are reversible), so the arms now set their own precondition in-txn, exactly as every
+-- ★ other scenario in this file does, and the lit flip below is unchanged.
+update public.game_config set value='false'::jsonb where key='module_crafting_enabled';
+update public.game_config set value='false'::jsonb where key='module_fitting_enabled';
 
 update public.game_config set value='true'::jsonb where key='module_crafting_enabled';
 update public.game_config set value='true'::jsonb where key='module_fitting_enabled';
@@ -2514,13 +2513,12 @@ end $$;
 do $$
 declare v_legacy8 jsonb; v_legacy10 jsonb; v_shard jsonb; v_got jsonb; n int;
 begin
-  -- the committed seeds are dark/inert — the 0185 posture (asserted BEFORE the in-txn knob write).
-  if (select value #>> '{}' from public.game_config where key = 'shipyard_enabled') is distinct from 'false' then
-    raise exception 'SHIPYARD0 FAIL: committed shipyard_enabled is % (want ''false'' — the 0185 dark seed)',
-      (select value #>> '{}' from public.game_config where key = 'shipyard_enabled'); end if;
-  if (select value #>> '{}' from public.game_config where key = 'blueprint_fragment_drop_rate') is distinct from '0' then
-    raise exception 'SHIPYARD0 FAIL: committed blueprint_fragment_drop_rate is % (want 0 — the 0185 faucet seed)',
-      (select value #>> '{}' from public.game_config where key = 'blueprint_fragment_drop_rate'); end if;
+  -- ★ The 0185 dark posture is SET here, not asserted (repointed 2026-07-27). 0300 lit
+  -- ★ shipyard_enabled and opened the faucet to 0.15 — both verified live in production — so
+  -- ★ asserting the committed seeds failed on a correct chain. The inert BEHAVIOUR is what this block
+  -- ★ proves, and both keys are reversible, so the arm establishes its own precondition in-txn.
+  update public.game_config set value='false'::jsonb where key='shipyard_enabled';
+  update public.game_config set value='0'::jsonb     where key='blueprint_fragment_drop_rate';
   -- the SHARDDROP fixture carry this block's exact bundles depend on (see header).
   if public.cfg_num('captain_shard_drop_rate') is distinct from 1 then
     raise exception 'SHIPYARD0 FAIL: in-txn captain_shard_drop_rate is % (want 1 — the SHARDDROP block''s fixture carry)',
@@ -2652,9 +2650,10 @@ end $$;
 do $$
 declare r jsonb; n int;
 begin
-  if (select value #>> '{}' from public.game_config where key = 'ship_traits_enabled') is distinct from 'false' then
-    raise exception 'SOUL0 FAIL: committed ship_traits_enabled is % (want ''false'' — the 0186 dark seed)',
-      (select value #>> '{}' from public.game_config where key = 'ship_traits_enabled'); end if;
+  -- ★ Same repoint as MOD2/SHIPYARD0: 0300 seeded ship_traits_enabled TRUE (verified live), so the
+  -- ★ committed-seed assertion failed on a correct chain. The dark reject-before-read behaviour below
+  -- ★ is the property, and the flag is reversible, so the arm sets its own precondition in-txn.
+  update public.game_config set value='false'::jsonb where key='ship_traits_enabled';
   -- gate-first while dark: a RANDOM uuid — a reject-after-read regression would answer
   -- ship_not_found instead (no existence oracle); and nothing may be written.
   r := public.soul_roll_traits_for_ship(gen_random_uuid());

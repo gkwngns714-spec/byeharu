@@ -406,8 +406,11 @@ if [ "$MODE" = "selftest" ]; then
     || fail "harness does not craft the shield via the real craft_module RPC"
   grep -qF "public.fit_module_to_ship(%L::uuid, %L::uuid, ''mod2-fit-1'')" "$SQL" \
     || fail "harness does not fit the shield via the real fit_module_to_ship RPC"
-  grep -qF "(want ''false'' — the 0107/0183 dark seeds)" "$SQL" \
-    || fail "harness does not ASSERT the committed module gate seeds are false"
+  # 0300 lit both module gates, so the dark arms SET their precondition instead of asserting the seed.
+  grep -qF "update public.game_config set value='false'::jsonb where key='module_crafting_enabled';" "$SQL" \
+    || fail "harness does not set module_crafting_enabled dark in-txn before its dark arm"
+  grep -qF "update public.game_config set value='false'::jsonb where key='module_fitting_enabled';" "$SQL" \
+    || fail "harness does not set module_fitting_enabled dark in-txn before its dark arm"
   grep -qF "the recipe spend did not land the balance at 0 (exact price)" "$SQL" \
     || fail "harness does not ASSERT the exact-price spend-to-zero"
   grep -qF "(want insufficient_items — the exact-price boundary)" "$SQL" \
@@ -459,10 +462,11 @@ if [ "$MODE" = "selftest" ]; then
   #    appended-last + additive-only pins, and BOTH thresholds (w<8 and the deterministic wave 1).
   #    Plus the catalog sole-writer negatives: the harness never mutates the two Reference/Config
   #    recipe tables (migration-seeded only — the main_ship_hull_types negative-grep convention).
-  grep -qF "(want ''false'' — the 0185 dark seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed shipyard_enabled seed is false"
-  grep -qF "(want 0 — the 0185 faucet seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed blueprint_fragment_drop_rate seed is 0"
+  # 0300 lit shipyard_enabled and opened the faucet to 0.15, so the inert arm sets both dark in-txn.
+  grep -qF "update public.game_config set value='false'::jsonb where key='shipyard_enabled';" "$SQL" \
+    || fail "harness does not set shipyard_enabled dark in-txn before its inert arm"
+  grep -qF "where key='blueprint_fragment_drop_rate';" "$SQL" \
+    || fail "harness does not close the blueprint faucet in-txn before its inert arm"
   grep -viE '^[[:space:]]*--' "$SQL" \
     | grep -qE "set value='true'::jsonb where key='shipyard_enabled'" \
     && fail "harness flips shipyard_enabled (must stay dark even in-txn — no shipyard RPC exists to exercise)" || true
@@ -506,8 +510,9 @@ if [ "$MODE" = "selftest" ]; then
   #    exist only through the real soul_roll_traits_for_ship writer. ────────────────────────────────
   grep -qF "public.soul_roll_traits_for_ship(" "$SQL" \
     || fail "harness does not exercise the SOUL-0 roll writer"
-  grep -qF "(want ''false'' — the 0186 dark seed)" "$SQL" \
-    || fail "harness does not ASSERT the committed ship_traits_enabled seed is false"
+  # 0300 lit ship_traits_enabled, so the dark arm sets its own precondition in-txn.
+  grep -qF "update public.game_config set value='false'::jsonb where key='ship_traits_enabled';" "$SQL" \
+    || fail "harness does not set ship_traits_enabled dark in-txn before its dark arm"
   grep -qF "SOUL0 FAIL dark:" "$SQL" \
     || fail "harness does not ASSERT the dark gate-first reject on the roll writer"
   grep -qF "(want 8 traits exact — the 0186 catalog verbatim)" "$SQL" \
