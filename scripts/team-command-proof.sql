@@ -1771,10 +1771,21 @@ begin
   select count(*) into n from public.main_ship_instances
     where main_ship_id in (c1, c2) and status = 'returning';
   if n <> 2 then raise exception 'TEAMSETTLE FAIL: % members returning after escape (want 2 — the D3 tick delta)', n; end if;
+  -- ★ SYNC IS THE PROPERTY; "both damaged" WAS AN ARTEFACT OF THE EQUAL SPLIT (repointed 2026-07-27).
+  -- ★ This required BOTH members to satisfy `msi.hp = combat hp AND msi.hp < max_hp`. Under 0228's
+  -- ★ focused fire (lit by 0300) the screened member ends the fight untouched at full hp, so the
+  -- ★ second half of that conjunction can no longer hold and the assertion was demanding the
+  -- ★ equal-split world. The D3 delta under test is that combat hp is PERSISTED onto the ship rows.
+  -- ★ So: every member must be synced, and at least one must actually be damaged — which keeps the
+  -- ★ sync assertion non-vacuous without asserting how the damage was distributed.
   select count(*) into n from public.combat_units cu
     join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
-    where cu.encounter_id = v_enc and msi.hp = round(greatest(0, cu.hp_current))::integer and msi.hp < msi.max_hp;
-  if n <> 2 then raise exception 'TEAMSETTLE FAIL: member damage not persisted onto the ship rows'; end if;
+    where cu.encounter_id = v_enc and cu.main_ship_id in (c1, c2)
+      and msi.hp = round(greatest(0, cu.hp_current))::integer;
+  if n <> 2 then raise exception 'TEAMSETTLE FAIL: member combat hp not persisted onto the ship rows (want 2 synced, got %)', n; end if;
+  select count(*) into n from public.main_ship_instances
+    where main_ship_id in (c1, c2) and hp < max_hp;
+  if n < 1 then raise exception 'TEAMSETTLE FAIL: no member carries damage after the fight — the persistence assertion above would be vacuous'; end if;
 
   -- ── RACE PIN (in transit home): fleet 'returning' is a LIVE manifest state — the reconciler must
   -- leave the members alone (the D3 legacy-branch guard; the head branch would yank them home).
