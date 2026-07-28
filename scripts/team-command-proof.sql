@@ -1845,12 +1845,27 @@ begin
   perform pg_temp.open_telegraphed(v_fleet3);
   select id into v_enc3 from public.combat_encounters where fleet_id = v_fleet3 and status = 'active';
   if v_enc3 is null then raise exception 'TEAMSETTLE FAIL loss: no active encounter'; end if;
-  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- one-step roster wipe
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc3;
-  perform public.process_combat_ticks();
+  -- ★ A ROSTER WIPE TAKES ONE TICK PER SHIP NOW (repointed 2026-07-27). This fired a single tick with
+  -- ★ a colossal enemy_attack_base and expected the whole roster gone — true under the equal-split
+  -- ★ arm, where one hit was divided across every member. 0300 lit per_ship_targeting_enabled, and
+  -- ★ 0228 routes the WHOLE hit onto ONE row (lowest aggro first), so a wipe now costs one tick per
+  -- ★ member however large the hit is. Ticking until defeat is the same experiment, not a weaker one:
+  -- ★ the boost still guarantees each tick is lethal to its target, and the loop is bounded so a
+  -- ★ genuine failure to defeat still fails here rather than hanging.
+  perform public.set_game_config('enemy_attack_base', '1000000'::jsonb);   -- lethal to its target each tick
+  for i in 1..12 loop
+    exit when (select status from public.combat_encounters where id = v_enc3) <> 'active';
+    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc3;
+    perform public.process_combat_ticks();
+  end loop;
   perform public.set_game_config('enemy_attack_base', '1'::jsonb);         -- restore the engine default
   select count(*) into n from public.combat_encounters where id = v_enc3 and status = 'defeat' and ended_at is not null;
-  if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: encounter did not defeat under the boosted enemy'; end if;
+  if n <> 1 then
+    raise exception 'TEAMSETTLE FAIL loss: encounter did not defeat under the boosted enemy (status=%, member rows=%)',
+      (select status from public.combat_encounters where id = v_enc3),
+      (select string_agg(format('%s hp=%s alive=%s', cu.main_ship_id, cu.hp_current, cu.alive_count), ', ')
+         from public.combat_units cu where cu.encounter_id = v_enc3 and cu.main_ship_id is not null);
+  end if;
   select count(*) into n from public.fleets where id = v_fleet3 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMSETTLE FAIL loss: sortie fleet not destroyed'; end if;
   select count(*) into n from public.main_ship_instances
