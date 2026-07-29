@@ -47,40 +47,18 @@ export function groupStopAvailability(input: {
 // Same INPUTS, different question. Fail-closed on unknown groups is kept (a tag pointing outside the
 // owner's read yields no row — never a guessed name), matching the roster's dangling-membership posture.
 
-// ── BRAKE CLIENT COMPANION — sortie classification (the affordance mirror of 0215's server brake) ─
+// ── 0305 — THE CLIENT NO LONGER GUESSES WHETHER A FLEET MAY BE STOPPED. ──────────────────────────
 //
-// The unified server brake rejects a Stop on a fleet that is flying a SORTIE (a hunt's outbound or
-// return leg) with reason `group_on_sortie` — combat commitment is not interruptible by the brake.
-// TeamMapStop already maps that reject to player copy, so correctness holds; but OFFERING the
-// "Stop — hold here" button for a sortie invites a click the server refuses. This classification
-// lets the rail swap the button for a non-actionable hint instead.
+// What used to be here: a `classifySortieLeg(mission_type)` proxy that hid the Stop button whenever
+// the lead movement read 'hunt_pirates' or 'return_home', because the 0215 server brake refused a
+// sortie with `group_on_sortie`. That made the client the THIRD independent definition of "on a
+// sortie" — the SQL had two more, in seven copied places — and all three could disagree.
 //
-// THE PROXY: the client cannot see the server's sortie manifest, so it keys on the group movement's
-// `mission_type` — 0214's unified hunt departs the group's ONE fleet with mission 'hunt_pirates',
-// and combat resolution sends it home with mission 'return_home' (0169/0195/0206). That field is a
-// PROXY for the UI affordance only; the SERVER stays authoritative on what a stop may actually do.
-//
-// GATED ON `unifiedEnabled` (the same runtime flag TeamMapStop branches its brake on) so the DARK
-// world is byte-identical: flag false → no classification is applied and the stoppable set is
-// exactly today's. This gate also moots a real ambiguity: mission_type='return_home' ALSO appears
-// on per-ship LEGACY return legs (0169's per-member returns carry the expedition's informational
-// group_id tag), which would mis-classify a legacy expedition's way home as a sortie — but those
-// shapes matter only in the dark arm, and dark applies no classification at all.
-
-// S4 TIMED DOCKING (0219) — deliberately NO change here: classifySortieLeg('dock') = null, so a
-// DOCKING fleet still shows the Stop button. That is the intended affordance, not an omission —
-// the brake cancels the dock leg and parks the fleet at the interpolated point, which is still
-// inside the port's territory, so it is immediately re-dockable. A dock is a 45s errand, not a
-// combat commitment; only sortie legs are non-stoppable.
-
-export type SortieLeg = 'outbound' | 'returning'
-
-/** 'hunt_pirates' → outbound sortie leg; 'return_home' → the way back; anything else → not a sortie. */
-function classifySortieLeg(missionType: string): SortieLeg | null {
-  if (missionType === 'hunt_pirates') return 'outbound'
-  if (missionType === 'return_home') return 'returning'
-  return null
-}
+// The server brake no longer refuses. `command_ship_group_stop` (0305) answers every Stop: an open
+// fight composes with the retreat authority, and any other leg simply halts. So there is nothing
+// for the client to predict, and predicting it is what made the button disappear. The Stop button
+// is now offered for every in-flight fleet, and the SERVER decides what the stop means — the same
+// posture the rest of this module already documents ("display-only; the server stays authoritative").
 
 export interface StoppableFleetDescriptor {
   groupId: string
@@ -90,25 +68,17 @@ export interface StoppableFleetDescriptor {
   fleetCount: number
   /** Lead (earliest) arrive_at across the group's moving fleets — display only; the server owns ETA. */
   arriveAt: string
-  /**
-   * BRAKE CLIENT COMPANION: non-null when the LEAD movement is a sortie leg (see the header above) —
-   * the rail renders a hint, NOT a Stop button, because the server brake rejects `group_on_sortie`.
-   * Always null in the dark world (the classification is gated on unifiedEnabled).
-   */
-  sortie: SortieLeg | null
 }
 
 /**
  * Owned groups with at least one in-flight ('moving') fleet → one descriptor each.
  * Pure, time-independent, no interpolation. Deterministic order (by groupId).
- * A descriptor with `sortie !== null` is IN FLIGHT but NOT actionable-stoppable (hint row, no button).
- * The third parameter is DEFAULTED (dark) so `resolveStoppableFleets.length` stays 2 — the
- * time-independence spec pins that arity, and a flag is not a clock.
+ * EVERY in-flight fleet is stoppable (0305): the server answers every Stop, so this derivation
+ * no longer predicts the answer. Arity stays 2 — the time-independence spec pins it.
  */
 export function resolveStoppableFleets(
   movements: readonly FleetMovement[],
   groups: readonly GroupRow[],
-  opts: { unifiedEnabled: boolean } = { unifiedEnabled: false },
 ): StoppableFleetDescriptor[] {
   if (groups.length === 0) return []
   const nameById = new Map(groups.map((g) => [g.group_id, g.name]))
@@ -133,11 +103,9 @@ export function resolveStoppableFleets(
       if (ta !== tb) return ta <= tb ? a : b
       return a.id <= b.id ? a : b
     })
-    // Classify on the LEAD movement: in the lit world a unified group flies ONE fleet with ONE
-    // movement, so lead IS the movement — and the row's ETA and its classification always speak
-    // about the same fleet. Dark → null unconditionally (byte-identical set; see the header).
-    const sortie = opts.unifiedEnabled ? classifySortieLeg(lead.mission_type) : null
-    out.push({ groupId: gid, name: nameById.get(gid) as string, fleetCount: list.length, arriveAt: lead.arrive_at, sortie })
+    // Lead is display truth only (the ETA the row shows). In the lit world a unified group flies ONE
+    // fleet with ONE movement, so lead IS the movement.
+    out.push({ groupId: gid, name: nameById.get(gid) as string, fleetCount: list.length, arriveAt: lead.arrive_at })
   }
   return out.sort((a, b) => (a.groupId < b.groupId ? -1 : a.groupId > b.groupId ? 1 : 0))
 }
@@ -154,7 +122,14 @@ export function resolveStoppableFleets(
 // stopped:false (the idempotent no-op arms). Rejects (ok:false + reason) never reach this parser —
 // TeamMapStop routes those through teamReasonMessage like every other RPC.
 
-export type UnifiedStopReasonCode = 'no_fleet' | 'not_moving' | 'already_settled'
+// 0305 adds two codes on the stopped:false arm — the brake's answer when a fight is genuinely open.
+// They are OUTCOMES, not rejects: the envelope is still ok:true, because the Stop did something.
+export type UnifiedStopReasonCode =
+  | 'no_fleet'
+  | 'not_moving'
+  | 'already_settled'
+  | 'retreat_started'
+  | 'retreat_already_underway'
 
 export interface UnifiedStopOutcome {
   /** BOOLEAN (0209): the fleet's live leg was cancelled and it now holds in open space. */
@@ -163,12 +138,22 @@ export interface UnifiedStopOutcome {
   reasonCode: UnifiedStopReasonCode | null
 }
 
+const STOP_REASON_CODES: readonly UnifiedStopReasonCode[] = [
+  'no_fleet',
+  'not_moving',
+  'already_settled',
+  'retreat_started',
+  'retreat_already_underway',
+]
+
 /** Parse a 0209 ok:true envelope. Strict boolean read: only `stopped === true` counts as a halt. */
 export function parseUnifiedStopResult(res: Record<string, unknown>): UnifiedStopOutcome {
   const rc = res.reason_code
   return {
     stopped: res.stopped === true,
-    reasonCode: rc === 'no_fleet' || rc === 'not_moving' || rc === 'already_settled' ? rc : null,
+    reasonCode: STOP_REASON_CODES.includes(rc as UnifiedStopReasonCode)
+      ? (rc as UnifiedStopReasonCode)
+      : null,
   }
 }
 
@@ -177,6 +162,14 @@ export function unifiedStopOutcomeMessage(fleetName: string, res: Record<string,
   const o = parseUnifiedStopResult(res)
   if (o.stopped) return `Stopped ${fleetName} — holding position in open space.`
   if (o.reasonCode === 'already_settled') return `${fleetName} already arrived — nothing to stop.`
+  // 0305: a Stop pressed during a real fight breaks off instead of being refused. Say what actually
+  // happens — the fleet leaves under fire, so this is not a free halt and must not read like one.
+  if (o.reasonCode === 'retreat_started') {
+    return `${fleetName} is breaking off — retreating under fire until it clears the fight.`
+  }
+  if (o.reasonCode === 'retreat_already_underway') {
+    return `${fleetName} is already retreating — it leaves when the window closes.`
+  }
   // no_fleet / not_moving / unrecognized: the fleet simply is not in flight. Idempotent, calm copy.
   return `${fleetName} was already stopped — nothing was in flight.`
 }

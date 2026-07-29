@@ -148,83 +148,88 @@ test('an UN-DRAWABLE in-flight fleet is STILL stoppable (the Stop must not inher
 })
 
 test('stoppability is time-independent — the signature takes no clock at all', () => {
-  // The BRAKE CLIENT COMPANION added a third parameter, but it is a DEFAULTED flag bag (dark by
-  // default), not a clock — defaulted params don't count toward Function.length, so this holds.
+  // Two parameters, and neither is a clock. 0305 REMOVED the third (the sortie flag bag): the client
+  // no longer predicts the server's answer, so there is nothing left to configure.
   expect(resolveStoppableFleets.length).toBe(2)
 })
 
-// ── BRAKE CLIENT COMPANION — sortie classification: don't OFFER a Stop the server refuses. ───────
-// The server brake rejects a stop on a sortie fleet (group_on_sortie). The selector classifies a
-// group's LEAD movement by mission_type — 'hunt_pirates' (outbound) / 'return_home' (returning) —
-// LIT ONLY, so the rail can swap the button for a hint. DARK must stay byte-identical to today.
+// ── 0305 — EVERY IN-FLIGHT FLEET IS STOPPABLE. ───────────────────────────────────────────────────
+// What these tests replaced: a client-side `classifySortieLeg(mission_type)` proxy that marked
+// hunt_pirates/return_home rows non-actionable so the rail could hide the Stop button, mirroring the
+// 0215 server refusal. That refusal is gone — command_ship_group_stop now answers every Stop (an
+// open fight composes with the retreat authority). A client that keeps predicting a refusal that no
+// longer exists just hides the control the player asked for. The property is now unconditional.
 
-const LIT = { unifiedEnabled: true }
-const DARK = { unifiedEnabled: false }
-
-test('LIT: a hunt_pirates group movement classifies as a sortie (outbound) — a hint row, NOT an actionable stop', () => {
-  const out = resolveStoppableFleets([mv({ group_id: 'g1', mission_type: 'hunt_pirates' })], [G1], LIT)
-  expect(out).toHaveLength(1) // still IN FLIGHT — the row exists (name/count/ETA render)...
-  expect(out[0].sortie).toBe('outbound') // ...but it is marked non-actionable
-  expect(out.filter((r) => r.sortie === null)).toEqual([]) // the actionable-stoppable set is empty
+test('a hunt leg is stoppable — no mission_type is special any more (outbound)', () => {
+  const out = resolveStoppableFleets([mv({ group_id: 'g1', mission_type: 'hunt_pirates' })], [G1])
+  expect(out).toEqual([{ groupId: 'g1', name: 'Vanguard', fleetCount: 1, arriveAt: ARR }])
 })
 
-test('LIT: a return_home group movement classifies as a sortie (returning)', () => {
-  const out = resolveStoppableFleets([mv({ group_id: 'g1', mission_type: 'return_home' })], [G1], LIT)
-  expect(out).toHaveLength(1)
-  expect(out[0].sortie).toBe('returning')
+test('a return leg is stoppable too (returning)', () => {
+  const out = resolveStoppableFleets([mv({ group_id: 'g1', mission_type: 'return_home' })], [G1])
+  expect(out).toEqual([{ groupId: 'g1', name: 'Vanguard', fleetCount: 1, arriveAt: ARR }])
 })
 
-test('LIT: a plain unified go stays actionable-stoppable — mission neither hunt leg', () => {
-  // A port-target go and a coordinate go (0207/0208 shapes) — neither mission is a sortie leg.
-  const portGo = resolveStoppableFleets([mv({ group_id: 'g1', mission_type: 'rally' })], [G1], LIT)
-  expect(portGo).toHaveLength(1)
-  expect(portGo[0].sortie).toBeNull()
-  const coordGo = resolveStoppableFleets(
-    [mv({ group_id: 'g1', mission_type: 'transit', target_type: 'space', target_location_id: null })],
-    [G1],
-    LIT,
-  )
-  expect(coordGo).toHaveLength(1)
-  expect(coordGo[0].sortie).toBeNull()
+test('NO descriptor carries a sortie verdict — the field is gone, not merely always-null', () => {
+  // Guards the whole class: a future re-introduction of a client-side refusal proxy fails here.
+  const rows = [
+    mv({ id: 'm1', group_id: 'g1', mission_type: 'hunt_pirates' }),
+    mv({ id: 'm2', group_id: 'g2', mission_type: 'return_home' }),
+  ]
+  for (const r of resolveStoppableFleets(rows, [G1, G2])) {
+    expect(Object.keys(r).sort()).toEqual(['arriveAt', 'fleetCount', 'groupId', 'name'])
+  }
 })
 
-test('LIT: classification keys on the LEAD movement (the same fleet the row’s ETA speaks about)', () => {
-  // A lit-world group flies ONE movement, so lead == the movement; this pins the tie to the lead
-  // rule for any transitional multi-movement shape rather than leaving it to Map iteration order.
-  const out = resolveStoppableFleets(
-    [
-      mv({ id: 'm-late', group_id: 'g1', mission_type: 'rally', arrive_at: ARR_LATE }),
-      mv({ id: 'm-lead', group_id: 'g1', mission_type: 'hunt_pirates', arrive_at: ARR }),
-    ],
-    [G1],
-    LIT,
-  )
-  expect(out).toHaveLength(1)
-  expect(out[0].arriveAt).toBe(ARR)
-  expect(out[0].sortie).toBe('outbound') // lead carries the hunt → the row is a sortie
-})
-
-test('DARK: the classification is INERT — the stoppable set is byte-identical to today, enumerated', () => {
-  // Every mission shape at once, including both sortie legs. Flag false → every row comes back,
-  // every row actionable (sortie null), same fields, same deterministic order — exactly today's set.
+test('every mission shape yields the same actionable row set, in deterministic order', () => {
   const rows = [
     mv({ id: 'm1', group_id: 'g1', mission_type: 'hunt_pirates' }),
     mv({ id: 'm2', group_id: 'g2', mission_type: 'return_home' }),
     mv({ id: 'm3', group_id: 'g3', mission_type: 'rally' }),
   ]
   const G3 = grp('g3', 'Lance')
-  const dark = resolveStoppableFleets(rows, [G1, G2, G3], DARK)
-  expect(dark).toEqual([
-    { groupId: 'g1', name: 'Vanguard', fleetCount: 1, arriveAt: ARR, sortie: null },
-    { groupId: 'g2', name: 'Hammer', fleetCount: 1, arriveAt: ARR, sortie: null },
-    { groupId: 'g3', name: 'Lance', fleetCount: 1, arriveAt: ARR, sortie: null },
+  expect(resolveStoppableFleets(rows, [G1, G2, G3])).toEqual([
+    { groupId: 'g1', name: 'Vanguard', fleetCount: 1, arriveAt: ARR },
+    { groupId: 'g2', name: 'Hammer', fleetCount: 1, arriveAt: ARR },
+    { groupId: 'g3', name: 'Lance', fleetCount: 1, arriveAt: ARR },
   ])
-  expect(dark.every((r) => r.sortie === null)).toBe(true) // no hint rows exist dark — all buttons
 })
 
-test('DARK is the DEFAULT: omitting the flag bag is exactly the dark arm (callers that predate the slice are safe)', () => {
-  const rows = [mv({ group_id: 'g1', mission_type: 'hunt_pirates' })]
-  expect(resolveStoppableFleets(rows, [G1])).toEqual(resolveStoppableFleets(rows, [G1], DARK))
+test('the row still speaks about the LEAD movement (earliest ETA), whatever its mission', () => {
+  const out = resolveStoppableFleets(
+    [
+      mv({ id: 'm-late', group_id: 'g1', mission_type: 'rally', arrive_at: ARR_LATE }),
+      mv({ id: 'm-lead', group_id: 'g1', mission_type: 'hunt_pirates', arrive_at: ARR }),
+    ],
+    [G1],
+  )
+  expect(out).toHaveLength(1)
+  expect(out[0].arriveAt).toBe(ARR)
+})
+
+// ── 0305 — the brake's new outcome copy: a Stop in a real fight BREAKS OFF, it is not refused. ────
+
+test('unifiedStopOutcomeMessage: retreat_started says the fleet leaves UNDER FIRE (never a clean halt)', () => {
+  const res = { ok: true, group_id: 'g1', fleet_id: 'f1', stopped: false, reason_code: 'retreat_started' }
+  const msg = unifiedStopOutcomeMessage('Vanguard', res)
+  expect(msg).toBe('Vanguard is breaking off — retreating under fire until it clears the fight.')
+  // The copy must NOT read like the free-halt message, or Stop looks better than Retreat.
+  expect(msg).not.toContain('holding position')
+})
+
+test('unifiedStopOutcomeMessage: retreat_already_underway does not promise a second, faster exit', () => {
+  const res = { ok: true, group_id: 'g1', fleet_id: 'f1', stopped: false, reason_code: 'retreat_already_underway' }
+  expect(unifiedStopOutcomeMessage('Vanguard', res)).toBe(
+    'Vanguard is already retreating — it leaves when the window closes.',
+  )
+})
+
+test('parseUnifiedStopResult: the two retreat codes parse; an unknown code still degrades to null', () => {
+  expect(parseUnifiedStopResult({ stopped: false, reason_code: 'retreat_started' }).reasonCode).toBe('retreat_started')
+  expect(parseUnifiedStopResult({ stopped: false, reason_code: 'retreat_already_underway' }).reasonCode).toBe(
+    'retreat_already_underway',
+  )
+  expect(parseUnifiedStopResult({ stopped: false, reason_code: 'who_knows' }).reasonCode).toBeNull()
 })
 
 // ── FLEET-GO 4a-1 — the UNIFIED stop's parser (0209), the ONLY group-stop path now. ──────────────
