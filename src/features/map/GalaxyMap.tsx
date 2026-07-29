@@ -56,6 +56,8 @@ export function GalaxyMap({
   selectedMiningFieldName,
   onSelectMiningField,
   dangerZones = [],
+  onSelectDangerZone,
+  selectedDangerZoneId = null,
   combatUnits = [],
   combatEvents = [],
   pirateMode = 'off',
@@ -99,6 +101,11 @@ export function GalaxyMap({
   // gate), so every prop below defaults to a no-op shape and the map is byte-identical to today.
   /** Active danger_zones (get_danger_zones) — rendered as smooth blobs, UNDER movement lines/markers. */
   dangerZones?: DangerZoneLite[]
+  /** ZONE INFO: present = zones become hoverable/clickable and a click reports the zone. Absent =
+   *  they stay scenery, byte-identical to before (the layer's own interactivity switch). */
+  onSelectDangerZone?: (zone: DangerZoneLite) => void
+  /** The zone currently open in the info panel — drawn strongest so map and panel agree. */
+  selectedDangerZoneId?: string | null
   // COMBAT-S4 — the caller's active combat_units + recent combat_events (both already polled every
   // ~1.5s by the shell's useCombat and exposed via useShellState().combat). The spatial-combat layer
   // draws the units that carry positions (their range rings, side-distinct glyphs, and this tick's fire
@@ -123,6 +130,11 @@ export function GalaxyMap({
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<Camera>({ k: 1, tx: 0, ty: 0 })
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
+
+  // ZONE INFO — which danger zone the pointer is over. Pure presentation state, owned here rather
+  // than lifted: nothing outside the map cares which blob is under the cursor, and keeping it local
+  // means a hover cannot re-render the screen's panels.
+  const [hoveredDangerZoneId, setHoveredDangerZoneId] = useState<string | null>(null)
 
   // 1s clock for the in-flight path filter below. Same idiom as TeamMovingMarkers: Date.now()
   // stays OUT of render (it is impure and would re-read unpredictably on any re-render), and the interval
@@ -392,7 +404,16 @@ export function GalaxyMap({
           {/* PIRATE INTERCEPT (prototype) — smooth danger-zone blobs (get_danger_zones), ABOVE the
               plain circle territoryLayer rings (untouched) and UNDER movement lines/markers. []
               while the flag is dark (the caller's gate) → renders nothing, byte-identical to today. */}
-          {dangerZoneLayer({ zones: dangerZones, norm, k: view.k })}
+          {dangerZoneLayer({
+            zones: dangerZones,
+            norm,
+            k: view.k,
+            // Interactivity is opt-in: no handler from the caller → the layer stays scenery.
+            onSelect: onSelectDangerZone,
+            selectedId: selectedDangerZoneId,
+            hoveredId: hoveredDangerZoneId,
+            onHoverChange: setHoveredDangerZoneId,
+          })}
 
           {/* Movement paths (under markers) — IN-FLIGHT ONLY.
               The rows arrive already filtered to status='moving', but that status is settled by the 30s
