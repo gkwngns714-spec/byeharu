@@ -349,24 +349,43 @@ begin
 end $rewrite$;
 
 -- ── 4. SELF-ASSERT (deploy-time; raises and rolls the whole deploy back on failure) ───────────────
-do $assert$
+--
+-- DELIBERATELY SPLIT INTO ONE DO BLOCK PER CHECK. The Supabase CLI reports a failed migration as
+-- "Failed to execute statement / At statement: N" and does NOT print the raise message or any
+-- notice — so a single fat assert block tells you only that *something* failed. One statement per
+-- check makes N the diagnosis. Checks in order: (a) no surviving roster read, (b) all six call the
+-- authority, (c) assign calls it twice, (d) the brake no longer refuses, (e) the mover keeps its
+-- four arms, (f) the authority's own shape, (g) it is callable and defaults false.
+--
+-- Every probe that must NOT find a token strips SQL line comments first. That is 0303's lesson and the
+-- first red this migration hit: command_ship_group_go carries an explanatory comment naming
+-- group_sortie_members (0301:1593), which a naive substring probe reads as a surviving copy.
+
+do $assert_a$
 declare
-  v_src   text;
-  v_fn    text;
   v_left  text;
 begin
   -- (a) NOT ONE of the five rewritten functions may still read the frozen roster to decide a
   --     command. This is the whole point of the migration; a survivor means a copy was missed.
+  --     COMMENTS ARE STRIPPED FIRST — 0303's exact lesson, and the first red this migration hit:
+  --     command_ship_group_go carries an explanatory comment naming the table (0301:1593), and a
+  --     naive substring probe reads that prose as a surviving copy. Probe CODE, never prose.
   select string_agg(p.proname, ', ') into v_left
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
      and p.proname in ('command_ship_group_go', 'command_ship_group_stop', 'command_ship_group_dock',
                        'assign_ship_to_group', 'delete_ship_group', 'send_ship_group_hunt')
-     and position('group_sortie_members' in p.prosrc) > 0;
+     and position('group_sortie_members' in regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g')) > 0;
   if v_left is not null then
-    raise exception '0305 SELF-ASSERT FAIL: these still read group_sortie_members to decide a command: %', v_left;
+    raise exception '0305 SELF-ASSERT (a) FAIL: these still read group_sortie_members to decide a command: %', v_left;
   end if;
+end $assert_a$;
 
+do $assert_b$
+declare
+  v_src text;
+  v_fn  text;
+begin
   -- (b) each of the six calls the authority.
   foreach v_fn in array array['command_ship_group_go', 'command_ship_group_stop',
                               'command_ship_group_dock', 'assign_ship_to_group',
@@ -375,34 +394,52 @@ begin
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public' and p.proname = v_fn;
     if position('group_sortie_is_open' in v_src) = 0 then
-      raise exception '0305 SELF-ASSERT FAIL: public.% does not call the authority', v_fn;
+      raise exception '0305 SELF-ASSERT (b) FAIL: public.% does not call the authority', v_fn;
     end if;
   end loop;
+end $assert_b$;
 
+do $assert_c$
+declare
+  v_src text;
+begin
   -- (c) assign_ship_to_group had TWO copies — both arms must call it.
   select p.prosrc into v_src from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'assign_ship_to_group';
   if (length(v_src) - length(replace(v_src, 'group_sortie_is_open', ''))) / length('group_sortie_is_open') <> 2 then
-    raise exception '0305 SELF-ASSERT FAIL: assign_ship_to_group must call the authority TWICE (assign + unassign arms)';
+    raise exception '0305 SELF-ASSERT (c) FAIL: assign_ship_to_group must call the authority TWICE (assign + unassign arms)';
   end if;
+end $assert_c$;
 
-  -- (d) THE BRAKE NO LONGER REFUSES. The token must be gone from its body entirely, and the retreat
+do $assert_d$
+declare
+  v_src  text;
+  v_code text;
+begin
+  -- (d) THE BRAKE NO LONGER REFUSES. The refusal token must be gone from its CODE (comments in the
+  --     replacement explain the retirement in prose, which is not a refusal), and the retreat
   --     compose must be there instead. This is the owner's capability, asserted as a fact.
   select p.prosrc into v_src from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_stop';
-  if position('group_on_sortie' in v_src) > 0 then
-    raise exception '0305 SELF-ASSERT FAIL: the brake still refuses with group_on_sortie';
+  v_code := regexp_replace(v_src, '--[^' || chr(10) || ']*', '', 'g');
+  if position('group_on_sortie' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (d) FAIL: the brake still refuses with group_on_sortie';
   end if;
-  if position('presence_request_leave' in v_src) = 0
-     or position('retreat_started' in v_src) = 0
-     or position('retreat_already_underway' in v_src) = 0 then
-    raise exception '0305 SELF-ASSERT FAIL: the brake does not compose with the retreat authority';
+  if position('presence_request_leave' in v_code) = 0
+     or position('retreat_started' in v_code) = 0
+     or position('retreat_already_underway' in v_code) = 0 then
+    raise exception '0305 SELF-ASSERT (d) FAIL: the brake does not compose with the retreat authority';
   end if;
   -- The brake must NOT reproduce the retreat machine: it may call the verb, never re-implement it.
-  if position('retreat_requested_at' in v_src) > 0 or position('presence_complete' in v_src) > 0 then
-    raise exception '0305 SELF-ASSERT FAIL: the brake writes retreat state directly — compose, do not fork';
+  if position('retreat_requested_at' in v_code) > 0 or position('presence_complete' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (d) FAIL: the brake writes retreat state directly — compose, do not fork';
   end if;
+end $assert_d$;
 
+do $assert_e$
+declare
+  v_src text;
+begin
   -- (e) the mover's four-way classify survives (it is the arm that already did this correctly).
   select p.prosrc into v_src from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_go';
@@ -410,41 +447,47 @@ begin
      or position('retreat_destination_updated' in v_src) = 0
      or position('movement_settled_retry' in v_src) = 0
      or position('group_on_sortie' in v_src) = 0 then
-    raise exception '0305 SELF-ASSERT FAIL: the mover lost one of its four mid-combat arms';
+    raise exception '0305 SELF-ASSERT (e) FAIL: the mover lost one of its four mid-combat arms';
   end if;
+end $assert_e$;
 
+do $assert_f$
+declare
+  v_src  text;
+  v_code text;
+begin
   -- (f) the authority itself must not read the frozen roster — that is the defect being retired.
   select p.prosrc into v_src from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'group_sortie_is_open';
-  if position('group_sortie_members' in v_src) > 0 then
-    raise exception '0305 SELF-ASSERT FAIL: the authority reads the never-released roster';
+  v_code := regexp_replace(v_src, '--[^' || chr(10) || ']*', '', 'g');
+  if position('group_sortie_members' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (f) FAIL: the authority reads the never-released roster';
   end if;
-  if position('combat_encounters' in v_src) = 0
-     or position('mission_type' in v_src) = 0
-     or position('location_presence' in v_src) = 0 then
-    raise exception '0305 SELF-ASSERT FAIL: the authority lost one of its three facts';
+  if position('combat_encounters' in v_code) = 0
+     or position('mission_type' in v_code) = 0
+     or position('location_presence' in v_code) = 0 then
+    raise exception '0305 SELF-ASSERT (f) FAIL: the authority lost one of its three facts';
   end if;
+end $assert_f$;
 
-  -- (g) NON-VACUOUS: prove the authority answers false for the shape that was breaking — a fleet
-  --     holding roster rows, moving on an ordinary 'rally' leg, with no open encounter. Rolled back
-  --     within this DO block via an exception, so no fixture survives.
-  begin
-    declare
-      v_p uuid := '00000000-0000-4305-8305-000000000305';
-      v_g uuid := '00000000-0000-4305-8305-000000000306';
-      v_ans boolean;
-    begin
-      -- No fixture rows exist for this synthetic player, so both facts are absent and the answer
-      -- MUST be false. (A vacuous assert would be one that never exercises the function at all.)
-      v_ans := public.group_sortie_is_open(v_p, v_g);
-      if v_ans is not false then
-        raise exception '0305 SELF-ASSERT FAIL: authority answered % for a player with no fight and no sortie leg', v_ans;
-      end if;
-    end;
-  end;
-
+do $assert_g$
+declare
+  v_p   uuid := '00000000-0000-4305-8305-000000000305';
+  v_g   uuid := '00000000-0000-4305-8305-000000000306';
+  v_ans boolean;
+begin
+  -- (g) SMOKE, and labelled as one: the authority is callable, runs all three clauses against real
+  --     tables, and answers FALSE for a player with no fight, no sortie leg and no hunt presence.
+  --     It is deliberately NOT the behavioural proof — a migration cannot mint fleets (auth.users
+  --     FKs). The refusals that must still fire, and the brake that must now answer, are proven by
+  --     scripts/fleetgo-proof.sql (ASSIGNGUARD-ONSORTIE, HUNTUNI-ONSORTIE) and
+  --     scripts/team-command-proof.sql against a disposable Postgres in CI.
+  v_ans := public.group_sortie_is_open(v_p, v_g);
+  if v_ans is not false then
+    raise exception '0305 SELF-ASSERT (g) FAIL: authority answered % for a player with no fight, no leg and no hunt presence', v_ans;
+  end if;
   raise notice '0305 SELF-ASSERT PASS: one authority, seven copies retired, the brake no longer refuses';
-end $assert$;
+end $assert_g$;
 
 commit;
 
