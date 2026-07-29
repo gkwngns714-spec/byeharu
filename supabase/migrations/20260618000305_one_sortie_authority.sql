@@ -353,33 +353,102 @@ end $rewrite$;
 -- DELIBERATELY SPLIT INTO ONE DO BLOCK PER CHECK. The Supabase CLI reports a failed migration as
 -- "Failed to execute statement / At statement: N" and does NOT print the raise message or any
 -- notice — so a single fat assert block tells you only that *something* failed. One statement per
--- check makes N the diagnosis. Checks in order: (a) no surviving roster read, (b) all six call the
--- authority, (c) assign calls it twice, (d) the brake no longer refuses, (e) the mover keeps its
--- four arms, (f) the authority's own shape, (g) it is callable and defaults false.
+-- check makes N the diagnosis. Checks in order: (a1..a6) no surviving roster READ, one block per
+-- function so the failing statement names it; (b) all six call the authority, (c) assign calls it
+-- twice, (d) the brake no longer refuses, (e) the mover keeps its four arms, (f) the authority's own
+-- shape, (g) it is callable and defaults false.
 --
--- Every probe that must NOT find a token strips SQL line comments first. That is 0303's lesson and the
--- first red this migration hit: command_ship_group_go carries an explanatory comment naming
--- group_sortie_members (0301:1593), which a naive substring probe reads as a surviving copy.
+-- TWO REDS TAUGHT THIS SHAPE, both recorded here so the next author skips them:
+--   1. Every probe that must NOT find a token strips SQL line comments first. command_ship_group_go
+--      carries an explanatory comment naming group_sortie_members (0301:1593), and a naive substring
+--      probe reads that prose as a surviving copy. Probe CODE, never prose — 0303's own lesson.
+--   2. The "no surviving copy" probe looks for a READ (from/join), never for any mention.
+--      send_ship_group_hunt is the roster's SOLE WRITER (0231:706/896/953) and must keep its
+--      inserts; the first version of this assert forbade the writer along with the guard.
 
-do $assert_a$
+-- (a1) public.command_ship_group_go must no longer READ the frozen roster.
+do $assert_a1$
 declare
-  v_left  text;
+  v_code text;
 begin
-  -- (a) NOT ONE of the five rewritten functions may still read the frozen roster to decide a
-  --     command. This is the whole point of the migration; a survivor means a copy was missed.
-  --     COMMENTS ARE STRIPPED FIRST — 0303's exact lesson, and the first red this migration hit:
-  --     command_ship_group_go carries an explanatory comment naming the table (0301:1593), and a
-  --     naive substring probe reads that prose as a surviving copy. Probe CODE, never prose.
-  select string_agg(p.proname, ', ') into v_left
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'public'
-     and p.proname in ('command_ship_group_go', 'command_ship_group_stop', 'command_ship_group_dock',
-                       'assign_ship_to_group', 'delete_ship_group', 'send_ship_group_hunt')
-     and position('group_sortie_members' in regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g')) > 0;
-  if v_left is not null then
-    raise exception '0305 SELF-ASSERT (a) FAIL: these still read group_sortie_members to decide a command: %', v_left;
+   where n.nspname = 'public' and p.proname = 'command_ship_group_go';
+  if position('from public.group_sortie_members' in v_code) > 0
+     or position('join public.group_sortie_members' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (a1) FAIL: public.command_ship_group_go still READS group_sortie_members to decide a command';
   end if;
-end $assert_a$;
+end $assert_a1$;
+
+-- (a2) public.command_ship_group_stop must no longer READ the frozen roster.
+do $assert_a2$
+declare
+  v_code text;
+begin
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'command_ship_group_stop';
+  if position('from public.group_sortie_members' in v_code) > 0
+     or position('join public.group_sortie_members' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (a2) FAIL: public.command_ship_group_stop still READS group_sortie_members to decide a command';
+  end if;
+end $assert_a2$;
+
+-- (a3) public.command_ship_group_dock must no longer READ the frozen roster.
+do $assert_a3$
+declare
+  v_code text;
+begin
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'command_ship_group_dock';
+  if position('from public.group_sortie_members' in v_code) > 0
+     or position('join public.group_sortie_members' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (a3) FAIL: public.command_ship_group_dock still READS group_sortie_members to decide a command';
+  end if;
+end $assert_a3$;
+
+-- (a4) public.assign_ship_to_group must no longer READ the frozen roster.
+do $assert_a4$
+declare
+  v_code text;
+begin
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'assign_ship_to_group';
+  if position('from public.group_sortie_members' in v_code) > 0
+     or position('join public.group_sortie_members' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (a4) FAIL: public.assign_ship_to_group still READS group_sortie_members to decide a command';
+  end if;
+end $assert_a4$;
+
+-- (a5) public.delete_ship_group must no longer READ the frozen roster.
+do $assert_a5$
+declare
+  v_code text;
+begin
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'delete_ship_group';
+  if position('from public.group_sortie_members' in v_code) > 0
+     or position('join public.group_sortie_members' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (a5) FAIL: public.delete_ship_group still READS group_sortie_members to decide a command';
+  end if;
+end $assert_a5$;
+
+-- (a6) public.send_ship_group_hunt must no longer READ the frozen roster.
+do $assert_a6$
+declare
+  v_code text;
+begin
+  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'send_ship_group_hunt';
+  if position('from public.group_sortie_members' in v_code) > 0
+     or position('join public.group_sortie_members' in v_code) > 0 then
+    raise exception '0305 SELF-ASSERT (a6) FAIL: public.send_ship_group_hunt still READS group_sortie_members to decide a command';
+  end if;
+end $assert_a6$;
 
 do $assert_b$
 declare
