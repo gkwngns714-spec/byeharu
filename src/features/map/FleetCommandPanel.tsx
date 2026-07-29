@@ -175,7 +175,8 @@ export function FleetCommandPanel({
           </div>
         )
       case 'stop':
-        // NO-SOFTLOCK: one click, no confirm; sortie rows get a non-actionable hint (server brake law).
+        // NO-SOFTLOCK: one click, no confirm. 0305 — every in-flight fleet gets the brake; the
+        // server decides what stopping means (halt, or break off from a fight).
         return (
           <div key="stop">
             <SectionLabel>Fleets in flight</SectionLabel>
@@ -186,37 +187,33 @@ export function FleetCommandPanel({
                     <span className="block truncate text-sm text-ink">{f.name}</span>
                     <span className="text-xs text-ink-faint">{f.fleetCount} in flight</span>
                   </span>
-                  {f.sortie !== null ? (
-                    <span data-testid={`team-sortie-hint-${f.groupId}`} className="shrink-0 text-right text-xs text-ink-faint">
-                      {f.sortie === 'outbound' ? 'On a hunt' : 'Returning'}
-                    </span>
-                  ) : (
-                    // Word-economy: Stop is a compact icon button (■). aria-label + title keep it
-                    // accessible and unambiguous. Still the safety brake — see BRAKE DECOUPLING below.
-                    <Button
-                      size="icon"
-                      variant="warning"
-                      data-testid={`team-stop-${f.groupId}`}
-                      busy={stopBusy === `stop:${f.groupId}`}
-                      busyLabel="…"
-                      aria-label={`Stop ${f.name}`}
-                      title="Stop — hold the fleet here"
-                      // BRAKE DECOUPLING: the safety CTA answers ONLY to its own in-flight stop —
-                      // never to `busy` (a pending go/dock/hunt must not disable the brake).
-                      disabled={locks.stopDisabled || !f.canStop}
-                      onClick={() =>
-                        void runStop(
-                          `stop:${f.groupId}`,
-                          // The ONE unified brake (0209) — fleet_movement_unified_enabled is on in prod
-                          // and the legacy per-member stop (0164) was retired with the signal cleanup.
-                          () => commandShipGroupStop(f.groupId),
-                          (res) => unifiedStopOutcomeMessage(f.name, res),
-                        )
-                      }
-                    >
-                      ■
-                    </Button>
-                  )}
+                  {/* 0305: EVERY in-flight fleet gets the button. The old sortie hint hid Stop
+                      whenever the movement read 'hunt_pirates'/'return_home' — a client-side guess
+                      at a server refusal that no longer exists. Word-economy: Stop is a compact
+                      icon button (■); aria-label + title keep it accessible and unambiguous. */}
+                  <Button
+                    size="icon"
+                    variant="warning"
+                    data-testid={`team-stop-${f.groupId}`}
+                    busy={stopBusy === `stop:${f.groupId}`}
+                    busyLabel="…"
+                    aria-label={`Stop ${f.name}`}
+                    title="Stop — hold the fleet here"
+                    // BRAKE DECOUPLING: the safety CTA answers ONLY to its own in-flight stop —
+                    // never to `busy` (a pending go/dock/hunt must not disable the brake).
+                    disabled={locks.stopDisabled || !f.canStop}
+                    onClick={() =>
+                      void runStop(
+                        `stop:${f.groupId}`,
+                        // The ONE unified brake (0209) — fleet_movement_unified_enabled is on in prod
+                        // and the legacy per-member stop (0164) was retired with the signal cleanup.
+                        () => commandShipGroupStop(f.groupId),
+                        (res) => unifiedStopOutcomeMessage(f.name, res),
+                      )
+                    }
+                  >
+                    ■
+                  </Button>
                 </div>
               ))}
             </div>

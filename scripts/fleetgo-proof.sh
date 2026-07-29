@@ -81,7 +81,7 @@ MIGRATION_4C2A="$REPO_ROOT/supabase/migrations/20260618000222_movement_writer_re
 # documenting the ban, it is to read the code. (Both traps were hit for real while writing these.)
 sql_code() { perl -0777 -pe "s/--[^\n]*//g; s/comment\s+on\s+\w+\s+.*?;//gsi" "$1"; }
 
-MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_RETIRED FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_REJECTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_NOOVERLAP TERRITORY_PASS_MAPREAD REPOINT_PASS_BERTHED_SETTLED REPOINT_PASS_FITGATE_BERTHED REPOINT_PASS_MAP_PARITY REPOINT_PASS_GROUPED_IDENTICAL REPOINT_PASS_SPACEPOS_FLEET REPOINT_PASS_LEGACYHOME_IDENTICAL"
+MARKERS="FLEETGO_PASS_DARK FLEETGO_PASS_ONEFLEET FLEETGO_PASS_NOSHIPWRITE FLEETGO_PASS_NOGHOSTDOCK FLEETGO_PASS_COMBATDEST FLEETGO_PASS_SPEEDMIN FLEETGO_PASS_REDIRECT FLEETGO_PASS_GUARDS FLEETGO_PASS_TARGETSHAPE FLEETGO_PASS_COORD FLEETGO_PASS_SPACESETTLE FLEETGO_PASS_FROMSPACE FLEETGO_PASS_SETTLEPARITY FLEETGO_PASS_STOP FLEETGO_PASS_ORACLEPARITY FLEETGO_PASS_GROUPREAD FLEETGO_PASS_DOCKDEDUP_DARKPARITY FLEETGO_PASS_DOCKDEDUP_GROUPDOCKED FLEETGO_PASS_DOCKDEDUP_COMMISSION FLEETGO_PASS_ISOLATION FLEETGO_PASS_DOCKDEDUP_HUNTOVERLAP FLEETGO_PASS_DOCKDEDUP_LEGACYPRESENT FLEETGO_PASS_MAPTRANSIT_DARKPARITY FLEETGO_PASS_MAPTRANSIT_GROUP FLEETGO_PASS_MAPSPACE_GROUP FLEETGO_PASS_MAPSPACE_RETIRED FLEETGO_PASS_ASSIGNGUARD_DARKPARITY FLEETGO_PASS_ASSIGNGUARD_UNASSIGN FLEETGO_PASS_ASSIGNGUARD_INFLIGHT FLEETGO_PASS_ASSIGNGUARD_HUNTPRESENT FLEETGO_PASS_ASSIGNGUARD_READRIGHT FLEETGO_PASS_ASSIGNGUARD_ELSEWHERE FLEETGO_PASS_ASSIGNGUARD_IDLESPACE FLEETGO_PASS_ASSIGNGUARD_COLOCATED FLEETGO_PASS_ASSIGNGUARD_PERMEMBER_TAG FLEETGO_PASS_ASSIGNGUARD_ONSORTIE FLEETGO_PASS_ASSIGNGUARD_AMBIGUOUS HUNTUNI_DARKPARITY HUNTUNI_REJECT_INFLIGHT HUNTUNI_REJECT_ONSORTIE HUNTUNI_REJECT_MEMBERBUSY HUNTUNI_PASS_NOSECONDFLEET HUNTUNI_PASS_NOGHOSTDOCK HUNTUNI_PASS_RESOLVER HUNTUNI_PASS_AMBIGUOUS HUNTUNI_PASS_BOOTSTRAP HUNTUNI_PASS_FROMSPACE FLEETGO_PASS_STOP_HALTS_SORTIE FLEETGO_PASS_STOP_DARKINERT FLEETGO_PASS_STOP_SORTIE_LIVESCOPE S3_PASS_POSLEAF_MIDPOINT S3_PASS_POSLEAF_AGREEMENT S3_PASS_POSLEAF_PARKED S3_PASS_POSLEAF_DOCKED S3_PASS_TERRITORY_IN S3_PASS_TERRITORY_OUT S4_PASS_DOCKLEG_MINT S4_PASS_DOCK_SETTLE S4_PASS_TRANSLATE_PARK S4_PASS_DARKPARITY_INSTANTDOCK S4_PASS_GUARD_NOTINTERRITORY S4_PASS_GUARD_ONSORTIE S4_PASS_GUARD_NOTPARKED S4_PASS_RALLY_UNTRANSLATED ASSIGN_CROSSGROUP_GUARDED COMMISSION_BERTHED BERTH_RESOLVER ASSIGN_CLEARS_BERTH UNASSIGN_BERTHS DELETE_BERTHS BERTH_XOR BERTH_BACKFILL TERRITORY_PASS_SEEDED TERRITORY_PASS_NOOVERLAP TERRITORY_PASS_MAPREAD REPOINT_PASS_BERTHED_SETTLED REPOINT_PASS_FITGATE_BERTHED REPOINT_PASS_MAP_PARITY REPOINT_PASS_GROUPED_IDENTICAL REPOINT_PASS_SPACEPOS_FLEET REPOINT_PASS_LEGACYHOME_IDENTICAL"
 PASS_LINE="FLEET-GO PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -219,18 +219,16 @@ if [ "$MODE" = "selftest" ]; then
     || fail "0218 does not compose 0208's fleet_set_in_space leaf (second parking mechanism?)"
   grep -qE "^[[:space:]]*(alter table|drop function)" "$MIGSTOP_TMP" \
     && fail "0218 alters/drops an existing object (the S3 re-creates must be purely additive)" || true
-  # ── THE 0215 SORTIE GUARD (now living in the 0218 body), judged on the BODY's comment-stripped
-  #    code (the 0213 lesson: a file-wide grep is satisfied by the self-assert's own literals).
-  #    Requires: the gsm join, the reject token, the LIVE scope (bare EXISTS — the status set gone
-  #    — bricks every post-hunt stop: FLEETGO_PASS_STOP_SORTIE_LIVESCOPE is its runtime red), and
-  #    the ORDER gate < group lock < guard < fleet count (guard after the count answers
-  #    no_fleet/ambiguous past a live sortie; guard before the gate leaks the read into the dark
-  #    world — DARKINERT's red).
-  #    MUTATIONS (the static reds executed while building; the runtime reds traced, CI-only):
-  #    strip the hunk → this check red + FLEETGO_PASS_STOP_REJECTS_SORTIE red; bare EXISTS (drop
-  #    the status set) → the live-scope regex red + FLEETGO_PASS_STOP_SORTIE_LIVESCOPE red; move
-  #    the guard above the gate → the order chain red + FLEETGO_PASS_STOP_DARKINERT red. 0218's
-  #    in-file self-assert reds the same three at deploy time.
+  # ── THE BRAKE'S SPINE, judged on the 0218 BODY's comment-stripped code (the 0213 lesson: a
+  #    file-wide grep is satisfied by the self-assert's own literals). What must still hold at every
+  #    head: the DARK GATE runs before any read, and the group lock is taken before the fleet count.
+  #    RETIRED BY 0305: this block used to demand the sortie guard — the gsm join, the reject token
+  #    and its live status scope — inside this body. That guard is GONE, deliberately and by owner
+  #    order. Keeping the demand here would have left a green static check asserting a rule the code
+  #    no longer has, which is worse than no check: it reads as coverage. The replacement is below,
+  #    against 0305 itself, and the runtime reds are FLEETGO_PASS_STOP_HALTS_SORTIE (in-flight) and
+  #    FLEETGO_PASS_STOP_SORTIE_LIVESCOPE (mid-combat).
+  #    MUTATIONS: move the group lock above the gate → the order chain red + STOP_DARKINERT red.
   perl -0777 -ne '
     my $i = index($_, "create or replace function public.command_ship_group_stop");
     exit 1 if $i < 0;
@@ -239,15 +237,33 @@ if [ "$MODE" = "selftest" ]; then
     my $body = substr($_, $i, $j - $i);
     my $gate = index($body, "cfg_bool(\x27fleet_movement_unified_enabled\x27)");
     my $lock = index($body, "from public.ship_groups where group_id = v_group and player_id = v_player for update");
-    my $gsm  = index($body, "join public.fleets f on f.id = gsm.fleet_id");
-    my $sort = index($body, "group_on_sortie");
     my $amb  = index($body, "fleet_ambiguous");
-    exit 1 unless $gate >= 0 && $lock >= 0 && $gsm >= 0 && $sort >= 0 && $amb >= 0;
-    exit 1 unless $gate < $lock && $lock < $gsm && $gsm < $sort && $sort < $amb;
-    my $guard = substr($body, $gsm, $sort - $gsm);
-    exit 1 unless $guard =~ /f\.status in \(.moving., .present., .returning.\)/;
+    exit 1 unless $gate >= 0 && $lock >= 0 && $amb >= 0;
+    exit 1 unless $gate < $lock && $lock < $amb;
     exit 0;' "$MIGSTOP_TMP" \
-    || fail "0218's brake body lost the sortie guard, its LIVE scope, or its order (gate -> group lock -> gsm guard -> fleet count) — an unguarded brake mid-hunt parks an immortal manifest-attached idle fleet and bricks the group"
+    || fail "0218's brake body lost the dark gate or its order (gate -> group lock -> fleet count) — a guard before the gate leaks a read into the dark world"
+
+  # ── 0305: THE BRAKE ANSWERS EVERY STOP. The refusal is retired; an open fight composes with the
+  #    ONE retreat authority, and an aborted pre-contact sortie releases its roster (the lifecycle
+  #    end the roster never had). Judged on the 0305 migration, which is where the brake's head now
+  #    comes from. MUTATIONS: re-add the refusal → the token check red; drop the compose → the
+  #    presence_request_leave check red; unscope the release → the scope check red (and
+  #    FLEETGO_PASS_STOP_SORTIE_LIVESCOPE reds at runtime).
+  MIG0305="$REPO_ROOT/supabase/migrations/20260618000305_one_sortie_authority.sql"
+  [ -f "$MIG0305" ] || fail "migration 0305 (the brake's head since the sortie-authority slice) not found"
+  MIG0305_TMP="$(mktemp)"
+  sql_code "$MIG0305" > "$MIG0305_TMP"
+  grep -q "group_sortie_is_open" "$MIG0305_TMP" \
+    || fail "0305 does not define/compose the ONE sortie authority"
+  grep -q "presence_request_leave" "$MIG0305_TMP" \
+    || fail "0305's brake does not compose with the retreat authority — a mid-combat Stop must retreat, never refuse and never silently halt"
+  grep -q "retreat_already_underway" "$MIG0305_TMP" \
+    || fail "0305's brake has no already-retreating arm — a second press would re-enter the verb and reset the damage window"
+  grep -q "delete from public.group_sortie_members" "$MIG0305_TMP" \
+    || fail "0305's brake does not release an aborted sortie's roster — the roster would again have a beginning and no end"
+  grep -q "where fleet_id = v_fleet and player_id = v_player" "$MIG0305_TMP" \
+    || fail "0305's roster release is not scoped to the braked fleet AND the caller — an unscoped delete reaches other rosters"
+  rm -f "$MIG0305_TMP"
   # the runtime must pin that the brake and the redirect agree on where "here" is.
   grep -q "disagrees with the redirect interpolation" "$SQL" \
     || fail "no runtime pin that the brake and the redirect compute the SAME interpolated point"
@@ -256,25 +272,33 @@ if [ "$MODE" = "selftest" ]; then
   # the 0215 runtime fixtures must be non-vacuous (each string is a RAISE that fires when the
   # fixture failed to reach the state its marker claims to pin).
   grep -q "the in-flight sortie state was not built" "$SQL" \
-    || fail "STOP_REJECTS_SORTIE does not guard that the sortie is really moving (phase 1 vacuous otherwise)"
+    || fail "STOP_HALTS_SORTIE does not guard that the sortie is really moving (the halt probe vacuous otherwise)"
   grep -q "the mid-combat brake state was not built" "$SQL" \
-    || fail "STOP_REJECTS_SORTIE does not guard the present-at-site mid-combat phase (the posture pin vacuous otherwise)"
+    || fail "STOP_HALTS_SORTIE does not rebuild the present-at-site mid-combat world DARKINERT and LIVESCOPE inherit"
   grep -q "no live encounter under the brake probe" "$SQL" \
-    || fail "STOP_REJECTS_SORTIE does not guard that a LIVE encounter exists (the brake would be refused where it does not hurt)"
+    || fail "STOP_HALTS_SORTIE does not guard that a LIVE encounter exists in the rebuilt world (LIVESCOPE would retreat nothing)"
   grep -q "the sortie snapshot is empty" "$SQL" \
-    || fail "STOP_REJECTS_SORTIE's zero-write diff does not guard against a vacuous empty snapshot"
+    || fail "STOP_HALTS_SORTIE zero-write diff does not guard against a vacuous empty snapshot"
   grep -q "the dark sortie state was not built" "$SQL" \
     || fail "STOP_DARKINERT does not guard that a live sortie exists while dark (the gate probe vacuous otherwise)"
   grep -q "the retained-manifest state was not built" "$SQL" \
     || fail "STOP_SORTIE_LIVESCOPE does not guard the completed-fleet + retained-manifest shape (the anti-overreach half unproven)"
   grep -q "a live group-shaped fleet survived the completed sortie" "$SQL" \
     || fail "STOP_SORTIE_LIVESCOPE does not guard that ONLY the retained dead manifest could block (ambiguous otherwise)"
-  # request_retreat has NO 'ok' key: it RAISES on failure and succeeds with the bare
-  # {return_movement_id: null} arm envelope (0019 → 0018's combat branch; the return leg is minted
-  # LATER by the tick). The fixture must therefore pin the ARMED STATE, never an envelope key the
-  # RPC never had — CI reddened exactly that mistake once (the recurring RPC-shape class).
-  grep -q "request_retreat did not arm the encounter" "$SQL" \
-    || fail "STOP_SORTIE_LIVESCOPE does not assert the armed-retreat STATE after request_retreat (its envelope has no ok key — asserting one reds a SUCCESSFUL call)"
+  # The retreat is ARMED by a verb whose envelope carries no 'ok' key (request_retreat → 0018's
+  # combat branch; the return leg is minted LATER by the tick). 0305 reaches it through the BRAKE,
+  # whose own envelope IS checked — but the thing that matters is still the STATE the verb produces,
+  # never an envelope key the RPC never had (CI reddened exactly that mistake once).
+  grep -q "the brake did not arm the encounter" "$SQL" \
+    || fail "STOP_SORTIE_LIVESCOPE does not assert the armed-retreat STATE after the mid-combat brake (assert the STATE the verb produces, never an envelope key it never had)"
+  grep -q "a second brake mid-retreat answered" "$SQL" \
+    || fail "STOP_SORTIE_LIVESCOPE does not pin that a second mid-combat press is idempotent (re-entering the verb hands back a free damage-window reset)"
+  grep -q "the mid-combat brake changed" "$SQL" \
+    || fail "STOP_SORTIE_LIVESCOPE does not pin that the retreat arm leaves the roster alone (the fight owns it; only a pre-contact abort releases it)"
+  grep -q "the brake left" "$SQL" \
+    || fail "STOP_HALTS_SORTIE does not pin that an aborted sortie's roster is RELEASED (the lifecycle end the roster never had)"
+  grep -q "the group still reads as on-sortie after the brake" "$SQL" \
+    || fail "STOP_HALTS_SORTIE does not pin that the group is COMMANDABLE after the brake — the outcome the retired refusal was really protecting"
 
   # ── THE GHOST-DOCK BAN: a fleet in flight must leave NO member docked behind it. ─────────────────
   # NOSHIPWRITE is structurally BLIND to this — it diffs main_ship_instances, and the leak lives in

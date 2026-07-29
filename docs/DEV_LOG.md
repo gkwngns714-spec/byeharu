@@ -5,6 +5,86 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-29 — Stop always works: `0305` retires SEVEN copies of the sortie rule onto ONE authority
+
+> **DEPLOY STATE — NOT deployed yet.** Migration `0305` is on the slice branch awaiting CI green and
+> the owner's `production` gate. Production head is still `0304`.
+
+**The owner's report:** *"there is this issue when stopping a fleet when moving to a location: This
+fleet is out on a sortie and can't take a new course yet"* — followed by *"i want to be able to stop
+whenever i want"* and, on being shown the duplication, *"four copies, remove necessary and do it
+again."*
+
+### 1. The defect
+
+The brake asked *"does this group hold a `group_sortie_members` row AND is one of its fleets
+moving/present/returning?"* and called that "on a sortie". Neither half means that:
+
+- **The frozen roster is never released.** No migration in the repo contains a `delete` against
+  `group_sortie_members`; a row dies only with its fleet, by cascade. Read live from production
+  through the owner's own session: **35 roster rows across 11 fleets, the oldest 2026-07-18.**
+- **Ordinary travel sets the fleet `moving`** (mission `'rally'`, `0301:2013`).
+
+So after a fleet's *first* fight, every ordinary trip it ever takes could be **started but never
+stopped**. `0215`'s own header predicted this failure ("it BRICKS THE GROUP") and tried to dodge it
+by scoping on fleet status — which is precisely the half ordinary travel also satisfies.
+
+### 2. The spaghetti (named plainly)
+
+That one rule was hand-copied into **seven places across five functions, in four shapes with three
+different key sets**:
+
+| Site | Shape |
+|---|---|
+| `command_ship_group_go` `0301:1659` · `command_ship_group_stop` `0301:2123` · `command_ship_group_dock` `0219:170` · `assign_ship_to_group` assign-arm `0216:331` | `count(*)` + join, keyed player+group |
+| `assign_ship_to_group` unassign-arm `0216:419` · `delete_ship_group` `0216:588` | `exists` + join, keyed **fleet**, no player scope |
+| `send_ship_group_hunt` `0231:551` | **bare `exists`** — no join, no scope: "has this fleet EVER been on a sortie" |
+
+Two of the seven live inside a single function. One comment reads *"the mover/brake guard
+VERBATIM"* — the copy recorded as if that made it safe. The client held a **third, unrelated**
+definition (`teamStop.ts`, guessing from `mission_type`). A rule with seven authors has no author.
+
+### 3. What `0305` does
+
+- **One authority:** `public.group_sortie_is_open(player, group)`, answered from three facts that
+  **end by themselves** — an open encounter (`active`/`retreating`), a live sortie *leg*
+  (`hunt_pirates`/`return_home`), or an active hunt *presence* (`activity_type = 'hunt_pirates'`,
+  covering the telegraph/between-waves window). Never the roster. Ordinary travel is `'rally'` +
+  activity `'none'`; mining/exploring/trading are their own activities and are not sorties.
+- **All seven copies deleted**, every caller composed onto the authority.
+- **The brake no longer refuses at all.** An open fight now *composes* with `presence_request_leave`
+  — the one retreat authority the mover already calls (`0301:1726`) — and reports `retreat_started`
+  / `retreat_already_underway`. It never re-enters the verb on a running retreat, so the damage
+  window can't be reset; a sortie leg with no encounter simply stops. **Stop is not a free escape:**
+  leaving a fight still costs the full retreat window, and the copy says so out loud.
+- **The client's third guess is gone.** Every in-flight fleet gets the ■ button; the server decides
+  what stopping means.
+
+### 4. How the seven bodies were rewritten — `0303`'s lesson taken literally
+
+**Nothing was retyped.** `scripts/gen-0305-sortie-authority.mjs` *slices* each guard's exact text out
+of the migration that currently defines it and emits the migration; the migration then locates each
+site in `pg_get_functiondef`, asserts it occurs **exactly once**, replaces it, checks the length delta
+is exactly the hunk delta, and re-executes. Byte parity outside the guard is a property of the
+method, not a review promise. A miss raises and the whole deploy rolls back. Re-check with
+`node scripts/gen-0305-sortie-authority.mjs --check`.
+
+### 5. Deliberately NOT in scope
+
+**No roster rows are deleted or stamped.** Battle reports read them (`report_create`, `0168`). The
+fix makes them irrelevant to command decisions instead of curating them, so **nothing is written to
+live player data**. No flag changes, no DDL beyond the one new function, no change to the retreat
+machine, the tick, or the ambush planner.
+
+### 6. Found while investigating — a live incident
+
+Reading production through the owner's session turned up Fleet 1 (`e2151a71`) in an **active**
+encounter at tick 94, player power 30 (from 60) against enemy power 433, no retreat requested. The
+owner was told immediately, mid-investigation. It is the same fleet and the same shape of fight that
+destroyed Fleet 1 once before.
+
+---
+
 ## 2026-07-28 — Ambushes work again: `0303` manifest guard + `0304` pirate-zone effect (**both DEPLOYED & verified live**)
 
 > **DEPLOY STATE — read this first.** **Production migration head is `20260618000304`.** Deploy run

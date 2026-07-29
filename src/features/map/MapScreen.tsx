@@ -19,6 +19,9 @@ import { distance } from '../../game/movement/travelPreview'
 import type { WorldCoord } from './openSpaceTransform'
 import { Badge, Button, OverlayPanel, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 import { PirateInterceptPanel } from './PirateInterceptPanel'
+import { ZoneInfoPanel } from './ZoneInfoPanel'
+import { buildZoneInfo } from './zoneInfoModel'
+import type { DangerZoneLite } from './pirateApi'
 
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
 // stays the hero; the location detail panel now speaks the shared design language (IDENTITY →
@@ -93,9 +96,15 @@ export function MapScreen() {
   // point (drives the in-range mining check + becomes the send destination); hubScreen is the SCREEN
   // px of the tap (relative to the map box) that anchors the stage-1 icon cluster over that point.
   const [hubOpen, setHubOpen] = useState(false)
-  const [hubView, setHubView] = useState<'menu' | 'fleet' | 'pirate' | 'mining'>('menu')
+  const [hubView, setHubView] = useState<'menu' | 'fleet' | 'pirate' | 'mining' | 'zone'>('menu')
   const [hubPoint, setHubPoint] = useState<WorldCoord | null>(null)
   const [hubScreen, setHubScreen] = useState<{ x: number; y: number } | null>(null)
+  // ZONE INFO — which danger zone's panel is open, held as an ID and re-derived from the live zone
+  // list below. Deliberately NOT the row: the list re-polls, and a captured row would go stale the
+  // moment a zone is edited (its ring/name are exactly what the panel shows). Keeping the id means
+  // the live read stays the one source, and a zone that is deleted or deactivated simply stops
+  // resolving — the panel closes itself instead of describing something that no longer exists.
+  const [zoneInfoId, setZoneInfoId] = useState<string | null>(null)
   // The double-tap summon (GalaxyMap.onDoubleTapPoint): remember WHERE (world + screen px), drop any
   // marker/field selection, open the hub on its MENU stage. Deliberately does NOT set pointTarget — no
   // crosshair is placed until the player actually taps the Send icon (openFleetPanel below).
@@ -115,6 +124,17 @@ export function MapScreen() {
   }
   const openPiratePanel = () => setHubView('pirate')
   const openMiningPanel = () => setHubView('mining')
+  // ZONE INFO — a single click on a zone blob opens the hub straight on its info stage. It goes
+  // through the SAME hub rather than adding a second overlay: one command-hub authority, one corner,
+  // one ✕. There is no icon-menu behind it (nothing was double-tapped), so hubScreen stays null and
+  // the header renders the ✕ alone — the same shape a port summon already uses.
+  const openZoneInfo = (zone: DangerZoneLite) => {
+    setZoneInfoId(zone.id)
+    setHubPoint(null)
+    setHubScreen(null)
+    setHubView('zone')
+    setHubOpen(true)
+  }
   // The ONE dismissal: ✕ closes the hub AND returns the map to plain navigation (clear the point/
   // crosshair and disarm any pirate tap mode + draft).
   const closeHub = () => {
@@ -128,6 +148,9 @@ export function MapScreen() {
     setSelectedId(null)
     setPirateMode('off')
     setPirateDraftPoints([])
+    // ZONE INFO: the ✕ must also drop the open zone, or the map would keep a zone highlighted with
+    // no panel explaining why.
+    setZoneInfoId(null)
   }
   // Back arrow → the button menu: drop the crosshair/target and disarm any pirate draft so the menu is
   // a clean slate again (re-choosing Send re-places the destination). A PORT summon has NO icon menu
@@ -142,11 +165,18 @@ export function MapScreen() {
     setPointTarget(null)
     setPirateMode('off')
     setPirateDraftPoints([])
+    setZoneInfoId(null)
   }
 
   const selected = locations.find((l) => l.id === selectedId) ?? null
   const selMeta = selectedId ? meta[selectedId] : null
   const selectedField: MiningField | null = miningFields.find((f) => f.name === selectedFieldName) ?? null
+
+  // ZONE INFO — resolved from the LIVE zone list every render (see the zoneInfoId comment above), so
+  // an edited zone re-describes itself and a removed one resolves to null: the panel and the map's
+  // highlight both fall away together, with no stale copy to clean up.
+  const zoneInfoRow = zoneInfoId ? (dangerZones.find((z) => z.id === zoneInfoId) ?? null) : null
+  const zoneInfo = zoneInfoRow ? buildZoneInfo(zoneInfoRow, locations) : null
 
   // Selecting a marker retires any live point target (never two live targets); a bare-space tap
   // already clears the selection on GalaxyMap's own svg click path — the two stay exclusive by
@@ -262,6 +292,9 @@ export function MapScreen() {
               selectedMiningFieldName={selectedFieldName}
               onSelectMiningField={handleSelectMiningField}
               dangerZones={dangerZones}
+              // ZONE INFO: passing a handler is what makes the blobs hoverable/clickable at all.
+              onSelectDangerZone={openZoneInfo}
+              selectedDangerZoneId={zoneInfoId}
               combatUnits={combat.units}
               combatEvents={combat.events}
               pirateMode={pirateMode}
@@ -432,7 +465,14 @@ export function MapScreen() {
                       </button>
                       )}
                       <p className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
-                        {hubView === 'fleet' ? 'Send fleet' : hubView === 'mining' ? 'Mine here' : 'Pirate intercept'}
+                        {hubView === 'fleet'
+                          ? 'Send fleet'
+                          : hubView === 'mining'
+                            ? 'Mine here'
+                            : hubView === 'zone'
+                              ? // The zone NAMES itself in the header, so the panel body needs no title row.
+                                (zoneInfo?.title ?? 'Danger zone')
+                              : 'Pirate intercept'}
                       </p>
                       <button
                         type="button"
@@ -482,6 +522,10 @@ export function MapScreen() {
                         shipSpatialState={null}
                       />
                     )}
+
+                    {/* ZONE INFO — what this danger zone is, in plain words. The header already
+                        carries the name and the ✕, so the panel is body-only. */}
+                    {hubView === 'zone' && zoneInfo && <ZoneInfoPanel info={zoneInfo} />}
 
                     {/* PIRATE INTERCEPT — plot a route around danger zones. Reused as-is; the
                         header owns dismissal, so no per-panel close here. */}

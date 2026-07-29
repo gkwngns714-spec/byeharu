@@ -2687,22 +2687,29 @@ begin
   raise notice 'HUNTUNI_PASS_FROMSPACE: a fleet parked in open space (via the real 0209 brake) hunts FROM its own coordinate — origin captured from the fleet, consumed fleet terminal, one live fleet';
 end $$;
 
--- ════════ BLOCK STOP-SORTIE (0215, lit): THE BRAKE REFUSES AN OPEN SORTIE — BOTH PHASES ════════
--- The bricking class 0215 exists to kill: the brake resolves the group fleet by the exact shape a
--- hunt's sortie fleet has, so unguarded it cancels the encounter's leg and parks the fleet IDLE
--- with its manifest attached — idle is immortal (0047 collects only terminal fleets), the manifest
--- never clears, and every later guard answers the sortie reject forever. Two phases, because the
--- two failure shapes differ:
---   • IN FLIGHT (fleet 'moving'): unguarded, the brake CANCELS the sortie leg — the catastrophic
---     write. Pinned by reason + the leg still moving/unresolved + byte-diffs on fleets AND
---     group_sortie_members (the charter's lesson: diff the table the bug hides in).
---   • MID-COMBAT (fleet 'present' at its site, live encounter): unguarded, the brake answers the
---     idempotent not_moving skip (ok:true) — wrong POSTURE. A sortie is "refuse", never "nothing
---     to do" (0213's token+posture arm). Pinned by demanding the reject token itself.
--- HOW THIS FAILS IF THE CODE WERE WRONG / MUTATION (executed statically here; runtime needs CI's
--- disposable Postgres): strip the 0215 hunk → phase 1 cancels the leg (reason/diff pins red) and
--- phase 2 answers ok:true not_moving → red; the sh's body-scoped hunk grep and 0215's own
--- self-assert also red.
+-- ════════ BLOCK STOP-SORTIE (0305, lit): THE BRAKE HALTS AN IN-FLIGHT SORTIE, CLEANLY ════════
+-- REPOINTED BY 0305. This block used to assert that the brake REFUSES an open sortie
+-- ('group_on_sortie', both phases). That rule is retired, deliberately and by owner order ("i want
+-- to be able to stop whenever i want"), because the refusal was the player-visible bug: the guard
+-- keyed on a roster nobody ever releases plus a fleet status ordinary travel also has, so after ONE
+-- fight every ordinary trip could be started and never stopped.
+--
+-- WHY THE OLD HARM NO LONGER FOLLOWS. 0215's stated catastrophe was "parks the fleet IDLE with its
+-- manifest attached … every later guard answers the sortie reject forever → BRICKS THE GROUP". Both
+-- halves of that are gone: (1) no guard reads the roster any more — group_sortie_is_open answers
+-- from the encounter, the live sortie leg and the hunt presence, all of which end by themselves; and
+-- (2) the brake now RELEASES the aborted sortie's roster, so the fleet is not left manifest-attached
+-- at all. What the old block protected is asserted here directly, as an OUTCOME: after the brake the
+-- group is immediately commandable again.
+--
+-- The MID-COMBAT phase moved to STOP-LIVESCOPE, where a retreat is needed anyway: braking a fleet in
+-- a real fight no longer refuses, it composes with presence_request_leave. Keeping it here would
+-- consume the mid-combat world that STOP-DARKINERT and STOP-LIVESCOPE both inherit.
+--
+-- HOW THIS FAILS IF THE CODE WERE WRONG / MUTATION: restore the 0215 refusal → the brake answers
+-- group_on_sortie → red on the first probe. Drop the roster release → the manifest-released and
+-- still-commandable probes go red. Make the release unscoped → the second sortie's own manifest
+-- would vanish and the rebuild's vacuity check goes red.
 do $$
 declare r jsonb; n int; v_flag jsonb; v_manifest_n int;
   uI uuid := (select v from fg where k='uI'); haven uuid := (select v from fg where k='haven');
@@ -2747,32 +2754,59 @@ begin
     raise exception 'STOP-SORTIE FAIL: the sortie snapshot is empty — the zero-write diff would be vacuous'; end if;
 
   r := pg_temp.call_as(uI, format('public.command_ship_group_stop(%L::uuid)', gI));
-  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'group_on_sortie' then
-    raise exception 'STOP-SORTIE FAIL: braking an IN-FLIGHT sortie answered % — the brake just cancelled a hunt leg and parked an immortal manifest-attached idle fleet', r; end if;
-  -- the sortie leg is STILL moving and unresolved; nothing was cancelled.
+  if (r->>'reason') is not distinct from 'group_on_sortie' then
+    raise exception 'STOP-SORTIE FAIL: the brake still REFUSES an in-flight sortie (%) — 0305 retired that refusal; this is the bug the owner reported', r; end if;
+  if (r->>'ok')::boolean is not true or (r->>'stopped')::boolean is not true then
+    raise exception 'STOP-SORTIE FAIL: braking an IN-FLIGHT sortie answered % — a recall before contact must actually halt the fleet', r; end if;
+  -- the sortie leg really was cancelled, and the fleet holds in open space.
   select count(*) into n from public.fleet_movements
-   where id = v_huntmv and status = 'moving' and resolved_at is null;
-  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the sortie leg is no longer moving/unresolved after the rejected brake'; end if;
-  select count(*) into n from public.fleet_movements where fleet_id = v_huntfleet and status = 'cancelled';
-  if n <> 0 then raise exception 'STOP-SORTIE FAIL: % cancelled leg(s) on the sortie fleet after the rejected brake', n; end if;
-  -- byte-diffs, both ways, on the tables the bug hides in — plus §2's own table.
+   where id = v_huntmv and status = 'cancelled' and resolved_at is not null;
+  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the sortie leg was not cancelled+resolved by the brake'; end if;
+  select count(*) into n from public.fleets
+   where id = v_huntfleet and status = 'idle' and active_movement_id is null
+     and space_x is not null and space_y is not null;
+  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the braked sortie fleet is not holding idle in open space'; end if;
+  -- ★ THE LIFECYCLE END ★ the aborted sortie's roster is RELEASED — this fleet is not left
+  -- manifest-attached, which is exactly the state 0215 feared and could not prevent.
+  select count(*) into n from public.group_sortie_members where fleet_id = v_huntfleet;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the brake left % roster row(s) on the recalled fleet — the sortie has no end again', n; end if;
+  -- ★ AND THE GROUP IS COMMANDABLE ★ the outcome the old refusal was really protecting. The ONE
+  -- authority must now answer false: no encounter, no sortie leg in the air, no hunt presence.
+  if public.group_sortie_is_open(uI, gI) then
+    raise exception 'STOP-SORTIE FAIL: the group still reads as on-sortie after the brake — the group is bricked, which is the whole defect'; end if;
+  -- the brake must not have reached across to anyone else's ships/fleets: diff both ways, minus the
+  -- rows this order is entitled to change (the braked fleet and its own cancelled leg).
   select count(*) into n from (
     (table bs1_ships except select * from public.main_ship_instances)
     union all (select * from public.main_ship_instances except table bs1_ships)) d;
-  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the rejected brake wrote % main_ship_instances row(s)', n; end if;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the brake wrote % main_ship_instances row(s) — it must touch no ship', n; end if;
   select count(*) into n from (
     (table bs1_fleets except select * from public.fleets)
-    union all (select * from public.fleets except table bs1_fleets)) d;
-  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the rejected brake wrote % fleets row(s)', n; end if;
+    union all (select * from public.fleets except table bs1_fleets)) d
+   where d.id <> v_huntfleet;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the brake wrote % fleets row(s) other than the braked fleet', n; end if;
   select count(*) into n from (
     (table bs1_gsm except select * from public.group_sortie_members)
-    union all (select * from public.group_sortie_members except table bs1_gsm)) d;
-  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the rejected brake wrote % group_sortie_members row(s)', n; end if;
-  if (select count(*) from public.group_sortie_members where fleet_id = v_huntfleet) <> v_manifest_n then
-    raise exception 'STOP-SORTIE FAIL: the rejected brake changed the manifest row count'; end if;
+    union all (select * from public.group_sortie_members except table bs1_gsm)) d
+   where d.fleet_id <> v_huntfleet;
+  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the roster release reached % row(s) outside the braked fleet — it is not scoped', n; end if;
   drop table bs1_ships; drop table bs1_fleets; drop table bs1_gsm;
 
-  -- ── PHASE 2: MID-COMBAT. Settle the sortie at its site through the real cron entry point. ──────
+  -- ── REBUILD: the brake consumed the sortie, so mint a fresh one FROM SPACE (the proven
+  --    HUNTUNI_PASS_FROMSPACE arm) and settle it mid-combat. STOP-DARKINERT and STOP-LIVESCOPE both
+  --    inherit that world; the mid-combat brake itself is proven in STOP-LIVESCOPE, where the
+  --    retreat it arms is the one that finishes the sortie.
+  perform pg_temp.arm_group(uI, gI);
+  r := pg_temp.call_as(uI, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gI, v_hunt));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'STOP-SORTIE FAIL: a re-hunt after the brake was rejected % — the recalled group is not commandable', r; end if;
+  v_huntfleet := (r->>'fleet_id')::uuid;
+  v_huntmv    := (r->>'movement_id')::uuid;
+  -- vacuity: the fresh sortie has its OWN roster (proving the release did not poison the next send).
+  select count(*) into n from public.group_sortie_members where fleet_id = v_huntfleet;
+  if n = 0 then raise exception 'STOP-SORTIE FAIL: the re-hunt froze no roster — the release reached the new sortie'; end if;
+
+  -- ── settle the fresh sortie at its site through the real cron entry point. ─────────────────────
   update public.fleet_movements
      set depart_at = now() - interval '10 seconds', arrive_at = now() - interval '1 second'
    where id = v_huntmv;
@@ -2788,27 +2822,15 @@ begin
    where fleet_id = v_huntfleet and status = 'active' and location_id = v_hunt;
   if n <> 1 then raise exception 'STOP-SORTIE FAIL: the mid-combat brake state was not built (no active presence)'; end if;
 
-  create temp table bs2_fleets as select * from public.fleets;
-  create temp table bs2_gsm    as select * from public.group_sortie_members;
-  r := pg_temp.call_as(uI, format('public.command_ship_group_stop(%L::uuid)', gI));
-  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'group_on_sortie' then
-    raise exception 'STOP-SORTIE FAIL: braking a MID-COMBAT sortie answered % — a sortie must be REFUSED, never idempotent-skipped (0213 posture)', r; end if;
-  select count(*) into n from (
-    (table bs2_fleets except select * from public.fleets)
-    union all (select * from public.fleets except table bs2_fleets)) d;
-  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the mid-combat rejected brake wrote % fleets row(s)', n; end if;
-  select count(*) into n from (
-    (table bs2_gsm except select * from public.group_sortie_members)
-    union all (select * from public.group_sortie_members except table bs2_gsm)) d;
-  if n <> 0 then raise exception 'STOP-SORTIE FAIL: the mid-combat rejected brake wrote % group_sortie_members row(s)', n; end if;
-  select count(*) into n from public.combat_encounters where fleet_id = v_huntfleet and status = 'active';
-  if n <> 1 then raise exception 'STOP-SORTIE FAIL: the live encounter did not survive the rejected brake'; end if;
-  drop table bs2_fleets; drop table bs2_gsm;
+  -- The mid-combat brake is NOT exercised here: it arms a retreat, which would consume the world
+  -- STOP-DARKINERT and STOP-LIVESCOPE inherit. STOP-LIVESCOPE drives it, and the retreat it arms is
+  -- the one that finishes this sortie — so the compose is proven on the real settle chain, not on a
+  -- throwaway fixture.
 
   -- hand the mid-combat world to DARKINERT + LIVESCOPE (the sortie persists deliberately).
   insert into fg values ('i1', i1), ('gI', gI), ('huntI', v_hunt), ('huntfleetI', v_huntfleet);
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
-  raise notice 'FLEETGO_PASS_STOP_REJECTS_SORTIE: lit brake vs an open sortie -> group_on_sortie in BOTH phases (moving: leg untouched; mid-combat: refused, not skipped); fleets + manifest byte-unchanged, encounter alive';
+  raise notice 'FLEETGO_PASS_STOP_HALTS_SORTIE: the lit brake HALTS an in-flight sortie — leg cancelled, fleet holding idle in space, the aborted roster RELEASED, group_sortie_is_open false (commandable again), nothing outside the braked fleet touched; a fresh hunt then froze its own roster';
 end $$;
 
 -- ════════ BLOCK STOP-DARKINERT (0215, dark): THE HUNK SITS BEHIND THE 0209 GATE ════════
@@ -2851,16 +2873,24 @@ begin
   raise notice 'FLEETGO_PASS_STOP_DARKINERT: dark + live sortie -> unified_movement_disabled (the gate answers; the sortie read is never reached; zero writes)';
 end $$;
 
--- ════════ BLOCK STOP-LIVESCOPE (0215, lit): A RETAINED DEAD MANIFEST MUST NOT BLOCK THE BRAKE ════
--- THE ANTI-OVERREACH HALF. A finished sortie's manifest is RETAINED up to 14d (0169's retention
--- decision; 0047 collects it only with its terminal fleet). A bare-EXISTS "fix" of the brake would
--- green REJECTS_SORTIE and then brick every post-hunt stop the group ever makes. So: finish the
--- sortie through the REAL chain (Retreat → escape tick → return settle → reconciler), prove the
--- manifest is retained on the completed fleet, then launch a NEW unified go and STOP it — the
--- brake MUST succeed, and the retained manifest must survive it untouched.
--- MUTATION (traced): widen the guard to a bare EXISTS (drop the live-status join) → the go's brake
--- below answers group_on_sortie → red (the sh's body-scoped live-status grep and 0215's
--- self-assert (c) also red statically).
+-- ════════ BLOCK STOP-LIVESCOPE (0305, lit): THE MID-COMBAT BRAKE, AND THE ANTI-OVERREACH HALF ════
+-- TWO PROPERTIES, on one real chain:
+--   1. THE MID-COMBAT BRAKE (moved here by 0305). Pressing Stop in a real fight is no longer
+--      refused — it COMPOSES with presence_request_leave, the one retreat authority. Asserted on the
+--      envelope (ok:true, stopped:false, retreat_started), on the STATE the verb must produce
+--      (encounter retreating + clock started, presence retreating), on the roster being LEFT ALONE
+--      (the fight owns it; only a pre-contact abort releases it), and on a second press answering
+--      retreat_already_underway so the damage window can never be reset. The retreat it arms is then
+--      the retreat that finishes this sortie — the compose is proven on the settle chain itself.
+--   2. THE ANTI-OVERREACH HALF (0215's, kept). A finished sortie's roster is RETAINED (0169's
+--      retention decision; 0047 collects it only with its terminal fleet). Finish the sortie through
+--      the REAL chain (escape tick → return settle → reconciler), prove the roster is retained on the
+--      completed fleet, then launch a NEW unified go and STOP it — the brake must succeed AND the
+--      retained roster must survive untouched, which also proves 0305's release is scoped to the
+--      braked fleet rather than sweeping the player's history.
+-- MUTATION (traced): restore any roster read in the brake → the post-hunt stop answers
+-- group_on_sortie → red. Unscope the release (drop `fleet_id = v_fleet`) → the retained-roster count
+-- goes red here. Re-enter the retreat verb on a second press → the idempotency probe goes red.
 do $$
 declare r jsonb; n int; v_flag jsonb; v_manifest_n int;
   uI uuid := (select v from fg where k='uI'); gI uuid := (select v from fg where k='gI');
@@ -2886,16 +2916,39 @@ begin
   -- did exactly that and CI reddened it on a SUCCESSFUL call. So: pin the key (and that its value
   -- is null — a non-null id here would mean the instant-leave 'none' branch ran, the WRONG branch),
   -- then assert the STATE the call must produce (the team-command-proof idiom).
-  r := pg_temp.call_as(uI, format('public.request_retreat(%L::uuid)', v_pres));
-  if not (r ? 'return_movement_id') then
-    raise exception 'STOP-LIVESCOPE FAIL: request_retreat envelope drifted (no return_movement_id key): %', r; end if;
-  if (r->>'return_movement_id') is not null then
-    raise exception 'STOP-LIVESCOPE FAIL: request_retreat returned a movement id % mid-combat — the instant-leave branch ran instead of the retreat arm', r->>'return_movement_id'; end if;
+  -- ── ★ 0305 — THE MID-COMBAT BRAKE ★ ────────────────────────────────────────────────────────────
+  -- This used to call request_retreat directly. It now goes through the BRAKE, because that is the
+  -- new contract: pressing Stop in a real fight is no longer refused, it COMPOSES with the one
+  -- retreat authority (presence_request_leave, the same verb the mover's arm (a) calls). Driving the
+  -- rest of this block from here proves the compose on the real settle chain — the retreat the brake
+  -- arms is the retreat that finishes the sortie — instead of on a throwaway fixture.
+  -- The envelope is the brake's, not request_retreat's: ok:true with stopped:false, because nothing
+  -- was halted — the fleet leaves under fire when the window closes.
+  create temp table bs2_gsm as select * from public.group_sortie_members;
+  r := pg_temp.call_as(uI, format('public.command_ship_group_stop(%L::uuid)', gI));
+  if (r->>'reason') is not distinct from 'group_on_sortie' then
+    raise exception 'STOP-LIVESCOPE FAIL: the mid-combat brake still REFUSES (%) — 0305 retired that refusal', r; end if;
+  if (r->>'ok')::boolean is not true or (r->>'stopped')::boolean is not false
+     or (r->>'reason_code') is distinct from 'retreat_started' then
+    raise exception 'STOP-LIVESCOPE FAIL: braking a MID-COMBAT sortie answered % — it must arm the retreat and report retreat_started, never halt and never skip', r; end if;
+  -- It armed the REAL machine, through the real verb: encounter retreating + clock started,
+  -- presence retreating. The brake reproduces none of this itself (0305 self-assert (d) pins that).
   select count(*) into n from public.combat_encounters
    where id = v_enc and status = 'retreating' and retreat_started_at is not null;
-  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: request_retreat did not arm the encounter (retreating + retreat_started_at)'; end if;
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: the brake did not arm the encounter (retreating + retreat_started_at)'; end if;
   select count(*) into n from public.location_presence where id = v_pres and status = 'retreating';
-  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: request_retreat did not set the presence retreating'; end if;
+  if n <> 1 then raise exception 'STOP-LIVESCOPE FAIL: the brake did not set the presence retreating'; end if;
+  -- THE FIGHT OWNS THE ROSTER: the retreat arm must NOT release it (only an aborted, pre-contact
+  -- sortie does). A release here would change who the encounter thinks is fighting, mid-fight.
+  select count(*) into n from (
+    (table bs2_gsm except select * from public.group_sortie_members)
+    union all (select * from public.group_sortie_members except table bs2_gsm)) d;
+  if n <> 0 then raise exception 'STOP-LIVESCOPE FAIL: the mid-combat brake changed % roster row(s) — the fight owns the roster', n; end if;
+  -- Idempotent under a second press: the window must not restart, and the answer must say so.
+  r := pg_temp.call_as(uI, format('public.command_ship_group_stop(%L::uuid)', gI));
+  if (r->>'ok')::boolean is not true or (r->>'reason_code') is distinct from 'retreat_already_underway' then
+    raise exception 'STOP-LIVESCOPE FAIL: a second brake mid-retreat answered % — it must report retreat_already_underway, never re-enter the verb', r; end if;
+  drop table bs2_gsm;
   -- SURGERY (retreat-clock rewind, the COMBATPARITY idiom): now() is txn-constant, so no real
   -- retreat delay can elapse in this txn; rewind the clock instead of faking the end state.
   update public.combat_encounters
@@ -2967,7 +3020,7 @@ begin
     raise exception 'STOP-LIVESCOPE FAIL: the successful brake changed the retained manifest row count'; end if;
 
   update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
-  raise notice 'FLEETGO_PASS_STOP_SORTIE_LIVESCOPE: sortie finished through the real chain, manifest RETAINED on the completed fleet -> a NEW go and its brake BOTH succeed; the manifest survives untouched';
+  raise notice 'FLEETGO_PASS_STOP_SORTIE_LIVESCOPE: the MID-COMBAT brake armed the real retreat (encounter+presence retreating, roster untouched, second press idempotent); the sortie then finished through the real chain with its roster RETAINED, and a NEW go plus its brake BOTH succeeded with that retained roster untouched — the 0305 release is scoped to the braked fleet';
 end $$;
 
 -- ═════════════════════════════ S1 — THE BERTH MODEL (migration 0216) ═════════════════════════════
