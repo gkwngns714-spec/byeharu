@@ -164,9 +164,7 @@ export function buildFleetCommandModel(input: FleetCommandModelInput): FleetComm
   }
 
   // 1 · STOP — state-predicated ONLY (NO-SOFTLOCK): never touches `target`.
-  const stopRows: FleetCommandStopRow[] = resolveStoppableFleets(input.movements, groups, {
-    unifiedEnabled,
-  }).map((f) => ({
+  const stopRows: FleetCommandStopRow[] = resolveStoppableFleets(input.movements, groups).map((f) => ({
     ...f,
     // The pure reject mirror (TeamMapStop verbatim): lit gate, resolved group, non-empty by construction.
     canStop: groupStopAvailability({ gateEnabled: true, groupResolved: true, memberCount: f.fleetCount }).canStop,
