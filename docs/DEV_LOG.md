@@ -5,10 +5,52 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-07-29 — Stop always works: `0305` retires SEVEN copies of the sortie rule onto ONE authority
+## 2026-07-29 — Map: click a danger zone to see what it is (`#334`, **DEPLOYED**)
 
-> **DEPLOY STATE — NOT deployed yet.** Migration `0305` is on the slice branch awaiting CI green and
-> the owner's `production` gate. Production head is still `0304`.
+> **DEPLOY STATE.** Client-only slice — no migration. `main` `a9bf70e`; "Deploy to GitHub Pages"
+> **success**. Verified on the live site: the deployed bundle is `index-CX2Q9_jm.js`, the map serves
+> **3 clickable zones** (Blackden / Reaver / Snare) with `cursor: pointer` and hover tooltips, and
+> the panel renders bottom-right with the right copy.
+
+**The owner's ask:** *"when i put my mouse over a zone in a game, i want to be able to click it, and
+see the info."*
+
+Zones were scenery. `dangerZoneLayer` drew them `pointerEvents:'none'` throughout and nothing in the
+client could name one — the most dangerous thing on the map was the only thing a player could not
+ask about.
+
+- **Hover** brightens the zone and shows its name (an SVG `<title>`); **click** opens a panel in the
+  bottom-right; **✕** closes it. Copy: *"Pirates hunt here. A fleet crossing this zone is almost
+  always attacked."* plus **Where** (`Around Reaver` / `Open space`) and **Size** (equal-area
+  diameter, e.g. `About 64 across`).
+- **Interactivity is opt-in:** the layer becomes a tap target only when a caller passes `onSelect`;
+  without it the output is byte-identical to the scenery it was. **Only the fill hit-tests** so the
+  1.5px outline cannot steal a click aimed at a marker on the boundary, and nothing calls
+  `stopPropagation` — the double-tap command-hub summon keeps working inside a zone.
+- **One hub, not a second panel:** it rides MapScreen's existing bottom-right command-hub rail as
+  another view beside Send fleet / Mine here / Pirate intercept, reusing its header and ✕.
+- **The words live in a pure model** (`zoneInfoModel`), fed only by data already loaded
+  (`get_danger_zones` + the locations list) — no new RPC. Authoring metadata (`source`,
+  `provenance`, `revision`, the id) is deliberately absent and a spec guards that whole class. The
+  warning says "almost always" rather than a number because `0236`'s `[0.98, 1.0]` is live config
+  the client cannot read.
+- **Caught by looking, not by testing:** the first build rendered the clicked zone as a white blob
+  with a black halo — `role`/`tabIndex` made the SVG path focusable and Chrome painted a filled
+  focus ring over it. `LocationMarker:64-68`, the map's existing clickable, carries neither.
+  Matching it fixed the render and moved the accessible name to `<title>`, which is where the hover
+  tooltip came from. Both pinned by specs.
+
+`tsc` clean; **1509** frontend specs green (16 new).
+
+---
+
+## 2026-07-29 — Stop always works: `0305` retires SEVEN copies of the sortie rule onto ONE authority (**DEPLOYED & verified live**)
+
+> **DEPLOY STATE — read this first.** **Production migration head is `20260618000305`.** Deploy run
+> `30428482523` applied `20260618000305_one_sortie_authority.sql` and finished **`success`**;
+> `main` `aaa7397` (PR **#333**). **Verified on target, not from the green:** the authority was
+> called on production through the owner's own session —
+> `POST /rest/v1/rpc/group_sortie_is_open` for both fleets → **HTTP 200, `false`**.
 
 **The owner's report:** *"there is this issue when stopping a fleet when moving to a location: This
 fleet is out on a sortie and can't take a new course yet"* — followed by *"i want to be able to stop
@@ -69,19 +111,51 @@ is exactly the hunk delta, and re-executes. Byte parity outside the guard is a p
 method, not a review promise. A miss raises and the whole deploy rolls back. Re-check with
 `node scripts/gen-0305-sortie-authority.mjs --check`.
 
-### 5. Deliberately NOT in scope
+### 5. The roster finally has an end — forced by a red proof
 
-**No roster rows are deleted or stamped.** Battle reports read them (`report_create`, `0168`). The
-fix makes them irrelevant to command decisions instead of curating them, so **nothing is written to
-live player data**. No flag changes, no DDL beyond the one new function, no change to the retreat
-machine, the tick, or the ambush planner.
+The first cut deliberately wrote nothing to `group_sortie_members`, on the reasoning that the fix
+made the roster irrelevant to command decisions. The `FLEET-GO` apply-proof disagreed, and it was
+right: `0215`'s stated catastrophe — braking a sortie "parks the fleet IDLE with its manifest
+attached" — was only *half* dead once the guards were gone. The roster's only consumers are the
+encounter builders (`combat_create_group_encounter` / `combat_create_encounter`, `0168`), and the
+freeze is idempotent (`ON CONFLICT DO NOTHING`, the `0303` defect), so a roster left on a recalled
+fleet is not history — it is a **stale answer waiting for the next fight**.
 
-### 6. Found while investigating — a live incident
+So the brake now **releases** it: when it actually halts a fleet it deletes that fleet's roster rows,
+scoped `fleet_id = v_fleet and player_id = v_player`. Reached only when no encounter was open and no
+ambush was owed. The **retreat arm deliberately does not release** — the fight owns the roster, and
+changing it mid-fight would change who the encounter thinks is fighting.
+
+Still not in scope: no backfill of the 35 pre-existing rows, no flag changes, no DDL beyond the one
+new function, no change to the retreat machine, the tick, or the ambush planner. Battle reports are
+untouched (they do not read the roster).
+
+### 6. Proof repointing — and a static check that would have lied
+
+`STOP-SORTIE` asserted the exact rule this slice retires, so it was **repointed, not deleted** →
+`FLEETGO_PASS_STOP_HALTS_SORTIE`: leg cancelled, fleet holding idle in space, roster released,
+`group_sortie_is_open` false (**commandable again**), nothing outside the braked fleet touched — then
+a fresh hunt froze its *own* roster, proving the release is scoped. The **mid-combat** phase moved
+into `STOP-LIVESCOPE`, where the retreat the brake arms is the one that finishes the sortie; that
+added two pins the old block never had (the roster is left alone mid-fight, and a second press
+answers `retreat_already_underway` instead of re-entering the verb and resetting the damage window).
+
+The `.sh` runner's static guard demanded the retired hunk inside `0218`'s body — a file that never
+changes, so it would have stayed **green forever while asserting the opposite of the live
+behaviour**. Repointed to judge `0305` itself. Full write-up of this class in
+`docs/HOW_ITS_BUILT.md` §3.
+
+### 7. Found while investigating — and lost
 
 Reading production through the owner's session turned up Fleet 1 (`e2151a71`) in an **active**
-encounter at tick 94, player power 30 (from 60) against enemy power 433, no retreat requested. The
-owner was told immediately, mid-investigation. It is the same fleet and the same shape of fight that
-destroyed Fleet 1 once before.
+encounter at tick 94: player power 30 (from 60) against enemy power 433, no retreat requested. The
+owner was told immediately, mid-investigation.
+
+**It did not survive.** The encounter settled `defeat` at **2026-07-29T05:37:22Z**, tick 130, player
+power 0 against 872. All four ships — Sparrow, Sparrow III, Sparrow IV, Sparrow V — are `destroyed`,
+and the fleet row is `destroyed` at `(-63, 96)`. Only Sparrow II (Fleet 2) survives. It is the same
+fleet and the same shape of fight that destroyed Fleet 1 once before, and the Stop refusal fixed
+above is exactly what denied the escape — the fix landed roughly 55 minutes too late for it.
 
 ---
 

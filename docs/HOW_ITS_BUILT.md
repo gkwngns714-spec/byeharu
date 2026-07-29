@@ -1,7 +1,7 @@
 # How Byeharu Is Built
 
 *A explainer of the development method behind this repository — for a reader who didn't build it
-and wants to know how ~265 migrations (266 files on `main` as of 2026-07-23, highest version `0272`;
+and wants to know how ~300 migrations (299 files on `main` as of 2026-07-29, highest version `0305`;
 the numbering has deliberate gaps — `0253` is a reserved, unused slot), a dozen game systems, and a
 solo-owner/AI-assistant team
 shipped a live multiplayer game without it turning into a mess.*
@@ -216,6 +216,35 @@ as a live error rather than a silent gap, and only then drop the old schema — 
 drain-assert that refuses to run if anything still depends on what's being dropped. The whole
 `0216`→`4c`→`4d` sequence in §5 of the movement charter is this pattern end to end: berth model
 first (additive), then read repoints, then (after a soak) the schema drop.
+
+**A proof can lie by staying green — and four ways it does.** The `0305` slice (2026-07-29) hit all
+four in one afternoon, so they are written down rather than re-learned:
+
+1. **Probe code, not prose.** A migration self-assert searched `pg_proc.prosrc` for a table name to
+   prove a retired guard was gone. It went red on a function whose *explanatory comment* mentioned
+   the table. Any "this token must be absent" check has to `regexp_replace` the SQL line comments
+   away first — the same false positive `0303`'s live verifier had already been written to dodge.
+2. **A writer is not a copy.** The next version of that assert forbade *any* mention of the table —
+   and condemned `send_ship_group_hunt`, the table's legitimate sole writer. "Is this the retired
+   rule?" means a **read** (`from`/`join`), never a mention.
+3. **A green check can assert a rule the code no longer has.** The shell runner demanded the retired
+   guard inside a historical migration's body. Because that file never changes, the check would have
+   stayed green *forever* while the live behaviour was the opposite. That reads as coverage and is
+   worse than no check at all — when a rule is retired, its proofs are part of the change.
+4. **A green on an old chain is not evidence.** A red proof was nearly dismissed by pointing at two
+   green runs from the day before — which turned out to be on a branch cut ten days earlier, whose
+   migration chain stopped 70 migrations back and had never applied the flags that broke it. Compare
+   the *chain*, not the colour.
+
+**Never retype a live function body — slice it.** When one rule had to be replaced inside five
+large deployed functions at once, none of them were retyped. A generator
+(`scripts/gen-0305-sortie-authority.mjs`) *slices* each guard's exact text out of the migration that
+currently defines it; the migration then finds that text in `pg_get_functiondef`, asserts it occurs
+**exactly once**, replaces it, asserts the length delta equals the hunk delta, and re-executes. Body
+parity outside the hunk becomes a property of the method instead of a review promise, and a miss
+raises and rolls the whole deploy back. This exists because `0303` recorded the opposite: a hand
+re-creation of the intercept resolver silently dropped a progress gate, the cancel-pending calls and
+a fleet-identity revalidation — it would have *reintroduced* the bug it claimed to fix.
 
 **All-or-nothing guarded transactions.** Every processor is written to be safe to run twice and to
 never process a batch partially: locks (`FOR UPDATE SKIP LOCKED`) prevent two concurrent cron runs
