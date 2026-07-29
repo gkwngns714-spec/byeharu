@@ -49,6 +49,19 @@ export function computeSourceFingerprint<TPayload, TLive, TReport>(
   return (h >>> 0).toString(16).padStart(8, '0')
 }
 
+/** The ONE place a draft's `sourceRevision` is decided: the domain's SERVER-ISSUED revision token when
+ *  the descriptor supplies one, otherwise the payload fingerprint. Both the fork and the staleness
+ *  recompute go through here, so the two can never disagree about which token they are comparing. */
+function sourceRevisionOf<TPayload, TLive, TReport>(
+  descriptor: DomainDraftDescriptor<TPayload, TLive, TReport>,
+  live: TLive,
+  snapshot: TPayload,
+): string {
+  return descriptor.liveRevision
+    ? descriptor.liveRevision(live)
+    : computeSourceFingerprint(descriptor, snapshot)
+}
+
 /** Start a brand-new draft (mode 'create') at the descriptor's blank payload. Deterministic — the
  *  caller supplies the id and clock. */
 export function beginCreate<TPayload, TLive, TReport>(
@@ -79,7 +92,7 @@ export function forkEdit<TPayload, TLive, TReport>(
     mode: {
       kind: 'edit',
       sourceId: descriptor.liveId(live),
-      sourceRevision: computeSourceFingerprint(descriptor, snapshot),
+      sourceRevision: sourceRevisionOf(descriptor, live, snapshot),
       sourceSnapshot: snapshot,
     },
     payload: { ...snapshot },
@@ -137,7 +150,9 @@ export function draftSourceStatus<TPayload, TLive, TReport>(
 ): DraftSourceStatus {
   if (draft.mode.kind !== 'edit') return 'current'
   if (!live) return 'source_missing'
-  return computeSourceFingerprint(descriptor, descriptor.projectFromLive(live)) ===
+  // Same authority as the fork (sourceRevisionOf): a server revision token when the domain has one,
+  // the payload fingerprint otherwise. Never re-derive a fingerprint against a token or vice versa.
+  return sourceRevisionOf(descriptor, live, descriptor.projectFromLive(live)) ===
     draft.mode.sourceRevision
     ? 'current'
     : 'source_changed'

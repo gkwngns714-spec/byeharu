@@ -14,14 +14,25 @@ export interface DangerZoneLite {
   source: 'circle' | 'drawn'
   location_id: string | null
   /** Ordered, ALREADY-CLOSED ring (first point repeats as the last) — the exterior boundary as
-   *  plain world-unit [x,y] pairs, straight from ST_DumpPoints(ST_ExteriorRing(...)). */
+   *  plain world-unit [x,y] pairs, straight from ST_DumpPoints(ST_ExteriorRing(...)).
+   *
+   *  LOSSY BY CONSTRUCTION: these coordinates cross the wire as jsonb numbers at 15 significant
+   *  digits, so they do NOT round-trip to the stored doubles. They are for DRAWING and for authoring
+   *  a new shape — never for deciding whether the live boundary changed. Use `revision` for that. */
   ring: [number, number][] | null
+  /** The row's SERVER-ISSUED aggregate revision (danger_zones.revision, 0275), bumped on every write
+   *  that changes the zone. This is the ONE staleness/optimistic-concurrency token for a zone: it is
+   *  exact, opaque, and immune to the coordinate rounding above. Null only when read from a server
+   *  that predates its exposure. */
+  revision: number | null
 }
 
 export async function fetchDangerZones(): Promise<DangerZoneLite[]> {
   const { data, error } = await supabase.rpc('get_danger_zones')
   if (error || !Array.isArray(data)) return []
-  return data as DangerZoneLite[]
+  // Normalize the revision to null when a server that predates its exposure omits it, so consumers
+  // face ONE absent-value shape instead of `undefined` on some rows and `null` on others.
+  return (data as DangerZoneLite[]).map((z) => ({ ...z, revision: z.revision ?? null }))
 }
 
 // The route target shape shared by the route write wrappers below. (The read-only advisory

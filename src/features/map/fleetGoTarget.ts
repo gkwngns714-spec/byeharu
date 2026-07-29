@@ -111,6 +111,11 @@ export function classifyFleetCoordinateGo(
 // ── Copy helpers (redirect-aware; the TeamMapSend success-naming convention) ───────────────────────
 export const formatWorldPoint = (w: WorldCoord): string => `(${w.x}, ${w.y})`
 
+/** How a COORDINATE destination is named in prose. A point in open space has no name, and since
+ *  0298 a fleet can be ordered to retreat to one, so any copy that must say WHERE a fleet is headed
+ *  needs a phrase for it. THE one authority for that phrase — plain language, no jargon. */
+export const openSpaceDestinationLabel = (w: WorldCoord): string => `open space at ${formatWorldPoint(w)}`
+
 export function fleetGoButtonLabel(intent: FleetGoIntent): string {
   return intent === 'redirect' ? 'Redirect fleet here' : 'Send fleet here'
 }

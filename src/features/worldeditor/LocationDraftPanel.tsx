@@ -99,11 +99,15 @@ function ValidationNotices({ report }: { report: ValidationReport }) {
 
 export function LocationDraftPanel({
   zoneOptions = [],
+  onReloadLive,
 }: {
   /** Zone references (uuid + names) for the create-draft zone selector — sourced from the RAW
    *  get_world_map tree (WorldEditorData.zoneRefs); advisory UX only, the server re-validates. */
   zoneOptions?: readonly WorldMapZoneRef[]
-} = {}) {
+  /** Re-read the live snapshot after a command APPLIES — the ONE shell authority (reloadLive), so the
+   *  editor never keeps rendering the pre-publish world. */
+  onReloadLive: () => void
+}) {
   const {
     drafts,
     activeDraft,
@@ -172,6 +176,7 @@ export function LocationDraftPanel({
       // The change is live now — the local draft has served its purpose.
       setPublishAttempt(null)
       discardDraft(draft.draftId)
+      onReloadLive() // …and the editor must SHOW it, without a manual refresh
       return
     }
     setPublishAttempt({ draftId: draft.draftId, requestId, phase: 'failed', failure: result })

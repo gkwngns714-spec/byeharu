@@ -510,7 +510,8 @@ declare v_rec record;
 begin
   if not exists (select 1 from pg_proc where proname = 'process_combat_ticks' and pronamespace = 'public'::regnamespace)
      or not exists (select 1 from pg_proc where proname = 'combat_create_group_encounter' and pronamespace = 'public'::regnamespace)
-     or not exists (select 1 from pg_proc where proname = 'pirate_intercept_evaluate_leg' and pronamespace = 'public'::regnamespace)
+     or not exists (select 1 from pg_proc where proname = 'pirate_intercept_plan_leg' and pronamespace = 'public'::regnamespace)
+     or not exists (select 1 from pg_proc where proname = 'pirate_intercept_resolve_due_for_movement' and pronamespace = 'public'::regnamespace)
      or not exists (select 1 from pg_proc where proname = 'reward_grant' and pronamespace = 'public'::regnamespace) then
     raise exception 'LEB PROOF FAIL: a combat/reward function is missing — surface disturbed';
   end if;
@@ -523,7 +524,7 @@ begin
   for v_rec in
     select oid, proname from pg_proc
     where pronamespace = 'public'::regnamespace
-      and proname in ('process_combat_ticks','combat_create_group_encounter','pirate_intercept_evaluate_leg','reward_grant')
+      and proname in ('process_combat_ticks','combat_create_group_encounter','pirate_intercept_plan_leg','pirate_intercept_resolve_due_for_movement','reward_grant')
   loop
     if pg_get_functiondef(v_rec.oid) ilike '%location_encounter_bindings%' then
       raise exception 'LEB PROOF FAIL: % references location_encounter_bindings — the DARK guarantee is broken', v_rec.proname;

@@ -49,16 +49,35 @@ jobs:
         run: |
           supabase status -o env | tee /tmp/sbenv >/dev/null
           grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: Record the seeded flag BEFORE the proof runs
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -X -v ON_ERROR_STOP=1 -tAc \
+            "select value from public.game_config where key='fleet_movement_unified_enabled';" | tee /tmp/flag_before
       - name: FLEET-GO real-chain matrix
         run: |
           set -a; . /tmp/sbenv; set +a
           bash scripts/fleetgo-proof.sh local
-      - name: Committed flag must STILL be false (the proof persists nothing)
+      - name: Committed flag must STILL be what the chain seeded (the proof persists nothing)
         run: |
           set -a; . /tmp/sbenv; set +a
+          # This step proves the proof LEAKS NOTHING: whatever the migration chain seeds for
+          # fleet_movement_unified_enabled must survive the run unchanged, because every flip inside
+          # the proof happens in a rolled-back transaction.
+          #
+          # It used to hard-code 'false'. That WAS the seeded value — until migration 0300 (lights-on)
+          # legitimately turned this flag TRUE, at which point the step started failing on a chain that
+          # was behaving correctly. It was asserting the dark world, not the no-leak property.
+          #
+          # The expected value now comes from the chain itself, captured immediately before the proof
+          # ran. That is the real invariant, and it survives any future flip in either direction.
           psql "$DB_URL" -X -v ON_ERROR_STOP=1 -tAc \
             "select value from public.game_config where key='fleet_movement_unified_enabled';" | tee /tmp/flag
-          grep -qx 'false' /tmp/flag || { echo "FAIL: fleet_movement_unified_enabled is not committed-false"; exit 1; }
+          if ! diff -q /tmp/flag_before /tmp/flag >/dev/null; then
+            echo "FAIL: fleet_movement_unified_enabled changed across the proof run: $(cat /tmp/flag_before) -> $(cat /tmp/flag)"
+            exit 1
+          fi
+          echo "OK: fleet_movement_unified_enabled unchanged across the run ($(cat /tmp/flag))"
       - name: Stop disposable stack (always)
         if: always()
         run: supabase stop --no-backup || true

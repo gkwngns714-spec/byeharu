@@ -198,7 +198,8 @@ Architecture)**; slice records in `docs/WORLD_EDITOR_V1B0_OWNERSPINE.md` and `DE
 2026-07-19→20).
 
 **Status (2026-07-23) — the World Editor program is CLOSED.** V1 → V5 shipped end to end. The migration
-chain `0263`→`0271` is **deployed** (production migration head **`0271`**), and client V5 (entity search +
+chain `0263`→`0271` is **deployed** (production migration head is now **`0272`**, after the DARK elite
+stat-wiring migration `0272` deployed on 2026-07-23 — see `docs/DEV_LOG.md` §9), and client V5 (entity search +
 camera jump, coordinate jump, global lifecycle filter, pending-drafts indicator, unsaved-draft navigation
 guard, inactive-entity selection + reactivation) is merged, plus a UX comfort pass (PR #287). All four
 domains now have **create · update · lifecycle flip**; location reactivation runs through

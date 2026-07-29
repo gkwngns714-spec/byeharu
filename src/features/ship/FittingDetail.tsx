@@ -3,7 +3,6 @@ import { isServerLit, runGuardedCommand, useActivityPanelGuards } from '../../li
 import {
   fetchMyExpeditionPreview,
   renameMainShip,
-  repairMainShip,
   type FleetPosition,
   type MainShipRow,
 } from '../map/mainshipApi'
@@ -47,6 +46,7 @@ import { fetchShipCommandBuff, type ShipCommandBuffData } from './commandBuffApi
 import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
 import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX } from './shipName'
+import { canRepair, canTow, repairGateNote, REPAIR_LABEL, TOW_LABEL, type RepairGate } from './shipRecovery'
 import { Badge, Button, Card, CardHeader, Notice, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 
@@ -57,10 +57,12 @@ import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 //     shipName.ts pure guards; rename_main_ship_self);
 //   · location — from the ONE fleet-positions row the screen threads down (ZERO own location
 //     reads; the fleetPositionLocationLabel adapter — the same fold every roster row uses);
-//   · condition — the shared shield/hull pair (MeterPairBars over shipMeterPair) + the UNGATED
-//     free Repair when the ship is disabled (NO-SOFTLOCK: repair_main_ship is the ONLY recovery
-//     path for a destroyed ship — RepairPanel's paid desk defers to it — so it must render here
-//     regardless of any flag);
+//   · condition — the shared shield/hull pair (MeterPairBars over shipMeterPair) + the free
+//     RECOVERY ACTION when the ship is disabled (NO-SOFTLOCK: the free path is the ONLY recovery
+//     for a destroyed ship — RepairPanel's paid desk defers to it — so an action must render here
+//     regardless of any flag). 0297 made that free repair POSITION-GATED, so which action shows is
+//     decided by the ONE pure gate (shipRecovery.repairGate) and BOTH commands are the screen's
+//     single implementations, threaded down as `recovery` — this component owns no copy of them;
 //   · THE FITTING EDIT SURFACE — the ONE place fit/unfit renders (moved OUT of ModulesPanel's
 //     Workshop in this same slice; ModulesPanel keeps crafting only). The row IS the ship: fit
 //     targets this ship directly, no <select>. ENABLED when the ship's place is 'docked' or
@@ -81,12 +83,29 @@ import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 // NO optimistic UI: every command awaits the server then refetches (its own wave + the screen's
 // shared reads via onLoadoutChanged / onIdentityChanged).
 
+/**
+ * 0297 — the disabled-ship recovery surface, decided and executed by ShipScreen (the ONE owner of
+ * both commands) and rendered here. The detail never calls repair or tow itself: a second copy of a
+ * recovery command is exactly the duplication that made the row and the detail drift apart before.
+ */
+export interface ShipRecoveryView {
+  gate: RepairGate
+  repairing: boolean
+  /** Already player words (shipRecovery.repairErrorMessage) — never a raw server raise. */
+  repairError: string | null
+  towing: boolean
+  towNote: string | null
+  onRepair: () => Promise<void>
+  onTow: () => Promise<void>
+}
+
 export function FittingDetail({
   ship,
   shipRow,
   hullName,
   position,
   locations,
+  recovery,
   allFittings,
   shipCaptains,
   refreshKey,
@@ -102,6 +121,8 @@ export function FittingDetail({
   /** This ship's ONE location fact — its map.fleetPositions row (undefined = not in the projection). */
   position: FleetPosition | undefined
   locations: MapLocation[]
+  /** The screen's recovery state + commands for THIS ship (0297). */
+  recovery: ShipRecoveryView
   /** The WHOLE fittings read (server-lit) or null while dark/unloaded — per-ship subset derived here. */
   allFittings: ShipFittingRow[] | null
   /** This ship's assigned captains (server-lit) or null while dark. */
@@ -140,9 +161,8 @@ export function FittingDetail({
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
 
-  // Repair (re-homed from ShipStatusCard — the free ungated path).
-  const [repairing, setRepairing] = useState(false)
-  const [repairError, setRepairError] = useState<string | null>(null)
+  // 0297: the repair command + its state moved UP to ShipScreen (the ONE implementation, composed by
+  // the row and by this detail). This component keeps no repair state of its own.
 
   const guards = useActivityPanelGuards()
   const { activeRef } = guards
@@ -194,22 +214,6 @@ export function FittingDetail({
     } finally {
       guards.release('rename')
       if (activeRef.current) setRenameBusy(false)
-    }
-  }
-
-  // NO-SOFTLOCK: the free repair path (repair_main_ship — deliberately ungated server-side, 0052).
-  async function doRepair() {
-    if (!guards.tryClaim('repair')) return
-    setRepairing(true)
-    setRepairError(null)
-    try {
-      await repairMainShip(shipId) // explicit ship id; server asserts ownership
-      await onIdentityChanged()
-    } catch (e) {
-      if (activeRef.current) setRepairError(e instanceof Error ? e.message : String(e))
-    } finally {
-      guards.release('repair')
-      if (activeRef.current) setRepairing(false)
     }
   }
 
@@ -453,29 +457,50 @@ export function FittingDetail({
         </div>
       )}
 
-      {/* NO-SOFTLOCK — the UNGATED free repair (0052): a destroyed ship recovers ONLY through this
-          path (RepairPanel's paid desk explicitly defers to it), so it renders on the detail for
-          any disabled ship, independent of every flag. */}
+      {/* NO-SOFTLOCK — a destroyed ship recovers ONLY through the free path (RepairPanel's paid desk
+          explicitly defers to it), so a recovery ACTION renders here for any disabled ship,
+          independent of every flag. 0297: the free repair is position-gated, so the gate decides
+          which action — Repair in port, Tow when adrift — and an adrift ship is told plainly why
+          rather than being handed a button the server will refuse. */}
       {isDisabled && (
         <div className="mt-3 rounded-lg border border-edge bg-surface-2/50 p-3">
           <Notice tone="warning" data-testid="mainship-disabled-note" className="mb-2">
-            🛠 This ship is disabled. Repair it to get moving again.
+            {repairGateNote(recovery.gate)}
           </Notice>
-          {repairError && (
-            <Notice tone="danger" data-testid="mainship-repair-error" className="mb-2">
-              {repairError}
+          {recovery.towNote && (
+            <Notice tone="neutral" data-testid="mainship-tow-note" className="mb-2">
+              {recovery.towNote}
             </Notice>
           )}
-          <Button
-            variant="warning"
-            data-testid="mainship-repair"
-            busy={repairing}
-            busyLabel="Repairing…"
-            onClick={() => void doRepair()}
-            className="min-h-11 w-full"
-          >
-            Repair ship
-          </Button>
+          {recovery.repairError && (
+            <Notice tone="danger" data-testid="mainship-repair-error" className="mb-2">
+              {recovery.repairError}
+            </Notice>
+          )}
+          {canTow(recovery.gate) ? (
+            <Button
+              variant="warning"
+              data-testid="mainship-tow"
+              busy={recovery.towing}
+              busyLabel="Towing…"
+              onClick={() => void recovery.onTow()}
+              className="min-h-11 w-full"
+            >
+              {TOW_LABEL}
+            </Button>
+          ) : (
+            <Button
+              variant="warning"
+              data-testid="mainship-repair"
+              disabled={!canRepair(recovery.gate)}
+              busy={recovery.repairing}
+              busyLabel="Repairing…"
+              onClick={() => void recovery.onRepair()}
+              className="min-h-11 w-full"
+            >
+              {REPAIR_LABEL}
+            </Button>
+          )}
         </div>
       )}
 

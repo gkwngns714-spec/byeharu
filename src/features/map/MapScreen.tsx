@@ -13,6 +13,8 @@ import { MiningPanel } from '../mining/MiningPanel'
 import type { MiningField } from '../mining/miningTypes'
 import { WorldEventsPanel } from '../events/WorldEventsPanel'
 import { TelegraphBanner } from '../combat/TelegraphBanner'
+import { CombatMapCard } from './CombatMapCard'
+import { ambushEncounterNotices } from './ambushEncounterNotice'
 import { distance } from '../../game/movement/travelPreview'
 import type { WorldCoord } from './openSpaceTransform'
 import { Badge, Button, OverlayPanel, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
@@ -113,14 +115,6 @@ export function MapScreen() {
   }
   const openPiratePanel = () => setHubView('pirate')
   const openMiningPanel = () => setHubView('mining')
-  // Back arrow → the button menu: drop the crosshair/target and disarm any pirate draft so the menu is
-  // a clean slate again (re-choosing Send re-places the destination).
-  const backToMenu = () => {
-    setHubView('menu')
-    setPointTarget(null)
-    setPirateMode('off')
-    setPirateDraftPoints([])
-  }
   // The ONE dismissal: ✕ closes the hub AND returns the map to plain navigation (clear the point/
   // crosshair and disarm any pirate tap mode + draft).
   const closeHub = () => {
@@ -128,6 +122,23 @@ export function MapScreen() {
     setHubView('menu')
     setHubPoint(null)
     setHubScreen(null)
+    setPointTarget(null)
+    // PORT-SEND: a port summon's destination IS the marker selection, so the ONE dismissal has to
+    // clear that too — otherwise ✕ would leave a live destination with no surface left to act on it.
+    setSelectedId(null)
+    setPirateMode('off')
+    setPirateDraftPoints([])
+  }
+  // Back arrow → the button menu: drop the crosshair/target and disarm any pirate draft so the menu is
+  // a clean slate again (re-choosing Send re-places the destination). A PORT summon has NO icon menu
+  // behind it (nothing was double-tapped, so hubScreen is null) — there the same control is simply the
+  // dismissal, and the header renders no arrow at all (see the stage-2 header below).
+  const backToMenu = () => {
+    if (hubScreen === null) {
+      closeHub()
+      return
+    }
+    setHubView('menu')
     setPointTarget(null)
     setPirateMode('off')
     setPirateDraftPoints([])
@@ -141,11 +152,31 @@ export function MapScreen() {
   // already clears the selection on GalaxyMap's own svg click path — the two stay exclusive by
   // construction. NB the svg click that FOLLOWS a space tap calls onSelect(null), so clearing the
   // point target here is gated on an actual (non-null) marker selection.
+  //
+  // PORT-SEND (owner play-test, verbatim: "i cannot even send any ship to a city — haven, slagworks,
+  // driftwatch because there is no UI"): TAPPING A PORT IS NOW A SUFFICIENT GESTURE. It was not
+  // before — the send row only mounts while the hub is on its fleet stage, and the ONLY way there was
+  // double-tap EMPTY SPACE → Send icon → then tap the port, because openHubAt clears the selection, so
+  // the obvious order (pick the port first) could never work. The fix COMPOSES the same ONE hub
+  // authority rather than forking a second command surface: no new state, no button in the read-only
+  // aside — the port target still DERIVES from selectedId exactly as before, and this only opens the
+  // hub on the stage that consumes it. hubPoint/hubScreen are cleared because a port summon has no
+  // double-tapped map point behind it (no crosshair to place, no icon menu to go back to), and any
+  // armed pirate draft is disarmed so the map's tap handling matches the stage that is now showing.
   const handleSelect = (id: string | null) => {
     setSelectedId(id)
     if (id !== null) {
       setPointTarget(null)
       setSelectedFieldName(null)
+      const loc = locations.find((l) => l.id === id)
+      if (TEAM_COMMAND_ENABLED && loc && teamDestinationKind(loc) !== null) {
+        setHubPoint(null)
+        setHubScreen(null)
+        setPirateMode('off')
+        setPirateDraftPoints([])
+        setHubView('fleet')
+        setHubOpen(true)
+      }
     }
   }
   const handleSelectMiningField = (name: string | null) => {
@@ -257,6 +288,30 @@ export function MapScreen() {
             </OverlayRail>
             {/* PHASE20-POLISH — dark world-events feed (top-center slot; server empties it while dark). */}
             <WorldEventsPanel lifecycleKey={panelLifecycleKey} />
+            {/* COMBAT — the fight is a thing happening in SPACE, so its live standing belongs on the
+                MAP, not only on the Command screen. Reads the shell's already-polled combat state, so
+                no new fetch; renders nothing when nothing is fighting (clean-map law #1). A SECOND VIEW
+                of the same server rows — ActiveCombatPanel is untouched and stays the Command-side
+                detail. Pure presentation: every number is the database's, none is derived here. */}
+            <div className="pointer-events-none absolute right-3 top-3 z-30 flex flex-col items-end gap-2">
+              {/* INTERCEPT DEFERRED ENTRY — the ambush notice. It rides in THIS slot, directly above
+                  the combat card, because this slot is already the map's ONE encounter-state surface:
+                  same rows (combat.encounters, polled once by useCombat), same fight, one line saying
+                  WHY that fight exists. Nothing new is fetched, polled or remembered — the pure model
+                  (ambushEncounterNotice.ts) derives it from rows already in hand, and the order RPC's
+                  response has no part in it. Its true final home is inside CombatMapCard's per-
+                  encounter card; that fold is a two-line move once that file is free to edit. */}
+              {ambushEncounterNotices({ encounters: combat.encounters, locations }).map((n) => (
+                <p
+                  key={n.encounterId}
+                  data-testid={`map-ambush-notice-${n.encounterId}`}
+                  className="pointer-events-auto w-64 rounded-card border border-danger/50 bg-surface/95 px-3 py-2 text-xs font-semibold text-danger shadow-overlay backdrop-blur"
+                >
+                  {n.text}
+                </p>
+              ))}
+              <CombatMapCard encounters={combat.encounters} units={combat.units} />
+            </div>
             {/* COMBAT-S2 TELEGRAPH — the pre-combat warning beat (top-center, urgent). Renders nothing
                 unless the caller has a telegraphed encounter; while combat_telegraph_enabled is dark the
                 pending table is empty so this is invisible (fail-closed by data). Flee withdraws the
@@ -361,6 +416,10 @@ export function MapScreen() {
               <OverlayRail slot="bottom-right" className="max-h-[85%] max-w-[calc(100vw-1.5rem)] overflow-y-auto">
                   <>
                     <OverlayPanel data-testid="map-command-panel-header" className="flex w-72 max-w-full items-center gap-2">
+                      {/* PORT-SEND: the arrow only exists when there IS an icon menu behind this stage
+                          (a double-tap summon). A port summon opens straight on the fleet stage, so a
+                          "back" there would lead to an empty menu — the ✕ is the only exit it needs. */}
+                      {hubScreen !== null && (
                       <button
                         type="button"
                         onClick={backToMenu}
@@ -371,6 +430,7 @@ export function MapScreen() {
                       >
                         ←
                       </button>
+                      )}
                       <p className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
                         {hubView === 'fleet' ? 'Send fleet' : hubView === 'mining' ? 'Mine here' : 'Pirate intercept'}
                       </p>

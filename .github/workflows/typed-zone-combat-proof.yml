@@ -1,0 +1,87 @@
+name: TYPED-ZONE COMBAT — 0278 disposable proof (no production)
+
+# Proves migration 0278 (typed_zone_combat_effect) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the full chain incl. 0278, so its self-assert runs against real
+#     Postgres (lands dark on BOTH halves; the capability proven to be an AND by lighting one half in
+#     a rolled-back probe; V1 dispatch and the V1 candidate builder combat-blind;
+#     zone_effect_pirate_intercept unaltered; the new table RLS-on with no policy and no client
+#     grant) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then tests the claim that actually matters — COMPOSABILITY. Two
+#     identical zones, one of which ALSO carries a combat effect, must plan an identical pirate risk.
+#     That is how a second effect breaks the first in practice: the shared zone starts being rejected
+#     or silently skipped. It also proves the effects are independent (removing one leaves the other
+#     and the zone intact), that the dual gate is a real AND across all four flag combinations, that
+#     the CHECKs reject NaN / Infinity / out-of-range / a dangling profile FK, and that cascade
+#     cannot strand a combat row.
+# The proof MINTS its own encounter profile rather than depending on seed data — a "skip when absent"
+# branch would emit PASS markers for tests that never ran, which is worse than no proof at all.
+# NO `environment:` on any job ⇒ none can read production secrets.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-typed-zone-combat**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typed-zone-combat-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0278 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: TYPED-ZONE COMBAT proof (composability / independence / dual gate / constraints)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/typed-zone-combat-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            TZK_PASS_COMPOSABLE_PIRATE_UNAFFECTED \
+            TZK_PASS_EFFECTS_INDEPENDENT \
+            TZK_PASS_DUAL_GATE_IS_AND \
+            TZK_PASS_CONSTRAINTS \
+            TZK_PASS_CASCADE \
+            TZK_PASS_ROLLED_BACK ; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING MARKER: $marker"; exit 1; }
+          done
+          echo "$out" | grep -q 'TZK_FAIL' && { echo "A TZK_FAIL marker was emitted"; exit 1; }
+          # a skipped test must never look like a passed one
+          echo "$out" | grep -q 'skipped' && { echo "A test reported itself skipped"; exit 1; }
+          echo "ALL TYPED-ZONE COMBAT MARKERS PRESENT"
+      - name: Assert the database was left DARK and clean
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
+            do \$\$
+            begin
+              if exists (select 1 from public.danger_zones where name like 'TZK %') then
+                raise exception 'PROOF LEAKED: a fixture zone was committed';
+              end if;
+              if exists (select 1 from public.encounter_profiles where key = 'tzk_proof_profile') then
+                raise exception 'PROOF LEAKED: the fixture encounter profile was committed';
+              end if;
+              if public.typed_zone_combat_capability_v1() then
+                raise exception 'PROOF LEAKED: the combat capability is OPEN';
+              end if;
+              if coalesce(public.cfg_bool('typed_zone_combat_runtime_enabled'), true) then
+                raise exception 'PROOF LEAKED: the combat flag was left LIT';
+              end if;
+              raise notice 'TZK_PASS_LEFT_DARK';
+            end \$\$;"

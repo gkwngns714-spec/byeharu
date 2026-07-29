@@ -28,7 +28,7 @@ import {
 } from './worldEditorFilters'
 import { WorldEditorInactiveInspector } from './WorldEditorInactiveInspector'
 import { resolveToViewBox } from './worldEditorGeometry'
-import { cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
+import { DEFAULT_FRAME_DOMAIN, cameraForDomain, focusPointsForDomain } from './worldEditorFocus'
 import { WorldEditorSearchBox } from './WorldEditorSearchBox'
 import { WorldEditorGotoBox } from './WorldEditorGotoBox'
 import { entityNavigation, type EntityMatch } from './worldEditorSearch'
@@ -72,7 +72,26 @@ import type { WorldEditorAuditEntry } from './worldEditorAuditTypes'
 import { CombatContentPanel } from './CombatContentPanel'
 import { worldToViewBox } from '../map/openSpaceTransform'
 import { Button } from '../../components/ui'
-import { WorldEditorDock, WorldEditorToolRail } from './WorldEditorDock'
+import { WorldEditorDock, WorldEditorFirstRunHint, WorldEditorToolRail } from './WorldEditorDock'
+import { shouldShowFirstRunHint, worldEditorHintDismissKey } from './worldEditorFirstRunHint'
+import {
+  hitTestAt,
+  markerRadiusInWorld,
+  needsDisambiguation,
+  primaryCandidate,
+  type HitCandidate,
+} from './worldEditorHitTest'
+import { WORLD_TO_VIEWBOX_SCALE, viewBoxToWorld } from './worldEditorCoordinates'
+import type { WorldPoint } from './worldEditorTypes'
+/** The marker hit radius the point layer draws (r = 19 / k). One constant, shared by draw and pick. */
+const MARKER_HIT_RADIUS = 19
+import {
+  authoringEditLabel,
+  authoringEditTitle,
+  editPlanNeedsGuard,
+  planSelectedEdit,
+} from './worldEditorAuthoringIntent'
+import { useAuthStore } from '../../store/authStore'
 import {
   INITIAL_WORLD_EDITOR_CHROME,
   collapsePanel,
@@ -187,6 +206,25 @@ export function Glyph({ x, y, r, glyph, tone }: { x: number; y: number; r: numbe
   return <circle cx={x} cy={y} r={r} fill={tone} {...stroke} />
 }
 
+// FIRST-RUN HINT dismissal — pure UI preference, ONE per-user versioned boolean holding '1'. Both
+// directions are try/catch-guarded so a blocked storage (private mode, disabled cookies) degrades to a
+// session-only dismissal rather than throwing. Authoring state is never persisted through here.
+function readHintDismissed(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeHintDismissed(key: string): void {
+  try {
+    window.localStorage.setItem(key, '1')
+  } catch {
+    /* storage unavailable → dismissal lives only for this session's state */
+  }
+}
+
 export function WorldEditor() {
   const [enabled, setEnabled] = useState<boolean | null>(null)
   // OWNER GATE (client exposure control): null=resolving, true=owner, false=not owner / lookup failed
@@ -215,6 +253,21 @@ export function WorldEditor() {
   const collapseChrome = useCallback(() => setChrome(collapsePanel), [])
   const hideChrome = useCallback(() => setChrome(dismissChrome), [])
   const toggleAllChrome = useCallback(() => setChrome(toggleChrome), [])
+
+  // FIRST-RUN HINT — the one affordance that keeps the clean-map default (law #1) from reading as a
+  // broken surface: a cold editor shows six icon-only rail buttons and nothing else, so a first-time
+  // owner has no visible cue that the rail is the summon surface. Dismissal is pure UI preference,
+  // persisted per user under ONE versioned boolean (the firstOrdersDismissKey idiom); storage IO is
+  // try/catch-guarded so blocked storage degrades to a session-only dismissal. Rendering it can never
+  // open a tool or touch a draft — worldEditorChrome and the draft guard keep their authorities.
+  // RequireAuth guarantees a stable user for this mount, so the key is fixed for the editor's life;
+  // lazy init reads storage exactly once (no effect, no flicker) — the FirstOrdersCard idiom.
+  const hintKey = worldEditorHintDismissKey(useAuthStore((s) => s.user?.id ?? null))
+  const [hintDismissed, setHintDismissed] = useState(() => readHintDismissed(hintKey))
+  const dismissHint = useCallback(() => {
+    setHintDismissed(true)
+    writeHintDismissed(hintKey)
+  }, [hintKey])
 
   // V1B-1 draft store — a SEPARATE structure (localStorage-backed); live locations are passed ONLY
   // for the mandatory staleness re-validation. Never merged into the read snapshot.
@@ -288,6 +341,14 @@ export function WorldEditor() {
   const [historicalFocus, setHistoricalFocus] = useState<HistoricalFocus | null>(null)
 
   const svgRef = useRef<SVGSVGElement | null>(null)
+  // The SAME element, held BOTH ways on purpose: the ref for the imperative readers that run inside
+  // event handlers (screenToWorld, toSvgUnits — they must not re-render anything), and the state for
+  // effects that need to react to it MOUNTING. One assignment site keeps them from diverging.
+  const [svgEl, setSvgEl] = useState<SVGSVGElement | null>(null)
+  const attachSvg = useCallback((el: SVGSVGElement | null) => {
+    svgRef.current = el
+    setSvgEl(el)
+  }, [])
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
   const userMovedRef = useRef(false)
   const fittedRef = useRef(false)
@@ -364,12 +425,19 @@ export function WorldEditor() {
   )
 
   // Content-fit the camera ONCE when data first arrives (unless the user already took camera control) —
-  // via the SHARED galaxyCamera fit over every item's canonical world points (§WE.11), collected
-  // through the ONE C1 framing helper (worldEditorFocus, domain 'all'). The retired ZoneEditor's
-  // bespoke fit is gone. Auto-fit-once semantics are unchanged: 'all' is and stays the default frame.
+  // via the SHARED galaxyCamera fit over the canonical world points, collected through the ONE C1
+  // framing helper (worldEditorFocus). The retired ZoneEditor's bespoke fit is gone.
+  //
+  // The frame is DEFAULT_FRAME_DOMAIN, not 'all', so the editor opens at the SAME SCALE as the player's
+  // map. Both surfaces call the same fitCameraToWorldPoints; they diverged only in WHAT they framed —
+  // the game frames its locations (galaxyCamera.focusWorldPoints), while 'all' additionally pulled in
+  // every zone RING VERTEX, which reach well past the locations. Measured against live data that was a
+  // 1.28x difference (game k=46.67, editor k=36.57), so a zone drawn to look right in the editor read
+  // noticeably different in game. Every layer still RENDERS; the zones simply no longer drive the fit.
+  // Framing everything is still one click away on the Focus control ('all').
   useEffect(() => {
     if (fittedRef.current || userMovedRef.current) return
-    const pts = focusPointsForDomain(itemsByLayer, 'all')
+    const pts = focusPointsForDomain(itemsByLayer, DEFAULT_FRAME_DOMAIN)
     if (pts.length === 0) return
     fittedRef.current = true
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -398,32 +466,70 @@ export function WorldEditor() {
     drag.current = null
   }
 
-  const zoomByFactor = useCallback((factor: number) => {
+  /** Screen point → VIEWBOX point. The ONE screen→viewBox projection: pointerToWorld undoes the camera
+   *  on top of this, and wheel-zoom anchors on it. Depends on nothing but the element, so the camera
+   *  can move without re-binding it. */
+  const pointerToViewBox = useCallback(
+    (clientX: number, clientY: number): { x: number; y: number } | null => {
+      const rect = svgRef.current?.getBoundingClientRect()
+      if (!rect || rect.width === 0 || rect.height === 0) return null
+      // the svg is xMidYMid meet, so the rendered viewBox is a centred square of side = min(w,h)
+      const side = Math.min(rect.width, rect.height)
+      const originX = rect.left + (rect.width - side) / 2
+      const originY = rect.top + (rect.height - side) / 2
+      return { x: ((clientX - originX) / side) * VIEW, y: ((clientY - originY) / side) * VIEW }
+    },
+    [],
+  )
+
+  /** Zoom about an ANCHOR in viewBox space — the cursor for a wheel gesture, the viewport centre for
+   *  the +/- buttons. The point under the anchor keeps its world position, which is what makes
+   *  wheel-zoom feel like it is pulling the map toward the pointer instead of drifting away from it.
+   *  (clampPan may still pull the result back at the world edges; the anchor is honoured up to that.) */
+  const zoomByFactor = useCallback((factor: number, anchor?: { x: number; y: number } | null) => {
     userMovedRef.current = true
     setView((v) => {
       const k = clampK(v.k * factor)
       const ratio = k / v.k
-      const c = VIEW / 2
-      return { k, ...clampPan(c - (c - v.tx) * ratio, c - (c - v.ty) * ratio, k) }
+      const ax = anchor?.x ?? VIEW / 2
+      const ay = anchor?.y ?? VIEW / 2
+      return { k, ...clampPan(ax - (ax - v.tx) * ratio, ay - (ay - v.ty) * ratio, k) }
     })
   }, [])
 
+  // WHEEL ZOOM must attach to the SVG ELEMENT ITSELF, non-passively: React routes onWheel through a
+  // PASSIVE root listener, where preventDefault is ignored — so the browser would page-zoom (or
+  // scroll) instead of the map zooming. That is why this is a manual addEventListener.
+  //
+  // It is keyed off the mounted element rather than svgRef.current: the map renders behind the
+  // owner + flag gate and a data fetch, so on first run the ref is still null. Depending on the ref
+  // alone, this effect bailed once and never re-ran when the SVG finally appeared — the listener was
+  // never attached and every wheel gesture fell through to the browser. The ref callback below makes
+  // the element a reactive value, so attachment happens exactly when the SVG exists.
   useEffect(() => {
-    const svg = svgRef.current
-    if (!svg) return
+    if (!svgEl) return
+    // Per-notch step. Kept gentle on purpose: a wheel gesture is many notches, so a step that feels
+    // right for ONE click of the +/- buttons (1.25) overshoots badly here. 1.07 needs ~10 notches to
+    // double, which is roughly one comfortable scroll.
+    const WHEEL_ZOOM_STEP = 1.07
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      zoomByFactor(e.deltaY < 0 ? 1.15 : 1 / 1.15)
+      e.preventDefault() // also swallows ctrl+wheel, so the page never zooms over the map
+      // Anchor on the CURSOR: the world point under the pointer stays put, so the map zooms toward
+      // what you are looking at rather than toward the viewport centre.
+      zoomByFactor(
+        e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP,
+        pointerToViewBox(e.clientX, e.clientY),
+      )
     }
-    svg.addEventListener('wheel', onWheel, { passive: false })
-    return () => svg.removeEventListener('wheel', onWheel)
-  }, [zoomByFactor])
+    svgEl.addEventListener('wheel', onWheel, { passive: false })
+    return () => svgEl.removeEventListener('wheel', onWheel)
+  }, [svgEl, zoomByFactor, pointerToViewBox])
 
   // Reset stays the ALL-domains content fit (cameraForDomain 'all' — identical camera; empty world
   // yields the identity camera via the fit's own empty rule).
   const resetView = () => {
     userMovedRef.current = false
-    setView(cameraForDomain(itemsByLayer, 'all'))
+    setView(cameraForDomain(itemsByLayer, DEFAULT_FRAME_DOMAIN))
   }
 
   // C1 Focus — CAMERA-ONLY domain framing: derive the fit for one domain's points and set the view.
@@ -455,9 +561,18 @@ export function WorldEditor() {
   // you ask for it, instead of being parked). Deselecting leaves the chrome exactly as it is, so a
   // dismissed map stays clean. Chrome is view state only — it never touches a draft.
   const requestSelect = useCallback((next: Selection | null) => {
+    // A DESELECT IS NOT AN ABANDONMENT. Clearing the selection writes no draft, discards no draft,
+    // closes no authoring panel and changes no authoring domain — the draft store is untouched by
+    // `selected`. Guarding it put a destructive choice ("Discard and continue" DISCARDS the draft) in
+    // front of an action that risked nothing, and because a click on empty map deselects, the owner
+    // got that dialog for every miss. Only a real selection CHANGE is routed through the guard.
+    if (next === null) {
+      setSelected(null)
+      return
+    }
     guardRef.current.requestAction('select-entity', () => {
       setSelected(next)
-      if (next) setChrome((c) => openChromeTool(c, 'inspect'))
+      setChrome((c) => openChromeTool(c, 'inspect'))
     })
   }, [])
 
@@ -623,6 +738,148 @@ export function WorldEditor() {
     [data, selected],
   )
 
+  // ── SELECTION-DERIVED EDIT (V5.1) ───────────────────────────────────────────────────────────────
+  // The live fork source behind the CURRENT selection, whichever domain it belongs to. Exactly one of
+  // the four memos above can be non-null for a given selection (the layer vocabulary is disjoint).
+  const selectedForkSource = useMemo(
+    () =>
+      selected?.layer === 'locations'
+        ? selectedLocation
+        : selected?.layer === 'mining'
+          ? selectedMiningField
+          : selected?.layer === 'exploration'
+            ? selectedExplorationSite
+            : selected?.layer === 'zones'
+              ? selectedZone
+              : null,
+    [selected, selectedLocation, selectedMiningField, selectedExplorationSite, selectedZone],
+  )
+
+  // What would Edit do right now? Decided by the ONE pure planner — the shell never re-derives it, and
+  // the planner is deliberately given NO dirty-state input (that stays the guard's alone).
+  const selectedEditPlan = useMemo(
+    () =>
+      planSelectedEdit({
+        selectedDomain: selected?.layer ?? null,
+        hasLiveRow: selectedForkSource !== null,
+        activeDomain: authoringDomain,
+      }),
+    [selected, selectedForkSource, authoringDomain],
+  )
+
+  // Fork the selected live row into ITS OWN domain's store. Kept as one lookup so the commit below can
+  // never fork into the wrong store when the domain is changing in the same tick.
+  const forkSelectedInto = useCallback(
+    (domain: AuthoringDomain) => {
+      if (domain === 'locations' && selectedLocation) draftStore.forkEditDraft(selectedLocation)
+      else if (domain === 'mining' && selectedMiningField) miningDraftStore.forkEditDraft(selectedMiningField)
+      else if (domain === 'exploration' && selectedExplorationSite)
+        explorationDraftStore.forkEditDraft(selectedExplorationSite)
+      else if (domain === 'zones' && selectedZone) zoneDraftStore.forkEditDraft(selectedZone)
+    },
+    [
+      selectedLocation,
+      selectedMiningField,
+      selectedExplorationSite,
+      selectedZone,
+      draftStore,
+      miningDraftStore,
+      explorationDraftStore,
+      zoneDraftStore,
+    ],
+  )
+
+  // Press Edit. A same-domain edit forks immediately (nothing is being left, so the switch-domain guard
+  // must NOT fire). A cross-domain edit hands the guard ONE closure that switches the workspace AND
+  // forks — the guard runs it whole or not at all, so there is no half-applied transition and no draft
+  // is touched before the owner confirms. forkEditDraft mints a NEW draftId and upserts, so an existing
+  // dirty draft in the target domain is preserved beside it, never overwritten.
+  const requestEditSelected = useCallback(() => {
+    const plan = selectedEditPlan
+    if (plan.kind === 'disabled') return
+    const commit = () => {
+      if (plan.kind === 'switch-then-edit') switchAuthoringDomain(plan.domain)
+      forkSelectedInto(plan.domain)
+      setChrome((c) => openChromeTool(c, 'author'))
+    }
+    if (editPlanNeedsGuard(plan)) guardRef.current.requestAction('switch-domain', commit)
+    else commit()
+  }, [selectedEditPlan, forkSelectedInto, switchAuthoringDomain])
+
+  // ── MAP PICKING (hit-test + disambiguation) ─────────────────────────────────────────────────────
+  // A pirate_hunt location and its danger zone are CO-LOCATED, and polygons draw under points. While
+  // every shape carried its own onClick+stopPropagation, the marker always won and the zone could not
+  // be selected at all near its own label. Raising the polygon would merely invert that, so instead
+  // ONE handler asks the pure hit-test what is under the cursor and, when that is more than one
+  // thing, ASKS rather than guessing.
+  const [pick, setPick] = useState<{ x: number; y: number; candidates: HitCandidate[] } | null>(null)
+
+  /** Screen point → world point, undoing the viewBox mapping and then the camera transform. */
+  const pointerToWorld = useCallback(
+    (clientX: number, clientY: number): WorldPoint | null => {
+      const vb = pointerToViewBox(clientX, clientY)
+      if (!vb) return null
+      // undo translate(tx ty) scale(k)
+      return viewBoxToWorld({ x: (vb.x - view.tx) / view.k, y: (vb.y - view.ty) / view.k })
+    },
+    [view.tx, view.ty, view.k, pointerToViewBox],
+  )
+
+  const pickAtPointer = useCallback(
+    (clientX: number, clientY: number) => {
+      const world = pointerToWorld(clientX, clientY)
+      if (!world) return
+      // the marker hit circle is drawn at a fixed SCREEN radius (19/k), so its world radius is that
+      // divided by the scale again — otherwise markers become unhittable as you zoom in.
+      const candidates = hitTestAt(
+        visibleItems,
+        world,
+        markerRadiusInWorld(MARKER_HIT_RADIUS, view.k, WORLD_TO_VIEWBOX_SCALE),
+      )
+      if (candidates.length === 0) {
+        setPick(null)
+        requestSelect(null)
+        return
+      }
+      if (!needsDisambiguation(candidates)) {
+        setPick(null)
+        const only = primaryCandidate(candidates)
+        if (only) requestSelect({ layer: only.layer, id: only.id })
+        return
+      }
+      // AMBIGUOUS — do not guess. Summon a small chooser at the cursor (map-UX law #2).
+      setPick({ x: clientX, y: clientY, candidates })
+    },
+    [visibleItems, view.k, pointerToWorld, requestSelect],
+  )
+
+  // THE ONE MAP-CLICK ROUTER: does this click belong to SELECTION or to AUTHORING? The shell owns that
+  // decision — pickAtPointer is a generic hit test and must not learn about zone gesture modes, and the
+  // gesture layer cannot settle it either (its pointerdown and this click are separate events, so
+  // stopPropagation on the grip does not stop the click reaching the svg).
+  //
+  // While a zone gesture is armed the pointer belongs to ZoneGeometryHandles: the click is a vertex
+  // placement, a grip drag or a ring close, never a selection attempt. Routing it through selection also
+  // routed it through the unsaved-draft guard, so AUTHORING A POLYGON RAISED ONE MODAL PER VERTEX.
+  // `zoneActiveDraft` is part of the condition deliberately: a gesture mode with no draft behind it is a
+  // stale state, and it must not leave the map permanently unselectable.
+  const onMapClick = useCallback(
+    (clientX: number, clientY: number) => {
+      // reads the store directly — `zoneActiveDraft` is bound further down the render body
+      if (zoneDraftStore.activeDraft && zoneGestureMode !== 'idle') return
+      pickAtPointer(clientX, clientY)
+    },
+    [zoneDraftStore.activeDraft, zoneGestureMode, pickAtPointer],
+  )
+
+  const choosePick = useCallback(
+    (c: HitCandidate) => {
+      setPick(null)
+      requestSelect({ layer: c.layer, id: c.id })
+    },
+    [requestSelect],
+  )
+
   // DARK by default (fail-closed). Render nothing while the flag is loading or off (exposure gate), and
   // nothing while owner status is still resolving. An authenticated NON-OWNER gets a controlled
   // "Not authorized" surface — the editor and the History panel never render for them. (The backend
@@ -658,7 +915,7 @@ export function WorldEditor() {
     <div className="relative h-screen w-full overflow-hidden bg-app text-ink" data-testid="worldeditor-shell">
         {/* ── the ONE real map (shared worldToViewBox + galaxyCamera) — full bleed ── */}
           <svg
-            ref={svgRef}
+            ref={attachSvg}
             viewBox={`0 0 ${VIEW} ${VIEW}`}
             preserveAspectRatio="xMidYMid meet"
             className="absolute inset-0 h-full w-full cursor-grab touch-none select-none active:cursor-grabbing"
@@ -669,9 +926,7 @@ export function WorldEditor() {
             onPointerUp={endDrag}
             onPointerLeave={endDrag}
             onPointerCancel={endDrag}
-            onClick={(e) => {
-              if (e.target === svgRef.current) requestSelect(null)
-            }}
+            onClick={(e) => onMapClick(e.clientX, e.clientY)}
             // Map-UX law #2 — SUMMON the UI: a double-click on empty map toggles all chrome away and
             // back. View state only (worldEditorChrome); it never reads or writes a draft.
             onDoubleClick={(e) => {
@@ -702,7 +957,10 @@ export function WorldEditor() {
                 if (!d) return null
                 const isSel = selected?.layer === it.layer && selected.id === it.id
                 return (
-                  <g key={`${it.layer}:${it.id}`} onClick={(e) => { e.stopPropagation(); requestSelect({ layer: it.layer, id: it.id }) }} style={{ cursor: 'pointer' }}>
+                  // NO per-shape onClick: a polygon that stopped propagation is exactly what made a
+                  // co-located location steal every click on its zone. Selection is decided ONCE, at
+                  // the svg level, from the pure hit-test over ALL shapes under the cursor.
+                  <g key={`${it.layer}:${it.id}`} style={{ cursor: 'pointer' }}>
                     <path d={d} fill={it.tone} opacity={isSel ? 0.22 : 0.1} />
                     <path
                       d={d}
@@ -724,11 +982,9 @@ export function WorldEditor() {
                 const isSel = selected?.layer === it.layer && selected.id === it.id
                 const r = 8 / k
                 return (
-                  <g
-                    key={`${it.layer}:${it.id}`}
-                    onClick={(e) => { e.stopPropagation(); requestSelect({ layer: it.layer, id: it.id }) }}
-                    style={{ cursor: 'pointer' }}
-                  >
+                  // NO per-shape onClick — see the polygon layer above. The marker no longer wins by
+                  // being drawn on top; it wins (or shares) by what the hit-test finds.
+                  <g key={`${it.layer}:${it.id}`} style={{ cursor: 'pointer' }}>
                     <circle cx={x} cy={y} r={19 / k} fill="transparent" />
                     {isSel && (
                       <circle cx={x} cy={y} r={r * 2.2} fill="var(--color-map-halo)" stroke="var(--color-accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
@@ -854,6 +1110,13 @@ export function WorldEditor() {
           onDismissAll={hideChrome}
           badges={{ author: pendingDrafts.total }}
         />
+        {/* Sits BESIDE the rail, in the same top-left corner stack — never parked over the map (law #1
+            and #3 both hold). Self-retires the moment any tool is summoned or any draft exists. */}
+        {shouldShowFirstRunHint({
+          chrome,
+          pendingDraftTotal: pendingDrafts.total,
+          dismissed: hintDismissed,
+        }) && <WorldEditorFirstRunHint onDismiss={dismissHint} />}
       </div>
 
       {/* ── BOTTOM-LEFT corner: unsaved-work indicator + camera controls ──
@@ -880,6 +1143,39 @@ export function WorldEditor() {
           </div>
         )}
       </div>
+
+      {/* ── DISAMBIGUATION CHOOSER — summoned ONLY when a click hit more than one entity ──
+          A co-located location and zone are both legitimate targets at the same coordinate, so the
+          map asks instead of silently preferring whichever is drawn on top. It appears at the
+          cursor, dismisses on any choice or on a click elsewhere, and is never parked (law #2). */}
+      {pick && (
+        <div
+          className="pointer-events-auto absolute z-40 min-w-[11rem] overflow-hidden rounded-lg border border-edge bg-surface/95 shadow-overlay backdrop-blur"
+          style={{ left: Math.max(8, pick.x - 8), top: Math.max(8, pick.y - 8) }}
+          data-testid="worldeditor-pick-chooser"
+          role="menu"
+          aria-label="Pick one of the overlapping entities"
+        >
+          <div className="border-b border-edge px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+            {pick.candidates.length} here
+          </div>
+          {pick.candidates.map((c) => (
+            <button
+              key={`${c.layer}:${c.id}`}
+              type="button"
+              role="menuitem"
+              onClick={() => choosePick(c)}
+              data-testid={`worldeditor-pick-${c.layer}`}
+              className="flex w-full items-center justify-between gap-3 px-2.5 py-1.5 text-left text-xs text-ink transition hover:bg-surface-2"
+            >
+              <span className="truncate">{c.label}</span>
+              <span className="shrink-0 text-[10px] uppercase tracking-wide text-ink-faint">
+                {AUTHORING_DOMAIN_LABELS[c.layer as AuthoringDomain] ?? c.layer}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* The only affordance left on a fully dismissed map — how to get the chrome back (law #2). */}
       {!chrome.railVisible && (
@@ -1028,75 +1324,19 @@ export function WorldEditor() {
                     >
                       New
                     </Button>
-                    {authoringDomain === 'locations' ? (
-                      <Button
-                        size="sm"
-                        disabled={!selectedLocation}
-                        title={
-                          selectedLocation
-                            ? 'Copy this location into a draft you can change.'
-                            : 'Select a location first.'
-                        }
-                        onClick={() => {
-                          if (!selectedLocation) return
-                          draftStore.forkEditDraft(selectedLocation)
-                          setChrome((c) => openChromeTool(c, 'author'))
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    ) : authoringDomain === 'mining' ? (
-                      <Button
-                        size="sm"
-                        disabled={!selectedMiningField}
-                        title={
-                          selectedMiningField
-                            ? 'Copy this mining field into a draft you can change.'
-                            : 'Select a mining field first.'
-                        }
-                        onClick={() => {
-                          if (!selectedMiningField) return
-                          miningDraftStore.forkEditDraft(selectedMiningField)
-                          setChrome((c) => openChromeTool(c, 'author'))
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    ) : authoringDomain === 'exploration' ? (
-                      <Button
-                        size="sm"
-                        disabled={!selectedExplorationSite}
-                        title={
-                          selectedExplorationSite
-                            ? 'Copy this exploration site into a draft you can change.'
-                            : 'Select an exploration site first.'
-                        }
-                        onClick={() => {
-                          if (!selectedExplorationSite) return
-                          explorationDraftStore.forkEditDraft(selectedExplorationSite)
-                          setChrome((c) => openChromeTool(c, 'author'))
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        disabled={!selectedZone}
-                        title={
-                          selectedZone
-                            ? 'Copy this zone into a draft you can reshape on the map.'
-                            : 'Select a zone first.'
-                        }
-                        onClick={() => {
-                          if (!selectedZone) return
-                          zoneDraftStore.forkEditDraft(selectedZone)
-                          setChrome((c) => openChromeTool(c, 'author'))
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    )}
+                    {/* SELECTION-DERIVED edit (not authoringDomain-derived). The control names the
+                        entity the owner actually picked, so it can never contradict the header above
+                        it. Crossing a domain boundary commits the switch AND the fork as ONE guarded
+                        action — cancel leaves both untouched; confirm performs both exactly once. */}
+                    <Button
+                      size="sm"
+                      disabled={selectedEditPlan.kind === 'disabled'}
+                      title={authoringEditTitle(selectedEditPlan)}
+                      data-testid="worldeditor-inspector-edit"
+                      onClick={requestEditSelected}
+                    >
+                      {authoringEditLabel(selectedEditPlan)}
+                    </Button>
                     {DEFERRED_OPERATIONS.filter((op) => !LIVE_DRAFT_OPERATIONS.includes(op)).map((op) => (
                       <button
                         key={op}
@@ -1195,17 +1435,18 @@ export function WorldEditor() {
               zoneOptions (0252): the create-location zone picker's source — the zone refs the raw
               get_world_map tree already carries (WorldEditorData.zoneRefs; no extra server read). */}
           {authoringDomain === 'locations' ? (
-            <LocationDraftPanel zoneOptions={data?.zoneRefs ?? []} />
+            <LocationDraftPanel zoneOptions={data?.zoneRefs ?? []} onReloadLive={reloadLive} />
           ) : authoringDomain === 'mining' ? (
-            <MiningDraftPanel />
+            <MiningDraftPanel onReloadLive={reloadLive} />
           ) : authoringDomain === 'exploration' ? (
-            <ExplorationDraftPanel />
+            <ExplorationDraftPanel onReloadLive={reloadLive} />
           ) : (
             <ZoneDraftPanel
               locations={data?.locations ?? []}
               zones={data?.zones ?? []}
               gestureMode={zoneGestureMode}
               onGestureModeChange={setZoneGestureMode}
+              onReloadLive={reloadLive}
             />
           )}
           </>

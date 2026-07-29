@@ -37,11 +37,29 @@ test('the shell builds the guard, provides it via context, and renders the confi
 })
 
 // ── every in-page context change routes through the guard with its action kind ────────────────────────
-test('map selection (and deselection) routes through the guard, not a raw setSelected', () => {
+test('picking an entity routes through the guard, not a raw setSelected', () => {
   expect(shell).toContain("requestAction('select-entity'")
-  // both map clicks + the background deselect go through requestSelect
-  expect(shell).toContain('requestSelect({ layer: it.layer, id: it.id })')
+  // Map picking has ONE entry point instead of a per-shape onClick on every polygon and marker — that
+  // duplication is what let a co-located location steal a zone's clicks. The svg now routes through the
+  // shell-owned onMapClick router, which decides selection-vs-authoring before the hit test runs.
+  expect(shell).toContain('onClick={(e) => onMapClick(e.clientX, e.clientY)}')
+  expect(shell).toContain('requestSelect({ layer: only.layer, id: only.id })')
+  expect(shell).toContain('requestSelect({ layer: c.layer, id: c.id })')
   expect(shell).toContain('requestSelect(null)')
+  // and no shape may select on its own any more
+  expect(shell).not.toContain('e.stopPropagation(); requestSelect(')
+})
+
+// A DESELECT IS NOT GUARDED, and this test used to assert the opposite. Clearing the selection writes
+// no draft, discards none, closes no panel and changes no domain — so routing it through the guard put
+// "Discard and continue" (which DISCARDS the draft) in front of an action that risked nothing, and
+// since a click on empty map deselects, that fired on every miss while drawing a polygon.
+test('a deselect clears directly and never reaches the guard', () => {
+  const sel = shell.slice(shell.indexOf('const requestSelect = useCallback('))
+  const body = sel.slice(0, sel.indexOf('}, [])'))
+  expect(body).toMatch(/if \(next === null\)[\s\S]*setSelected\(null\)[\s\S]*return/)
+  // the guard is still consulted for a real selection CHANGE, after that early return
+  expect(body.indexOf('next === null')).toBeLessThan(body.indexOf("requestAction('select-entity'"))
 })
 
 test('search jump, camera jump, tab switch and filter change each route through the guard', () => {

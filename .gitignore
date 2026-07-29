@@ -35,3 +35,6 @@ supabase/.secrets.env
 *.njsproj
 *.sln
 *.sw?
+
+# agent worktrees (isolation:worktree) — never part of the repo
+.claude/worktrees/

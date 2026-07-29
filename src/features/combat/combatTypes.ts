@@ -27,6 +27,14 @@ export interface CombatEncounter {
   started_at: string
   retreat_started_at: string | null
   ended_at: string | null
+  // ENGAGEMENT ANCHOR (0293) — WHERE this fight physically is, which is no longer the same question
+  // as which location owns it. combat_create_group_encounter resolves it to the intercept's ambush
+  // point when one was supplied, and to the linked location's centre otherwise; the intercept then
+  // restates the ambush point on the row. Optional/nullable because combatApi reads `select('*')`,
+  // so a server that predates the column simply omits it — consumers must fail closed on absence
+  // (see ambushEncounterNotice.ts, the ONE reader).
+  engagement_x?: number | null
+  engagement_y?: number | null
 }
 
 export interface CombatUnit {

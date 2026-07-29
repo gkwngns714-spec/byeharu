@@ -1,0 +1,90 @@
+name: TYPED-ZONE DISPATCH V1 — 0274 disposable proof (no production)
+
+# Proves migration 0274 (typed_zone_effect_dispatch_v1) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL chain incl. 0273 + 0274, so 0274's own in-migration
+#     self-assert runs against real Postgres (the dispatcher contains no write statement and no
+#     reference to danger_zones / zone_effect_pirate_intercept / game_config / cfg_* / random() /
+#     now(); it calls no 0233 runtime function and performs no PostGIS; the 0233 risk function is
+#     untouched and typed-zone-blind; risk parity is bit-identical across an input sweep; an
+#     all-inherit zone plans exactly the live risk; an unknown effect type is a TYPED failure;
+#     neither function is client-executable) — any regression ABORTS `supabase start` red.
+#   * a read-only SQL proof then drives the full matrix: happy-path parity, per-knob override
+#     resolution, highest-exposure-wins, equal-exposure-lowest-uuid, input-order invariance,
+#     determinism, inactive-ignored, empty-effect-set-inert, every typed failure code,
+#     resolved-config failure as distinct from per-value failure, identity-does-not-dispatch, and
+#     edge-value parity (negative stats, zero and full exposure).
+# The dispatcher is PURE, so this proof needs no transaction and writes nothing at all.
+# NO `environment:` on any job ⇒ none can read production secrets.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-typed-zone-dispatch**'
+      - 'slice-typed-zone-foundation**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typed-zone-dispatch-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0274 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: TYPED-ZONE DISPATCH V1 matrix (parity / overlap / determinism / typed failures)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/typed-zone-dispatch-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            TZD_PASS_HAPPY_PATH_PARITY \
+            TZD_PASS_OVERRIDE_RESOLUTION \
+            TZD_PASS_HIGHEST_EXPOSURE_WINS \
+            TZD_PASS_EQUAL_EXPOSURE_LOWEST_UUID \
+            TZD_PASS_INPUT_ORDER_INVARIANT \
+            TZD_PASS_DETERMINISTIC \
+            TZD_PASS_INACTIVE_IGNORED \
+            TZD_PASS_EMPTY_EFFECT_SET_INERT \
+            TZD_PASS_TYPED_FAILURES \
+            TZD_PASS_RESOLVED_CONFIG_DISTINCT \
+            TZD_PASS_IDENTITY_DOES_NOT_DISPATCH \
+            TZD_PASS_EDGE_PARITY \
+            TZD_PASS_NO_WRITES ; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING MARKER: $marker"; exit 1; }
+          done
+          echo "$out" | grep -q 'TZD_FAIL' && { echo "A TZD_FAIL marker was emitted"; exit 1; }
+          echo "ALL TYPED-ZONE DISPATCH MARKERS PRESENT"
+      - name: Assert the live runtime is still authoritative and untouched
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
+            do \$\$
+            begin
+              -- 0274 must not have wired itself into anything
+              if pg_get_functiondef(to_regprocedure('public.pirate_intercept_evaluate_leg(uuid)')) ilike '%typed_zone_%' then
+                raise exception 'CUTOVER LEAK: the live leg evaluator references the typed-zone planner';
+              end if;
+              if pg_get_functiondef(to_regprocedure('public.pirate_intercept_compute_risk(double precision, double precision)')) ilike '%typed_zone_%' then
+                raise exception 'CUTOVER LEAK: the live risk function references the typed-zone planner';
+              end if;
+              if coalesce(public.cfg_bool('typed_zone_pirate_intercept_runtime_enabled'), true) then
+                raise exception 'CUTOVER LEAK: the pirate-intercept runtime flag is not false';
+              end if;
+              raise notice 'TZD_PASS_NO_CUTOVER';
+            end \$\$;"

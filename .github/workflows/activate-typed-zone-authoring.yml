@@ -1,0 +1,75 @@
+name: Activate typed-zone authoring
+
+# OWNER-TRIGGERED FLAG ACTIVATION. Runs exactly ONE checked-in script:
+#   scripts/activate-typed-zone-authoring.sql
+# There is no input, no parameter, and no way to pass SQL to this workflow — the script path is a
+# literal. This is deliberate: a workflow that accepts arbitrary SQL would be a standing
+# arbitrary-execution path against production, which is strictly worse than having no workflow.
+#
+# The script itself is the safety authority, not this file. It refuses to run against an
+# un-migrated database, flips ONLY the three AUTHORING flags, verifies all three actually landed,
+# and aborts if any RUNTIME flag is lit. Player-facing behaviour is untouched either way.
+#
+# Gate: `environment: production`, the same approval gate deploy-migrations.yml uses. The approval
+# recorded there (approver + commit) IS the authorization record for the flag flip.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-typed-zone-activation
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout the triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify the script is the one in the repo
+        run: |
+          test -f scripts/activate-typed-zone-authoring.sql
+          echo "sha256: $(sha256sum scripts/activate-typed-zone-authoring.sql | cut -d' ' -f1)"
+
+      # The direct host db.<ref>.supabase.co is IPv6-only and GitHub runners are IPv4-only, so psql
+      # cannot reach it. The Management API query endpoint is the same path the dashboard SQL editor
+      # uses, and it is reachable over IPv4.
+      - name: Run activation
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          # strip psql client directives (backslash commands) — the API takes plain SQL
+          grep -v '^\\' scripts/activate-typed-zone-authoring.sql > /tmp/activate.sql
+          jq -Rs '{query: .}' /tmp/activate.sql > /tmp/activate.json
+          code=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            -X POST "https://api.supabase.com/v1/projects/${PROJECT_ID}/database/query" \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/activate.json)
+          echo "HTTP $code"
+          head -c 2000 /tmp/resp.json
+          echo
+          test "$code" = "200" || test "$code" = "201"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Typed-zone authoring activation"
+            echo ""
+            echo "* commit: \`${{ github.sha }}\`"
+            echo "* run: ${{ github.run_id }}"
+            echo "* outcome: ${{ job.status }}"
+            echo ""
+            echo "Flips \`typed_zone_authoring_enabled\`, \`seeded_zone_edit_enabled\`,"
+            echo "\`seeded_zone_lifecycle_enabled\`. No runtime flag is touched."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -19,6 +19,10 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-danger-combat**'
+      # 0301 moved the ambush off the order path; this proof is now the apply-and-behaviour gate for
+      # every intercept-touching branch, so it must fire on them.
+      - 'wt-intercept**'
+      - 'slice-intercept**'
 
 permissions:
   contents: read

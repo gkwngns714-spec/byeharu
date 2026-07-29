@@ -8,9 +8,10 @@ which are still `false`, not the deploy state.) This document is the reviewer- a
 owner-facing map of the whole program: what it is, the exact merge/deploy/flag-flip order, the
 byte-identity guarantee, and the deferred items.
 
-> **Deploy state (2026-07-23).** `0257`–`0271` are deployed; **production migration head is `0271`.**
-> **`0272` (elite stat wiring) is merged to `main` but NOT deployed** — its `Deploy Supabase migrations`
-> run (`29979341800`) is waiting at the `production` approval gate, deferred by the owner. In production
+> **Deploy state (2026-07-23).** `0257`–**`0272`** are deployed; **production migration head is `0272`.**
+> The owner approved the `production` gate and the `Deploy Supabase migrations` run (`29979341800`,
+> deployment `5566872965`, commit `b11b3bd`) completed **`success`** at 2026-07-23T06:48:43Z.
+> **`0272` (elite stat wiring) landed DARK** — nothing about elite is reachable. In production
 > today `enemy_content_registry_enabled` / `encounter_authoring_enabled` /
 > `encounter_binding_authoring_enabled` are **`true`** (owner authoring surfaces only) and
 > **`encounter_resolver_enabled` is `false`** — combat is unchanged. See §7 / §7a.
@@ -216,20 +217,31 @@ resolved branch goes inert and combat is byte-identical again on the next tick. 
 - **Composition variety** — ~~E3's resolver salts its weighted pick location-static~~ **DONE in E5
   (0261)**: `resolve_location_encounter` folds a per-encounter seed (`e.id::text`) into every salt, so
   encounters at one location vary (still fully deterministic). Time-varying variety remains out of scope.
-- **ELITE stat wiring** — ~~deferred~~ **BUILT AND MERGED in `0272`** (`encounter_elite_stat_wiring`,
-  PR #284, `b11b3bd`) — **but NOT DEPLOYED.** See the deploy-state box below.
+- **ELITE stat wiring** — ~~deferred~~ **BUILT, MERGED AND DEPLOYED in `0272`**
+  (`encounter_elite_stat_wiring`, PR #284, `b11b3bd`) — **deployed DARK.** See the deploy-state box below.
   `enemy_fleet_template_members.elite_chance` is rolled once, at materialization, and amplifies the
   plan's `base_difficulty` for the elite subset. The `activate-encounter-resolver` /
   `activate-combat-content-all` elite **refusal is removed** (now the informational
   `ACTE3_PASS_ELITE_WIRED` notice; a new `ELITE-WIRING FAIL` raise fires only if the *deployed* resolver
-  lacks the `':enc:elite:'` salt, i.e. if someone tries to activate before `0272` is deployed).
+  lacks the `':enc:elite:'` salt, i.e. if someone tries to activate before `0272` is deployed — which is
+  no longer the case in production).
   Honest note: that old refusal **was not blocking anything today** — production has **0** members with
   `elite_chance > 0`.
 
-  > ### ⚠ DEPLOY STATE — `0272` is MERGED but NOT DEPLOYED
-  > `main` carries `0272`. **Production migration head is `0271`.** The `Deploy Supabase migrations` run
-  > for the `0272` merge (**`29979341800`**) is **`waiting` at the `production` environment approval
-  > gate** — deployment is **deferred, pending owner approval**. **Nothing about elite is live.**
+  > ### DEPLOY STATE — `0272` is DEPLOYED, and it landed DARK
+  > **Production migration head is `0272`**, in sync with `main`. Deployment **`5566872965`** / workflow
+  > run **`29979341800`** (commit `b11b3bd`, ref `main`) completed **`success`** at
+  > **2026-07-23T06:48:43Z**, approved by the **owner**. The migration's **in-transaction self-assert
+  > passed on live Postgres**: `encounter_resolver_enabled` still `false`, no new flag,
+  > `encounter_elite_difficulty_multiplier` seeded, `process_combat_ticks` **not re-created** (still
+  > exactly 2 `random(` calls, no elite token), the `0261` count-roll expression byte-identical, no elite
+  > column on any combat/runtime table, ACL unchanged.
+  >
+  > The before/after verifier returned **`PD0272S_DIFF_PASS` — 2 intended changes, 0 unintended**
+  > (`encounter_elite_difficulty_multiplier` absent → `2`; `game_config` row count **139 → 140**); every
+  > `must_not_change.*` value was byte-identical. Both bindings remain inactive and **no member gained
+  > `elite_chance > 0`**, so **no player-visible behaviour became reachable**. Elite is deployed *code*,
+  > not observed *behaviour*. Full record: `docs/DEV_LOG.md` §9.
 
   **Two honest v1 tradeoffs (still deferred, by design):**
   1. **Elite is a COUPLED buff.** `base_difficulty` scales **hp AND attack AND range AND speed**

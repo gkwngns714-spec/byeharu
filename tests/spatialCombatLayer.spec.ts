@@ -4,6 +4,7 @@ import {
   spatialCombatLayer,
   resolveSpatialUnits,
   resolveFireLines,
+  resolveHitSplats,
   unitWeaponRange,
   type SpatialUnitView,
 } from '../src/features/map/spatialCombatLayer'
@@ -163,4 +164,78 @@ test('resolveFireLines: ignores dark-path salvos (no unit_id) and shots at vanis
   const aggregate = salvo({ id: 3, tick_number: 7, payload_json: { damage: 42, wave: 1 } }) // dark path
   const orphan = salvo({ id: 4, tick_number: 7, payload_json: { unit_id: 'u1', target_id: 'gone' } })
   expect(resolveFireLines([aggregate, orphan], views)).toEqual([])
+})
+
+// ── HITSPLATS — the OSRS read: damage numbers over whoever took them ─────────────────────────────────
+// The server has emitted everything needed since 0234: hull_damage {unit_id, damage} and
+// unit_destroyed {unit_id, count} (0261:777-789). These tests pin that the layer only FORMATS them.
+
+const dmg = (o: Partial<CombatEvent> = {}): CombatEvent => ({
+  id: 1,
+  encounter_id: 'e1',
+  tick_number: 7,
+  seq: 0,
+  event_type: 'hull_damage',
+  source: 'pirate',
+  target: 'player',
+  projectile_type: null,
+  projectile_count: null,
+  impact_delay_ms: null,
+  payload_json: { unit_id: 'a', damage: 12 },
+  created_at: '',
+  ...o,
+})
+
+test('a hitsplat floats over the unit that TOOK the damage, carrying the server number', () => {
+  const views = resolveSpatialUnits([unit({ id: 'a', pos_x: 1, pos_y: 2 })])
+  const splats = resolveHitSplats([dmg()], views)
+  expect(splats).toHaveLength(1)
+  expect(splats[0].damage).toBe(12)
+  expect(splats[0].x).toBe(1)
+  expect(splats[0].y).toBe(2)
+  expect(splats[0].destroyed).toBe(false)
+})
+
+test('only the LATEST tick splats — old numbers clear instead of piling up', () => {
+  const views = resolveSpatialUnits([unit({ id: 'a', pos_x: 0, pos_y: 0 })])
+  const splats = resolveHitSplats(
+    [dmg({ id: 1, tick_number: 6, payload_json: { unit_id: 'a', damage: 5 } }),
+     dmg({ id: 2, tick_number: 9, payload_json: { unit_id: 'a', damage: 33 } })],
+    views,
+  )
+  expect(splats).toHaveLength(1)
+  expect(splats[0].damage).toBe(33)
+})
+
+test('a splat whose unit has no position draws NOTHING — never a number over empty space', () => {
+  const views = resolveSpatialUnits([unit({ id: 'a', pos_x: null, pos_y: null })])
+  expect(resolveHitSplats([dmg()], views)).toEqual([])
+})
+
+test('AGGREGATE damage events are ignored — they carry `group`, not a positioned unit_id', () => {
+  const views = resolveSpatialUnits([unit({ id: 'a', pos_x: 0, pos_y: 0 })])
+  const aggregate = dmg({ payload_json: { group: 'some_unit_type', damage: 40 } })
+  expect(resolveHitSplats([aggregate], views)).toEqual([])
+})
+
+test('damage AND destruction in one tick collapse to ONE splat marked destroyed', () => {
+  const views = resolveSpatialUnits([unit({ id: 'a', pos_x: 0, pos_y: 0 })])
+  const splats = resolveHitSplats(
+    [dmg({ id: 1, payload_json: { unit_id: 'a', damage: 20 } }),
+     dmg({ id: 2, event_type: 'unit_destroyed', payload_json: { unit_id: 'a', count: 1 } })],
+    views,
+  )
+  expect(splats).toHaveLength(1)
+  expect(splats[0].destroyed).toBe(true)
+  expect(splats[0].damage).toBe(20)
+})
+
+test('the layer renders a splat element per damaged unit, on top of the glyphs', () => {
+  const units = [unit({ id: 'a', pos_x: 0, pos_y: 0 }), unit({ id: 'b', side: 'enemy', pos_x: 9, pos_y: 9 })]
+  const els = spatialCombatLayer({ units, events: [dmg()], norm, k: 1 })
+  const ids = els.map((e) => (e.props as Record<string, unknown>)['data-testid']).filter(Boolean) as string[]
+  const splatIdx = ids.findIndex((s) => s.startsWith('spatial-combat-splat-'))
+  expect(splatIdx).toBeGreaterThan(-1)
+  // drawn last => a number is never hidden behind the ship it belongs to
+  expect(splatIdx).toBe(ids.length - 1)
 })

@@ -1,0 +1,84 @@
+name: TYPED-ZONE SHADOW — 0275 disposable proof (no production)
+
+# Proves migration 0275 (typed_zone_pirate_shadow_v1) on a THROWAWAY local Supabase — NEVER prod:
+#   * `supabase start` applies the FULL chain incl. 0273/0274/0275, so 0275's own self-assert runs
+#     against real Postgres (danger_zones.revision added additive+defaulted with every row at 0; NO
+#     cutover — the live leg evaluator is typed-zone-blind; the shadow never calls
+#     pirate_intercept_evaluate_leg and holds no write and no random(); the candidate builder is
+#     write-free and mirrors the 0233 literal fallbacks; both functions engine-only; the runtime flag
+#     still false) — any regression ABORTS `supabase start` red.
+#   * a self-rolling-back SQL proof then drives REAL geometry through BOTH paths: agreement over a
+#     stat sweep with the deeper of two overlapping zones selected by each; no-crossing agreement;
+#     inactive fall-through; a real override diverging and being ATTRIBUTED to the override rather
+#     than reported as a planner fault; effect presence (not identity, not geometry alone) deciding
+#     what is planned; the shadow inserting zero pirate_intercepts rows — counted, not assumed;
+#     determinism; and the live-built request being accepted by the dispatcher.
+# NO `environment:` on any job ⇒ none can read production secrets.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'autopilot/**'
+      - 'slice-typed-zone-shadow**'
+      - 'slice-typed-zone-dispatch**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: typed-zone-shadow-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  disposable-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start disposable local Supabase (applies the full chain incl. 0275 + its self-assert)
+        run: supabase start
+      - name: Export disposable DB_URL (no secrets)
+        run: |
+          supabase status -o env | tee /tmp/sbenv >/dev/null
+          grep -E '^DB_URL=' /tmp/sbenv || true
+      - name: TYPED-ZONE SHADOW real-geometry proof (agreement / attribution / write-free)
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          : "${DB_URL:?DB_URL (disposable stack) required}"
+          out="$(psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/typed-zone-shadow-proof.sql 2>&1)"
+          echo "$out"
+          for marker in \
+            TZS_PASS_REAL_GEOMETRY_AGREEMENT \
+            TZS_PASS_NO_CROSSING_AGREEMENT \
+            TZS_PASS_INACTIVE_FALLTHROUGH \
+            TZS_PASS_OVERRIDE_ATTRIBUTED \
+            TZS_PASS_EFFECT_PRESENCE_DECIDES \
+            TZS_PASS_SHADOW_WRITES_NOTHING \
+            TZS_PASS_SHADOW_DETERMINISTIC \
+            TZS_PASS_BUILDER_CONTRACT_VALID \
+            TZS_PASS_ROLLED_BACK ; do
+            echo "$out" | grep -q "$marker" || { echo "MISSING MARKER: $marker"; exit 1; }
+          done
+          echo "$out" | grep -q 'TZS_FAIL' && { echo "A TZS_FAIL marker was emitted"; exit 1; }
+          echo "ALL TYPED-ZONE SHADOW MARKERS PRESENT"
+      - name: Assert nothing leaked and no cutover happened
+        run: |
+          set -a; . /tmp/sbenv; set +a
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "
+            do \$\$
+            begin
+              if exists (select 1 from public.danger_zones where name like 'TZS %') then
+                raise exception 'PROOF LEAKED: a fixture zone was committed';
+              end if;
+              if pg_get_functiondef(to_regprocedure('public.pirate_intercept_evaluate_leg(uuid)')) ilike '%typed_zone_%' then
+                raise exception 'CUTOVER LEAK: the live leg evaluator references the typed-zone path';
+              end if;
+              if coalesce(public.cfg_bool('typed_zone_pirate_intercept_runtime_enabled'), true) then
+                raise exception 'CUTOVER LEAK: the runtime flag is not false';
+              end if;
+              raise notice 'TZS_PASS_NO_LEAK_NO_CUTOVER';
+            end \$\$;"
