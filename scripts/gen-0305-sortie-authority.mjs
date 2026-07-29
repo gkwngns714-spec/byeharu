@@ -86,6 +86,30 @@ const SITES = [
     ].join('\n'),
   },
   {
+    fn: 'command_ship_group_stop',
+    what: 'THE BRAKE, second hunk — aborting a sortie RELEASES its roster (the missing lifecycle end)',
+    old: slice(F301, 2203, 2204),
+    neu: [
+      `  -- STOP = HOLD (the 0155 semantic, kept): the fleet holds position in open space at the turn point.`,
+      `  perform public.fleet_set_in_space(v_fleet, v_x, v_y);`,
+      ``,
+      `  -- ── 0305: ABORTING A SORTIE RELEASES ITS ROSTER. ───────────────────────────────────────────`,
+      `  -- The roster had a beginning (send_ship_group_hunt freezes it) and NO END — that is the whole`,
+      `  -- defect this migration exists for. Its only consumers are the encounter builders`,
+      `  -- (combat_create_group_encounter / combat_create_encounter, 0168), which read it to decide WHO`,
+      `  -- fights; nothing else reads it, and battle reports do not. So a roster left on a fleet the`,
+      `  -- player has just recalled is not history — it is a stale answer waiting to be given to the`,
+      `  -- NEXT fight, because the freeze is idempotent (ON CONFLICT DO NOTHING, the 0303 defect).`,
+      `  -- This is reached ONLY when the brake actually halted the fleet, which by construction means`,
+      `  -- no encounter was open (an open fight returned above, through the retreat compose) and no`,
+      `  -- ambush was owed (hunk [S1] refused the brake if one fired). Scoped to THIS fleet, inside the`,
+      `  -- player's own explicit order. No backfill, no other fleet, no other player.`,
+      `  delete from public.group_sortie_members`,
+      `   where fleet_id = v_fleet and player_id = v_player;`,
+      `  -- ── end 0305 ───────────────────────────────────────────────────────────────────────────────`,
+    ].join('\n'),
+  },
+  {
     fn: 'command_ship_group_dock',
     what: 'dock — still refuses a real fight, now via the authority',
     old: slice(F219, 165, 178),
@@ -403,11 +427,18 @@ do $assert_a${i + 1}$
 declare
   v_code text;
 begin
-  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+  -- Comments stripped (probe code, not prose) AND writes stripped: 'delete from public.x' contains
+  -- 'from public.x', and send_ship_group_hunt is the roster's sole INSERTER. Writes are legitimate;
+  -- only a READ that decides a command is the retired copy.
+  select regexp_replace(
+           replace(regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g'),
+                   'delete from public.group_sortie_members', ''),
+           'insert into (public\\.)?group_sortie_members', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = '${fn}';
   if position('from public.group_sortie_members' in v_code) > 0
-     or position('join public.group_sortie_members' in v_code) > 0 then
+     or position('join public.group_sortie_members' in v_code) > 0
+     or position('from group_sortie_members' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (a${i + 1}) FAIL: public.${fn} still READS group_sortie_members to decide a command';
   end if;
 end $assert_a${i + 1}$;`,
@@ -465,6 +496,12 @@ begin
   -- The brake must NOT reproduce the retreat machine: it may call the verb, never re-implement it.
   if position('retreat_requested_at' in v_code) > 0 or position('presence_complete' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (d) FAIL: the brake writes retreat state directly — compose, do not fork';
+  end if;
+  -- The roster release exists, and is scoped to the braked fleet AND the caller. An unscoped delete
+  -- here would reach other fleets' rosters, so the scope is asserted, not trusted.
+  if position('delete from public.group_sortie_members' in v_code) = 0
+     or position('where fleet_id = v_fleet and player_id = v_player' in v_code) = 0 then
+    raise exception '0305 SELF-ASSERT (d) FAIL: the brake does not release the aborted sortie roster, scoped to this fleet and caller';
   end if;
 end $assert_d$;
 

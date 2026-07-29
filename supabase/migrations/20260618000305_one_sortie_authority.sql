@@ -227,8 +227,28 @@ begin
     end;
   end if;
   -- ── end 0305 ───────────────────────────────────────────────────────────────────────────────$s1n$),
-    (2, 'command_ship_group_dock',
-     $s2o$  -- 4) the group must not be mid-sortie — the mover/brake guard VERBATIM (0208:335-343 /
+    (2, 'command_ship_group_stop',
+     $s2o$  -- STOP = HOLD (the 0155 semantic, kept): the fleet holds position in open space at the turn point.
+  perform public.fleet_set_in_space(v_fleet, v_x, v_y);$s2o$,
+     $s2n$  -- STOP = HOLD (the 0155 semantic, kept): the fleet holds position in open space at the turn point.
+  perform public.fleet_set_in_space(v_fleet, v_x, v_y);
+
+  -- ── 0305: ABORTING A SORTIE RELEASES ITS ROSTER. ───────────────────────────────────────────
+  -- The roster had a beginning (send_ship_group_hunt freezes it) and NO END — that is the whole
+  -- defect this migration exists for. Its only consumers are the encounter builders
+  -- (combat_create_group_encounter / combat_create_encounter, 0168), which read it to decide WHO
+  -- fights; nothing else reads it, and battle reports do not. So a roster left on a fleet the
+  -- player has just recalled is not history — it is a stale answer waiting to be given to the
+  -- NEXT fight, because the freeze is idempotent (ON CONFLICT DO NOTHING, the 0303 defect).
+  -- This is reached ONLY when the brake actually halted the fleet, which by construction means
+  -- no encounter was open (an open fight returned above, through the retreat compose) and no
+  -- ambush was owed (hunk [S1] refused the brake if one fired). Scoped to THIS fleet, inside the
+  -- player's own explicit order. No backfill, no other fleet, no other player.
+  delete from public.group_sortie_members
+   where fleet_id = v_fleet and player_id = v_player;
+  -- ── end 0305 ───────────────────────────────────────────────────────────────────────────────$s2n$),
+    (3, 'command_ship_group_dock',
+     $s3o$  -- 4) the group must not be mid-sortie — the mover/brake guard VERBATIM (0208:335-343 /
   --    0215:104-112). LIVE-scoped join, NEVER a bare EXISTS: a retained dead manifest (0047/0169,
   --    up to 14d) must not block docking after a finished hunt. Ordered BEFORE the fleet-state
   --    inspection (the brake's order): a hunt's sortie fleet sits 'present' AT ITS SITE mid-combat
@@ -241,14 +261,14 @@ begin
      and f.status in ('moving', 'present', 'returning');
   if v_hunting > 0 then
     return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-  end if;$s2o$,
-     $s2n$  -- 4) 0305: the ONE sortie authority. A fight that is genuinely open still refuses a dock; a
+  end if;$s3o$,
+     $s3n$  -- 4) 0305: the ONE sortie authority. A fight that is genuinely open still refuses a dock; a
   --    finished one no longer does, because "finished" is now a fact and not a leftover row.
   if public.group_sortie_is_open(v_player, v_group) then
     return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-  end if;$s2n$),
-    (3, 'assign_ship_to_group',
-     $s3o$        -- OPEN SORTIE — co-location does NOT override it (the 0213 review's Finding 1, the ghost-
+  end if;$s3n$),
+    (4, 'assign_ship_to_group',
+     $s4o$        -- OPEN SORTIE — co-location does NOT override it (the 0213 review's Finding 1, the ghost-
         -- dock hole re-entering through the ALLOW arm): a hunt fleet settled 'present' at its site
         -- with the assignee's own dock AT that same site is co-located, but the sortie's manifest
         -- was FROZEN at send — combat ends, the fleet departs 'returning' on that manifest, the new
@@ -266,14 +286,14 @@ begin
            and f.status in ('moving', 'present', 'returning');
         if v_hunting > 0 then
           return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-        end if;$s3o$,
-     $s3n$        -- 0305: the ONE sortie authority. Nothing joins a fleet that is actually in a fight —
+        end if;$s4o$,
+     $s4n$        -- 0305: the ONE sortie authority. Nothing joins a fleet that is actually in a fight —
         -- the rule is unchanged; only its (single) definition moved.
         if public.group_sortie_is_open(v_player, v_group) then
           return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-        end if;$s3n$),
-    (4, 'assign_ship_to_group',
-     $s4o$          -- LIVE-SCOPED manifest read (the 0169/0215 live-scope law, per the S1 review's MINOR-6):
+        end if;$s4n$),
+    (5, 'assign_ship_to_group',
+     $s5o$          -- LIVE-SCOPED manifest read (the 0169/0215 live-scope law, per the S1 review's MINOR-6):
           -- a RETAINED manifest on a completed sortie fleet is kept up to 14d and must never block
           -- — the status join makes over-blocking impossible even if the leaf's own status set
           -- ever drifts (a bare EXISTS is safe only by construction, and constructions drift).
@@ -283,14 +303,14 @@ begin
                       where gsm.fleet_id = v_gf.id
                         and f.status in ('moving', 'present', 'returning')) then
             return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-          end if;$s4o$,
-     $s4n$          -- 0305: the ONE sortie authority (this arm keyed the fleet and dropped player_id —
+          end if;$s5o$,
+     $s5n$          -- 0305: the ONE sortie authority (this arm keyed the fleet and dropped player_id —
           -- the second of two copies inside this one function).
           if public.group_sortie_is_open(v_player, v_cur_group) then
             return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-          end if;$s4n$),
-    (5, 'delete_ship_group',
-     $s5o$      -- LIVE-SCOPED manifest read (the 0169/0215 live-scope law, per the S1 review's MINOR-6):
+          end if;$s5n$),
+    (6, 'delete_ship_group',
+     $s6o$      -- LIVE-SCOPED manifest read (the 0169/0215 live-scope law, per the S1 review's MINOR-6):
       -- a RETAINED manifest on a completed sortie fleet must never block a delete.
       if exists (select 1
                    from public.group_sortie_members gsm
@@ -298,20 +318,20 @@ begin
                   where gsm.fleet_id = v_gf.id
                     and f.status in ('moving', 'present', 'returning')) then
         return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-      end if;$s5o$,
-     $s5n$      -- 0305: the ONE sortie authority.
+      end if;$s6o$,
+     $s6n$      -- 0305: the ONE sortie authority.
       if public.group_sortie_is_open(v_player, v_group) then
         return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-      end if;$s5n$),
-    (6, 'send_ship_group_hunt',
-     $s6o$      if exists (select 1 from public.group_sortie_members where fleet_id = v_gf.id) then
+      end if;$s6n$),
+    (7, 'send_ship_group_hunt',
+     $s7o$      if exists (select 1 from public.group_sortie_members where fleet_id = v_gf.id) then
         return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-      end if;$s6o$,
-     $s6n$      -- 0305: the ONE sortie authority. This copy was a bare EXISTS over group_sortie_members —
+      end if;$s7o$,
+     $s7n$      -- 0305: the ONE sortie authority. This copy was a bare EXISTS over group_sortie_members —
       -- no join, no scope — i.e. "has this fleet EVER been on a sortie". It is gone.
       if public.group_sortie_is_open(v_player, v_group) then
         return jsonb_build_object('ok', false, 'reason', 'group_on_sortie');
-      end if;$s6n$)
+      end if;$s7n$)
     ) as t(idx, fname, old_t, new_t)
     order by idx
   loop
@@ -342,8 +362,8 @@ begin
     v_done := v_done + 1;
   end loop;
 
-  if v_done <> 7 then
-    raise exception '0305 REWRITE FAIL: rewrote % site(s), expected 7', v_done;
+  if v_done <> 8 then
+    raise exception '0305 REWRITE FAIL: rewrote % site(s), expected 8', v_done;
   end if;
   raise notice '0305: rewrote % sortie-guard copies onto the one authority', v_done;
 end $rewrite$;
@@ -371,11 +391,18 @@ do $assert_a1$
 declare
   v_code text;
 begin
-  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+  -- Comments stripped (probe code, not prose) AND writes stripped: 'delete from public.x' contains
+  -- 'from public.x', and send_ship_group_hunt is the roster's sole INSERTER. Writes are legitimate;
+  -- only a READ that decides a command is the retired copy.
+  select regexp_replace(
+           replace(regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g'),
+                   'delete from public.group_sortie_members', ''),
+           'insert into (public\.)?group_sortie_members', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_go';
   if position('from public.group_sortie_members' in v_code) > 0
-     or position('join public.group_sortie_members' in v_code) > 0 then
+     or position('join public.group_sortie_members' in v_code) > 0
+     or position('from group_sortie_members' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (a1) FAIL: public.command_ship_group_go still READS group_sortie_members to decide a command';
   end if;
 end $assert_a1$;
@@ -385,11 +412,18 @@ do $assert_a2$
 declare
   v_code text;
 begin
-  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+  -- Comments stripped (probe code, not prose) AND writes stripped: 'delete from public.x' contains
+  -- 'from public.x', and send_ship_group_hunt is the roster's sole INSERTER. Writes are legitimate;
+  -- only a READ that decides a command is the retired copy.
+  select regexp_replace(
+           replace(regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g'),
+                   'delete from public.group_sortie_members', ''),
+           'insert into (public\.)?group_sortie_members', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_stop';
   if position('from public.group_sortie_members' in v_code) > 0
-     or position('join public.group_sortie_members' in v_code) > 0 then
+     or position('join public.group_sortie_members' in v_code) > 0
+     or position('from group_sortie_members' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (a2) FAIL: public.command_ship_group_stop still READS group_sortie_members to decide a command';
   end if;
 end $assert_a2$;
@@ -399,11 +433,18 @@ do $assert_a3$
 declare
   v_code text;
 begin
-  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+  -- Comments stripped (probe code, not prose) AND writes stripped: 'delete from public.x' contains
+  -- 'from public.x', and send_ship_group_hunt is the roster's sole INSERTER. Writes are legitimate;
+  -- only a READ that decides a command is the retired copy.
+  select regexp_replace(
+           replace(regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g'),
+                   'delete from public.group_sortie_members', ''),
+           'insert into (public\.)?group_sortie_members', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_dock';
   if position('from public.group_sortie_members' in v_code) > 0
-     or position('join public.group_sortie_members' in v_code) > 0 then
+     or position('join public.group_sortie_members' in v_code) > 0
+     or position('from group_sortie_members' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (a3) FAIL: public.command_ship_group_dock still READS group_sortie_members to decide a command';
   end if;
 end $assert_a3$;
@@ -413,11 +454,18 @@ do $assert_a4$
 declare
   v_code text;
 begin
-  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+  -- Comments stripped (probe code, not prose) AND writes stripped: 'delete from public.x' contains
+  -- 'from public.x', and send_ship_group_hunt is the roster's sole INSERTER. Writes are legitimate;
+  -- only a READ that decides a command is the retired copy.
+  select regexp_replace(
+           replace(regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g'),
+                   'delete from public.group_sortie_members', ''),
+           'insert into (public\.)?group_sortie_members', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'assign_ship_to_group';
   if position('from public.group_sortie_members' in v_code) > 0
-     or position('join public.group_sortie_members' in v_code) > 0 then
+     or position('join public.group_sortie_members' in v_code) > 0
+     or position('from group_sortie_members' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (a4) FAIL: public.assign_ship_to_group still READS group_sortie_members to decide a command';
   end if;
 end $assert_a4$;
@@ -427,11 +475,18 @@ do $assert_a5$
 declare
   v_code text;
 begin
-  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+  -- Comments stripped (probe code, not prose) AND writes stripped: 'delete from public.x' contains
+  -- 'from public.x', and send_ship_group_hunt is the roster's sole INSERTER. Writes are legitimate;
+  -- only a READ that decides a command is the retired copy.
+  select regexp_replace(
+           replace(regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g'),
+                   'delete from public.group_sortie_members', ''),
+           'insert into (public\.)?group_sortie_members', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'delete_ship_group';
   if position('from public.group_sortie_members' in v_code) > 0
-     or position('join public.group_sortie_members' in v_code) > 0 then
+     or position('join public.group_sortie_members' in v_code) > 0
+     or position('from group_sortie_members' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (a5) FAIL: public.delete_ship_group still READS group_sortie_members to decide a command';
   end if;
 end $assert_a5$;
@@ -441,11 +496,18 @@ do $assert_a6$
 declare
   v_code text;
 begin
-  select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
+  -- Comments stripped (probe code, not prose) AND writes stripped: 'delete from public.x' contains
+  -- 'from public.x', and send_ship_group_hunt is the roster's sole INSERTER. Writes are legitimate;
+  -- only a READ that decides a command is the retired copy.
+  select regexp_replace(
+           replace(regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g'),
+                   'delete from public.group_sortie_members', ''),
+           'insert into (public\.)?group_sortie_members', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'send_ship_group_hunt';
   if position('from public.group_sortie_members' in v_code) > 0
-     or position('join public.group_sortie_members' in v_code) > 0 then
+     or position('join public.group_sortie_members' in v_code) > 0
+     or position('from group_sortie_members' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (a6) FAIL: public.send_ship_group_hunt still READS group_sortie_members to decide a command';
   end if;
 end $assert_a6$;
@@ -502,6 +564,12 @@ begin
   -- The brake must NOT reproduce the retreat machine: it may call the verb, never re-implement it.
   if position('retreat_requested_at' in v_code) > 0 or position('presence_complete' in v_code) > 0 then
     raise exception '0305 SELF-ASSERT (d) FAIL: the brake writes retreat state directly — compose, do not fork';
+  end if;
+  -- The roster release exists, and is scoped to the braked fleet AND the caller. An unscoped delete
+  -- here would reach other fleets' rosters, so the scope is asserted, not trusted.
+  if position('delete from public.group_sortie_members' in v_code) = 0
+     or position('where fleet_id = v_fleet and player_id = v_player' in v_code) = 0 then
+    raise exception '0305 SELF-ASSERT (d) FAIL: the brake does not release the aborted sortie roster, scoped to this fleet and caller';
   end if;
 end $assert_d$;
 
