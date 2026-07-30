@@ -1,24 +1,65 @@
-# Session Handoff — historical snapshot 2026-07-12, **current state refreshed 2026-07-23**
+# Session Handoff — historical snapshot 2026-07-12, **current state refreshed 2026-07-29**
 
-> # ⚠ READ **§0 — CURRENT STATE (2026-07-23)** FIRST. Everything from §1 onward is the 2026-07-12 snapshot.
+> # ⚠ READ **§0 — CURRENT STATE (2026-07-29)** FIRST. Everything from §1 onward is the 2026-07-12 snapshot.
 >
 > §0 is the live handoff. §1 (machine setup) and §4–§5 (dev-method laws, process) are still accurate and
-> still worth reading. **§2 and §3 are historical** — superseded by §0, kept so the record survives.
+> still worth reading. **§2, §3 and §0.1 are historical** — superseded, kept so the record survives.
+>
+> **The newest truth is always `docs/DEV_LOG.md` (top entry), not this file.** §0 is refreshed at the
+> end of a session; the dev log is written as the work lands.
 
 ---
 
-## 0. CURRENT STATE (verified 2026-07-23)
+## 0. CURRENT STATE (verified 2026-07-29)
 
 ### Repo
 
 | | |
 |---|---|
+| `main` head | **`a9bf70e`** (merge of PR **#334**) |
+| Highest migration on `main` | **`0305`** (`20260618000305_one_sortie_authority.sql`), 299 migration files |
+| **Production migration head** | **`0305`** — `main` and production are IN SYNC |
+| Open PRs | **15.** #163 PROJECTMAP (`feat-project-map`, intentionally off `main`) · **#305–#317** (migrations `0275`–`0285`) which are already on `main` via the `integrate-combat` merge and are closable · **#299/#300** (resolver preflight audit + rollback-only damage canary) whose purpose lapsed when the resolver was lit |
+
+### What is LIVE right now
+
+| | |
+|---|---|
+| `encounter_resolver_enabled` | **`true`** — lit by `0302` (2026-07-27) under an explicit owner order, as a fail-closed migration, after a blast-radius audit (0 live encounters; ONE active binding: `canary_encounter` at Reaver, difficulty 1 / cap 1 / cooldown 30s). Rollback is a set-to-false. |
+| Every other capability flag | **`true`** — `0300` "lights on" flipped ~44 of them |
+| `timed_docking_enabled` | **`false`** — the ONLY flag still dark |
+| Combat / ambush | `0303` fixed the ambush teleport + no-fight-on-re-entry (the manifest guard counted inserts, not rows); `0304` gave every pirate zone its typed effect (zones drawn after `0273` had been inert) |
+| Fleet Stop | `0305` — the brake answers **every** press: it halts ordinary travel and pre-contact sorties (releasing the aborted roster), and composes with the retreat authority in a real fight. It can no longer return `group_on_sortie` at all. |
+| Map | Danger zones are clickable: hover names them, click opens an info panel in the bottom-right hub (PR #334) |
+
+**Verified on target 2026-07-29** (not from CI green): prod `game_config` read over anon REST for the
+flag posture, and `rpc/group_sortie_is_open` called on production through the owner's own session
+(HTTP 200) for `0305`.
+
+### Known red / debt
+
+- **`TEAM-COMMAND` disposable proof fails at `SHIELD1`** (`team-command-proof.sql:3359`). **Pre-existing** — the identical failure is on the `0303`/`0304` branch from 07-28, before any of this session's work. Harness debt from `0300`'s lights-on, no gameplay impact. *(Careful: two `TEAM-COMMAND` runs went green on 07-28 on a branch cut 07-19 whose chain stops at `0234` — a green on an old chain is not evidence.)*
+- **`docs/DEV_LOG.md` has no entries for migrations `0273`–`0302`** — the typed-zone platform and the combat overhaul. Detail lives in the migration headers and PR bodies.
+
+### ⚠ Fleet 1 was destroyed 2026-07-29T05:37:22Z
+
+Encounter `d16f308d` ran to tick 130 (player power 60 → 0 vs 872). All four ships `destroyed`; only
+Sparrow II (Fleet 2) survives. The Stop refusal that `0305` fixes is what denied the escape.
+
+---
+
+## 0.1 PRIOR STATE (historical — 2026-07-23, kept for the record)
+
+### Repo, as of 2026-07-23
+
+| | |
+|---|---|
 | `main` head | **`ce26486`** (merge of PR **#287**) |
 | Open PRs | **#163** only (PROJECTMAP tool, branch `feat-project-map` — **intentionally not on `main`**) |
-| Merged this session | **#282** `68ea475` · **#283** `86c2c73` · **#286** `b9e2560` · **#288** `a086800` · **#285** `2279b45` · **#284** `b11b3bd` (mig `0272`) · **#287** `ce26486` |
+| Merged that session | **#282** `68ea475` · **#283** `86c2c73` · **#286** `b9e2560` · **#288** `a086800` · **#285** `2279b45` · **#284** `b11b3bd` (mig `0272`) · **#287** `ce26486` |
 | Closed unmerged | **#162** (edits an already-applied migration → guaranteed prod no-op; re-author as a *forward* migration) · **#245** (×17 coordinate normalize — rejected direction; slot `0253` is intentionally reserved and absent from `main`) · **#221** (Zone Templates plan — predates the whole V1→V5 program; rewrite against current architecture) |
 
-### Migrations — **`main` and production ARE in sync**
+### Migrations — `main` and production were in sync at `0272`
 
 | | |
 |---|---|
@@ -70,25 +111,37 @@ closed**: the four inverse `set_game_config` writes are deleted and the remainin
 on its first statement if run. The **activation path is unchanged** (proven byte-identical). Full
 analysis: **`docs/MOVEMENT_ROLLBACK_DEFECT.md`**.
 
-### Combat content — what is lit in production
+### Combat content — what was lit in production **as of 2026-07-23**
+
+> **SUPERSEDED 2026-07-29 — see §0.** `encounter_resolver_enabled` is now **`true`** (lit by `0302`
+> on 07-27), so the paragraph below is history. It is kept because it records *why* the flag was held
+> dark for so long.
 
 `enemy_content_registry_enabled`, `encounter_authoring_enabled` and `encounter_binding_authoring_enabled`
 are **`true`** (owner authoring surfaces only). **`encounter_resolver_enabled` is `false`** — the one
 behaviour-changing flag. Two encounter bindings exist, both inactive; the `canary_encounter` chain
 (binding `2f7bcf88`) is the selected canary. See `docs/COMBAT_CONTENT_PROGRAM.md` §7.
 
-### THE NEXT STEPS (this supersedes §3)
+### THE NEXT STEPS (as of 2026-07-23 — all resolved; kept for the record)
 
-1. ~~**Approve the `production` gate for `0272`**~~ — **DONE 2026-07-23**; production head is `0272`.
-2. **Execute the unified-movement smoke** (`docs/MOVEMENT_SMOKE_PACKET.md`) with an owner-named
-   **expendable** fleet — moves movement from classification **B** to **A**. **Still not performed.**
-3. **Encounter canary** — activate the `canary_encounter` chain, **not** `pirate_basic` (its
-   `cooldown_seconds = 0`, i.e. no spawn throttle). **First**, the owner must run the SELECT-only
-   cap-audit packet (`docs/ENCOUNTER_CANARY_PACKET.md` §3A) as `service_role`: it is the one
-   RLS-blocked read that settles whether the derived cap at Reaver is already consumed.
-4. **Team-command activation** (the old §3) is still an open human gate, still per
-   `docs/TEAM_COMMAND.md` + `docs/TEAM_ACTIVATION_PACKET.md`, but it is **no longer "THE ONE next step"**
-   — items 1–3 above sit in front of it.
+1. ~~**Approve the `production` gate for `0272`**~~ — **DONE 2026-07-23**.
+2. ~~**Execute the unified-movement smoke**~~ — **DONE 2026-07-24**, full pass on production with an
+   expendable fleet (Fleet 2), including the decisive no-crossing proof (empty `pirate_intercepts`
+   for the movement). Movement moved from classification **B** to **A**.
+3. ~~**Encounter canary**~~ — **OVERTAKEN 2026-07-27.** The owner ordered "don't make anything dark",
+   and `0302` lit the resolver through the deploy pipeline as a fail-closed migration instead of via
+   the canary scripts. The canary packets remain as the record of the method.
+4. ~~**Team-command activation**~~ — lit with everything else by `0300`.
+
+### THE NEXT STEPS (2026-07-29)
+
+1. **Play-test the map's zone info and the new Stop** — both are live and neither has had a real
+   player session yet.
+2. **Decide `timed_docking_enabled`**, the last dark flag. The owner's "don't make anything dark"
+   order did not include it and `0300` deliberately left it out.
+3. **Close the stale PRs** (#305–#317 already on `main`; #299/#300 lapsed).
+4. **Back-fill `DEV_LOG.md` for `0273`–`0302`** — the one real documentation gap.
+5. **Fix `TEAM-COMMAND`'s `SHIELD1`** red (harness debt, pre-existing).
 
 ---
 
