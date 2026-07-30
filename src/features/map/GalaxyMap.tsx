@@ -19,6 +19,7 @@ import type { UnifiedGroupFleetLite } from '../command/teamApi'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { SpaceMoveTargetMarker } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
+import { isMapBackground } from './mapBackground'
 import { type FleetGoTargetView } from './fleetGoTarget'
 import { screenToWorld, worldToViewBox, type WorldCoord } from './openSpaceTransform'
 import { VIEW, clampK, clampPan, focusCamera, focusWorldPoints, type Camera, type FocusInputs } from './galaxyCamera'
@@ -56,7 +57,7 @@ export function GalaxyMap({
   selectedMiningFieldName,
   onSelectMiningField,
   dangerZones = [],
-  onSelectDangerZone,
+  zonesInteractive = false,
   selectedDangerZoneId = null,
   combatUnits = [],
   combatEvents = [],
@@ -101,9 +102,10 @@ export function GalaxyMap({
   // gate), so every prop below defaults to a no-op shape and the map is byte-identical to today.
   /** Active danger_zones (get_danger_zones) — rendered as smooth blobs, UNDER movement lines/markers. */
   dangerZones?: DangerZoneLite[]
-  /** ZONE INFO: present = zones become hoverable/clickable and a click reports the zone. Absent =
-   *  they stay scenery, byte-identical to before (the layer's own interactivity switch). */
-  onSelectDangerZone?: (zone: DangerZoneLite) => void
+  /** ZONE INFO: true = zones become HOVERABLE (they brighten and name themselves) and hand map
+   *  gestures through. False = they stay scenery, byte-identical to before. They are never clickable —
+   *  zone info is reached through the command hub, see dangerZoneLayer's header. */
+  zonesInteractive?: boolean
   /** The zone currently open in the info panel — drawn strongest so map and panel agree. */
   selectedDangerZoneId?: string | null
   // COMBAT-S4 — the caller's active combat_units + recent combat_events (both already polled every
@@ -231,10 +233,17 @@ export function GalaxyMap({
     pointers.current.delete(e.pointerId)
     drag.current = null
     tap.current = null
-    // A single short near-stationary tap on EMPTY space (the <svg> itself — markers/backdrop don't hit
-    // here) is the gesture candidate. Drags/multi-touch already returned as pan.
+    // A single short near-stationary tap on the map's NAVIGABLE BACKGROUND is the gesture candidate.
+    // Drags/multi-touch already returned as pan.
+    //
+    // "Background" is asked of ONE authority (mapBackground.isMapBackground), not tested here by
+    // element identity. It used to be `e.target !== svg`, which silently assumed every drawn layer was
+    // `pointerEvents:'none'`; the moment the danger-zone fill became hit-testable, that assumption made
+    // BOTH map gestures — the double-tap hub summon and the pirate waypoint tap — dead across the whole
+    // area of every zone. A layer that draws over the map now either takes the gesture or declares
+    // itself passthrough. See mapBackground.ts for the full account.
     const svg = svgRef.current
-    if (!t || !svg || e.target !== svg) return
+    if (!t || !svg || !isMapBackground(e.target, svg)) return
     const travelPx = Math.hypot(e.clientX - t.x, e.clientY - t.y)
     const durationMs = e.timeStamp - t.t
     if (classifyPointerGesture({ travelPx, durationMs, maxPointers: t.maxPointers }) !== 'tap') return
@@ -408,11 +417,10 @@ export function GalaxyMap({
             zones: dangerZones,
             norm,
             k: view.k,
-            // Interactivity is opt-in: no handler from the caller → the layer stays scenery.
-            onSelect: onSelectDangerZone,
+            // Interactivity is opt-in: without the caller's switch the layer stays scenery.
             selectedId: selectedDangerZoneId,
             hoveredId: hoveredDangerZoneId,
-            onHoverChange: setHoveredDangerZoneId,
+            onHoverChange: zonesInteractive ? setHoveredDangerZoneId : undefined,
           })}
 
           {/* Movement paths (under markers) — IN-FLIGHT ONLY.
