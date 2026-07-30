@@ -18,7 +18,12 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'supabase/migrations/20260618000216_berth_model.sql');
 const OUT = join(ROOT, 'supabase/migrations/20260618000306_empty_fleet_dock_authority.sql');
 
-const lines = readFileSync(SRC, 'utf8').split('\n');
+// LINE ENDINGS ARE PART OF THE CONTRACT. The hunks below are matched against pg_get_functiondef,
+// whose text comes from the migration as APPLIED — always LF. A Windows checkout (core.autocrlf)
+// hands this script CRLF, so slicing naively bakes \r into every old_t and the rewrite can then
+// never find its hunk: the migration fails the deploy with "expected exactly 1". Normalise on read
+// and refuse to emit anything carrying a CR, so the output is byte-identical on every platform.
+const lines = readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n').split('\n');
 
 /** Slice [from,to] 1-indexed inclusive, asserting the fence lines so source drift fails loudly. */
 function slice(from, to, startsWith, endsWith) {
@@ -482,6 +487,10 @@ begin
 end $i$;
 `;
 
+if (sql.includes('\r')) {
+  throw new Error('generated 0306 carries a CR — the rewrite hunks would never match the deployed body');
+}
+
 const check = process.argv.includes('--check');
 if (check) {
   let onDisk;
@@ -491,7 +500,9 @@ if (check) {
     console.error('0306 CHECK FAIL: migration file is missing — run the generator');
     process.exit(1);
   }
-  if (onDisk !== sql) {
+  // Compare normalised: a Windows checkout hands back CRLF for a blob stored as LF, which is a
+  // checkout artefact, not drift. Real drift (changed text) still reds.
+  if (onDisk.replace(/\r\n/g, '\n') !== sql) {
     console.error('0306 CHECK FAIL: the migration on disk is not what the slices generate.');
     console.error('Either 0216 drifted or the migration was hand-edited. Re-run the generator.');
     process.exit(1);

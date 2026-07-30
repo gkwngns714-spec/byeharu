@@ -177,7 +177,7 @@ begin
       v_gf_n := 0;
       for v_gf in select * from public.ship_group_resolve_fleet(v_player, v_group) loop
         v_gf_n := v_gf_n + 1;
-      end loop;$h1o$,
+      end loop;$h1o$,
      $h1n$      -- 0306: A GROUP WITH NO SHIPS HAS NO FLEET. This assign is about to be judged against the
       -- group's FLEET — never against its membership — so a member-less group that still owns a
       -- live fleet judges every future assign by a ghost (see the header's deadlock). Collect it
@@ -192,14 +192,14 @@ begin
       v_gf_n := 0;
       for v_gf in select * from public.ship_group_resolve_fleet(v_player, v_group) loop
         v_gf_n := v_gf_n + 1;
-      end loop;$h1n$),
+      end loop;$h1n$),
     (2, 'assign_ship_to_group',
      $h2o$        if not (v_gf.status = 'present' and v_gf.location_mode = 'location'
                 and v_gf.current_location_id is not null
                 and v_ship_berth is not null
                 and v_ship_berth = v_gf.current_location_id) then
           return jsonb_build_object('ok', false, 'reason', 'group_fleet_elsewhere');
-        end if;$h2o$,
+        end if;$h2o$,
      $h2n$        -- 0306: THE ONE DOCKED AUTHORITY. Identical rule ("settled at a real port"), one
         -- definition — public.fleet_docked_location, evaluated over the row ALREADY in hand, so
         -- this still costs no second snapshot (the 0213 review's Finding 3 stays closed).
@@ -212,7 +212,7 @@ begin
      $h3o$        select f.current_location_id into v_berth
           from public.fleets f
          where f.id = public.mainship_resolve_fleet(v_ship)
-           and f.status = 'present' and f.location_mode = 'location';$h3o$,
+           and f.status = 'present' and f.location_mode = 'location';$h3o$,
      $h3n$        select public.fleet_docked_location(f) into v_berth
           from public.fleets f
          where f.id = public.mainship_resolve_fleet(v_ship);$h3n$),
@@ -223,7 +223,7 @@ begin
           else
             -- parked in open space (0208/0209) or idle at its anchor: no port to berth at.
             return jsonb_build_object('ok', false, 'reason', 'fleet_in_flight');
-          end if;$h4o$,
+          end if;$h4o$,
      $h4n$          -- 0306: THE ONE DOCKED AUTHORITY (copy 2 of 3 inside this one function).
           v_berth := public.fleet_docked_location(v_gf);
           if v_berth is null then
@@ -233,7 +233,7 @@ begin
     (5, 'assign_ship_to_group',
      $h5o$  end if;
 
-  return jsonb_build_object('ok', true, 'main_ship_id', v_ship, 'group_id', v_group);$h5o$,
+  return jsonb_build_object('ok', true, 'main_ship_id', v_ship, 'group_id', v_group);$h5o$,
      $h5n$  end if;
 
   -- 0306: THE SYMMETRY delete_ship_group ALWAYS HAD AND UNASSIGN NEVER DID. Removing the last ship
@@ -261,7 +261,7 @@ begin
          where id = v_gf.id;
       else
         return jsonb_build_object('ok', false, 'reason', 'fleet_in_flight');
-      end if;$h6o$,
+      end if;$h6o$,
      $h6n$      -- 0306: THE ONE DOCKED AUTHORITY, and the ONE retire idiom. The consume below was the
       -- only place in the codebase that retired a group's fleet; group_fleet_retire is now that
       -- idiom's single definition and the empty-fleet collector calls the very same one.
@@ -274,7 +274,7 @@ begin
      $h7o$           (select f.current_location_id
               from public.fleets f
              where f.id = public.mainship_resolve_fleet(s.main_ship_id)
-               and f.status = 'present' and f.location_mode = 'location'),$h7o$,
+               and f.status = 'present' and f.location_mode = 'location'),$h7o$,
      $h7n$           (select public.fleet_docked_location(f)
               from public.fleets f
              where f.id = public.mainship_resolve_fleet(s.main_ship_id)),$h7n$)
