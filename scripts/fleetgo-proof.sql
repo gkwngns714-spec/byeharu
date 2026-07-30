@@ -3506,10 +3506,15 @@ begin
     on conflict (player_id) do update set balance = excluded.balance;
   r := pg_temp.call_as(uK, 'public.commission_first_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL: commission k1: %', r; end if;
-  k1 := (r->>'main_ship_id')::uuid;
   r := pg_temp.call_as(uK, 'public.commission_additional_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL: commission k2: %', r; end if;
-  k2 := (r->>'main_ship_id')::uuid;
+  -- the FIRST commission does not return a ship id (it answers ok/created only — 0211:49-58), so
+  -- both ids come from the table, the FLEETCTRL fixture idiom.
+  select k.a[1], k.a[2] into k1, k2
+    from (select array_agg(main_ship_id order by created_at) as a
+            from public.main_ship_instances where player_id = uK) k;
+  if k1 is null or k2 is null then
+    raise exception 'EMPTY_FLEET FAIL: fixture did not produce two ships (k1=%, k2=%)', k1, k2; end if;
   -- the commission mints a per-ship 'present' fleet; normalise to the post-4c BERTHED shape so the
   -- group fleet below is the only live fleet these ships have (the ASSIGN_CLEARS_BERTH vacuity).
   update public.location_presence set status='completed', updated_at=now()
