@@ -264,6 +264,61 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "where fleet_id = v_fleet and player_id = v_player" "$MIG0305_TMP" \
     || fail "0305's roster release is not scoped to the braked fleet AND the caller — an unscoped delete reaches other rosters"
   rm -f "$MIG0305_TMP"
+
+  # ── 0306: A FLEET WITH NO SHIPS IS NOT A FLEET, and "is it docked" has ONE definition. ──────────
+  #    Judged on 0306, which is where the LIVE bodies of assign_ship_to_group and delete_ship_group
+  #    now come from. ⚠ THE 0216 PINS BELOW ARE HISTORY, NOT THE LIVE RULE: they read the frozen
+  #    0216 FILE, so they would stay green while the deployed body says something else entirely —
+  #    the exact failure this suite already recorded once (a .sh guard demanding a retired 0218
+  #    hunk). The live co-location and berth-resolution rules are pinned HERE from now on.
+  #    MUTATIONS: drop the authority → the definition check reds; drop either collector call → the
+  #    count check reds (and runtime EMPTY_FLEET (2)/(3) red); drop the backfill → the backfill
+  #    check reds (and prod stays bricked); hand-edit the migration → the generator --check reds.
+  MIG0306="$REPO_ROOT/supabase/migrations/20260618000306_empty_fleet_dock_authority.sql"
+  [ -f "$MIG0306" ] || fail "migration 0306 (the head of assign_ship_to_group / delete_ship_group since the empty-fleet slice) not found"
+  MIG0306_TMP="$(mktemp)"
+  sql_code "$MIG0306" > "$MIG0306_TMP"
+  grep -q "create or replace function public.fleet_docked_location" "$MIG0306_TMP" \
+    || fail "0306 does not define the ONE docked authority — the eleven hand-copied docked tests would still have no home"
+  grep -q "create or replace function public.group_retire_empty_fleet" "$MIG0306_TMP" \
+    || fail "0306 does not define the empty-fleet collector — the ghost that bricks a group survives"
+  grep -q "create or replace function public.group_fleet_retire" "$MIG0306_TMP" \
+    || fail "0306 does not define the ONE retire idiom — delete_ship_group's inline consume would stay a second copy"
+  # the collector must COMPOSE with the 0305 sortie authority, never re-decide "is this group busy".
+  grep -q "group_sortie_is_open" "$MIG0306_TMP" \
+    || fail "0306's collector does not compose with the 0305 sortie authority — a second opinion about whether a group is busy is a new fork"
+  # the collector must ask the MEMBERSHIP question the assign guard never asked.
+  grep -q "where s.group_id = p_group and s.player_id = p_player" "$MIG0306_TMP" \
+    || fail "0306's collector does not scope its membership read to the group AND the caller"
+  # BOTH arms of assign_ship_to_group get a collector (assign-side self-heal + unassign-side symmetry).
+  [ "$(grep -c "perform public.group_retire_empty_fleet" "$MIG0306_TMP")" = "2" ] \
+    || fail "0306 does not wire the collector into BOTH assign arms — one arm alone leaves either legacy ghosts unfixable or new ones still being created"
+  grep -q "0306 BACKFILL" "$MIG0306_TMP" \
+    || fail "0306 has no backfill — already-bricked groups (the owner's own) would stay bricked after deploy"
+  grep -q "revoke execute on function public.group_retire_empty_fleet" "$MIG0306_TMP" \
+    || fail "0306 leaves an internal authority client-callable (the 0254 prod grant-drift lesson)"
+  # the rewrite must be the SLICE method, not a retyped body (the 0303 lesson).
+  grep -q "expected exactly 1 — the deployed body is not what this migration was generated against" "$MIG0306_TMP" \
+    || fail "0306's rewrite does not assert the sliced hunk occurs exactly once in the DEPLOYED body"
+  grep -q "unexpected length delta rewriting" "$MIG0306_TMP" \
+    || fail "0306's rewrite does not assert the length moved by exactly the hunk delta — replace() could have touched more than the hunk"
+  rm -f "$MIG0306_TMP"
+  # the migration must still be exactly what the generator's slices produce — a hand-edit here would
+  # silently drift the "old" text away from the deployed body and the rewrite would fail at deploy.
+  if command -v node >/dev/null 2>&1; then
+    node "$REPO_ROOT/scripts/gen-0306-dock-authority.mjs" --check >/dev/null 2>&1 \
+      || fail "0306 does not match the slices scripts/gen-0306-dock-authority.mjs takes from 0216 — it was hand-edited, or 0216 drifted"
+  fi
+  # the runtime block must exist and must not be able to pass vacuously.
+  grep -q "FLEETGO_PASS_EMPTY_FLEET" "$SQL" \
+    || fail "no runtime proof that an emptied fleet is retired and the owner's deadlock is gone"
+  grep -q "DEADLOCK IS STILL LIVE" "$SQL" \
+    || fail "the EMPTY_FLEET block does not assert the owner's exact failing action (assign into a member-less group whose fleet sits elsewhere)"
+  grep -q "the collector fired on a crewed fleet" "$SQL" \
+    || fail "the EMPTY_FLEET block does not guard that a CREWED fleet is never collected — a collector that over-fires destroys live players' fleets"
+  grep -q "the phase would be vacuous" "$SQL" \
+    || fail "the EMPTY_FLEET block does not guard that the staged ghost really sits at a different port"
+
   # the runtime must pin that the brake and the redirect agree on where "here" is.
   grep -q "disagrees with the redirect interpolation" "$SQL" \
     || fail "no runtime pin that the brake and the redirect compute the SAME interpolated point"
@@ -847,8 +902,12 @@ if [ "$MODE" = "selftest" ]; then
   # before the update could precede a reject; one before the cap leaks a fleet on fleet_full).
   grep -q "f.main_ship_id = v_ship" "$MIGS1_TMP" \
     && fail "0216's assign still carries the old per-ship dock pair read — the berth is the ONE ship-side authority now" || true
+  # ⚠ HISTORY, NOT THE LIVE RULE (0306). This pins 0216's frozen FILE, where the co-location test was
+  # still hand-written. Since 0306 the DEPLOYED body reads public.fleet_docked_location instead, so
+  # this grep can never again tell you what the running guard does — the 0306 section above is what
+  # judges the live rule. Kept because 0216 is shipped history and its file can never change.
   grep -q "v_ship_berth = v_gf.current_location_id" "$MIGS1_TMP" \
-    || fail "0216's co-location guard does not read the assignee's BERTH"
+    || fail "0216's (historical) co-location guard does not read the assignee's BERTH — 0216 is frozen, so this can only fire if the file was edited"
   grep -qF "'reason', 'fleet_in_flight'" "$MIGS1_TMP" \
     || fail "0216's unassign lost its fleet_in_flight refusal (reason-form; the bare token is a substring of group_fleet_in_flight)"
   grep -qF "'reason', 'must_unassign_first'" "$MIGS1_TMP" \

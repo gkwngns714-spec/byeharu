@@ -5,6 +5,90 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-30 — A fleet with no ships is not a fleet (migration `0306`, **NOT DEPLOYED — PR open**)
+
+> **DEPLOY STATE.** Server-only slice, one migration, **no flag flip and no client change**. Built
+> and green locally; **not merged, so not live.** The owner's game stays bricked until this is
+> merged — the deploy pipeline applies `0306` and its backfill is what unbricks it.
+
+**The owner's report:** *"my fleet has no ship, so it has nothing, yet i can't assign ship to fleet
+since the fleet is not docked. too many spaghettis. please when doing something think of all
+connections."*
+
+**THE DEADLOCK.** `assign_ship_to_group` judges a group by its **fleet** and never by its
+**membership** (`0216:306-320` asks only about the row `ship_group_resolve_fleet` returns). The two
+stop agreeing because the **unassign arm berths the departing ship without retiring the group's
+fleet** — `delete_ship_group` has always consumed it (`0216:595-609`), unassign never did, and no
+reaper collects one either (`0047:174-194` only deletes fleets *already* completed/destroyed). So
+emptying a fleet leaves a member-less group owning a live fleet pinned at a port, permanently. From
+there **every exit is independently closed**:
+
+| escape | site | answer |
+|---|---|---|
+| assign a ship | `0216:315-320` | `group_fleet_elsewhere` (the ship is berthed at another port) |
+| move the fleet to the ship | `0301:1582-1584` | `empty_group` |
+| dock it | `0219:147-149` | `timed_docking_disabled` — the verb is dark (`0300:74`) |
+| delete the group | `0216:595-609` | needs the fleet **docked**; idle/moving → `fleet_in_flight` |
+
+…and a berthed ship has no mover of its own under the unified model, so it cannot come to the ghost
+either. The fleet is bricked and so is the group slot.
+
+**THE SPAGHETTI, named.** *"Is this fleet docked"* — `status='present' AND location_mode='location'
+AND current_location_id IS NOT NULL` — was hand-copied **eleven times with no authority**, three of
+them inside `assign_ship_to_group` alone. Same shape `0305` retired for sorties; never done for
+docking.
+
+**THE FIX.**
+- **`public.fleet_docked_location(fleets) → uuid`** — the one docked authority. **IMMUTABLE, pure
+  over a row already in hand**, deliberately *not* re-querying: a re-querying authority would have
+  re-introduced the two-snapshot phantom read `0216:273-277` exists to prevent.
+- **`public.group_fleet_retire(player, fleet)`** — the one retire idiom, lifted out of
+  `delete_ship_group`, which was its only instance.
+- **`public.group_retire_empty_fleet(player, group)`** — the collector. Retires a group's settled
+  fleet **only** when the group has no members and no fight is open, **composing with `0305`'s
+  `group_sortie_is_open`** rather than inventing a second opinion about whether a group is busy.
+- **Both arms wired:** unassign retires on the last ship out (the symmetry it never had), and assign
+  self-heals a ghost before judging — so a group bricked by *any* detach path (including
+  `mainship_emergency_tow` `0297:334-338`, which writes `group_id` with no guard at all) recovers.
+- **Five docked-test copies folded** onto the authority, across `assign_ship_to_group` and
+  `delete_ship_group`, by **slicing the deployed text** (`scripts/gen-0306-dock-authority.mjs`,
+  `--check` mode) — nothing retyped, per the `0303` lesson. The migration proves each slice occurs
+  **exactly once** in `pg_get_functiondef` and that the length moved by exactly the hunk delta.
+- **Backfill** retires every already-orphaned fleet. **This is what unbricks the owner's game.**
+
+**Blast radius on a live ~30-player world:** the backfill writes only to fleets that hold **no
+ships**, and only to `idle`/`present` ones — never to a fleet in flight (it keeps its movement row
+and settles by itself, then gets collected on the next pass). Nothing is deleted; fleets are
+`completed`, the same terminal state `delete_ship_group` has always written. `group_sortie_members`
+is not touched.
+
+**Proof.** New runtime block **`FLEETGO_PASS_EMPTY_FLEET`** in `scripts/fleetgo-proof.sql` stages the
+owner's exact action: a crewed fleet is never collected → the last ship out retires the fleet
+(presence closed, no ghost) → **assigning into a member-less group whose fleet sits at another port
+now succeeds and mints at the assignee's port** → a *crewed* foreign fleet still refuses (the rule
+moved, it was not deleted) → world-wide, no member-less group owns a settled fleet.
+**Placed in `fleetgo-proof.sql`, not `team-command-proof.sql`, deliberately** — the latter aborts at
+the pre-existing `SHIELD1` failure (`team-command-proof.sql:3359`) so a block added there would
+never execute and would look green while proving nothing.
+
+**Nine self-asserts**, one `DO` block per check (the `0305` lesson: the Supabase CLI prints neither
+the raise message nor notices, so the statement number must *be* the diagnosis), every body probe
+**stripping comments first** — probe code, never prose. Assert (g) re-pins `0305`'s invariant:
+assign still calls `group_sortie_is_open` exactly twice and never reads `group_sortie_members`.
+
+**A stale guard repointed.** `fleetgo-proof.sh` pinned the co-location rule by grepping the frozen
+`0216` **file** — after this slice the deployed body says something else, so that grep would have
+stayed **green while asserting a rule the running code no longer has** (the failure class this suite
+already recorded once). It is now labelled as history and the live rule is judged on `0306`.
+
+**NON-GOALS, named rather than silently skipped.** Six copies of the docked test remain, all
+read-side projections in other functions: `0210:178-186`, `0210:299-303`, `0231:1069-1073`,
+`0231:1486-1501` (`move_ship_group_to_location`, whose predicate carries two extra conjuncts), and
+`0297:126-131`. They now have an authority to fold onto; doing it here would have put the map
+projection and the movement oracle inside a roster-bug slice.
+
+---
+
 ## 2026-07-29 — Map: click a danger zone to see what it is (`#334`, **DEPLOYED**)
 
 > **DEPLOY STATE.** Client-only slice — no migration. `main` `a9bf70e`; "Deploy to GitHub Pages"
