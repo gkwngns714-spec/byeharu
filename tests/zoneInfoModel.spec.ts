@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
-import { buildZoneInfo } from '../src/features/map/zoneInfoModel'
+import { buildZoneInfo, zoneAtPoint } from '../src/features/map/zoneInfoModel'
 import { dangerZoneLayer } from '../src/features/map/dangerZoneLayer'
+import { MAP_PASSTHROUGH_ATTR, isMapBackground } from '../src/features/map/mapBackground'
 import type { DangerZoneLite } from '../src/features/map/pirateApi'
 import type { MapLocation } from '../src/features/map/mapTypes'
 
@@ -95,6 +96,41 @@ test('NO authoring jargon reaches the player — source, provenance, revision an
   }
 })
 
+// ── which zone is under the double-tapped point (gates "What's here" on the hub menu) ────────────
+
+test('a point INSIDE the ring resolves to that zone; a point outside resolves to nothing', () => {
+  expect(zoneAtPoint({ x: 50, y: 50 }, [zone()])?.id).toBe('z-1')
+  expect(zoneAtPoint({ x: 500, y: 500 }, [zone()])).toBeNull()
+})
+
+test('no point (nothing double-tapped) and no zones both resolve to nothing', () => {
+  expect(zoneAtPoint(null, [zone()])).toBeNull()
+  expect(zoneAtPoint({ x: 50, y: 50 }, [])).toBeNull()
+})
+
+test('a degenerate or absent ring contains nothing — fails closed rather than claiming the point', () => {
+  expect(zoneAtPoint({ x: 50, y: 50 }, [zone({ ring: null })])).toBeNull()
+  expect(zoneAtPoint({ x: 50, y: 50 }, [zone({ ring: [] })])).toBeNull()
+  expect(zoneAtPoint({ x: 50, y: 50 }, [zone({ ring: [[0, 0], [1, 1]] })])).toBeNull()
+})
+
+test('a non-finite point never lands in a zone', () => {
+  expect(zoneAtPoint({ x: Number.NaN, y: 50 }, [zone()])).toBeNull()
+  expect(zoneAtPoint({ x: 50, y: Number.POSITIVE_INFINITY }, [zone()])).toBeNull()
+})
+
+test('with overlapping zones the FIRST in list order wins — the one the layer paints on top', () => {
+  const under = zone({ id: 'z-under', name: 'Under' })
+  const over = zone({ id: 'z-over', name: 'Over' })
+  expect(zoneAtPoint({ x: 50, y: 50 }, [over, under])?.id).toBe('z-over')
+  expect(zoneAtPoint({ x: 50, y: 50 }, [under, over])?.id).toBe('z-under')
+})
+
+test('a point inside one zone but outside another picks the one that actually contains it', () => {
+  const far = zone({ id: 'z-far', ring: [[900, 900], [1000, 900], [1000, 1000], [900, 1000], [900, 900]] })
+  expect(zoneAtPoint({ x: 50, y: 50 }, [far, zone()])?.id).toBe('z-1')
+})
+
 // ── the tap target ───────────────────────────────────────────────────────────────────────────────
 
 const norm = (p: { x: number; y: number }) => p
@@ -106,24 +142,49 @@ test('WITHOUT a handler the layer is scenery — nothing is hit-testable (today,
   expect(fill.onClick).toBeUndefined()
   expect(fill.style).toBeUndefined()
   expect(fill['data-testid']).toBeUndefined()
+  expect(fill['data-map-passthrough']).toBeUndefined()
 })
 
-test('WITH a handler the FILL becomes a pointer target and reports the whole zone', () => {
-  let got: DangerZoneLite | null = null
-  const els = dangerZoneLayer({ zones: [zone()], norm, k: 1, onSelect: (z) => (got = z) })
+test('WITH a hover handler the FILL becomes a pointer target — for HOVER only', () => {
+  const els = dangerZoneLayer({ zones: [zone()], norm, k: 1, onHoverChange: () => {} })
   const fill = (els[0].props as { children: { props: Record<string, unknown> }[] }).children[0].props
-  expect((fill.style as { pointerEvents: string; cursor: string }).pointerEvents).toBe('auto')
-  expect((fill.style as { cursor: string }).cursor).toBe('pointer')
-  ;(fill.onClick as () => void)()
-  expect(got).not.toBeNull()
-  expect((got as unknown as DangerZoneLite).id).toBe('z-1')
+  expect((fill.style as { pointerEvents: string }).pointerEvents).toBe('auto')
+  expect(fill.onPointerEnter).toBeDefined()
 })
 
-test('the OUTLINE never hit-tests, so a boundary click cannot be stolen from a marker under it', () => {
-  const els = dangerZoneLayer({ zones: [zone()], norm, k: 1, onSelect: () => {} })
+// ── THE REGRESSION THIS SLICE EXISTS FOR ─────────────────────────────────────────────────────────
+// Owner, 2026-07-30: "i can't send a fleet to zone since it is pressed and info is shown". A zone that
+// owns a click owns the whole area of the blob, and GalaxyMap decides "is this a map gesture?" by
+// asking whether the pointer landed on the background. Both halves are pinned here.
+
+test('the zone owns NO click — a click cannot compete with the map double-tap (click fires after pointerup)', () => {
+  const kids = (
+    dangerZoneLayer({ zones: [zone()], norm, k: 1, onHoverChange: () => {} })[0].props as {
+      children: { props: Record<string, unknown> }[]
+    }
+  ).children
+  expect(kids[0].props.onClick).toBeUndefined()
+  expect(kids[1].props.onClick).toBeUndefined()
+  // No hand cursor either: it would promise a tap that does nothing.
+  expect((kids[0].props.style as { cursor?: string }).cursor).toBeUndefined()
+})
+
+test('the hit-testing fill DECLARES ITSELF PASSTHROUGH, so map gestures survive inside a zone', () => {
+  // Without this the double-tap hub summon AND the pirate waypoint tap are dead across the whole zone,
+  // because GalaxyMap's gate resolves the pointer target through isMapBackground.
+  const fill = (
+    dangerZoneLayer({ zones: [zone()], norm, k: 1, onHoverChange: () => {} })[0].props as {
+      children: { props: Record<string, unknown> }[]
+    }
+  ).children[0].props
+  expect(fill[MAP_PASSTHROUGH_ATTR]).toBe('true')
+  expect(isMapBackground({ getAttribute: (k: string) => (fill as Record<string, string>)[k] ?? null } as unknown as EventTarget, {} as SVGSVGElement)).toBe(true)
+})
+
+test('the OUTLINE never hit-tests, so a boundary hover cannot be stolen from a marker under it', () => {
+  const els = dangerZoneLayer({ zones: [zone()], norm, k: 1, onHoverChange: () => {} })
   const kids = (els[0].props as { children: { props: Record<string, unknown> }[] }).children
   expect(kids[1].props.style).toBeUndefined()
-  expect(kids[1].props.onClick).toBeUndefined()
   // ...and the group itself stays inert so only the fill opts in.
   expect((els[0].props as { style: { pointerEvents: string } }).style.pointerEvents).toBe('none')
 })
@@ -132,7 +193,7 @@ test('the hit path is NOT focusable — a focused SVG path gets a filled browser
   // Caught in the local build: role/tabIndex made the clicked zone render white with a black halo.
   // LocationMarker (:64-68), the map's existing clickable, carries neither. Guards the regression.
   const fill = (
-    dangerZoneLayer({ zones: [zone()], norm, k: 1, onSelect: () => {} })[0].props as {
+    dangerZoneLayer({ zones: [zone()], norm, k: 1, onHoverChange: () => {} })[0].props as {
       children: { props: Record<string, unknown> }[]
     }
   ).children[0].props
@@ -142,7 +203,7 @@ test('the hit path is NOT focusable — a focused SVG path gets a filled browser
 
 test('an interactive zone carries an SVG <title> — the accessible name, and a hover tooltip', () => {
   const kids = (
-    dangerZoneLayer({ zones: [zone()], norm, k: 1, onSelect: () => {} })[0].props as {
+    dangerZoneLayer({ zones: [zone()], norm, k: 1, onHoverChange: () => {} })[0].props as {
       children: (null | { type: string; props: { children: string } })[]
     }
   ).children
@@ -162,7 +223,7 @@ test('hover and selection READ on the map: fill and outline both strengthen, sel
     const kids = (dangerZoneLayer(args)[0].props as { children: { props: Record<string, number> }[] }).children
     return { fill: kids[0].props.opacity, stroke: kids[1].props.strokeOpacity, width: kids[1].props.strokeWidth }
   }
-  const base = { zones: [zone()], norm, k: 1, onSelect: () => {} }
+  const base = { zones: [zone()], norm, k: 1, onHoverChange: () => {} }
   const idle = read(base)
   const hovered = read({ ...base, hoveredId: 'z-1' })
   const selected = read({ ...base, selectedId: 'z-1' })
@@ -185,7 +246,7 @@ test('hover/selection ids are IGNORED while the layer is scenery (no handler →
 
 test('hovering reports the id in, and null out, so the caller can drive the highlight', () => {
   const seen: (string | null)[] = []
-  const els = dangerZoneLayer({ zones: [zone()], norm, k: 1, onSelect: () => {}, onHoverChange: (id) => seen.push(id) })
+  const els = dangerZoneLayer({ zones: [zone()], norm, k: 1, onHoverChange: (id) => seen.push(id) })
   const fill = (els[0].props as { children: { props: Record<string, unknown> }[] }).children[0].props
   ;(fill.onPointerEnter as () => void)()
   ;(fill.onPointerLeave as () => void)()
@@ -193,6 +254,6 @@ test('hovering reports the id in, and null out, so the caller can drive the high
 })
 
 test('a ring with fewer than 3 points draws nothing at all (no invisible tap target)', () => {
-  expect(dangerZoneLayer({ zones: [zone({ ring: null })], norm, k: 1, onSelect: () => {} })).toEqual([])
-  expect(dangerZoneLayer({ zones: [zone({ ring: [[0, 0], [1, 1]] })], norm, k: 1, onSelect: () => {} })).toEqual([])
+  expect(dangerZoneLayer({ zones: [zone({ ring: null })], norm, k: 1, onHoverChange: () => {} })).toEqual([])
+  expect(dangerZoneLayer({ zones: [zone({ ring: [[0, 0], [1, 1]] })], norm, k: 1, onHoverChange: () => {} })).toEqual([])
 })

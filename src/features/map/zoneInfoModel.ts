@@ -19,6 +19,7 @@
 import type { DangerZoneLite } from './pirateApi'
 import type { MapLocation } from './mapTypes'
 import { polygonArea } from '../worldeditor/zoneGeometryMath'
+import { pointInRing } from './routeGeometry'
 
 export interface ZoneInfoRow {
   label: string
@@ -89,4 +90,32 @@ export function buildZoneInfo(
     warning: WARNING,
     rows,
   }
+}
+
+/**
+ * WHICH ZONE (if any) CONTAINS a world point — the decision behind offering "What's here" on the
+ * command hub's icon menu after a double-tap.
+ *
+ * This is the whole gesture for zone info now. The blob used to own a click, which took the map's
+ * double-tap across the entire zone and made a point inside a zone unreachable as a fleet destination
+ * (owner, 2026-07-30: "i can't send a fleet to zone since it is pressed and info is shown"). Asking
+ * "what is under the point the player double-tapped" composes onto the hub the map already has,
+ * instead of a second gesture competing with it.
+ *
+ * Containment is `routeGeometry.pointInRing` — the map's EXISTING ray-cast, already the client-side
+ * mirror of the server's PostGIS zone test used for the route-crossing warning. Deliberately not a
+ * second formula: the zone a player is told they are standing in is the same zone the route planner
+ * flashes red. Zones overlap rarely; the first containing zone in list order wins, which is the same
+ * order the layer paints them in, so the answer matches what the player sees on top.
+ *
+ * Fails closed: a non-finite point or a degenerate ring contains nothing.
+ */
+export function zoneAtPoint(
+  point: { x: number; y: number } | null,
+  zones: readonly DangerZoneLite[],
+): DangerZoneLite | null {
+  if (!point) return null
+  return (
+    zones.find((z) => z.ring && z.ring.length >= 3 && pointInRing(point, z.ring.map(([x, y]) => ({ x, y })))) ?? null
+  )
 }

@@ -9,17 +9,32 @@
 //
 // ── ZONE INFO (owner, 2026-07-29: "i want to be able to click it, and see the info") ──────────────
 // A zone used to be scenery and nothing else: `pointerEvents:'none'` throughout, so it could not be
-// hovered or clicked and the client had no way to name one. It is now a TAP TARGET when — and only
-// when — a caller passes `onSelect`. Without that prop the layer is byte-identical to the scenery it
-// was, so every existing caller and test keeps today's behaviour.
+// hovered and the client had no way to name one. It now HOVERS — pointing at a blob brightens it and
+// names it — when, and only when, a caller passes `onHoverChange`/`hoveredId`.
 //
-// ONLY THE FILL IS HIT-TESTABLE, and the outline stays inert: the fill is the shape a player points
-// at, and leaving the stroke out of hit-testing avoids a 1.5px ring stealing clicks aimed at a
-// marker sitting on the boundary.
+// ── THE ZONE DOES NOT OWN A CLICK (owner, 2026-07-30: "i can't send a fleet to zone since it is
+//    pressed and info is shown") ────────────────────────────────────────────────────────────────────
+// The first cut gave the fill its own `onClick` that opened the info panel. Two things followed, and
+// both were wrong:
 //
-// WHY CLICK AND NOT DOUBLE-CLICK: double-tap on the map is already taken — it summons the command
-// hub — and that gesture must keep working INSIDE a zone, which covers a large part of the map. A
-// single click is the free gesture, so the zone takes it and lets everything else bubble.
+//   1. Hit-testing the fill broke the map's unwritten "every layer is pointerEvents:'none'" invariant,
+//      which GalaxyMap's gesture handler depended on via an `e.target !== svg` identity test. The
+//      double-tap hub summon and the pirate waypoint tap both went dead over the whole area of every
+//      zone — no fleet could be sent to a point inside a zone at all. Fixed by declaring passthrough
+//      (below) so the ONE background authority accepts the gesture; see `mapBackground.ts`.
+//   2. A raw `onClick` cannot coexist with the double-tap even once the gate is fixed, because `click`
+//      fires AFTER `pointerup`: the second tap of a double would open the hub menu and then the click
+//      would immediately replace it with the zone panel. The conflict is structural, not a race to be
+//      tuned — so the click is GONE and the gesture stays with the one authority that already owns it.
+//
+// Zone info is now reached the same way every other map action is: double-tap → the command hub's
+// icon cluster offers "What's here" when the tapped point is inside a zone (MapScreen). ONE gesture,
+// ONE hub, and the hover name still identifies a zone with no tap at all.
+//
+// ONLY THE FILL IS HIT-TESTABLE (for hover), and the outline stays inert: the fill is the shape a
+// player points at, and leaving the stroke out avoids a 1.5px ring hovering when the pointer is
+// really aimed at a marker sitting on the boundary.
+import { MAP_PASSTHROUGH_ATTR } from './mapBackground'
 import { createElement, type ReactElement } from 'react'
 import type { DangerZoneLite } from './pirateApi'
 import { smoothClosedPathD } from './smoothPolygon'
@@ -33,15 +48,14 @@ export function dangerZoneLayer(args: {
   zones: readonly DangerZoneLite[]
   norm: (p: { x: number; y: number }) => { x: number; y: number }
   k: number
-  /** Present = the layer is interactive. Absent = scenery, exactly as before. */
-  onSelect?: (zone: DangerZoneLite) => void
+  /** Present = the layer hovers (and names itself). Absent = scenery, exactly as before. */
+  onHoverChange?: (id: string | null) => void
   /** Id under the pointer, from the caller's hover state (the caller owns React state). */
   hoveredId?: string | null
   /** Id currently open in the info panel. */
   selectedId?: string | null
-  onHoverChange?: (id: string | null) => void
 }): ReactElement[] {
-  const interactive = typeof args.onSelect === 'function'
+  const interactive = typeof args.onHoverChange === 'function'
   const out: ReactElement[] = []
   for (const z of args.zones) {
     if (!z.ring || z.ring.length < 3) continue
@@ -69,17 +83,24 @@ export function dangerZoneLayer(args: {
           ...(interactive
             ? {
                 'data-testid': `danger-zone-hit-${z.id}`,
+                // TRANSPARENT TO MAP GESTURES. The fill hit-tests so it can hover, which makes it the
+                // pointer target for everything inside the blob — so it MUST hand the map's own
+                // gestures back, or the double-tap summon and the pirate waypoint tap die across the
+                // zone. This marker is how it does that; `mapBackground.isMapBackground` is the only
+                // reader. Not `pointerEvents:'none'` — that would lose the hover with it.
+                [MAP_PASSTHROUGH_ATTR]: 'true',
                 // NO role/tabIndex. LocationMarker (:64-68) — the map's existing clickable — is a
                 // plain onClick + cursor:pointer, and matching it is not just consistency: a
                 // focusable SVG path takes browser FOCUS on click and Chrome paints a filled focus
                 // ring over the whole blob (seen in the local build: the zone went white with a
                 // black halo). tabIndex -1 is not keyboard-reachable anyway, so it bought nothing.
-                style: { pointerEvents: 'auto' as const, cursor: 'pointer' },
+                //
+                // NO `cursor:pointer` either: the zone is not clickable any more, and a hand cursor
+                // over a third of the map would promise a tap that does nothing. The map keeps its
+                // own grab cursor, which is the truth — you can pan and double-tap here.
+                style: { pointerEvents: 'auto' as const },
                 onPointerEnter: () => args.onHoverChange?.(z.id),
                 onPointerLeave: () => args.onHoverChange?.(null),
-                // Do NOT stopPropagation: a click that lands on a zone should still reach the map's
-                // own handlers, and the double-tap summon must survive inside a zone.
-                onClick: () => args.onSelect?.(z),
               }
             : {}),
         }),

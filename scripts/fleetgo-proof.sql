@@ -3471,6 +3471,159 @@ begin
   raise notice 'BERTH_BACKFILL: world-wide after every mutation — ungrouped ⇒ berthed at a real port; grouped ⇒ berthless (the invariant the migration-time backfill establishes)';
 end $$;
 
+-- ════════ BLOCK EMPTY_FLEET (0306): A FLEET WITH NO SHIPS IS NOT A FLEET ═════════════════════════
+-- THE OWNER'S BUG, staged end to end: "my fleet has no ship, so it has nothing, yet i can't assign
+-- ship to fleet since the fleet is not docked."
+--
+-- The assign guard judges a group by its FLEET and never by its MEMBERSHIP. Unassign used to berth
+-- the departing ship WITHOUT retiring the group's fleet (delete_ship_group always did), so emptying
+-- a fleet left a member-less group owning a live fleet pinned at a port — and that ghost then
+-- refused every attempt to put a ship back, while go said empty_group, dock was dark and delete
+-- refused anything not docked. A closed loop.
+--
+-- FAIL MODES this block is built to catch: drop the unassign-arm collector → phase (2)'s
+-- fleet-is-gone assert goes red; drop the assign-arm collector → phase (3), the legacy-ghost arm,
+-- goes red with the very reason the owner saw (group_fleet_elsewhere); make the collector fire on a
+-- group that still has members → phase (1) goes red (it would retire a live player's fleet out from
+-- under them); lose the folded docked authority → phase (4) stops refusing a genuinely foreign
+-- port, i.e. the rule was deleted rather than moved.
+do $$
+declare r jsonb; n int; v_flag jsonb;
+  uK uuid; k1 uuid; k2 uuid; gK uuid; gGhost uuid; v_fleet uuid; v_ghost uuid;
+  haven uuid := (select v from fg where k='haven');
+  drift uuid := (select v from fg where k='drift');
+  v_zone uuid; v_sector uuid; v_base uuid;
+begin
+  select value into v_flag from public.game_config where key='fleet_movement_unified_enabled';
+  update public.game_config set value='true'::jsonb where key='fleet_movement_unified_enabled';
+
+  -- ── fixture: a fresh user with two ships, born berthed at Haven ──────────────────────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'fg.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uK;
+  insert into public.player_wallet (player_id, balance) values (uK, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uK, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL: commission k1: %', r; end if;
+  r := pg_temp.call_as(uK, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL: commission k2: %', r; end if;
+  -- the FIRST commission does not return a ship id (it answers ok/created only — 0211:49-58), so
+  -- both ids come from the table, the FLEETCTRL fixture idiom.
+  select k.a[1], k.a[2] into k1, k2
+    from (select array_agg(main_ship_id order by created_at) as a
+            from public.main_ship_instances where player_id = uK) k;
+  if k1 is null or k2 is null then
+    raise exception 'EMPTY_FLEET FAIL: fixture did not produce two ships (k1=%, k2=%)', k1, k2; end if;
+  -- the commission mints a per-ship 'present' fleet; normalise to the post-4c BERTHED shape so the
+  -- group fleet below is the only live fleet these ships have (the ASSIGN_CLEARS_BERTH vacuity).
+  update public.location_presence set status='completed', updated_at=now()
+   where fleet_id in (select id from public.fleets where player_id=uK and main_ship_id is not null)
+     and status='active';
+  update public.fleets set status='completed', location_mode='movement', active_movement_id=null,
+      current_base_id=null, current_location_id=null, current_zone_id=null, current_sector_id=null, updated_at=now()
+   where player_id=uK and main_ship_id is not null;
+  update public.main_ship_instances set berth_location_id = haven, updated_at=now()
+   where player_id=uK and group_id is null and berth_location_id is null;
+  select count(*) into n from public.main_ship_instances
+   where player_id=uK and group_id is null and berth_location_id = haven;
+  if n <> 2 then raise exception 'EMPTY_FLEET FAIL: fixture is not two Haven-berthed ungrouped ships (got %) — every phase below would be vacuous', n; end if;
+
+  r := pg_temp.call_as(uK, 'public.upsert_ship_group(1, ''Emptymen'')');
+  if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL: group: %', r; end if;
+  gK := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uK, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', k1, gK));
+  if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL: assign k1: %', r; end if;
+  r := pg_temp.call_as(uK, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', k2, gK));
+  if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL: assign k2: %', r; end if;
+  select id into v_fleet from public.fleets
+   where group_id=gK and player_id=uK and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if v_fleet is null then raise exception 'EMPTY_FLEET FAIL: the group has no minted fleet — the whole block would be vacuous'; end if;
+
+  -- ── (1) A GROUP THAT STILL HAS MEMBERS KEEPS ITS FLEET. The collector must be a no-op here. ──
+  r := pg_temp.call_as(uK, format('public.assign_ship_to_group(%L::uuid, null)', k2));
+  if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL (1): unassign k2 rejected: %', r; end if;
+  select count(*) into n from public.fleets
+   where id=v_fleet and status in ('idle','moving','present','returning');
+  if n <> 1 then raise exception 'EMPTY_FLEET FAIL (1): the fleet was retired while k1 is STILL ABOARD — the collector fired on a crewed fleet'; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id=k2 and group_id is null and berth_location_id = haven;
+  if n <> 1 then raise exception 'EMPTY_FLEET FAIL (1): k2 did not berth at the fleet''s port'; end if;
+
+  -- ── (2) THE LAST SHIP OUT RETIRES THE FLEET (the symmetry delete_ship_group always had). ──
+  r := pg_temp.call_as(uK, format('public.assign_ship_to_group(%L::uuid, null)', k1));
+  if (r->>'ok')::boolean is not true then raise exception 'EMPTY_FLEET FAIL (2): unassign k1 rejected: %', r; end if;
+  select count(*) into n from public.fleets
+   where group_id=gK and player_id=uK and main_ship_id is null
+     and status in ('idle','moving','present','returning');
+  if n <> 0 then raise exception 'EMPTY_FLEET FAIL (2): the emptied group STILL owns % live fleet(s) — this is the ghost that bricks the group', n; end if;
+  if (select status from public.fleets where id=v_fleet) is distinct from 'completed' then
+    raise exception 'EMPTY_FLEET FAIL (2): the emptied fleet is not completed'; end if;
+  select count(*) into n from public.location_presence where fleet_id=v_fleet and status='active';
+  if n <> 0 then raise exception 'EMPTY_FLEET FAIL (2): the retired fleet still holds an active presence'; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id=k1 and group_id is null and berth_location_id = haven;
+  if n <> 1 then raise exception 'EMPTY_FLEET FAIL (2): k1 did not berth at the port the fleet was at'; end if;
+
+  -- ── (3) THE OWNER'S EXACT ACTION, on a LEGACY ghost: a member-less group holding a live fleet at
+  --        a port the ship is NOT berthed at. Before 0306 this answered group_fleet_elsewhere with
+  --        no way out. The assign-arm collector must clear it and the mint must fire. ──
+  r := pg_temp.call_as(uK, 'public.upsert_ship_group(2, ''Ghostmen'')');
+  gGhost := (r->>'group_id')::uuid;
+  select l.zone_id, z.sector_id into v_zone, v_sector
+    from public.locations l join public.zones z on z.id = l.zone_id where l.id = drift;
+  select b.id into v_base from public.bases b where b.player_id=uK and b.status='active' order by b.created_at limit 1;
+  insert into public.fleets (player_id, origin_base_id, status, location_mode, current_base_id,
+                             current_location_id, current_zone_id, current_sector_id, group_id)
+    values (uK, v_base, 'present', 'location', null, drift, v_zone, v_sector, gGhost)
+    returning id into v_ghost;
+  perform public.presence_create(uK, v_ghost, v_sector, v_zone, drift, 'none');
+  -- vacuity: the ghost is live, at drift, and the assignee is berthed at haven — the co-location
+  -- test genuinely fails, so this phase cannot pass by accident.
+  if public.fleet_docked_location((select f from public.fleets f where f.id=v_ghost)) is distinct from drift then
+    raise exception 'EMPTY_FLEET FAIL (3): the staged ghost is not docked at drift — the phase would be vacuous'; end if;
+  if (select berth_location_id from public.main_ship_instances where main_ship_id=k1) is distinct from haven then
+    raise exception 'EMPTY_FLEET FAIL (3): k1 is not berthed at haven — the ports would not differ'; end if;
+  r := pg_temp.call_as(uK, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', k1, gGhost));
+  if (r->>'reason') is not distinct from 'group_fleet_elsewhere' then
+    raise exception 'EMPTY_FLEET FAIL (3): THE OWNER''S DEADLOCK IS STILL LIVE — assigning into an empty group answered group_fleet_elsewhere'; end if;
+  if (r->>'ok')::boolean is not true then
+    raise exception 'EMPTY_FLEET FAIL (3): assign into the empty ghost group was rejected: %', r; end if;
+  if (select status from public.fleets where id=v_ghost) is distinct from 'completed' then
+    raise exception 'EMPTY_FLEET FAIL (3): the ghost fleet was not collected'; end if;
+  select count(*) into n from public.location_presence where fleet_id=v_ghost and status='active';
+  if n <> 0 then raise exception 'EMPTY_FLEET FAIL (3): the collected ghost still holds an active presence'; end if;
+  -- the group is usable again: exactly ONE live fleet, minted at the ASSIGNEE'S port.
+  select count(*) into n from public.fleets
+   where group_id=gGhost and player_id=uK and main_ship_id is null
+     and status in ('idle','moving','present','returning') and current_location_id = haven;
+  if n <> 1 then raise exception 'EMPTY_FLEET FAIL (3): after the collect the group holds % live fleet(s) at the assignee''s port (want exactly 1)', n; end if;
+
+  -- ── (4) THE RULE MOVED, IT WAS NOT DELETED. A genuinely foreign, CREWED fleet still refuses. ──
+  update public.fleets set current_location_id = drift, current_zone_id = v_zone, current_sector_id = v_sector,
+      updated_at = now()
+   where group_id = gGhost and player_id = uK and main_ship_id is null and status = 'present';
+  select count(*) into n from public.main_ship_instances where group_id = gGhost and player_id = uK;
+  if n <> 1 then raise exception 'EMPTY_FLEET FAIL (4): the group is not crewed — the collector would fire and the phase would be vacuous'; end if;
+  r := pg_temp.call_as(uK, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', k2, gGhost));
+  if (r->>'reason') is distinct from 'group_fleet_elsewhere' then
+    raise exception 'EMPTY_FLEET FAIL (4): a ship berthed at haven joined a CREWED fleet docked at drift — the folded docked authority stopped refusing: %', r; end if;
+
+  -- ── (5) WORLD-WIDE INVARIANT, after everything this proof did: no member-less group owns a
+  --        settled fleet. This is what the 0306 backfill establishes on prod. ──
+  select count(*) into n from public.fleets f
+   where f.group_id is not null and f.main_ship_id is null
+     and f.status in ('idle','present')
+     and not exists (select 1 from public.main_ship_instances s
+                      where s.group_id = f.group_id and s.player_id = f.player_id)
+     and not public.group_sortie_is_open(f.player_id, f.group_id);
+  if n <> 0 then raise exception 'EMPTY_FLEET FAIL (5): % member-less group(s) still own a settled fleet world-wide', n; end if;
+
+  update public.game_config set value = v_flag where key='fleet_movement_unified_enabled';
+  raise notice 'FLEETGO_PASS_EMPTY_FLEET: a crewed fleet is never collected; the LAST ship out retires the fleet (presence closed, no ghost left); the owner''s deadlock — assigning into a member-less group whose ghost fleet sits at another port — now COLLECTS and mints at the assignee''s port; a crewed foreign fleet still refuses (the docked rule moved, not deleted); world-wide no member-less group owns a settled fleet';
+end $$;
+
 -- ════════ BLOCK TERRITORY_PASS_SEEDED (0217+0220+0227): the REBALANCED radius map landed ═════════
 -- 0220 retuned the seed (0217's 25/35/15 mutually engulfed the real map — min inter-location
 -- distance is 29.15) to trade_outpost → 10, pirate_hunt/pirate_den → 12, safe_zone/rally_point → 8;

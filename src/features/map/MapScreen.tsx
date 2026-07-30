@@ -20,7 +20,7 @@ import type { WorldCoord } from './openSpaceTransform'
 import { Badge, Button, OverlayPanel, OverlayRail, Skeleton, StatRow, type BadgeTone } from '../../components/ui'
 import { PirateInterceptPanel } from './PirateInterceptPanel'
 import { ZoneInfoPanel } from './ZoneInfoPanel'
-import { buildZoneInfo } from './zoneInfoModel'
+import { buildZoneInfo, zoneAtPoint } from './zoneInfoModel'
 import type { DangerZoneLite } from './pirateApi'
 
 // UI-REBUILD (2b, Map interior) — the Map destination: THE primary play surface. The galaxy canvas
@@ -105,6 +105,13 @@ export function MapScreen() {
   // the live read stays the one source, and a zone that is deleted or deactivated simply stops
   // resolving — the panel closes itself instead of describing something that no longer exists.
   const [zoneInfoId, setZoneInfoId] = useState<string | null>(null)
+  // ZONE FOLD — the zone (if any) whose ring CONTAINS the double-tapped point. Non-null → the icon
+  // menu offers "What's here". Exactly the shape the mining fold already uses (tapFieldInRange), and
+  // keyed on hubPoint for the same reason: the offer is decided by WHERE the player double-tapped.
+  //
+  // The containment decision lives in the pure model (zoneInfoModel.zoneAtPoint) with the rest of the
+  // zone-info wording, so it is unit-pinned and there is no second copy of the geometry here.
+  const tapZone: DangerZoneLite | null = zoneAtPoint(hubPoint, dangerZones)
   // The double-tap summon (GalaxyMap.onDoubleTapPoint): remember WHERE (world + screen px), drop any
   // marker/field selection, open the hub on its MENU stage. Deliberately does NOT set pointTarget — no
   // crosshair is placed until the player actually taps the Send icon (openFleetPanel below).
@@ -114,6 +121,9 @@ export function MapScreen() {
     setHubView('menu')
     setSelectedId(null)
     setSelectedFieldName(null)
+    // A fresh summon retires any open zone panel — otherwise a zone would stay highlighted on the map
+    // with the icon menu (not its panel) showing, i.e. a highlight with nothing explaining it.
+    setZoneInfoId(null)
     setHubOpen(true)
   }
   // Stage-2 openers. "Send fleet here" is the ONLY one that places the go-destination: it sets the SAME
@@ -124,16 +134,14 @@ export function MapScreen() {
   }
   const openPiratePanel = () => setHubView('pirate')
   const openMiningPanel = () => setHubView('mining')
-  // ZONE INFO — a single click on a zone blob opens the hub straight on its info stage. It goes
-  // through the SAME hub rather than adding a second overlay: one command-hub authority, one corner,
-  // one ✕. There is no icon-menu behind it (nothing was double-tapped), so hubScreen stays null and
-  // the header renders the ✕ alone — the same shape a port summon already uses.
-  const openZoneInfo = (zone: DangerZoneLite) => {
-    setZoneInfoId(zone.id)
-    setHubPoint(null)
-    setHubScreen(null)
+  // ZONE INFO — a stage-2 opener exactly like the other three, reached from the icon menu when the
+  // double-tapped point lies inside a zone (tapZone below). It is NOT its own gesture any more: the
+  // zone blob used to own a click, which stole the map's double-tap across the whole zone area and so
+  // made it impossible to send a fleet to a point inside a zone. One gesture, one hub. Full account in
+  // dangerZoneLayer's header.
+  const openZonePanel = () => {
+    if (tapZone) setZoneInfoId(tapZone.id)
     setHubView('zone')
-    setHubOpen(true)
   }
   // The ONE dismissal: ✕ closes the hub AND returns the map to plain navigation (clear the point/
   // crosshair and disarm any pirate tap mode + draft).
@@ -292,8 +300,10 @@ export function MapScreen() {
               selectedMiningFieldName={selectedFieldName}
               onSelectMiningField={handleSelectMiningField}
               dangerZones={dangerZones}
-              // ZONE INFO: passing a handler is what makes the blobs hoverable/clickable at all.
-              onSelectDangerZone={openZoneInfo}
+              // ZONE INFO: this switch makes the blobs hover + name themselves. They are NOT clickable —
+              // the info panel is reached from the command hub's "What's here", so the map's own
+              // double-tap and pirate taps keep working inside a zone.
+              zonesInteractive
               selectedDangerZoneId={zoneInfoId}
               combatUnits={combat.units}
               combatEvents={combat.events}
@@ -403,6 +413,27 @@ export function MapScreen() {
                       </svg>
                     </button>
                   )}
+                  {/* ZONE INFO — offered only when the double-tapped point is INSIDE a zone, the same
+                      way "Mine here" is offered only in range. This is the whole gesture for zone info:
+                      the blob itself is not clickable, because a click on it stole the map's double-tap
+                      and made a point inside a zone unreachable as a destination. */}
+                  {tapZone && (
+                    <button
+                      type="button"
+                      onClick={openZonePanel}
+                      data-testid="map-action-zone"
+                      aria-label="What's here"
+                      title="What's here"
+                      className="flex h-11 w-11 items-center justify-center rounded-full text-danger transition hover:bg-danger/15 active:bg-danger/25"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                        {/* info disc — "tell me about this place" */}
+                        <circle cx="12" cy="12" r="9" />
+                        <line x1="12" y1="11" x2="12" y2="16.5" />
+                        <circle cx="12" cy="7.75" r="1.1" fill="currentColor" stroke="none" />
+                      </svg>
+                    </button>
+                  )}
                   {pirateInterceptEnabled && (
                     <button
                       type="button"
@@ -423,7 +454,7 @@ export function MapScreen() {
                       </svg>
                     </button>
                   )}
-                  {!TEAM_COMMAND_ENABLED && !pirateInterceptEnabled && !tapFieldInRange && (
+                  {!TEAM_COMMAND_ENABLED && !pirateInterceptEnabled && !tapFieldInRange && !tapZone && (
                     <span className="px-2 text-xs text-ink-muted">Nothing to do here</span>
                   )}
                   {/* dismiss — return to a clean map */}
