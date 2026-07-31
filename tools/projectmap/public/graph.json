@@ -1,16 +1,16 @@
 {
  "generatedFrom": "repo scan (no production knowledge)",
  "counts": {
-  "migrations": 266,
-  "functions": 274,
-  "tables": 95,
-  "flags": 41,
+  "migrations": 300,
+  "functions": 302,
+  "tables": 100,
+  "flags": 48,
   "systems": 30,
   "phases": 28,
   "rungs": 9,
-  "jobs": 241,
-  "nodes": 743,
-  "edges": 2204
+  "jobs": 245,
+  "nodes": 817,
+  "edges": 2473
  },
  "boundariesParsed": true,
  "plansParsed": true,
@@ -3024,6 +3024,392 @@
    "seedsFlag": []
   },
   {
+   "id": "mig:20260618000273",
+   "kind": "migration",
+   "label": "0273 typed_zone_effect_foundation",
+   "stamp": "20260618000273",
+   "seq": "0273",
+   "addedAt": "2026-07-25T16:14:50+09:00",
+   "file": "supabase/migrations/20260618000273_typed_zone_effect_foundation.sql",
+   "detail": "Byeharu — TYPED-ZONE EFFECT FOUNDATION (migration 0273). Slice 1 of the typed-zone platform. ADDITIVE AND FULLY DARK. Two new flags, both seeded FALSE. NOTHING reads this table yet. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE MODEL THIS ESTABLISHES — IDENTITY + COMPOSABLE EFFECTS (owner's decision, 2026-07-25) Today a danger_zones polygon has",
+   "seedsFlag": [
+    "typed_zone_authoring_enabled",
+    "typed_zone_pirate_intercept_runtime_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000274",
+   "kind": "migration",
+   "label": "0274 typed_zone_effect_dispatch_v1",
+   "stamp": "20260618000274",
+   "seq": "0274",
+   "addedAt": "2026-07-25T16:47:10+09:00",
+   "file": "supabase/migrations/20260618000274_typed_zone_effect_dispatch_v1.sql",
+   "detail": "Byeharu — TYPED-ZONE EFFECT DISPATCH V1 (migration 0274). Slice 2 of the typed-zone platform. TWO PURE VERSIONED FUNCTIONS. NO new flag, NO table, NO runtime wiring, NOTHING calls these yet. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHY THIS LIVES IN POSTGRESQL AND NOT IN TYPESCRIPT Byeharu is server-authoritative. The live geometry and interce",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000275",
+   "kind": "migration",
+   "label": "0275 typed_zone_pirate_shadow_v1",
+   "stamp": "20260618000275",
+   "seq": "0275",
+   "addedAt": "2026-07-25T16:51:52+09:00",
+   "file": "supabase/migrations/20260618000275_typed_zone_pirate_shadow_v1.sql",
+   "detail": "Byeharu — TYPED-ZONE PIRATE SHADOW COMPARISON (migration 0275). Slice 3 of the typed-zone platform. READ-ONLY. No flag, no cutover, no write, no encounter. The live 0233 path stays the sole authority. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS SLICE IS FOR Slice 2 built a pure planner but proved it only against literal inputs. This sli",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000276",
+   "kind": "migration",
+   "label": "0276 typed_zone_pirate_cutover",
+   "stamp": "20260618000276",
+   "seq": "0276",
+   "addedAt": "2026-07-25T16:59:52+09:00",
+   "file": "supabase/migrations/20260618000276_typed_zone_pirate_cutover.sql",
+   "detail": "Byeharu — TYPED-ZONE PIRATE CUTOVER (migration 0276). Slice 4 of the typed-zone platform. LANDS DARK. typed_zone_pirate_intercept_runtime_enabled is still seeded FALSE, and while it is false this function behaves byte-for-byte as 0233 shipped it. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE ONLY FUNCTION THIS SLICE TOUCHES",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000277",
+   "kind": "migration",
+   "label": "0277 typed_zone_effect_authoring",
+   "stamp": "20260618000277",
+   "seq": "0277",
+   "addedAt": "2026-07-25T17:05:28+09:00",
+   "file": "supabase/migrations/20260618000277_typed_zone_effect_authoring.sql",
+   "detail": "Byeharu — TYPED-ZONE EFFECT AUTHORING (migration 0277). Slice 5a of the typed-zone platform. LANDS DARK behind typed_zone_authoring_enabled (seeded false in 0273). Two owner-gated commands. ═══════════════════════════════════════════════════════════════════════════════════════════════ SEPARATE INTENTS, NEVER ONE GIANT PAYLOAD A zone now has four independent concerns — geometry, identity (kind), be",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000278",
+   "kind": "migration",
+   "label": "0278 typed_zone_combat_effect",
+   "stamp": "20260618000278",
+   "seq": "0278",
+   "addedAt": "2026-07-25T17:21:39+09:00",
+   "file": "supabase/migrations/20260618000278_typed_zone_combat_effect.sql",
+   "detail": "Byeharu — TYPED-ZONE COMBAT EFFECT (migration 0278). Slice 6 of the typed-zone platform. ADDITIVE AND FULLY DARK. A second composable effect, and the DUAL-GATE rule that governs it. Nothing dispatches it yet, on purpose (see \"WHY NO DISPATCH\" below). ═══════════════════════════════════════════════════════════════════════════════════════════════ WHY COMBAT IS THE RIGHT FIRST NEW KIND",
+   "seedsFlag": [
+    "typed_zone_combat_runtime_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000279",
+   "kind": "migration",
+   "label": "0279 typed_zone_effect_dispatch_v2",
+   "stamp": "20260618000279",
+   "seq": "0279",
+   "addedAt": "2026-07-25T19:12:57+09:00",
+   "file": "supabase/migrations/20260618000279_typed_zone_effect_dispatch_v2.sql",
+   "detail": "Byeharu — TYPED-ZONE EFFECT DISPATCH V2 (migration 0279). Slice 6b of the typed-zone platform. A NEW versioned planner. V1 IS NOT TOUCHED. Nothing calls V2 yet. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHY A NEW VERSION RATHER THAN AN EDIT V1 registers exactly fleet_leg_traversal -> pirate_intercept and returns unsupported_effect_type",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000280",
+   "kind": "migration",
+   "label": "0280 typed_zone_mining_successors",
+   "stamp": "20260618000280",
+   "seq": "0280",
+   "addedAt": "2026-07-25T19:18:49+09:00",
+   "file": "supabase/migrations/20260618000280_typed_zone_mining_successors.sql",
+   "detail": "Byeharu — TYPED-ZONE MINING SUCCESSORS (migration 0280). Slice 7 of the typed-zone platform. DARK COEXISTENCE. The mining POINT rows stay authoritative; this adds INACTIVE successor zones beside them and changes no player outcome. One new flag, seeded false. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE TRAP THIS SLICE HAD TO AVOID, STATED FIRS",
+   "seedsFlag": [
+    "typed_zone_mining_runtime_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000281",
+   "kind": "migration",
+   "label": "0281 typed_zone_exploration_successors",
+   "stamp": "20260618000281",
+   "seq": "0281",
+   "addedAt": "2026-07-25T19:22:18+09:00",
+   "file": "supabase/migrations/20260618000281_typed_zone_exploration_successors.sql",
+   "detail": "Byeharu — TYPED-ZONE EXPLORATION SUCCESSORS (migration 0281). Slice 8 of the typed-zone platform. DARK COEXISTENCE, on its OWN gate. The exploration POINT rows stay authoritative. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHY THIS IS A SEPARATE SLICE AND A SEPARATE FLAG Exploration and mining both happen to use point tables today, and it would ",
+   "seedsFlag": [
+    "typed_zone_exploration_runtime_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000282",
+   "kind": "migration",
+   "label": "0282 danger_zone_provenance",
+   "stamp": "20260618000282",
+   "seq": "0282",
+   "addedAt": "2026-07-25T19:25:20+09:00",
+   "file": "supabase/migrations/20260618000282_danger_zone_provenance.sql",
+   "detail": "Byeharu — DANGER-ZONE PROVENANCE (migration 0282). Splits the two jobs `source` has been doing. ADDITIVE AND BEHAVIOUR-NEUTRAL. No guard changes here; no flag; no row's protection status moves. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE CONFLATION THIS FIXES `danger_zones.source` currently answers TWO unrelated questions at once:",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000283",
+   "kind": "migration",
+   "label": "0283 seeded_zone_unlock",
+   "stamp": "20260618000283",
+   "seq": "0283",
+   "addedAt": "2026-07-25T19:31:18+09:00",
+   "file": "supabase/migrations/20260618000283_seeded_zone_unlock.sql",
+   "detail": "Byeharu — SEEDED-ZONE UNLOCK (migration 0283). Re-points the three seeded-zone guards at the immutable `provenance` column and puts them behind TWO flags, both seeded FALSE. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHAT THIS FINALLY ANSWERS The owner asked to be able to edit the three seeded zones. The obvious version of that — let the",
+   "seedsFlag": [
+    "seeded_zone_edit_enabled",
+    "seeded_zone_lifecycle_enabled"
+   ]
+  },
+  {
+   "id": "mig:20260618000284",
+   "kind": "migration",
+   "label": "0284 seeded_zone_error_precedence",
+   "stamp": "20260618000284",
+   "seq": "0284",
+   "addedAt": "2026-07-25T19:36:52+09:00",
+   "file": "supabase/migrations/20260618000284_seeded_zone_error_precedence.sql",
+   "detail": "Byeharu — SEEDED-ZONE ERROR PRECEDENCE (migration 0284). Eligibility is now decided BEFORE the optimistic-concurrency compare. Behaviour changes for exactly one case: the error you get back. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE BUG, IN THE OWNER'S WORDS \"when i edit shape of zone, and try to publish, it says the live row changed since ",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000285",
+   "kind": "migration",
+   "label": "0285 zone_kind_change",
+   "stamp": "20260618000285",
+   "seq": "0285",
+   "addedAt": "2026-07-25T19:43:19+09:00",
+   "file": "supabase/migrations/20260618000285_zone_kind_change.sql",
+   "detail": "Byeharu — ZONE KIND CHANGE (migration 0285). The fourth and last authoring intent. LANDS DARK behind typed_zone_authoring_enabled (still false). One owner-gated command. ═══════════════════════════════════════════════════════════════════════════════════════════════ WHY THIS WAS HELD BACK UNTIL EVERY OTHER INTENT EXISTED Slice 5a shipped geometry and behaviour authoring and deliberately refused to ",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000286",
+   "kind": "migration",
+   "label": "zone_commands_select_provenance",
+   "stamp": "20260618000286",
+   "seq": null,
+   "addedAt": "2026-07-25T22:38:46+09:00",
+   "file": "supabase/migrations/20260618000286_zone_commands_select_provenance.sql",
+   "detail": "0286 — ZONE WRITE COMMANDS: select `provenance` into v_live (fix 42703 at the seeded guard). THE DEFECT (observed in production, not inferred). Publishing an EDIT of a live zone failed with: HTTP 400 · SQLSTATE 42703 · record \"v_live\" has no field \"provenance\"",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000287",
+   "kind": "migration",
+   "label": "zone_edit_revision_concurrency",
+   "stamp": "20260618000287",
+   "seq": null,
+   "addedAt": "2026-07-25T23:58:57+09:00",
+   "file": "supabase/migrations/20260618000287_zone_edit_revision_concurrency.sql",
+   "detail": "0287 — ZONE EDIT CONCURRENCY: compare danger_zones.revision, not a re-materialized boundary. THE DEFECT (reproduced on a disposable stack, not inferred). After 0286 fixed the 42703 crash, publishing an edit of a real zone returned: {ok:false, error:'stale_revision',",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000288",
+   "kind": "migration",
+   "label": "zone_effect_revision_concurrency",
+   "stamp": "20260618000288",
+   "seq": null,
+   "addedAt": "2026-07-26T22:13:44+09:00",
+   "file": "supabase/migrations/20260618000288_zone_effect_revision_concurrency.sql",
+   "detail": "0288 — ONE ZONE CONCURRENCY TOKEN: the effect commands gate on danger_zones.revision. WHY. 0287 made danger_zones.revision the sole optimistic-concurrency authority for zone_update, after the geometry compare was found to reject unchanged zones permanently (the ring reaches a client only through get_danger_zones, which emits float8 at 15 significant digits, so an ST_Equals compare against the stor",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000289",
+   "kind": "migration",
+   "label": "territory_radius_retune_third",
+   "stamp": "20260618000289",
+   "seq": null,
+   "addedAt": "2026-07-26T22:45:02+09:00",
+   "file": "supabase/migrations/20260618000289_territory_radius_retune_third.sql",
+   "detail": "0289 — TERRITORY RINGS ÷3: the rings dominate the map and the owner has called them too large. WHY THEY LOOK THIS BIG. 0220 tuned the radii to 10/12/8 and self-asserted \"every territory pair strictly disjoint; no ring reaches another location's center\". 0227 then rebalanced world geometry by scaling locations 3x AND territory_radius 3x (10/12/8 -> 30/36/24). Because both scaled by the same factor ",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000290",
+   "kind": "migration",
+   "label": "intercept_zero_manifest_guard",
+   "stamp": "20260618000290",
+   "seq": null,
+   "addedAt": "2026-07-26T22:57:55+09:00",
+   "file": "supabase/migrations/20260618000290_intercept_zero_manifest_guard.sql",
+   "detail": "0290 — ZERO-MANIFEST AMBUSH: an intercept that can field no ships must not open combat. THE DEFECT, observed in production. An encounter exists carrying THREE combat_units rows with main_ship_id NULL, unit_type_id NOT NULL, alive_count 0, no positions, no weapons — a fight with nothing in it. Nothing to draw on the map, nothing to shoot, player_power_start = 0.",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000291",
+   "kind": "migration",
+   "label": "sticky_spatial_mode_restore",
+   "stamp": "20260618000291",
+   "seq": null,
+   "addedAt": "2026-07-26T23:11:37+09:00",
+   "file": "supabase/migrations/20260618000291_sticky_spatial_mode_restore.sql",
+   "detail": "0291 — STICKY SPATIAL MODE, RESTORED: process_combat_ticks stops re-reading spatial_combat_enabled. THIS IS A REVERT OF AN ACCIDENTAL REVERT. Nothing here is a new idea; 0242 already shipped this fix and already proved it. Two later migrations undid it without noticing, and the guarantee 0242's self-assert prints is FALSE in production today.",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000292",
+   "kind": "migration",
+   "label": "retreat_to_chosen_destination",
+   "stamp": "20260618000292",
+   "seq": null,
+   "addedAt": "2026-07-26T23:34:00+09:00",
+   "file": "supabase/migrations/20260618000292_retreat_to_chosen_destination.sql",
+   "detail": "0292 — RETREAT TO A CHOSEN DESTINATION: a move order given mid-combat becomes a RETREAT. ── WHAT CHANGES (exactly two hunks, in two functions) ────────────────────────────────────────────── (1) command_ship_group_go — re-emitted BYTE-IDENTICAL to its TRUE head (20260618000233_pirate_intercept_danger_zones.sql:589-995) EXCEPT step 8 (head :751-762). The head counted the group's live sortie and refu",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000293",
+   "kind": "migration",
+   "label": "intercept_ambush_point_engagement_anchor",
+   "stamp": "20260618000293",
+   "seq": null,
+   "addedAt": "2026-07-26T23:38:10+09:00",
+   "file": "supabase/migrations/20260618000293_intercept_ambush_point_engagement_anchor.sql",
+   "detail": "0293 — THE INTERCEPT TELEPORT. A fleet sent toward a hostile area is TELEPORTED to the destination location's centre the instant the ambush fires. This migration makes the ambush stop the fleet WHERE IT WAS AMBUSHED, and separates encounter IDENTITY (which location owns the fight, its pirates, its rewards, its presence) from encounter POSITION (the point in space where the fight physically is). ══",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000294",
+   "kind": "migration",
+   "label": "combat_seeds_at_engagement_point",
+   "stamp": "20260618000294",
+   "seq": null,
+   "addedAt": "2026-07-27T01:02:00+09:00",
+   "file": "supabase/migrations/20260618000294_combat_seeds_at_engagement_point.sql",
+   "detail": "0294 — THE FIGHT MOVES TO WHERE THE FLEET IS. 0293 gave a combat encounter a POSITION of its own (combat_encounters.engagement_x/engagement_y) and parked the ambushed FLEET at that position — and then left the new columns UNREAD by everything that seeds the fight. This migration makes every remaining combat-coordinate decision derive from the engagement anchor instead of locations.x/y. ═══════════",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000295",
+   "kind": "migration",
+   "label": "bases_resync_to_port_anchors",
+   "stamp": "20260618000295",
+   "seq": null,
+   "addedAt": "2026-07-27T01:22:40+09:00",
+   "file": "supabase/migrations/20260618000295_bases_resync_to_port_anchors.sql",
+   "detail": "0295 — BASES RESYNC TO THEIR PORT ANCHOR: 0227 moved the world and left the bases behind, and the seeder that mints them was hardcoded to the origin in the first place. ══ THE DEFECT (0227's false premise — this part of the earlier diagnosis stands) ═══════════════════ 0227 (world_geometry_rebalance) scaled locations.x/y ×3 and territory_radius ×3, and relocated every active location anchor in loc",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000296",
+   "kind": "migration",
+   "label": "danger_zone_geometry_follows_radius",
+   "stamp": "20260618000296",
+   "seq": null,
+   "addedAt": "2026-07-27T01:26:15+09:00",
+   "file": "supabase/migrations/20260618000296_danger_zone_geometry_follows_radius.sql",
+   "detail": "0296 — DANGER-ZONE GEOMETRY FOLLOWS THE RADIUS: re-materialize the derived circle zones from the CURRENT territory_radius, and close the writer that let them drift in the first place. ═══════════════════════════════════════════════════════════════════════════════════════════════ THE DEFECT (two authorities that disagree about the SAME region)",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000297",
+   "kind": "migration",
+   "label": "repair_requires_a_port",
+   "stamp": "20260618000297",
+   "seq": null,
+   "addedAt": "2026-07-27T01:39:04+09:00",
+   "file": "supabase/migrations/20260618000297_repair_requires_a_port.sql",
+   "detail": "REPAIR REQUIRES A PORT (0297) — the owner's bug report, closed as ONE slice. THE COMPLAINT (verbatim): \"The fleet ships are able to repair even though they are not in a city.\" ── WHAT WAS TRUE BEFORE THIS FILE ──────────────────────────────────────────────────────────────── repair_main_ship (TRUE head 20260618000231:335-385) restored hp = max_hp, status = 'home', for",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000298",
+   "kind": "migration",
+   "label": "retreat_to_any_destination",
+   "stamp": "20260618000298",
+   "seq": null,
+   "addedAt": "2026-07-27T09:15:50+09:00",
+   "file": "supabase/migrations/20260618000298_retreat_to_any_destination.sql",
+   "detail": "0298 — RETREAT TO ANY DESTINATION. A move order given mid-combat becomes a retreat to WHEREVER THE PLAYER ORDERED — a port, or a bare point in open space. The port-only restriction 0292 shipped is REMOVED, not made optional. ── THE OWNER'S WORD, WHICH THIS FILE IMPLEMENTS ─────────────────────────────────────────────────── \"i don't want to retreat to a port. i want to retreat to anywhere i want.\"",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000299",
+   "kind": "migration",
+   "label": "combat_card_reports_true_power",
+   "stamp": "20260618000299",
+   "seq": null,
+   "addedAt": "2026-07-27T10:10:37+09:00",
+   "file": "supabase/migrations/20260618000299_combat_card_reports_true_power.sql",
+   "detail": "0299 -- THE COMBAT CARD REPORTS A TRUE POWER, AND EXPLAINS THE 3-SECOND PAUSE. Two defects, ONE slice, because they are the same card on the same render and fixing one alone leaves the other lying to the player on the surface the fix just touched. =================================================================================================== DEFECT A -- \"power 0\" IS FABRICATED (server side; th",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000300",
+   "kind": "migration",
+   "label": "lights_on",
+   "stamp": "20260618000300",
+   "seq": null,
+   "addedAt": "2026-07-27T09:49:09+09:00",
+   "file": "supabase/migrations/20260618000300_lights_on.sql",
+   "detail": "0300 — LIGHTS ON. Every dark capability this project built is switched on. THE ORDER. The owner, 2026-07-27: \"stop freeze and dark. it is usuless if i can't see and check\", then \"while you are at it, make every dark we've developed open.\" Dark code they cannot see or verify is worthless to them. This migration is that decision, recorded.",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000301",
+   "kind": "migration",
+   "label": "intercept_fires_at_zone_entry",
+   "stamp": "20260618000301",
+   "seq": null,
+   "addedAt": "2026-07-27T10:26:12+09:00",
+   "file": "supabase/migrations/20260618000301_intercept_fires_at_zone_entry.sql",
+   "detail": "Byeharu — THE FLEET NO LONGER TELEPORTS INTO A ZONE. The ambush happens WHERE the leg first enters the zone and WHEN the fleet gets there. ═══════════════════════════════════════════════════════════════════════════════════════════════════ WHAT WAS ACTUALLY WRONG (verified at file:line, not assumed)",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000302",
+   "kind": "migration",
+   "label": "encounter_resolver_lights_on",
+   "stamp": "20260618000302",
+   "seq": null,
+   "addedAt": "2026-07-27T17:21:17+09:00",
+   "file": "supabase/migrations/20260618000302_encounter_resolver_lights_on.sql",
+   "detail": "0302 — ENCOUNTER RESOLVER: LIGHTS ON. The last dark capability flag flips true. THE ORDER. The owner, 2026-07-27, after 0300 lit everything else: \"don't make anything dark.\" 0300 deliberately HELD encounter_resolver_enabled dark (it is the one flag with a history of destroying a real asset — the owner's Fleet 1 was lost through the combat-damage path, fixed by 0262). The owner has now given the ex",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000303",
+   "kind": "migration",
+   "label": "intercept_manifest_count_is_a_count",
+   "stamp": "20260618000303",
+   "seq": null,
+   "addedAt": "2026-07-28T00:10:36+09:00",
+   "file": "supabase/migrations/20260618000303_intercept_manifest_count_is_a_count.sql",
+   "detail": "0303 — THE AMBUSH MANIFEST GUARD COUNTS THE MANIFEST, NOT THE INSERT. THE BUG, as the owner hit it in the live game (2026-07-27) and as production recorded it: \"moving inside a combat zone, changing course makes this saying and it teleports — 'This fleet is out on a sortie and can't take a new course yet.' Also, fighting starts",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000304",
+   "kind": "migration",
+   "label": "pirate_zone_registers_its_effect",
+   "stamp": "20260618000304",
+   "seq": null,
+   "addedAt": "2026-07-28T00:45:25+09:00",
+   "file": "supabase/migrations/20260618000304_pirate_zone_registers_its_effect.sql",
+   "detail": "0304 — A PIRATE ZONE REGISTERS ITS OWN TYPED EFFECT, SO IT CAN ACTUALLY AMBUSH. THE GAP, found while proving 0303 and then confirmed against production source and data: 0276 cut ambush planning over to the typed-zone planner, and 0300 lit typed_zone_pirate_intercept_runtime_enabled (verified true in production today, along with the",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000305",
+   "kind": "migration",
+   "label": "one_sortie_authority",
+   "stamp": "20260618000305",
+   "seq": null,
+   "addedAt": "2026-07-29T14:55:24+09:00",
+   "file": "supabase/migrations/20260618000305_one_sortie_authority.sql",
+   "detail": "0305 — ONE AUTHORITY FOR \"IS THIS GROUP ON A SORTIE?\" THE ORDER (owner, 2026-07-29): \"i want to be able to stop whenever i want\" and, on finding the duplication, \"four copies, remove necessary and do it again.\" THE BUG THE OWNER HIT: pressing Stop on a fleet travelling to a location was refused with",
+   "seedsFlag": []
+  },
+  {
+   "id": "mig:20260618000306",
+   "kind": "migration",
+   "label": "empty_fleet_dock_authority",
+   "stamp": "20260618000306",
+   "seq": null,
+   "addedAt": "2026-07-30T17:19:01+09:00",
+   "file": "supabase/migrations/20260618000306_empty_fleet_dock_authority.sql",
+   "detail": "═══════════════════════════════════════════════════════════════════════════════════════════════ 0306 — A FLEET WITH NO SHIPS IS NOT A FLEET (and \"is this fleet docked?\" finally gets ONE definition) ═══════════════════════════════════════════════════════════════════════════════════════════════ THE BUG THE OWNER HIT: \"my fleet has no ship, so it has nothing, yet i can't assign ship to fleet",
+   "seedsFlag": []
+  },
+  {
    "id": "fn:handle_new_user",
    "kind": "function",
    "label": "handle_new_user",
@@ -4942,6 +5328,202 @@
    "detail": "Postgres function — owned by World Editor (SYSTEM_BOUNDARIES function-level ownership)"
   },
   {
+   "id": "fn:typed_zone_dispatch_error_v1",
+   "kind": "function",
+   "label": "typed_zone_dispatch_error_v1",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:typed_zone_is_uuid_v1",
+   "kind": "function",
+   "label": "typed_zone_is_uuid_v1",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:typed_zone_is_finite_v1",
+   "kind": "function",
+   "label": "typed_zone_is_finite_v1",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:typed_zone_pirate_intercept_risk_v1",
+   "kind": "function",
+   "label": "typed_zone_pirate_intercept_risk_v1",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:typed_zone_effect_dispatch_v1",
+   "kind": "function",
+   "label": "typed_zone_effect_dispatch_v1",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:typed_zone_pirate_candidates_v1",
+   "kind": "function",
+   "label": "typed_zone_pirate_candidates_v1",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:typed_zone_pirate_shadow_compare_v1",
+   "kind": "function",
+   "label": "typed_zone_pirate_shadow_compare_v1",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:zone_effect_set",
+   "kind": "function",
+   "label": "zone_effect_set",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:zone_effect_remove",
+   "kind": "function",
+   "label": "zone_effect_remove",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:typed_zone_combat_capability_v1",
+   "kind": "function",
+   "label": "typed_zone_combat_capability_v1",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:typed_zone_effect_dispatch_v2",
+   "kind": "function",
+   "label": "typed_zone_effect_dispatch_v2",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:danger_zones_provenance_is_immutable",
+   "kind": "function",
+   "label": "danger_zones_provenance_is_immutable",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:zone_kind_change",
+   "kind": "function",
+   "label": "zone_kind_change",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:danger_zone_rematerialize_for_location",
+   "kind": "function",
+   "label": "danger_zone_rematerialize_for_location",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:mainship_port_of_ship",
+   "kind": "function",
+   "label": "mainship_port_of_ship",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:mainship_emergency_tow",
+   "kind": "function",
+   "label": "mainship_emergency_tow",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:get_my_disabled_ships",
+   "kind": "function",
+   "label": "get_my_disabled_ships",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:combat_encounter_side_power",
+   "kind": "function",
+   "label": "combat_encounter_side_power",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_intercept_leg_entry",
+   "kind": "function",
+   "label": "pirate_intercept_leg_entry",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_intercept_cancel_pending_for_movement",
+   "kind": "function",
+   "label": "pirate_intercept_cancel_pending_for_movement",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_intercept_plan_leg",
+   "kind": "function",
+   "label": "pirate_intercept_plan_leg",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:pirate_intercept_resolve_due_for_movement",
+   "kind": "function",
+   "label": "pirate_intercept_resolve_due_for_movement",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:movement_advance",
+   "kind": "function",
+   "label": "movement_advance",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:danger_zone_register_pirate_effect",
+   "kind": "function",
+   "label": "danger_zone_register_pirate_effect",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:group_sortie_is_open",
+   "kind": "function",
+   "label": "group_sortie_is_open",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:fleet_docked_location",
+   "kind": "function",
+   "label": "fleet_docked_location",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:group_fleet_retire",
+   "kind": "function",
+   "label": "group_fleet_retire",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
+   "id": "fn:group_retire_empty_fleet",
+   "kind": "function",
+   "label": "group_retire_empty_fleet",
+   "system": null,
+   "detail": "Postgres function"
+  },
+  {
    "id": "table:profiles",
    "kind": "table",
    "label": "profiles",
@@ -5607,6 +6189,41 @@
    "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
   },
   {
+   "id": "table:zone_effect_pirate_intercept",
+   "kind": "table",
+   "label": "zone_effect_pirate_intercept",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:zone_effect_combat",
+   "kind": "table",
+   "label": "zone_effect_combat",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:zone_effect_mining",
+   "kind": "table",
+   "label": "zone_effect_mining",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:zone_effect_exploration",
+   "kind": "table",
+   "label": "zone_effect_exploration",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
+   "id": "table:zone_kind_permitted_effects",
+   "kind": "table",
+   "label": "zone_kind_permitted_effects",
+   "system": null,
+   "detail": "no sole-writer entry in SYSTEM_BOUNDARIES"
+  },
+  {
    "id": "flag:runtime_cleanup_enabled",
    "kind": "flag",
    "label": "runtime_cleanup_enabled",
@@ -5850,6 +6467,48 @@
    "id": "flag:encounter_resolver_enabled",
    "kind": "flag",
    "label": "encounter_resolver_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:typed_zone_authoring_enabled",
+   "kind": "flag",
+   "label": "typed_zone_authoring_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "kind": "flag",
+   "label": "typed_zone_pirate_intercept_runtime_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:typed_zone_combat_runtime_enabled",
+   "kind": "flag",
+   "label": "typed_zone_combat_runtime_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:typed_zone_mining_runtime_enabled",
+   "kind": "flag",
+   "label": "typed_zone_mining_runtime_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:typed_zone_exploration_runtime_enabled",
+   "kind": "flag",
+   "label": "typed_zone_exploration_runtime_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:seeded_zone_edit_enabled",
+   "kind": "flag",
+   "label": "seeded_zone_edit_enabled",
+   "detail": "game_config feature flag"
+  },
+  {
+   "id": "flag:seeded_zone_lifecycle_enabled",
+   "kind": "flag",
+   "label": "seeded_zone_lifecycle_enabled",
    "detail": "game_config feature flag"
   },
   {
@@ -11388,6 +12047,851 @@
    "type": "gated-by"
   },
   {
+   "source": "mig:20260618000273",
+   "target": "table:zone_effect_pirate_intercept",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000273",
+   "target": "table:zone_effect_pirate_intercept",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000273",
+   "target": "flag:typed_zone_authoring_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000273",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000273",
+   "target": "flag:typed_zone_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000273",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000274",
+   "target": "fn:typed_zone_dispatch_error_v1",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000274",
+   "target": "fn:typed_zone_is_uuid_v1",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000274",
+   "target": "fn:typed_zone_is_finite_v1",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000274",
+   "target": "fn:typed_zone_pirate_intercept_risk_v1",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000274",
+   "target": "fn:typed_zone_effect_dispatch_v1",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000275",
+   "target": "fn:typed_zone_pirate_candidates_v1",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000275",
+   "target": "fn:typed_zone_pirate_shadow_compare_v1",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000275",
+   "target": "table:danger_zones",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000275",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000276",
+   "target": "fn:pirate_intercept_evaluate_leg",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000276",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000276",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000277",
+   "target": "fn:zone_effect_set",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000277",
+   "target": "fn:zone_effect_remove",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000277",
+   "target": "flag:typed_zone_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000278",
+   "target": "fn:typed_zone_combat_capability_v1",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000278",
+   "target": "table:zone_effect_combat",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000278",
+   "target": "table:zone_effect_combat",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000278",
+   "target": "flag:typed_zone_combat_runtime_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000278",
+   "target": "flag:typed_zone_combat_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000278",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000279",
+   "target": "fn:typed_zone_effect_dispatch_v2",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000280",
+   "target": "table:zone_effect_mining",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000280",
+   "target": "table:danger_zones",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000280",
+   "target": "table:zone_effect_mining",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000280",
+   "target": "flag:typed_zone_mining_runtime_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000280",
+   "target": "flag:typed_zone_mining_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000281",
+   "target": "table:zone_effect_exploration",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000281",
+   "target": "table:zone_effect_exploration",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000281",
+   "target": "flag:typed_zone_exploration_runtime_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000281",
+   "target": "flag:typed_zone_exploration_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000281",
+   "target": "flag:typed_zone_mining_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000282",
+   "target": "fn:danger_zones_provenance_is_immutable",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000282",
+   "target": "table:danger_zones",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "fn:zone_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "fn:zone_unpublish",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "fn:zone_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "flag:seeded_zone_edit_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "flag:seeded_zone_lifecycle_enabled",
+   "type": "seeds"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "flag:seeded_zone_edit_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "flag:seeded_zone_lifecycle_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000284",
+   "target": "fn:zone_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000284",
+   "target": "fn:zone_unpublish",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000284",
+   "target": "fn:zone_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000284",
+   "target": "flag:seeded_zone_edit_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000284",
+   "target": "flag:seeded_zone_lifecycle_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000285",
+   "target": "fn:zone_kind_change",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000285",
+   "target": "table:zone_kind_permitted_effects",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000285",
+   "target": "table:zone_kind_permitted_effects",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000285",
+   "target": "flag:typed_zone_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000286",
+   "target": "fn:zone_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000286",
+   "target": "fn:zone_unpublish",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000286",
+   "target": "fn:zone_set_active",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000286",
+   "target": "flag:seeded_zone_edit_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000286",
+   "target": "flag:seeded_zone_lifecycle_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000287",
+   "target": "fn:get_danger_zones",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000287",
+   "target": "fn:zone_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000287",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000287",
+   "target": "flag:seeded_zone_edit_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000288",
+   "target": "fn:zone_effect_set",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000288",
+   "target": "fn:zone_effect_remove",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000288",
+   "target": "flag:typed_zone_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000290",
+   "target": "fn:pirate_intercept_evaluate_leg",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000290",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000290",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000291",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000291",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000291",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000291",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000291",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000291",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000291",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "fn:command_ship_group_go",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "table:fleets",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "flag:timed_docking_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "fn:combat_create_group_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "fn:fleet_set_returning",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "fn:fleet_destroy",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "fn:pirate_intercept_evaluate_leg",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "table:combat_encounters",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "fn:combat_create_group_encounter",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "fn:pirate_intercept_evaluate_leg",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000295",
+   "target": "fn:initialize_new_player",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000296",
+   "target": "fn:danger_zone_rematerialize_for_location",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000296",
+   "target": "fn:location_update",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000297",
+   "target": "fn:mainship_port_of_ship",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000297",
+   "target": "fn:repair_main_ship",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000297",
+   "target": "fn:mainship_emergency_tow",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000297",
+   "target": "fn:get_my_disabled_ships",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000297",
+   "target": "flag:launch_from_dock_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "fn:command_ship_group_go",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "table:fleets",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "flag:timed_docking_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000299",
+   "target": "fn:combat_encounter_side_power",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000299",
+   "target": "fn:process_combat_ticks",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000299",
+   "target": "flag:per_ship_targeting_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000299",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000299",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000299",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000299",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000300",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000300",
+   "target": "flag:timed_docking_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:pirate_intercept_leg_entry",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:pirate_intercept_leg_zone_hits",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:pirate_intercept_cancel_pending_for_movement",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:pirate_intercept_plan_leg",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:combat_create_group_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:combat_create_encounter",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:pirate_intercept_resolve_due_for_movement",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:movement_advance",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:process_fleet_movements",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:command_main_ship_settle_arrival_legacy",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:command_ship_group_go",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:command_ship_group_stop",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:command_ship_group_go_route",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:process_pirate_route_legs",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "table:pirate_intercepts",
+   "type": "alters"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:pirate_intercept_leg_zone_hits",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:combat_create_group_encounter",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "fn:pirate_intercept_evaluate_leg",
+   "type": "drops"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "flag:pirate_intercept_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "flag:spatial_combat_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "flag:mainship_send_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "flag:fleet_movement_unified_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "flag:timed_docking_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000302",
+   "target": "flag:enemy_content_registry_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000302",
+   "target": "flag:encounter_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000302",
+   "target": "flag:encounter_binding_authoring_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000302",
+   "target": "flag:encounter_resolver_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000303",
+   "target": "fn:pirate_intercept_resolve_due_for_movement",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000303",
+   "target": "flag:typed_zone_pirate_intercept_runtime_enabled",
+   "type": "gated-by"
+  },
+  {
+   "source": "mig:20260618000304",
+   "target": "fn:danger_zone_register_pirate_effect",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000305",
+   "target": "fn:group_sortie_is_open",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000306",
+   "target": "fn:fleet_docked_location",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000306",
+   "target": "fn:group_fleet_retire",
+   "type": "creates"
+  },
+  {
+   "source": "mig:20260618000306",
+   "target": "fn:group_retire_empty_fleet",
+   "type": "creates"
+  },
+  {
    "source": "mig:20260616000018",
    "target": "mig:20260616000008",
    "type": "supersedes",
@@ -12630,6 +14134,246 @@
    "note": "resolve_location_encounter"
   },
   {
+   "source": "mig:20260618000276",
+   "target": "mig:20260618000233",
+   "type": "supersedes",
+   "note": "pirate_intercept_evaluate_leg"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "mig:20260618000266",
+   "type": "supersedes",
+   "note": "zone_update"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "mig:20260618000255",
+   "type": "supersedes",
+   "note": "zone_unpublish"
+  },
+  {
+   "source": "mig:20260618000283",
+   "target": "mig:20260618000268",
+   "type": "supersedes",
+   "note": "zone_set_active"
+  },
+  {
+   "source": "mig:20260618000284",
+   "target": "mig:20260618000283",
+   "type": "supersedes",
+   "note": "zone_update"
+  },
+  {
+   "source": "mig:20260618000284",
+   "target": "mig:20260618000283",
+   "type": "supersedes",
+   "note": "zone_unpublish"
+  },
+  {
+   "source": "mig:20260618000284",
+   "target": "mig:20260618000283",
+   "type": "supersedes",
+   "note": "zone_set_active"
+  },
+  {
+   "source": "mig:20260618000286",
+   "target": "mig:20260618000284",
+   "type": "supersedes",
+   "note": "zone_update"
+  },
+  {
+   "source": "mig:20260618000286",
+   "target": "mig:20260618000284",
+   "type": "supersedes",
+   "note": "zone_unpublish"
+  },
+  {
+   "source": "mig:20260618000286",
+   "target": "mig:20260618000284",
+   "type": "supersedes",
+   "note": "zone_set_active"
+  },
+  {
+   "source": "mig:20260618000287",
+   "target": "mig:20260618000233",
+   "type": "supersedes",
+   "note": "get_danger_zones"
+  },
+  {
+   "source": "mig:20260618000287",
+   "target": "mig:20260618000286",
+   "type": "supersedes",
+   "note": "zone_update"
+  },
+  {
+   "source": "mig:20260618000288",
+   "target": "mig:20260618000277",
+   "type": "supersedes",
+   "note": "zone_effect_set"
+  },
+  {
+   "source": "mig:20260618000288",
+   "target": "mig:20260618000277",
+   "type": "supersedes",
+   "note": "zone_effect_remove"
+  },
+  {
+   "source": "mig:20260618000290",
+   "target": "mig:20260618000276",
+   "type": "supersedes",
+   "note": "pirate_intercept_evaluate_leg"
+  },
+  {
+   "source": "mig:20260618000291",
+   "target": "mig:20260618000261",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "mig:20260618000233",
+   "type": "supersedes",
+   "note": "command_ship_group_go"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "mig:20260618000291",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "mig:20260618000262",
+   "type": "supersedes",
+   "note": "combat_create_group_encounter"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "mig:20260616000006",
+   "type": "supersedes",
+   "note": "fleet_set_returning"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "mig:20260616000006",
+   "type": "supersedes",
+   "note": "fleet_destroy"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "mig:20260618000290",
+   "type": "supersedes",
+   "note": "pirate_intercept_evaluate_leg"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "mig:20260618000292",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000294",
+   "target": "mig:20260618000293",
+   "type": "supersedes",
+   "note": "pirate_intercept_evaluate_leg"
+  },
+  {
+   "source": "mig:20260618000295",
+   "target": "mig:20260618000157",
+   "type": "supersedes",
+   "note": "initialize_new_player"
+  },
+  {
+   "source": "mig:20260618000296",
+   "target": "mig:20260618000265",
+   "type": "supersedes",
+   "note": "location_update"
+  },
+  {
+   "source": "mig:20260618000297",
+   "target": "mig:20260618000231",
+   "type": "supersedes",
+   "note": "repair_main_ship"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "mig:20260618000292",
+   "type": "supersedes",
+   "note": "command_ship_group_go"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "mig:20260618000294",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000299",
+   "target": "mig:20260618000298",
+   "type": "supersedes",
+   "note": "process_combat_ticks"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000233",
+   "type": "supersedes",
+   "note": "pirate_intercept_leg_zone_hits"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000293",
+   "type": "supersedes",
+   "note": "combat_create_group_encounter"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000168",
+   "type": "supersedes",
+   "note": "combat_create_encounter"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000206",
+   "type": "supersedes",
+   "note": "process_fleet_movements"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000151",
+   "type": "supersedes",
+   "note": "command_main_ship_settle_arrival_legacy"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000298",
+   "type": "supersedes",
+   "note": "command_ship_group_go"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000218",
+   "type": "supersedes",
+   "note": "command_ship_group_stop"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000233",
+   "type": "supersedes",
+   "note": "command_ship_group_go_route"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000233",
+   "type": "supersedes",
+   "note": "process_pirate_route_legs"
+  },
+  {
+   "source": "mig:20260618000303",
+   "target": "mig:20260618000301",
+   "type": "supersedes",
+   "note": "pirate_intercept_resolve_due_for_movement"
+  },
+  {
    "source": "mig:20260616000007",
    "target": "mig:20260616000006",
    "type": "extends",
@@ -12982,6 +14726,48 @@
    "target": "mig:20260616000014",
    "type": "extends",
    "note": "combat_encounters"
+  },
+  {
+   "source": "mig:20260618000275",
+   "target": "mig:20260618000233",
+   "type": "extends",
+   "note": "danger_zones"
+  },
+  {
+   "source": "mig:20260618000280",
+   "target": "mig:20260618000233",
+   "type": "extends",
+   "note": "danger_zones"
+  },
+  {
+   "source": "mig:20260618000282",
+   "target": "mig:20260618000233",
+   "type": "extends",
+   "note": "danger_zones"
+  },
+  {
+   "source": "mig:20260618000292",
+   "target": "mig:20260616000006",
+   "type": "extends",
+   "note": "fleets"
+  },
+  {
+   "source": "mig:20260618000293",
+   "target": "mig:20260616000014",
+   "type": "extends",
+   "note": "combat_encounters"
+  },
+  {
+   "source": "mig:20260618000298",
+   "target": "mig:20260616000006",
+   "type": "extends",
+   "note": "fleets"
+  },
+  {
+   "source": "mig:20260618000301",
+   "target": "mig:20260618000233",
+   "type": "extends",
+   "note": "pirate_intercepts"
   },
   {
    "source": "fn:base_reserve_units",
@@ -16614,6 +18400,271 @@
    "type": "touches"
   },
   {
+   "source": "fn:typed_zone_pirate_candidates_v1",
+   "target": "fn:cfg_num",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_effect_set",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_effect_set",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_effect_set",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:zone_effect_remove",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_effect_remove",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_effect_remove",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:typed_zone_combat_capability_v1",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_kind_change",
+   "target": "fn:is_owner",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_kind_change",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:zone_kind_change",
+   "target": "table:world_editor_audit",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_destroy",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:fleet_destroy",
+   "target": "fn:fleet_set_returning",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_port_of_ship",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_port_of_ship",
+   "target": "fn:mainship_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_port_of_ship",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:repair_main_ship",
+   "target": "fn:mainship_port_of_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_emergency_tow",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_emergency_tow",
+   "target": "fn:mainship_resolve_owned_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_emergency_tow",
+   "target": "fn:mainship_port_of_ship",
+   "type": "calls"
+  },
+  {
+   "source": "fn:mainship_emergency_tow",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:mainship_emergency_tow",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_encounter_side_power",
+   "target": "table:combat_units",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_encounter_side_power",
+   "target": "table:unit_types",
+   "type": "touches"
+  },
+  {
+   "source": "fn:pirate_intercept_cancel_pending_for_movement",
+   "target": "table:pirate_intercepts",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_create_encounter",
+   "target": "table:group_sortie_members",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_create_encounter",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_create_encounter",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:combat_create_encounter",
+   "target": "fn:combat_create_group_encounter",
+   "type": "calls"
+  },
+  {
+   "source": "fn:movement_advance",
+   "target": "table:fleet_movements",
+   "type": "touches"
+  },
+  {
+   "source": "fn:movement_advance",
+   "target": "fn:pirate_intercept_resolve_due_for_movement",
+   "type": "calls"
+  },
+  {
+   "source": "fn:movement_advance",
+   "target": "table:pirate_intercepts",
+   "type": "touches"
+  },
+  {
+   "source": "fn:movement_advance",
+   "target": "fn:movement_settle_arrival",
+   "type": "calls"
+  },
+  {
+   "source": "fn:process_fleet_movements",
+   "target": "table:pirate_intercepts",
+   "type": "touches"
+  },
+  {
+   "source": "fn:process_fleet_movements",
+   "target": "fn:movement_advance",
+   "type": "calls"
+  },
+  {
+   "source": "fn:command_main_ship_settle_arrival_legacy",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:command_main_ship_settle_arrival_legacy",
+   "target": "table:fleet_movements",
+   "type": "touches"
+  },
+  {
+   "source": "fn:command_main_ship_settle_arrival_legacy",
+   "target": "fn:cfg_bool",
+   "type": "calls"
+  },
+  {
+   "source": "fn:command_main_ship_settle_arrival_legacy",
+   "target": "table:locations",
+   "type": "touches"
+  },
+  {
+   "source": "fn:command_main_ship_settle_arrival_legacy",
+   "target": "fn:movement_advance",
+   "type": "calls"
+  },
+  {
+   "source": "fn:fleet_docked_location",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:group_fleet_retire",
+   "target": "fn:presence_complete",
+   "type": "calls"
+  },
+  {
+   "source": "fn:group_fleet_retire",
+   "target": "table:location_presence",
+   "type": "touches"
+  },
+  {
+   "source": "fn:group_fleet_retire",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "table:main_ship_instances",
+   "type": "touches"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "fn:group_sortie_is_open",
+   "type": "calls"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "fn:ship_group_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "fn:group_fleet_retire",
+   "type": "calls"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "fn:fleet_docked_location",
+   "type": "calls"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "table:fleets",
+   "type": "touches"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "fn:mainship_resolve_fleet",
+   "type": "calls"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "fn:presence_complete",
+   "type": "calls"
+  },
+  {
+   "source": "fn:group_retire_empty_fleet",
+   "target": "table:location_presence",
+   "type": "touches"
+  },
+  {
    "source": "table:profiles",
    "target": "system:Auth",
    "type": "owned-by"
@@ -18951,7 +21002,27 @@
   },
   {
    "date": "2026-07-23",
-   "title": "Movement-truth audit, dead-wrapper retirement, rollback fail-closed, elite stat wiring (`0272` merged, **deploy deferred**), PROJECTMAP function-ownership authority",
+   "title": "Movement-truth audit, dead-wrapper retirement, rollback fail-closed, elite stat wiring (`0272` **DEPLOYED, dark**), PROJECTMAP function-ownership authority",
+   "migs": []
+  },
+  {
+   "date": "2026-07-28",
+   "title": "Ambushes work again: `0303` manifest guard + `0304` pirate-zone effect (**both DEPLOYED & verified live**)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-29",
+   "title": "Stop always works: `0305` retires SEVEN copies of the sortie rule onto ONE authority (**DEPLOYED & verified live**)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-29",
+   "title": "Map: click a danger zone to see what it is (`#334`, **DEPLOYED**)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-30",
+   "title": "A fleet with no ships is not a fleet (migration `0306`, **NOT DEPLOYED — PR open**)",
    "migs": []
   }
  ]
