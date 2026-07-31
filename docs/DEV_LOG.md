@@ -5,11 +5,76 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
-## 2026-07-30 — A fleet with no ships is not a fleet (migration `0306`, **NOT DEPLOYED — PR open**)
+## 2026-07-30 — A danger zone can't swallow the map's gestures (`#336`, **DEPLOYED**)
 
-> **DEPLOY STATE.** Server-only slice, one migration, **no flag flip and no client change**. Built
-> and green locally; **not merged, so not live.** The owner's game stays bricked until this is
-> merged — the deploy pipeline applies `0306` and its backfill is what unbricks it.
+> **DEPLOY STATE.** Client-only slice — no migration, no flag. `main` **`05159a6`**; "Deploy to
+> GitHub Pages" run **`30526226776`** **success**, "Build (frontend typecheck)" and "Frontend
+> tests" both **success**, 2026-07-30T08:19 UTC. Live on the site.
+>
+> *(Logged 2026-07-31 — this slice shipped without a dev-log entry. Written from the merge commit,
+> not from memory.)*
+
+**The owner's report:** *"i can't send a fleet to zone since it is pressed and info is shown"* — the
+direct regression from the previous day's clickable zones (`#334`).
+
+**THE DEFECT, wider than reported.** `GalaxyMap` decided whether a pointer-up was a map gesture with
+`e.target !== svg` (`onPointerUp`). That identity test silently depended on an **unwritten
+invariant**: every drawn layer was `pointerEvents:'none'`, so the `<svg>` was always the hit target.
+Making the danger-zone fill clickable broke it — inside a zone the target is the zone's `<path>`, so
+the gate returned early and **both** map gestures died across the entire area of every zone:
+
+- the **double-tap command-hub summon**, so no point inside a zone could be chosen as a fleet
+  destination at all (the owner's report), and
+- the **pirate route-planner's waypoint tap** — you could not plot an intercept route through the
+  one kind of place intercepts actually happen.
+
+The layer's *"do NOT stopPropagation, the summon must survive inside a zone"* comment could never
+have helped: an identity test is not satisfied by an event **reaching** the svg, only by the svg
+**being** the target. Bubbling was never the mechanism.
+
+**ONE BACKGROUND AUTHORITY.** `mapBackground.isMapBackground` now answers *"did this land on the
+map's navigable background"*, and background is **declared, not inferred**: a layer that draws over
+the map and must not swallow its gestures marks itself `data-map-passthrough="true"`. The zone fill
+declares it, so it keeps hit-testing for **hover** while handing **gestures** back. A future
+hit-testing layer now has two coherent choices — take the gesture, or declare passthrough — instead
+of silently deleting a gesture for everything underneath it.
+
+**THE ZONE OWNS NO CLICK.** Fixing the gate alone was not enough: `click` fires *after* `pointerup`,
+so the second tap of a double-tap would open the hub menu and the click would immediately replace it
+with the zone panel. Structural conflict, not a race to tune. So zone info **moves onto the hub the
+map already has** — double-tap → *"What's here"*, offered exactly when the tapped point falls inside
+a zone, the same shape *"Mine here"* already uses for range. One gesture, one hub; hovering still
+names a zone with no tap at all. `cursor:pointer` is gone too — it promised a tap that does nothing
+over a third of the map.
+
+**Containment is the map's EXISTING ray-cast**, `routeGeometry.pointInRing`, already the client
+mirror of the server's PostGIS zone test for the route warning — not a second formula. The zone a
+player is told they are in is the zone the planner flashes red. Wrapped as
+`zoneInfoModel.zoneAtPoint` so the decision is pinned by unit specs instead of living inline in the
+screen. A fresh summon also clears an open zone panel, so the map never keeps a zone highlighted
+with nothing explaining it.
+
+**Proof.** `tsc -b` clean, `vite build` clean, eslint clean on every touched file, **1522** frontend
+specs green (13 new — the whole `isMapBackground` contract, the no-click/passthrough pair as an
+explicit regression block, and `zoneAtPoint` including overlap order and fail-closed rings).
+
+---
+
+## 2026-07-30 — A fleet with no ships is not a fleet (migration `0306`, **DEPLOYED & verified on target**)
+
+> **DEPLOY STATE — corrected 2026-07-31.** This entry was written before the merge and said
+> *"NOT DEPLOYED — PR open"*. That is no longer true and the stale line is why this correction
+> exists: **`0306` is live.** Merged as PR **#337** (`main` `e793ba9`); the "Deploy Supabase
+> migrations" run **`30526214678`** logged `Applying migration
+> 20260618000306_empty_fleet_dock_authority.sql` and finished **`success`** at 2026-07-30T08:24 UTC.
+> Server-only slice, one migration, **no flag flip and no client change** — as planned.
+>
+> **Verified on production, not from the CI green** (2026-07-31): probed over anon REST with a
+> deliberately malformed uuid, so PostgREST fails at argument coercion and no function body can
+> run. `group_retire_empty_fleet` and `group_fleet_retire` both answer **`42501 permission denied
+> for function`** — an error Postgres raises only for a function that **exists** — while a control
+> name that does not exist answers **`404 PGRST202`**. The `0306` authorities are in the production
+> catalog. The backfill that unbricks the owner's emptied fleet ran inside that same push.
 
 **The owner's report:** *"my fleet has no ship, so it has nothing, yet i can't assign ship to fleet
 since the fleet is not docked. too many spaghettis. please when doing something think of all
