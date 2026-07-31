@@ -8,7 +8,7 @@
   "systems": 30,
   "phases": 28,
   "rungs": 9,
-  "jobs": 245,
+  "jobs": 246,
   "nodes": 817,
   "edges": 2473
  },
@@ -21022,7 +21022,12 @@
   },
   {
    "date": "2026-07-30",
-   "title": "A fleet with no ships is not a fleet (migration `0306`, **NOT DEPLOYED — PR open**)",
+   "title": "A fleet with no ships is not a fleet (migration `0306`, **DEPLOYED & verified on target**)",
+   "migs": []
+  },
+  {
+   "date": "2026-07-30",
+   "title": "A danger zone can't swallow the map's gestures (`#336`, **DEPLOYED**)",
    "migs": []
   }
  ]
