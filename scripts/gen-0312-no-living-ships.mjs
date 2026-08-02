@@ -93,20 +93,29 @@ const GO_MEMBERS_NEW = `${GO_MEMBERS}
   -- ── end 0312 — the head continues verbatim from here ───────────────────────────────────────────`;
 
 // ── Hunk 2: the dock verb's step-3 resolve+lock block (0219:156-163). The guard is APPENDED after
-// ── the group lock, BEFORE the (0305-rewritten) sortie guard and the fleet resolve, so a dead
-// ── fleet gets the same one answer at every order verb.
+// ── the group lock, BEFORE the (0305-rewritten) sortie guard and the fleet resolve. HONESTY ABOUT
+// ── REACH: the MOVER carries the live answer — dock's dark gate (0219:147-149) returns
+// ── timed_docking_disabled before this guard can run, and timed_docking_enabled is FALSE in
+// ── production, so hunk 2 is PRE-POSITIONED for whenever that key is lit and unreachable until
+// ── then. The placement is still deliberate: reject-before-read keeps the flag gate first, and
+// ── the liveness guard must already be standing on the day the key flips (the 0301 dock blind
+// ── spot — a guard everyone meant to add "with the flag" — is why timed docking is held today).
 const DOCK_LOCK = slice(F219, '0219', 156, 163, 'v_group := public.mainship_resolve_owned_group', 'end if;');
 
 const DOCK_LOCK_NEW = `${DOCK_LOCK}
 
   -- ── 0312: A DEAD FLEET TAKES NO MAP ORDERS — dock included. ────────────────────────────────────
   -- Dock mints a movement leg like any other order; a group whose every ship is destroyed must not
-  -- fly it to a port. Today's writers cannot actually reach this (a total defeat destroys the
-  -- fleet WITH its ships — process_combat_ticks calls fleet_destroy then marks the members — so
-  -- the live-fleet resolve below already answers no_fleet), but that safety is EMERGENT from the
-  -- tick's write order, and emergent invariants are how this codebase has been hurt before. The
-  -- guard makes it local to the verb. Same ONE authority as the mover; an EMPTY group is not a
-  -- dead fleet and keeps its own answers below.
+  -- fly it to a port. REACHABILITY, honestly: the dark gate above answers timed_docking_disabled
+  -- before this line runs while timed_docking_enabled is false — which it is in production — so
+  -- this guard is INERT until that key is lit, and the MOVER's twin guard carries the live answer
+  -- today. Even lit, today's writers cannot stage the state it refuses (a total defeat destroys
+  -- the fleet WITH its ships — process_combat_ticks calls fleet_destroy then marks the members —
+  -- so the live-fleet resolve below already answers no_fleet). Both of those safeties are EMERGENT
+  -- — one from a flag value, one from the tick's write order — and emergent invariants are how
+  -- this codebase has been hurt before; this guard makes the rule local to the verb, standing
+  -- before either fact changes. Same ONE authority as the mover; an EMPTY group is not a dead
+  -- fleet and keeps its own answers below.
   if public.group_all_ships_destroyed(v_player, v_group) then
     return jsonb_build_object('ok', false, 'reason', 'no_living_ships');
   end if;
@@ -173,9 +182,15 @@ const sql = `-- ═════════════════════�
 --   command_ship_group_go_route  — covered BY COMPOSITION: leg 1 calls the mover unmodified and
 --                                  returns its refusal before queueing anything (0301:2298-2305).
 --                                  A second guard here would be a second copy of the predicate.
---   command_ship_group_dock      — COMPOSED (hunk 2). It mints a movement leg like the mover; the
---                                  no-dead-parked-fleet safety it enjoys today is emergent from
---                                  the tick's fleet_destroy-then-mark write order, not local.
+--   command_ship_group_dock      — COMPOSED (hunk 2), PRE-POSITIONED: its dark gate
+--                                  (0219:147-149) answers timed_docking_disabled before this
+--                                  guard while timed_docking_enabled is false — which it is in
+--                                  production — so THE MOVER CARRIES THE LIVE ANSWER and hunk 2
+--                                  is unreachable until that key is lit. It stands anyway: dock
+--                                  mints a movement leg like the mover, and its only other
+--                                  safety (no dead group owns a live parked fleet) is emergent
+--                                  from the tick's fleet_destroy-then-mark write order, not
+--                                  local. The guard must already exist on the day the key flips.
 --   send_ship_group_hunt         — NOT composed: every one of its three arms already refuses any
 --                                  fleet containing a ship at hp<=0 or not home/docked
 --                                  (member_not_ready — 0231:558-562, :724-735, :745-760). A dead
@@ -201,11 +216,15 @@ const sql = `-- ═════════════════════�
 -- ── BLAST RADIUS ON LIVE PLAYERS ─────────────────────────────────────────────────────────────────
 --   - No data written at deploy time: no backfill, no flag, no schema change. DDL = one CREATE
 --     FUNCTION + one CREATE OR REPLACE each of the mover and the dock verb (pg_proc row locks).
---   - Which orders change behaviour: ONLY an order on a group whose every member is destroyed —
---     today that order "succeeds" and flies wrecks around the map. Groups with any living ship,
+--   - Which orders change behaviour: ONLY a MOVER order (go / route leg 1) on a group whose every
+--     member is destroyed — today that order "succeeds" and flies wrecks around the map. The dock
+--     hunk changes nothing observable in production: its dark gate answers first while
+--     timed_docking_enabled is false (see the per-verb table). Groups with any living ship,
 --     empty groups, mid-combat retreats, sorties: byte-identical to 0301+0305+0307.
 --   - Recovery (tow/repair/roster) and the brake are untouched by construction and pinned so.
---   - NO DARK: no flag. The refusal is live the moment this deploys, which is the owner's order.
+--   - NO DARK: no flag. The mover's refusal is live the moment this deploys, which is the owner's
+--     order; the dock guard's reach is bounded by the pre-existing timed_docking key, not by any
+--     flag of this slice's making.
 --
 -- ── ROLLBACK ─────────────────────────────────────────────────────────────────────────────────────
 -- Re-apply the deployed command_ship_group_go / command_ship_group_dock bodies with the 0312 hunks
@@ -400,6 +419,12 @@ begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'group_all_ships_destroyed';
+  if v_code is null then
+    -- NULL-vacuity guard (the (f) idiom, applied uniformly): position(… in NULL) is NULL and no
+    -- branch below would fire — this block must fail on absence by ITS OWN construction, never by
+    -- another block's luck.
+    raise exception '0312 ASSERT (c) FAIL: group_all_ships_destroyed is missing — every probe below would pass vacuously';
+  end if;
   if position('status <> ''destroyed''' in v_code) = 0 then
     raise exception '0312 ASSERT (c) FAIL: the liveness predicate lost its status test';
   end if;
@@ -429,6 +454,9 @@ begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_go';
+  if v_code is null then
+    raise exception '0312 ASSERT (d) FAIL: command_ship_group_go is missing — every probe below would pass vacuously (NULL position/NULL counters fire no branch)';
+  end if;
   v_n := (length(v_code) - length(replace(v_code, 'group_all_ships_destroyed(v_player, v_group)', '')))
          / length('group_all_ships_destroyed(v_player, v_group)');
   if v_n <> 1 then
@@ -456,6 +484,9 @@ begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_dock';
+  if v_code is null then
+    raise exception '0312 ASSERT (e) FAIL: command_ship_group_dock is missing — every probe below would pass vacuously (NULL position/NULL counters fire no branch)';
+  end if;
   v_n := (length(v_code) - length(replace(v_code, 'group_all_ships_destroyed(v_player, v_group)', '')))
          / length('group_all_ships_destroyed(v_player, v_group)');
   if v_n <> 1 then
@@ -502,6 +533,9 @@ begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'send_ship_group_hunt';
+  if v_code is null then
+    raise exception '0312 ASSERT (g) FAIL: send_ship_group_hunt is missing — the probe below would pass vacuously (NULL position fires no branch)';
+  end if;
   if position('hp <= 0' in v_code) = 0 then
     raise exception '0312 ASSERT (g) FAIL: send_ship_group_hunt lost its hp<=0 readiness — 0312 deliberately did NOT guard the hunt because that refusal already covers a dead fleet; if it is gone, the hunt needs the liveness authority composed in a follow-up slice';
   end if;

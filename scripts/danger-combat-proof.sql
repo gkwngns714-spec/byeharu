@@ -1602,10 +1602,15 @@ end $$;
 --   2. a fleet with a damaged-but-alive ship (instance hp 0!) is still ALLOWED to move;
 --   3. with every ship destroyed, go (coordinate), go (port), go_route (leg-1 composition) and dock
 --      (flag lit in-txn) are ALL refused with the typed no_living_ships — and the refused volley
---      mints NO fleet and NO movement row. ON THE PRE-0312 BODY THIS IS RED TWICE OVER: the mover's
---      bootstrap arm returns ok=true/movement_started for the dead group AND mints a fresh
---      fleet + leg (the member-count guard cannot see death — 0301:1576-1584 counts rows, and
---      destroyed ships are never deleted).
+--      mints NO fleet and NO movement row. ON THE PRE-0312 BODY THIS IS RED TWICE OVER — a claim
+--      that is SOURCE-DERIVED, NOT EMPIRICALLY DEMONSTRATED: a proof can only run the post-fix
+--      chain, so nobody has watched the old body fly these wrecks. The derivation, from source:
+--      the member-count guard cannot see death (0301:1576-1584 counts rows, and destroyed ships
+--      are never deleted), the dead group's fleet is 'destroyed' so step 9 resolves zero and falls
+--      into the bootstrap arm, and calculate_group_expedition_stats folds ALL members with no
+--      status filter (0166:100-118) — two wrecks still yield a positive team speed — so the old
+--      body reaches movement_create: ok=true/movement_started AND a fresh fleet + leg. That chain
+--      is what makes the minted-nothing arm below non-vacuous rather than an observation replay.
 --   4. RECOVERY IS NEVER BLOCKED on exactly that dead fleet: the brake stays an idempotent ok,
 --      the tow berths a wreck, repair revives it in port, the roster re-assign takes it back,
 --      and ONE living ship is enough for the group to move again — the un-brick loop, closed.
@@ -1616,6 +1621,7 @@ declare
   v_port uuid; v_fleetN uuid;
   n_fleets integer; n_legs integer; n integer;
   v_status text; v_hp integer; v_group_tag uuid; v_max integer;
+  v_dock_flag jsonb;
 begin
   -- ── a fresh, funded fixture player; the signup trigger mints the base the PRE-0312 bootstrap
   --    would have launched the dead fleet from (without it this block could pass VACUOUSLY:
@@ -1697,7 +1703,7 @@ begin
   -- go, coordinate target
   r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN));
   if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
-    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go(coordinate) answered % instead of the typed no_living_ships refusal (the pre-0312 body returns ok/movement_started here and flies the wrecks)', r;
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go(coordinate) answered % instead of the typed no_living_ships refusal (source-derived expectation: the pre-0312 body reaches movement_create here — 0166''s status-blind fold — a proof can only run the post-fix chain)', r;
   end if;
   -- go, port target (both shapes of the exactly-one-of pair refuse identically)
   r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, %L::uuid, null, null)', gN, v_port));
@@ -1711,10 +1717,19 @@ begin
   if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
     raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go_route answered % instead of no_living_ships (leg 1 composes the mover; its refusal must propagate)', r;
   end if;
-  -- dock: the flag comes up ONLY around this probe (in-txn, rolled back like everything else)
+  -- dock: the key comes up ONLY around this probe, and goes back to WHATEVER IT WAS — captured
+  -- here, never restored to a hard-coded ambient default (the proofs-never-assert-ambient-defaults
+  -- law: a later block appended to this file must inherit the setup's world, not this block's
+  -- assumption of it). NOTE what this probe reaches: in PRODUCTION timed_docking_enabled is false
+  -- and dock's dark gate answers first, so the deployed dock guard is pre-positioned, not live —
+  -- this probe is the only place the guard is exercised until the owner lights that key.
+  select value into v_dock_flag from public.game_config where key='timed_docking_enabled';
+  if v_dock_flag is null then
+    raise exception 'NOLIVE FAIL: timed_docking_enabled is not seeded — cannot capture a value to restore';
+  end if;
   update public.game_config set value='true'::jsonb where key='timed_docking_enabled';
   r := pg_temp.call_as(uN, format('public.command_ship_group_dock(%L::uuid)', gN));
-  update public.game_config set value='false'::jsonb where key='timed_docking_enabled';
+  update public.game_config set value = v_dock_flag where key='timed_docking_enabled';
   if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
     raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — dock answered % instead of no_living_ships (the dock guard must answer before the fleet resolve''s no_fleet)', r;
   end if;
@@ -1760,7 +1775,7 @@ begin
     raise exception 'NOLIVE FAIL: the recovered fleet (1 living ship + 1 wreck) was still refused: % — "all destroyed" must mean ALL', r;
   end if;
 
-  raise notice 'DZCOMBAT_PASS_NOLIVE ok: empty_group kept its own code; a damaged-but-alive ship at instance hp 0 (the tick''s round-to-zero shape) still moved; with every ship destroyed, go(coordinate)/go(port)/go_route/dock all refused with the typed no_living_ships and minted nothing (the pre-0312 body flies the wrecks and mints a fleet + leg right here); and on exactly that dead fleet the brake, the tow, the repair and the re-assign all worked — one living ship un-bricked the group';
+  raise notice 'DZCOMBAT_PASS_NOLIVE ok: empty_group kept its own code; a damaged-but-alive ship at instance hp 0 (the tick''s round-to-zero shape) still moved; with every ship destroyed, go(coordinate)/go(port)/go_route/dock all refused with the typed no_living_ships and minted nothing (source-derived, not observed: the pre-0312 body reaches movement_create right here — the member count is death-blind and 0166''s fold has no status filter — a proof can only run the post-fix chain); and on exactly that dead fleet the brake, the tow, the repair and the re-assign all worked — one living ship un-bricked the group';
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
