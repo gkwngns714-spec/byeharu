@@ -355,7 +355,7 @@ begin
   --          by the elite multiplier exactly where an elite can roll.
   v_elite_mult := greatest(1.0, coalesce(public.cfg_num('encounter_elite_difficulty_multiplier'), 2));
   select coalesce(max(a.base_difficulty
-                      * case when coalesce(fm.elite_chance, 0) > 0 then v_elite_mult else 1.0 end), 0)
+                      * case when coalesce(fm.elite_chance, 0) > 0 then v_elite_mult else 1.0::double precision end), 0)
     into v_maxd_res
     from public.location_encounter_bindings b
     join public.locations l                     on l.id  = b.location_id and l.status = 'active'
@@ -389,4 +389,8 @@ begin
   if v_mk2 < v_ring then
     raise exception '0313 ASSERT (f5) FAIL: Mk-II range % is under the % ring — a Mk-II escort could not fire from its formation slot', v_mk2, v_ring;
   end if;
+  raise notice '0313 SELF-ASSERT PASS: ranges cut to fit the zone — basic gun %, Mk-II %, fallback %, spawn ring %; the worst enemy range ANY spawn arm can mint is % at difficulty % (from %), strictly under the basic gun and strictly inside the ring. mining_rig_extension and every untouched knob byte-unchanged.',
+    v_basic, v_mk2, v_fallback, v_ring, v_enemy_max, v_maxd, v_arm;
 end $$;
+
+commit;
