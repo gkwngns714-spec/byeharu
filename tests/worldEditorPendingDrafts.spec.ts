@@ -105,7 +105,11 @@ test('nextPendingDomain walks through every pending domain over repeated clicks'
   const walk: PendingDraftDomain[] = []
   let cur: PendingDraftDomain = 'locations'
   for (let i = 0; i < 4; i++) {
-    const nxt = nextPendingDomain(s, cur)!
+    // The annotation is load-bearing, not decoration: `cur` is re-assigned from `nxt` on the loop's
+    // back-edge, so inferring `nxt` from `nextPendingDomain(s, cur)` would be self-referential and
+    // TS falls back to `any` (TS7022). Stating the domain type the signature already guarantees
+    // keeps the walk type-checked instead of silently untyped.
+    const nxt: PendingDraftDomain = nextPendingDomain(s, cur)!
     walk.push(nxt)
     cur = nxt
   }

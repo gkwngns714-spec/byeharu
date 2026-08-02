@@ -37,6 +37,7 @@ const loc = (over: Partial<MapLocation> = {}): MapLocation => ({
   min_power_required: 0,
   is_public: true,
   status: 'active',
+  territory_radius: null, // 0217: always present in the get_world_map JSON; NULL = projects no territory
   ...over,
 })
 
