@@ -1019,6 +1019,13 @@ declare r jsonb; n int; t record;
 begin
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  -- ring 0 — OWNED (0313 repoint): every member spawns ON the engagement anchor, distance 0 from
+  -- the wave, so every weapon fires on tick 1 at ANY positive range. The exact-damage pins below
+  -- assert AGGREGATION (all members' attack flows into player_damage), and they held before 0313
+  -- only because the seeded ranges (120-180) happened to cover the seeded 30-unit ring — an
+  -- ambient geometry this proof never owned. 0313 cut the ranges below the ring; the property is
+  -- unchanged, the precondition is now stated.
+  perform public.set_game_config('spatial_formation_ring_radius', '0'::jsonb);
 
   -- a real legacy unit fleet to a real hunt_pirates location (lowest entry gate first).
   select id into v_base from public.bases where player_id = uA and status = 'active' limit 1;
@@ -1239,9 +1246,12 @@ declare r jsonb; t jsonb; s1 jsonb; s2 jsonb; n int;
   v_err text;
 begin
   -- config surgery must be in effect for the exact-damage pins: re-apply the COMBATPARITY in-txn
-  -- surgery (idempotent; the real set_game_config; all reverted by ROLLBACK).
+  -- surgery (idempotent; the real set_game_config; all reverted by ROLLBACK), including the OWNED
+  -- ring-0 geometry (see COMBATPARITY's knob block — 0313 cut ranges below the seeded ring; every
+  -- member must sit on the anchor for the tick-damage aggregation pin to measure aggregation).
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  perform public.set_game_config('spatial_formation_ring_radius', '0'::jsonb);
 
   -- the same seeded hunt destination COMBATPARITY used (lowest entry gate first).
   select id into v_hunt from public.locations
