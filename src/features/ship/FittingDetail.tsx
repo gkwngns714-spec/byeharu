@@ -47,6 +47,8 @@ import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
 import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX } from './shipName'
 import { canRepair, canTow, repairGateNote, REPAIR_LABEL, TOW_LABEL, type RepairGate } from './shipRecovery'
+import { RepairPanel } from './RepairPanel'
+import { repairDockedPlace } from '../port/repairEconomy'
 import { Badge, Button, Card, CardHeader, Notice, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 
@@ -57,12 +59,15 @@ import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 //     shipName.ts pure guards; rename_main_ship_self);
 //   · location — from the ONE fleet-positions row the screen threads down (ZERO own location
 //     reads; the fleetPositionLocationLabel adapter — the same fold every roster row uses);
-//   · condition — the shared shield/hull pair (MeterPairBars over shipMeterPair) + the free
-//     RECOVERY ACTION when the ship is disabled (NO-SOFTLOCK: the free path is the ONLY recovery
-//     for a destroyed ship — RepairPanel's paid desk defers to it — so an action must render here
-//     regardless of any flag). 0297 made that free repair POSITION-GATED, so which action shows is
-//     decided by the ONE pure gate (shipRecovery.repairGate) and BOTH commands are the screen's
-//     single implementations, threaded down as `recovery` — this component owns no copy of them;
+//   · condition — the shared shield/hull pair (MeterPairBars over shipMeterPair), then EXACTLY ONE
+//     repair concept for this ship's state (REPAIR-WHERE-YOU-ARE): an ALIVE ship gets the paid
+//     hull mend (RepairPanel — its ONE mount; dockedness from this same positions row via
+//     repairDockedPlace), a DISABLED ship gets the free RECOVERY ACTION instead (NO-SOFTLOCK: the
+//     free path is the ONLY recovery for a destroyed ship — the paid desk defers to it — so an
+//     action must render regardless of any flag). 0297 made that free repair POSITION-GATED, so
+//     which free action shows is decided by the ONE pure gate (shipRecovery.repairGate) and BOTH
+//     free commands are the screen's single implementations, threaded down as `recovery` — this
+//     component owns no copy of them;
 //   · THE FITTING EDIT SURFACE — the ONE place fit/unfit renders (moved OUT of ModulesPanel's
 //     Workshop in this same slice; ModulesPanel keeps crafting only). The row IS the ship: fit
 //     targets this ship directly, no <select>. ENABLED when the ship's place is 'docked' or
@@ -457,11 +462,29 @@ export function FittingDetail({
         </div>
       )}
 
-      {/* NO-SOFTLOCK — a destroyed ship recovers ONLY through the free path (RepairPanel's paid desk
-          explicitly defers to it), so a recovery ACTION renders here for any disabled ship,
-          independent of every flag. 0297: the free repair is position-gated, so the gate decides
-          which action — Repair in port, Tow when adrift — and an adrift ship is told plainly why
-          rather than being handed a button the server will refuse. */}
+      {/* REPAIR-WHERE-YOU-ARE — the paid hull mend, right under the hull meter it mends (the ONE
+          mount; the Port-rail copy is retired). ALIVE ships only: the isDisabled split below is the
+          mutual-exclusion seam — a destroyed ship gets the free Repair/Tow block INSTEAD, never
+          both (server-enforced: free repair gates on destroyed, paid repair rejects it, 0201).
+          Dockedness is the ship's OWN position row through repairDockedPlace (docked only — a
+          berthed ship's paid mend would 100%-fail server-side; see that function), so the desk and
+          the location line above always describe the same ship. Flag-dark → renders null. */}
+      {!isDisabled && (
+        <RepairPanel
+          mainShipId={shipId}
+          shipName={ship.name}
+          docked={repairDockedPlace(position)}
+          lifecycleKey={refreshKey}
+          onMended={onIdentityChanged}
+        />
+      )}
+
+      {/* NO-SOFTLOCK — a destroyed ship recovers ONLY through the free path (the paid mend above
+          explicitly defers to it and never mounts for a destroyed ship), so a recovery ACTION
+          renders here for any disabled ship, independent of every flag. 0297: the free repair is
+          position-gated, so the gate decides which action — Repair in port, Tow when adrift — and
+          an adrift ship is told plainly why rather than being handed a button the server will
+          refuse. */}
       {isDisabled && (
         <div className="mt-3 rounded-lg border border-edge bg-surface-2/50 p-3">
           <Notice tone="warning" data-testid="mainship-disabled-note" className="mb-2">

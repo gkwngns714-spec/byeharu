@@ -8,8 +8,11 @@ import {
   repairBlocks,
   repairConfigFromRows,
   repairCostFor,
+  repairDockedPlace,
   type ShipHull,
 } from '../src/features/port/repairEconomy'
+import { repairGate } from '../src/features/ship/shipRecovery'
+import type { FleetPositionPlace } from '../src/features/map/mainshipApi'
 
 // REPAIR-ECON — pure-logic specs for the paid hull-repair client mirrors (no app/Supabase). Asserts the
 // same reject ORDER as the server RPC repair_ship_hull_at_port (migration 0201): gate FIRST, then amount
@@ -142,6 +145,38 @@ test('repairAvailability: too poor → insufficient_credits (last)', () => {
 
 test('repairAvailability: unknown wallet (affordable null) SKIPS the afford precheck → ok (server answers)', () => {
   expect(repairAvailability({ ...repairOk(), affordable: null })).toEqual({ canRepair: true, reason: 'ok' })
+})
+
+// ── repairDockedPlace (REPAIR-WHERE-YOU-ARE: the paid mend's dockedness input) ──────────────────────
+test('repairDockedPlace: ONLY place=docked lights the paid mend — berthed/transit/in_space/hidden/no-row are false', () => {
+  // 'docked' = a present fleet at a port — the one state mainship_resolve_docked_location accepts.
+  expect(repairDockedPlace({ place: 'docked' })).toBe(true)
+  // 'berthed' is deliberately NOT enough (unlike fittingEditability): an unfleeted berthed ship
+  // resolves to state='home' server-side, so the paid RPC would answer not_docked — never offer it.
+  for (const place of ['berthed', 'transit', 'in_space', 'hidden'] as FleetPositionPlace[]) {
+    expect(repairDockedPlace({ place })).toBe(false)
+  }
+  // no position row at all (projection dark / ship absent) → fail closed.
+  expect(repairDockedPlace(undefined)).toBe(false)
+})
+
+test('repairDockedPlace(false) flows to the not_docked verdict the old hardcode made unreachable', () => {
+  const verdict = repairAvailability({ ...repairOk(), docked: repairDockedPlace({ place: 'in_space' }) })
+  expect(verdict).toEqual({ canRepair: false, reason: 'not_docked' })
+  expect(repairBlocks(verdict.reason)).toBe(true) // structural: the Repair button hard-disables
+})
+
+// ── mutual exclusion (REPAIR-WHERE-YOU-ARE: one repair concept per ship state, never both) ──────────
+test('mutual exclusion: a destroyed ship gets ONLY the free path; an alive ship gets ONLY the paid path', () => {
+  // DESTROYED: the paid mirror refuses (ship_destroyed — structural block) while the free
+  // recovery gate offers an action (at_port/adrift/unknown — anything but silence).
+  const paidOnDestroyed = repairAvailability({ ...repairOk(), destroyed: true })
+  expect(paidOnDestroyed.canRepair).toBe(false)
+  expect(repairBlocks(paidOnDestroyed.reason)).toBe(true)
+  expect(repairGate('destroyed', null, 's1').kind).not.toBe('not_disabled')
+  // ALIVE: the free recovery gate renders NOTHING (not_disabled) while the paid mirror may accept.
+  expect(repairGate('stationary', null, 's1')).toEqual({ kind: 'not_disabled' })
+  expect(repairAvailability(repairOk()).canRepair).toBe(true)
 })
 
 // ── button-disable policy (the salvage M2 posture) ──────────────────────────────────────────────────

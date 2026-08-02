@@ -15,7 +15,7 @@ const REASON_MESSAGES: Record<string, string> = {
   ship_not_found: 'No ship available.',
   // The safelock seam: a destroyed ship recovers through the FREE recovery path, not the paid desk.
   ship_destroyed: 'This ship is disabled — recover it first (free), then it can be repaired.',
-  not_docked: 'Dock at a port to repair the hull.',
+  not_docked: 'Take this ship to a port to mend its hull.',
   nothing_to_repair: 'Hull is already at full integrity.',
   repair_misconfigured: 'Repair pricing is unavailable right now.',
   insufficient_credits: 'Not enough credits for that repair.',

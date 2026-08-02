@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { runGuardedCommand, useActivityPanelGuards } from '../../lib/useActivityPanelGuards'
 import { getWalletBalance } from '../map/tradeApi'
-import { getRepairConfigRows, getShipHull, repairShipHullAtPort } from './repairApi'
+import { getRepairConfigRows, getShipHull, repairShipHullAtPort } from '../port/repairApi'
 import {
   clampRepairHp,
   isDestroyed,
@@ -14,33 +14,54 @@ import {
   repairWalletDisplay,
   type RepairConfig,
   type ShipHull,
-} from './repairEconomy'
-import { repairReasonMessage } from './repairReasonMessage'
+} from '../port/repairEconomy'
+import { repairReasonMessage } from '../port/repairReasonMessage'
 import { Button, Card, CardHeader, Meter, SectionLabel, Skeleton } from '../../components/ui'
 
-// REPAIR-ECON — the dark paid hull-repair desk: the chosen docked ship's hull integrity (hp/max_hp from
-// owner-read main_ship_instances, 0043) as a Meter, the missing hull, a whole-hp stepper (default = a
-// FULL mend) with the server-priced cost (hp × repair_credits_per_hp, 0201), and ONE intentional Repair
-// (repair_ship_hull_at_port — the only repair command). CLIENT-FLAG-GATED on the SERVER'S OWN flag, read
-// honestly from PUBLIC-READ game_config (the SalvageMarketPanel posture): 0201 shipped NO read RPC for
-// repair, so the panel reads repair_economy_enabled itself and renders NOTHING unless it is jsonb true
-// (strict fold). While the flag is false (production today) the panel is null AND the server would reject
-// any repair with repair_economy_disabled before any read — double fail-closed, the client is never the
-// control. NO optimistic UI: every repair awaits the server then refetches hull + wallet. The availability
-// mirror (repairEconomy.ts) is a display-only precheck; its hints and every server reject flow through the
-// ONE repairReasonMessage mapper. THE SEAM: a DESTROYED ship is not a paid subject — the desk shows the
-// free-recovery note (the existing repair_main_ship path handles it), never a Repair button.
+// REPAIR-WHERE-YOU-ARE — the paid hull-mend surface, mounted in the Fitting detail's condition
+// block (its ONE home; the Port-rail mount is retired with this slice — the player mends the ship
+// they are LOOKING AT, next to the only per-ship hull meter in the game, without re-picking it at
+// a dock desk). Named for its ship in the header, so the desk is never pointed at a mystery ship.
+//
+// DOCKEDNESS is a PROP: `docked` derives from the ship's own get_my_fleet_positions row
+// (repairDockedPlace — place='docked' ONLY; see that function for why berthed stays false), the
+// projection the shell already polls. ZERO new dockedness reads — the old locationId prop (the
+// Port dock projection) was only ever a client-side is-docked proxy: repair_ship_hull_at_port
+// takes no location and resolves the dock server-side (0201 → mainship_resolve_docked_location).
+//
+// CLIENT-FLAG-GATED on the SERVER'S OWN flag, read honestly from PUBLIC-READ game_config (the
+// SalvageMarketPanel posture): 0201 shipped NO read RPC for repair, so the panel reads
+// repair_economy_enabled itself and renders NOTHING unless it is jsonb true (strict fold). While
+// the flag is false the server would also reject any repair with repair_economy_disabled before
+// any read — double fail-closed, the client is never the control. NO optimistic UI: every repair
+// awaits the server, refetches hull + wallet, then pings the screen (onMended) so the shared hull
+// meters above re-read the hp the mend just changed. The availability mirror (repairEconomy.ts)
+// is a display-only precheck; its hints and every server reject flow through the ONE
+// repairReasonMessage mapper.
+//
+// EXACTLY ONE ACTION AT A TIME (the server-enforced mutual exclusion — free repair_main_ship
+// gates on status='destroyed', paid repair REJECTS destroyed, 0201): the caller mounts this panel
+// for ALIVE ships only (FittingDetail's isDisabled split — the free Repair/Tow block owns
+// destroyed), and the branches below keep it honest even against a stale prop: destroyed hull →
+// the free-path note, full hull → nothing to mend, damaged but not docked → the take-it-to-a-port
+// line, damaged and docked → the mend (stepper + cost + ONE Repair).
 
 export function RepairPanel({
-  // The ship's server-reported docked location (PortScreen's dock projection) + the commanded ship.
-  locationId,
+  // The commanded ship (always resolved — the Fitting detail IS a ship) + its display name.
   mainShipId,
-  // Re-reads whenever the main-ship dock lifecycle changes (the SalvageMarketPanel dep idiom).
+  shipName,
+  // The ship's own dockedness (repairDockedPlace over its fleet-positions row — never a 2nd read).
+  docked,
+  // Re-reads whenever the screen's read lifecycle changes (the SalvageMarketPanel dep idiom).
   lifecycleKey,
+  // A paid mend landed — the screen refetches the shared reads (hull meters, roster rows).
+  onMended,
 }: {
-  locationId: string | null
-  mainShipId: string | null
+  mainShipId: string
+  shipName: string
+  docked: boolean
   lifecycleKey: string
+  onMended: () => Promise<void>
 }) {
   // null = flag unread (renders null — no pre-read flash); then the strict fold of the config read.
   const [cfg, setCfg] = useState<RepairConfig | null>(null)
@@ -64,12 +85,14 @@ export function RepairPanel({
   const litRef = useRef(false)
 
   const refresh = useCallback(async () => {
-    // The gate read comes FIRST (the server's own order): while the flag is dark — or the ship isn't
-    // docked / not resolved — this panel performs NO hull/wallet read.
+    // The gate read comes FIRST (the server's own order): while the flag is dark this panel performs
+    // NO hull/wallet read. Once lit, hull + wallet are plain owner reads (RLS) — they work wherever
+    // the ship is, which is the point: an undamaged or undocked ship still gets an HONEST line
+    // instead of a vanished panel. Dockedness itself is the `docked` prop, never a read here.
     const rows = await getRepairConfigRows()
     const nextCfg = repairConfigFromRows(rows)
     if (nextCfg.enabled) litRef.current = true
-    if (!repairStickyLit(litRef.current, nextCfg.enabled) || locationId == null || mainShipId == null) {
+    if (!repairStickyLit(litRef.current, nextCfg.enabled)) {
       if (!activeRef.current) return
       setCfg(nextCfg)
       setHull(null)
@@ -82,7 +105,7 @@ export function RepairPanel({
     setCfg((prev) => (nextCfg.enabled ? nextCfg : (prev ?? nextCfg)))
     setHull(h ?? 'error')
     setWallet(w)
-  }, [activeRef, locationId, mainShipId])
+  }, [activeRef, mainShipId])
 
   // lifecycleKey is a deliberate re-fetch trigger (the SalvageMarketPanel dep idiom).
   useEffect(() => {
@@ -90,7 +113,6 @@ export function RepairPanel({
   }, [refresh, lifecycleKey])
 
   async function repair(hpAmount: number) {
-    if (!mainShipId) return
     if (!Number.isInteger(hpAmount) || hpAmount < 1) {
       setNote(repairReasonMessage('invalid_amount'))
       return
@@ -105,31 +127,26 @@ export function RepairPanel({
       successNote: (res) =>
         `Repaired +${res.hp_restored} hull — −${res.total_price.toLocaleString('en-US')} credits.`,
       errorNote: (res) => repairReasonMessage(res.reason ?? 'unavailable'),
-      refresh,
+      // Own wave (hull + wallet) + the screen's shared reads: the meters above render the same
+      // hull this mend just changed — both sides of that contract land together, never optimistic.
+      refresh: async () => {
+        await refresh()
+        await onMended()
+      },
     })
   }
 
   // FAIL CLOSED: render nothing unless the server's flag read affirmatively lit repairs (strict jsonb
-  // true) AND we have a docked, resolved ship. This is the dark path in production today
-  // (repair_economy_enabled=false); an unread flag / a first-mount failed read / an undocked-or-
-  // unresolved ship all collapse to null the same way. Once lit this mount, a transient config blip
-  // keeps the PRIOR lit cfg (sticky-lit). The server would still reject any repair (gate first).
-  if (cfg == null || !cfg.enabled || locationId == null || mainShipId == null) return null
+  // true). An unread flag / a first-mount failed read collapse to null the same way. Once lit this
+  // mount, a transient config blip keeps the PRIOR lit cfg (sticky-lit). The server would still
+  // reject any repair (gate first).
+  if (cfg == null || !cfg.enabled) return null
 
   return (
-    <Card tone="warning" data-testid="repair-panel">
-      <CardHeader title="Repair Bay" subtitle="Pay to mend this ship's hull at port." />
+    <Card tone="warning" data-testid="repair-panel" className="mt-3">
+      {/* THE SHIP'S NAME IS IN THE HEADER — the desk is never pointed at a mystery ship. */}
+      <CardHeader title="Condition" subtitle={shipName} />
 
-      {/* Current credits — the getWalletBalance semantics verbatim ('error'/unread → '—'; no wallet
-          row → the effective starting credits; the SalvageMarketPanel honesty posture). */}
-      <div className="mt-1 flex items-center justify-between gap-2 text-xs">
-        <span className="text-ink-faint">Credits</span>
-        <span data-testid="repair-wallet" className="font-mono tabular-nums text-warning">
-          {repairWalletDisplay(wallet, cfg.startingCredits)}
-        </span>
-      </div>
-
-      <SectionLabel className="mt-3">Hull integrity</SectionLabel>
       {hull === null ? (
         // Transient only (refresh sets cfg + hull together) — a quiet skeleton, never a flash.
         <div className="mt-1" aria-busy="true">
@@ -145,6 +162,7 @@ export function RepairPanel({
           hull={hull}
           cfg={cfg}
           wallet={wallet}
+          docked={docked}
           amount={amount}
           amountDraft={amountDraft}
           pending={pending}
@@ -158,12 +176,14 @@ export function RepairPanel({
   )
 }
 
-// The lit-and-loaded body: hull bar → destroyed/full/damaged branch. Split out so the null/error/loading
-// gates above stay flat (the SalvageMarketPanel readability posture).
+// The lit-and-loaded body: destroyed / full / not-docked / mend — EXACTLY ONE branch renders, so
+// the surface always carries one honest statement or one action, never two. Split out so the
+// null/error/loading gates above stay flat (the SalvageMarketPanel readability posture).
 function RepairBody({
   hull,
   cfg,
   wallet,
+  docked,
   amount,
   amountDraft,
   pending,
@@ -175,6 +195,7 @@ function RepairBody({
   hull: ShipHull
   cfg: RepairConfig
   wallet: number | null | 'error' | undefined
+  docked: boolean
   amount: number | null
   amountDraft: string | null
   pending: boolean
@@ -200,25 +221,19 @@ function RepairBody({
   const avail = repairAvailability({
     flagOn: true, // by construction: rendered only under the cfg.enabled gate
     amount: effectiveAmount || 1,
-    shipResolved: true, // by construction: mainShipId !== null in this branch
+    shipResolved: true, // by construction: mainShipId is a required prop
     destroyed,
-    docked: true, // by construction: locationId !== null in this branch
+    docked, // the REAL value (the ship's own position row) — never hardcoded
     missing,
     affordable,
   })
 
   return (
     <>
-      <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
-        <Meter pct={pct} tone={tone} className="flex-1" />
-        <span data-testid="repair-hull" className="shrink-0 font-mono tabular-nums text-ink-muted">
-          {Math.floor(hull.hp)} / {Math.floor(hull.maxHp)}
-        </span>
-      </div>
-
       {destroyed ? (
         // THE SEAM: a destroyed ship recovers through the FREE path (repair_main_ship), not the paid
-        // desk. No Repair button here — the existing recovery UI handles it.
+        // desk. Normally unreachable here (the caller mounts this panel for ALIVE ships only) — this
+        // covers a stale-props race against the fresher hull read, honestly and button-free.
         <p data-testid="repair-destroyed" className="mt-2 text-[10px] text-ink-muted">
           {repairReasonMessage('ship_destroyed')}
         </p>
@@ -226,8 +241,31 @@ function RepairBody({
         <p data-testid="repair-full" className="mt-2 text-[10px] text-ink-muted">
           {repairReasonMessage('nothing_to_repair')}
         </p>
+      ) : !docked ? (
+        // Damaged but not at a dock: the ONE honest line (the availability mirror's not_docked copy —
+        // the same words a server reject would show). No stepper, no button that would 100%-fail.
+        <p data-testid="repair-not-docked" className="mt-2 text-[10px] text-ink-muted">
+          {repairReasonMessage('not_docked')}
+        </p>
       ) : (
         <>
+          <SectionLabel className="mt-3">Mend this ship&rsquo;s hull</SectionLabel>
+          <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
+            <Meter pct={pct} tone={tone} className="flex-1" />
+            <span data-testid="repair-hull" className="shrink-0 font-mono tabular-nums text-ink-muted">
+              {Math.floor(hull.hp)} / {Math.floor(hull.maxHp)}
+            </span>
+          </div>
+
+          {/* Current credits — the getWalletBalance semantics verbatim ('error'/unread → '—'; no wallet
+              row → the effective starting credits; the SalvageMarketPanel honesty posture). */}
+          <div className="mt-1 flex items-center justify-between gap-2 text-xs">
+            <span className="text-ink-faint">Credits</span>
+            <span data-testid="repair-wallet" className="font-mono tabular-nums text-warning">
+              {repairWalletDisplay(wallet, cfg.startingCredits)}
+            </span>
+          </div>
+
           <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
             {/* Whole-hp stepper — buttons clamp to 1..missing; typed input floors to whole 1.. and may
                 exceed missing (server clamps to the actual missing hull, never over-charges). */}

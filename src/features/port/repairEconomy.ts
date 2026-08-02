@@ -1,5 +1,6 @@
 import { strictConfigFlag } from '../../lib/gameConfigFold'
 import { foldStartingCredits, salvageStickyLit, salvageWalletDisplay } from './salvageMarket'
+import type { FleetPosition } from '../map/mainshipApi'
 
 // REPAIR-ECON — PURE, framework-free types + client mirrors for the paid hull-repair desk (dark UI).
 //
@@ -82,6 +83,21 @@ export function clampRepairHp(raw: number, missing: number): number {
 export function repairCostFor(hpAmount: number, creditsPerHp: number | null): number | null {
   if (creditsPerHp === null || !Number.isFinite(hpAmount) || hpAmount <= 0) return null
   return hpAmount * creditsPerHp
+}
+
+/**
+ * The paid mend's `docked` input, from the ship's ONE position row (get_my_fleet_positions — the
+ * projection the shell already polls; NEVER a second dockedness read). ONLY place='docked' lights
+ * it: the server resolves the dock itself via mainship_resolve_docked_location (0201 takes no
+ * location argument), which requires state='at_location' plus a PRESENT fleet row (0092) — an
+ * unfleeted 'berthed' ship resolves to state='home' (0221) and the RPC answers not_docked. So this
+ * deliberately DIFFERS from fittingEditability (which also accepts 'berthed'): fitting is
+ * settled-safe, the paid mend is docked-fleet-only. transit / in_space / hidden / no row → false
+ * (fail closed — the availability mirror then explains with the honest not_docked copy).
+ * This is an INPUT adapter for repairAvailability, not a second gate.
+ */
+export function repairDockedPlace(pos: Pick<FleetPosition, 'place'> | undefined): boolean {
+  return pos?.place === 'docked'
 }
 
 // ── repair availability mirror (the 0201 reject order) ─────────────────────────────────────────────────
