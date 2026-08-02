@@ -25,6 +25,26 @@ PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
+  # ── GENERATED-MIGRATION PARITY GATE (added 0308) ───────────────────────────────────────────────
+  # 0305, 0306 and 0308 each re-create LIVE plpgsql by SLICING the deployed text and replacing one
+  # marked hunk, and each ships a generator whose --check re-derives the migration from those slices.
+  # That makes byte parity outside the hunks a property of the METHOD rather than a review promise —
+  # but ONLY if the generator is actually run. Before this gate existed, `--check` was wired into no
+  # workflow, no harness and no npm script, so a hand-edit of a generated migration passed every gate
+  # in the repo and would have surfaced as an exactly-once probe failing AT DEPLOY TIME ON PRODUCTION
+  # instead of in CI. Adversarial review found that hole. All three are gated together, not just the
+  # newest, because the gap was identical for the two that came before.
+  if command -v node >/dev/null 2>&1; then
+    for gen in gen-0305-sortie-authority gen-0306-dock-authority gen-0308-combat-roster-authority; do
+      if [ -f "$REPO_ROOT/scripts/$gen.mjs" ]; then
+        node "$REPO_ROOT/scripts/$gen.mjs" --check >/dev/null 2>&1 \
+          || fail "$gen --check FAILED: its migration no longer matches the slices it takes from the deployed heads. Either the migration was hand-edited, or a source migration drifted. Do NOT re-generate blindly — read the diff first; a slice that no longer matches may mean the head moved under you."
+      fi
+    done
+  else
+    fail "node not found — the generated-migration parity gate cannot run, and a hand-edited migration would reach production unchecked"
+  fi
+
   tp_assert_self_rolling_back "$SQL"
 
   # every dark capability flag this scenario needs is enabled ONLY strictly inside the txn.

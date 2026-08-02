@@ -85,11 +85,18 @@
 --   captain_xp_accrue             0177:212   XP attribution -> UNTOUCHED; narrow re-ambush window
 --     degrades to the designed sentinel (stated above).
 --   command_ship_group_stop       0305:247   the brake's release -> now composes the one idiom (hunk 6).
---   send_ship_group_hunt          0231:706/896/953  sole sender-writer -> UNTOUCHED. Its freeze
---     still accretes on a persistent fleet; that leak is bounded (PK fleet+ship; 0047 cascades
---     terminal fleets) and INERT after this migration (no read-to-act site consumes stale rows).
---     Folding the replacement into its three insert arms is a follow-up slice, deliberately not
---     smuggled in here.
+--   send_ship_group_hunt          0231:706/896/953  sole sender-writer -> UNTOUCHED, and it needs
+--     NOTHING. A draft of this header claimed its freeze "still accretes on a persistent fleet" and
+--     scheduled a follow-up slice to fold the replacement into its three insert arms. That was
+--     WRONG, and adversarial review caught it: each arm MINTS A BRAND-NEW FLEET immediately before
+--     freezing -- 0231:687 / :878 / :937 "insert into fleets ... returning id into v_fleet", then
+--     0231:706 / :896 / :953 "insert into group_sortie_members ... select v_fleet, ...". A fresh
+--     fleet_id every send, no ON CONFLICT clause because a conflict is impossible. The hunt roster
+--     is therefore ALWAYS exactly the live members at send. The ambush resolver on the REUSED
+--     persistent fleet was the only accreting path in the chain, and hunk 3 releases it. The
+--     follow-up slice would have been dead work against a leak that does not exist.
+--     THE LESSON: that consumer was ruled on without being read, and the same method produced the
+--     safety argument for every other row of this ledger. A ledger is a CLAIM -- re-derive it.
 --   group_sortie_is_open          0305       does NOT read the roster (0305 self-assert f).
 --   client                        RLS SELECT grant (0168:96) exists; no client code reads the table.
 --
@@ -228,6 +235,11 @@ create or replace function public.module_is_firing_weapon(t public.module_types)
 returns boolean
 language sql
 immutable
+-- Pinned for posture parity with every sibling in this file and with 0305:105 — several harnesses
+-- in scripts/ assert 'search_path=public' = any(proconfig) on the functions they touch. Not a
+-- privilege matter here (SECURITY INVOKER, and the body reads no schema object), but a lone
+-- unpinned function is the kind of inconsistency that later reads as an oversight worth "fixing".
+set search_path to 'public'
 as $fn$
   select t.slot_type = 'weapon'
      and t.range is not null
@@ -241,6 +253,30 @@ comment on function public.module_is_firing_weapon(public.module_types) is
   'fire or suppress the 0262 fallback. Deliberately NOT composed by ship_weapon_modules, which '
   'answers a different question ("what carries a spatial range?" — weapon OR mining) for the '
   'client map-radius layer.';
+
+-- ── 3b. SUPERSEDE 0168'S NOW-FALSE DOCUMENTATION ─────────────────────────────────────────────────
+-- 0168 declared fleets.group_id "INFORMATIONAL … ROUTING NEVER reads it" (0168:101, :110-112) and
+-- group_sortie_members "THE routing truth … never live group membership" (0168:98-100). This
+-- migration changes that: the roster is now filtered THROUGH fleets.group_id, so a nulled tag empties
+-- a roster. No reachable break exists today — delete_ship_group is the only writer that nulls both
+-- sides (0216:619 + the FK) and 0305 gates it on group_sortie_is_open, whose clauses cover every
+-- in-flight mission type and the telegraph window — but the OLD COMMENTS ARE WHAT THE NEXT AUTHOR
+-- READS, and acting on a retired law is how this codebase has been hurt before. A deployed comment
+-- is state; correcting it forward is part of the slice, not documentation housekeeping. 0168 itself
+-- is applied and must never be edited in place.
+comment on table public.group_sortie_members is
+  'Membership SNAPSHOT of a sortie, frozen at send (0168) and, since 0308, READ THROUGH LIVE '
+  'MEMBERSHIP: group_sortie_live_members honours a row only while the ship is still in the fleet''s '
+  'group. The manifest-wins law is intact for a LIVE sortie — 0305 refuses assign/unassign/delete '
+  'while group_sortie_is_open, so membership cannot move between freeze and conclusion and the '
+  'filter is an identity there. It bites only BETWEEN sorties, where a departed ship must not fight. '
+  'Writers: send_ship_group_hunt (fresh fleet per send) and the ambush resolver (release+refreeze).';
+comment on column public.fleets.group_id is
+  'Team label — NO LONGER display-only. 0168 declared that routing never reads this column; 0308 '
+  'made the combat roster read it (group_sortie_live_members joins msi.group_id = f.group_id), so '
+  'nulling this tag on a fleet with a live sortie would empty its roster. That is unreachable today '
+  'because 0305 gates the only writer that nulls it, but treat this column as ROUTING-BEARING: any '
+  'new path that clears it must first prove no sortie is open.';
 
 -- ACLs: internal leaves — every composer is a security-definer engine function. Explicitly revoked
 -- rather than merely un-granted (the 0254 prod grant-drift lesson).
