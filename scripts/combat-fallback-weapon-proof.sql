@@ -96,6 +96,10 @@ update public.game_config set value='true'::jsonb where key='module_crafting_ena
 update public.game_config set value='true'::jsonb where key='module_fitting_enabled';
 update public.game_config set value='true'::jsonb where key='captain_assignment_enabled';
 update public.game_config set value='true'::jsonb where key='spatial_combat_enabled';
+-- combat_telegraph stays DARK — OWNED here, not inherited (0300 lit it in the chain seeds, after
+-- this proof was written; a lit telegraph queues the encounter instead of opening it inline at the
+-- settle, and the attribution scenario observes the inline opening). The danger-combat-proof idiom.
+update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 
 -- tuning knobs (numeric, not capability gates) — all reverted by ROLLBACK. The engineered geometry
 -- (header) depends on these EXACT values.

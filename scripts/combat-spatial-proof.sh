@@ -79,6 +79,8 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "enemy_synthetic_speed_base', '60'" "$SQL"    || fail "harness lost the tuned pirate closing speed (needed for the tick-2 retaliation)"
   grep -q "combat_damage_variance_pct', '0'" "$SQL"     || fail "harness lost the determinism knob (0 variance)"
   grep -q "combat_player_fallback_weapon_range', '5'" "$SQL" || fail "harness lost the OWNED fallback range (since 0262 the unfitted escort carries the fallback weapon; the CLOSE case needs a range this harness sets under the ring)"
+  grep -q "set value='false'::jsonb where key='combat_telegraph_enabled'" "$SQL" \
+    || fail "harness does not keep combat_telegraph_enabled dark (0300 lit it; a lit telegraph queues the encounter instead of opening it inline at the settle)"
   grep -q "'autocannon_battery'" "$SQL"                 || fail "harness does not craft the real S0 weapon catalog entry"
   grep -q "the catalog autocannon_battery range" "$SQL" || fail "harness's fitted-range assert is no longer derived from the catalog (the 0313 repoint regressed to a hard-coded seed)"
 

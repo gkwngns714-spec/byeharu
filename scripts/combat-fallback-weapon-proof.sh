@@ -68,6 +68,8 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "spatial_formation_ring_radius', '500'" "$SQL" || fail "harness lost the escort-out-of-range ring radius (damage attribution depends on it)"
   grep -q "enemy_synthetic_range_base', '10'" "$SQL"     || fail "harness lost the tuned-low pirate range (the pirate must not fire tick 1)"
   grep -q "combat_damage_variance_pct', '0'" "$SQL"      || fail "harness lost the determinism knob (0 variance)"
+  grep -q "set value='false'::jsonb where key='combat_telegraph_enabled'" "$SQL" \
+    || fail "harness does not keep combat_telegraph_enabled dark (0300 lit it; a lit telegraph queues the encounter instead of opening it inline at the settle)"
   grep -q "'autocannon_battery'" "$SQL"                  || fail "harness does not use the real S0 weapon catalog entry for the armed witness"
 
   # every property is asserted in assert-form (gutting any one block fails here).
