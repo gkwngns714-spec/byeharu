@@ -82,8 +82,11 @@
 --
 -- Forward-only: 0001–0310 unedited. 0311 (reposition-in-zone) and 0312 (no-living-ships) are in
 -- flight on sibling branches; both re-create plpgsql and neither writes these config keys or
--- module_types rows, so this data-only file cannot collide with either (verified against their
--- generators' source slices at branch time).
+-- module_types rows — verified by grepping both branches' migration files on origin
+-- (origin/slice-reposition-in-zone, origin/slice-no-living-ships-no-orders): zero hits for any key
+-- or catalog row this file touches. All three slices DO append blocks to
+-- scripts/danger-combat-proof.{sql,sh} — an ordinary textual merge at integration time, not a
+-- semantic conflict.
 
 -- ── 0) CAPTURE the deliberately-untouched values BEFORE any write (derived, never hard-coded) ──────
 create temp table _0313_before (k text primary key, v text) on commit drop;
