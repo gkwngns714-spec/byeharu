@@ -3,6 +3,7 @@ import type { UnitType } from '../../lib/catalog'
 import { CombatEventLayer } from './CombatEventLayer'
 import { RoundLog } from './RoundLog'
 import { requestRetreat } from './combatApi'
+import { retreatErrorMessage } from './combatReasonMessage'
 import type { CombatEncounter, CombatEvent, CombatTick, CombatUnit } from './combatTypes'
 import { combatUnitLabel } from './combatLabels'
 import { selectCombatPhase, nextWaveSeconds, nextWaveText } from './combatPhase'
@@ -73,7 +74,9 @@ export function ActiveCombatPanel({
       await requestRetreat(encounter.presence_id)
       onChanged()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      // 0307: raise text → player copy via the ONE combat reject map. A double-pressed Retreat used
+      // to render `request_retreat: presence not active (is retreating)` verbatim.
+      setError(retreatErrorMessage(e instanceof Error ? e.message : String(e)))
     } finally {
       setBusy(false)
     }
@@ -107,7 +110,7 @@ export function ActiveCombatPanel({
 
       {retreating && (
         <Notice tone="warning" className="mb-4 text-xs">
-          Retreating — fleet breaks away and heads home in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}.
+          Retreating — fleet breaks away in {retreatLeft > 0 ? `${retreatLeft}s` : 'a moment…'}.
           Warning: it can still take damage until it escapes.
         </Notice>
       )}
@@ -190,9 +193,12 @@ export function ActiveCombatPanel({
               ))}
         </p>
         <p className="mt-1 text-[11px] text-ink-faint">
+          {/* 0307: rewards ride with the fleet and are banked the moment it arrives — wherever the
+              retreat was pointed. The old copy ("secured only after your fleet returns to base")
+              documented the pre-0307 defect as a rule and named a base the design does not have. */}
           {retreating
-            ? 'Locked — secured only after your fleet returns to base.'
-            : 'Pending — secured only after your fleet returns to base (lost if destroyed).'}
+            ? 'Locked — banked as soon as your fleet gets clear and arrives.'
+            : 'Pending — banked when your fleet leaves the fight and arrives (lost if it is destroyed).'}
         </p>
       </div>
 

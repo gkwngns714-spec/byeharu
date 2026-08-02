@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Button, OverlayPanel } from '../../components/ui'
 import { fetchMyPendingEncounter, fleePending, type PendingEncounter } from './telegraphApi'
+import { fleeErrorMessage } from './combatReasonMessage'
 
 // COMBAT-S2 TELEGRAPH — the pre-combat warning banner (mounted on MapScreen). Polls the caller's
 // pending encounter (~1s), shows "⚠ Combat encounter … in Ns" with a LIVE countdown, and a Flee button
@@ -57,8 +58,9 @@ export function TelegraphBanner({ onChange }: { onChange?: () => void }) {
       setPending(null)
       onChange?.()
     } catch (e) {
-      // The resolver may have started combat first (no_pending) — surface it and re-read.
-      setError(e instanceof Error ? e.message : 'Could not flee')
+      // The resolver may have started combat first (no_pending) — say so in player words and
+      // re-read. 0307: the raw token used to render verbatim; the ONE combat reject map speaks now.
+      setError(fleeErrorMessage(e instanceof Error ? e.message : 'flee_failed'))
       void refresh()
     } finally {
       setBusy(false)
