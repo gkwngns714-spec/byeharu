@@ -194,6 +194,12 @@ update public.game_config set value='true'::jsonb where key='mainship_additional
 update public.game_config set value='true'::jsonb where key='module_crafting_enabled';
 update public.game_config set value='true'::jsonb where key='module_fitting_enabled';
 update public.game_config set value='true'::jsonb where key='spatial_combat_enabled';
+-- 0300 lit combat_telegraph_enabled in the CHAIN, so a hunt arrival now QUEUES a telegraph instead
+-- of opening combat inline — and this harness's send-then-settle staging found "no active
+-- encounter" on every post-0300 chain (verified 2026-08-02: identical failure on main, no 0314).
+-- This proof's subject is the TICK, not the telegraph — so it OWNS the inline-opening world the
+-- danger-combat way: telegraph pinned dark in-txn (rolled back with everything else).
+update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 
 -- deterministic tuning (numeric knobs — all reverted by ROLLBACK; the engineered lifecycle depends on
 -- these EXACT values). Pirates are frozen (speed 0) with a long range (they HOLD + fire in place), deal

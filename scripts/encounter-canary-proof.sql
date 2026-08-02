@@ -86,6 +86,12 @@ update public.game_config set value='true'::jsonb  where key='encounter_authorin
 update public.game_config set value='true'::jsonb  where key='encounter_binding_authoring_enabled'; -- E2
 update public.game_config set value='false'::jsonb where key='encounter_resolver_enabled';        -- E3 starts DARK
 update public.game_config set value='false'::jsonb where key='pirate_intercept_enabled';          -- no en-route ambush noise
+-- 0300 lit combat_telegraph_enabled in the CHAIN, so a hunt arrival now QUEUES a telegraph instead
+-- of opening combat inline — and this harness's send-then-settle staging found "no active
+-- encounter" on every post-0300 chain (verified 2026-08-02: identical failure on main, no 0314).
+-- This proof's subject is the TICK, not the telegraph — so it OWNS the inline-opening world the
+-- danger-combat way: telegraph pinned dark in-txn (rolled back with everything else).
+update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 
 do $$
 begin
