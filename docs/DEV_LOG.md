@@ -5,6 +5,99 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-07-31 — Nothing was left to ship; what was left was the record (`#338`, **MERGED**)
+
+> **DEPLOY STATE.** Docs + one project-map data refresh. **No migration, no flag, no client change,
+> no behaviour change.** `main` **`2464694`**. Merging this triggers no Supabase deploy and no Pages
+> rebuild — `deploy-migrations.yml` and `pages.yml` are both path-filtered and `docs/**` matches
+> neither. **The game itself needed nothing.**
+
+**The owner's ask:** *"git pull my game byeharu, read all rule, log, history. Push and deploy what
+is left."*
+
+### 1. The answer to "what is left" was: nothing, in the code
+
+`main` was already fully pushed and deployed — migrations applied through `0306`, frontend deployed
+to Pages. All twelve local `byeharu*` checkouts were swept for unpushed commits; only the stale
+project-map clone had any. **There was no built-but-unmerged and no merged-but-undeployed work.**
+
+**Verified on production, not from the CI green.** With only the anon key on this machine, a prod
+function can still be proven to **exist without executing it**: POST `/rest/v1/rpc/<fn>` with a
+**deliberately malformed uuid** for each named argument. PostgREST fails at argument coercion, so no
+function body can run.
+
+| response | means |
+|---|---|
+| `42501 permission denied for function` | the function **EXISTS** (Postgres raises this only after resolving it) |
+| `404 PGRST202` | the function is **ABSENT** |
+
+`0306`'s `group_retire_empty_fleet` and `group_fleet_retire` both answered `42501`; a bogus control
+name in the same batch answered `404`. **Production migration head is `0306`.**
+
+*Two traps in this probe, both hit before it worked:* calling with **no arguments** returns
+`PGRST202` even for a function that exists — a **false negative**, because PostgREST resolves by
+argument names, so the real parameter names are required. And always send a known-bogus control
+name in the same batch, or you are reading a `42501` you have not calibrated.
+
+### 2. What WAS left: the record contradicted production
+
+- **The dev log was lying about prod.** This file — whose own header promises *"the newest truth is
+  always `docs/DEV_LOG.md` (top entry)"* — carried **`NOT DEPLOYED — PR open`** at the top for
+  `0306` for a full day **after** `0306` went live. A reader would have concluded the owner's
+  emptied fleet was still bricked.
+- **PR `#336` shipped with no entry at all** — the danger-zone gesture regression, deployed to
+  Pages, unrecorded.
+- **`HANDOFF.md` §0 was a day stale** — `main` head, migration head, and the live-state table.
+
+All three corrected. The failure **class** is now recorded as debt rather than the instance merely
+patched: *an entry is written when the work lands, so its deploy line has to be revisited when it
+actually deploys.*
+
+### 3. The 15-PR backlog was not work — it was 14 dead PRs
+
+Every file of every open PR was diffed **blob-by-blob against `main`** before anything was touched.
+
+| PRs | Finding | Outcome |
+|---|---|---|
+| #305, #310, #311, #313, #314, #315 | every file **byte-identical** to `main` | closed — superseded |
+| #306, #307, #309, #312, #316, #317 | migration already on `main`; the only remaining differences are **net deletions** in the `main → branch` direction | closed — **merging them would have moved the tree backwards** |
+| #299, #300 | not on `main`; pre-flip resolver proof tooling whose purpose lapsed when `0302` lit the flag on 07-27 | closed — lapsed, branches left recoverable |
+| #163 | PROJECTMAP | **open by design** |
+
+**15 open PRs → 1.** The finding that mattered is the middle row: six of these looked mergeable and
+were not. A stale branch is not always a subset of `main` in the direction you assume — check which
+way the diff points before treating "it still has changes" as "it still has work".
+
+### 4. The project map was 34 migrations behind the game it maps
+
+`feat-project-map` had not absorbed `main` since 07-23, so the codebase map was drawing a codebase
+that no longer exists — missing the entire typed-zone platform, the combat overhaul, `0302` lighting
+the resolver, and both the `0305` sortie authority and the `0306` docked authority. **Nothing in CI
+watches this.**
+
+    migrations  266 → 300      nodes  743 → 817
+    functions   274 → 302      edges 2204 → 2473
+    tables       95 → 100      flags   41 →  48
+
+Merged `main` (clean, no conflicts), re-ran `npm run scan` + `npm run wip`, spot-checked the
+regenerated graph for `fleet_docked_location` / `group_retire_empty_fleet` / `group_sortie_is_open`
+rather than trusting the scanner's exit code, and built clean.
+
+**The map has no deploy and that is deliberate.** `pages.yml` builds the **game** from `main`; the
+repo has one Pages site and the map is not it. The map is shared through a **temporary Cloudflare
+tunnel** (`tools/projectmap/share.ps1`) whose URL dies with the window. Pushing the branch is the
+whole delivery.
+
+### 5. One correction made in the same session it was introduced
+
+The first cut of §0 stated the 14 closes were *"blocked by the session's permission policy, not
+performed"*. That was true when written and false twenty minutes later, once the owner ran the
+commands. It also claimed the project map *"ships via GitHub Pages from its own branch"* — it does
+not. Both fixed here, which is the §2 lesson arriving immediately: **§0 describes a moving target
+and has to be re-read against reality, not trusted.**
+
+---
+
 ## 2026-07-30 — A danger zone can't swallow the map's gestures (`#336`, **DEPLOYED**)
 
 > **DEPLOY STATE.** Client-only slice — no migration, no flag. `main` **`05159a6`**; "Deploy to

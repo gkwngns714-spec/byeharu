@@ -16,25 +16,27 @@
 
 | | |
 |---|---|
-| `main` head | **`05159a6`** (merge of PR **#336**) |
+| `main` head | **`2464694`** (merge of PR **#338**) |
 | Highest migration on `main` | **`0306`** (`20260618000306_empty_fleet_dock_authority.sql`), 300 migration files |
 | **Production migration head** | **`0306`** — `main` and production are IN SYNC |
-| Nothing is waiting to ship | Every commit on `main` is pushed; migrations are deployed through `0306`; the frontend is deployed to GitHub Pages from `05159a6`. **There is no built-but-unmerged and no merged-but-undeployed work.** |
-| Open PRs | **15**, none of them pending work — see the disposition table below |
+| Nothing is waiting to ship | Every commit on `main` is pushed; migrations are deployed through `0306`; the frontend is deployed to GitHub Pages. **There is no built-but-unmerged and no merged-but-undeployed work.** |
+| Open PRs | **1** — #163 only, and it is open by design. The backlog is gone. |
 
-**Open-PR disposition — verified at the blob level on 2026-07-31, not assumed.** Every file of every
-open PR was compared against `main` `05159a6`:
+**Open-PR disposition — verified at the blob level, then ACTED ON. 14 PRs closed 2026-07-31.**
+Every file of every open PR was compared against `main` blob-by-blob first; nothing was closed on a
+guess.
 
-| PRs | Finding | Action |
+| PRs | Finding | Outcome |
 |---|---|---|
-| **#305, #310, #311, #313, #314, #315** | Every file **byte-identical** to `main` | Close — superseded |
-| **#306, #307, #309, #312, #316, #317** | Migration on `main`; remaining differences are **net deletions** in the `main → branch` direction, i.e. `main` carries this content *and more* | Close — superseded; merging would move the tree **backwards** |
-| **#299, #300** | Files are **not** on `main` (resolver preflight audit + rollback-only pre-flip damage canary). Their purpose lapsed when `0302` lit `encounter_resolver_enabled` on 07-27 | Close — lapsed; branches survive, so the tooling is recoverable if a future flip needs it |
-| **#163** | PROJECTMAP standalone tool | **Keep open** — intentionally off `main`, ships via GitHub Pages from its own branch |
+| **#305, #310, #311, #313, #314, #315** | Every file **byte-identical** to `main` | **CLOSED** — superseded |
+| **#306, #307, #309, #312, #316, #317** | Migration on `main`; remaining differences are **net deletions** in the `main → branch` direction, i.e. `main` carries this content *and more* | **CLOSED** — superseded; merging would have moved the tree **backwards** |
+| **#299, #300** | Files are **not** on `main` (resolver preflight audit + rollback-only pre-flip damage canary). Their purpose lapsed when `0302` lit `encounter_resolver_enabled` on 07-27 | **CLOSED** — lapsed. Branches left in place, so the harness is recoverable if a future flip needs it |
+| **#163** | PROJECTMAP standalone tool | **OPEN by design** — intentionally never merged to `main` |
 
-> The closes were **not** performed automatically — the session's permission policy blocked the
-> `gh pr close` calls. The verification above is the whole decision; all that remains is the command:
-> `for n in 305 306 307 309 310 311 312 313 314 315 316 317 299 300; do gh pr close $n; done`
+> **The project map does NOT ship via GitHub Pages.** `pages.yml` builds the **game** from `main`;
+> the repo has one Pages site and the map is not it. The map is shared by a **temporary Cloudflare
+> tunnel** — `powershell.exe -File tools\projectmap\share.ps1` — whose URL dies with the window.
+> Pushing `feat-project-map` is the whole delivery; there is nothing to deploy.
 
 ### What is LIVE right now
 
@@ -55,26 +57,12 @@ denied for function` — raised only for a function that **exists** — while a 
 `404 PGRST202`. Earlier, 2026-07-29: prod `game_config` read over anon REST for the flag posture, and
 `rpc/group_sortie_is_open` called on production through the owner's own session (HTTP 200) for `0305`.
 
-### What is LIVE right now
-
-| | |
-|---|---|
-| `encounter_resolver_enabled` | **`true`** — lit by `0302` (2026-07-27) under an explicit owner order, as a fail-closed migration, after a blast-radius audit (0 live encounters; ONE active binding: `canary_encounter` at Reaver, difficulty 1 / cap 1 / cooldown 30s). Rollback is a set-to-false. |
-| Every other capability flag | **`true`** — `0300` "lights on" flipped ~44 of them |
-| `timed_docking_enabled` | **`false`** — the ONLY flag still dark |
-| Combat / ambush | `0303` fixed the ambush teleport + no-fight-on-re-entry (the manifest guard counted inserts, not rows); `0304` gave every pirate zone its typed effect (zones drawn after `0273` had been inert) |
-| Fleet Stop | `0305` — the brake answers **every** press: it halts ordinary travel and pre-contact sorties (releasing the aborted roster), and composes with the retreat authority in a real fight. It can no longer return `group_on_sortie` at all. |
-| Map | Danger zones are clickable: hover names them, click opens an info panel in the bottom-right hub (PR #334) |
-
-**Verified on target 2026-07-29** (not from CI green): prod `game_config` read over anon REST for the
-flag posture, and `rpc/group_sortie_is_open` called on production through the owner's own session
-(HTTP 200) for `0305`.
-
 ### Known red / debt
 
 - **`TEAM-COMMAND` disposable proof fails at `SHIELD1`** (`team-command-proof.sql:3359`). **Pre-existing** — the identical failure is on the `0303`/`0304` branch from 07-28, before any of this session's work. Harness debt from `0300`'s lights-on, no gameplay impact. *(Careful: two `TEAM-COMMAND` runs went green on 07-28 on a branch cut 07-19 whose chain stops at `0234` — a green on an old chain is not evidence.)*
 - **`docs/DEV_LOG.md` has no entries for migrations `0273`–`0302`** — the typed-zone platform and the combat overhaul. Detail lives in the migration headers and PR bodies.
-- **A log entry can outlive the state it describes.** The `0306` entry sat at the top of `DEV_LOG.md` reading *"NOT DEPLOYED — PR open"* for a day **after** it was merged and applied to production, and PR #336 shipped with no entry at all. Both corrected 2026-07-31. The entry is written when the work lands; **the deploy line has to be revisited when it actually deploys**, or the newest doc in the repo becomes the most misleading one.
+- **A log entry can outlive the state it describes.** The `0306` entry sat at the top of `DEV_LOG.md` reading *"NOT DEPLOYED — PR open"* for a day **after** it was merged and applied to production, and PR #336 shipped with no entry at all. Both corrected 2026-07-31. The entry is written when the work lands; **the deploy line has to be revisited when it actually deploys**, or the newest doc in the repo becomes the most misleading one. *(This bites fast: the first version of this very §0 said the 14 PR closes were "blocked, not performed" — true when written, false twenty minutes later. **Re-read §0 against reality before trusting it**, and it is cheap to re-verify: `gh pr list`, `git rev-parse origin/main`, and the malformed-uuid prod probe.)*
+- **`tools/projectmap` drifts silently and nothing warns you.** On 2026-07-31 `feat-project-map` was 54 commits / **34 migrations** behind `main` — it was drawing a codebase that no longer existed (`266→300` migrations, `743→817` nodes after the refresh). Nothing in CI checks this. Refresh it after any game change: merge `origin/main` in, then `npm run scan` + `npm run wip` in `tools/projectmap`, commit `public/graph.json` + `public/wip.json`, push. `npm run live` is the third leg but writes gitignored `public/live.json`, so it never ships.
 - **Six docked-test copies remain** (`0210:178-186`, `0210:299-303`, `0231:1069-1073`, `0231:1486-1501`, `0297:126-131`) — all read-side projections, named as an explicit non-goal by `0306` rather than silently skipped. They now have `fleet_docked_location` to fold onto.
 
 ### ⚠ Fleet 1 was destroyed 2026-07-29T05:37:22Z
