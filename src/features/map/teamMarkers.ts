@@ -206,7 +206,9 @@ export function resolveFleetSpaceBadges(
 // ⚑ THE BADGE FOLLOWS THE FORMATION, NOT THE SITE'S CENTRE — the SAME rule the in-space badge above
 // obeys, so "where is this fleet" has ONE answer no matter which arm draws it. The deliberate-hunt
 // path needs it just as badly as the ambush path: 0234 seeds this fight's units at the site centre
-// and 0313/0314 then MOVE them every tick, so within a couple of ticks the fleet's own ships have
+// and the tick then MOVES them (0234/0294/0311/0314 are the writers of pos_x; 0313 writes none — it
+// cut the ranges that make the mover's close/kite arms fire at all, which is why the drift only became
+// visible now, but crediting it with the movement is wrong), so within a couple of ticks the ships have
 // walked 20-30 world units off the centre this badge used to be pinned to — the identical
 // drawn-twice-in-two-places defect, differing only in where the drift starts. Position therefore
 // comes from map/fleetFightPosition (the centroid of this fleet's own living, positioned units),

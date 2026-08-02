@@ -488,7 +488,33 @@ test('fail closed: an unusable resting point renders NO badge — never NaN, nev
   }
 })
 
-test('layer: the wired encounters + units move BOTH badges onto their formations, through the map norm', () => {
+// COVERAGE PIN (re-review). The two layer specs below must BOTH exist — one per badge arm. The
+// re-review killed a mutant that stopped forwarding `encounters`/`units` to the SPACE arm, but the
+// identical mutant on the COMBAT arm SURVIVED the entire suite: the previous round had deleted the only
+// spec that rendered a combat fleet with the data wired, so nothing noticed the combat badge silently
+// falling back to the site centre. Runtime was correct throughout; the guard was not. Do NOT fold these
+// into one spec — a single fixture exercising one arm is exactly how the hole opened.
+test('layer: the wired encounters + units move the COMBAT badge onto its formation, through the map norm', () => {
+  const layer = teamMarkersLayer({
+    movements: [],
+    groups,
+    rollups: crew(),
+    locations,
+    norm: (p) => ({ x: p.x + 1, y: p.y + 1 }), // non-identity: proves projection happens
+    k: 1,
+    combatFleets: [combatFleet()],
+    encounters: [enc()], // enc().fleet_id === combatFleet().id
+    units: [...formation(), ...enemies()],
+  })
+  const badge = layer.find((e) => e.type === TeamCombatBadge)
+  expect(badge).toBeTruthy()
+  const props = badge!.props as { x: number; y: number; label: string }
+  // NOT the site centre (100, 200) this used to be pinned to, and not an un-normed centroid either.
+  expect({ x: props.x, y: props.y }).toEqual({ x: CENTROID.x + 1, y: CENTROID.y + 1 })
+  expect(props.label).toBe('Fleet Alpha · 2 ships · in combat at Alpha Port')
+})
+
+test('layer: the wired encounters + units move the SPACE badge onto its formation, through the map norm', () => {
   const layer = teamMarkersLayer({
     movements: [],
     groups,
@@ -522,7 +548,7 @@ test('layer: omitting encounters/units leaves the tree byte-identical (every bad
   expect(teamMarkersLayer({ ...base, encounters: [], units: [] })).toEqual(teamMarkersLayer(base))
 })
 
-test('layer: ONE badge per fleet — a fighting fleet is never drawn twice', () => {
+test('layer: a fighting fleet is claimed by the SPACE arm only — the combat arm never also badges it', () => {
   const layer = teamMarkersLayer({
     movements: [mv({ group_id: 'g1' })], // a movement row for the same group…
     groups,
@@ -535,7 +561,13 @@ test('layer: ONE badge per fleet — a fighting fleet is never drawn twice', () 
     encounters: [enc()],
     units: formation(),
   })
-  // the space badge is the fleet's ONE representation; nothing else claims group g1's position
+  // The space badge is the fleet's ONE representation among the badges rendered at THIS level.
+  // Scope, stated honestly: `TeamMovingMarkers` is element 0 of this same array and renders its own
+  // TeamMarkerBadge for g1 when mounted, which a filter over the top level cannot see — so this spec
+  // does NOT prove "never drawn twice" in the DOM. The double-draw is unreachable in prod for a
+  // different reason (0301:1104 cancels the movement, and 0231:1335 sets location_mode='movement'
+  // while moving, which teamMarkers.ts:155 rejects), and that is an invariant of the SERVER, not of
+  // this fixture. What this spec does prove: the space arm claims g1 and the combat arm does not.
   const spaceBadges = layer.filter((e) => e.type === TeamMarkerBadge)
   expect(spaceBadges).toHaveLength(1)
   expect((spaceBadges[0].props as { groupId: string }).groupId).toBe('g1')

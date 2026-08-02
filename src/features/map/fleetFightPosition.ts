@@ -13,8 +13,10 @@
 // The fleet badge sat on the fleet row's own parked point while that fleet's OWN SHIPS — drawn by
 // spatialCombatLayer from combat_units.pos_x/pos_y — stood 21.5-28.7 world units away. The SAME
 // fleet was rendered twice, in two places. It went from subtle to stark today: 0313 cut weapon
-// ranges to 25-30 (so the gap now exceeds the whole battle's footprint) and 0313/0314 made units
-// actually move, so the ships walk further from the badge with every tick.
+// ranges to 25-30, so the gap now exceeds the whole battle's footprint — and because those ranges are
+// what the mover's close/kite arms compare against, units began ACTUALLY MOVING for the first time, so
+// the ships now walk further from the badge with every tick. (0313 itself writes no pos_x; the writers
+// are 0234/0294/0311/0314. It is the cause of the movement starting, not the author of it.)
 //
 // ── THE RULE ───────────────────────────────────────────────────────────────────────────────────────
 // While a fleet has a LIVE encounter carrying positioned, living player units, the fleet badge sits
