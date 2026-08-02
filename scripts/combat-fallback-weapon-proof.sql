@@ -18,9 +18,10 @@
 --   • s_fb  — the COMMAND ship (spawns at the location center, dist 0 from the pirate). Carries a
 --             gunnery_veteran CAPTAIN (attack 4, folded into combat_power) but NO weapon module fitted
 --             → its RAW fitted-weapon join is EMPTY (the pre-fix state — asserted directly). 0262
---             synthesizes a basic_player_weapon (power = attack_snapshot = 4, range 150).
+--             synthesizes a basic_player_weapon (power = attack_snapshot = 4, range = the
+--             combat_player_fallback_weapon_range knob — asserted knob-derived, never hard-coded).
 --   • s_arm — an armed escort with a real autocannon_battery fitted, parked on the formation ring tuned
---             to radius 500 — OUTSIDE its own 150 weapon range, so it CLOSEs (does not fire) on tick 1.
+--             to radius 500 — far OUTSIDE its own catalog weapon range, so it CLOSEs (no fire) on tick 1.
 --             Its ONLY role here is the "armed ship's weapons_json is UNCHANGED (real autocannon, not
 --             the fallback)" witness.
 -- The synthetic pirate spawns at the center with weapon range tuned to 10 and targets the escort (aggro
@@ -35,11 +36,13 @@
 --                                 the tick's 0-length-safe fire loop would fire zero shots → zero damage.
 --   CFALLBACK_PASS_SYNTH        — POST-fix: s_fb's weapons_json carries exactly ONE synthesized entry —
 --                                 module_type_id='basic_player_weapon', power = attack_snapshot (4),
---                                 range 150 / projectile_speed 300 / cooldown 2 (the dedicated player
---                                 basic-weapon knobs, NOT the enemy synthetic's numbers).
+--                                 range / projectile_speed / cooldown equal to the dedicated player
+--                                 basic-weapon KNOBS (derived at assert time, 0313 repoint), NOT the
+--                                 enemy synthetic's numbers.
 --   CFALLBACK_PASS_ARMED        — s_arm (real autocannon fitted) keeps its own weapons_json: exactly one
---                                 entry, module_type_id='autocannon_battery', power 10, range 150 — the
---                                 fallback did NOT overwrite an already-armed ship.
+--                                 entry, module_type_id='autocannon_battery', power/range equal to its
+--                                 CATALOG row (derived at assert time) — the fallback did NOT
+--                                 overwrite an already-armed ship.
 --   CFALLBACK_PASS_DAMAGE       — after tick 1 the pirate's hp_current fell below its frozen hp_max, and
 --                                 (attribution) s_fb is the only player unit within weapon range of the
 --                                 pirate while s_arm is out of range and the pirate fired nothing — so
@@ -93,6 +96,10 @@ update public.game_config set value='true'::jsonb where key='module_crafting_ena
 update public.game_config set value='true'::jsonb where key='module_fitting_enabled';
 update public.game_config set value='true'::jsonb where key='captain_assignment_enabled';
 update public.game_config set value='true'::jsonb where key='spatial_combat_enabled';
+-- combat_telegraph stays DARK — OWNED here, not inherited (0300 lit it in the chain seeds, after
+-- this proof was written; a lit telegraph queues the encounter instead of opening it inline at the
+-- settle, and the attribution scenario observes the inline opening). The danger-combat-proof idiom.
+update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 
 -- tuning knobs (numeric, not capability gates) — all reverted by ROLLBACK. The engineered geometry
 -- (header) depends on these EXACT values.
@@ -102,7 +109,7 @@ begin
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);              -- so combat_ticks rows land
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);             -- so fire events land
   perform public.set_game_config('enemy_hp_base', '1000'::jsonb);                    -- pirate survives the fallback hit
-  perform public.set_game_config('spatial_formation_ring_radius', '500'::jsonb);     -- escort OUT of its own 150 range (CLOSE, no fire)
+  perform public.set_game_config('spatial_formation_ring_radius', '500'::jsonb);     -- escort far OUT of its own catalog range (CLOSE, no fire)
   perform public.set_game_config('enemy_synthetic_range_base', '10'::jsonb);         -- pirate can't reach the 500-away escort
   perform public.set_game_config('enemy_synthetic_range_per_difficulty', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_base', '3'::jsonb);          -- pirate cannot close 500 in one tick
@@ -225,7 +232,16 @@ declare
   v_attack_fb double precision; v_wc int;
   v_mid text; v_power double precision; v_range double precision; v_pspeed double precision; v_cd double precision;
   v_tick text;
+  -- expected values DERIVED at assert time (0313 repoint: the old form hard-coded the 150/300/2 and
+  -- 10/150 seeds — ambient defaults this proof never owned): the fallback entry must equal the
+  -- knobs the creator reads, the fitted entry must equal its catalog row.
+  v_exp_range double precision; v_exp_pspeed double precision; v_exp_cd double precision;
+  v_cat record;
 begin
+  v_exp_range  := coalesce(public.cfg_num('combat_player_fallback_weapon_range'), 150);
+  v_exp_pspeed := coalesce(public.cfg_num('combat_player_fallback_weapon_projectile_speed'), 300);
+  v_exp_cd     := coalesce(public.cfg_num('combat_player_fallback_weapon_cooldown_seconds'), 2);
+  select * into v_cat from public.module_types where id = 'autocannon_battery';
   -- ── PREFIX_EMPTY: s_fb's RAW fitted-weapon join (what the pre-0262 creator used) is EMPTY. ──────────
   select count(*) into n
     from public.ship_module_fittings f
@@ -257,9 +273,9 @@ begin
     from public.combat_units where encounter_id = v_enc and main_ship_id = s_fb;
   if v_mid <> 'basic_player_weapon' then raise exception 'SYNTH FAIL: fallback module_type_id is % (want basic_player_weapon)', v_mid; end if;
   if v_power is distinct from v_attack_fb then raise exception 'SYNTH FAIL: fallback power % <> attack_snapshot %', v_power, v_attack_fb; end if;
-  if v_range <> 150 or v_pspeed <> 300 or v_cd <> 2 then
-    raise exception 'SYNTH FAIL: fallback range/projectile/cooldown = %/%/% (want 150/300/2 — the player basic-weapon knobs)', v_range, v_pspeed, v_cd; end if;
-  raise notice 'CFALLBACK_PASS_SYNTH ok: s_fb synthesized ONE basic_player_weapon (power=% = attack_snapshot, range 150, projectile 300, cooldown 2)', v_power;
+  if v_range <> v_exp_range or v_pspeed <> v_exp_pspeed or v_cd <> v_exp_cd then
+    raise exception 'SYNTH FAIL: fallback range/projectile/cooldown = %/%/% (want %/%/% — the player basic-weapon knobs, derived at assert time)', v_range, v_pspeed, v_cd, v_exp_range, v_exp_pspeed, v_exp_cd; end if;
+  raise notice 'CFALLBACK_PASS_SYNTH ok: s_fb synthesized ONE basic_player_weapon (power=% = attack_snapshot, range %, projectile %, cooldown % — all knob-derived)', v_power, v_range, v_pspeed, v_cd;
 
   -- ── ARMED: s_arm (real autocannon fitted) keeps its OWN weapons_json — the fallback did NOT touch it.
   select jsonb_array_length(weapons_json), weapons_json->0->>'module_type_id', (weapons_json->0->>'power')::double precision, (weapons_json->0->>'range')::double precision
@@ -267,8 +283,8 @@ begin
     from public.combat_units where encounter_id = v_enc and main_ship_id = s_arm;
   if v_wc <> 1 then raise exception 'ARMED FAIL: s_arm weapons_json has % entries (want exactly 1 real autocannon)', v_wc; end if;
   if v_mid <> 'autocannon_battery' then raise exception 'ARMED FAIL: s_arm weapon is % (want autocannon_battery — the fallback overwrote a fitted weapon!)', v_mid; end if;
-  if v_power <> 10 or v_range <> 150 then raise exception 'ARMED FAIL: s_arm autocannon power/range = %/% (want 10/150 — real fitted stats)', v_power, v_range; end if;
-  raise notice 'CFALLBACK_PASS_ARMED ok: s_arm keeps its real autocannon_battery (power 10, range 150) — an already-armed ship''s weapons_json is unchanged by the fallback';
+  if v_power <> v_cat.power or v_range <> v_cat.range then raise exception 'ARMED FAIL: s_arm autocannon power/range = %/% (want %/% — the catalog row, derived at assert time)', v_power, v_range, v_cat.power, v_cat.range; end if;
+  raise notice 'CFALLBACK_PASS_ARMED ok: s_arm keeps its real autocannon_battery (catalog power %, range %) — an already-armed ship''s weapons_json is unchanged by the fallback', v_power, v_range;
 end $$;
 
 -- ════════ BLOCK DAMAGE: tick 1 — the synthesized weapon deals REAL damage to the pirate ═══════════════
@@ -280,6 +296,7 @@ declare
   v_hunt uuid := (select v from cfb where k='v_hunt');
   v_loc_x double precision; v_loc_y double precision;
   v_dist_fb double precision; v_dist_arm double precision;
+  v_r_fb double precision; v_r_arm double precision;
   v_e_hpmax double precision; v_e_hpcur double precision;
   v_pirate_fire int;
   v_hp_fb0 double precision; v_hp_arm0 double precision; v_hp_fb1 double precision; v_hp_arm1 double precision;
@@ -300,13 +317,20 @@ begin
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy' and unit_type_id = 'pirate_synthetic';
   if n <> 1 then raise exception 'DAMAGE FAIL: % synthetic pirate row(s) (want exactly 1)', n; end if;
 
-  -- ATTRIBUTION: s_fb (command, at center) is in weapon range of the pirate (dist 0 <= 150); s_arm sits
-  -- ~500 out (its own 150 range can't reach) so it CLOSEs, does not fire; the pirate (range 10, targeting
-  -- the far escort under the aggro screen) fires NOTHING on tick 1. So any pirate damage is s_fb's alone.
+  -- ATTRIBUTION: s_fb (command, at center) is in weapon range of the pirate (dist 0 <= its own
+  -- range); s_arm sits ~500 out (beyond its own range — DERIVED from its frozen weapons_json, never
+  -- the old hard-coded 150 seed) so it CLOSEs, does not fire; the pirate (range 10, targeting the
+  -- far escort under the aggro screen) fires NOTHING on tick 1. So any pirate damage is s_fb's alone.
   select public.osn_distance(pos_x, pos_y, v_loc_x, v_loc_y) into v_dist_fb  from public.combat_units where encounter_id = v_enc and main_ship_id = s_fb;
   select public.osn_distance(pos_x, pos_y, v_loc_x, v_loc_y) into v_dist_arm from public.combat_units where encounter_id = v_enc and main_ship_id = s_arm;
-  if v_dist_fb > 150 then raise exception 'DAMAGE FAIL attribution: s_fb is % from center, out of its own 150 range', v_dist_fb; end if;
-  if v_dist_arm <= 150 then raise exception 'DAMAGE FAIL attribution: s_arm is % from center, within its 150 range (it would fire and muddy attribution)', v_dist_arm; end if;
+  select max((w->>'range')::double precision) into v_r_fb
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w
+   where cu.encounter_id = v_enc and cu.main_ship_id = s_fb;
+  select max((w->>'range')::double precision) into v_r_arm
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w
+   where cu.encounter_id = v_enc and cu.main_ship_id = s_arm;
+  if v_dist_fb > v_r_fb then raise exception 'DAMAGE FAIL attribution: s_fb is % from center, out of its own % range', v_dist_fb, v_r_fb; end if;
+  if v_dist_arm <= v_r_arm then raise exception 'DAMAGE FAIL attribution: s_arm is % from center, within its % range (it would fire and muddy attribution)', v_dist_arm, v_r_arm; end if;
   select count(*) into v_pirate_fire from public.combat_events
     where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'pirate';
   if v_pirate_fire <> 0 then raise exception 'DAMAGE FAIL attribution: pirate fired % time(s) on tick 1 (want 0 — the escort is out of its range)', v_pirate_fire; end if;

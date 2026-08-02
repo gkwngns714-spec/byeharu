@@ -21,7 +21,12 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 
 # UNION of 0310's and 0311's markers, resolved by hand at the 0310/0311 merge. Taking either side
 # alone would leave a runtime block unchecked while the suite still printed ALL PASSED.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE"
+# UNION AGAIN at the 0312/0313 merge — main carried …AUTOEXIT REPOSITION REPOOVERLAP REPOOUTSIDE
+# REPOMODE NOLIVE and this branch carried …AUTOEXIT CLOSURE. Every marker from both sides is below.
+# This is the trap the comment exists for: taking either side WHOLE drops the other's markers, the
+# local run then never checks for those notices, and the suite prints OVERALL_PASS with entire
+# runtime blocks unverified.
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -137,9 +142,10 @@ if [ "$MODE" = "selftest" ]; then
   #   1. PIRATEFIRE    — the first wave spawn + fire pass.
   #   2. MANIFESTHELD  — the drain that FINISHES the hunt sortie, so its manifest becomes a RETAINED
   #                      one and the later course change is ambushed while holding it (0303).
-  #   3. AUTOEXIT      — pg_temp.ae_tick, the one-encounter tick driver (rewinds ONE encounter's
-  #                      cadence clock then runs the real engine) that erodes the fleet to its
-  #                      threshold (0310).
+  #   3. AUTOEXIT + CLOSURE — pg_temp.ae_tick, the one-encounter tick driver (rewinds ONE
+  #                      encounter's cadence clock then runs the real engine); AUTOEXIT (0310) uses
+  #                      it to erode a fleet to its threshold, CLOSURE (0313) to walk an escort and
+  #                      a pirate into range across ticks. One helper, one engine call site.
   # Still a real pin: a fourth, unexplained invocation fails here.
   n="$(grep -c 'perform public\.process_combat_ticks();' "$SQL" || true)"
   [ "$n" = "3" ] || fail "expected exactly 3 process_combat_ticks() call sites (PIRATEFIRE + the MANIFESTHELD hunt-fight drain + the AUTOEXIT ae_tick driver), found $n"
@@ -217,13 +223,40 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "recovery is blocked on a dead fleet"                   "$SQL" || fail "harness lacks the recovery-never-blocked asserts (tow/repair/brake/re-assign)"
   grep -q "did not answer empty_group"                            "$SQL" || fail "harness lacks the empty-vs-dead distinctness assert (two states, two codes)"
   grep -q "must mean ALL"                                         "$SQL" || fail "harness lacks the one-living-ship-suffices assert (the un-brick loop)"
+  # 0313 — the CLOSURE properties (units MOVE at the seeded cut ranges; fire only after closure) are
+  # asserted in assert-form too, and the SPATIAL range expectation must stay catalog-DERIVED.
+  grep -q "the catalog autocannon_battery range"                  "$SQL" || fail "harness's SPATIAL range assert is no longer derived from the catalog (the 0313 repoint regressed to a hard-coded seed)"
+  grep -q "the seeded world no longer forces closure"             "$SQL" || fail "harness lacks the CLOSURE gap-exceeds-both-ranges premise assert"
+  grep -q "the fight no longer starts instantly"                  "$SQL" || fail "harness lacks the command-ship-fires-tick-1 assert (combat must start despite the gap)"
+  grep -q "the CLOSE arm never ran"                               "$SQL" || fail "harness lacks the escort-moved-on-tick-1 assert (the first observed movement)"
+  grep -q "the enemy CLOSE arm never ran"                         "$SQL" || fail "harness lacks the pirate-moved-off-anchor assert"
+  grep -q "they are not closing"                                  "$SQL" || fail "harness lacks the gap-shrinks assert"
+  grep -q "something fired across a gap larger than its own range" "$SQL" || fail "harness lacks the no-fire-beyond-range tick-1 assert"
+  grep -q "the escort NEVER fired within 12 ticks"                "$SQL" || fail "harness lacks the closure-completes assert (approach must reach firing range)"
+  grep -q "the fire gate is not honouring the cut range"          "$SQL" || fail "harness lacks the first-shot-within-own-range assert"
+  grep -q "no silent closing tick before it"                      "$SQL" || fail "harness lacks the closure non-vacuity guard (at least one silent approach tick)"
+  grep -q "the out-range order inverted"                          "$SQL" || fail "harness lacks the longer-range-fires-first assert"
+  # 0313 rev.2 — NULL-VACUITY PINS. combat_units.pos_x/pos_y and combat_encounters.engagement_x/y are
+  # all NULLABLE, and `x is not distinct from NULL` is FALSE for any real number — so a missing
+  # coordinate made the moved/closing asserts pass while proving nothing. Absence is failure now, and
+  # these greps are what stops the pins being quietly removed again — but only if each pattern matches
+  # exactly ONE line. The escort pattern below must NOT be shortened to "cannot prove it moved": that
+  # substring also occurs in the PIRATE pin two lines down, so the escort pin could then be deleted and
+  # this grep would still fire on the other line, silently guarding nothing. Pin it to the escort's own
+  # wording ("unit", not "enemy").
+  grep -q "an unpositioned unit cannot prove it moved"            "$SQL" || fail "harness lacks the escort NULL-coordinate pin (a moved-assert against NULL is vacuous)"
+  grep -q "the spawn point this assert compares against does not exist" "$SQL" || fail "harness lacks the engagement-anchor NULL pin"
+  grep -q "an unpositioned enemy cannot prove it moved off the anchor" "$SQL" || fail "harness lacks the pirate NULL-position pin"
+  grep -q "the closure comparison would be vacuous"               "$SQL" || fail "harness lacks the tick-1 gap NULL pin"
+  grep -q "makes every range check in the approach vacuous"       "$SQL" || fail "harness lacks the approach-loop pre-move-distance NULL pin"
+  grep -q "the spawn-ring pin would prove nothing"                "$SQL" || fail "harness lacks the spawn-ring distance NULL pin"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route, command_ship_group_stop and set_group_auto_exit; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 3 known tick call sites; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage; the 0310 HP auto-exit fires at the player's threshold of REAL CAPACITY and never earlier, never re-requests, completes like a human press, exits a damaged fleet on re-entry (the compounding-denominator regression) and stays silent with the toggle OFF; and (0311) an in-zone order REPOSITIONS the fight (exact-delta translate, restamp, no retreat write, no leg), overlapping zones are QUANTIFIED over rather than chosen (a lower-area holder can neither veto nor decide), a destination admitted by no anchor-holding zone retreats byte-identically, a retreating fight never jumps, and a site fight falls through to the retreat — never repositioned, never refused — asserted in assert-form; no random() and the 0312 no-living-ships law — a dead fleet is refused go/go_route/dock with the typed no_living_ships and mints nothing, a damaged-but-alive hp-0 ship still moves, empty_group stays its own state, and the recovery path (brake/tow/repair/re-assign) works on exactly the dead fleet)"
+  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route, command_ship_group_stop and set_group_auto_exit; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 3 known tick call sites; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage; the 0310 HP auto-exit fires at the player's threshold of REAL CAPACITY and never earlier, never re-requests, completes like a human press, exits a damaged fleet on re-entry (the compounding-denominator regression) and stays silent with the toggle OFF; and (0311) an in-zone order REPOSITIONS the fight (exact-delta translate, restamp, no retreat write, no leg), overlapping zones are QUANTIFIED over rather than chosen (a lower-area holder can neither veto nor decide), a destination admitted by no anchor-holding zone retreats byte-identically, a retreating fight never jumps, and a site fight falls through to the retreat — never repositioned, never refused — asserted in assert-form; no random() and the 0312 no-living-ships law — a dead fleet is refused go/go_route/dock with the typed no_living_ships and mints nothing, a damaged-but-alive hp-0 ship still moves, empty_group stays its own state, and the recovery path (brake/tow/repair/re-assign) works on exactly the dead fleet; and the 0313 CLOSURE properties (spawn gap exceeds the seeded cut ranges, command ship still fires tick 1, escort + pirate MOVE and hold fire until their own pre-move distance is inside their own range, and every positional comparison is NULL-pinned so absence is failure rather than a silent pass))"
   exit 0
 fi
 
