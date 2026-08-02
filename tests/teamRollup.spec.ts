@@ -104,6 +104,7 @@ test('ungrouped ships and foreign fleets never leak into a team rollup', () => {
 // proof (an omitted/[] unified input folds byte-identically to the pre-slice function).
 
 const uni = (o: Partial<UnifiedGroupFleetLite> = {}): UnifiedGroupFleetLite => ({
+  id: 'fleet-g1',
   group_id: 'g1',
   status: 'present',
   location_mode: 'location',

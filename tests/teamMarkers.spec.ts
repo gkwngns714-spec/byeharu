@@ -16,6 +16,7 @@ import type { GroupRow } from '../src/features/command/teamRoster'
 import type { DockedTeamRollup } from '../src/features/command/teamRollup'
 // type-only import — erased at compile, so the spec never loads teamApi's supabase client.
 import type { UnifiedGroupFleetLite } from '../src/features/command/teamApi'
+import type { FleetEncounterLite } from '../src/features/combat/encounterAnchor'
 
 // TEAMMAP-2 — pure specs for the team-marker cluster function + the shared movement interpolation,
 // and the GalaxyMap wiring proof via the SAME pure `teamMarkersLayer` element-descriptor helper the
@@ -185,6 +186,7 @@ test('layer: one TeamDockBadge per complete rollup, positioned at the port throu
 
 // ── FLEET-GO 4a-1 — resolveFleetSpaceBadges: the parked-in-space fleet badge (charter §2/0208). ──
 const spaceFleet = (o: Partial<UnifiedGroupFleetLite> = {}): UnifiedGroupFleetLite => ({
+  id: 'fleet-g1',
   group_id: 'g1',
   status: 'idle',
   location_mode: 'space',
@@ -270,6 +272,7 @@ test('layer: omitting unifiedFleets leaves the tree byte-identical (dark parity 
 // movement and no space park — without THIS badge it is invisible for the whole combat phase. Input
 // is the pre-partitioned combat set (teamRollup.selectCombatSortieFleets); position is the SITE's.
 const combatFleet = (o: Partial<UnifiedGroupFleetLite> = {}): UnifiedGroupFleetLite => ({
+  id: 'fleet-g1',
   group_id: 'g1',
   status: 'present',
   location_mode: 'location',
@@ -308,6 +311,144 @@ test('combat badge: one badge per group (first wins on a duplicate); determinist
     locations,
   )
   expect(out.map((b) => b.groupId)).toEqual(['g1', 'g2'])
+})
+
+// ── ENGAGEMENT ANCHOR — the badge must stand ON THE FIGHT, not on the site's centre ──────────────
+// The owner's report: "when fighting, my fleet location and the fighting location differs". The
+// battle is drawn by spatialCombatLayer from combat_units.pos_x/pos_y, which the server seeds and
+// moves around coalesce(combat_encounters.engagement_x, locations.x) (0294:424) — and for an ambush
+// that anchor is the point where the leg CROSSED THE ZONE BOUNDARY, never the centre. The numbers
+// below are REAL: the owner's production encounters at Snare, site centre (-45,120), one fight
+// measured at (-27.37, 97.04) — a 28.95-unit gap, wider than the whole battle since 0313 cut weapon
+// ranges to 25-30. Before this slice the badge drew at (-45,120) and the fleet was nowhere near it.
+const SNARE = { id: 'loc-snare', name: 'Snare', x: -45, y: 120, territory_radius: null }
+const snareFleet = (o: Partial<UnifiedGroupFleetLite> = {}): UnifiedGroupFleetLite =>
+  combatFleet({ current_location_id: 'loc-snare', ...o })
+const enc = (o: Partial<FleetEncounterLite> = {}): FleetEncounterLite => ({
+  fleet_id: 'fleet-g1',
+  status: 'active',
+  engagement_x: -27.37,
+  engagement_y: 97.04,
+  ...o,
+})
+
+test('combat badge: the fleet badge renders AT the engagement anchor, not at the site centre', () => {
+  const out = resolveFleetCombatBadges([snareFleet()], groups, [], [SNARE], [enc()])
+  expect(out).toHaveLength(1)
+  // THE BUG: this used to be { x: -45, y: 120 } — the site centre, ~29 units from the battle.
+  expect({ x: out[0].x, y: out[0].y }).toEqual({ x: -27.37, y: 97.04 })
+  // the SITE keeps owning the label and the stacking key — the fleet is still fighting at Snare
+  expect(out[0].label).toBe('Fleet Alpha · in combat at Snare')
+  expect(out[0].locationId).toBe('loc-snare')
+})
+
+test('combat badge: a retreating encounter still anchors the badge (a retreating fleet is still shot at)', () => {
+  const out = resolveFleetCombatBadges([snareFleet()], groups, [], [SNARE], [enc({ status: 'retreating' })])
+  expect({ x: out[0].x, y: out[0].y }).toEqual({ x: -27.37, y: 97.04 })
+})
+
+test('combat badge: no encounter in hand → the site centre (the pre-slice position, never a guess)', () => {
+  // the encounters argument omitted entirely — every existing caller's shape
+  expect(resolveFleetCombatBadges([snareFleet()], groups, [], [SNARE])[0]).toMatchObject({ x: -45, y: 120 })
+  expect(resolveFleetCombatBadges([snareFleet()], groups, [], [SNARE], [])[0]).toMatchObject({ x: -45, y: 120 })
+})
+
+test('combat badge: a NULL / absent / non-finite anchor falls back to the site centre — never NaN, never (0,0)', () => {
+  for (const broken of [
+    enc({ engagement_x: null, engagement_y: null }),
+    enc({ engagement_x: undefined, engagement_y: undefined }),
+    enc({ engagement_x: -27.37, engagement_y: null }), // half a point is not a point
+    enc({ engagement_x: null, engagement_y: 97.04 }),
+    enc({ engagement_x: Number.NaN, engagement_y: 97.04 }),
+    enc({ engagement_x: -27.37, engagement_y: Number.POSITIVE_INFINITY }),
+  ]) {
+    const [badge] = resolveFleetCombatBadges([snareFleet()], groups, [], [SNARE], [broken])
+    expect({ x: badge.x, y: badge.y }).toEqual({ x: -45, y: 120 })
+    expect(Number.isFinite(badge.x) && Number.isFinite(badge.y)).toBe(true)
+    expect(badge.x === 0 && badge.y === 0).toBe(false)
+  }
+})
+
+test('combat badge: ANOTHER fleet’s encounter never moves this fleet’s badge', () => {
+  const out = resolveFleetCombatBadges([snareFleet()], groups, [], [SNARE], [enc({ fleet_id: 'fleet-someone-else' })])
+  expect({ x: out[0].x, y: out[0].y }).toEqual({ x: -45, y: 120 })
+})
+
+test('combat badge: an ENDED encounter is not this fleet’s live fight', () => {
+  for (const status of ['escaped', 'defeat', 'completed']) {
+    const [badge] = resolveFleetCombatBadges([snareFleet()], groups, [], [SNARE], [enc({ status })])
+    expect({ x: badge.x, y: badge.y }).toEqual({ x: -45, y: 120 })
+  }
+})
+
+test('combat badge: TWO live encounters for one fleet (a broken invariant) → the centre, never a coin flip', () => {
+  const out = resolveFleetCombatBadges(
+    [snareFleet()],
+    groups,
+    [],
+    [SNARE],
+    [enc(), enc({ engagement_x: -63, engagement_y: 96 })],
+  )
+  expect({ x: out[0].x, y: out[0].y }).toEqual({ x: -45, y: 120 })
+})
+
+test('combat badge: a site with non-finite coordinates renders NO badge (no NaN into an SVG transform)', () => {
+  const nanSite = [{ id: 'loc-snare', name: 'Snare', x: Number.NaN, y: 120, territory_radius: null }]
+  expect(resolveFleetCombatBadges([snareFleet()], groups, [], nanSite, [enc()])).toEqual([])
+  expect(resolveFleetCombatBadges([snareFleet()], groups, [], nanSite)).toEqual([])
+})
+
+test('combat badge: each fleet takes ITS OWN encounter’s anchor when two teams fight at one site', () => {
+  const out = resolveFleetCombatBadges(
+    [snareFleet(), snareFleet({ id: 'fleet-g2', group_id: 'g2' })],
+    groups,
+    [],
+    [SNARE],
+    [enc(), enc({ fleet_id: 'fleet-g2', engagement_x: -63, engagement_y: 96 })],
+  )
+  expect(out.map((b) => ({ g: b.groupId, x: b.x, y: b.y }))).toEqual([
+    { g: 'g1', x: -27.37, y: 97.04 },
+    { g: 'g2', x: -63, y: 96 },
+  ])
+})
+
+test('layer: the wired encounters put the combat badge on the fight, through the map norm', () => {
+  const layer = teamMarkersLayer({
+    movements: [],
+    groups,
+    rollups: [],
+    locations: [SNARE],
+    norm: (p) => ({ x: p.x + 1, y: p.y + 1 }), // non-identity: proves projection happens
+    k: 1,
+    combatFleets: [snareFleet()],
+    encounters: [enc()],
+  })
+  const badge = layer.find((e) => e.type === TeamCombatBadge)
+  expect(badge).toBeTruthy()
+  const props = badge!.props as { x: number; y: number; label: string }
+  expect({ x: props.x, y: props.y }).toEqual({ x: -26.37, y: 98.04 })
+  expect(props.label).toBe('Fleet Alpha · in combat at Snare')
+})
+
+test('layer: omitting encounters leaves the tree byte-identical (the site-centre fallback)', () => {
+  const base = { movements: [], groups, rollups: [], locations: [SNARE], norm, k: 1, combatFleets: [snareFleet()] }
+  expect(teamMarkersLayer({ ...base, encounters: [] })).toEqual(teamMarkersLayer(base))
+})
+
+test('layer: co-fighting teams still STACK on the SITE even though they stand on different points', () => {
+  const layer = teamMarkersLayer({
+    movements: [],
+    groups,
+    rollups: [],
+    locations: [SNARE],
+    norm,
+    k: 1,
+    combatFleets: [snareFleet(), snareFleet({ id: 'fleet-g2', group_id: 'g2' })],
+    encounters: [enc(), enc({ fleet_id: 'fleet-g2', engagement_x: -63, engagement_y: 96 })],
+  })
+  const badges = layer.filter((e) => e.type === TeamCombatBadge)
+  expect(badges.map((b) => (b.props as { stack: number }).stack)).toEqual([0, 1])
+  expect(badges.map((b) => (b.props as { x: number }).x)).toEqual([-27.37, -63])
 })
 
 test('layer: a combat-present fleet renders a TeamCombatBadge at the site through the map norm', () => {

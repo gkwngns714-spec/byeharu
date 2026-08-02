@@ -11,7 +11,7 @@ import { MiningFieldMarker } from './MiningFieldMarker'
 import type { MiningField } from '../mining/miningTypes'
 import { dangerZoneLayer } from './dangerZoneLayer'
 import { spatialCombatLayer } from './spatialCombatLayer'
-import type { CombatEvent, CombatUnit } from '../combat/combatTypes'
+import type { CombatEncounter, CombatEvent, CombatUnit } from '../combat/combatTypes'
 import type { DangerZoneLite } from './pirateApi'
 import type { GroupRow } from '../command/teamRoster'
 import type { DockedTeamRollup } from '../command/teamRollup'
@@ -61,6 +61,7 @@ export function GalaxyMap({
   selectedDangerZoneId = null,
   combatUnits = [],
   combatEvents = [],
+  combatEncounters = [],
   pirateMode = 'off',
   pirateDraftPoints = [],
   onPirateTap,
@@ -119,6 +120,11 @@ export function GalaxyMap({
   /** Recent combat events; the layer consumes only the latest tick's spatial `missile_salvo`s (fire
    *  lines between units), ignoring the aggregate/dark-path events that carry no unit_id. */
   combatEvents?: CombatEvent[]
+  /** The caller's live encounters (the SAME rows the units above belong to — useCombat polls them
+   *  together). They carry the ENGAGEMENT ANCHOR (0293/0294), so the team layer's "in combat"
+   *  badge can sit on the fight instead of on the site's centre, which for an ambush is a different
+   *  place by construction. [] → badges fall back to the centre, byte-identical to before. */
+  combatEncounters?: CombatEncounter[]
   /** 'off' = normal ship-go tap handling (byte-identical to pre-slice behavior). 'route' TAKES OVER
    *  the entire empty-space tap surface (mutually exclusive with the fleet-go tap) — each tap appends
    *  a route waypoint via onPirateTap instead of setting a fleet-go target. */
@@ -511,6 +517,9 @@ export function GalaxyMap({
             unifiedFleets: unifiedGroupFleets,
             // MAP-INTEGRATION M1: combat-present sorties → the in-combat fleet badge ([] while dark).
             combatFleets: combatSortieFleets,
+            // …and the ENGAGEMENT ANCHORS those badges stand on: the very encounters the spatial
+            // units layer below is drawn from, so the badge and the battle share ONE point of truth.
+            encounters: combatEncounters,
           })}
 
           {/* COMBAT-S4 — the SPATIAL-COMBAT layer, composed by the pure, hook-free `spatialCombatLayer`
