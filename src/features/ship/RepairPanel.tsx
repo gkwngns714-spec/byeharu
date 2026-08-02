@@ -25,13 +25,17 @@ import { Button, Card, CardHeader, SectionLabel } from '../../components/ui'
 // they are LOOKING AT, next to the one hull meter in the game, without re-picking it at a dock
 // desk). Named for its ship in the header, so the desk is never pointed at a mystery ship.
 //
-// SPEAK ONLY WHEN THERE IS SOMETHING TO SAY (the review-2 posture): the panel renders NOTHING for
-// a full-hull ship and NOTHING when the ship's position is unknown (a failed projection read must
-// never become a confident "take this ship to a port" over a genuinely docked ship) — unless a
-// command note is pending, which always stays on screen. The warning tone appears ONLY when the
-// mend is actually actionable (damaged + docked); honest explainer lines ride a neutral card. And
-// it renders NO hull meter of its own — MeterPairBars directly above is the one hull display; two
-// bars for one fact would be the one-authority law broken in pixels.
+// SPEAK ONLY WHEN THERE IS SOMETHING TO SAY (the review-2/3 posture): the panel renders NOTHING
+// for a full-hull ship, NOTHING when the ship's position is unknown (a failed projection read
+// must never become a confident "take this ship to a port" over a genuinely docked ship), and
+// NOTHING when its own hull read failed (an "unavailable" line under the meter above — which
+// reads its own query and may be perfectly healthy — is noise, and can even visibly disagree
+// with it). The one exception is a pending command note, which always keeps the card up — and a
+// lifecycle tick RETIRES stale notes (see refresh), so one old failure can never hold the
+// silence gate off forever. The warning tone appears ONLY when the mend is actually actionable
+// (damaged + docked); honest explainer lines ride a neutral card. And it renders NO hull meter
+// of its own — MeterPairBars directly above is the one hull display; two bars for one fact would
+// be the one-authority law broken in pixels.
 //
 // DOCKEDNESS is a PROP: `dockState` is repairDockState over the ship's own get_my_fleet_positions
 // row (see that fold for the four states and why berthed/unknown are not 'away'), the projection
@@ -95,6 +99,13 @@ export function RepairPanel({
   // note mid-interaction. First-mount reads stay fail-closed (dark until a POSITIVE strict read).
   const litRef = useRef(false)
 
+  // NOTE RETIREMENT — the lifecycle key this panel has already answered for. A stale command note
+  // (a receipt, or a ten-minute-old error) must survive its own command's refetch (runGuardedCommand
+  // sets the note and then refreshes under the SAME key) but NOT the player's next journey — a key
+  // tick retires it, otherwise the pending-note exception below would hold the silence gate off
+  // forever. A ship switch clears notes by remount (the ship-id key on the panel's mount).
+  const seenKeyRef = useRef(lifecycleKey)
+
   const refresh = useCallback(async () => {
     // The gate read comes FIRST (the server's own order): while the flag is dark this panel performs
     // NO hull/wallet read. Once lit, hull + wallet are plain owner reads (RLS) — they work wherever
@@ -103,8 +114,13 @@ export function RepairPanel({
     const rows = await getRepairConfigRows()
     const nextCfg = repairConfigFromRows(rows)
     if (nextCfg.enabled) litRef.current = true
+    // The note-retirement decision (see seenKeyRef above) — settled INSIDE the async wave, never
+    // synchronously in the effect body (the set-state-in-effect rule).
+    const keyTicked = seenKeyRef.current !== lifecycleKey
+    seenKeyRef.current = lifecycleKey
     if (!repairStickyLit(litRef.current, nextCfg.enabled)) {
       if (!activeRef.current) return
+      if (keyTicked) setNote(null)
       setCfg(nextCfg)
       setHull(null)
       setWallet(undefined)
@@ -112,13 +128,15 @@ export function RepairPanel({
     }
     const [h, w] = await Promise.all([getShipHull(mainShipId), getWalletBalance()])
     if (!activeRef.current) return
+    if (keyTicked) setNote(null)
     // On a sticky transient (config unreadable AFTER being lit) keep the PRIOR cfg (the salvage posture).
     setCfg((prev) => (nextCfg.enabled ? nextCfg : (prev ?? nextCfg)))
     setHull(h ?? 'error')
     setWallet(w)
-  }, [activeRef, mainShipId])
+  }, [activeRef, mainShipId, lifecycleKey])
 
-  // lifecycleKey is a deliberate re-fetch trigger (the SalvageMarketPanel dep idiom).
+  // lifecycleKey is a deliberate re-fetch trigger (the SalvageMarketPanel dep idiom) — and, via
+  // refresh's key tracking, the note-retirement tick.
   useEffect(() => {
     void refresh()
   }, [refresh, lifecycleKey])
@@ -155,14 +173,18 @@ export function RepairPanel({
   // say (most ships are healthy).
   if (cfg == null || !cfg.enabled || hull === null) return null
 
-  // SILENT STATES — hull known and alive: a FULL hull has nothing to act on (no card stating the
-  // obvious over a healthy ship) and an UNKNOWN position permits no dock claim (a failed
-  // projection read must not become "take this ship to a port" over a ship that may be docked
-  // right now). A pending command note always keeps the card up (a just-landed mend's receipt
-  // must not vanish under the player).
-  if (hull !== 'error' && !isDestroyed(hull) && note == null) {
-    if (missingHull(hull) <= 0) return null
-    if (dockState === 'unknown') return null
+  // SILENT STATES — with no pending note, the card renders ONLY when it has something true AND
+  // useful to say. An UNREADABLE hull is noise, not information (the meter above reads its own
+  // query and may be sitting there perfectly healthy — a "hull unavailable" line under a full
+  // green bar would be the surface disagreeing with itself); a FULL hull has nothing to act on
+  // (no card stating the obvious over a healthy ship); an UNKNOWN position permits no dock claim
+  // (a failed projection read must not become "take this ship to a port" over a ship that may be
+  // docked right now). A pending command note always keeps the card up (a just-landed receipt or
+  // error must not vanish under the player) — and the lifecycle tick retires stale notes (see
+  // refresh), so one old failure can never hold this gate off forever.
+  if (note == null) {
+    if (hull === 'error') return null
+    if (!isDestroyed(hull) && (missingHull(hull) <= 0 || dockState === 'unknown')) return null
   }
 
   // The warning tone marks an ACTIONABLE desk only (damaged + docked); explainers ride neutral.

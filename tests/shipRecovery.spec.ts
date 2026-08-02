@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import {
   canRepair,
   canTow,
+  freshestShipStatus,
   isAdriftError,
   repairConcept,
   repairErrorMessage,
@@ -44,6 +45,17 @@ test('repairConcept agrees with the free gate: free_recovery exactly when the ga
     const gateActive = repairGate(status, null, 's1').kind !== 'not_disabled'
     expect(routesFree).toBe(gateActive)
   }
+})
+
+test('freshestShipStatus: the refetched shared read wins; the selection row is the fallback', () => {
+  // fresher-read-first — a mid-session destruction lands in the shared read long before the
+  // never-repolled selection list hears of it.
+  expect(freshestShipStatus({ status: 'destroyed' }, { status: 'stationary' })).toBe('destroyed')
+  expect(freshestShipStatus({ status: 'stationary' }, { status: 'destroyed' })).toBe('stationary')
+  // pre-load (null) and a missing row (undefined — also the shape of a failed shared read that
+  // collapsed to []) fall back to the selection status; the leaf's doc states that limit.
+  expect(freshestShipStatus(null, { status: 'home' })).toBe('home')
+  expect(freshestShipStatus(undefined, { status: 'destroyed' })).toBe('destroyed')
 })
 
 test('a healthy ship has no recovery surface at all', () => {

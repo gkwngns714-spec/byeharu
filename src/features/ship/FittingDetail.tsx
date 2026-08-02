@@ -46,7 +46,7 @@ import { fetchShipCommandBuff, type ShipCommandBuffData } from './commandBuffApi
 import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
 import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX } from './shipName'
-import { canRepair, canTow, repairConcept, repairGateNote, REPAIR_LABEL, TOW_LABEL, type RepairGate } from './shipRecovery'
+import { canRepair, canTow, freshestShipStatus, repairConcept, repairGateNote, REPAIR_LABEL, TOW_LABEL, type RepairGate } from './shipRecovery'
 import { RepairPanel } from './RepairPanel'
 import { repairDockState } from './repairEconomy'
 import { Badge, Button, Card, CardHeader, Notice, SectionLabel, Skeleton } from '../../components/ui'
@@ -271,15 +271,15 @@ export function FittingDetail({
   }
 
   // ── pure projections (specs: tests/shipDossier.spec.ts, tests/fittingView.spec.ts) ─────────────
-  // THE ONE MOUNT DECISION for the condition block (repairConcept — specs in
-  // tests/shipRecovery.spec.ts): which repair concept this ship gets. Status comes from the
-  // screen's REFETCHED shared read (shipRow — fetchMyMainShips, re-read on every refreshKey tick
-  // and after every command) with the selection row only as a pre-load fallback: the selection
-  // list never re-polls, so keying this off ship.status alone left a mid-session destruction
-  // showing the paid desk's "recover it first (free)" note while the free block never rendered —
-  // a recovery named nowhere on screen. Both mounts below read THIS value; they can only flip
-  // together.
-  const surface = repairConcept(shipRow?.status ?? ship.status)
+  // THE ONE MOUNT DECISION for the condition block (repairConcept over freshestShipStatus — both
+  // spec'd in tests/shipRecovery.spec.ts): which repair concept this ship gets. Status resolution
+  // is the ONE shared leaf: the refetched shared read first, the never-repolled selection row as
+  // the fallback — a fallback freshestShipStatus's doc honestly notes covers pre-load AND a
+  // failed shared read (fetchMyMainShips collapses errors to []). Keying this off ship.status
+  // alone left a mid-session destruction showing the paid desk's "recover it first (free)" note
+  // while the free block never rendered — a recovery named nowhere on screen. Both mounts below
+  // read THIS value; they can only flip together.
+  const surface = repairConcept(freshestShipStatus(shipRow, ship))
   const isDisabled = surface === 'free_recovery'
   const gate = fittingEditability(position)
   const locLabel = fleetPositionLocationLabel(position, locations)
