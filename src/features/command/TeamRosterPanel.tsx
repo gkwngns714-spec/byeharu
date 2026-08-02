@@ -5,15 +5,19 @@ import {
   fetchMyShipGroups,
   fetchMyShipGroupMap,
   fetchMyPresentShipFleets,
+  fetchMyGroupAutoExit,
   upsertShipGroup,
   assignShipToGroup,
   deleteShipGroup,
   setFleetCommandShip,
+  setGroupAutoExit,
+  type GroupAutoExitRow,
   type PresentShipFleetLite,
   type ShipGroupMapEntry,
   type TeamRpcResult,
 } from './teamApi'
 import { teamReasonMessage } from './teamReasonMessage'
+import { autoExitSaveAvailability, autoExitSummary, parseAutoExitPct, AUTO_EXIT_PCT_MIN, AUTO_EXIT_PCT_MAX } from './teamAutoExit'
 import { deriveDockedTeamRollups } from './teamRollup'
 import {
   buildTeamRoster,
@@ -98,11 +102,16 @@ export function TeamRosterPanel() {
   const [addShipFor, setAddShipFor] = useState<string | null>(null) // group_id whose "+ Add ship" picker is open (TEAM-UX)
   const [drafts, setDrafts] = useState<Record<string, string>>({}) // per-team rename input, keyed by group_id
   const [fleetControl, setFleetControl] = useState(false) // FLEET-CONTROL (0204) gate; dark → no command-ship/cap surface
+  // HP AUTO-EXIT (0310): per-fleet safety-line settings. null = the read failed (pre-0310 DB or
+  // transport error) → the control does not render at all (fail closed to hidden, never to a
+  // fabricated default). Keyed by group_id.
+  const [autoExit, setAutoExit] = useState<Record<string, GroupAutoExitRow> | null>(null)
+  const [aeDrafts, setAeDrafts] = useState<Record<string, string>>({}) // per-team percent input, keyed by group_id
 
   const reload = useCallback(async () => {
-    const [g, m, cr, pf, fc] = await Promise.all([
+    const [g, m, cr, pf, fc, ae] = await Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-      fetchFleetControlEnabled(),
+      fetchFleetControlEnabled(), fetchMyGroupAutoExit(),
       // n1: refresh the SHELL's map reads (the ONE fleet-positions read) in the same wave, so a
       // membership mutation's docked↔berthed place flip shows without waiting on the next poll.
       refreshMapReads(),
@@ -112,24 +121,26 @@ export function TeamRosterPanel() {
     setCaptainRoster(cr)
     setPresentFleets(pf)
     setFleetControl(fc)
+    setAutoExit(ae)
     setRosterVersion((v) => v + 1) // membership may have changed — any cached preview is stale
     setLoading(false)
   }, [refreshMapReads])
 
   // Initial load: inline .then so setState lands in an async callback, not synchronously in the effect body
-  // (react-hooks/set-state-in-effect). reload() reuses the same four fetches after every mutation.
+  // (react-hooks/set-state-in-effect). reload() reuses the same fetches after every mutation.
   useEffect(() => {
     let active = true
     void Promise.all([
       fetchMyShipGroups(), fetchMyShipGroupMap(), getMyCaptainInstances(), fetchMyPresentShipFleets(),
-      fetchFleetControlEnabled(),
-    ]).then(([g, m, cr, pf, fc]) => {
+      fetchFleetControlEnabled(), fetchMyGroupAutoExit(),
+    ]).then(([g, m, cr, pf, fc, ae]) => {
       if (!active) return
       setGroups(g)
       setGroupMap(m)
       setCaptainRoster(cr)
       setPresentFleets(pf)
       setFleetControl(fc)
+      setAutoExit(ae)
       setLoading(false)
     })
     return () => {
@@ -500,6 +511,85 @@ export function TeamRosterPanel() {
                       Fleet inactive — set a command ship to move, send, or hunt with this fleet.
                     </Notice>
                   ))}
+
+                {/* HP AUTO-EXIT (0310) — the fleet's combat safety line, LIT (dark-first is
+                    suspended by owner order). The threshold is a percent of the fleet's FULL HULL
+                    CAPACITY (the server sums max_hp) — never the damaged hull it entered with —
+                    and every sentence below must say so; copy that drops the qualifier states a
+                    rule the engine does not run (the review that sent this slice back).
+                    Renders ONLY when the settings read succeeded AND carries this fleet (fail
+                    closed to hidden on a pre-0310 DB or a flaky read — never a fabricated
+                    default). The toggle dispatches IMMEDIATELY (an off switch that waits for Save
+                    fails when it matters); the percent has a draft + Save with the client
+                    mirroring the server's [5,95] bounds as UX only — the RPC re-validates and is
+                    the authority. Same run()/busy/await-then-refetch discipline as every mutation
+                    in this panel; rejects route through the ONE reason map. */}
+                {(() => {
+                  const ae = autoExit?.[group.group_id]
+                  if (!ae) return null
+                  const aeDraft = aeDrafts[group.group_id] ?? String(ae.pct)
+                  const save = autoExitSaveAvailability(ae, aeDraft)
+                  return (
+                    <div
+                      className="space-y-1 rounded-lg border border-edge/60 bg-surface-2/40 p-2"
+                      data-testid={`auto-exit-${group.group_id}`}
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <SectionLabel>Auto-retreat</SectionLabel>
+                        <Badge tone={ae.enabled ? 'accent' : 'neutral'}>{ae.enabled ? 'On' : 'Off'}</Badge>
+                        <Button
+                          size="sm"
+                          variant={ae.enabled ? 'ghost' : 'secondary'}
+                          busy={busy === `autoexit-toggle:${group.group_id}`}
+                          disabled={busy !== null}
+                          onClick={() =>
+                            void run(
+                              `autoexit-toggle:${group.group_id}`,
+                              () => setGroupAutoExit(group.group_id, !ae.enabled, ae.pct),
+                              () =>
+                                ae.enabled
+                                  ? `Auto-retreat is off — ${group.name} will keep fighting until you pull it out.`
+                                  : `Auto-retreat is on — ${group.name} will pull out at ${ae.pct}% of full hull.`,
+                            )
+                          }
+                        >
+                          {ae.enabled ? 'Turn off' : 'Turn on'}
+                        </Button>
+                        {ae.enabled && (
+                          <span className="inline-flex items-center gap-1">
+                            <input
+                              value={aeDraft}
+                              onChange={(e) => setAeDrafts((d) => ({ ...d, [group.group_id]: e.target.value }))}
+                              inputMode="numeric"
+                              className="w-14 rounded-lg border border-edge bg-surface-2 px-2 py-1 text-right font-mono text-xs tabular-nums text-ink"
+                              aria-label={`Auto-retreat hull percent for fleet ${group.group_index} (${AUTO_EXIT_PCT_MIN}–${AUTO_EXIT_PCT_MAX})`}
+                            />
+                            <span className="text-xs text-ink-muted">% of full hull</span>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              busy={busy === `autoexit-pct:${group.group_id}`}
+                              disabled={busy !== null || !save.canSave}
+                              onClick={() => {
+                                const parsed = parseAutoExitPct(aeDraft)
+                                if (!parsed.ok) return
+                                void run(
+                                  `autoexit-pct:${group.group_id}`,
+                                  () => setGroupAutoExit(group.group_id, ae.enabled, parsed.pct),
+                                  () => `${group.name} now pulls out at ${parsed.pct}% of full hull.`,
+                                )
+                              }}
+                            >
+                              Save
+                            </Button>
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-ink-muted">{autoExitSummary(ae)}</p>
+                      {save.hint && <p className="text-[11px] text-warning/90">{save.hint}</p>}
+                    </div>
+                  )
+                })()}
 
                 {/* TEAM-DOSSIER — the always-visible authoritative stats strip (Power/Speed/Cargo/
                     Survival/Members from D0's totals RPC, auto-fetched) + per-ship Breakdown (C0's

@@ -179,6 +179,52 @@ export async function deleteShipGroup(groupId: string): Promise<TeamRpcResult> {
   return data as TeamRpcResult
 }
 
+// ── HP AUTO-EXIT (0310) — the fleet's combat safety line. ──
+// The settings read is a SEPARATE query, NOT a widening of fetchMyShipGroupsChecked's select —
+// the same load-bearing deploy-order rule as the is_command_ship read above: the client (Pages)
+// auto-deploys AHEAD of the approval-gated migration, and a widened base select would error on a
+// pre-0310 database and blank every live fleet list. This one fail-closes to null instead, and the
+// panel simply does not render the control until the columns exist. Owner-RLS read (0160's
+// ship_groups_select_own covers the new columns).
+export interface GroupAutoExitRow {
+  enabled: boolean
+  pct: number
+}
+
+export async function fetchMyGroupAutoExit(): Promise<Record<string, GroupAutoExitRow> | null> {
+  const { data, error } = await supabase
+    .from('ship_groups')
+    .select('group_id, auto_exit_enabled, auto_exit_hp_pct')
+  if (error || !data) return null
+  const out: Record<string, GroupAutoExitRow> = {}
+  for (const r of data as { group_id: string; auto_exit_enabled: boolean | null; auto_exit_hp_pct: number | string | null }[]) {
+    // numeric arrives as a string over PostgREST; a malformed row fail-closes to hidden (skip),
+    // never to a fabricated setting.
+    const pct = typeof r.auto_exit_hp_pct === 'string' ? Number(r.auto_exit_hp_pct) : r.auto_exit_hp_pct
+    if (typeof r.auto_exit_enabled !== 'boolean' || typeof pct !== 'number' || !Number.isFinite(pct)) continue
+    out[r.group_id] = { enabled: r.auto_exit_enabled, pct }
+  }
+  return out
+}
+
+// set_group_auto_exit (0310) — THE one writer of the setting. Thin, normalize-don't-throw (the
+// file's write style): ids/values only; the server derives the player from auth.uid(), re-resolves
+// the group, and validates the percent to the table CHECK's exact [5,95] bounds (the client's
+// bounds in teamAutoExit.ts are UX only, never the authority).
+export async function setGroupAutoExit(
+  groupId: string,
+  enabled: boolean,
+  pct: number,
+): Promise<TeamRpcResult> {
+  const { data, error } = await supabase.rpc('set_group_auto_exit', {
+    p_group_id: groupId,
+    p_enabled: enabled,
+    p_pct: pct,
+  })
+  if (error) return { ok: false, reason: 'unavailable' }
+  return data as TeamRpcResult
+}
+
 // RETIRED 2026-07-23 — `sendShipGroup` (send_ship_group_expedition, 0163) and `moveShipGroup`
 // (move_ship_group_to_location, 0190) were deleted here. Both were exported with ZERO callers,
 // and migration 0232 DROPPED both RPCs from production, so either call could only ever have
