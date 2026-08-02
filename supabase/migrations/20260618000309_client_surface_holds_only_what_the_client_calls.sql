@@ -53,7 +53,8 @@
 --      0301:2271-2275 (live value 3). The read path simply omits the cap. pirateApi.ts:41 records
 --      that this RPC "still exists but has no client caller".
 --
--- WHAT THIS MIGRATION DOES: revokes EXECUTE from anon and authenticated on all five. Nothing else.
+-- WHAT THIS MIGRATION DOES: revokes EXECUTE from public, anon and authenticated on all five (see
+-- the note above the revokes for why `public` is in that list — it is load-bearing). Nothing else.
 -- No body is re-created, no behaviour changes for any reachable path, no flag moves. Because none of
 -- the five has a client caller, the player-visible change is exactly zero.
 --
