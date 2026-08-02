@@ -46,9 +46,9 @@ import { fetchShipCommandBuff, type ShipCommandBuffData } from './commandBuffApi
 import { shipMeterPair } from './meterPair'
 import { MeterPairBars } from './MeterPairBars'
 import { normalizeShipName, renameReasonMessage, shipNameProblem, SHIP_NAME_MAX } from './shipName'
-import { canRepair, canTow, repairGateNote, REPAIR_LABEL, TOW_LABEL, type RepairGate } from './shipRecovery'
+import { canRepair, canTow, repairConcept, repairGateNote, REPAIR_LABEL, TOW_LABEL, type RepairGate } from './shipRecovery'
 import { RepairPanel } from './RepairPanel'
-import { repairDockedPlace } from '../port/repairEconomy'
+import { repairDockState } from './repairEconomy'
 import { Badge, Button, Card, CardHeader, Notice, SectionLabel, Skeleton } from '../../components/ui'
 import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 
@@ -62,7 +62,7 @@ import { ItemChip, ItemGlyph, ItemTile } from '../../components/items'
 //   · condition — the shared shield/hull pair (MeterPairBars over shipMeterPair), then EXACTLY ONE
 //     repair concept for this ship's state (REPAIR-WHERE-YOU-ARE): an ALIVE ship gets the paid
 //     hull mend (RepairPanel — its ONE mount; dockedness from this same positions row via
-//     repairDockedPlace), a DISABLED ship gets the free RECOVERY ACTION instead (NO-SOFTLOCK: the
+//     repairDockState), a DISABLED ship gets the free RECOVERY ACTION instead (NO-SOFTLOCK: the
 //     free path is the ONLY recovery for a destroyed ship — the paid desk defers to it — so an
 //     action must render regardless of any flag). 0297 made that free repair POSITION-GATED, so
 //     which free action shows is decided by the ONE pure gate (shipRecovery.repairGate) and BOTH
@@ -271,7 +271,16 @@ export function FittingDetail({
   }
 
   // ── pure projections (specs: tests/shipDossier.spec.ts, tests/fittingView.spec.ts) ─────────────
-  const isDisabled = ship.status === 'destroyed'
+  // THE ONE MOUNT DECISION for the condition block (repairConcept — specs in
+  // tests/shipRecovery.spec.ts): which repair concept this ship gets. Status comes from the
+  // screen's REFETCHED shared read (shipRow — fetchMyMainShips, re-read on every refreshKey tick
+  // and after every command) with the selection row only as a pre-load fallback: the selection
+  // list never re-polls, so keying this off ship.status alone left a mid-session destruction
+  // showing the paid desk's "recover it first (free)" note while the free block never rendered —
+  // a recovery named nowhere on screen. Both mounts below read THIS value; they can only flip
+  // together.
+  const surface = repairConcept(shipRow?.status ?? ship.status)
+  const isDisabled = surface === 'free_recovery'
   const gate = fittingEditability(position)
   const locLabel = fleetPositionLocationLabel(position, locations)
   const litFittings = allFittings ? fittingsForShip(allFittings, shipId) : null
@@ -463,17 +472,19 @@ export function FittingDetail({
       )}
 
       {/* REPAIR-WHERE-YOU-ARE — the paid hull mend, right under the hull meter it mends (the ONE
-          mount; the Port-rail copy is retired). ALIVE ships only: the isDisabled split below is the
-          mutual-exclusion seam — a destroyed ship gets the free Repair/Tow block INSTEAD, never
-          both (server-enforced: free repair gates on destroyed, paid repair rejects it, 0201).
-          Dockedness is the ship's OWN position row through repairDockedPlace (docked only — a
-          berthed ship's paid mend would 100%-fail server-side; see that function), so the desk and
-          the location line above always describe the same ship. Flag-dark → renders null. */}
-      {!isDisabled && (
+          mount; the Port-rail copy is retired). Mounted when repairConcept says 'paid_mend' — the
+          same single decision that mounts the free block below, so exactly one repair concept ever
+          renders (server-enforced: free repair gates on destroyed, paid repair rejects it, 0201).
+          Dockedness is the ship's OWN position row folded by repairDockState (docked / berthed /
+          away / unknown — each gets its own honest treatment; a berthed ship's paid mend would
+          100%-fail server-side, and an unknown position permits no dock claim at all), so the desk
+          and the location line above always describe the same ship. Flag-dark, full-hull, and
+          position-unknown all render null. */}
+      {surface === 'paid_mend' && (
         <RepairPanel
           mainShipId={shipId}
           shipName={ship.name}
-          docked={repairDockedPlace(position)}
+          dockState={repairDockState(position)}
           lifecycleKey={refreshKey}
           onMended={onIdentityChanged}
         />
@@ -484,8 +495,9 @@ export function FittingDetail({
           renders here for any disabled ship, independent of every flag. 0297: the free repair is
           position-gated, so the gate decides which action — Repair in port, Tow when adrift — and
           an adrift ship is told plainly why rather than being handed a button the server will
-          refuse. */}
-      {isDisabled && (
+          refuse. Mounted when repairConcept says 'free_recovery' — the same single decision that
+          mounts the paid mend above; the two can only flip together. */}
+      {surface === 'free_recovery' && (
         <div className="mt-3 rounded-lg border border-edge bg-surface-2/50 p-3">
           <Notice tone="warning" data-testid="mainship-disabled-note" className="mb-2">
             {repairGateNote(recovery.gate)}

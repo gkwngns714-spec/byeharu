@@ -24,6 +24,22 @@ export interface DisabledShipRow {
   location_id: string | null
 }
 
+/**
+ * REPAIR-WHERE-YOU-ARE — the ONE mount decision for the Fitting detail's condition block: which
+ * repair concept a ship's state gets. Mirrors the server's mutual exclusion exactly (the free
+ * repair_main_ship gates on status='destroyed'; the paid repair_ship_hull_at_port REJECTS
+ * destroyed with ship_destroyed, 0201) — exactly one concept per state, never both, never
+ * neither. Both mount sites in FittingDetail read THIS value; neither carries its own status
+ * comparison, so the two surfaces can only flip together. Feed it the freshest status available
+ * (the screen's refetched shared read, falling back to the selection row) — a stale selection
+ * status here is what turns a mid-session destruction into a dead end.
+ */
+export type RepairConcept = 'paid_mend' | 'free_recovery'
+
+export function repairConcept(status: string): RepairConcept {
+  return status === 'destroyed' ? 'free_recovery' : 'paid_mend'
+}
+
 export type RepairGate =
   /** Not disabled — no recovery surface at all. */
   | { kind: 'not_disabled' }

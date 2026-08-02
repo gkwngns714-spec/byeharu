@@ -23,11 +23,13 @@
 #
 # FLIP ORDER: independent — repair needs only credits (Rung 3) and a docked damaged ship; no other flag
 # is a hard precondition (a repair with no credits simply returns insufficient_credits). AFTER a green run:
-#   1. NO separate client PR — the RepairPanel ships dark in THIS slice, mounted on the Port screen main
-#      rail (PortScreen.tsx, the SalvageMarketPanel neighbour), gated on repair_economy_enabled read from
-#      public game_config; it appears on the next docked Port render.
-#   2. Manual smoke: dock a DAMAGED ship -> the Repair desk shows the hull bar + cost -> Repair (full or
-#      partial) -> wallet debits hp_restored x repair_credits_per_hp (0.5), hull mends; a destroyed ship
+#   1. NO separate client PR — the RepairPanel (REPAIR-WHERE-YOU-ARE) mounts in the Fitting tab's
+#      per-ship condition block (src/features/ship/RepairPanel.tsx via FittingDetail; the Port-rail
+#      mount is retired), gated on repair_economy_enabled read from public game_config; it appears on
+#      the next Fitting render of a damaged DOCKED ship.
+#   2. Manual smoke: select a damaged DOCKED ship in Fitting -> the Condition card shows the mend +
+#      cost -> Repair (full or partial) -> wallet debits hp_restored x repair_credits_per_hp (0.5),
+#      hull mends; a destroyed ship
 #      still shows the FREE recovery (unchanged).
 # Rollback: the commented section at the bottom of the .sql (ONE reverse config write; the panel vanishes
 # on its next read; past repairs stand; the free safelock is unaffected).
@@ -115,4 +117,4 @@ out="$(psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$OP_SQL" 2>&1)" || { echo "$out"
 printf '%s\n' "$out"
 for m in $MARKERS; do printf '%s' "$out" | grep -q "$m" || fail "missing marker $m in the run output"; done
 printf '%s' "$out" | grep -q "$PASS_LINE" || fail "operation did not report the final PASS line"
-echo "REPAIR-ECON ACTIVATION: OVERALL_PASS — the paid hull-repair economy is live server-side. NO separate client PR needed — the RepairPanel mounts dark in this slice on the Port screen main rail. Manual smoke: dock a DAMAGED ship -> Repair desk -> pay hp_restored x 0.5 -> hull mends; destroyed ships still recover free."
+echo "REPAIR-ECON ACTIVATION: OVERALL_PASS — the paid hull-repair economy is live server-side. NO separate client PR needed — the RepairPanel mounts in the Fitting tab's per-ship condition block (REPAIR-WHERE-YOU-ARE; the Port-rail mount is retired). Manual smoke: select a damaged DOCKED ship in Fitting -> Condition card -> pay hp_restored x 0.5 -> hull mends; destroyed ships still recover free."

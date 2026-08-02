@@ -252,9 +252,14 @@ export function ShipScreen() {
     const selected = s.main_ship_id === selection.selectedShipId
     const row = shipRowById.get(s.main_ship_id)
     const meters = row ? shipMeterPair(row) : null
-    const isDisabled = s.status === 'destroyed'
+    // REPAIR-WHERE-YOU-ARE review fix: recovery decisions read the REFETCHED shared status
+    // (fetchMyMainShips — re-read after every command wave), falling back to the selection row
+    // only pre-load. The selection list never re-polls, so keying off s.status alone hid a
+    // mid-session destruction's Repair/Tow button until a full reload.
+    const rowStatus = row?.status ?? s.status
+    const isDisabled = rowStatus === 'destroyed'
     // 0297 — the ONE gate decision for this ship (pure; specs in tests/shipRecovery.spec.ts).
-    const gate = repairGate(s.status, disabledShips, s.main_ship_id, adriftSeen[s.main_ship_id] ?? false)
+    const gate = repairGate(rowStatus, disabledShips, s.main_ship_id, adriftSeen[s.main_ship_id] ?? false)
     const locLabel = fleetPositionLocationLabel(posByShip.get(s.main_ship_id), game.locations)
     // Fleet-aware state (same selector the Command roster uses): a moving/docked ship no longer
     // reads the raw 'home' status as "Ready to launch" — that shows only when genuinely idle.
@@ -474,8 +479,11 @@ export function ShipScreen() {
               /* 0297 — the detail COMPOSES this screen's one recovery implementation (it no longer
                  carries a second copy of the repair command). */
               recovery={{
+                /* REPAIR-WHERE-YOU-ARE review fix: the same freshest-status source the detail's
+                   repairConcept uses (the refetched shared read, selection as pre-load fallback) —
+                   so the gate and the mount decision can never disagree about destroyed. */
                 gate: repairGate(
-                  selectedShip.status,
+                  selectedShipRow?.status ?? selectedShip.status,
                   disabledShips,
                   selectedShip.main_ship_id,
                   adriftSeen[selectedShip.main_ship_id] ?? false,

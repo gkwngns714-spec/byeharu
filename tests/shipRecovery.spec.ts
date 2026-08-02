@@ -3,6 +3,7 @@ import {
   canRepair,
   canTow,
   isAdriftError,
+  repairConcept,
   repairErrorMessage,
   repairGate,
   repairGateNote,
@@ -20,6 +21,30 @@ import {
 
 const AT_PORT: DisabledShipRow = { main_ship_id: 's1', name: 'Kestrel', at_port: true, location_id: 'haven' }
 const ADRIFT: DisabledShipRow = { main_ship_id: 's2', name: 'Vagrant', at_port: false, location_id: null }
+
+// ── repairConcept (REPAIR-WHERE-YOU-ARE: the ONE mount decision for the condition block) ─────────
+// Both FittingDetail mount sites read this single value (`surface === 'paid_mend'` /
+// `surface === 'free_recovery'`) — neither carries its own status comparison. HONESTY NOTE: these
+// specs pin the DECIDER; the JSX composition consuming it is not covered by any rendered test
+// (no harness mounts FittingDetail today) — stated plainly rather than papered over with a spec
+// that could not fail.
+test('repairConcept: destroyed → the free recovery block; every live status → the paid mend', () => {
+  expect(repairConcept('destroyed')).toBe('free_recovery')
+  for (const status of ['home', 'stationary', 'traveling', 'anything_else', '']) {
+    expect(repairConcept(status)).toBe('paid_mend')
+  }
+})
+
+test('repairConcept agrees with the free gate: free_recovery exactly when the gate has a surface', () => {
+  // The server's mutual exclusion, held between the two client deciders: the free block renders
+  // (gate ≠ not_disabled) exactly when repairConcept routes to it — one concept per state, never
+  // both, never neither.
+  for (const status of ['destroyed', 'home', 'stationary', 'traveling']) {
+    const routesFree = repairConcept(status) === 'free_recovery'
+    const gateActive = repairGate(status, null, 's1').kind !== 'not_disabled'
+    expect(routesFree).toBe(gateActive)
+  }
+})
 
 test('a healthy ship has no recovery surface at all', () => {
   const gate = repairGate('home', [AT_PORT], 's1')
