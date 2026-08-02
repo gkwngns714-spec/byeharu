@@ -466,16 +466,18 @@ end $rewrite$;
 do $a$
 declare v_def text;
 begin
+  -- is_nullable is the SQL-standard 'YES'/'NO' (uppercase) — the lowercase spelling never matches
+  -- and failed this assert's first CI run; the fix is the literal, recorded here so it stays.
   if not exists (select 1 from information_schema.columns
                   where table_schema = 'public' and table_name = 'ship_groups'
                     and column_name = 'auto_exit_enabled' and data_type = 'boolean'
-                    and is_nullable = 'no' and column_default = 'true') then
+                    and is_nullable = 'NO' and column_default = 'true') then
     raise exception '0310 ASSERT (a) FAIL: auto_exit_enabled is not boolean NOT NULL DEFAULT true';
   end if;
   if not exists (select 1 from information_schema.columns
                   where table_schema = 'public' and table_name = 'ship_groups'
                     and column_name = 'auto_exit_hp_pct' and data_type = 'numeric'
-                    and is_nullable = 'no') then
+                    and is_nullable = 'NO') then
     raise exception '0310 ASSERT (a) FAIL: auto_exit_hp_pct is not numeric NOT NULL';
   end if;
   if (select column_default from information_schema.columns
