@@ -26,6 +26,9 @@ on:
       # 0308 rewrites the encounter builder + the ambush resolver — roster-touching branches must
       # run the intercept apply-and-behaviour gate too.
       - 'slice-combat-roster**'
+      # 0311 rewrites the mover's mid-combat arm (reposition inside the fight's zone) and this proof
+      # carries its three behaviour blocks — the branch must fire this gate or the net is empty.
+      - 'slice-reposition**'
 
 permissions:
   contents: read
