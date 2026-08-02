@@ -22,6 +22,7 @@ import { FittingDetail, type ShipRecoveryView } from './FittingDetail'
 import {
   canRepair,
   canTow,
+  freshestShipStatus,
   isAdriftError,
   repairErrorMessage,
   repairGate,
@@ -252,9 +253,14 @@ export function ShipScreen() {
     const selected = s.main_ship_id === selection.selectedShipId
     const row = shipRowById.get(s.main_ship_id)
     const meters = row ? shipMeterPair(row) : null
-    const isDisabled = s.status === 'destroyed'
+    // REPAIR-WHERE-YOU-ARE: recovery decisions read the ONE freshest-status leaf (refetched
+    // shared read first; the never-repolled selection row as the fallback — which, per the
+    // leaf's doc, also covers a failed shared read that collapsed to []). Keying off s.status
+    // alone hid a mid-session destruction's Repair/Tow button until a full reload.
+    const rowStatus = freshestShipStatus(row, s)
+    const isDisabled = rowStatus === 'destroyed'
     // 0297 — the ONE gate decision for this ship (pure; specs in tests/shipRecovery.spec.ts).
-    const gate = repairGate(s.status, disabledShips, s.main_ship_id, adriftSeen[s.main_ship_id] ?? false)
+    const gate = repairGate(rowStatus, disabledShips, s.main_ship_id, adriftSeen[s.main_ship_id] ?? false)
     const locLabel = fleetPositionLocationLabel(posByShip.get(s.main_ship_id), game.locations)
     // Fleet-aware state (same selector the Command roster uses): a moving/docked ship no longer
     // reads the raw 'home' status as "Ready to launch" — that shows only when genuinely idle.
@@ -474,8 +480,11 @@ export function ShipScreen() {
               /* 0297 — the detail COMPOSES this screen's one recovery implementation (it no longer
                  carries a second copy of the repair command). */
               recovery={{
+                /* REPAIR-WHERE-YOU-ARE: the SAME freshest-status leaf the detail's repairConcept
+                   composes — so the gate and the mount decision can never disagree about
+                   destroyed (one leaf, not two copies of one comparison). */
                 gate: repairGate(
-                  selectedShip.status,
+                  freshestShipStatus(selectedShipRow, selectedShip),
                   disabledShips,
                   selectedShip.main_ship_id,
                   adriftSeen[selectedShip.main_ship_id] ?? false,

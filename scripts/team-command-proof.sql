@@ -1016,9 +1016,18 @@ declare r jsonb; n int; t record;
   v_hp_after double precision; v_expected_enemy double precision; v_bd double precision;
   v_defbase double precision; v_danger integer; v_waves integer; v_started timestamptz;
   v_keys text[]; v_expected_keys text[]; v_speed double precision; v_bad int := 0;
+  v_ring_before jsonb;
 begin
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  -- UNION at the 0313/0314 merge. BOTH preconditions below are load-bearing and neither replaces the
+  -- other: 0314 zeroes the weapon cooldowns (a TIME precondition — without it every multi-tick fire
+  -- sequence stalls) and 0313 borrows the formation ring (a GEOMETRY precondition — without it the
+  -- members sit outside their own cut ranges and never fire at all). Taking either side whole leaves
+  -- this block asserting against an ambient default it does not own, which is the exact failure the
+  -- proofs-never-assert-ambient-defaults law exists for. Cooldowns are zeroed FIRST because they must
+  -- land before anything snapshots weapons_json; the ring borrow is order-independent.
+  --
   -- 0314: the tick arms REAL weapon cooldowns (next_ready_at = now() + cooldown_seconds), and now()
   -- is frozen for this whole txn — any positive cooldown means a weapon fires at most ONCE per
   -- proof run, which would stall every multi-tick fire sequence below (TEAMHUNT's second exchange,
@@ -1031,6 +1040,21 @@ begin
   perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
   perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
   update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
+
+  -- ring 0 — OWNED (0313 repoint): every member spawns ON the engagement anchor, distance 0 from
+  -- the wave, so every weapon fires on tick 1 at ANY positive range. The exact-damage pins below
+  -- assert AGGREGATION (all members' attack flows into player_damage), and they held before 0313
+  -- only because the seeded ranges (120-180) happened to cover the seeded 30-unit ring — an
+  -- ambient geometry this proof never owned. 0313 cut the ranges below the ring; the property is
+  -- unchanged, the precondition is now stated.
+  -- OWNED means BORROWED, not taken: the seeded value is captured here and RESTORED at the end of
+  -- this block. Leaving the ring at 0 would silently co-locate every unit in every later block of
+  -- this 4300-line proof — a global geometry change smuggled in by one block's precondition.
+  select value into v_ring_before from public.game_config where key = 'spatial_formation_ring_radius';
+  if v_ring_before is null then
+    raise exception 'COMBATPARITY FAIL: game_config.spatial_formation_ring_radius is absent — this block cannot borrow-and-restore a knob that does not exist, and every later block would inherit the ring-0 override';
+  end if;
+  perform public.set_game_config('spatial_formation_ring_radius', '0'::jsonb);
 
   -- a real legacy unit fleet to a real hunt_pirates location (lowest entry gate first).
   select id into v_base from public.bases where player_id = uA and status = 'active' limit 1;
@@ -1212,6 +1236,9 @@ begin
     where jobname like '%combat%' and jobname not in ('process-combat-ticks', 'process-combat-telegraphs');
   if n <> 0 then raise exception 'COMBATPARITY FAIL: % unexpected combat-named cron job(s) beyond the tick engine + telegraph resolver', n; end if;
 
+  -- give the borrowed geometry back (derived from the capture above, never a hard-coded 30).
+  perform public.set_game_config('spatial_formation_ring_radius', v_ring_before);
+
   raise notice 'TEAMCMD_PASS_COMBATPARITY ok: legacy hunt via real chain under team flag ON; tick damage = independent Σ(attack×alive); enemy damage = independent defense-curve value; legacy jsonb keys; hp+fleet sync exact; escaped report legacy-keyed; return speed = fleet_speed; identity CHECK raises both ways; leaf smoke (NULL return speed, hp-only sync, 0059 terminal); exactly 1 combat-TICK engine cron (process-combat-ticks) + the COMBAT-S2 telegraph resolver which never runs the tick engine, and no third combat-named cron';
 end $$;
 
@@ -1249,11 +1276,22 @@ declare r jsonb; t jsonb; s1 jsonb; s2 jsonb; n int;
   v_fleet2 uuid; v_mv2 uuid; v_enc2 uuid;
   v_hp1 double precision; v_hp2 double precision; v_hp1b double precision; v_hp2b double precision;
   v_err text;
+  v_ring_before jsonb;
 begin
   -- config surgery must be in effect for the exact-damage pins: re-apply the COMBATPARITY in-txn
-  -- surgery (idempotent; the real set_game_config; all reverted by ROLLBACK).
+  -- surgery (idempotent; the real set_game_config; all reverted by ROLLBACK), including the OWNED
+  -- ring-0 geometry (see COMBATPARITY's knob block — 0313 cut ranges below the seeded ring; every
+  -- member must sit on the anchor for the tick-damage aggregation pin to measure aggregation).
+  -- Borrowed and restored at the end of this block, exactly as COMBATPARITY does: the capture is
+  -- taken here rather than inherited, so this block is correct whether it runs after COMBATPARITY
+  -- or alone.
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  select value into v_ring_before from public.game_config where key = 'spatial_formation_ring_radius';
+  if v_ring_before is null then
+    raise exception 'TEAMHUNT FAIL: game_config.spatial_formation_ring_radius is absent — this block cannot borrow-and-restore a knob that does not exist, and every later block would inherit the ring-0 override';
+  end if;
+  perform public.set_game_config('spatial_formation_ring_radius', '0'::jsonb);
 
   -- the same seeded hunt destination COMBATPARITY used (lowest entry gate first).
   select id into v_hunt from public.locations
@@ -1593,6 +1631,9 @@ begin
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: b1 not marked combat-destroyed by the D1 member loop'; end if;
   select count(*) into n from public.fleets where id = v_fleet2 and status = 'destroyed';
   if n <> 1 then raise exception 'TEAMHUNT FAIL degrade: sortie fleet not destroyed on defeat'; end if;
+
+  -- give the borrowed geometry back (derived from the capture above, never a hard-coded 30).
+  perform public.set_game_config('spatial_formation_ring_radius', v_ring_before);
 
   raise notice 'TEAMCMD_PASS_TEAMHUNT ok: rejects (group_not_found×2/empty_group/invalid_location-before-readiness/member_not_ready incl. zero-hp), ONE fleet + 2-row manifest + hunting ships, speed_used = independent D0 totals.speed, races reject (single send + double team send), member encounter (attack_snapshot = per-member adapter, hp carries pre-existing damage, power_start = totals.combat_power), tick damage = sum(attack_snapshot) with ship-hp sync, manifest wins over a mid-flight unassign, and the H1 cron-safety degrade: settle succeeds despite an adapter-refused member, whose row lands alive_count=0/zero-snapshot and defeats cleanly';
 end $$;

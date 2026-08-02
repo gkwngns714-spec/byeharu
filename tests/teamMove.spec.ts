@@ -204,9 +204,31 @@ test('RETREAT: the destination is a LABEL, not a port name — open space reads 
 
 test('RETREAT: an ordinary move yields null, so the caller keeps its own "Sent …" summary', () => {
   // The envelope key is absent on a normal leg, and `unknown` by TeamRpcResult's shape — anything
-  // that is not one of the two combat-time outcomes must fall through, never produce retreat copy.
+  // that is not one of the combat-time outcomes must fall through, never produce retreat copy.
   for (const outcome of [undefined, null, '', 'moving', 42, {}]) {
     expect(fleetRetreatOutcomeMessage(outcome, 'Alpha', 'Haven')).toBeNull()
+  }
+})
+
+// ── REPOSITION (0311): an in-zone order moves the fight, and the copy says so plainly. ────────────
+
+test('REPOSITION: the repositioned outcome says the fleet moved and the fight continues', () => {
+  // The owner's rule: "when i am inside the zone and moving(redirecting), it should just move
+  // without breaking combat, and battles being continued." The copy mirrors it: moved, still
+  // fighting. It must never read as a retreat (nothing broke off) and never as a journey (no leg
+  // was minted — the move is immediate).
+  const point = openSpaceDestinationLabel({ x: 310, y: 455 })
+  expect(fleetRetreatOutcomeMessage('repositioned', 'Alpha', point)).toBe(
+    'Alpha moved to open space at (310, 455) — still in the fight.',
+  )
+  expect(fleetRetreatOutcomeMessage('repositioned', 'Alpha', 'Haven')).toBe(
+    'Alpha moved to Haven — still in the fight.',
+  )
+  const msg = fleetRetreatOutcomeMessage('repositioned', 'Alpha', point) as string
+  expect(msg).not.toContain('retreat')
+  // no jargon, no home/base/win wording (the standing copy laws).
+  for (const banned of ['base', 'home', 'win', 'sortie', 'berth']) {
+    expect(msg).not.toContain(banned)
   }
 })
 

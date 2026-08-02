@@ -75,10 +75,14 @@ if [ "$MODE" = "selftest" ]; then
   # ── the engineered geometry itself: the tuning knobs that make CLOSE/KITE/HOLD all reachable in
   #    ONE deterministic pass are present (gutting any one would silently degrade the scenario). ──────
   grep -q "enemy_synthetic_range_base', '10'" "$SQL"    || fail "harness lost the tuned-low pirate weapon range (the KITE/CLOSE geometry depends on it)"
-  grep -q "spatial_formation_ring_radius', '50'" "$SQL" || fail "harness lost the tuned escort ring radius"
+  grep -q "spatial_formation_ring_radius', '20'" "$SQL" || fail "harness lost the tuned escort ring radius (20: inside the post-0313 catalog gun range, outside the pirate's 10 and the owned fallback 5)"
   grep -q "enemy_synthetic_speed_base', '60'" "$SQL"    || fail "harness lost the tuned pirate closing speed (needed for the tick-2 retaliation)"
   grep -q "combat_damage_variance_pct', '0'" "$SQL"     || fail "harness lost the determinism knob (0 variance)"
+  grep -q "combat_player_fallback_weapon_range', '5'" "$SQL" || fail "harness lost the OWNED fallback range (since 0262 the unfitted escort carries the fallback weapon; the CLOSE case needs a range this harness sets under the ring)"
+  grep -q "set value='false'::jsonb where key='combat_telegraph_enabled'" "$SQL" \
+    || fail "harness does not keep combat_telegraph_enabled dark (0300 lit it; a lit telegraph queues the encounter instead of opening it inline at the settle)"
   grep -q "'autocannon_battery'" "$SQL"                 || fail "harness does not craft the real S0 weapon catalog entry"
+  grep -q "the catalog autocannon_battery range" "$SQL" || fail "harness's fitted-range assert is no longer derived from the catalog (the 0313 repoint regressed to a hard-coded seed)"
 
   # ── every property is asserted in assert-form (gutting any one block fails here). ──────────────────
   grep -q "SPAWN FAIL: command ship not at location center" "$SQL" || fail "harness lacks the command-ship-at-center assert"
@@ -100,7 +104,7 @@ if [ "$MODE" = "selftest" ]; then
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "COMBAT-SPATIAL SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. craft/fit/group/send/settle; exactly 2 tick invocations; the engineered geometry knobs (range 10 / ring 50 / pirate speed 60 / variance 0) present; every property — spawn positions, synthetic pirate at center, HOLD/KITE/CLOSE, tick-1 fire, pirate hp fell, tick-2 aggro-tier screening — asserted in assert-form; no random())"
+  echo "COMBAT-SPATIAL SELFTEST: ALL PASSED (self-rolling-back; every dark flag — team_command/additional_commission/module_crafting/module_fitting/spatial_combat — enabled only inside the txn; sole-writer law for group_sortie_members + combat_units; provisioning 100% real-RPC incl. craft/fit/group/send/settle; exactly 2 tick invocations; the engineered geometry knobs (pirate range 10 / ring 20 / owned fallback range 5 / pirate speed 60 / variance 0) present with the fitted range derived from the catalog; every property — spawn positions, synthetic pirate at center, HOLD/KITE/CLOSE, tick-1 fire, pirate hp fell, tick-2 aggro-tier screening — asserted in assert-form; no random())"
   exit 0
 fi
 

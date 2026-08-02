@@ -7,6 +7,7 @@ import {
   fleetGoButtonLabel,
   fleetGoSuccessMessage,
   formatWorldPoint,
+  routeCombatOutcomeMessage,
   type SpaceTapOwner,
 } from '../src/features/map/fleetGoTarget'
 import { canonicalizeWorldTarget, roundHalfAwayFromZero } from '../src/features/map/spaceMoveCommand'
@@ -184,4 +185,26 @@ test('success copy names the fleet + the CANONICAL destination, redirect-aware f
     'Sent Fleet 2 to (0, 0).',
   )
   expect(formatWorldPoint({ x: -1, y: 2 })).toBe('(-1, 2)')
+})
+
+// ── ROUTE COMBAT COPY (0311): the route surface consults the one combat-copy authority ────────────
+
+test('routeCombatOutcomeMessage: combat-time route outcomes name leg 1’s target, canonicalized', () => {
+  // Leg 1 of a route composes command_ship_group_go, so the server aimed the retreat/reposition at
+  // the FIRST plotted point — the copy must name that point, in its canonical (server-rounded) view.
+  expect(routeCombatOutcomeMessage('repositioned', { x: 310.4, y: 455.5 })).toBe(
+    'The fleet moved to open space at (310, 456) — still in the fight.',
+  )
+  expect(routeCombatOutcomeMessage('retreat_started', { x: -10.5, y: 20 })).toBe(
+    'The fleet is breaking off the fight and heading for open space at (-11, 20).',
+  )
+  expect(routeCombatOutcomeMessage('retreat_destination_updated', { x: 1, y: 2 })).toBe(
+    'The fleet will retreat to open space at (1, 2) instead.',
+  )
+})
+
+test('routeCombatOutcomeMessage: an ordinary route yields null, so routeOrderOutcomeMessage speaks', () => {
+  for (const outcome of [undefined, null, '', 'movement_started', 42, {}]) {
+    expect(routeCombatOutcomeMessage(outcome, { x: 1, y: 2 })).toBeNull()
+  }
 })

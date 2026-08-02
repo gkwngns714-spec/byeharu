@@ -18,6 +18,10 @@ test('every known fleet-RPC reject reason maps to specific player text (not the 
     'not_authenticated',
     'group_not_found',
     'empty_group',
+    // NO LIVING SHIPS (0312) — emitted by command_ship_group_go (and via route leg 1, which
+    // composes it) and command_ship_group_dock when every ship in the group is destroyed.
+    // Distinct from empty_group: that fleet has no ships; this one has ships, all wrecked.
+    'no_living_ships',
     // hunt send (0168)
     'invalid_location',
     // shared readiness reject: hunt (0168) + docked-team move (0190)
@@ -104,4 +108,13 @@ test('the retired 0232 code is gone from the map, not left as dead copy', () => 
 // silent source of truth about the vocabulary.
 test('the retired 0298 code is gone from the map, not left as dead copy', () => {
   expect(teamReasonMessage('retreat_needs_port_destination')).toBe(FALLBACK)
+})
+
+// NEVER-SHIPPED PIN — 'reposition_requires_open_space' existed only in 0311's first cut, which
+// REFUSED an in-zone order from a fleet fighting 'present' at a site. Adversarial review showed the
+// refusal regressed a capability every site fight has today (an in-zone-destination retreat order),
+// so the server now FALLS THROUGH to the retreat arms instead and no emitter for this code ever
+// reached any deployment. It must stay out of the map: mapping it again would invite the refusal back.
+test('the reposition refusal code was never shipped and stays out of the map', () => {
+  expect(teamReasonMessage('reposition_requires_open_space')).toBe(FALLBACK)
 })

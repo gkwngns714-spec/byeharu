@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { repairReasonMessage } from '../src/features/port/repairReasonMessage'
+import { repairReasonMessage } from '../src/features/ship/repairReasonMessage'
 
 // REPAIR-ECON — specs for the pure reason→message map (repair_ship_hull_at_port, migration 0201). Every
 // server reject string maps to non-empty player text; the transport fallback 'unavailable' and any

@@ -66,6 +66,30 @@
 --                              never the rig's power-8 entry: a rig is not a gun.
 --   DZCOMBAT_PASS_FITTEDEXACT — (0308) a ship with a REAL weapon fitted carries exactly its catalog
 --                              weapon entry — alone, field-for-field — and no fallback entry.
+--   DZCOMBAT_PASS_REPOSITION — (0311) an ambushed fleet ordered to a point INSIDE the fight's own
+--                              zone REPOSITIONS: fleet parked at the destination, player units
+--                              translated by the exact delta, engagement_x/y restamped, encounter
+--                              still active, NO retreat_target_* written, NO retreat started, NO
+--                              leg minted. Fails on the pre-0311 retreat-always body at its FIRST
+--                              envelope assert (the order comes back 'retreat_started').
+--   DZCOMBAT_PASS_REPOOVERLAP — (0311) the admission QUANTIFIES over overlapping zones instead of
+--                              choosing one: a thin lower-area zone that holds the anchor but not
+--                              the destination cannot VETO a move whose destination sits inside
+--                              another anchor-holding zone — in either area order. BOTH orders
+--                              here fail on the tie-break body (131e027), which picked the
+--                              smallest anchor-holding zone and retreated when it missed.
+--   DZCOMBAT_PASS_REPOOUTSIDE — (0311) a destination inside a zone that does NOT hold the anchor —
+--                              with no anchor-holding zone containing it — retreats exactly as
+--                              before (destination stored, presence + encounter 'retreating',
+--                              nothing moved, no leg): the quantifier's negative side. And a
+--                              'retreating' encounter ordered back to an ADMITTED point never
+--                              jumps — it only updates the stored destination and the retreat
+--                              clocks never restart (no free escape from the damage window).
+--   DZCOMBAT_PASS_REPOMODE   — (0311) a fleet fighting AT ITS SITE (location_mode <> 'space')
+--                              ordered to an admitted in-zone point FALLS THROUGH to the retreat —
+--                              today's behaviour exactly: never a reposition, and NEVER a refusal
+--                              (the first cut refused here; adversarial review showed that
+--                              regressed a capability, and this block fails on that 131e027 body).
 --   DZCOMBAT_PASS_AUTOEXIT   — (0310) the HP auto-exit, staged on the REAL ambush chain and driven
 --                              by the REAL tick: a fleet whose group sets a 50% threshold fights
 --                              (real ambush → real encounter → real enemy fire) and, the first tick
@@ -93,6 +117,16 @@
 --                              construction); set_group_auto_exit enforces its bounds ([5,95],
 --                              NaN refused, null toggle refused, cross-player refused) and the
 --                              table CHECK refuses NaN / out-of-range even on a direct write.
+--   DZCOMBAT_PASS_CLOSURE    — (0313) with the seeded ranges cut below the 30-unit escort spawn gap,
+--                              units MOVE: an escort and its pirate close on each other across real
+--                              ticks (pos_x/pos_y changing), neither fires while the gap exceeds its
+--                              own range, the escort's FIRST shot lands only on a tick whose pre-move
+--                              distance is inside its range (after at least one silent closing tick),
+--                              the pirate's first shot obeys ITS range the same way — while the
+--                              command ship (spawned at distance 0) fires from tick 1, so the fight
+--                              starts immediately even though the escorts must travel. This is the
+--                              CLOSE arm of combat_unit_decide_move running at SEEDED values for the
+--                              first time in the game's history.
 --
 -- Self-rolling-back (begin;…rollback;, no COMMIT); every dark flag flipped ONLY inside the txn;
 -- provisioning is 100% real-RPC; group_sortie_members and combat_units are NEVER hand-written.
@@ -244,7 +278,9 @@ begin
   select main_ship_id into s_cmd from public.main_ship_instances where player_id = uZ;
   insert into dzc values ('s_cmd', s_cmd);
 
-  -- fund + craft + fit ONE autocannon_battery (range 150) onto the command ship, via the real writers.
+  -- fund + craft + fit ONE autocannon_battery onto the command ship, via the real writers. Its range is
+  -- NOT restated here: 0313 cut it 150 -> 25 and every assert downstream reads it from the catalog, so
+  -- a number in this comment would be one more thing to forget to update.
   perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
     '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
   r := pg_temp.call_as(uZ, 'public.craft_module(''dzc-gun-1'', ''autocannon_battery'')');
@@ -611,6 +647,7 @@ declare
   n int; n_pos int;
   v_enc uuid := (select v from dzc where k='v_enc');
   s_cmd uuid := (select v from dzc where k='s_cmd');
+  v_cat_range numeric;
 begin
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player';
   if n < 1 then raise exception 'DZCOMBAT FAIL SPATIAL: no player combat_units in the intercept encounter (want the group members)'; end if;
@@ -619,12 +656,15 @@ begin
     where encounter_id = v_enc and side = 'player' and pos_x is not null and pos_y is not null and move_speed is not null;
   if n_pos <> n then raise exception 'DZCOMBAT FAIL SPATIAL: only %/% player units carry positions — the encounter is NOT spatial (map would render nothing)', n_pos, n; end if;
 
+  -- the expected range is DERIVED from the deployed catalog row at assert time (0313 repoint: the
+  -- old form hard-coded the 150 seed — an ambient default this proof never owned).
+  select range into v_cat_range from public.module_types where id = 'autocannon_battery';
   select count(*) into n from public.combat_units
     where encounter_id = v_enc and main_ship_id = s_cmd
-      and (weapons_json->0->>'range')::double precision = 150;
-  if n <> 1 then raise exception 'DZCOMBAT FAIL SPATIAL: command ship weapons_json did not carry the fitted range (want 1 row at range 150)'; end if;
+      and (weapons_json->0->>'range')::numeric = v_cat_range;
+  if n <> 1 then raise exception 'DZCOMBAT FAIL SPATIAL: command ship weapons_json did not carry the fitted range (want 1 row at the catalog autocannon_battery range %)', v_cat_range; end if;
 
-  raise notice 'DZCOMBAT_PASS_SPATIAL ok: the intercept opened a SPATIAL encounter — % player units positioned, command ship carries its 150-range ring', n_pos;
+  raise notice 'DZCOMBAT_PASS_SPATIAL ok: the intercept opened a SPATIAL encounter — % player units positioned, command ship carries its catalog %-range ring', n_pos, v_cat_range;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_PIRATEFIRE: one tick → a spawned + firing pirate, damage dealt back ══════════
@@ -1002,6 +1042,11 @@ begin
   r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
                                   'DZC Roster Authority Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: zone: %', r; end if;
+  -- handed to the 0311 REPOSITION blocks below: the zone, the fleet, its group and the port anchor
+  -- the zone geometry was built from (the ambush this block stages parks the fleet on this zone's
+  -- bottom edge, which is exactly the boundary-anchored fixture reposition must work from).
+  insert into dzc values ('ra_zone', (r->>'zone_id')::uuid), ('ra_group', gL);
+  insert into dzn values ('ra_px', f_x), ('ra_py', f_y);
 
   r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, round(t_x), round(t_y)));
   if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: the re-order: %', r; end if;
@@ -1044,8 +1089,10 @@ begin
   select count(*) into n from public.group_sortie_members where fleet_id = v_fleet and main_ship_id = s_l;
   if n <> 1 then raise exception 'ROSTERAUTH FAIL: the fresh snapshot does not carry the live member'; end if;
   -- hand the NEVER-TICKED armed encounter to FITTEDEXACT (the tick legitimately rewrites
-  -- next_ready_at after a shot, so the frozen-at-creation shape can only be pinned pre-tick).
-  insert into dzc values ('ra_enc2', v_enc2);
+  -- next_ready_at after a shot, so the frozen-at-creation shape can only be pinned pre-tick) and
+  -- the fleet to the 0311 REPOSITION blocks (which run after FITTEDEXACT — they write positions,
+  -- never weapons_json, so the pin still sees creation state).
+  insert into dzc values ('ra_enc2', v_enc2), ('ra_fleet', v_fleet);
 
   raise notice 'DZCOMBAT_PASS_ROSTERAUTH ok: a fleet whose fight had concluded lost a ship to a legal unassign, was ambushed again, and the fight fielded ONLY the live member (1 unit = %); the departed ship kept its berth/status/hp and was never seeded; the re-ambush freeze replaced the 2-row stale snapshot with the 1-row live one', s_l;
 end $$;
@@ -1136,6 +1183,10 @@ begin
   if (w->>'range')::double precision is distinct from v_frange then
     raise exception 'RIGFALLBACK FAIL: fallback range % <> the knob-derived %', w->>'range', v_frange; end if;
 
+  -- handed to the 0311 REPOSITION-MODE block below: a LIVE, never-drained hunt fight whose fleet is
+  -- 'present' AT its site — exactly the not-in-open-space shape the typed refusal exists for.
+  insert into dzc values ('rf_enc', v_enc), ('rf_fleet', v_fleet), ('rf_group', gM);
+
   raise notice 'DZCOMBAT_PASS_RIGFALLBACK ok: a rig-only ship (the exact pre-0308 poisoned input: one range-bearing non-weapon fitted) was seeded with exactly ONE weapon — the % fallback at power %*% = %, range % — and the rig entry is gone: a mining rig is not a gun',
     v_fb_id, v_attack, v_paf, v_attack * v_paf, v_frange;
 end $$;
@@ -1184,6 +1235,445 @@ begin
     raise exception 'FITTEDEXACT FAIL: a fallback entry sits beside the real gun — the empty-array guard broke'; end if;
 
   raise notice 'DZCOMBAT_PASS_FITTEDEXACT ok: the armed command ship''s weapons_json is exactly its catalog autocannon_battery entry (field-for-field, alone, frozen NULL clocks) and carries no fallback beside it';
+end $$;
+
+-- ════════ DZCOMBAT_PASS_REPOSITION (0311): AN IN-ZONE ORDER MOVES THE FIGHT, NOT OUT OF IT ══════════
+-- The owner's law, verbatim: "there should only be breaking combat when it is outside the zone.
+-- When i am inside the zone and moving(redirecting), it should just move without breaking combat,
+-- and battles being continued." Pre-0311, step 8 of command_ship_group_go treated EVERY move order
+-- against an active encounter as a retreat: it wrote fleets.retreat_target_* and armed
+-- presence_request_leave. ON THAT PRE-0311 RETREAT-ALWAYS BODY (main today) THIS BLOCK FAILS AT
+-- ITS FIRST ENVELOPE ASSERT (order_outcome comes back 'retreat_started', never 'repositioned') —
+-- the defect, inverted. The OVERLAP semantics (quantify, never choose) are proven by the next
+-- block; this one proves the basic in-zone move on a single-zone world.
+--
+-- Fixture: ROSTERAUTH's end state, reused. Encounter ra_enc2 is ACTIVE and never ticked; its fleet
+-- is parked idle/space at the ambush entry point ON the 'DZC Roster Authority Zone' boundary — the
+-- exact boundary-anchored engagement every real ambush produces (the reason the admission's anchor
+-- arm is a closure test).
+do $$
+declare
+  r jsonb; n int;
+  uL uuid := (select v from dzc where k='uL');
+  gL uuid := (select v from dzc where k='ra_group');
+  v_fleet uuid := (select v from dzc where k='ra_fleet');
+  v_enc uuid := (select v from dzc where k='ra_enc2');
+  z_small uuid := (select v from dzc where k='ra_zone');
+  px double precision := (select v from dzn where k='ra_px');
+  py double precision := (select v from dzn where k='ra_py');
+  e0x double precision; e0y double precision;
+  dx double precision; dy double precision;
+  fl record; e record; pr record;
+  n_mv0 int; n_units0 int;
+begin
+  if v_enc is null or v_fleet is null or z_small is null or px is null then
+    raise exception 'REPOSITION FAIL: the ROSTERAUTH fixture was not handed over'; end if;
+
+  -- ── vacuity + fixture-isolation guards (the proof owns its preconditions). ──────────────────────
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'active' then raise exception 'REPOSITION FAIL precondition: the encounter is % (want active)', e.status; end if;
+  if e.engagement_x is null or e.engagement_y is null then
+    raise exception 'REPOSITION FAIL precondition: the encounter has no engagement point'; end if;
+  e0x := e.engagement_x; e0y := e.engagement_y;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.status <> 'idle' or fl.location_mode <> 'space' then
+    raise exception 'REPOSITION FAIL precondition: the fleet is %/% (want idle/space — the ambush park)', fl.status, fl.location_mode; end if;
+  if abs(fl.space_x - e0x) > 1e-6 or abs(fl.space_y - e0y) > 1e-6 then
+    raise exception 'REPOSITION FAIL precondition: fleet (%,%) is not parked on the engagement point (%,%)', fl.space_x, fl.space_y, e0x, e0y; end if;
+  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
+    raise exception 'REPOSITION FAIL precondition: a retreat destination is already stored'; end if;
+  -- exactly the ONE known zone holds the anchor here (overlap semantics get their own block below).
+  select count(*) into n from public.danger_zones z
+   where z.status = 'active' and z.id <> z_small
+     and ST_DWithin(z.boundary, ST_MakePoint(e0x, e0y), 1e-6);
+  if n <> 0 then
+    raise exception 'REPOSITION FAIL fixture: % unrelated active zone(s) also hold the engagement point — move the fixture geometry', n; end if;
+
+  -- ── snapshot EVERY combat unit in the world: only ra_enc2's player rows may move. ───────────────
+  create temp table dz_repo_u1 on commit drop as
+    select cu.id, cu.encounter_id, cu.side, cu.pos_x, cu.pos_y from public.combat_units cu;
+  select count(*) into n_units0 from dz_repo_u1 where encounter_id = v_enc and side = 'player';
+  if n_units0 < 1 then raise exception 'REPOSITION FAIL precondition: no player units in the fixture encounter'; end if;
+  select count(*) into n_mv0 from public.fleet_movements where fleet_id = v_fleet;
+
+  -- ── THE OWNER'S ACTION: redirect INSIDE the zone (the small zone's centre). ─────────────────────
+  dx := round(px); dy := round(py + 350);
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, dx, dy));
+  if (r->>'ok')::boolean is not true then raise exception 'REPOSITION FAIL: the in-zone order was refused: %', r; end if;
+  if (r->>'order_outcome') is distinct from 'repositioned' then
+    raise exception 'REPOSITION FAIL: order_outcome is % — the in-zone order armed a retreat instead of repositioning (the pre-0311 behaviour)', r->>'order_outcome'; end if;
+  if (r->>'encounter_id')::uuid is distinct from v_enc then
+    raise exception 'REPOSITION FAIL: the envelope names encounter % (want the live fight %)', r->>'encounter_id', v_enc; end if;
+  if r ? 'movement_id' then
+    raise exception 'REPOSITION FAIL: the envelope carries a movement_id — a reposition must never mint a leg: %', r; end if;
+
+  -- ── the fleet MOVED, through the one writer, and nothing retreat-shaped was written. ────────────
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.status <> 'idle' or fl.location_mode <> 'space' or fl.active_movement_id is not null
+     or abs(fl.space_x - dx) > 1e-6 or abs(fl.space_y - dy) > 1e-6 then
+    raise exception 'REPOSITION FAIL: the fleet is %/% at (%,%) — it did not park at the ordered point (%,%)',
+      fl.status, fl.location_mode, fl.space_x, fl.space_y, dx, dy; end if;
+  if fl.current_location_id is not null then
+    raise exception 'REPOSITION FAIL: the fleet is present at a location after an open-space jump'; end if;
+  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
+    raise exception 'REPOSITION FAIL: a reposition wrote a retreat destination (%, %, %)',
+      fl.retreat_target_location_id, fl.retreat_target_x, fl.retreat_target_y; end if;
+
+  -- ── the fight CONTINUES at the new spot: still active, anchor restamped, no retreat armed. ──────
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'active' then
+    raise exception 'REPOSITION FAIL: the encounter is % — the in-zone order broke the combat', e.status; end if;
+  if abs(e.engagement_x - dx) > 1e-6 or abs(e.engagement_y - dy) > 1e-6 then
+    raise exception 'REPOSITION FAIL: engagement is (%,%) not the destination (%,%) — wave 2 would spawn at the abandoned point', e.engagement_x, e.engagement_y, dx, dy; end if;
+  select * into pr from public.location_presence where id = e.presence_id;
+  if pr.status <> 'active' or pr.retreat_requested_at is not null then
+    raise exception 'REPOSITION FAIL: the presence is %/retreat_requested % — the reposition armed a retreat', pr.status, pr.retreat_requested_at; end if;
+
+  -- ── the formation TRANSLATED by the exact delta; every other unit in the world is untouched. ────
+  select count(*) into n
+    from dz_repo_u1 b join public.combat_units cu on cu.id = b.id
+   where b.encounter_id = v_enc and b.side = 'player'
+     and (abs(cu.pos_x - (b.pos_x + (dx - e0x))) > 1e-6 or abs(cu.pos_y - (b.pos_y + (dy - e0y))) > 1e-6);
+  if n <> 0 then
+    raise exception 'REPOSITION FAIL: % player unit(s) off the translated position — the formation did not translate with the fleet', n; end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player';
+  if n <> n_units0 then
+    raise exception 'REPOSITION FAIL: player unit count moved % -> % across a translate', n_units0, n; end if;
+  select count(*) into n
+    from dz_repo_u1 b join public.combat_units cu on cu.id = b.id
+   where not (b.encounter_id = v_enc and b.side = 'player')
+     and (cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y);
+  if n <> 0 then
+    raise exception 'REPOSITION FAIL: % unit(s) outside the repositioned side moved — enemy rows and other fights must be untouched', n; end if;
+
+  -- ── no journey, no fresh ambush roll: zero new legs, zero pending intercepts for this fleet. ────
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
+  if n <> n_mv0 then raise exception 'REPOSITION FAIL: a reposition minted a leg (% -> % movements)', n_mv0, n; end if;
+  select count(*) into n from public.pirate_intercepts pi
+   join public.fleet_movements m on m.id = pi.movement_id
+   where m.fleet_id = v_fleet and pi.lifecycle_state = 'pending';
+  if n <> 0 then raise exception 'REPOSITION FAIL: % pending ambush(es) exist after a reposition — the jump was rolled like a journey', n; end if;
+
+  raise notice 'DZCOMBAT_PASS_REPOSITION ok: an in-zone order MOVED the ambushed fleet to (%,%) — % player unit(s) translated by the exact delta, engagement restamped, encounter still active, no retreat destination, no retreat armed, no leg, no new roll',
+    dx, dy, n_units0;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_REPOOVERLAP (0311): QUANTIFY OVER OVERLAPPING ZONES — NEVER CHOOSE ONE ═══════
+-- THE TIE-BREAK DEFECT, INVERTED (adversarial review of the first cut, upheld and fixed here). The
+-- 131e027 body resolved "the" zone of the fight — the smallest-area zone whose closure holds the
+-- engagement anchor — and tested the destination against ONLY that zone. With overlapping zones
+-- that is wrong in both directions: a thin lower-area zone that holds the anchor VETOES a
+-- destination genuinely inside the fight's own zone (order 1 below), and the same area ordering
+-- decides instead of geometry when the containing zone is the bigger one (order 2). The fixed
+-- admission asks only "does SOME active zone hold the anchor AND strictly contain the
+-- destination" — so BOTH orders below reposition. BOTH fail on the 131e027 body, whose tie-break
+-- picks the sliver (order 1) / the mid zone (order 2), misses the destination, and retreats.
+--
+-- Geometry, all relative to the ROSTERAUTH port anchor (px, py) and the previous block's
+-- destination A1 = (round(px), round(py+350)) — the fight's current anchor:
+--   S      = ra_zone                 [px-150, px+150] x [py+200, py+500]   area  90,000 (holds A1)
+--   SLIVER = drawn here              [px-5,   px+5  ] x [py+250, py+450]   area   2,000 (holds A1)
+--   BIG    = drawn here              [px-350, px+350] x [py+50,  py+750]   area 490,000 (holds A1)
+--   order 1: D1 = A1 + (100, 0) — inside S and BIG, NOT inside SLIVER (the lowest-area holder).
+--   order 2: D2 = A1 + (250, 0) — inside BIG only; S (the then-smallest holder of the new anchor
+--            D1) does not contain it. Area order must not decide: geometry does.
+do $$
+declare
+  r jsonb; n int;
+  uZ uuid := (select v from dzc where k='uZ');
+  uL uuid := (select v from dzc where k='uL');
+  gL uuid := (select v from dzc where k='ra_group');
+  v_fleet uuid := (select v from dzc where k='ra_fleet');
+  v_enc uuid := (select v from dzc where k='ra_enc2');
+  z_s uuid := (select v from dzc where k='ra_zone');
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  px double precision := (select v from dzn where k='ra_px');
+  py double precision := (select v from dzn where k='ra_py');
+  a1x double precision := round(px); a1y double precision := round(py + 350);
+  d1x double precision; d1y double precision;
+  d2x double precision; d2y double precision;
+  z_sliver uuid; z_big uuid; v_verts jsonb;
+  fl record; e record;
+  n_mv0 int;
+begin
+  -- ── the two overlapping zones, drawn with the real verb (0304 gives each its effect row). ───────
+  v_verts := jsonb_build_array(
+    jsonb_build_array(px - 5, py + 250),
+    jsonb_build_array(px + 5, py + 250),
+    jsonb_build_array(px + 5, py + 450),
+    jsonb_build_array(px - 5, py + 450));
+  r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Overlap Sliver Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'REPOOVERLAP FAIL: sliver zone: %', r; end if;
+  z_sliver := (r->>'zone_id')::uuid;
+  v_verts := jsonb_build_array(
+    jsonb_build_array(px - 350, py + 50),
+    jsonb_build_array(px + 350, py + 50),
+    jsonb_build_array(px + 350, py + 750),
+    jsonb_build_array(px - 350, py + 750));
+  r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Overlap Big Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'REPOOVERLAP FAIL: big zone: %', r; end if;
+  z_big := (r->>'zone_id')::uuid;
+
+  -- ── vacuity + isolation guards: the anchor is where the last block left it, the three zones hold
+  -- ── it, the SLIVER is the lowest-area holder, and nothing else holds it. All derived, not assumed.
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'active' then raise exception 'REPOOVERLAP FAIL precondition: the encounter is % (want active)', e.status; end if;
+  if abs(e.engagement_x - a1x) > 1e-6 or abs(e.engagement_y - a1y) > 1e-6 then
+    raise exception 'REPOOVERLAP FAIL precondition: the anchor is (%,%), not the previous block''s destination (%,%)', e.engagement_x, e.engagement_y, a1x, a1y; end if;
+  select count(*) into n from public.danger_zones z
+   where z.status = 'active' and z.id in (z_s, z_sliver, z_big)
+     and ST_DWithin(z.boundary, ST_MakePoint(a1x, a1y), 1e-6);
+  if n <> 3 then raise exception 'REPOOVERLAP FAIL fixture: only % of the 3 zones hold the anchor', n; end if;
+  select count(*) into n from public.danger_zones z
+   where z.status = 'active' and z.id not in (z_s, z_sliver, z_big)
+     and ST_DWithin(z.boundary, ST_MakePoint(a1x, a1y), 1e-6);
+  if n <> 0 then raise exception 'REPOOVERLAP FAIL fixture: % unrelated zone(s) hold the anchor', n; end if;
+  if (select ST_Area(boundary) from public.danger_zones where id = z_sliver)
+     >= least((select ST_Area(boundary) from public.danger_zones where id = z_s),
+              (select ST_Area(boundary) from public.danger_zones where id = z_big)) then
+    raise exception 'REPOOVERLAP FAIL fixture: the sliver is not the lowest-area holder — the veto shape did not build'; end if;
+  select count(*) into n_mv0 from public.fleet_movements where fleet_id = v_fleet;
+
+  -- ── ORDER 1: destination inside S (and BIG) but NOT inside the lowest-area holder. ──────────────
+  d1x := a1x + 100; d1y := a1y;
+  if not public.danger_zone_contains_point(z_s, d1x, d1y)
+     or public.danger_zone_contains_point(z_sliver, d1x, d1y) then
+    raise exception 'REPOOVERLAP FAIL fixture: D1 is not (inside S, outside the sliver) — move it'; end if;
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, d1x, d1y));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'repositioned' then
+    raise exception 'REPOOVERLAP FAIL: order 1 answered % — a lower-area overlapping zone VETOED an in-zone move (the 131e027 tie-break defect)', r; end if;
+  select * into e from public.combat_encounters where id = v_enc;
+  select * into fl from public.fleets where id = v_fleet;
+  if e.status <> 'active' or abs(e.engagement_x - d1x) > 1e-6 or abs(fl.space_x - d1x) > 1e-6 then
+    raise exception 'REPOOVERLAP FAIL: order 1 did not move the fight to D1 (encounter %, anchor %, fleet %)', e.status, e.engagement_x, fl.space_x; end if;
+
+  -- ── ORDER 2: destination inside the BIGGEST holder only — area order must not decide. ───────────
+  d2x := a1x + 250; d2y := a1y;
+  if public.danger_zone_contains_point(z_s, d2x, d2y)
+     or not public.danger_zone_contains_point(z_big, d2x, d2y) then
+    raise exception 'REPOOVERLAP FAIL fixture: D2 is not (outside S, inside BIG) — move it'; end if;
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, d2x, d2y));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'repositioned' then
+    raise exception 'REPOOVERLAP FAIL: order 2 answered % — the destination lies inside an anchor-holding zone and the area order still decided the outcome (the 131e027 tie-break defect)', r; end if;
+  select * into e from public.combat_encounters where id = v_enc;
+  select * into fl from public.fleets where id = v_fleet;
+  if e.status <> 'active' or abs(e.engagement_x - d2x) > 1e-6 or abs(fl.space_x - d2x) > 1e-6 then
+    raise exception 'REPOOVERLAP FAIL: order 2 did not move the fight to D2 (encounter %, anchor %, fleet %)', e.status, e.engagement_x, fl.space_x; end if;
+  if fl.retreat_target_location_id is not null or fl.retreat_target_x is not null or fl.retreat_target_y is not null then
+    raise exception 'REPOOVERLAP FAIL: an overlap reposition wrote a retreat destination'; end if;
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
+  if n <> n_mv0 then raise exception 'REPOOVERLAP FAIL: an overlap reposition minted a leg'; end if;
+
+  raise notice 'DZCOMBAT_PASS_REPOOVERLAP ok: with three overlapping anchor-holding zones (areas 2000 / 90000 / 490000), an in-zone move repositioned PAST the lower-area sliver to (%,%) and PAST the mid zone to (%,%) — geometry admits, area never decides, no retreat write, no leg',
+    d1x, d1y, d2x, d2y;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_REPOOUTSIDE (0311): THE QUANTIFIER'S NEGATIVE SIDE, AND NO MID-RETREAT JUMP ══
+-- Two properties on the same fleet and fight:
+--   1. THE MIRROR of the overlap block: a destination inside a zone that does NOT hold the anchor —
+--      with no anchor-holding zone containing it — is NOT an in-zone move. It retreats exactly as
+--      the pre-0311 world did: destination stored, the ONE retreat authority armed, nothing moved,
+--      no restamp, no leg. (Analysis note, stated rather than implied: the 131e027 tie-break body
+--      also retreats here — any zone IT could pick holds the anchor by construction, so a grant
+--      through a non-holding zone was impossible on either body. The discriminating cases live in
+--      REPOOVERLAP; this block pins the negative side of the quantifier so a future widening —
+--      "any zone containing the destination grants a jump" — fails loudly.)
+--   2. Once the fight is 'retreating', an order back to an ADMITTED point must NOT jump: it only
+--      replaces the stored destination, and neither retreat clock restarts.
+do $$
+declare
+  r jsonb; n int;
+  uZ uuid := (select v from dzc where k='uZ');
+  uL uuid := (select v from dzc where k='uL');
+  gL uuid := (select v from dzc where k='ra_group');
+  v_fleet uuid := (select v from dzc where k='ra_fleet');
+  v_enc uuid := (select v from dzc where k='ra_enc2');
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  px double precision := (select v from dzn where k='ra_px');
+  py double precision := (select v from dzn where k='ra_py');
+  a3x double precision := round(px) + 250; a3y double precision := round(py + 350);
+  obx double precision; oby double precision;
+  irx double precision; iry double precision;
+  z_far uuid; v_verts jsonb;
+  fl record; e record; pr record;
+  t_req timestamptz; t_start timestamptz;
+  n_mv0 int;
+begin
+  -- ── a zone that contains the outside destination but does NOT hold the anchor. ──────────────────
+  v_verts := jsonb_build_array(
+    jsonb_build_array(px + 1000, py + 300),
+    jsonb_build_array(px + 1200, py + 300),
+    jsonb_build_array(px + 1200, py + 400),
+    jsonb_build_array(px + 1000, py + 400));
+  r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Far Non-Holder Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'REPOOUTSIDE FAIL: far zone: %', r; end if;
+  z_far := (r->>'zone_id')::uuid;
+
+  -- ── vacuity guards, all derived through the deployed authorities the mover itself consults. ─────
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'active' then raise exception 'REPOOUTSIDE FAIL precondition: the encounter is % (want active)', e.status; end if;
+  if abs(e.engagement_x - a3x) > 1e-6 or abs(e.engagement_y - a3y) > 1e-6 then
+    raise exception 'REPOOUTSIDE FAIL precondition: the anchor is (%,%), not the overlap block''s end state (%,%)', e.engagement_x, e.engagement_y, a3x, a3y; end if;
+  obx := round(px) + 1100; oby := a3y;
+  if exists (select 1 from public.danger_zones z
+              where z.id = z_far and ST_DWithin(z.boundary, ST_MakePoint(a3x, a3y), 1e-6)) then
+    raise exception 'REPOOUTSIDE FAIL fixture: the far zone holds the anchor — the mirror shape did not build'; end if;
+  if not public.danger_zone_contains_point(z_far, obx, oby) then
+    raise exception 'REPOOUTSIDE FAIL fixture: the mirror destination is not inside the far zone — move it'; end if;
+  if public.combat_encounter_zone_admits_point(v_enc, obx, oby) then
+    raise exception 'REPOOUTSIDE FAIL fixture: the mirror destination IS admitted — some anchor-holding zone contains it; move the geometry'; end if;
+  select count(*) into n_mv0 from public.fleet_movements where fleet_id = v_fleet;
+  create temp table dz_repo_u2 on commit drop as
+    select cu.id, cu.pos_x, cu.pos_y from public.combat_units cu where cu.encounter_id = v_enc;
+
+  -- ── 1. THE MIRROR ORDER -> the retreat, exactly as before. ──────────────────────────────────────
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, obx, oby));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'retreat_started' then
+    raise exception 'REPOOUTSIDE FAIL: the mirror order answered % — a zone that does not hold the fight granted a jump', r; end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.retreat_target_x is distinct from obx or fl.retreat_target_y is distinct from oby
+     or fl.retreat_target_location_id is not null then
+    raise exception 'REPOOUTSIDE FAIL: the retreat destination was not stored (%, %, %)',
+      fl.retreat_target_location_id, fl.retreat_target_x, fl.retreat_target_y; end if;
+  if abs(fl.space_x - a3x) > 1e-6 or abs(fl.space_y - a3y) > 1e-6 then
+    raise exception 'REPOOUTSIDE FAIL: the fleet MOVED on a retreat order (%,%) — the retreat leaves only when the window expires', fl.space_x, fl.space_y; end if;
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'retreating' or e.retreat_started_at is null then
+    raise exception 'REPOOUTSIDE FAIL: the encounter is %/% — the sole retreat authority did not arm', e.status, e.retreat_started_at; end if;
+  select * into pr from public.location_presence where id = e.presence_id;
+  if pr.status <> 'retreating' or pr.retreat_requested_at is null then
+    raise exception 'REPOOUTSIDE FAIL: the presence is %/% — the sole retreat authority did not arm', pr.status, pr.retreat_requested_at; end if;
+  if abs(e.engagement_x - a3x) > 1e-6 or abs(e.engagement_y - a3y) > 1e-6 then
+    raise exception 'REPOOUTSIDE FAIL: a retreat order restamped the engagement point'; end if;
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
+  if n <> n_mv0 then raise exception 'REPOOUTSIDE FAIL: the retreat order minted a leg immediately (the tick mints it when the window expires)'; end if;
+  t_req := pr.retreat_requested_at; t_start := e.retreat_started_at;
+
+  -- ── 2. NOW RETREATING: an order back to an ADMITTED point must NOT jump. ────────────────────────
+  irx := round(px) + 300; iry := a3y;
+  if not public.combat_encounter_zone_admits_point(v_enc, irx, iry) then
+    raise exception 'REPOOUTSIDE FAIL fixture: the admitted point is not admitted — the no-jump property would be vacuous'; end if;
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, irx, iry));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'retreat_destination_updated' then
+    raise exception 'REPOOUTSIDE FAIL: an admitted order on a RETREATING fight answered % — a mid-retreat jump would be a free escape from the damage window', r; end if;
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.retreat_target_x is distinct from irx or fl.retreat_target_y is distinct from iry then
+    raise exception 'REPOOUTSIDE FAIL: the stored destination was not replaced (%, %)', fl.retreat_target_x, fl.retreat_target_y; end if;
+  if abs(fl.space_x - a3x) > 1e-6 or abs(fl.space_y - a3y) > 1e-6 then
+    raise exception 'REPOOUTSIDE FAIL: the retreating fleet MOVED (%,%) — the blocked reposition still wrote a position', fl.space_x, fl.space_y; end if;
+  select * into e from public.combat_encounters where id = v_enc;
+  select * into pr from public.location_presence where id = e.presence_id;
+  if abs(e.engagement_x - a3x) > 1e-6 or abs(e.engagement_y - a3y) > 1e-6 then
+    raise exception 'REPOOUTSIDE FAIL: the blocked reposition restamped the engagement point'; end if;
+  if e.retreat_started_at is distinct from t_start or pr.retreat_requested_at is distinct from t_req then
+    raise exception 'REPOOUTSIDE FAIL: the retreat window was restarted (% -> %, % -> %) — a free reset of the damage window', t_start, e.retreat_started_at, t_req, pr.retreat_requested_at; end if;
+  select count(*) into n
+    from dz_repo_u2 b join public.combat_units cu on cu.id = b.id
+   where cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y;
+  if n <> 0 then
+    raise exception 'REPOOUTSIDE FAIL: % unit(s) moved across the two retreat-path orders — only a real reposition may translate the formation', n; end if;
+
+  raise notice 'DZCOMBAT_PASS_REPOOUTSIDE ok: the mirror order (destination inside a non-holding zone, admitted by nothing) stored (%,%) and armed the one retreat authority (presence + encounter retreating, fleet unmoved, no restamp, no leg); the admitted order on the retreating fight only replaced the destination with (%,%) — no jump, no restamp, no clock restart',
+    obx, oby, irx, iry;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_REPOMODE (0311): A SITE FIGHT FALLS THROUGH TO THE RETREAT — NEVER REFUSED ═══
+-- Fixture: RIGFALLBACK's live hunt fight, reused — its fleet is 'present' AT the hunt location
+-- (location_mode <> 'space'). Reposition is open-space-only (fleet_set_in_space nulls
+-- current_location_id, and its interaction with a live 'present' location_presence is unverified),
+-- so an ADMITTED in-zone order from this fleet must FALL THROUGH to the retreat arms — exactly what
+-- the same order did before 0311. THE FIRST CUT REFUSED IT TYPED instead, which adversarial review
+-- called correctly as a regression (every hunt site carries a zone; an in-zone-destination retreat
+-- order is a capability players have today) — SO THIS BLOCK FAILS ON THE 131e027 BODY, whose
+-- refusal envelope (ok:false) trips the first assert. The zone is drawn AFTER the fight opened,
+-- which also proves the linkage is DERIVED live geometry, never a stored snapshot.
+do $$
+declare
+  r jsonb; n int;
+  uZ uuid := (select v from dzc where k='uZ');
+  uL uuid := (select v from dzc where k='uL');
+  gM uuid := (select v from dzc where k='rf_group');
+  v_fleet uuid := (select v from dzc where k='rf_fleet');
+  v_enc uuid := (select v from dzc where k='rf_enc');
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  hx double precision; hy double precision;
+  v_verts jsonb;
+  ix double precision; iy double precision;
+  fl0 record; fl record; e record; pr record;
+  n_mv0 int;
+begin
+  if v_enc is null or v_fleet is null then
+    raise exception 'REPOMODE FAIL: the RIGFALLBACK fixture was not handed over'; end if;
+  select l.x, l.y into hx, hy from public.locations l where l.id = v_hunt;
+
+  -- ── a zone AROUND the site, drawn with the real verb AFTER the fight opened. ────────────────────
+  v_verts := jsonb_build_array(
+    jsonb_build_array(hx - 160, hy - 160),
+    jsonb_build_array(hx + 160, hy - 160),
+    jsonb_build_array(hx + 160, hy + 160),
+    jsonb_build_array(hx - 160, hy + 160));
+  r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Reposition Mode Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'REPOMODE FAIL: zone: %', r; end if;
+
+  -- ── vacuity guards: the fight is live and anchored, the in-zone point IS admitted (so only the
+  -- ── fleet's location_mode decides the outcome), and the fleet is NOT in open space. ─────────────
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'active' then raise exception 'REPOMODE FAIL precondition: the encounter is % (want active)', e.status; end if;
+  if e.engagement_x is null then raise exception 'REPOMODE FAIL precondition: the encounter has no engagement point'; end if;
+  insert into dzn values ('rm_e0x', e.engagement_x), ('rm_e0y', e.engagement_y);
+  select * into fl0 from public.fleets where id = v_fleet;
+  if fl0.location_mode = 'space' then
+    raise exception 'REPOMODE FAIL precondition: the fleet is in open space — the fall-through shape did not build'; end if;
+  if fl0.retreat_target_location_id is not null or fl0.retreat_target_x is not null or fl0.retreat_target_y is not null then
+    raise exception 'REPOMODE FAIL precondition: a retreat destination is already stored'; end if;
+  ix := round(hx) + 2; iy := round(hy);
+  if not public.combat_encounter_zone_admits_point(v_enc, ix, iy) then
+    raise exception 'REPOMODE FAIL fixture: the in-zone point (%,%) is not admitted for the site fight — the mode arm would be unreachable and this block vacuous', ix, iy; end if;
+  select count(*) into n_mv0 from public.fleet_movements where fleet_id = v_fleet;
+  create temp table dz_repo_u3 on commit drop as
+    select cu.id, cu.pos_x, cu.pos_y from public.combat_units cu where cu.encounter_id = v_enc;
+
+  -- ── THE ADMITTED IN-ZONE ORDER: falls through to the retreat, exactly as before 0311. ───────────
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gM, ix, iy));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'REPOMODE FAIL: the admitted order was REFUSED (%) — a site fight''s in-zone order must fall through to the retreat, never a refusal (the 131e027 regression)', r; end if;
+  if (r->>'order_outcome') = 'repositioned' then
+    raise exception 'REPOMODE FAIL: a site fight was repositioned — reposition is open-space-only (the presence interaction is unverified)'; end if;
+  if (r->>'order_outcome') is distinct from 'retreat_started' then
+    raise exception 'REPOMODE FAIL: the admitted order answered % (want retreat_started — today''s behaviour, preserved)', r->>'order_outcome'; end if;
+  -- the retreat is real and the fleet did not move: destination stored, authorities armed, no
+  -- restamp, no translate, no leg, fleet row otherwise byte-unchanged.
+  select * into fl from public.fleets where id = v_fleet;
+  if fl.retreat_target_x is distinct from ix or fl.retreat_target_y is distinct from iy
+     or fl.retreat_target_location_id is not null then
+    raise exception 'REPOMODE FAIL: the retreat destination was not stored (%, %, %)',
+      fl.retreat_target_location_id, fl.retreat_target_x, fl.retreat_target_y; end if;
+  if fl.status is distinct from fl0.status or fl.location_mode is distinct from fl0.location_mode
+     or fl.current_location_id is distinct from fl0.current_location_id
+     or fl.space_x is distinct from fl0.space_x or fl.space_y is distinct from fl0.space_y then
+    raise exception 'REPOMODE FAIL: the fall-through moved the fleet (%/% at loc %)', fl.status, fl.location_mode, fl.current_location_id; end if;
+  select * into e from public.combat_encounters where id = v_enc;
+  if e.status <> 'retreating' or e.retreat_started_at is null then
+    raise exception 'REPOMODE FAIL: the encounter is % after the fall-through order (want retreating — the sole authority armed)', e.status; end if;
+  if abs(e.engagement_x - (select v from dzn where k='rm_e0x')) > 1e-6
+     or abs(e.engagement_y - (select v from dzn where k='rm_e0y')) > 1e-6 then
+    raise exception 'REPOMODE FAIL: the fall-through restamped the engagement point (%,%)', e.engagement_x, e.engagement_y; end if;
+  select * into pr from public.location_presence where id = e.presence_id;
+  if pr.status <> 'retreating' or pr.retreat_requested_at is null then
+    raise exception 'REPOMODE FAIL: the presence is %/% after the fall-through order', pr.status, pr.retreat_requested_at; end if;
+  select count(*) into n
+    from dz_repo_u3 b join public.combat_units cu on cu.id = b.id
+   where cu.pos_x is distinct from b.pos_x or cu.pos_y is distinct from b.pos_y;
+  if n <> 0 then raise exception 'REPOMODE FAIL: % unit(s) moved across a fall-through order', n; end if;
+  select count(*) into n from public.fleet_movements where fleet_id = v_fleet;
+  if n <> n_mv0 then raise exception 'REPOMODE FAIL: the fall-through minted a leg'; end if;
+
+  raise notice 'DZCOMBAT_PASS_REPOMODE ok: the site fight''s ADMITTED in-zone order fell through to the retreat exactly as before 0311 — retreat_started, destination (%,%) stored, presence + encounter retreating, fleet/units/anchor unmoved, no leg, and no refusal envelope anywhere',
+    ix, iy;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_AUTOEXIT (0310): THE HP AUTO-EXIT, ON THE REAL CHAIN ═════════════════════════
@@ -1799,6 +2289,448 @@ begin
 
   raise notice 'DZCOMBAT_PASS_RSFEEL ok: % pirates spawned at danger % and every landed hit emitted its own hull_damage with a positive amount under EVENT logging (debug pinned dark), % distinct damage values across one volley of identical guns, the player''s own hit visible too; every fired weapon armed now()+3600s exactly, and tick 2 was pirate-silent (fight active, wave alive) while the zero-cooldown fallback kept firing (% player salvo(s)): attack interval real, every hit its own roll, every hit visible',
     n_units, v_danger, n_distinct, n;
+end $$;
+
+-- ^ RSFEEL's OWN terminator, added at the 0313/0314 merge. Both sides of this conflict appended a
+-- do-block that leaned on the single shared terminator below, so a plain union leaves one block
+-- unclosed and RSFEEL swallows CLOSURE and NOLIVE into its own body. Not hypothetical: commit
+-- 040454e on this same file is "fix MY merge resolution: the REPOMODE block lost its terminator".
+-- The selftest cannot see it — it is static greps; only real Postgres can.
+--
+-- NOTE TO THE NEXT RESOLVER: no comment in this file may contain a literal dollar-quote token. The
+-- merge check for this file is arithmetic over those tokens — they must be even, and a depth walk
+-- must return to zero — so one sitting in prose desyncs the count while changing nothing Postgres
+-- sees, which is worse than either a real error or no check at all. This very comment was written
+-- that way on the first attempt and the depth walk caught it.
+
+-- ════════ DZCOMBAT_PASS_CLOSURE (0313): CUT RANGES MAKE POSITION MATTER — UNITS MOVE, THEN FIRE ══════
+-- The behaviour nobody has ever observed in this game: before 0313, every range (120–245) dwarfed
+-- every spawn distance (0–30), so combat_unit_decide_move returned 'hold' on every tick of every
+-- real fight and no combat_units row ever changed its pos_x/pos_y. This block stages a fresh
+-- TWO-ship group (command + one escort) through the REAL ambush chain at the SEEDED knob/catalog
+-- values (no range/ring/speed tuning — the 0313 seeds ARE the subject), and drives the REAL tick:
+--   • premise, derived not assumed: ring > escort range AND ring > pirate range (exactly what 0313
+--     establishes; if a later retune re-buries the mechanic, this raises honestly);
+--   • tick 1: the command ship (dist 0) FIRES — combat still starts instantly — while the escort
+--     and the pirate both MOVE (positions change, their gap shrinks) and neither fires;
+--   • across ticks: the escort's FIRST salvo lands only on a tick whose recorded PRE-MOVE distance
+--     is within its own range, with at least one earlier silent tick (fire strictly AFTER closure),
+--     and the pirate's first salvo at the escort obeys ITS OWN shorter range the same way.
+-- Damage knobs are owned in-block (pirate attack tiny so the escort survives the approach; hp_base
+-- is already 1000 from setup so the wave survives) and restored after — the geometry knobs are NOT
+-- touched, that is the point.
+do $$
+declare
+  r jsonb; n int; i int;
+  uC uuid;
+  s1 uuid; s2 uuid; gC uuid;
+  o_x double precision; o_y double precision;
+  v_fleet uuid; v_mv uuid; v_enc uuid;
+  mv record; pi record;
+  u_cmd uuid; u_esc uuid; u_en uuid;
+  v_r_esc double precision; v_r_en double precision; v_ring double precision;
+  ex0 double precision; ey0 double precision; ex1 double precision; ey1 double precision;
+  nx0 double precision; ny0 double precision; nx1 double precision; ny1 double precision;
+  d_pre double precision; d_t1 double precision;
+  v_tick int;
+  v_esc_fire_tick int := null; v_esc_fire_dist double precision := null;
+  v_en_fire_tick int := null; v_en_fire_dist double precision := null;
+  n_silent int := 0;
+  v_eab_before double precision;
+begin
+  -- ── fresh funded player, two ships, ONE group, command designated — 100% real RPCs. ────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.cl.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uC;
+  insert into public.player_wallet (player_id, balance) values (uC, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+
+  r := pg_temp.call_as(uC, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: commission 1: %', r; end if;
+  select main_ship_id into s1 from public.main_ship_instances where player_id = uC;
+  r := pg_temp.call_as(uC, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: commission 2: %', r; end if;
+  select main_ship_id into s2 from public.main_ship_instances where player_id = uC and main_ship_id <> s1 limit 1;
+  if s2 is null then raise exception 'CLOSURE FAIL: no second ship materialised'; end if;
+  r := pg_temp.call_as(uC, 'public.upsert_ship_group(1, ''Closure'')');
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: group: %', r; end if;
+  gC := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s1, gC));
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: assign 1: %', r; end if;
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s2, gC));
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: assign 2: %', r; end if;
+  r := pg_temp.call_as(uC, format('public.set_fleet_command_ship(%L::uuid, true)', s1));
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: command: %', r; end if;
+
+  -- ── damage knobs owned in-block (geometry knobs deliberately NOT touched): the pirate must not
+  --    meaningfully hurt the escort during the approach, and 0310's default auto-exit (ON at 30)
+  --    must never trigger mid-scenario. Captured and restored below. ───────────────────────────────
+  select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
+  perform public.set_game_config('enemy_attack_base', '0.001'::jsonb);
+
+  -- ── the REAL ambush, through the STANDING Auto Exit corridor (the AUTOEXIT re-entry idiom: the
+  --    zone already stands; a new fleet crossing it gets its own certain pending intercept). ───────
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uC and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gC
+   limit 1;
+  if o_x is null then raise exception 'CLOSURE FAIL: could not resolve the group''s docked origin'; end if;
+  r := pg_temp.call_as(uC, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gC, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'CLOSURE FAIL: no pending ambush on the leg (the standing corridor should cover it)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id, fleet_id into v_enc, v_fleet from public.combat_encounters
+   where player_id = uC and status = 'active';
+  if v_enc is null then raise exception 'CLOSURE FAIL: the ambush opened no encounter'; end if;
+
+  select id into u_cmd from public.combat_units where encounter_id = v_enc and main_ship_id = s1;
+  select id into u_esc from public.combat_units where encounter_id = v_enc and main_ship_id = s2;
+  if u_cmd is null or u_esc is null then raise exception 'CLOSURE FAIL: the 2-ship roster did not seed 2 units'; end if;
+
+  -- the escort's own range, from its OWN frozen weapons_json (fitted or fallback — derived, never
+  -- assumed), and the seeded ring it spawned on.
+  select max((w->>'range')::double precision) into v_r_esc
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_esc;
+  if v_r_esc is null then raise exception 'CLOSURE FAIL: the escort carries no ranged weapon at all (want the fitted/fallback range)'; end if;
+  v_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
+  select public.osn_distance(e.pos_x, e.pos_y, c.pos_x, c.pos_y) into d_pre
+    from public.combat_units e, public.combat_units c where e.id = u_esc and c.id = u_cmd;
+  -- NULL IS FAILURE, not a pass. combat_units.pos_x/pos_y are NULLABLE (0234:173), so an
+  -- unpositioned row makes osn_distance NULL, `abs(NULL - v_ring) > 0.01` NULL, and this whole spawn
+  -- pin silently vacuous. Every positional comparison in this block is null-pinned for that reason
+  -- (same defect class as the position(x in NULL) probe found on this chain).
+  if d_pre is null then
+    raise exception 'CLOSURE FAIL: the escort/command distance is NULL — one of them is unpositioned, so the spawn-ring pin would prove nothing';
+  end if;
+  if abs(d_pre - v_ring) > 0.01 then
+    raise exception 'CLOSURE FAIL: escort spawned % from the command ship (want the % ring)', d_pre, v_ring;
+  end if;
+
+  -- ── TICK 1: the wave spawns at the anchor (dist 0 from the command ship, one ring from the
+  --    escort) inside this very call, then everyone moves/fires once. ──────────────────────────────
+  select pos_x, pos_y into ex0, ey0 from public.combat_units where id = u_esc;
+  perform pg_temp.ae_tick(v_enc);
+  select id into u_en from public.combat_units
+    where encounter_id = v_enc and side = 'enemy' and alive_count > 0
+    order by id limit 1;
+  if u_en is null then raise exception 'CLOSURE FAIL: no living pirate after tick 1'; end if;
+  select max((w->>'range')::double precision) into v_r_en
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_en;
+  if v_r_en is null then raise exception 'CLOSURE FAIL: the pirate carries no range in its weapons_json'; end if;
+
+  -- THE PREMISE 0313 ESTABLISHES, asserted not assumed: the spawn gap exceeds BOTH short ranges.
+  if v_ring <= v_r_esc or v_ring <= v_r_en then
+    raise exception 'CLOSURE FAIL premise: the % ring does not exceed both ranges (escort %, pirate %) — the seeded world no longer forces closure and this scenario proves nothing',
+      v_ring, v_r_esc, v_r_en;
+  end if;
+
+  -- tick 1, the command ship (dist 0) FIRED — the fight starts immediately despite the gap.
+  select count(*) into n from public.combat_events
+    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
+      and source = 'player' and payload_json->>'unit_id' = u_cmd::text;
+  if n < 1 then raise exception 'CLOSURE FAIL: the command ship (dist 0) did not fire on tick 1 — the fight no longer starts instantly'; end if;
+
+  -- tick 1, the escort and the pirate both MOVED (the first observed movement in a real fight)...
+  -- Every operand is null-pinned FIRST. `x is not distinct from NULL` is FALSE for any real number,
+  -- so a NULL on either side of these comparisons would skip the raise and pass an assert that
+  -- proved nothing — the exact shape that let a moved/unmoved check go vacuous elsewhere on this
+  -- chain. Absence of a coordinate is failure here, never evidence of movement.
+  select pos_x, pos_y into ex1, ey1 from public.combat_units where id = u_esc;
+  if ex0 is null or ey0 is null or ex1 is null or ey1 is null then
+    raise exception 'CLOSURE FAIL: the escort has a NULL coordinate (pre %,% / post %,%) — an unpositioned unit cannot prove it moved', ex0, ey0, ex1, ey1;
+  end if;
+  if ex1 = ex0 and ey1 = ey0 then
+    raise exception 'CLOSURE FAIL: the escort did not move on tick 1 (still at %,%) — the CLOSE arm never ran', ex0, ey0;
+  end if;
+  select engagement_x, engagement_y into nx0, ny0 from public.combat_encounters where id = v_enc;
+  select pos_x, pos_y into nx1, ny1 from public.combat_units where id = u_en;
+  if nx0 is null or ny0 is null then
+    raise exception 'CLOSURE FAIL: the encounter carries no engagement anchor (engagement_x/y is NULL) — the spawn point this assert compares against does not exist';
+  end if;
+  if nx1 is null or ny1 is null then
+    raise exception 'CLOSURE FAIL: the pirate has a NULL position after tick 1 — an unpositioned enemy cannot prove it moved off the anchor';
+  end if;
+  if nx1 = nx0 and ny1 = ny0 then
+    raise exception 'CLOSURE FAIL: the pirate did not move off its spawn anchor on tick 1 — the enemy CLOSE arm never ran';
+  end if;
+  -- ...toward each other: the gap after tick 1 is smaller than the spawn ring.
+  select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_t1
+    from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
+  if d_t1 is null then
+    raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is NULL — the closure comparison would be vacuous';
+  end if;
+  if d_t1 >= v_ring then
+    raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is % (want < the % spawn gap) — they are not closing', d_t1, v_ring;
+  end if;
+  -- ...and NEITHER of them fired (both pre-move distances were the full ring, beyond both ranges).
+  select count(*) into n from public.combat_events
+    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
+      and payload_json->>'unit_id' in (u_esc::text, u_en::text);
+  if n <> 0 then
+    raise exception 'CLOSURE FAIL: % salvo(s) from the escort/pirate on tick 1 — something fired across a gap larger than its own range', n;
+  end if;
+
+  -- ── THE APPROACH: pre-move distance recorded BEFORE each tick; first fire checked against it. ───
+  for i in 2..12 loop
+    exit when v_esc_fire_tick is not null and v_en_fire_tick is not null;
+    select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_pre
+      from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
+    -- null-pinned like every other distance here: a NULL d_pre would make both `d_pre > v_r_esc`
+    -- (the silent-tick counter) and the later `v_esc_fire_dist > v_r_esc + 1e-6` range check NULL,
+    -- so the whole approach would be measured against nothing and still report PASS.
+    if d_pre is null then
+      raise exception 'CLOSURE FAIL: the escort-pirate pre-move distance is NULL on tick % — an unpositioned unit makes every range check in the approach vacuous', i;
+    end if;
+    perform pg_temp.ae_tick(v_enc);
+    select tick_number into v_tick from public.combat_encounters where id = v_enc;
+    if v_esc_fire_tick is null then
+      select count(*) into n from public.combat_events
+        where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo'
+          and payload_json->>'unit_id' = u_esc::text;
+      if n > 0 then
+        v_esc_fire_tick := v_tick; v_esc_fire_dist := d_pre;
+      elsif d_pre > v_r_esc then
+        n_silent := n_silent + 1;   -- a closing tick with the escort still legitimately silent
+      end if;
+    end if;
+    if v_en_fire_tick is null then
+      select count(*) into n from public.combat_events
+        where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo'
+          and payload_json->>'unit_id' = u_en::text;
+      if n > 0 then
+        v_en_fire_tick := v_tick; v_en_fire_dist := d_pre;
+      end if;
+    end if;
+  end loop;
+
+  if v_esc_fire_tick is null then
+    raise exception 'CLOSURE FAIL: the escort NEVER fired within 12 ticks — closure stalled (mutual approach at ~(3+0.2·difficulty)+~1 units/tick should be in range by tick 3-4)';
+  end if;
+  if v_esc_fire_dist > v_r_esc + 1e-6 then
+    raise exception 'CLOSURE FAIL: the escort''s first salvo (tick %) left at pre-move distance % — OUTSIDE its own % range; the fire gate is not honouring the cut range',
+      v_esc_fire_tick, v_esc_fire_dist, v_r_esc;
+  end if;
+  -- non-vacuity: the first shot must come strictly AFTER a verified silent closing tick. Tick 1 is
+  -- that tick by construction (the premise pinned gap > range, and the tick-1 assert above pinned
+  -- zero escort salvos), so the first fire may never be tick 1 itself.
+  if v_esc_fire_tick < 2 then
+    raise exception 'CLOSURE FAIL: the escort fired on tick % with no silent closing tick before it — the gap never exceeded its range and closure was not exercised (vacuous)', v_esc_fire_tick;
+  end if;
+  if v_en_fire_tick is null then
+    raise exception 'CLOSURE FAIL: the pirate NEVER fired at the escort within 12 ticks — the enemy approach stalled';
+  end if;
+  if v_en_fire_dist > v_r_en + 1e-6 then
+    raise exception 'CLOSURE FAIL: the pirate''s first salvo (tick %) left at pre-move distance % — OUTSIDE its own % range', v_en_fire_tick, v_en_fire_dist, v_r_en;
+  end if;
+  if v_en_fire_tick < v_esc_fire_tick then
+    raise exception 'CLOSURE FAIL: the short-ranged pirate (range %) fired on tick %, BEFORE the longer-ranged escort (range %, tick %) — the out-range order inverted',
+      v_r_en, v_en_fire_tick, v_r_esc, v_esc_fire_tick;
+  end if;
+
+  perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
+
+  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED 0313 ranges (escort %, pirate %, spawn gap %), the command ship fired on tick 1 while the escort and the pirate MOVED across ticks (gap % -> % after tick 1) and held fire until closure — escort''s first salvo tick % at pre-move distance % (<= its range), pirate''s tick % at % (<= its range), % additional silent closing tick(s) after the verified-silent tick 1: position now matters in a real fight',
+    v_r_esc, v_r_en, v_ring, v_ring, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_NOLIVE (0312): NO LIVING SHIPS, NO ORDERS ════════════════════════════════════
+-- The owner's bug, verbatim: "when there is no fleet active, meaning if it has no hp, it should not
+-- be able to move to map." Staged on the REAL writers end to end:
+--   * the DEAD shape is produced by the tick's own terminal leaves — fleet_destroy then
+--     mainship_mark_combat_destroyed per member, the defeat branch's exact write order — never by a
+--     hand-write of main_ship_instances;
+--   * a MERELY DAMAGED ship is produced by mainship_sync_combat_hp(ship, 0) — the tick's own hp
+--     writer, in the exact round-to-zero shape (0234:851-852) that makes an ALIVE ship read
+--     instance hp 0. If the liveness predicate ever reads hp, THIS scenario goes red: the damaged
+--     fleet's order would bounce.
+-- Properties, in order:
+--   1. an EMPTY group still answers empty_group (the neighbouring state keeps its own code);
+--   2. a fleet with a damaged-but-alive ship (instance hp 0!) is still ALLOWED to move;
+--   3. with every ship destroyed, go (coordinate), go (port), go_route (leg-1 composition) and dock
+--      (flag lit in-txn) are ALL refused with the typed no_living_ships — and the refused volley
+--      mints NO fleet and NO movement row. ON THE PRE-0312 BODY THIS IS RED TWICE OVER — a claim
+--      that is SOURCE-DERIVED, NOT EMPIRICALLY DEMONSTRATED: a proof can only run the post-fix
+--      chain, so nobody has watched the old body fly these wrecks. The derivation, from source:
+--      the member-count guard cannot see death (0301:1576-1584 counts rows, and destroyed ships
+--      are never deleted), the dead group's fleet is 'destroyed' so step 9 resolves zero and falls
+--      into the bootstrap arm, and calculate_group_expedition_stats folds ALL members with no
+--      status filter (0166:100-118) — two wrecks still yield a positive team speed — so the old
+--      body reaches movement_create: ok=true/movement_started AND a fresh fleet + leg. That chain
+--      is what makes the minted-nothing arm below non-vacuous rather than an observation replay.
+--   4. RECOVERY IS NEVER BLOCKED on exactly that dead fleet: the brake stays an idempotent ok,
+--      the tow berths a wreck, repair revives it in port, the roster re-assign takes it back,
+--      and ONE living ship is enough for the group to move again — the un-brick loop, closed.
+do $$
+declare
+  r jsonb;
+  uN uuid; gN uuid; gN2 uuid; sN1 uuid; sN2 uuid;
+  v_port uuid; v_fleetN uuid;
+  n_fleets integer; n_legs integer; n integer;
+  v_status text; v_hp integer; v_group_tag uuid; v_max integer;
+  v_dock_flag jsonb;
+begin
+  -- ── a fresh, funded fixture player; the signup trigger mints the base the PRE-0312 bootstrap
+  --    would have launched the dead fleet from (without it this block could pass VACUOUSLY:
+  --    the old body would refuse no_origin instead of flying, and the red would never show). ────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.nl.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uN;
+  insert into public.player_wallet (player_id, balance) values (uN, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  if not exists (select 1 from public.bases where player_id = uN) then
+    raise exception 'NOLIVE FAIL: the signup trigger minted no base — the pre-0312 bootstrap mint is unreachable here and the block would prove nothing';
+  end if;
+
+  -- ── two ships, one team, command designated — 100% real RPCs. ───────────────────────────────────
+  r := pg_temp.call_as(uN, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: first ship: %', r; end if;
+  select main_ship_id into sN1 from public.main_ship_instances where player_id = uN;
+  select berth_location_id into v_port from public.main_ship_instances where main_ship_id = sN1;
+  if v_port is null then raise exception 'NOLIVE FAIL: the commissioned ship has no berth port'; end if;
+  r := pg_temp.call_as(uN, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: second ship: %', r; end if;
+  select main_ship_id into sN2 from public.main_ship_instances
+   where player_id = uN and main_ship_id <> sN1 limit 1;
+  if sN2 is null then raise exception 'NOLIVE FAIL: no second ship materialised'; end if;
+  r := pg_temp.call_as(uN, 'public.upsert_ship_group(1, ''No Live'')');
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: group: %', r; end if;
+  gN := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uN, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sN1, gN));
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: assign 1: %', r; end if;
+  r := pg_temp.call_as(uN, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sN2, gN));
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: assign 2: %', r; end if;
+  r := pg_temp.call_as(uN, format('public.set_fleet_command_ship(%L::uuid, true)', sN1));
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: command: %', r; end if;
+
+  -- ── 1. the NEIGHBOURING STATE keeps its own code: an EMPTY group answers empty_group. ──────────
+  r := pg_temp.call_as(uN, 'public.upsert_ship_group(2, ''No Live Empty'')');
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: empty group create: %', r; end if;
+  gN2 := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN2));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'empty_group' then
+    raise exception 'NOLIVE FAIL: an order on a group with NO ships did not answer empty_group (got %) — the two states must stay distinguishable', r;
+  end if;
+
+  -- ── 2. a MERELY DAMAGED ship is never dead. mainship_sync_combat_hp(ship, 0) is the tick's own
+  --      writer in its exact round-to-zero shape: the ship is ALIVE (status untouched) while its
+  --      instance row reads hp 0. The order must go through — an hp-shaped predicate refuses here.
+  perform public.mainship_sync_combat_hp(sN2, 0);
+  select status, hp into v_status, v_hp from public.main_ship_instances where main_ship_id = sN2;
+  if v_status = 'destroyed' or v_hp <> 0 then
+    raise exception 'NOLIVE FAIL: staging drifted — wanted an alive ship at instance hp 0, got status %, hp %', v_status, v_hp;
+  end if;
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'movement_started' then
+    raise exception 'NOLIVE FAIL: a merely damaged ship was treated as dead — the fleet with an alive hp-0 member was refused (%). The liveness predicate must be status, never hp (0234:851-852)', r;
+  end if;
+  v_fleetN := (r->>'fleet_id')::uuid;
+  -- hold the fleet in open space (the brake's own HOLD), so the kill below lands on the defeat
+  -- branch's exact from-state: idle + space (0293's widened fleet_destroy arm).
+  r := pg_temp.call_as(uN, format('public.command_ship_group_stop(%L::uuid)', gN));
+  if (r->>'ok')::boolean is not true or (r->>'stopped')::boolean is not true then
+    raise exception 'NOLIVE FAIL: could not hold the fleet in open space: %', r;
+  end if;
+
+  -- ── 3. KILL THE FLEET — the defeat branch's own write order (fleet first, then each member). ───
+  perform public.fleet_destroy(v_fleetN);
+  perform public.mainship_mark_combat_destroyed(sN1);
+  perform public.mainship_mark_combat_destroyed(sN2);
+  select count(*) into n from public.main_ship_instances
+   where player_id = uN and group_id = gN and status = 'destroyed' and hp = 0;
+  if n <> 2 then
+    raise exception 'NOLIVE FAIL: staging drifted — wanted 2 destroyed members still in the group, got %', n;
+  end if;
+
+  -- ── the refused volley writes NOTHING: capture the world before it. ─────────────────────────────
+  select count(*) into n_fleets from public.fleets where player_id = uN;
+  select count(*) into n_legs from public.fleet_movements where player_id = uN;
+
+  -- go, coordinate target
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go(coordinate) answered % instead of the typed no_living_ships refusal (source-derived expectation: the pre-0312 body reaches movement_create here — 0166''s status-blind fold — a proof can only run the post-fix chain)', r;
+  end if;
+  -- go, port target (both shapes of the exactly-one-of pair refuse identically)
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, %L::uuid, null, null)', gN, v_port));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go(port) answered % instead of no_living_ships', r;
+  end if;
+  -- go_route: leg 1 COMPOSES the mover, so the refusal must ride through with no second guard
+  r := pg_temp.call_as(uN, format(
+        'public.command_ship_group_go_route(%L::uuid, %L::jsonb, null, 120, 120)',
+        gN, jsonb_build_array(jsonb_build_object('x', 60, 'y', 60))::text));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go_route answered % instead of no_living_ships (leg 1 composes the mover; its refusal must propagate)', r;
+  end if;
+  -- dock: the key comes up ONLY around this probe, and goes back to WHATEVER IT WAS — captured
+  -- here, never restored to a hard-coded ambient default (the proofs-never-assert-ambient-defaults
+  -- law: a later block appended to this file must inherit the setup's world, not this block's
+  -- assumption of it). NOTE what this probe reaches: in PRODUCTION timed_docking_enabled is false
+  -- and dock's dark gate answers first, so the deployed dock guard is pre-positioned, not live —
+  -- this probe is the only place the guard is exercised until the owner lights that key.
+  select value into v_dock_flag from public.game_config where key='timed_docking_enabled';
+  if v_dock_flag is null then
+    raise exception 'NOLIVE FAIL: timed_docking_enabled is not seeded — cannot capture a value to restore';
+  end if;
+  update public.game_config set value='true'::jsonb where key='timed_docking_enabled';
+  r := pg_temp.call_as(uN, format('public.command_ship_group_dock(%L::uuid)', gN));
+  update public.game_config set value = v_dock_flag where key='timed_docking_enabled';
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — dock answered % instead of no_living_ships (the dock guard must answer before the fleet resolve''s no_fleet)', r;
+  end if;
+  -- and the volley left no trace
+  select count(*) into n from public.fleets where player_id = uN;
+  if n <> n_fleets then
+    raise exception 'NOLIVE FAIL: a dead fleet''s refused order still minted a fleet or a leg (% fleets, was %) — the pre-0312 bootstrap arm is back', n, n_fleets;
+  end if;
+  select count(*) into n from public.fleet_movements where player_id = uN;
+  if n <> n_legs then
+    raise exception 'NOLIVE FAIL: a dead fleet''s refused order still minted a fleet or a leg (% movements, was %)', n, n_legs;
+  end if;
+
+  -- ── 4. RECOVERY IS NEVER BLOCKED on exactly this dead fleet. ────────────────────────────────────
+  -- the brake stays an idempotent ok (an abort verb must never be gated on liveness)
+  r := pg_temp.call_as(uN, format('public.command_ship_group_stop(%L::uuid)', gN));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — the brake was refused: %', r;
+  end if;
+  -- the tow hauls a wreck in (it leaves the group: the 0216 XOR write)
+  r := pg_temp.call_as(uN, format('public.mainship_emergency_tow(%L::uuid)', sN2));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — the tow was refused: %', r;
+  end if;
+  -- repair revives it at the port (raises on any refusal — a raise here IS the failure)
+  r := pg_temp.call_as(uN, format('public.repair_main_ship(%L::uuid)', sN2));
+  if (r->>'status') is distinct from 'home' then
+    raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — repair did not revive the towed ship: %', r;
+  end if;
+  select hp, group_id into v_hp, v_group_tag from public.main_ship_instances where main_ship_id = sN2;
+  select max_hp into v_max from public.main_ship_instances where main_ship_id = sN2;
+  if v_hp is distinct from v_max or v_group_tag is not null then
+    raise exception 'NOLIVE FAIL: repair left the ship half-revived (hp % of %, group %)', v_hp, v_max, v_group_tag;
+  end if;
+  -- the roster takes the revived ship back — into the group still holding a wreck
+  r := pg_temp.call_as(uN, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sN2, gN));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — re-assigning the revived ship was refused: %', r;
+  end if;
+  -- ONE living ship is enough: the group moves again, wreck still aboard — the un-brick, closed.
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'movement_started' then
+    raise exception 'NOLIVE FAIL: the recovered fleet (1 living ship + 1 wreck) was still refused: % — "all destroyed" must mean ALL', r;
+  end if;
+
+  raise notice 'DZCOMBAT_PASS_NOLIVE ok: empty_group kept its own code; a damaged-but-alive ship at instance hp 0 (the tick''s round-to-zero shape) still moved; with every ship destroyed, go(coordinate)/go(port)/go_route/dock all refused with the typed no_living_ships and minted nothing (source-derived, not observed: the pre-0312 body reaches movement_create right here — the member count is death-blind and 0166''s fold has no status filter — a proof can only run the post-fix chain); and on exactly that dead fleet the brake, the tow, the repair and the re-assign all worked — one living ship un-bricked the group';
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
