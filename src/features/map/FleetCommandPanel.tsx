@@ -294,14 +294,9 @@ export function FleetCommandPanel({
                           // fleet's combat is live mints no leg at all — it arms (or re-points) a
                           // retreat toward whatever was ordered. Checked for BOTH destination kinds:
                           // a coordinate order used to come back refused, and 0298 accepts it, so
-                          // "Sent … to (x, y)" would now be a lie on the point arm too. The envelope's
-                          // `carried_rewards` rides along so the copy can say what the order costs.
-                          const retreat = fleetRetreatOutcomeMessage(
-                            res.outcome,
-                            r.name,
-                            destinationLabel,
-                            res.carried_rewards,
-                          )
+                          // "Sent … to (x, y)" would now be a lie on the point arm too. LOOT (0307):
+                          // the carried bundle deposits on arrival, so the copy no longer warns.
+                          const retreat = fleetRetreatOutcomeMessage(res.outcome, r.name, destinationLabel)
                           if (retreat) return retreat
                           // INTERCEPT DEFERRED ENTRY — `order_outcome` is the mover's word on what
                           // THIS call did. 'combat_started' (reachable only while deferred entry is
@@ -371,12 +366,7 @@ export function FleetCommandPanel({
                           // command_ship_group_go arms a RETREAT (0298:466-487) — a constant
                           // "Sent … to dock at Haven." would be reporting a docking that is not
                           // happening. The retreat copy has ONE authority; both call sites consult it.
-                          const retreat = fleetRetreatOutcomeMessage(
-                            res.outcome,
-                            r.name,
-                            r.portName,
-                            res.carried_rewards,
-                          )
+                          const retreat = fleetRetreatOutcomeMessage(res.outcome, r.name, r.portName)
                           if (retreat) return retreat
                           return timedDockingEnabled
                             ? `${r.name} is docking at ${r.portName}.`

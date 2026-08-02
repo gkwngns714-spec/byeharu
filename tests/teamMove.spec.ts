@@ -5,7 +5,6 @@ import {
   unifiedMapSendAction,
   buildCommandShipGroupGoArgs,
   fleetRetreatOutcomeMessage,
-  retreatCarriesLoot,
   type GroupGoTarget,
 } from '../src/features/command/teamMove'
 import { openSpaceDestinationLabel } from '../src/features/map/fleetGoTarget'
@@ -209,51 +208,27 @@ test('RETREAT: an ordinary move yields null, so the caller keeps its own "Sent �
   for (const outcome of [undefined, null, '', 'moving', 42, {}]) {
     expect(fleetRetreatOutcomeMessage(outcome, 'Alpha', 'Haven')).toBeNull()
   }
-  // …and a non-retreat envelope produces no retreat copy even when it carries a reward bundle.
-  expect(fleetRetreatOutcomeMessage('moving', 'Alpha', 'Haven', { metal: 120 })).toBeNull()
 })
 
-// ── THE COST OF NAMING A DESTINATION — the server says it in `carried_rewards`; the player is told. ─
+// ── LOOT (0307): naming a destination costs nothing — so the copy no longer threatens the player. ──
 
-test('LOOT: a bundle is "carrying something" only when an entry holds a positive number or a list', () => {
-  // The 0040 shape, read generically so a future reward key is covered by the same authority.
-  expect(retreatCarriesLoot({ metal: 120 })).toBe(true)
-  expect(retreatCarriesLoot({ items: [{ item_id: 'scrap', quantity: 3 }] })).toBe(true)
-  expect(retreatCarriesLoot({ metal: 0, items: [], crystal: 4 })).toBe(true)
-  // Empty, all-zero, or not a bundle at all → no warning. It must never fire over a fight that
-  // earned nothing: the server sends coalesce(total_rewards_json, '{}') on every retreat envelope.
-  for (const empty of [undefined, null, {}, { metal: 0 }, { metal: 0, items: [] }, [], 'metal', 7]) {
-    expect(retreatCarriesLoot(empty)).toBe(false)
-  }
-})
-
-test('LOOT: with rewards carried, both retreat outcomes say plainly that they are lost', () => {
-  // VERIFIED IN THE SERVER SOURCE (see teamMove.ts): the ordered-destination retreat always mints a
-  // 'space' leg, and reward_grant fires ONLY from movement_settle_arrival's 'base' arm (0208:153-154)
-  // — so the haul is not delayed, it is gone. The copy therefore says "lost", and it says BASE, the
-  // word ActiveCombatPanel already uses; docking at a port does not bank it.
-  expect(fleetRetreatOutcomeMessage('retreat_started', 'Alpha', 'Haven', { metal: 120 })).toBe(
-    'Alpha is breaking off the fight and heading for Haven.' +
-      ' The rewards this fight had earned are lost — they are secured only by a retreat back to base.',
-  )
-  expect(
-    fleetRetreatOutcomeMessage('retreat_destination_updated', 'Alpha', 'Haven', { metal: 120 }),
-  ).toBe(
-    'Alpha will retreat to Haven instead.' +
-      ' The rewards this fight had earned are lost — they are secured only by a retreat back to base.',
-  )
-  // It stays plain: no raw envelope key, no reason code, and still no claim about a port.
+test('LOOT: the "rewards are lost" warning is GONE from every retreat sentence (0307)', () => {
+  // That warning documented the pre-0307 defect (movement_settle_arrival's 'space' arm deposited
+  // nothing) as a rule of the game, and it said "back to base" — a place the NO-HOME law deleted.
+  // 0307 makes the 'space' arrival deposit the carried bundle (store at the arrival port, or the
+  // oldest active store for a bare point), so the retreat copy must never again claim a loss, and
+  // must never again name a base or a home.
   for (const outcome of ['retreat_started', 'retreat_destination_updated']) {
-    const msg = fleetRetreatOutcomeMessage(outcome, 'Alpha', 'Haven', { metal: 120 }) as string
-    expect(msg).not.toContain('carried_rewards')
-    expect(msg).not.toContain('port')
+    for (const dest of ['Haven', openSpaceDestinationLabel({ x: 1204, y: -377 })]) {
+      const msg = fleetRetreatOutcomeMessage(outcome, 'Alpha', dest) as string
+      expect(msg).toBeTruthy()
+      expect(msg).not.toContain('lost')
+      expect(msg).not.toContain('base')
+      expect(msg).not.toContain('home')
+      expect(msg).not.toContain('carried_rewards')
+    }
   }
-})
-
-test('LOOT: an empty bundle adds nothing — the retreat copy is byte-identical to the no-argument form', () => {
-  for (const outcome of ['retreat_started', 'retreat_destination_updated']) {
-    const plain = fleetRetreatOutcomeMessage(outcome, 'Alpha', 'Haven')
-    expect(fleetRetreatOutcomeMessage(outcome, 'Alpha', 'Haven', {})).toBe(plain)
-    expect(fleetRetreatOutcomeMessage(outcome, 'Alpha', 'Haven', undefined)).toBe(plain)
-  }
+  // And the deleted fourth parameter stays deleted: the function's copy depends on nothing but the
+  // outcome, the fleet name and the destination label.
+  expect(fleetRetreatOutcomeMessage.length).toBe(3)
 })

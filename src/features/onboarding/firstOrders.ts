@@ -81,9 +81,14 @@ export function deriveFirstOrders(input: FirstOrdersInput): FirstOrderStep[] {
     })
     steps.push({
       id: 'first-hunt',
-      label: 'Win your first hunt',
+      // 0307 copy sweep — this step broke BOTH standing design laws in eleven words. "Win your
+      // first hunt" taught the goal the game does not have (combat is never about winning; the
+      // skill is knowing when to leave), and "come home" named a base that does not exist — ports
+      // are the only base. The id and the `done` rule are UNCHANGED, so every spec pinning them
+      // (tests/firstOrders.spec.ts:35,43,82-83) still holds; only the words a player reads moved.
+      label: 'Survive your first fight',
       done: input.wonBattle,
-      hint: 'Send your ship to hunt pirates at the Snare (Wreck Belt) and come home in one piece.',
+      hint: 'Send your ship to hunt pirates at the Snare (Wreck Belt), then pull out while it still has hull.',
     })
   }
 
