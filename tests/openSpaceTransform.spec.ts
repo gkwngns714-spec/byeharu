@@ -4,6 +4,8 @@ import {
   viewBoxToWorld,
   viewBoxToScreen,
   screenToViewBox,
+  screenToViewBoxRaw,
+  screenDeltaToViewBox,
   worldToScreen,
   screenToWorld,
   viewBoxDisplayRect,
@@ -232,4 +234,79 @@ test('S6B4: preview + fixed-space ship co-move (screen Δ = letterbox·zoom × v
       near(sB.y - sA.y, s * cam.k * vbDelta.y)
     }
   }
+})
+
+// ── ZOOM/PAN SUPPORT PAIR: screenToViewBoxRaw + screenDeltaToViewBox ────────────────────────────────
+// Both were extracted from hand-rolled copies that lived in the two SVG map components. They are the
+// projection half of cursor-anchored zoom (`galaxyCamera.zoomCameraAbout`) and of camera panning.
+
+test('screenToViewBoxRaw: undoes ONLY the letterbox — screenToViewBox is exactly it, then the camera', () => {
+  for (const vp of VIEWPORTS) {
+    const r = viewBoxDisplayRect(vp)
+    for (const cam of CAMERAS)
+      for (const w of WORLD_SAMPLES) {
+        const screen = worldToScreen(w, cam, vp)
+        const raw = screenToViewBoxRaw(screen, vp)
+        // (a) the raw value IS the post-camera (viewBox user-space) point the SVG <g> emits…
+        const vb = worldToViewBox(w)
+        nearPt(raw, { x: cam.tx + cam.k * vb.x, y: cam.ty + cam.k * vb.y }, 1e-6)
+        // (b) …so undoing the camera on top of it reproduces screenToViewBox exactly.
+        nearPt(
+          { x: (raw.x - cam.tx) / cam.k, y: (raw.y - cam.ty) / cam.k },
+          screenToViewBox(screen, cam, vp),
+          1e-9,
+        )
+        // (c) with the identity camera the two collapse into one another.
+        nearPt(screenToViewBoxRaw(screen, vp), screenToViewBox(screen, { k: 1, tx: 0, ty: 0 }, vp), 1e-9)
+      }
+    // (d) round trip against the forward letterbox: raw → px → raw.
+    for (const p of [{ x: 0, y: 0 }, { x: 500, y: 500 }, { x: 1000, y: 1000 }, { x: -250, y: 1750 }]) {
+      const px = { x: r.offsetX + r.scale * p.x, y: r.offsetY + r.scale * p.y }
+      nearPt(screenToViewBoxRaw(px, vp), p, 1e-9)
+    }
+  }
+})
+
+test('screenToViewBoxRaw: is camera-INDEPENDENT (the anchor must not move when the camera does)', () => {
+  const vp: Viewport = { width: 1600, height: 900 }
+  const px = { x: 1200, y: 300 }
+  const first = screenToViewBoxRaw(px, vp)
+  for (const cam of CAMERAS) {
+    void cam // the signature takes no camera at all — this is the structural point
+    nearPt(screenToViewBoxRaw(px, vp), first, 0)
+  }
+})
+
+test('screenDeltaToViewBox: dragging N px moves the grabbed point EXACTLY N px, on every aspect', () => {
+  // The defect this replaces: `dxPx * VIEWBOX_SIZE / rect.width` is only right on a SQUARE element.
+  for (const vp of VIEWPORTS) {
+    const r = viewBoxDisplayRect(vp)
+    // it is exactly 1/scale = VIEWBOX_SIZE / min(width, height) — never width alone
+    near(screenDeltaToViewBox(1, vp), 1 / r.scale)
+    near(screenDeltaToViewBox(1, vp), VIEWBOX_SIZE / Math.min(vp.width, vp.height))
+    for (const cam of CAMERAS)
+      for (const dPx of [1, 37, -220.5]) {
+        // pan the camera by the converted delta, then measure how far the world point actually moved
+        const panned: Camera = {
+          k: cam.k,
+          tx: cam.tx + screenDeltaToViewBox(dPx, vp),
+          ty: cam.ty + screenDeltaToViewBox(dPx, vp),
+        }
+        const before = worldToScreen({ x: 1234.5, y: -6789.25 }, cam, vp)
+        const after = worldToScreen({ x: 1234.5, y: -6789.25 }, panned, vp)
+        near(after.x - before.x, dPx, 1e-9) // 1:1 with the pointer — no lag, no drift
+        near(after.y - before.y, dPx, 1e-9)
+      }
+  }
+})
+
+test('screenDeltaToViewBox: the retired width-only formula was wrong by min(w,h)/w — 0.5625 on 1600x900', () => {
+  const retired = (dPx: number, vp: Viewport) => (dPx * VIEWBOX_SIZE) / (vp.width || 1)
+  const landscape: Viewport = { width: 1600, height: 900 }
+  near(retired(1, landscape) / screenDeltaToViewBox(1, landscape), 0.5625) // the map crawled at 56.25%
+  // It agrees ONLY where the element is square or taller than wide (where width IS the smaller axis).
+  near(retired(1, { width: 800, height: 800 }), screenDeltaToViewBox(1, { width: 800, height: 800 }))
+  near(retired(1, { width: 400, height: 1200 }), screenDeltaToViewBox(1, { width: 400, height: 1200 }))
+  for (const vp of VIEWPORTS)
+    near(retired(1, vp) / screenDeltaToViewBox(1, vp), Math.min(vp.width, vp.height) / vp.width)
 })

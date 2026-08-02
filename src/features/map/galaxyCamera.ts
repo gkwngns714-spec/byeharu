@@ -1,4 +1,4 @@
-import { worldToViewBox, type WorldCoord } from './openSpaceTransform'
+import { worldToViewBox, type ViewBoxCoord, type WorldCoord } from './openSpaceTransform'
 
 // S6B-PRES — pure camera math for GalaxyMap's UNIFIED fixed-coordinate frame.
 //
@@ -41,6 +41,34 @@ export function clampPan(tx: number, ty: number, k: number): { tx: number; ty: n
   const [minT, maxT] = content >= VIEW ? [VIEW - content, 0] : [0, VIEW - content]
   const cl = (t: number) => Math.min(maxT, Math.max(minT, t))
   return { tx: cl(tx), ty: cl(ty) }
+}
+
+// ── Zoom steps (the ONE place either surface reads a zoom magnitude) ─────────────────────────────────
+/** Per-notch WHEEL step. Kept gentle on purpose: a wheel gesture is many notches, so a step that feels
+ *  right for ONE click of the +/− buttons overshoots badly here. 1.07 needs ~10 notches to double,
+ *  which is roughly one comfortable scroll. Shared by the game map and the World Editor — the game map
+ *  used to run 1.15, the value the editor had already tried and rejected as an overshoot. */
+export const WHEEL_ZOOM_STEP = 1.07
+/** Per-click step for the +/− BUTTONS. One deliberate click should be a decisive change, so it is much
+ *  coarser than a wheel notch. Buttons stay CENTRE-anchored (there is no cursor to anchor on). */
+export const BUTTON_ZOOM_STEP = 1.25
+
+/** Zoom about an ANCHOR in VIEWBOX space — the cursor for a wheel gesture, the viewport centre for the
+ *  +/− buttons (pass no anchor). The point under the anchor keeps its position on screen, which is what
+ *  makes wheel-zoom feel like it pulls the map toward the pointer instead of drifting away from it.
+ *
+ *  Composes both camera invariants: `clampK` bounds the zoom, and `clampPan` still wins at the world
+ *  edges — the anchor is honoured only up to the point where holding it would drag the viewBox off the
+ *  viewport. A null/omitted anchor is exactly the centre (VIEW/2, VIEW/2).
+ *
+ *  The anchor is a PRE-camera viewBox point: get it from `openSpaceTransform.screenToViewBoxRaw`, which
+ *  undoes the letterbox WITHOUT undoing the camera (the anchor lives in the same space as tx/ty). */
+export function zoomCameraAbout(cam: Camera, factor: number, anchor?: ViewBoxCoord | null): Camera {
+  const k = clampK(cam.k * factor)
+  const ratio = k / cam.k
+  const ax = anchor?.x ?? VIEW / 2
+  const ay = anchor?.y ?? VIEW / 2
+  return { k, ...clampPan(ax - (ax - cam.tx) * ratio, ay - (ay - cam.ty) * ratio, k) }
 }
 
 /** Fit WORLD points into the camera so their FIXED-domain bounding box fills ~(1 − 2·PAD) of the
