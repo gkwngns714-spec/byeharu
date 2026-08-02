@@ -1587,6 +1587,182 @@ begin
     n_above, round(v_hp_a::numeric), round(v_imax_a::numeric), round(v_imax3::numeric), round(v_cap3::numeric), round(v_hp::numeric), round(v_imax::numeric);
 end $$;
 
+-- ════════ DZCOMBAT_PASS_NOLIVE (0312): NO LIVING SHIPS, NO ORDERS ════════════════════════════════════
+-- The owner's bug, verbatim: "when there is no fleet active, meaning if it has no hp, it should not
+-- be able to move to map." Staged on the REAL writers end to end:
+--   * the DEAD shape is produced by the tick's own terminal leaves — fleet_destroy then
+--     mainship_mark_combat_destroyed per member, the defeat branch's exact write order — never by a
+--     hand-write of main_ship_instances;
+--   * a MERELY DAMAGED ship is produced by mainship_sync_combat_hp(ship, 0) — the tick's own hp
+--     writer, in the exact round-to-zero shape (0234:851-852) that makes an ALIVE ship read
+--     instance hp 0. If the liveness predicate ever reads hp, THIS scenario goes red: the damaged
+--     fleet's order would bounce.
+-- Properties, in order:
+--   1. an EMPTY group still answers empty_group (the neighbouring state keeps its own code);
+--   2. a fleet with a damaged-but-alive ship (instance hp 0!) is still ALLOWED to move;
+--   3. with every ship destroyed, go (coordinate), go (port), go_route (leg-1 composition) and dock
+--      (flag lit in-txn) are ALL refused with the typed no_living_ships — and the refused volley
+--      mints NO fleet and NO movement row. ON THE PRE-0312 BODY THIS IS RED TWICE OVER: the mover's
+--      bootstrap arm returns ok=true/movement_started for the dead group AND mints a fresh
+--      fleet + leg (the member-count guard cannot see death — 0301:1576-1584 counts rows, and
+--      destroyed ships are never deleted).
+--   4. RECOVERY IS NEVER BLOCKED on exactly that dead fleet: the brake stays an idempotent ok,
+--      the tow berths a wreck, repair revives it in port, the roster re-assign takes it back,
+--      and ONE living ship is enough for the group to move again — the un-brick loop, closed.
+do $$
+declare
+  r jsonb;
+  uN uuid; gN uuid; gN2 uuid; sN1 uuid; sN2 uuid;
+  v_port uuid; v_fleetN uuid;
+  n_fleets integer; n_legs integer; n integer;
+  v_status text; v_hp integer; v_group_tag uuid; v_max integer;
+begin
+  -- ── a fresh, funded fixture player; the signup trigger mints the base the PRE-0312 bootstrap
+  --    would have launched the dead fleet from (without it this block could pass VACUOUSLY:
+  --    the old body would refuse no_origin instead of flying, and the red would never show). ────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.nl.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uN;
+  insert into public.player_wallet (player_id, balance) values (uN, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  if not exists (select 1 from public.bases where player_id = uN) then
+    raise exception 'NOLIVE FAIL: the signup trigger minted no base — the pre-0312 bootstrap mint is unreachable here and the block would prove nothing';
+  end if;
+
+  -- ── two ships, one team, command designated — 100% real RPCs. ───────────────────────────────────
+  r := pg_temp.call_as(uN, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: first ship: %', r; end if;
+  select main_ship_id into sN1 from public.main_ship_instances where player_id = uN;
+  select berth_location_id into v_port from public.main_ship_instances where main_ship_id = sN1;
+  if v_port is null then raise exception 'NOLIVE FAIL: the commissioned ship has no berth port'; end if;
+  r := pg_temp.call_as(uN, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: second ship: %', r; end if;
+  select main_ship_id into sN2 from public.main_ship_instances
+   where player_id = uN and main_ship_id <> sN1 limit 1;
+  if sN2 is null then raise exception 'NOLIVE FAIL: no second ship materialised'; end if;
+  r := pg_temp.call_as(uN, 'public.upsert_ship_group(1, ''No Live'')');
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: group: %', r; end if;
+  gN := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uN, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sN1, gN));
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: assign 1: %', r; end if;
+  r := pg_temp.call_as(uN, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sN2, gN));
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: assign 2: %', r; end if;
+  r := pg_temp.call_as(uN, format('public.set_fleet_command_ship(%L::uuid, true)', sN1));
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: command: %', r; end if;
+
+  -- ── 1. the NEIGHBOURING STATE keeps its own code: an EMPTY group answers empty_group. ──────────
+  r := pg_temp.call_as(uN, 'public.upsert_ship_group(2, ''No Live Empty'')');
+  if (r->>'ok')::boolean is not true then raise exception 'NOLIVE FAIL: empty group create: %', r; end if;
+  gN2 := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN2));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'empty_group' then
+    raise exception 'NOLIVE FAIL: an order on a group with NO ships did not answer empty_group (got %) — the two states must stay distinguishable', r;
+  end if;
+
+  -- ── 2. a MERELY DAMAGED ship is never dead. mainship_sync_combat_hp(ship, 0) is the tick's own
+  --      writer in its exact round-to-zero shape: the ship is ALIVE (status untouched) while its
+  --      instance row reads hp 0. The order must go through — an hp-shaped predicate refuses here.
+  perform public.mainship_sync_combat_hp(sN2, 0);
+  select status, hp into v_status, v_hp from public.main_ship_instances where main_ship_id = sN2;
+  if v_status = 'destroyed' or v_hp <> 0 then
+    raise exception 'NOLIVE FAIL: staging drifted — wanted an alive ship at instance hp 0, got status %, hp %', v_status, v_hp;
+  end if;
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'movement_started' then
+    raise exception 'NOLIVE FAIL: a merely damaged ship was treated as dead — the fleet with an alive hp-0 member was refused (%). The liveness predicate must be status, never hp (0234:851-852)', r;
+  end if;
+  v_fleetN := (r->>'fleet_id')::uuid;
+  -- hold the fleet in open space (the brake's own HOLD), so the kill below lands on the defeat
+  -- branch's exact from-state: idle + space (0293's widened fleet_destroy arm).
+  r := pg_temp.call_as(uN, format('public.command_ship_group_stop(%L::uuid)', gN));
+  if (r->>'ok')::boolean is not true or (r->>'stopped')::boolean is not true then
+    raise exception 'NOLIVE FAIL: could not hold the fleet in open space: %', r;
+  end if;
+
+  -- ── 3. KILL THE FLEET — the defeat branch's own write order (fleet first, then each member). ───
+  perform public.fleet_destroy(v_fleetN);
+  perform public.mainship_mark_combat_destroyed(sN1);
+  perform public.mainship_mark_combat_destroyed(sN2);
+  select count(*) into n from public.main_ship_instances
+   where player_id = uN and group_id = gN and status = 'destroyed' and hp = 0;
+  if n <> 2 then
+    raise exception 'NOLIVE FAIL: staging drifted — wanted 2 destroyed members still in the group, got %', n;
+  end if;
+
+  -- ── the refused volley writes NOTHING: capture the world before it. ─────────────────────────────
+  select count(*) into n_fleets from public.fleets where player_id = uN;
+  select count(*) into n_legs from public.fleet_movements where player_id = uN;
+
+  -- go, coordinate target
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go(coordinate) answered % instead of the typed no_living_ships refusal (the pre-0312 body returns ok/movement_started here and flies the wrecks)', r;
+  end if;
+  -- go, port target (both shapes of the exactly-one-of pair refuse identically)
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, %L::uuid, null, null)', gN, v_port));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go(port) answered % instead of no_living_ships', r;
+  end if;
+  -- go_route: leg 1 COMPOSES the mover, so the refusal must ride through with no second guard
+  r := pg_temp.call_as(uN, format(
+        'public.command_ship_group_go_route(%L::uuid, %L::jsonb, null, 120, 120)',
+        gN, jsonb_build_array(jsonb_build_object('x', 60, 'y', 60))::text));
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — go_route answered % instead of no_living_ships (leg 1 composes the mover; its refusal must propagate)', r;
+  end if;
+  -- dock: the flag comes up ONLY around this probe (in-txn, rolled back like everything else)
+  update public.game_config set value='true'::jsonb where key='timed_docking_enabled';
+  r := pg_temp.call_as(uN, format('public.command_ship_group_dock(%L::uuid)', gN));
+  update public.game_config set value='false'::jsonb where key='timed_docking_enabled';
+  if (r->>'ok')::boolean is not false or (r->>'reason') is distinct from 'no_living_ships' then
+    raise exception 'NOLIVE FAIL: a dead fleet was ordered onto the map — dock answered % instead of no_living_ships (the dock guard must answer before the fleet resolve''s no_fleet)', r;
+  end if;
+  -- and the volley left no trace
+  select count(*) into n from public.fleets where player_id = uN;
+  if n <> n_fleets then
+    raise exception 'NOLIVE FAIL: a dead fleet''s refused order still minted a fleet or a leg (% fleets, was %) — the pre-0312 bootstrap arm is back', n, n_fleets;
+  end if;
+  select count(*) into n from public.fleet_movements where player_id = uN;
+  if n <> n_legs then
+    raise exception 'NOLIVE FAIL: a dead fleet''s refused order still minted a fleet or a leg (% movements, was %)', n, n_legs;
+  end if;
+
+  -- ── 4. RECOVERY IS NEVER BLOCKED on exactly this dead fleet. ────────────────────────────────────
+  -- the brake stays an idempotent ok (an abort verb must never be gated on liveness)
+  r := pg_temp.call_as(uN, format('public.command_ship_group_stop(%L::uuid)', gN));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — the brake was refused: %', r;
+  end if;
+  -- the tow hauls a wreck in (it leaves the group: the 0216 XOR write)
+  r := pg_temp.call_as(uN, format('public.mainship_emergency_tow(%L::uuid)', sN2));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — the tow was refused: %', r;
+  end if;
+  -- repair revives it at the port (raises on any refusal — a raise here IS the failure)
+  r := pg_temp.call_as(uN, format('public.repair_main_ship(%L::uuid)', sN2));
+  if (r->>'status') is distinct from 'home' then
+    raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — repair did not revive the towed ship: %', r;
+  end if;
+  select hp, group_id into v_hp, v_group_tag from public.main_ship_instances where main_ship_id = sN2;
+  select max_hp into v_max from public.main_ship_instances where main_ship_id = sN2;
+  if v_hp is distinct from v_max or v_group_tag is not null then
+    raise exception 'NOLIVE FAIL: repair left the ship half-revived (hp % of %, group %)', v_hp, v_max, v_group_tag;
+  end if;
+  -- the roster takes the revived ship back — into the group still holding a wreck
+  r := pg_temp.call_as(uN, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sN2, gN));
+  if (r->>'ok')::boolean is not true then
+    raise exception 'NOLIVE FAIL: recovery is blocked on a dead fleet — re-assigning the revived ship was refused: %', r;
+  end if;
+  -- ONE living ship is enough: the group moves again, wreck still aboard — the un-brick, closed.
+  r := pg_temp.call_as(uN, format('public.command_ship_group_go(%L::uuid, null, 60, 60)', gN));
+  if (r->>'ok')::boolean is not true or (r->>'order_outcome') is distinct from 'movement_started' then
+    raise exception 'NOLIVE FAIL: the recovered fleet (1 living ship + 1 wreck) was still refused: % — "all destroyed" must mean ALL', r;
+  end if;
+
+  raise notice 'DZCOMBAT_PASS_NOLIVE ok: empty_group kept its own code; a damaged-but-alive ship at instance hp 0 (the tick''s round-to-zero shape) still moved; with every ship destroyed, go(coordinate)/go(port)/go_route/dock all refused with the typed no_living_ships and minted nothing (the pre-0312 body flies the wrecks and mints a fleet + leg right here); and on exactly that dead fleet the brake, the tow, the repair and the re-assign all worked — one living ship un-bricked the group';
+end $$;
+
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
 
 rollback;   -- self-rolling-back: ZERO persisted state (no COMMIT anywhere above).
