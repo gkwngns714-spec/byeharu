@@ -1,7 +1,8 @@
 // THE ONE reject-copy map for every fleet surface — pure and fail-closed (the tradeReasonMessage/
 // haulReasonMessage idiom verbatim). Maps the ACTUAL server reject vocabulary of the fleet RPCs —
-// the hunt send (0168), the roster writes (0161/0204/0216), the unified mover/brake/dock
-// (0207/0208/0209/0219/0292/0298), the route planner (0233), and the totals/preview reads (0165/0166) —
+// the hunt send (0168), the roster writes (0161/0204/0216), the auto-exit writer (0310), the
+// unified mover/brake/dock (0207/0208/0209/0219/0292/0298), the route planner (0233), and the
+// totals/preview reads (0165/0166) —
 // plus the teamApi transport fallback ('unavailable') to short player-facing text; any unmapped/
 // unknown reason degrades to a generic "Fleet order unavailable." so the UI never surfaces a raw
 // code and never throws. No React/DOM/state — unit-tested in tests/teamReasonMessage.spec.ts.
@@ -70,6 +71,10 @@ const REASON_MESSAGES: Record<string, string> = {
   invalid_name: 'Give the fleet a name between 1 and 40 characters.',
   // ROSTER WRITES — the command-ship setter (0204:104) and the assign/unassign guards (0216:214).
   ship_not_found: 'That ship couldn’t be found — open the Fleets panel and pick it again.',
+  // HP AUTO-EXIT — set_group_auto_exit (0310). The server is the authority on the [5,95] bounds;
+  // the client control mirrors them, so these normally surface only for a stale/bypassed client.
+  invalid_auto_exit_pct: 'Auto-retreat needs a hull percent between 5 and 95.',
+  invalid_auto_exit_toggle: 'Choose whether auto-retreat is on or off.',
   // Joining a fleet: the ship is still on another one (0216:303-304).
   must_unassign_first: 'That ship is on another fleet — remove it from that fleet first.',
   // Joining a fleet in flight (0216:308) / hunting with one already in flight (0231:535).
