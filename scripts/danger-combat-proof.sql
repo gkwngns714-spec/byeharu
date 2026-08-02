@@ -844,6 +844,14 @@ begin
   select main_ship_id into s_l from public.main_ship_instances where player_id = uL;
   select berth_location_id into v_port from public.main_ship_instances where main_ship_id = s_l;
   if v_port is null then raise exception 'ROSTERAUTH FAIL: the commissioned ship has no berth port'; end if;
+  -- arm the survivor with a REAL autocannon (real writers): its unit in the final, never-ticked
+  -- encounter below is what FITTEDEXACT pins field-for-field against the catalog.
+  perform public.reward_grant('combat', gen_random_uuid(), uL, null,
+    '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
+  r := pg_temp.call_as(uL, 'public.craft_module(''ral-gun-1'', ''autocannon_battery'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: craft gun: %', r; end if;
+  r := pg_temp.call_as(uL, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''ral-fit-1'')', (r->>'instance_id')::uuid, s_l));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: fit gun: %', r; end if;
   r := pg_temp.call_as(uL, 'public.commission_additional_main_ship()');
   if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: second ship: %', r; end if;
   select main_ship_id into s_d from public.main_ship_instances
@@ -978,6 +986,9 @@ begin
   if n <> 1 then raise exception 'ROSTERAUTH FAIL: % roster rows after the re-ambush (want exactly 1 — the snapshot was replaced)', n; end if;
   select count(*) into n from public.group_sortie_members where fleet_id = v_fleet and main_ship_id = s_l;
   if n <> 1 then raise exception 'ROSTERAUTH FAIL: the fresh snapshot does not carry the live member'; end if;
+  -- hand the NEVER-TICKED armed encounter to FITTEDEXACT (the tick legitimately rewrites
+  -- next_ready_at after a shot, so the frozen-at-creation shape can only be pinned pre-tick).
+  insert into dzc values ('ra_enc2', v_enc2);
 
   raise notice 'DZCOMBAT_PASS_ROSTERAUTH ok: a fleet whose fight had concluded lost a ship to a legal unassign, was ambushed again, and the fight fielded ONLY the live member (1 unit = %); the departed ship kept its berth/status/hp and was never seeded; the re-ambush freeze replaced the 2-row stale snapshot with the 1-row live one', s_l;
 end $$;
@@ -1073,20 +1084,21 @@ begin
 end $$;
 
 -- ════════ DZCOMBAT_PASS_FITTEDEXACT (0308): A REAL WEAPON RIDES THROUGH EXACTLY, AND ALONE ═══════════
--- The control arm: team A's command ship fitted a real autocannon_battery at provision time and its
--- encounter was created earlier in this file. Its weapons_json must be exactly its CATALOG entry —
--- every field equal to the deployed module_types row, no fallback entry beside it. Field values are
--- DERIVED from the catalog at assert time, never hard-coded.
+-- The control arm: the ROSTERAUTH survivor fitted a real autocannon_battery at provision time, and
+-- the block's FINAL encounter has NEVER TICKED — deliberately: the tick legitimately rewrites
+-- next_ready_at after a weapon fires (team A's PIRATEFIRE encounter proved that the hard way), so
+-- the frozen-at-creation shape can only be pinned on a pre-tick encounter. Its weapons_json must be
+-- exactly its CATALOG entry — every field equal to the deployed module_types row, no fallback entry
+-- beside it. Field values are DERIVED from the catalog at assert time, never hard-coded.
 do $$
 declare
   n int;
-  s_cmd uuid := (select v from dzc where k='s_cmd');
-  v_fleet uuid := (select v from dzc where k='v_fleet');
-  v_enc uuid; w jsonb; t record; v_wc int;
+  s_cmd uuid := (select v from dzc where k='uL_s_l');
+  v_enc uuid := (select v from dzc where k='ra_enc2');
+  w jsonb; t record; v_wc int;
   v_fb_id text;
 begin
-  select id into v_enc from public.combat_encounters where fleet_id = v_fleet order by created_at asc limit 1;
-  if v_enc is null then raise exception 'FITTEDEXACT FAIL: team A''s encounter is missing'; end if;
+  if v_enc is null then raise exception 'FITTEDEXACT FAIL: the ROSTERAUTH encounter was not handed over'; end if;
 
   select jsonb_array_length(weapons_json), weapons_json->0 into v_wc, w
     from public.combat_units where encounter_id = v_enc and main_ship_id = s_cmd;
