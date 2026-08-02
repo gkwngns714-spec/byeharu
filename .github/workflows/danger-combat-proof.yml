@@ -15,8 +15,19 @@ name: DANGER-ZONE COMBAT — intercept→spatial disposable proof (no production
 
 on:
   workflow_dispatch:
+  # 0313 rev.3 — THIS PROOF MUST GATE EVERY PR AND EVERY MERGE, not just the branches that remembered
+  # to name themselves. It now carries the behaviour blocks for 0310 (AUTOEXIT), 0311 (REPOSITION /
+  # REPOOVERLAP / REPOOUTSIDE / REPOMODE), 0312 (NOLIVE) and 0313 (CLOSURE) — 19 markers in all — plus
+  # the six-generator parity gate. A branch-glob-only trigger means a branch that does not match a glob
+  # can change the combat tick and run none of it. That is not hypothetical: the sibling proofs
+  # combat-spatial and combat-fallback were branch-glob-only, went dark for three weeks, were silently
+  # broken by 0300 that whole time, and were found only by accident during this slice. Same failure
+  # mode, larger blast radius. `pull_request` catches it before it lands; `main` catches what a PR
+  # filter misses (admin-override merges, direct pushes).
+  pull_request:
   push:
     branches:
+      - main
       - 'autopilot/**'
       - 'slice-danger-combat**'
       # 0301 moved the ambush off the order path; this proof is now the apply-and-behaviour gate for

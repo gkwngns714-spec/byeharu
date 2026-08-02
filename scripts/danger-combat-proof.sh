@@ -239,8 +239,12 @@ if [ "$MODE" = "selftest" ]; then
   # 0313 rev.2 — NULL-VACUITY PINS. combat_units.pos_x/pos_y and combat_encounters.engagement_x/y are
   # all NULLABLE, and `x is not distinct from NULL` is FALSE for any real number — so a missing
   # coordinate made the moved/closing asserts pass while proving nothing. Absence is failure now, and
-  # these greps are what stops the pins being quietly removed again.
-  grep -q "cannot prove it moved"                                 "$SQL" || fail "harness lacks the escort NULL-coordinate pin (a moved-assert against NULL is vacuous)"
+  # these greps are what stops the pins being quietly removed again — but only if each pattern matches
+  # exactly ONE line. The escort pattern below must NOT be shortened to "cannot prove it moved": that
+  # substring also occurs in the PIRATE pin two lines down, so the escort pin could then be deleted and
+  # this grep would still fire on the other line, silently guarding nothing. Pin it to the escort's own
+  # wording ("unit", not "enemy").
+  grep -q "an unpositioned unit cannot prove it moved"            "$SQL" || fail "harness lacks the escort NULL-coordinate pin (a moved-assert against NULL is vacuous)"
   grep -q "the spawn point this assert compares against does not exist" "$SQL" || fail "harness lacks the engagement-anchor NULL pin"
   grep -q "an unpositioned enemy cannot prove it moved off the anchor" "$SQL" || fail "harness lacks the pirate NULL-position pin"
   grep -q "the closure comparison would be vacuous"               "$SQL" || fail "harness lacks the tick-1 gap NULL pin"

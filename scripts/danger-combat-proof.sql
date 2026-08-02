@@ -262,7 +262,9 @@ begin
   select main_ship_id into s_cmd from public.main_ship_instances where player_id = uZ;
   insert into dzc values ('s_cmd', s_cmd);
 
-  -- fund + craft + fit ONE autocannon_battery (range 150) onto the command ship, via the real writers.
+  -- fund + craft + fit ONE autocannon_battery onto the command ship, via the real writers. Its range is
+  -- NOT restated here: 0313 cut it 150 -> 25 and every assert downstream reads it from the catalog, so
+  -- a number in this comment would be one more thing to forget to update.
   perform public.reward_grant('combat', gen_random_uuid(), uZ, null,
     '{"items": [{"item_id": "weapon_parts", "quantity": 8}, {"item_id": "pirate_alloy", "quantity": 4}, {"item_id": "scrap", "quantity": 12}]}'::jsonb);
   r := pg_temp.call_as(uZ, 'public.craft_module(''dzc-gun-1'', ''autocannon_battery'')');

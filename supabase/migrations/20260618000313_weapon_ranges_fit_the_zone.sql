@@ -104,13 +104,14 @@
 -- explicit transaction each statement is its own txn, so the capture table would be dropped before
 -- the asserts that read it ever ran.
 --
--- Forward-only: 0001–0310 unedited. 0311 (reposition-in-zone) and 0312 (no-living-ships) are in
--- flight on sibling branches; both re-create plpgsql and neither writes these config keys or
--- module_types rows — verified by grepping both branches' migration files on origin
--- (origin/slice-reposition-in-zone, origin/slice-no-living-ships-no-orders): zero hits for any key
--- or catalog row this file touches. All three slices DO append blocks to
--- scripts/danger-combat-proof.{sql,sh} — an ordinary textual merge at integration time, not a
--- semantic conflict.
+-- Forward-only: 0001–0312 unedited. 0311 (reposition-in-zone) and 0312 (no-living-ships) have since
+-- LANDED on main and are present in this tree as their own new files — this slice edits neither, and
+-- adds 0313 above them. Both re-create plpgsql; neither writes these config keys or these module_types
+-- rows, re-verified against the merged tree (zero hits for enemy_synthetic_range_base,
+-- enemy_synthetic_range_per_difficulty, combat_player_fallback_weapon_range, or either autocannon row
+-- in 0311/0312). All three slices DO append blocks to scripts/danger-combat-proof.{sql,sh}; that merge
+-- is done and was resolved as a union — 19 markers, six parity generators, every runtime block from
+-- both sides retained. Ordinary textual overlap, never a semantic conflict.
 
 begin;
 set local time zone 'UTC';
