@@ -14,9 +14,14 @@ import {
 //
 // The rule mirrors the server verbatim: combat_create_group_encounter resolves
 // coalesce(p_engagement_x, l.x) (0293:255) and the tick re-resolves coalesce(e.engagement_x, loc.x)
-// (0294:424) before seeding and moving every combat_units row. Two client readers compose this leaf
-// — the map's in-combat fleet badge (teamMarkers) and the ambush notice (ambushEncounterNotice) —
-// so neither can drift from the other or from the server.
+// (0294:424) before SEEDING every combat_units row.
+//
+// ⚑ THE ANCHOR IS WHERE A FIGHT STARTED — NOT WHERE THE FLEET IS. Since 0313/0314 the seeded units
+// then move, so the formation walks 20-30 units off the anchor within a tick or two. "Where is this
+// fleet now" is map/fleetFightPosition's question (the formation centroid), and NO badge positions
+// itself from this leaf. What remains here: the ambush-vs-hunt ORIGIN test (an anchor off the linked
+// location's centre means the fleet was dragged into the fight en route — 0293's own rule), read by
+// map/ambushEncounterNotice, plus the shared live-encounter selection both readers compose.
 //
 // The coordinates below are REAL: the owner's production encounters at Snare, site centre (-45,120),
 // fights measured at (-27.37, 97.04) and (-63, 96) — gaps of 28.95 and 30.00 world units.
@@ -25,6 +30,7 @@ const SITE = { x: -45, y: 120 }
 const FIGHT = { x: -27.37, y: 97.04 }
 
 const enc = (o: Partial<FleetEncounterLite> = {}): FleetEncounterLite => ({
+  id: 'e1',
   fleet_id: 'fleet-1',
   status: 'active',
   engagement_x: FIGHT.x,
@@ -124,7 +130,7 @@ test('an ended row beside a live one does not shadow it', () => {
 
 test('TWO live encounters for one fleet is a broken invariant → null, never an arbitrary pick', () => {
   // the DB's one_active_encounter_per_fleet partial unique index (0014:35) forbids this shape
-  const pair = [enc(), enc({ engagement_x: -63, engagement_y: 96 })]
+  const pair = [enc(), enc({ id: 'e2', engagement_x: -63, engagement_y: 96 })]
   expect(liveEncounterForFleet(pair, 'fleet-1')).toBeNull()
   expect(liveEncounterForFleet([...pair].reverse(), 'fleet-1')).toBeNull() // order-independent
 })

@@ -190,7 +190,7 @@ const combatLocs = [
   { id: 'hunt-site', activity_type: 'pirate_hunt' },
 ]
 const uf = (over: Partial<UnifiedGroupFleetLite>): UnifiedGroupFleetLite => ({
-  group_id: 'g1', status: 'present', location_mode: 'location',
+  id: 'fleet-g1', group_id: 'g1', status: 'present', location_mode: 'location',
   current_location_id: 'haven', space_x: null, space_y: null, ...over,
 })
 

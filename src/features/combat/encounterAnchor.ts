@@ -14,11 +14,20 @@
 // wider than the whole battle's footprint since 0313 cut weapon ranges to 25-30. A badge pinned to
 // the site centre is then a badge pointing at empty space while the fleet burns somewhere else.
 //
-// ── THE ONE AUTHORITY, TWO READERS ─────────────────────────────────────────────────────────────────
-//   • map/teamMarkers.resolveFleetCombatBadges — draws the in-combat fleet badge AT the fight.
-//   • map/ambushEncounterNotice                — says "ambushed" exactly when the anchor is OFF the
-//                                                site's centre (0293's own ambush-vs-hunt rule).
-// Neither re-derives the fallback, the finiteness rule, the epsilon, or the live-status set.
+// ── WHAT THIS LEAF IS FOR — AND WHAT IT IS NOT ─────────────────────────────────────────────────────
+// The anchor is where a fight STARTED. It is NOT where the fleet currently is: the units seeded
+// around it then MOVE (0313/0314), so within a tick or two the formation has walked 20-30 units off
+// it. "Where is this fleet right now" is a different question with a different answer, owned by
+// map/fleetFightPosition (the centroid of the fleet's own living, positioned units). This module
+// deliberately does not answer it, and no badge positions itself from the anchor.
+//
+// Its two live jobs, both still ONE authority apiece:
+//   • `resolveEncounterAnchor` — map/ambushEncounterNotice's ambush-vs-hunt test: an anchor OFF the
+//     linked location's centre means the fleet was dragged into this fight en route (0293's own rule).
+//     That question is about the fight's ORIGIN, which is exactly what the anchor records.
+//   • `liveEncounterForFleet` / `isLiveEncounter` / `LIVE_ENCOUNTER_STATUSES` — the shared "which
+//     encounter is this fleet's, and is it live" selection, read by the notice and by
+//     map/fleetFightPosition. Neither re-derives the live-status set or the ambiguity rule.
 //
 // ── FAIL CLOSED ────────────────────────────────────────────────────────────────────────────────────
 // A missing / NULL / non-finite engagement anchor is neither an error nor a licence to guess: it
@@ -94,6 +103,9 @@ export function isLiveEncounter(encounter: { status: string }): boolean {
 
 /** The structural slice needed to decide WHICH encounter belongs to a given fleet. */
 export interface FleetEncounterLite extends EncounterAnchorLite {
+  /** combat_encounters.id — what combat_units.encounter_id points back at, so a reader can select
+   *  THIS fight's own units (map/fleetFightPosition). */
+  id: string
   status: string
   /** combat_encounters.fleet_id → fleets.id (0014:13, a NOT NULL FK). */
   fleet_id: string

@@ -121,9 +121,9 @@ export function GalaxyMap({
    *  lines between units), ignoring the aggregate/dark-path events that carry no unit_id. */
   combatEvents?: CombatEvent[]
   /** The caller's live encounters (the SAME rows the units above belong to — useCombat polls them
-   *  together). They carry the ENGAGEMENT ANCHOR (0293/0294), so the team layer's "in combat"
-   *  badge can sit on the fight instead of on the site's centre, which for an ambush is a different
-   *  place by construction. [] → badges fall back to the centre, byte-identical to before. */
+   *  together). With `combatUnits` they let the team layer place a fighting fleet's badge on that
+   *  fleet's own formation instead of on a resting point its ships have already left. [] → badges
+   *  keep their resting position, byte-identical to before. */
   combatEncounters?: CombatEncounter[]
   /** 'off' = normal ship-go tap handling (byte-identical to pre-slice behavior). 'route' TAKES OVER
    *  the entire empty-space tap surface (mutually exclusive with the fleet-go tap) — each tap appends
@@ -517,9 +517,11 @@ export function GalaxyMap({
             unifiedFleets: unifiedGroupFleets,
             // MAP-INTEGRATION M1: combat-present sorties → the in-combat fleet badge ([] while dark).
             combatFleets: combatSortieFleets,
-            // …and the ENGAGEMENT ANCHORS those badges stand on: the very encounters the spatial
-            // units layer below is drawn from, so the badge and the battle share ONE point of truth.
+            // …and the live fights themselves: the VERY SAME encounters and units the spatial layer
+            // below is drawn from, so a fleet's badge and that fleet's own ships are placed from ONE
+            // source and can never render as two things standing in two different places.
             encounters: combatEncounters,
+            units: combatUnits,
           })}
 
           {/* COMBAT-S4 — the SPATIAL-COMBAT layer, composed by the pure, hook-free `spatialCombatLayer`
