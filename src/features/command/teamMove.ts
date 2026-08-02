@@ -148,6 +148,12 @@ export function buildCommandShipGroupGoArgs(groupId: string, target: GroupGoTarg
 // back at. Both died with the defect. The envelope still carries `carried_rewards`; no copy needs
 // to threaten the player with it.
 //
+// REPOSITION (0311): a third combat-time outcome. When the ordered destination is inside the same
+// danger zone the fight is in, the server MOVES the fleet instead of arming a retreat — the fight
+// continues at the new spot ("repositioning is a tactical move", the owner's rule). The copy says
+// exactly that, plainly: the fleet moved, the fight goes on. No "retreat" wording — nothing broke
+// off — and no journey wording either: the move is immediate, no leg was minted.
+//
 // ONE authority for this copy, composed by every arm that submits a move (the go arm AND the
 // dock arm — the dock arm reaches the same server branch for a fleet ambushed inside a port's
 // territory). Returns null for an ordinary move so the caller keeps its own summary. The envelope
@@ -163,6 +169,9 @@ export function fleetRetreatOutcomeMessage(
   }
   if (outcome === 'retreat_destination_updated') {
     return `${fleetName} will retreat to ${destination} instead.`
+  }
+  if (outcome === 'repositioned') {
+    return `${fleetName} moved to ${destination} — still in the fight.`
   }
   return null
 }
