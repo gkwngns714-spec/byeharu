@@ -58,9 +58,13 @@ begin
      or strpos(v_tick, 'v_reward_metal := round(coalesce(cfg_num(''reward_metal_base''),10) * greatest(loc.reward_tier,1)') = 0 then
     raise exception 'ELITE PROOF FAIL SOURCE: a pinned process_combat_ticks anchor is gone (the tick must be untouched by 0272)';
   end if;
+  -- 0314 repointed this pin 2 -> 3: the tick's known RNG sites are the two wave-seed variance
+  -- rolls (spatial + aggregate arm) plus the PER-HIT damage roll 0314 added inside the fire loop
+  -- ("everytime it deals differently"). The property is unchanged — every RNG site is known and
+  -- counted; anything else is drift.
   v_n := (length(v_tick) - length(replace(v_tick, 'random(', ''))) / length('random(');
-  if v_n <> 2 then
-    raise exception 'ELITE PROOF FAIL SOURCE: process_combat_ticks carries % random( call(s) (want exactly 2)', v_n;
+  if v_n <> 3 then
+    raise exception 'ELITE PROOF FAIL SOURCE: process_combat_ticks carries % random( call(s) (want exactly 3: two wave seeds + the 0314 per-hit roll)', v_n;
   end if;
 
   -- the RESOLVER is deterministic and carries the elite salt + the honest tag.

@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO_ROOT="$(cd "$SC
 tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT"
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_RSFEEL"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -35,7 +35,7 @@ if [ "$MODE" = "selftest" ]; then
   # instead of in CI. Adversarial review found that hole. All three are gated together, not just the
   # newest, because the gap was identical for the two that came before.
   if command -v node >/dev/null 2>&1; then
-    for gen in gen-0305-sortie-authority gen-0306-dock-authority gen-0308-combat-roster-authority gen-0310-hp-auto-exit; do
+    for gen in gen-0305-sortie-authority gen-0306-dock-authority gen-0308-combat-roster-authority gen-0310-hp-auto-exit gen-0314-runescape-combat-feel; do
       # A MISSING generator is a HARD FAIL, not a skip. The first version of this gate wrapped the
       # check in `if [ -f … ]; then … fi`, and adversarial review broke it empirically: hand-edit a
       # generated migration AND delete its generator, and the selftest went green. A refactor that
@@ -123,7 +123,8 @@ if [ "$MODE" = "selftest" ]; then
   #                      one and the later course change is ambushed while holding it (0303).
   #   3. AUTOEXIT      — pg_temp.ae_tick, the one-encounter tick driver (rewinds ONE encounter's
   #                      cadence clock then runs the real engine) that erodes the fleet to its
-  #                      threshold (0310).
+  #                      threshold (0310). RSFEEL (0314) drives its two ticks through the SAME
+  #                      ae_tick — one cadence driver, no fourth call site.
   # Still a real pin: a fourth, unexplained invocation fails here.
   n="$(grep -c 'perform public\.process_combat_ticks();' "$SQL" || true)"
   [ "$n" = "3" ] || fail "expected exactly 3 process_combat_ticks() call sites (PIRATEFIRE + the MANIFESTHELD hunt-fight drain + the AUTOEXIT ae_tick driver), found $n"
@@ -177,13 +178,30 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "did not auto-exit on entry"                            "$SQL" || fail "harness lacks the damaged-re-entry first-tick assert (the compounding-denominator regression)"
   grep -q "the two denominators do not differ"                    "$SQL" || fail "harness lacks the re-entry divergence vacuity guard (entry integrity strictly under capacity)"
   grep -q "differs from its entry integrity"                      "$SQL" || fail "harness lacks the fresh-fleet capacity==entry identity assert"
+  # 0314 — the RuneScape-feel properties, in assert-form (each is RED on the pre-0314 tick body):
+  # the harness OWNS the frozen-now() cooldown world (zeroed knobs) and RSFEEL owns its 3600s one.
+  grep -q "set_game_config('enemy_synthetic_cooldown_seconds', '0'" "$SQL" \
+    || fail "harness lost the zeroed enemy cooldown — with 0314's real cooldowns and txn-frozen now(), every multi-tick fire block (AUTOEXIT above all) would stall"
+  grep -q "set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'" "$SQL" \
+    || fail "harness lost the zeroed fallback cooldown (the frozen-now() precondition)"
+  grep -q "set_game_config('combat_hit_variance_pct',         '0'" "$SQL" \
+    || fail "harness lost the per-hit variance determinism pin — every exact damage number above RSFEEL would flake"
+  grep -q "set_game_config('combat_debug_logging',            'false'" "$SQL" \
+    || fail "harness lost the pinned-dark debug flag — RSFEEL's hitsplat-promotion property would be provable by the wrong flag"
+  grep -q "produced no per-hit hull_damage under EVENT logging"   "$SQL" || fail "harness lacks the visible-hitsplat assert (the pre-0314 red: debug-gated)"
+  grep -q "every same-tick hit carries the same damage"           "$SQL" || fail "harness lacks the per-hit distinct-roll assert (the pre-0314 red: one shared roll per tick)"
+  grep -q "fired again through an unelapsed 3600s cooldown"       "$SQL" || fail "harness lacks the attack-interval assert (the pre-0314 red: armed with bare now())"
+  grep -q "armed with bare now() and the cooldown never reached the clock" "$SQL" || fail "harness lacks the exact now()+cooldown arming pin"
+  grep -q "a zero-cooldown weapon must stay ready every tick"     "$SQL" || fail "harness lacks the fail-open zero-cooldown assert (today's cadence must survive for cooldowns at or under the tick)"
+  grep -q "the wave is too small to exercise the roll spread"     "$SQL" || fail "harness lacks the multi-unit-volley vacuity guard"
+  grep -q "silence would be vacuous"                              "$SQL" || fail "harness lacks the tick-2 silence vacuity guard (live wave, active fight)"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route, command_ship_group_stop and set_group_auto_exit; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 3 known tick call sites; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage, and the 0310 HP auto-exit fires at the player's threshold of REAL CAPACITY and never earlier, never re-requests, completes like a human press, exits a damaged fleet on re-entry (the compounding-denominator regression) and stays silent with the toggle OFF — asserted in assert-form; no random())"
+  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route, command_ship_group_stop and set_group_auto_exit; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 3 known tick call sites; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage, the 0310 HP auto-exit fires at the player's threshold of REAL CAPACITY and never earlier, never re-requests, completes like a human press, exits a damaged fleet on re-entry (the compounding-denominator regression) and stays silent with the toggle OFF, and the 0314 RuneScape feel — a 3600s-cooldown wave holds fire on tick 2 while a zero-cooldown weapon keeps firing, six identical guns roll distinct damage in one tick, every landed hit emits its visible hull_damage under EVENT logging with debug pinned dark, every fired clock armed now()+cooldown exactly — asserted in assert-form; no random())"
   exit 0
 fi
 

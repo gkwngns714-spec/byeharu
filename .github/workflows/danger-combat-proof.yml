@@ -29,6 +29,9 @@ on:
       # 0310 rewrites the combat tick itself (the HP auto-exit arm) and this proof carries its
       # behaviour block (DZCOMBAT_PASS_AUTOEXIT) — auto-exit branches must run it.
       - 'slice-combat-auto-exit**'
+      # 0314 rewrites the combat tick again (real attack intervals + per-hit rolls + the visible
+      # hitsplat) and this proof carries its behaviour block (DZCOMBAT_PASS_RSFEEL).
+      - 'slice-runescape-**'
 
 permissions:
   contents: read

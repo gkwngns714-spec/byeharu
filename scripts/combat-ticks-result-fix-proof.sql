@@ -169,6 +169,14 @@ update public.game_config set value='true'::jsonb where key='spatial_combat_enab
 do $tune$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);   -- determinism (variance≡1)
+  -- 0314: the tick arms REAL weapon cooldowns and now() is txn-frozen — a positive cooldown means
+  -- fire-once-per-proof, which would stall the wave-clear ticks below. This harness asserts the
+  -- fire-every-tick world, so it OWNS that precondition in-txn, zeroed BEFORE anything snapshots a
+  -- cooldown into weapons_json. The cooldown property itself is proven where it is owned:
+  -- danger-combat-proof's RSFEEL block.
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);       -- LOG the pause tick (the whole point)
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
   perform public.set_game_config('enemy_hp_danger_scale', '0'::jsonb);        -- wave total hp independent of danger

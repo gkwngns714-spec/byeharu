@@ -278,6 +278,18 @@ update public.game_config set value='true'::jsonb where key='launch_from_dock_en
 -- a fresh chain — 0050).
 update public.game_config set value='true'::jsonb where key='mainship_send_enabled';
 
+-- 0314: the tick arms REAL weapon cooldowns (next_ready_at = now() + cooldown_seconds), and now()
+-- is txn-frozen — a positive cooldown means a weapon fires at most ONCE per proof run, which would
+-- stall earn_wave's second-tick clear (the player's own fire finishes the 1-hp wave). This harness
+-- asserts the fire-every-tick world, so it OWNS that precondition in-txn, zeroed BEFORE anything
+-- snapshots a cooldown into weapons_json. The cooldown property itself is proven where it is
+-- owned: danger-combat-proof's RSFEEL block.
+do $$
+begin
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+end $$;
+
 -- Fund the fixture wallets BEFORE any additional commission. commission_first_main_ship is free, but
 -- every ADDITIONAL commission DEBITS a price from player_wallet (0091) and fresh fixtures have zero
 -- balance. Kept AFTER the DARK block (which must stay unfunded/unprovisioned) and inside the txn.
