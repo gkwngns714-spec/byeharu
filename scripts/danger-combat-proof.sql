@@ -1642,6 +1642,8 @@ begin
 
   raise notice 'DZCOMBAT_PASS_REPOMODE ok: the site fight''s ADMITTED in-zone order fell through to the retreat exactly as before 0311 — retreat_started, destination (%,%) stored, presence + encounter retreating, fleet/units/anchor unmoved, no leg, and no refusal envelope anywhere',
     ix, iy;
+end $$;
+
 -- ════════ DZCOMBAT_PASS_AUTOEXIT (0310): THE HP AUTO-EXIT, ON THE REAL CHAIN ═════════════════════════
 -- The owner's core combat law, staged end to end: waves are endless by design, so the ONLY good
 -- outcome of a fight is leaving it at the right moment — and until 0310 nothing left automatically.
