@@ -57,8 +57,13 @@
 -- combat_units -> main_ship_instances on main_ship_id. A unit with main_ship_id NULL (legacy
 -- catalog stack) is EXCLUDED, deliberately: every spatial player row is a member row, and a
 -- hypothetical all-catalog roster sums to NULL, so the guard never fires — exactly the pre-0310
--- behaviour, fail closed. No new column: capacity already has one authority (max_hp) and copying
--- it onto combat_encounters would be a second snapshot of the same fact.
+-- behaviour, fail closed. THE ASYMMETRY, NAMED: the numerator (v_hp_after, 0299:956) sums ALL
+-- player rows while this denominator sums member rows only, so a MIXED member+catalog roster
+-- would inflate the ratio and exit LATE or never — that case fails OPEN, unlike the all-catalog
+-- one. No writer can mint a mixed spatial roster today (0301:838-853 seeds member rows only), but
+-- any future writer that adds catalog rows to a spatial player side must widen this sum in the
+-- same slice. No new column: capacity already has one authority (max_hp) and copying it onto
+-- combat_encounters would be a second snapshot of the same fact.
 --
 -- ── WHERE IT FIRES ───────────────────────────────────────────────────────────────────────────────
 -- Inside process_combat_ticks' SPATIAL arm, immediately AFTER the death branch (a dead fleet is
@@ -129,8 +134,11 @@
 --     non-volatile default → metadata-only, no rewrite.
 --   - The tick rewrite is CREATE OR REPLACE — atomic swap; the first tick after commit applies the
 --     rule to every active encounter. No encounter/fleet/presence row is written by this file.
---   - New per-tick cost: ONE single-row indexed join (fleets pk → ship_groups pk) per active
---     encounter per tick, only on ticks that reach the spatial bookkeeping.
+--   - New per-tick cost: TWO queries per active encounter per tick, only on ticks that reach the
+--     spatial bookkeeping — the single-row settings join (fleets pk → ship_groups pk), and, only
+--     when the toggle is on, an aggregate join over the encounter's own combat_units →
+--     main_ship_instances member rows (a handful per fleet, both sides indexed). Plus one
+--     subtransaction per evaluation for the confinement handler below.
 --
 -- ── ROLLBACK ─────────────────────────────────────────────────────────────────────────────────────
 -- Re-apply 0299's process_combat_ticks definition (its section 2, verbatim), then
@@ -142,14 +150,20 @@
 -- or leave the columns and re-emit the tick without the arm.
 --
 -- ── SELF-ASSERT MAP (one DO block per check — the statement number IS the diagnosis) ─────────────
+-- WHAT THESE PROVE, HONESTLY: the tick asserts below establish that the emitted TEXT is what this
+-- migration intended — never that it EXECUTES. plpgsql does not resolve identifiers inside SQL
+-- until first execution, so a body that cannot run (rev.2's ambiguous alias) sails through CREATE
+-- OR REPLACE, every token/ordering/parity probe here, --check, tsc and the whole frontend suite.
+-- Behaviour is proven by exactly one layer: the disposable apply-proof driving the REAL tick
+-- (danger-combat-proof's AUTOEXIT block, which is what caught it).
 --   (a) columns exist with the right types, defaults, and the CHECK is present and validated
 --   (b) the DEPLOYED CHECK, evaluated: rejects NaN/±Infinity/4/96, accepts 5/30/95 — the real
 --       constraint expression is executed against each value, never a re-typed copy of it
 --   (c) set_group_auto_exit exists, is callable, validates, and composes the ONE group resolver
 --   (d) ACLs, each ESTABLISHED here then asserted: the RPC authenticated-only; the tick's execute
 --       revoked from client roles; ship_groups client table-write revoked
---   (e) tick: the auto-exit arm is present, guarded, capacity-based, and composes
---       presence_request_leave ONCE
+--   (e) tick: the auto-exit arm is present, guarded, capacity-based, composes
+--       presence_request_leave ONCE, and carries its own confinement handler
 --   (f) tick: the arm sits after the spatial death branch and before the aggregate arm — every
 --       positional anchor must EXIST or the check fails (absence is failure, not a pass)
 --   (g) tick: no second retreat authority was acquired (no direct status/event/timestamp writes)
@@ -436,6 +450,20 @@ begin
                 perform presence_request_leave(e.presence_id);
               end if;
             end if;
+          -- CONFINEMENT: a defect in the SAFETY LINE must never void COMBAT ITSELF. Without this
+          -- handler a raise here lands in the 0206 per-encounter guard, which downgrades it to a
+          -- warning and rolls back the encounter's ENTIRE tick — wave spawn, damage, rewards —
+          -- every 3 seconds for every enabled fleet, while process_combat_ticks keeps returning
+          -- normally and nothing alerts. The rev.2 alias bug demonstrated exactly that shape in
+          -- CI. So the arm carries its own subtransaction: its failure skips the auto-exit for
+          -- THIS tick (warned, retried next tick) and the fight continues undamaged.
+          -- query_canceled re-raises, exactly as the outer guard treats it — a cancellation must
+          -- kill the run, never be eaten as a skipped feature.
+          exception
+            when query_canceled then raise;
+            when others then
+              raise warning 'auto-exit skipped for encounter % (the fight continues; retried next tick): %',
+                e.id, sqlerrm;
           end;
         end if;
 
@@ -610,7 +638,8 @@ begin
   end if;
 end $d$;
 
--- (e) tick: the auto-exit arm is present, guarded, and composes presence_request_leave ONCE
+-- (e) tick: the auto-exit arm is present, guarded, capacity-based, confined, and composes
+--     presence_request_leave ONCE
 do $e$
 declare v_code text; v_n integer;
 begin
@@ -650,6 +679,19 @@ begin
   end if;
   if position('auto_exit_enabled' in v_code) = 0 or position('auto_exit_hp_pct' in v_code) = 0 then
     raise exception '0310 ASSERT (e) FAIL: the tick does not read the group''s auto-exit setting';
+  end if;
+  -- THE CONFINEMENT HANDLER. Without it, any defect in this arm reaches the 0206 per-encounter
+  -- guard and silently voids the encounter's WHOLE tick — combat stops progressing for every
+  -- enabled fleet while the cron keeps returning normally (rev.2 demonstrated it in CI). The
+  -- arm's own handler must exist, and it must re-raise query_canceled exactly as the outer guard
+  -- does: exactly TWO such re-raise lines in the body (the outer 0206 one, and the arm's own).
+  if position('auto-exit skipped for encounter' in v_code) = 0 then
+    raise exception '0310 ASSERT (e) FAIL: the arm''s confinement handler is gone — a defect in the safety line would void the combat tick itself for every enabled fleet';
+  end if;
+  v_n := (length(v_code) - length(replace(v_code, 'when query_canceled then raise;', '')))
+         / length('when query_canceled then raise;');
+  if v_n <> 2 then
+    raise exception '0310 ASSERT (e) FAIL: % query_canceled re-raise line(s), want exactly 2 (the outer 0206 guard''s and the arm''s own) — the confinement handler must never eat a cancellation', v_n;
   end if;
 end $e$;
 

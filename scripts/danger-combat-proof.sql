@@ -1356,10 +1356,12 @@ begin
   -- it must equal the entry integrity, and that identity is asserted so the fresh-fleet loop below
   -- is knowingly testing both denominators at once; the damaged re-entry afterwards is where they
   -- part ways and the capacity one is proven to be the one in charge.
+  -- alias u, mirroring the 0310 arm: cu is exactly the alias that was ambiguous inside the tick
+  -- (a declared record variable there), and the one alias worth removing on sight everywhere.
   select sum(msi.max_hp)::double precision into v_cap
-    from public.combat_units cu
-    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
-   where cu.encounter_id = v_enc and cu.side = 'player' and cu.main_ship_id is not null;
+    from public.combat_units u
+    join public.main_ship_instances msi on msi.main_ship_id = u.main_ship_id
+   where u.encounter_id = v_enc and u.side = 'player' and u.main_ship_id is not null;
   if v_cap is null or v_cap <= 0 then
     raise exception 'AUTOEXIT FAIL: no capacity resolved for group A''s encounter (member units missing?)';
   end if;
@@ -1497,9 +1499,9 @@ begin
   -- capacity. Equal values would mean this scenario cannot tell the two denominators apart.
   select player_integrity_max into v_imax3 from public.combat_encounters where id = v_enc3;
   select sum(msi.max_hp)::double precision into v_cap3
-    from public.combat_units cu
-    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
-   where cu.encounter_id = v_enc3 and cu.side = 'player' and cu.main_ship_id is not null;
+    from public.combat_units u
+    join public.main_ship_instances msi on msi.main_ship_id = u.main_ship_id
+   where u.encounter_id = v_enc3 and u.side = 'player' and u.main_ship_id is not null;
   if v_cap3 is null or v_imax3 is null or v_imax3 >= v_cap3 then
     raise exception 'AUTOEXIT FAIL: entry integrity % is not strictly below capacity % — the two denominators do not differ and the re-entry proves nothing', v_imax3, v_cap3;
   end if;
