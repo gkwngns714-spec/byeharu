@@ -1702,6 +1702,13 @@ begin
   v_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
   select public.osn_distance(e.pos_x, e.pos_y, c.pos_x, c.pos_y) into d_pre
     from public.combat_units e, public.combat_units c where e.id = u_esc and c.id = u_cmd;
+  -- NULL IS FAILURE, not a pass. combat_units.pos_x/pos_y are NULLABLE (0234:173), so an
+  -- unpositioned row makes osn_distance NULL, `abs(NULL - v_ring) > 0.01` NULL, and this whole spawn
+  -- pin silently vacuous. Every positional comparison in this block is null-pinned for that reason
+  -- (same defect class as the position(x in NULL) probe found on this chain).
+  if d_pre is null then
+    raise exception 'CLOSURE FAIL: the escort/command distance is NULL — one of them is unpositioned, so the spawn-ring pin would prove nothing';
+  end if;
   if abs(d_pre - v_ring) > 0.01 then
     raise exception 'CLOSURE FAIL: escort spawned % from the command ship (want the % ring)', d_pre, v_ring;
   end if;
@@ -1731,18 +1738,34 @@ begin
   if n < 1 then raise exception 'CLOSURE FAIL: the command ship (dist 0) did not fire on tick 1 — the fight no longer starts instantly'; end if;
 
   -- tick 1, the escort and the pirate both MOVED (the first observed movement in a real fight)...
+  -- Every operand is null-pinned FIRST. `x is not distinct from NULL` is FALSE for any real number,
+  -- so a NULL on either side of these comparisons would skip the raise and pass an assert that
+  -- proved nothing — the exact shape that let a moved/unmoved check go vacuous elsewhere on this
+  -- chain. Absence of a coordinate is failure here, never evidence of movement.
   select pos_x, pos_y into ex1, ey1 from public.combat_units where id = u_esc;
-  if ex1 is not distinct from ex0 and ey1 is not distinct from ey0 then
+  if ex0 is null or ey0 is null or ex1 is null or ey1 is null then
+    raise exception 'CLOSURE FAIL: the escort has a NULL coordinate (pre %,% / post %,%) — an unpositioned unit cannot prove it moved', ex0, ey0, ex1, ey1;
+  end if;
+  if ex1 = ex0 and ey1 = ey0 then
     raise exception 'CLOSURE FAIL: the escort did not move on tick 1 (still at %,%) — the CLOSE arm never ran', ex0, ey0;
   end if;
   select engagement_x, engagement_y into nx0, ny0 from public.combat_encounters where id = v_enc;
   select pos_x, pos_y into nx1, ny1 from public.combat_units where id = u_en;
-  if nx1 is not distinct from nx0 and ny1 is not distinct from ny0 then
+  if nx0 is null or ny0 is null then
+    raise exception 'CLOSURE FAIL: the encounter carries no engagement anchor (engagement_x/y is NULL) — the spawn point this assert compares against does not exist';
+  end if;
+  if nx1 is null or ny1 is null then
+    raise exception 'CLOSURE FAIL: the pirate has a NULL position after tick 1 — an unpositioned enemy cannot prove it moved off the anchor';
+  end if;
+  if nx1 = nx0 and ny1 = ny0 then
     raise exception 'CLOSURE FAIL: the pirate did not move off its spawn anchor on tick 1 — the enemy CLOSE arm never ran';
   end if;
   -- ...toward each other: the gap after tick 1 is smaller than the spawn ring.
   select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_t1
     from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
+  if d_t1 is null then
+    raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is NULL — the closure comparison would be vacuous';
+  end if;
   if d_t1 >= v_ring then
     raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is % (want < the % spawn gap) — they are not closing', d_t1, v_ring;
   end if;
@@ -1759,6 +1782,12 @@ begin
     exit when v_esc_fire_tick is not null and v_en_fire_tick is not null;
     select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_pre
       from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
+    -- null-pinned like every other distance here: a NULL d_pre would make both `d_pre > v_r_esc`
+    -- (the silent-tick counter) and the later `v_esc_fire_dist > v_r_esc + 1e-6` range check NULL,
+    -- so the whole approach would be measured against nothing and still report PASS.
+    if d_pre is null then
+      raise exception 'CLOSURE FAIL: the escort-pirate pre-move distance is NULL on tick % — an unpositioned unit makes every range check in the approach vacuous', i;
+    end if;
     perform pg_temp.ae_tick(v_enc);
     select tick_number into v_tick from public.combat_encounters where id = v_enc;
     if v_esc_fire_tick is null then

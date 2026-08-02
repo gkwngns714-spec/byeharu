@@ -27,13 +27,25 @@
 -- Enemy range = 18 + 0.2·difficulty. At the LIVE difficulties (Snare 10, Reaver 15, Blackden 25):
 -- 20 / 21 / 23. At the hidden, power-gated Ember tier (40/50/60): 26 / 28 / 30.
 --   • The player's basic gun (25) STRICTLY out-ranges every live pirate (max 23). This is
---     load-bearing, not flavour: enemy move_speed is 3 + 0.2·difficulty = 5–8 at live sites, while
---     player in-combat move_speed is the hull's base_speed ≈ 0.8–1.3 (0043:39, 0185:143,147,
---     0122:259). The kite arm retreats a unit to its own range edge, capped by its speed — so ANY
---     enemy whose range exceeded the player's would hold the standoff forever (its 5–8 speed beats
---     the player's ~1) and the player would take fire without ever landing a shot. An earlier draft
---     of this slice proposed per_difficulty = 1 (enemy 30/35/45 at live sites, above every player
---     range) — rejected on exactly that arithmetic.
+--     load-bearing, not flavour — THE STANDOFF ARITHMETIC, re-derived from the code rather than
+--     asserted (enemy move_speed is 3 + 0.2·difficulty = 5–8 at live sites; player in-combat
+--     move_speed is the hull's base_speed ≈ 0.8–1.3 — 0043:39, 0185:143,147, 0122:259):
+--       – Every unit moves from a snapshot frozen BEFORE any movement is applied (0299:802-813), so
+--         within one tick the two moves are SIMULTANEOUS: the distance change is (enemy step) −
+--         (player step), both measured from the same pre-move distance d.
+--       – The KITE step is `least(v_e, R_e − d)` (0234:250-251): a kiter may never retreat past its
+--         OWN range edge. The player, out-ranged, CLOSEs by its full v_p (0234:248-249).
+--       – So d ↦ d + least(v_e, R_e − d) − v_p, which has a STABLE FIXED POINT at d* = R_e − v_p
+--         whenever v_e ≥ v_p: at d*, the cap re-opens by exactly the v_p the player just closed, so
+--         the kiter recovers it every tick, forever. Worked, R_e=30 / R_p=25 / v_p=1: an escort
+--         spawned on the 30 ring is kited to 29 and stays at 29 for every tick of the fight.
+--       – The player's fire gate is `pre-move distance ≤ its own range` (0299:872-873). It therefore
+--         NEVER lands a shot while R_e − v_p > R_p — i.e. whenever the enemy out-ranges the player
+--         by more than the player's own per-tick speed (~1). It is the enemy's RANGE that builds
+--         the wall; its speed only has to be ≥ the player's for the wall to hold.
+--     An earlier draft of this slice proposed per_difficulty = 1 (enemy 30/35/45 at live sites,
+--     4–20 units above the 25 gun — far beyond the ~1 tolerance): a permanent standoff in which the
+--     player takes fire without ever landing a shot. Rejected on exactly that arithmetic.
 --   • Mk-II (30) out-ranges everything up to and including the deepest hidden site (The Furnace,
 --     d=60 → 30) — the upgrade keeps a real edge everywhere.
 --   • The 30-unit spawn ring now sits ABOVE every live range: escorts and enemies must close before
@@ -80,6 +92,18 @@
 -- self-asserts below then ABORT the migration rather than let a silent no-op ship. A later owner
 -- retune can never be clobbered by replaying this file.
 --
+-- ── WHY THE EXPLICIT TRANSACTION BLOCK (the same guard every sibling carries: 0308:153-156,
+--    0310:174-177, 0311:202-205, 0312:107-110) ──────────────────────────────────────────────────────
+-- This file writes public.game_config and public.module_types — the two tables read by EVERY combat
+-- tick (0299) and every fitting RPC, on a LIVE ~30-player production. Without `set local
+-- lock_timeout`, an UPDATE that meets a concurrent tick's row lock waits INDEFINITELY, and a
+-- migration hung inside `supabase db push` blocks every migration after it. 5s fails fast instead;
+-- the deploy is then re-run in a quiet window. `statement_timeout` bounds the self-asserts the same
+-- way, and `time zone 'UTC'` pins the `now()` the description `updated_at` stamps carry.
+-- The block is also what makes `create temp table … on commit drop` (below) mean anything: outside an
+-- explicit transaction each statement is its own txn, so the capture table would be dropped before
+-- the asserts that read it ever ran.
+--
 -- Forward-only: 0001–0310 unedited. 0311 (reposition-in-zone) and 0312 (no-living-ships) are in
 -- flight on sibling branches; both re-create plpgsql and neither writes these config keys or
 -- module_types rows — verified by grepping both branches' migration files on origin
@@ -87,6 +111,11 @@
 -- or catalog row this file touches. All three slices DO append blocks to
 -- scripts/danger-combat-proof.{sql,sh} — an ordinary textual merge at integration time, not a
 -- semantic conflict.
+
+begin;
+set local time zone 'UTC';
+set local lock_timeout = '5s';
+set local statement_timeout = '120s';
 
 -- ── 0) CAPTURE the deliberately-untouched values BEFORE any write (derived, never hard-coded) ──────
 create temp table _0313_before (k text primary key, v text) on commit drop;
@@ -123,8 +152,8 @@ update public.game_config
                      'base_difficulty=0 (world units). Cut 120->18 so ranges fit inside the pirate '
                      'zones (29-79 units across) and the CLOSE/KITE movement arms actually run; with '
                      '_per_difficulty this stays strictly under the player basic gun at every LIVE '
-                     'difficulty, because enemies (speed 3+0.2d) would otherwise kite the slower '
-                     '(~1 speed) player forever.',
+                     'difficulty: a longer-ranged kiter settles at the fixed distance (its own range '
+                     '- the player speed) and the ~1-speed player then never lands a shot at all.',
        updated_at = now()
  where key = 'enemy_synthetic_range_base' and value = '120'::jsonb;
 
@@ -196,10 +225,23 @@ end $$;
 
 -- (c) mining_rig_extension is BYTE-UNTOUCHED (compared to the pre-write capture, never a hard-coded
 --     expectation) and is still NOT a firing weapon.
+--     ABSENCE IS FAILURE, not a pass: if the row were gone, the pre-write capture at the top would
+--     have inserted ZERO rig_* rows, the comparison below would join against nothing and yield NULL,
+--     `select * into t` would leave t all-NULL, and module_is_firing_weapon(t) would raise nothing —
+--     the whole assert would pass while the mining extraction radius had vanished. Both the row and
+--     the capture are therefore pinned first. (Compare (b), where a vanished gun row already aborts
+--     because NULL IS DISTINCT FROM 25.)
 do $$
-declare t public.module_types; v_bad text;
+declare t public.module_types; v_bad text; v_n int;
 begin
+  select count(*) into v_n from _0313_before where k like 'rig\_%' escape '\';
+  if v_n <> 5 then
+    raise exception '0313 ASSERT (c) FAIL: the pre-write capture holds % mining_rig_extension attribute(s) (want 5) — the catalog row was already absent BEFORE this migration wrote anything, so the byte-comparison below would prove nothing', v_n;
+  end if;
   select * into t from public.module_types where id = 'mining_rig_extension';
+  if not found then
+    raise exception '0313 ASSERT (c) FAIL: module_types row mining_rig_extension is GONE — the mining EXTRACTION radius (slot_type=mining, 0229 §5) this migration must never touch no longer exists';
+  end if;
   select string_agg(b.k || ': ' || b.v || ' -> ' || cur.v, '; ') into v_bad
     from _0313_before b
     join (values ('rig_range',            t.range::text),
@@ -232,9 +274,21 @@ begin
 end $$;
 
 -- (e) the guns' non-range attributes are byte-unchanged (power/projectile_speed/cooldown/slot).
+--     Same absence-is-failure pin as (c): a vanished gun row would empty one side of the join and
+--     the comparison would pass vacuously. BOTH sides are counted first — 2 guns x 4 attributes = 8.
 do $$
-declare v_bad text;
+declare v_bad text; v_n int; v_cur int;
 begin
+  select count(*) into v_n from _0313_before where k like 'gun\_%' escape '\';
+  if v_n <> 8 then
+    raise exception '0313 ASSERT (e) FAIL: the pre-write capture holds % gun attribute(s) (want 8 = 2 guns x 4 attributes) — a gun catalog row was already absent BEFORE this migration wrote anything, so the comparison below would prove nothing', v_n;
+  end if;
+  select count(*) into v_cur
+    from public.module_types
+   where id in ('autocannon_battery','autocannon_battery_mk2');
+  if v_cur <> 2 then
+    raise exception '0313 ASSERT (e) FAIL: % of the 2 gun catalog rows survive this migration — a firing-weapon row VANISHED', v_cur;
+  end if;
   select string_agg(b.k || ': ' || b.v || ' -> ' || cur.v, '; ') into v_bad
     from _0313_before b
     join (select 'gun_' || id || '_' || key as k, value as v from (
@@ -253,22 +307,69 @@ end $$;
 --     actually carries — the arithmetic in the header, executed rather than trusted:
 --       1. fallback range == basic gun range (one basic-weapon tier, two spellings);
 --       2. Mk-II strictly out-ranges the basic gun;
---       3. the basic gun strictly out-ranges the synthetic pirate at EVERY active hunt site
---          (otherwise the faster enemy kites the ~1-speed player forever — the standoff bug);
---       4. the escort spawn ring strictly exceeds the pirate's range at every active hunt site
+--       3. the basic gun strictly out-ranges the synthetic pirate at EVERY difficulty either spawn
+--          arm can actually mint (otherwise the standoff bug — see the header's fixed-point
+--          derivation: a kiter settles at its own range minus the player's speed, forever);
+--       4. the escort spawn ring strictly exceeds that same worst-case pirate range
 --          (the spawn gap forces closure — the mechanic this slice unlocks);
 --       5. Mk-II covers the ring (a Mk-II escort fires from its formation slot on tick 1).
+--
+--     ⚠ BOTH SPAWN ARMS, not just one. `enemy range = base + per_difficulty × D` is evaluated in TWO
+--     places and D comes from a DIFFERENT source in each:
+--       • SYNTHETIC arm (0299:756-757): D = the LOCATION's own `locations.base_difficulty`.
+--       • RESOLVED arm (0299:705-706): D = the PER-UNIT `base_difficulty` carried by the encounter
+--         plan, which resolve_location_encounter materialises from `enemy_archetypes.base_difficulty`
+--         (0272:245) and, for the units that roll ELITE, from base_difficulty ×
+--         `encounter_elite_difficulty_multiplier` (read at 0272:208, applied at 0272:256; seeded 2 at
+--         0272:75). Those archetypes are seeded with difficulties of their OWN — pirate_light 10 and
+--         pirate_heavy 25 (0257:992-993) — that no location column constrains. An elite pirate_heavy
+--         is effective difficulty 50, i.e. range 18 + 0.2·50 = 28, which would be ABOVE the 25 basic
+--         gun while a location-only max saw nothing at all. Reading only the synthetic arm made (f3)
+--         and (f4) blind to exactly the arm that can break them.
+--     REACHABILITY for the resolved arm is the live binding chain the resolver itself walks, so this
+--     can never fail on authored-but-unreachable content: ACTIVE binding (0272:141-147) → ACTIVE
+--     profile (0272:160-161) → its members → ACTIVE fleet template (0272:195) → its members → ACTIVE
+--     archetype (0272:224), at an ACTIVE location (0272:134). The elite multiplier is applied only
+--     where the member's authored `elite_chance > 0` (0272:230-241) — elite_chance 0 mints no elite
+--     entry at all, so it must not inflate the bound.
+--     ASSERTED UNCONDITIONALLY, not under the resolver's quad flag (0272:126-131): those flags are a
+--     runtime toggle written by set_game_config with no migration, so gating on them would let a
+--     later flip walk straight past this invariant with nothing checking it. The CONTENT has to fit
+--     the ranges whether the resolver is lit today or lit tomorrow.
 do $$
 declare
   v_basic numeric; v_mk2 numeric; v_fallback numeric; v_ring numeric;
-  v_maxd  numeric; v_enemy_max numeric;
+  v_maxd  double precision; v_maxd_syn double precision; v_maxd_res double precision;
+  v_elite_mult double precision; v_arm text; v_enemy_max numeric;
 begin
   select range into v_basic from public.module_types where id = 'autocannon_battery';
   select range into v_mk2   from public.module_types where id = 'autocannon_battery_mk2';
   v_fallback := public.cfg_num('combat_player_fallback_weapon_range');
   v_ring     := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
-  select coalesce(max(base_difficulty), 0) into v_maxd
+
+  -- ARM 1 — the SYNTHETIC wave: the location's own difficulty.
+  select coalesce(max(base_difficulty), 0) into v_maxd_syn
     from public.locations where status = 'active' and activity_type = 'hunt_pirates';
+
+  -- ARM 2 — the RESOLVED wave: the archetype difficulty reachable through a LIVE binding, amplified
+  --          by the elite multiplier exactly where an elite can roll.
+  v_elite_mult := greatest(1.0, coalesce(public.cfg_num('encounter_elite_difficulty_multiplier'), 2));
+  select coalesce(max(a.base_difficulty
+                      * case when coalesce(fm.elite_chance, 0) > 0 then v_elite_mult else 1.0 end), 0)
+    into v_maxd_res
+    from public.location_encounter_bindings b
+    join public.locations l                     on l.id  = b.location_id and l.status = 'active'
+    join public.encounter_profiles ep           on ep.id = b.encounter_profile_id and ep.active is true
+    join public.encounter_profile_members pm    on pm.encounter_profile_id = ep.id
+    join public.enemy_fleet_templates ft        on ft.id = pm.fleet_template_id and ft.active is true
+    join public.enemy_fleet_template_members fm on fm.fleet_template_id = ft.id
+    join public.enemy_archetypes a              on a.id = fm.enemy_archetype_id and a.active is true
+   where b.active is true;
+
+  v_maxd := greatest(v_maxd_syn, v_maxd_res);
+  v_arm  := case when v_maxd_res > v_maxd_syn
+                 then format('the RESOLVED arm (encounter plan; synthetic arm tops out at %s)', v_maxd_syn)
+                 else format('the SYNTHETIC arm (location base_difficulty; resolved arm tops out at %s)', v_maxd_res) end;
   v_enemy_max := public.cfg_num('enemy_synthetic_range_base')
                + v_maxd * public.cfg_num('enemy_synthetic_range_per_difficulty');
   if v_fallback is distinct from v_basic then
@@ -278,12 +379,12 @@ begin
     raise exception '0313 ASSERT (f2) FAIL: Mk-II range % does not exceed the basic gun''s % — the upgrade lost its edge', v_mk2, v_basic;
   end if;
   if v_enemy_max >= v_basic then
-    raise exception '0313 ASSERT (f3) FAIL: enemy range at the hardest ACTIVE hunt site (difficulty %) is % >= the basic gun''s % — the faster enemy would kite the player forever',
-      v_maxd, v_enemy_max, v_basic;
+    raise exception '0313 ASSERT (f3) FAIL: the worst spawnable enemy range is % (difficulty %, from %) >= the basic gun''s % — a kiter at that range would settle at (its range - the player''s ~1 speed) and the player would never land a shot',
+      v_enemy_max, v_maxd, v_arm, v_basic;
   end if;
   if v_ring <= v_enemy_max then
-    raise exception '0313 ASSERT (f4) FAIL: the % spawn ring is inside the enemy''s % range at difficulty % — enemies reach escorts on tick 1 and nothing ever closes',
-      v_ring, v_enemy_max, v_maxd;
+    raise exception '0313 ASSERT (f4) FAIL: the % spawn ring is inside the worst spawnable enemy range % (difficulty %, from %) — enemies reach escorts on tick 1 and nothing ever closes',
+      v_ring, v_enemy_max, v_maxd, v_arm;
   end if;
   if v_mk2 < v_ring then
     raise exception '0313 ASSERT (f5) FAIL: Mk-II range % is under the % ring — a Mk-II escort could not fire from its formation slot', v_mk2, v_ring;

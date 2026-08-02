@@ -191,6 +191,16 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the fire gate is not honouring the cut range"          "$SQL" || fail "harness lacks the first-shot-within-own-range assert"
   grep -q "no silent closing tick before it"                      "$SQL" || fail "harness lacks the closure non-vacuity guard (at least one silent approach tick)"
   grep -q "the out-range order inverted"                          "$SQL" || fail "harness lacks the longer-range-fires-first assert"
+  # 0313 rev.2 — NULL-VACUITY PINS. combat_units.pos_x/pos_y and combat_encounters.engagement_x/y are
+  # all NULLABLE, and `x is not distinct from NULL` is FALSE for any real number — so a missing
+  # coordinate made the moved/closing asserts pass while proving nothing. Absence is failure now, and
+  # these greps are what stops the pins being quietly removed again.
+  grep -q "cannot prove it moved"                                 "$SQL" || fail "harness lacks the escort NULL-coordinate pin (a moved-assert against NULL is vacuous)"
+  grep -q "the spawn point this assert compares against does not exist" "$SQL" || fail "harness lacks the engagement-anchor NULL pin"
+  grep -q "an unpositioned enemy cannot prove it moved off the anchor" "$SQL" || fail "harness lacks the pirate NULL-position pin"
+  grep -q "the closure comparison would be vacuous"               "$SQL" || fail "harness lacks the tick-1 gap NULL pin"
+  grep -q "makes every range check in the approach vacuous"       "$SQL" || fail "harness lacks the approach-loop pre-move-distance NULL pin"
+  grep -q "the spawn-ring pin would prove nothing"                "$SQL" || fail "harness lacks the spawn-ring distance NULL pin"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
