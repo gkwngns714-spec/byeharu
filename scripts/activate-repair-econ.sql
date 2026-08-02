@@ -38,11 +38,12 @@
 -- upsert to the same value; no other state is touched. No path double-applies.
 --
 -- ── NO SEPARATE CLIENT PR IS NEEDED ──────────────────────────────────────────────────────────────
---   The RepairPanel ships (dark) in THIS slice's client PR, already mounted on the Port screen main
---   rail (PortScreen.tsx, the SalvageMarketPanel neighbour) and gated on the SAME server flag it reads
---   from public game_config — flag false → it renders null (production byte-unchanged). The moment
---   this script commits, the panel's next docked-Port read sees repair_economy_enabled=true and the
---   Repair desk appears. There is NO compile constant to flip (no REPAIR_* in osnReleaseGates.ts).
+--   The RepairPanel (REPAIR-WHERE-YOU-ARE: mounted in the Fitting tab's per-ship condition block —
+--   src/features/ship/RepairPanel.tsx via FittingDetail; the former Port-rail mount is retired) is
+--   gated on the SAME server flag it reads from public game_config — flag false → it renders null
+--   (production byte-unchanged). The moment this script commits, the panel's next read sees
+--   repair_economy_enabled=true and the mend appears on every damaged DOCKED ship's Fitting detail.
+--   There is NO compile constant to flip (no REPAIR_* in osnReleaseGates.ts).
 --
 -- ── WHAT IT DELIBERATELY DOES NOT TOUCH ──────────────────────────────────────────────────────────
 --   • repair_receipts / main_ship_instances rows — NEVER written by this script (its only direct
@@ -200,14 +201,15 @@ begin
   raise notice 'ACTIVATE_REPAIR_PASS_SMOKE ok: flag committed true, knob sane, paid RPC gate OPEN (advances to ship_not_found for a no-ship subject, zero writes), receipts selectable, free safelock still ungated';
 end $$;
 
-select 'REPAIR ACTIVATION PASS — the paid hull-repair economy is LIVE server-side (repair_ship_hull_at_port no longer gate-rejects). NO separate client PR is needed: the RepairPanel ships dark in this slice and mounts on the Port screen main rail gated on repair_economy_enabled (read from public game_config); it appears the moment this commits, on the next docked-Port render. The FREE destroyed-ship safelock (repair_main_ship) is UNCHANGED and ungated. Players dock a DAMAGED ship, see the hull bar + cost, and pay hp_restored × repair_credits_per_hp (0.5) to mend the hull (full or partial); destroyed ships still recover free.' as result;
+select 'REPAIR ACTIVATION PASS — the paid hull-repair economy is LIVE server-side (repair_ship_hull_at_port no longer gate-rejects). NO separate client PR is needed: the RepairPanel mounts in the Fitting tab''s per-ship condition block (REPAIR-WHERE-YOU-ARE) gated on repair_economy_enabled (read from public game_config); it appears the moment this commits, on the next Fitting render of a damaged DOCKED ship. The FREE destroyed-ship safelock (repair_main_ship) is UNCHANGED and ungated. Players select a damaged docked ship in Fitting, see the mend + cost under its hull meter, and pay hp_restored × repair_credits_per_hp (0.5) to mend the hull (full or partial); destroyed ships still recover free.' as result;
 
 commit;
 
 -- ════════════════════════════════ ROLLBACK (manual; commented out) ════════════════════════════════
 -- To dark the paid-repair surface again, run the reverse write below (uncomment, run once). Notes:
 --   • FLAG-ONLY: repair_economy_enabled → false. The paid RPC rejects gate-first again
---     (repair_economy_disabled) and the RepairPanel fails closed to null on its next read.
+--     (repair_economy_disabled) and the RepairPanel (Fitting condition block) fails closed to null
+--     on its next read.
 --   • Past repairs STAND: repair_receipts rows and healed hp are never reverted (they were paid for).
 --   • The FREE safelock (repair_main_ship) is unaffected either way — it never read the flag.
 --
