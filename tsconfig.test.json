@@ -3,7 +3,13 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
-    "types": ["node", "vite/client"],
+    /* IDENTICAL to tsconfig.app.json's `types`, deliberately. An earlier draft carried "node" as
+       well, on the belief it was load-bearing; it is not — removing it yields ZERO errors. Its only
+       effect was to put process/Buffer/__dirname in ambient scope for every spec, holding tests to a
+       LOOSER bar than src on exactly the axis the "same rules as the source it imports" argument
+       exists to rule out. If a future config file here genuinely needs Node globals, give them to
+       THAT file — never re-widen the whole test surface for one of them. */
+    "types": ["vite/client"],
     "module": "esnext",
     "skipLibCheck": true,
 
@@ -24,5 +30,10 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["tests", "playwright.config.ts"]
+  /* BOTH playwright configs, not just the default one. playwright.osnui.config.ts is a live CI
+     entrypoint (.github/workflows/phase9-dock-services-ui-proof.yml:40) and is the config that RUNS
+     tests/dockServicesUi.uispec.ts — the very file this gate exists to start covering. Leaving it out
+     would have made the gate cover the test but not the thing that runs it. If another
+     playwright.*.config.ts is ever added, it belongs here on the same day. */
+  "include": ["tests", "playwright.config.ts", "playwright.osnui.config.ts"]
 }
