@@ -23,6 +23,9 @@ on:
       # every intercept-touching branch, so it must fire on them.
       - 'wt-intercept**'
       - 'slice-intercept**'
+      # 0308 rewrites the encounter builder + the ambush resolver — roster-touching branches must
+      # run the intercept apply-and-behaviour gate too.
+      - 'slice-combat-roster**'
 
 permissions:
   contents: read

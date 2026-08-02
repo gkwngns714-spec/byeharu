@@ -57,6 +57,15 @@
 --                              pos_x/pos_y and the command ship carries its fitted weapon range.
 --   DZCOMBAT_PASS_PIRATEFIRE — after one process_combat_ticks(): a synthetic pirate spawned, FIRED a
 --                              spatial missile_salvo, and took real damage back.
+--   DZCOMBAT_PASS_ROSTERAUTH — (0308) a ship UNASSIGNED after a concluded fight is NOT seeded into
+--                              the fleet's next ambush — it keeps its berth, status, hp — while the
+--                              ship still on the roster IS seeded; the re-ambush freeze REPLACED the
+--                              fleet's snapshot (stale row released, live membership frozen).
+--   DZCOMBAT_PASS_RIGFALLBACK — (0308) a ship whose ONLY fitted module is a mining rig gets the 0262
+--                              fallback weapon derived from its own attack (power = attack x knob),
+--                              never the rig's power-8 entry: a rig is not a gun.
+--   DZCOMBAT_PASS_FITTEDEXACT — (0308) a ship with a REAL weapon fitted carries exactly its catalog
+--                              weapon entry — alone, field-for-field — and no fallback entry.
 --
 -- Self-rolling-back (begin;…rollback;, no COMMIT); every dark flag flipped ONLY inside the txn;
 -- provisioning is 100% real-RPC; group_sortie_members and combat_units are NEVER hand-written.
@@ -794,6 +803,319 @@ begin
     n_after, v_enc2;
 end $$;
 
+
+-- ════════ DZCOMBAT_PASS_ROSTERAUTH (0308): THE COMBAT ROSTER IS LIVE MEMBERSHIP ══════════════════════
+-- Production's destruction sequence, staged for real and inverted into assertions: a fleet fights,
+-- the fight CONCLUDES, the player unassigns one ship (legal — the sortie is closed), and the fleet
+-- is ambushed again. Pre-0308 the idempotent freeze inserted nothing, the unfiltered roster kept the
+-- departed ship, and the builder seeded it into combat_units — a ship berthed at a port, dragged
+-- into someone else's fight and destroyed on defeat. Post-0308 the re-ambush freeze REPLACES the
+-- fleet's snapshot (the one release idiom) and the builder seeds live membership only.
+--
+-- A SECOND fixture player: uZ's three team slots are all spent (group_index <= 3), and an isolated
+-- world makes the "untouched bystander ship" assertion airtight. Provisioning is 100% real-RPC.
+-- STAGING LEGS FLY UNDER risk 0 (the proof owns its preconditions): the trip back to port must not
+-- roll an ambush of its own; the knobs return to 1.0 for the leg under test.
+do $$
+declare
+  r jsonb; n int;
+  uZ uuid := (select v from dzc where k='uZ');
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  uL uuid; s_l uuid; s_d uuid; gL uuid; v_port uuid;
+  v_fleet uuid; v_mv uuid; v_enc uuid; v_enc2 uuid;
+  f_x double precision; f_y double precision; t_x double precision; t_y double precision;
+  v_verts jsonb;
+  v_hp_before double precision; v_atk_before double precision;
+  d_status text; d_hp integer;
+  pi record; mv record;
+begin
+  -- ── a second fixture player, funded like the first ───────────────────────────────────────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzl.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uL;
+  insert into dzc values ('uL', uL);
+  insert into public.player_wallet (player_id, balance) values (uL, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+
+  -- ── two ships, one team, command designated — the real RPCs only ─────────────────────────────────
+  r := pg_temp.call_as(uL, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: first ship: %', r; end if;
+  select main_ship_id into s_l from public.main_ship_instances where player_id = uL;
+  select berth_location_id into v_port from public.main_ship_instances where main_ship_id = s_l;
+  if v_port is null then raise exception 'ROSTERAUTH FAIL: the commissioned ship has no berth port'; end if;
+  r := pg_temp.call_as(uL, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: second ship: %', r; end if;
+  select main_ship_id into s_d from public.main_ship_instances
+   where player_id = uL and main_ship_id <> s_l limit 1;
+  if s_d is null then raise exception 'ROSTERAUTH FAIL: no second ship materialised'; end if;
+  insert into dzc values ('uL_s_l', s_l), ('uL_s_d', s_d);
+
+  r := pg_temp.call_as(uL, 'public.upsert_ship_group(1, ''Roster L'')');
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: group: %', r; end if;
+  gL := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uL, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s_l, gL));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: assign s_l: %', r; end if;
+  r := pg_temp.call_as(uL, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s_d, gL));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: assign s_d: %', r; end if;
+  r := pg_temp.call_as(uL, format('public.set_fleet_command_ship(%L::uuid, true)', s_l));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: designate command: %', r; end if;
+
+  -- ── 1. A FIGHT, CONCLUDED. Harmless wave (knobs set BEFORE it spawns; restored after). ───────────
+  select coalesce(public.cfg_num('enemy_hp_base'), 0)     into v_hp_before;
+  select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_atk_before;
+  perform public.set_game_config('enemy_hp_base',     '1'::jsonb);
+  perform public.set_game_config('enemy_attack_base', '0'::jsonb);
+
+  r := pg_temp.call_as(uL, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gL, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: hunt send: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
+  if v_enc is null then raise exception 'ROSTERAUTH FAIL: the hunt arrival opened no encounter'; end if;
+  -- the retreat is armed the way a player arms it: a new course against the live encounter.
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gL, round(coalesce((select space_x from public.fleets where id = v_fleet), 0)) + 10,
+                                  round(coalesce((select space_y from public.fleets where id = v_fleet), 0))));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: could not arm the retreat: %', r; end if;
+  if pg_temp.drain_encounter(v_enc, v_fleet) in ('active', 'retreating') then
+    raise exception 'ROSTERAUTH FAIL: the fight never concluded'; end if;
+  perform public.set_game_config('enemy_hp_base',     to_jsonb(v_hp_before));
+  perform public.set_game_config('enemy_attack_base', to_jsonb(v_atk_before));
+  select count(*) into n from public.fleets where id = v_fleet and status = 'destroyed';
+  if n <> 0 then raise exception 'ROSTERAUTH FAIL: the fleet died in a 1-hp, 0-damage fight'; end if;
+
+  -- vacuity: the concluded sortie RETAINED its 2-row roster — the trap state exists.
+  select count(*) into n from public.group_sortie_members where fleet_id = v_fleet;
+  if n <> 2 then raise exception 'ROSTERAUTH FAIL: % roster rows after the concluded fight (want 2 retained — the trap)', n; end if;
+
+  -- ── 2. HOME TO PORT under risk 0 (a staging leg must not roll its own ambush), then UNASSIGN. ────
+  perform public.set_game_config('pirate_intercept_base_risk',      '0'::jsonb);
+  perform public.set_game_config('pirate_intercept_min_risk',       '0'::jsonb);
+  perform public.set_game_config('pirate_intercept_max_risk',       '0'::jsonb);
+  perform public.set_game_config('pirate_intercept_exposure_floor', '0'::jsonb);
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, %L::uuid, null, null)', gL, v_port));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: go to port: %', r; end if;
+  -- vacuity: the production defect lives on a PERSISTENT group fleet — the go must reuse it, or the
+  -- stale rows would sit on a different fleet and this block would prove nothing.
+  if (r->>'fleet_id')::uuid is distinct from v_fleet then
+    raise exception 'ROSTERAUTH FAIL: the go minted a different fleet (% vs %) — the persistent-fleet trap shape did not build', r->>'fleet_id', v_fleet; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select count(*) into n from public.fleets
+   where id = (select f.id from public.fleets f where f.group_id = gL and f.player_id = uL
+                 and f.status = 'present' and f.location_mode = 'location' and f.current_location_id = v_port limit 1);
+  if n <> 1 then raise exception 'ROSTERAUTH FAIL: the fleet did not settle present at its port'; end if;
+
+  -- THE PLAYER'S LEGAL ACT: the sortie is closed, so the unassign must succeed (0305).
+  r := pg_temp.call_as(uL, format('public.assign_ship_to_group(%L::uuid, null)', s_d));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: post-sortie unassign refused: %', r; end if;
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = s_d and group_id is null and berth_location_id = v_port;
+  if n <> 1 then raise exception 'ROSTERAUTH FAIL: the unassigned ship is not berthed at the port, out of the group'; end if;
+  -- vacuity: the STALE row for the departed ship is STILL on the roster — the trap is armed.
+  select count(*) into n from public.group_sortie_members where fleet_id = v_fleet and main_ship_id = s_d;
+  if n <> 1 then raise exception 'ROSTERAUTH FAIL: the departed ship''s stale roster row is already gone — the regression cannot reproduce and this block would pass vacuously'; end if;
+  select status, hp into d_status, d_hp from public.main_ship_instances where main_ship_id = s_d;
+
+  -- ── 3. THE RE-AMBUSH: risk back to 1.0, a fresh zone on a fresh leg, fired by the real processor. ─
+  perform public.set_game_config('pirate_intercept_base_risk',      '1.0'::jsonb);
+  perform public.set_game_config('pirate_intercept_min_risk',       '1.0'::jsonb);
+  perform public.set_game_config('pirate_intercept_max_risk',       '1.0'::jsonb);
+  perform public.set_game_config('pirate_intercept_exposure_floor', '1.0'::jsonb);
+  select l.x, l.y into f_x, f_y from public.locations l where l.id = v_port;
+  t_x := f_x; t_y := f_y + 700;
+  v_verts := jsonb_build_array(
+    jsonb_build_array(f_x - 150, f_y + 200),
+    jsonb_build_array(f_x + 150, f_y + 200),
+    jsonb_build_array(f_x + 150, f_y + 500),
+    jsonb_build_array(f_x - 150, f_y + 500));
+  r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC Roster Authority Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: zone: %', r; end if;
+
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)', gL, round(t_x), round(t_y)));
+  if (r->>'ok')::boolean is not true then raise exception 'ROSTERAUTH FAIL: the re-order: %', r; end if;
+  if (r->>'fleet_id')::uuid is distinct from v_fleet then
+    raise exception 'ROSTERAUTH FAIL: the re-order minted a different fleet (% vs %) — the stale roster would not even be in play', r->>'fleet_id', v_fleet; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv order by created_at desc limit 1;
+  if pi is null or pi.lifecycle_state <> 'pending' then
+    raise exception 'ROSTERAUTH FAIL: the leg under test scheduled no pending ambush'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select * into pi from public.pirate_intercepts where movement_id = v_mv order by created_at desc limit 1;
+  if pi.lifecycle_state <> 'fired' then
+    raise exception 'ROSTERAUTH FAIL: the ambush is % (want fired)', pi.lifecycle_state; end if;
+  if pi.note is not null then
+    raise exception 'ROSTERAUTH FAIL: the ambush bailed out with note=% instead of opening combat — one live member must be a fight', pi.note; end if;
+  if pi.encounter_id is null then
+    raise exception 'ROSTERAUTH FAIL: the ambush fired but opened NO encounter'; end if;
+  v_enc2 := pi.encounter_id;
+
+  -- ── THE ASSERTIONS THE LIVE DEFECT WOULD FAIL ────────────────────────────────────────────────────
+  -- (i) the fight is fielded by LIVE MEMBERSHIP: exactly one player unit, and it is the member.
+  select count(*) into n from public.combat_units where encounter_id = v_enc2 and side = 'player';
+  if n <> 1 then raise exception 'ROSTERAUTH FAIL: % player unit(s) seeded (want exactly 1 — live membership only)', n; end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc2 and side = 'player' and main_ship_id = s_l;
+  if n <> 1 then raise exception 'ROSTERAUTH FAIL: the remaining member was NOT seeded — the roster rule is too aggressive'; end if;
+  -- (ii) the DEPARTED ship was not dragged in — this line IS the production defect, inverted.
+  select count(*) into n from public.combat_units where encounter_id = v_enc2 and main_ship_id = s_d;
+  if n <> 0 then raise exception 'ROSTERAUTH FAIL: the ship that LEFT the fleet was seeded into its next fight (the 0308 defect)'; end if;
+  -- (iii) the bystander is untouched: same berth, same status, same hp, still ungrouped.
+  select count(*) into n from public.main_ship_instances
+   where main_ship_id = s_d and group_id is null and berth_location_id = v_port
+     and status = d_status and hp = d_hp;
+  if n <> 1 then raise exception 'ROSTERAUTH FAIL: the departed ship''s row changed across a fight it was never in'; end if;
+  -- (iv) the freeze REPLACED the snapshot: the stale row is released, the live member is frozen.
+  select count(*) into n from public.group_sortie_members where fleet_id = v_fleet;
+  if n <> 1 then raise exception 'ROSTERAUTH FAIL: % roster rows after the re-ambush (want exactly 1 — the snapshot was replaced)', n; end if;
+  select count(*) into n from public.group_sortie_members where fleet_id = v_fleet and main_ship_id = s_l;
+  if n <> 1 then raise exception 'ROSTERAUTH FAIL: the fresh snapshot does not carry the live member'; end if;
+
+  raise notice 'DZCOMBAT_PASS_ROSTERAUTH ok: a fleet whose fight had concluded lost a ship to a legal unassign, was ambushed again, and the fight fielded ONLY the live member (1 unit = %); the departed ship kept its berth/status/hp and was never seeded; the re-ambush freeze replaced the 2-row stale snapshot with the 1-row live one', s_l;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_RIGFALLBACK (0308): A MINING RIG IS NOT A GUN ════════════════════════════════
+-- The catalog seeds mining_rig_extension with range 120 / power 8 (0229), and the creator's old
+-- weapon test was `range is not null` — so a fitted rig fired power 8 AND suppressed the 0262
+-- fallback. Post-0308 a rig-only ship's fitted-WEAPON join is empty and the fallback fires,
+-- deriving power from the ship's own attack. Expected values are DERIVED from the knobs and the
+-- unit's own snapshot at assert time — nothing ambient is hard-coded.
+do $$
+declare
+  r jsonb; n int;
+  uL uuid := (select v from dzc where k='uL');
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  s_m uuid; gM uuid; v_modinst uuid; v_fleet uuid; v_mv uuid; v_enc uuid;
+  mv record; w jsonb;
+  v_attack double precision; v_wc int;
+  v_fb_id text; v_paf double precision; v_frange double precision;
+begin
+  -- ── a third ship for the second player, rigged (not armed), its own team ─────────────────────────
+  r := pg_temp.call_as(uL, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'RIGFALLBACK FAIL: commission: %', r; end if;
+  select main_ship_id into s_m from public.main_ship_instances
+   where player_id = uL
+     and main_ship_id not in ((select v from dzc where k='uL_s_l'), (select v from dzc where k='uL_s_d'))
+   limit 1;
+  if s_m is null then raise exception 'RIGFALLBACK FAIL: no third ship materialised'; end if;
+
+  -- fund + craft + fit ONE mining rig via the real writers (recipe: crystal/ore/scrap, 0183).
+  perform public.reward_grant('combat', gen_random_uuid(), uL, null,
+    '{"items": [{"item_id": "crystal", "quantity": 4}, {"item_id": "ore", "quantity": 8}, {"item_id": "scrap", "quantity": 8}]}'::jsonb);
+  r := pg_temp.call_as(uL, 'public.craft_module(''dzc-rig-1'', ''mining_rig_extension'')');
+  if (r->>'ok')::boolean is not true then raise exception 'RIGFALLBACK FAIL: craft rig: %', r; end if;
+  v_modinst := (r->>'instance_id')::uuid;
+  r := pg_temp.call_as(uL, format('public.fit_module_to_ship(%L::uuid, %L::uuid, ''dzc-fit-rig'')', v_modinst, s_m));
+  if (r->>'ok')::boolean is not true then raise exception 'RIGFALLBACK FAIL: fit rig: %', r; end if;
+
+  -- vacuity guards: the rig really is the trap-carrier (a range-bearing NON-weapon), and it is the
+  -- ship's ONLY range-bearing fitted module — the exact pre-0308 poisoned input.
+  select count(*) into n from public.module_types t
+   where t.id = 'mining_rig_extension' and t.slot_type = 'mining' and t.range is not null;
+  if n <> 1 then raise exception 'RIGFALLBACK FAIL: mining_rig_extension is no longer a range-bearing mining module — the trap input does not exist and this block would pass vacuously'; end if;
+  select count(*) into n
+    from public.ship_module_fittings f
+    join public.module_instances i on i.id = f.module_instance_id
+    join public.module_types t     on t.id = i.module_type_id
+   where f.main_ship_id = s_m and t.range is not null;
+  if n <> 1 then raise exception 'RIGFALLBACK FAIL: % range-bearing fitted module(s) on the rig ship (want exactly the rig)', n; end if;
+
+  r := pg_temp.call_as(uL, 'public.upsert_ship_group(2, ''Roster M'')');
+  if (r->>'ok')::boolean is not true then raise exception 'RIGFALLBACK FAIL: group: %', r; end if;
+  gM := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uL, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s_m, gM));
+  if (r->>'ok')::boolean is not true then raise exception 'RIGFALLBACK FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uL, format('public.set_fleet_command_ship(%L::uuid, true)', s_m));
+  if (r->>'ok')::boolean is not true then raise exception 'RIGFALLBACK FAIL: designate command: %', r; end if;
+
+  -- ── a real sortie opens a real encounter (no ticks are run; creation state is the assertion). ────
+  r := pg_temp.call_as(uL, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gM, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'RIGFALLBACK FAIL: hunt send: %', r; end if;
+  v_fleet := (r->>'fleet_id')::uuid; v_mv := (r->>'movement_id')::uuid;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet and status = 'active';
+  if v_enc is null then raise exception 'RIGFALLBACK FAIL: the hunt arrival opened no encounter'; end if;
+
+  -- ── THE ASSERTIONS: the rig never fires; the ship fires ITS OWN attack through the fallback. ─────
+  select attack_snapshot, jsonb_array_length(weapons_json) into v_attack, v_wc
+    from public.combat_units where encounter_id = v_enc and main_ship_id = s_m;
+  if v_attack is null or v_attack <= 0 then
+    raise exception 'RIGFALLBACK FAIL: attack_snapshot is % — the fallback trigger (attack > 0) would be vacuous', v_attack; end if;
+  if v_wc <> 1 then
+    raise exception 'RIGFALLBACK FAIL: weapons_json has % entries (want exactly 1 — the synthesized fallback)', v_wc; end if;
+  select weapons_json->0 into w from public.combat_units where encounter_id = v_enc and main_ship_id = s_m;
+  select count(*) into n from public.combat_units cu, jsonb_array_elements(cu.weapons_json) e
+   where cu.encounter_id = v_enc and cu.main_ship_id = s_m and e->>'module_type_id' = 'mining_rig_extension';
+  if n <> 0 then
+    raise exception 'RIGFALLBACK FAIL: the mining rig is in weapons_json — a rig still counts as a gun (the 0308 defect)'; end if;
+  v_fb_id  := coalesce((select value #>> '{}' from public.game_config where key = 'combat_player_fallback_weapon_module_type_id'), 'basic_player_weapon');
+  v_paf    := coalesce(public.cfg_num('combat_player_fallback_weapon_power_from_attack'), 1);
+  v_frange := coalesce(public.cfg_num('combat_player_fallback_weapon_range'), 150);
+  if (w->>'module_type_id') is distinct from v_fb_id then
+    raise exception 'RIGFALLBACK FAIL: the one weapon is % (want the fallback %) — the 0262 fallback did not fire', w->>'module_type_id', v_fb_id; end if;
+  if (w->>'power')::double precision is distinct from v_attack * v_paf then
+    raise exception 'RIGFALLBACK FAIL: fallback power % <> attack_snapshot % x knob % — the ship does not fire its own attack', w->>'power', v_attack, v_paf; end if;
+  if (w->>'range')::double precision is distinct from v_frange then
+    raise exception 'RIGFALLBACK FAIL: fallback range % <> the knob-derived %', w->>'range', v_frange; end if;
+
+  raise notice 'DZCOMBAT_PASS_RIGFALLBACK ok: a rig-only ship (the exact pre-0308 poisoned input: one range-bearing non-weapon fitted) was seeded with exactly ONE weapon — the % fallback at power %*% = %, range % — and the rig entry is gone: a mining rig is not a gun',
+    v_fb_id, v_attack, v_paf, v_attack * v_paf, v_frange;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_FITTEDEXACT (0308): A REAL WEAPON RIDES THROUGH EXACTLY, AND ALONE ═══════════
+-- The control arm: team A's command ship fitted a real autocannon_battery at provision time and its
+-- encounter was created earlier in this file. Its weapons_json must be exactly its CATALOG entry —
+-- every field equal to the deployed module_types row, no fallback entry beside it. Field values are
+-- DERIVED from the catalog at assert time, never hard-coded.
+do $$
+declare
+  n int;
+  s_cmd uuid := (select v from dzc where k='s_cmd');
+  v_fleet uuid := (select v from dzc where k='v_fleet');
+  v_enc uuid; w jsonb; t record; v_wc int;
+  v_fb_id text;
+begin
+  select id into v_enc from public.combat_encounters where fleet_id = v_fleet order by created_at asc limit 1;
+  if v_enc is null then raise exception 'FITTEDEXACT FAIL: team A''s encounter is missing'; end if;
+
+  select jsonb_array_length(weapons_json), weapons_json->0 into v_wc, w
+    from public.combat_units where encounter_id = v_enc and main_ship_id = s_cmd;
+  if v_wc is null then raise exception 'FITTEDEXACT FAIL: no combat unit for the armed command ship'; end if;
+  if v_wc <> 1 then
+    raise exception 'FITTEDEXACT FAIL: the armed ship carries % weapon entries (want exactly its one fitted gun)', v_wc; end if;
+
+  select * into t from public.module_types where id = 'autocannon_battery';
+  if t.id is null then raise exception 'FITTEDEXACT FAIL: autocannon_battery is not in the catalog'; end if;
+  if (w->>'module_type_id') is distinct from t.id
+     or (w->>'range')::numeric            is distinct from t.range
+     or (w->>'power')::numeric            is distinct from t.power
+     or (w->>'projectile_speed')::numeric is distinct from t.projectile_speed
+     or (w->>'cooldown_seconds')::numeric is distinct from t.cooldown_seconds
+     or (w->>'ammo_type')                 is distinct from t.ammo_type
+     or (w->>'ammo_per_shot')::integer    is distinct from t.ammo_per_shot then
+    raise exception 'FITTEDEXACT FAIL: the fitted weapon entry drifted from its catalog row: % vs (%, %, %, %, %, %, %)',
+      w, t.id, t.range, t.power, t.projectile_speed, t.cooldown_seconds, t.ammo_type, t.ammo_per_shot; end if;
+  if w->>'next_ready_at' is not null or w->>'ammo_remaining' is not null then
+    raise exception 'FITTEDEXACT FAIL: the fitted entry lost its frozen next_ready_at/ammo_remaining NULLs'; end if;
+  -- and NO fallback entry beside it: a real gun must keep suppressing the synthesized weapon.
+  v_fb_id := coalesce((select value #>> '{}' from public.game_config where key = 'combat_player_fallback_weapon_module_type_id'), 'basic_player_weapon');
+  select count(*) into n from public.combat_units cu, jsonb_array_elements(cu.weapons_json) e
+   where cu.encounter_id = v_enc and cu.main_ship_id = s_cmd and e->>'module_type_id' = v_fb_id;
+  if n <> 0 then
+    raise exception 'FITTEDEXACT FAIL: a fallback entry sits beside the real gun — the empty-array guard broke'; end if;
+
+  raise notice 'DZCOMBAT_PASS_FITTEDEXACT ok: the armed command ship''s weapons_json is exactly its catalog autocannon_battery entry (field-for-field, alone, frozen NULL clocks) and carries no fallback beside it';
+end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
 
