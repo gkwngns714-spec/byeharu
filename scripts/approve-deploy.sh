@@ -19,20 +19,51 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "Looking for a halted production deploy on $REPO ..."
 
-# Pick the NEWEST waiting run (sort_by createdAt, take last) — NOT [0]. Migration merges stack
+# Pick the NEWEST unfinished run (sort_by createdAt, take last) — NOT [0]. Migration merges stack
 # multiple halted deploy runs at the gate; the newest commit's run pushes ALL unapplied migrations
 # idempotently (supabase db push), so approving it advances prod the furthest in one go. Grabbing an
 # older run (the original [0] bug) deploys a stale commit and leaves prod behind its own main.
+#
+# The filter is `status != "completed"`, NOT an allowlist of statuses. It WAS an allowlist
+# (waiting/queued/in_progress) and that re-created the very bug the paragraph above describes:
+# on 2026-08-02 the run carrying 0310+0311+0312 sat at status **"pending"** — held by the
+# `prod-migrations-deploy` concurrency group behind an older run — so the allowlist skipped it and
+# this script offered the older commit, which carried only 0310. Approving that would have deployed
+# one migration and left prod behind main. GitHub's status vocabulary is open-ended (pending,
+# requested, action_required, …); enumerating the live ones is a losing game, so enumerate the one
+# terminal one instead. `completed` covers success, failure and cancelled alike.
 RUN_ID="$(gh run list --repo "$REPO" --workflow "$WF" --limit 20 \
   --json databaseId,status,headSha,createdAt \
-  -q '[.[] | select(.status=="waiting" or .status=="queued" or .status=="in_progress")] | sort_by(.createdAt) | last | .databaseId' 2>/dev/null || true)"
+  -q '[.[] | select(.status != "completed")] | sort_by(.createdAt) | last | .databaseId' 2>/dev/null || true)"
 
 if [ -z "${RUN_ID:-}" ] || [ "$RUN_ID" = "null" ]; then
   echo
-  echo "No waiting deploy run found."
-  echo "  - If you have NOT merged PR #165 yet, merge it first; the deploy only starts on a push to main."
+  echo "No unfinished deploy run found."
+  echo "  - If you have not merged the migration PR yet, merge it first; the deploy only starts on a push to main."
   echo "  - If you just merged, wait ~20s for GitHub to register the run and re-run this script."
   exit 1
+fi
+
+# A run held behind the concurrency group has NO pending_deployments yet — there is nothing to
+# approve until GitHub actually starts its job. Detect that here and say what to do, rather than
+# falling back to an older run (which is exactly how a stale commit gets deployed).
+if ! gh api "repos/$REPO/actions/runs/$RUN_ID/pending_deployments" -q '.[0].environment.id' >/dev/null 2>&1 \
+   || [ -z "$(gh api "repos/$REPO/actions/runs/$RUN_ID/pending_deployments" -q '.[0].environment.id' 2>/dev/null)" ]; then
+  BLOCKERS="$(gh run list --repo "$REPO" --workflow "$WF" --limit 20 \
+    --json databaseId,status,headSha,createdAt \
+    -q "[.[] | select(.status != \"completed\") | select(.databaseId != $RUN_ID)] | sort_by(.createdAt) | .[] | \"  run \(.databaseId)  status=\(.status)  sha=\(.headSha[0:7])\"" 2>/dev/null || true)"
+  if [ -n "$BLOCKERS" ]; then
+    echo
+    echo "The newest deploy run ($RUN_ID) has not reached the approval gate yet — it is queued behind"
+    echo "the \`prod-migrations-deploy\` concurrency group. Older unfinished runs holding the group:"
+    echo "$BLOCKERS"
+    echo
+    echo "Those older runs deploy a STRICT SUBSET of the newest commit (db push is idempotent and the"
+    echo "newest commit contains every earlier migration), so cancelling them loses nothing and lets"
+    echo "the newest run reach the gate. Cancel them, wait ~20s, then re-run this script:"
+    echo "$BLOCKERS" | sed "s#  run \([0-9]*\).*#  gh run cancel \1 --repo $REPO#"
+    exit 1
+  fi
 fi
 
 echo "Found run $RUN_ID"
@@ -75,7 +106,7 @@ fi
 gh api -X POST "repos/$REPO/actions/runs/$RUN_ID/pending_deployments" \
   -F "environment_ids[]=$ENV_ID" \
   -f state=approved \
-  -f comment="Approved by owner: FLEET-GO movement-unification migrations (deploy of commit ${HEAD_SHA})." \
+  -f comment="Approved by owner: production migration deploy of commit ${HEAD_SHA}." \
   >/dev/null
 
 echo
