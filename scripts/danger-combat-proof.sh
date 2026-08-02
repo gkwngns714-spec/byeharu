@@ -36,10 +36,19 @@ if [ "$MODE" = "selftest" ]; then
   # newest, because the gap was identical for the two that came before.
   if command -v node >/dev/null 2>&1; then
     for gen in gen-0305-sortie-authority gen-0306-dock-authority gen-0308-combat-roster-authority; do
-      if [ -f "$REPO_ROOT/scripts/$gen.mjs" ]; then
-        node "$REPO_ROOT/scripts/$gen.mjs" --check >/dev/null 2>&1 \
-          || fail "$gen --check FAILED: its migration no longer matches the slices it takes from the deployed heads. Either the migration was hand-edited, or a source migration drifted. Do NOT re-generate blindly — read the diff first; a slice that no longer matches may mean the head moved under you."
-      fi
+      # A MISSING generator is a HARD FAIL, not a skip. The first version of this gate wrapped the
+      # check in `if [ -f … ]; then … fi`, and adversarial review broke it empirically: hand-edit a
+      # generated migration AND delete its generator, and the selftest went green. A refactor that
+      # moved these into scripts/gen/ or renamed one would have silently un-verified all three
+      # migrations forever, and the failure would resurface as an exactly-once probe raising AT
+      # DEPLOY TIME ON PRODUCTION — the exact sequence this gate exists to prevent. Absence of the
+      # checker is not evidence of correctness; it is loss of the only evidence there was.
+      [ -f "$REPO_ROOT/scripts/$gen.mjs" ] \
+        || fail "$gen.mjs is MISSING — migration $(echo "$gen" | sed 's/^gen-\([0-9]*\).*/\1/') can no longer be verified against the slices it claims to take. Restore it or delete the gate deliberately; do not let it skip."
+      # stderr is NOT swallowed: the generator distinguishes "a source migration drifted" from "the
+      # file was hand-edited", and that line is the only actionable diagnostic.
+      node "$REPO_ROOT/scripts/$gen.mjs" --check \
+        || fail "$gen --check FAILED (its own message is above): the migration no longer matches the slices it takes from the deployed heads. Do NOT re-generate blindly — read the diff first; a slice that no longer matches may mean the head moved under you."
     done
   else
     fail "node not found — the generated-migration parity gate cannot run, and a hand-edited migration would reach production unchecked"

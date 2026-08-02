@@ -257,6 +257,13 @@ const sql = `-- ═════════════════════�
 --   - No data is written by this migration itself: no backfill, no roster rows deleted at deploy
 --     time, no flag change, no client change. Live prod's ~35 retained rows stay untouched until
 --     each fleet's next ambush replaces its own snapshot.
+--   - It DOES take DDL locks, which the line above alone would have hidden. The two comment-on
+--     statements in section 3b each acquire a ShareUpdateExclusiveLock — on public.fleets, the
+--     busiest table in the live game, and on group_sortie_members. That lock does NOT conflict with
+--     RowShare/RowExclusive, so it blocks no player read or write; it conflicts only with VACUUM,
+--     ANALYZE and other DDL. Under the set local lock_timeout = '5s' above, a concurrent autovacuum
+--     is auto-cancelled well inside budget, while a manual VACUUM FULL/ANALYZE on fleets would make
+--     this deploy ABORT and need a retry. Fails closed, no data risk — but deploy in a quiet window.
 --   - Additive-safe roster rule: a ship that IS a member of the fleet's group is ALWAYS seeded —
 --     the filter can only exclude a ship whose msi.group_id no longer matches, which is exactly a
 --     ship the player moved out. During a live sortie the 0305 authority makes exclusion
@@ -382,6 +389,12 @@ immutable
 -- in scripts/ assert 'search_path=public' = any(proconfig) on the functions they touch. Not a
 -- privilege matter here (SECURITY INVOKER, and the body reads no schema object), but a lone
 -- unpinned function is the kind of inconsistency that later reads as an oversight worth "fixing".
+-- IT IS NOT FREE, and saying so is the point: a non-null proconfig is a showstopper in Postgres's
+-- inline_function(), so this leaf stops being inlined into the builder's fitting filter and becomes
+-- an opaque call with a GUC save/restore per row. That costs nothing HERE — a handful of fitting
+-- rows per member against a NINE-row catalog, a few times per encounter creation — and results
+-- cannot change, since the body touches no schema object for search_path to resolve. Recorded so a
+-- future author copying this line onto a hot path knows what it buys and what it spends.
 set search_path to 'public'
 as $fn$
   select t.slot_type = 'weapon'
