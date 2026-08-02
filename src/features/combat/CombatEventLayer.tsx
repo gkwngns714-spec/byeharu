@@ -18,11 +18,25 @@ function describe(e: CombatEvent): { icon: string; text: ReactNode } {
     case 'wave_spawned':
       return { icon: '👾', text: `Wave ${num(p.wave)} incoming (danger ${num(p.danger)}${p.hp ? `, ${num(p.hp)} HP` : ''})` }
     case 'missile_salvo':
-      return { icon: '🚀', text: `Missile salvo hit the pirate wave for ${num(p.damage)} damage` }
+      // The AGGREGATE (legacy) salvo carries its damage in the payload; the SPATIAL salvo is the
+      // LAUNCH event ({unit_id, target_id}, no damage — the impact lands as hull_damage). The old
+      // copy printed "for 0 damage" on every spatial salvo and claimed every salvo was ours.
+      if (p.damage != null) return { icon: '🚀', text: `Missile salvo hit the pirate wave for ${Math.round(num(p.damage))} damage` }
+      return e.source === 'pirate'
+        ? { icon: '🚀', text: 'Pirate salvo inbound' }
+        : { icon: '🚀', text: 'Missile salvo away' }
     case 'laser_burst':
       return { icon: '⚡', text: 'Pirates opened fire' }
-    case 'hull_damage':
-      return { icon: '🔧', text: `Pirates damaged ${cap(p.group)} group for ${num(p.damage)} hull` }
+    case 'hull_damage': {
+      // 0314: the per-hit hitsplat now arrives for BOTH directions (source tells whose shot landed);
+      // the spatial payload is {unit_id, damage} while the legacy aggregate one carries {group}.
+      // Damage is the server's unrounded fact — display rounds.
+      const dmg = Math.round(num(p.damage))
+      const who = p.group ? `${cap(p.group)} group` : e.source === 'pirate' ? 'our hull' : 'the pirate'
+      return e.source === 'pirate'
+        ? { icon: '🔧', text: `Pirate hit landed — ${who} took ${dmg} damage` }
+        : { icon: '💢', text: `Our hit landed — ${who} took ${dmg} damage` }
+    }
     case 'unit_destroyed':
       return { icon: '☠️', text: `${num(p.count)} ${cap(p.group)} destroyed` }
     case 'explosion':

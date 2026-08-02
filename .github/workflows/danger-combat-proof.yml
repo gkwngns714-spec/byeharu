@@ -17,8 +17,8 @@ on:
   workflow_dispatch:
   # 0313 rev.3 — THIS PROOF MUST GATE EVERY PR AND EVERY MERGE, not just the branches that remembered
   # to name themselves. It now carries the behaviour blocks for 0310 (AUTOEXIT), 0311 (REPOSITION /
-  # REPOOVERLAP / REPOOUTSIDE / REPOMODE), 0312 (NOLIVE) and 0313 (CLOSURE) — 19 markers in all — plus
-  # the six-generator parity gate. A branch-glob-only trigger means a branch that does not match a glob
+  # REPOOVERLAP / REPOOUTSIDE / REPOMODE), 0312 (NOLIVE), 0313 (CLOSURE) and 0314 (RSFEEL) — 20 markers
+  # in all — plus the seven-generator parity gate. A branch-glob-only trigger means a branch that misses
   # can change the combat tick and run none of it. That is not hypothetical: the sibling proofs
   # combat-spatial and combat-fallback were branch-glob-only, went dark for three weeks, were silently
   # broken by 0300 that whole time, and were found only by accident during this slice. Same failure
@@ -48,9 +48,12 @@ on:
       - 'slice-no-living-ships**'
       # 0313 cuts the weapon ranges below the spawn gap and this proof carries its behaviour block
       # (DZCOMBAT_PASS_CLOSURE — units MOVE, fire only after closure) — range branches must run it.
-      # UNION at the 0312/0313 merge: both sides appended a branch here, so taking either whole
-      # would silently un-gate the other slice's own proof block.
+      # UNION at the 0312/0313 merge, and AGAIN at 0313/0314: every side appended a branch here, so
+      # taking any one whole would silently un-gate the other slices' own proof blocks.
       - 'slice-weapon-ranges**'
+      # 0314 rewrites the combat tick again (real attack intervals + per-hit rolls + the visible
+      # hitsplat) and this proof carries its behaviour block (DZCOMBAT_PASS_RSFEEL).
+      - 'slice-runescape-**'
 
 permissions:
   contents: read

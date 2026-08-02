@@ -130,6 +130,15 @@ update public.game_config set value='true'::jsonb where key='encounter_resolver_
 do $$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);   -- v_variance = 1
+  -- 0314: the tick arms REAL weapon cooldowns and now() is txn-frozen — a positive cooldown means
+  -- fire-once-per-proof, which would stall every wave-clear re-tick below (FLAGOFF, RESOLVED,
+  -- MULTIWAVE). This harness asserts the fire-every-tick world, so it OWNS that precondition
+  -- in-txn, zeroed BEFORE anything snapshots a cooldown into weapons_json (catalog included: the
+  -- fixture guns are crafted autocannons). The cooldown property itself is proven where it is
+  -- owned: danger-combat-proof's RSFEEL block. (The per-hit roll inherits the variance-0 pin.)
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
   perform public.set_game_config('combat_tick_logging',  'true'::jsonb);
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
   perform public.set_game_config('enemy_hp_base',        '500'::jsonb);       -- enemy survives the spawn tick comfortably

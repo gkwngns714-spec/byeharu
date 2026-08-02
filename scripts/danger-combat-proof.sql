@@ -242,8 +242,24 @@ begin
   perform public.set_game_config('pirate_intercept_max_risk',       '1.0'::jsonb);
   perform public.set_game_config('pirate_intercept_exposure_floor', '1.0'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct',      '0'::jsonb);      -- determinism
+  -- 0314: the per-hit roll's own knob, pinned 0 like the tick-shared one (it INHERITS that knob
+  -- when absent, but the precondition is OWNED here, never inherited) — every damage number in the
+  -- pre-0314 blocks stays byte-exact. The RSFEEL block sets its own 0.5 and restores this 0.
+  perform public.set_game_config('combat_hit_variance_pct',         '0'::jsonb);
   perform public.set_game_config('combat_tick_logging',             'true'::jsonb);
   perform public.set_game_config('combat_event_logging',            'true'::jsonb);   -- so fire events land
+  -- 0314: hull_damage must ride EVENT logging, not debug — RSFEEL proves the promotion, so the
+  -- debug flag is pinned dark here (owned, not assumed from the chain seed).
+  perform public.set_game_config('combat_debug_logging',            'false'::jsonb);
+  -- 0314: the tick arms REAL weapon cooldowns (next_ready_at = now() + cooldown_seconds), and now()
+  -- is FROZEN for this whole txn — so any positive cooldown means a weapon fires at most ONCE per
+  -- proof run, which would stall every block that drives multi-tick fire (the AUTOEXIT erosion
+  -- loops above all). Those blocks assert the fire-every-tick world, so they OWN it: the enemy
+  -- cooldown knob is zeroed BEFORE any wave spawns (the wave snapshots it into weapons_json), and
+  -- the player fallback likewise. The cooldown property itself is proven where it is owned — the
+  -- RSFEEL block, which sets its own 3600s cooldown and demands tick-2 silence.
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
   perform public.set_game_config('enemy_hp_base',                   '1000'::jsonb);   -- pirate survives tick 1
   perform public.set_game_config('max_active_fleets',               '50'::jsonb);
 end $$;
@@ -2076,6 +2092,216 @@ begin
   raise notice 'DZCOMBAT_PASS_AUTOEXIT ok: default ON at 30 for fresh groups; the player set 50%% / toggled OFF through the one writer (bad pct, NaN, null toggle, cross-player all refused; the table CHECK refuses NaN/150 beneath it); group A fought % tick(s) above its CAPACITY-based threshold untouched, then auto-requested the canonical retreat the tick its hull hit %/% of capacity (presence retreating, retreat_started_at stamped, exactly 1 retreat_started event), a second tick did not re-request, and the retreat COMPLETED like a human press (escaped, fleet returning, origin-base arm); the DAMAGED RE-ENTRY (entry integrity % strictly under capacity %, threshold 60) auto-exited on its FIRST tick — the compounding-denominator regression, closed; group B — toggle OFF — fought on to %/% with zero retreat events: the pre-0310 world, reproduced as the control',
     n_above, round(v_hp_a::numeric), round(v_imax_a::numeric), round(v_imax3::numeric), round(v_cap3::numeric), round(v_hp::numeric), round(v_imax::numeric);
 end $$;
+
+-- ════════ DZCOMBAT_PASS_RSFEEL (0314): THE RUNESCAPE COMBAT FEEL, ON THE REAL CHAIN ═════════════════
+-- The owner's ask: "attack with interval, showing hp, and everytime it deals differently."
+-- Three properties, each RED on the pre-0314 tick body BY CONSTRUCTION:
+--   1. INTERVAL — a weapon whose cooldown exceeds the tick period does NOT fire on the next tick.
+--      The enemy wave spawns with a 3600s cooldown (owned knob, set before the spawn snapshots it);
+--      tick 1 fires, tick 2 must be pirate-silent. Pre-0314 the tick armed next_ready_at with bare
+--      now(), so tick 2 fired again -> red. (now() is txn-frozen, so 3600s can never elapse here —
+--      the property provable in one txn is exactly "no fire while the cooldown is unelapsed";
+--      re-fire AFTER elapse is live-cron behaviour, settled by the same arithmetic: now()+0 for a
+--      zero cooldown is proven ready-every-tick below, on the player's own zeroed fallback.)
+--   2. PER-HIT ROLL — two hits in the same tick carry DIFFERENT damage. Six pirates with identical
+--      power hit the same command ship in tick 1 under combat_hit_variance_pct=0.5 (owned); their
+--      unrounded payload damages must not all be equal. Pre-0314 every shot in a tick shared ONE
+--      v_variance roll -> byte-identical numbers -> red. (With independent uniform doubles the
+--      all-equal case has probability ~0 — this is not a tolerance assert.)
+--   3. VISIBLE HIT — every landed hit emits hull_damage WITH its amount under combat_event_logging,
+--      with combat_debug_logging pinned FALSE (owned in setup). Pre-0314 the spatial hitsplat was
+--      debug-gated -> zero rows -> red.
+-- Staging is the AUTOEXIT idiom end to end: fresh player, real RPCs only, real zone, real
+-- processors, pg_temp.ae_tick as the one cadence driver. The only clock moved beyond ae_tick is
+-- started_at (rewound 930s so the wave's danger derives a MULTI-UNIT spawn — same clock-only law
+-- as every other rewind here; forced-extract needs 1800s, untouched).
+do $$
+declare
+  r jsonb; n int; n_units int; n_exp int; n_hits int; n_distinct int;
+  uR uuid;
+  v_hunt uuid := (select v from dzc where k='v_hunt');
+  sR uuid; gR uuid;
+  o_x double precision; o_y double precision;
+  v_verts jsonb;
+  v_mv uuid; v_enc uuid;
+  mv record; pi record;
+  v_imax double precision; v_def double precision; v_bd double precision;
+  v_danger int; v_scale double precision;
+  v_eab_before double precision; v_eab numeric;
+  v_cd_before double precision; v_hv_before double precision;
+  v_t1 int; v_t2 int;
+begin
+  -- ── a fresh, funded fixture player; one ship, one group, command designated — real RPCs. ───────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.rs.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uR;
+  insert into public.player_wallet (player_id, balance) values (uR, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uR, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'RSFEEL FAIL: commission: %', r; end if;
+  select main_ship_id into sR from public.main_ship_instances where player_id = uR;
+  r := pg_temp.call_as(uR, 'public.upsert_ship_group(1, ''RS Feel'')');
+  if (r->>'ok')::boolean is not true then raise exception 'RSFEEL FAIL: group: %', r; end if;
+  gR := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uR, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sR, gR));
+  if (r->>'ok')::boolean is not true then raise exception 'RSFEEL FAIL: assign: %', r; end if;
+  r := pg_temp.call_as(uR, format('public.set_fleet_command_ship(%L::uuid, true)', sR));
+  if (r->>'ok')::boolean is not true then raise exception 'RSFEEL FAIL: command: %', r; end if;
+  -- decouple 0310's arm entirely (also true by arithmetic — damage below stays under 40%):
+  r := pg_temp.call_as(uR, format('public.set_group_auto_exit(%L::uuid, false, 30)', gR));
+  if (r->>'ok')::boolean is not true then raise exception 'RSFEEL FAIL: auto-exit off: %', r; end if;
+
+  -- ── OWN the knobs this block is about, BEFORE anything snapshots them. ──────────────────────────
+  select coalesce(public.cfg_num('enemy_synthetic_cooldown_seconds'), 2) into v_cd_before;
+  select coalesce(public.cfg_num('combat_hit_variance_pct'), 0)         into v_hv_before;
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '3600'::jsonb);
+  perform public.set_game_config('combat_hit_variance_pct',          '0.5'::jsonb);
+
+  -- ── a REAL ambush through a drawn zone (the AUTOEXIT staging, verbatim in shape). ───────────────
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uR and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gR
+   limit 1;
+  if o_x is null then raise exception 'RSFEEL FAIL: could not resolve the docked origin'; end if;
+  -- the AUTOEXIT corridor geometry, verbatim: a vertical leg north through a zone straddling it.
+  v_verts := jsonb_build_array(
+    jsonb_build_array(o_x - 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 400),
+    jsonb_build_array(o_x + 100, o_y + 600),
+    jsonb_build_array(o_x - 100, o_y + 600));
+  r := pg_temp.call_as(uR, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
+                                  'DZC RS Feel Zone', v_verts::text, v_hunt));
+  if (r->>'ok')::boolean is not true then raise exception 'RSFEEL FAIL: zone: %', r; end if;
+  r := pg_temp.call_as(uR, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gR, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'RSFEEL FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'RSFEEL FAIL: no pending ambush on the leg (risk knobs are 1.0)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uR and status = 'active';
+  if v_enc is null then raise exception 'RSFEEL FAIL: the ambush opened no encounter'; end if;
+
+  -- ── a MULTI-UNIT wave: rewind started_at so the spawn's danger derives >= 3 units, and derive
+  --    the expected count from the same knobs the tick reads (never an ambient assumption). ───────
+  update public.combat_encounters set started_at = started_at - interval '930 seconds' where id = v_enc;
+  v_danger := 1 + 0 + floor(930.0 / coalesce(public.cfg_num('danger_time_divisor_seconds'), 180))::int;
+  n_exp    := least(coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::int, greatest(1, v_danger));
+  if n_exp < 3 then
+    raise exception 'RSFEEL FAIL: staging derives only % unit(s) — the wave is too small to exercise the roll spread', n_exp;
+  end if;
+
+  -- ── enemy attack derived from the fight's OWN numbers (the AUTOEXIT idiom): ~24%% of entry
+  --    integrity per full volley -> ~4%% per hit, so six hits leave the command ship far alive. ───
+  select player_integrity_max into v_imax from public.combat_encounters where id = v_enc;
+  if v_imax is null or v_imax <= 0 then raise exception 'RSFEEL FAIL: entry integrity is %', v_imax; end if;
+  select coalesce(max(defense_snapshot), 0) into v_def from public.combat_units
+   where encounter_id = v_enc and side = 'player';
+  select l.base_difficulty into v_bd
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  if v_bd is null or v_bd <= 0 then raise exception 'RSFEEL FAIL: base_difficulty %', v_bd; end if;
+  v_scale := 1 + v_danger * coalesce(public.cfg_num('enemy_attack_danger_scale'), 0.25);
+  select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
+  v_eab := round(((0.24 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * v_scale))::numeric, 6);
+  perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
+
+  -- ── TICK 1: the wave spawns AND fires the same tick. ────────────────────────────────────────────
+  perform pg_temp.ae_tick(v_enc);
+  select tick_number into v_t1 from public.combat_encounters where id = v_enc;
+  select count(*) into n_units from public.combat_units where encounter_id = v_enc and side = 'enemy';
+  if n_units <> n_exp then
+    raise exception 'RSFEEL FAIL: % enemy unit(s) spawned (want the danger-derived %) — the wave is too small to exercise the roll spread', n_units, n_exp;
+  end if;
+  -- vacuity for tick-2 silence: tick 1 really was a full pirate volley.
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = v_t1 and event_type = 'missile_salvo' and source = 'pirate';
+  if n < 3 then raise exception 'RSFEEL FAIL: only % pirate salvo(s) on tick 1 — no volley to measure', n; end if;
+
+  -- (3) THE VISIBLE HIT: one hull_damage per landed hit, WITH its amount, under EVENT logging
+  --     (combat_debug_logging is pinned false in setup — the promotion is the thing under test).
+  select count(*) into n_hits from public.combat_events
+   where encounter_id = v_enc and tick_number = v_t1 and event_type = 'hull_damage'
+     and source = 'pirate' and target = 'player' and (payload_json->>'damage')::numeric > 0;
+  if n_hits < 3 then
+    raise exception 'RSFEEL FAIL: % of % landed pirate hits produced no per-hit hull_damage under EVENT logging (the pre-0314 world: the hitsplat was debug-gated)', n_hits, n_units;
+  end if;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = v_t1 and event_type = 'hull_damage'
+     and source = 'player' and (payload_json->>'damage')::numeric > 0;
+  if n < 1 then
+    raise exception 'RSFEEL FAIL: the player''s own landed hit emitted no visible hull_damage with its amount';
+  end if;
+
+  -- (2) THE PER-HIT ROLL: six identical guns, one target, one tick — the numbers must differ.
+  select count(distinct payload_json->>'damage') into n_distinct from public.combat_events
+   where encounter_id = v_enc and tick_number = v_t1 and event_type = 'hull_damage'
+     and source = 'pirate' and target = 'player';
+  if n_distinct < 2 then
+    raise exception 'RSFEEL FAIL: every same-tick hit carries the same damage (% hits, % distinct value(s)) — the tick-shared roll is back and "everytime it deals differently" is dead', n_hits, n_distinct;
+  end if;
+
+  -- (1a) THE ARMING: every fired pirate weapon''s clock is now() + ITS OWN 3600s cooldown — exactly.
+  select count(*) into n
+    from public.combat_units u, jsonb_array_elements(u.weapons_json) w
+   where u.encounter_id = v_enc and u.side = 'enemy'
+     and nullif(w->>'next_ready_at','') is not null
+     and (w->>'next_ready_at')::timestamptz = now() + make_interval(secs => 3600);
+  if n <> n_units then
+    raise exception 'RSFEEL FAIL: % of % fired pirate weapons carry now()+3600s — a weapon was armed with bare now() and the cooldown never reached the clock', n, n_units;
+  end if;
+
+  -- ── TICK 2: the cooldown is unelapsed (frozen now()), so the pirates hold fire. ────────────────
+  perform pg_temp.ae_tick(v_enc);
+  select tick_number into v_t2 from public.combat_encounters where id = v_enc;
+  if v_t2 <> v_t1 + 1 then raise exception 'RSFEEL FAIL: tick 2 did not advance (% -> %)', v_t1, v_t2; end if;
+  -- vacuity: the silence must not be an ended fight or a dead wave.
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'enemy' and alive_count > 0 and hp_current > 0;
+  if n < 3 then raise exception 'RSFEEL FAIL: only % live pirate(s) at tick 2 — silence would be vacuous', n; end if;
+  if (select status from public.combat_encounters where id = v_enc) <> 'active' then
+    raise exception 'RSFEEL FAIL: the encounter is not active at tick 2 — silence would be vacuous';
+  end if;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = v_t2 and source = 'pirate'
+     and event_type in ('missile_salvo', 'hull_damage');
+  if n <> 0 then
+    raise exception 'RSFEEL FAIL: % pirate fire event(s) on tick 2 — the pirates fired again through an unelapsed 3600s cooldown (the pre-0314 world: attack speed was fake)', n;
+  end if;
+  -- and the FAIL-OPEN arm: the player''s fallback weapon (cooldown knob 0 in setup) must still fire
+  -- every tick — a zero-cooldown weapon must stay ready every tick, byte-equal to the old cadence.
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = v_t2 and source = 'player' and event_type = 'missile_salvo';
+  if n < 1 then
+    raise exception 'RSFEEL FAIL: the player''s zero-cooldown weapon went silent on tick 2 — a zero-cooldown weapon must stay ready every tick';
+  end if;
+
+  -- ── restore every knob this block owned (captured above; the setup values are 0/0). ────────────
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', to_jsonb(v_cd_before));
+  perform public.set_game_config('combat_hit_variance_pct',          to_jsonb(v_hv_before));
+  perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
+
+  raise notice 'DZCOMBAT_PASS_RSFEEL ok: % pirates spawned at danger % and every landed hit emitted its own hull_damage with a positive amount under EVENT logging (debug pinned dark), % distinct damage values across one volley of identical guns, the player''s own hit visible too; every fired weapon armed now()+3600s exactly, and tick 2 was pirate-silent (fight active, wave alive) while the zero-cooldown fallback kept firing (% player salvo(s)): attack interval real, every hit its own roll, every hit visible',
+    n_units, v_danger, n_distinct, n;
+end $$;
+
+-- ^ RSFEEL's OWN terminator, added at the 0313/0314 merge. Both sides of this conflict appended a
+-- do-block that leaned on the single shared terminator below, so a plain union leaves one block
+-- unclosed and RSFEEL swallows CLOSURE and NOLIVE into its own body. Not hypothetical: commit
+-- 040454e on this same file is "fix MY merge resolution: the REPOMODE block lost its terminator".
+-- The selftest cannot see it — it is static greps; only real Postgres can.
+--
+-- NOTE TO THE NEXT RESOLVER: no comment in this file may contain a literal dollar-quote token. The
+-- merge check for this file is arithmetic over those tokens — they must be even, and a depth walk
+-- must return to zero — so one sitting in prose desyncs the count while changing nothing Postgres
+-- sees, which is worse than either a real error or no check at all. This very comment was written
+-- that way on the first attempt and the depth walk caught it.
 
 -- ════════ DZCOMBAT_PASS_CLOSURE (0313): CUT RANGES MAKE POSITION MATTER — UNITS MOVE, THEN FIRE ══════
 -- The behaviour nobody has ever observed in this game: before 0313, every range (120–245) dwarfed

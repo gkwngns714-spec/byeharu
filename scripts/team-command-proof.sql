@@ -1020,6 +1020,27 @@ declare r jsonb; n int; t record;
 begin
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);
+  -- UNION at the 0313/0314 merge. BOTH preconditions below are load-bearing and neither replaces the
+  -- other: 0314 zeroes the weapon cooldowns (a TIME precondition — without it every multi-tick fire
+  -- sequence stalls) and 0313 borrows the formation ring (a GEOMETRY precondition — without it the
+  -- members sit outside their own cut ranges and never fire at all). Taking either side whole leaves
+  -- this block asserting against an ambient default it does not own, which is the exact failure the
+  -- proofs-never-assert-ambient-defaults law exists for. Cooldowns are zeroed FIRST because they must
+  -- land before anything snapshots weapons_json; the ring borrow is order-independent.
+  --
+  -- 0314: the tick arms REAL weapon cooldowns (next_ready_at = now() + cooldown_seconds), and now()
+  -- is frozen for this whole txn — any positive cooldown means a weapon fires at most ONCE per
+  -- proof run, which would stall every multi-tick fire sequence below (TEAMHUNT's second exchange,
+  -- TEAMSETTLE's two-wave clear, the lethal-focus loop). This harness asserts the fire-every-tick
+  -- world, so it OWNS that precondition in-txn, zeroed BEFORE anything snapshots a cooldown into
+  -- weapons_json (wave spawn / encounter creation). Set once here — game_config persists for the
+  -- whole txn. The cooldown property itself is proven where it is owned: danger-combat-proof's
+  -- RSFEEL block. (The per-hit damage roll inherits the variance-0 pin above, so every exact
+  -- damage number in this file is unchanged.)
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
+
   -- ring 0 — OWNED (0313 repoint): every member spawns ON the engagement anchor, distance 0 from
   -- the wave, so every weapon fires on tick 1 at ANY positive range. The exact-damage pins below
   -- assert AGGREGATION (all members' attack flows into player_damage), and they held before 0313

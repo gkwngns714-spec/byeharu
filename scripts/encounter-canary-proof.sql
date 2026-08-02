@@ -86,10 +86,25 @@ update public.game_config set value='true'::jsonb  where key='encounter_authorin
 update public.game_config set value='true'::jsonb  where key='encounter_binding_authoring_enabled'; -- E2
 update public.game_config set value='false'::jsonb where key='encounter_resolver_enabled';        -- E3 starts DARK
 update public.game_config set value='false'::jsonb where key='pirate_intercept_enabled';          -- no en-route ambush noise
+-- 0300 lit combat_telegraph_enabled in the CHAIN, so a hunt arrival now QUEUES a telegraph instead
+-- of opening combat inline — and this harness's send-then-settle staging found "no active
+-- encounter" on every post-0300 chain (verified 2026-08-02: identical failure on main, no 0314).
+-- This proof's subject is the TICK, not the telegraph — so it OWNS the inline-opening world the
+-- danger-combat way: telegraph pinned dark in-txn (rolled back with everything else).
+update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 
 do $$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);      -- v_variance = 1
+  -- 0314: the tick arms REAL weapon cooldowns and now() is txn-frozen — a positive cooldown means
+  -- fire-once-per-proof, which would stall the REWARD block's second-tick wave clear. This harness
+  -- asserts the fire-every-tick world, so it OWNS that precondition in-txn, zeroed BEFORE anything
+  -- snapshots a cooldown into weapons_json (catalog included: the fixture gun is a crafted
+  -- autocannon). The cooldown property itself is proven where it is owned: danger-combat-proof's
+  -- RSFEEL block. (The per-hit damage roll inherits the variance-0 pin above.)
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
   perform public.set_game_config('combat_tick_logging',  'true'::jsonb);
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
   perform public.set_game_config('enemy_hp_base',        '500'::jsonb);          -- the enemy survives the spawn tick

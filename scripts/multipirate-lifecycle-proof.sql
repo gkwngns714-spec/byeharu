@@ -194,6 +194,12 @@ update public.game_config set value='true'::jsonb where key='mainship_additional
 update public.game_config set value='true'::jsonb where key='module_crafting_enabled';
 update public.game_config set value='true'::jsonb where key='module_fitting_enabled';
 update public.game_config set value='true'::jsonb where key='spatial_combat_enabled';
+-- 0300 lit combat_telegraph_enabled in the CHAIN, so a hunt arrival now QUEUES a telegraph instead
+-- of opening combat inline — and this harness's send-then-settle staging found "no active
+-- encounter" on every post-0300 chain (verified 2026-08-02: identical failure on main, no 0314).
+-- This proof's subject is the TICK, not the telegraph — so it OWNS the inline-opening world the
+-- danger-combat way: telegraph pinned dark in-txn (rolled back with everything else).
+update public.game_config set value='false'::jsonb where key='combat_telegraph_enabled';
 
 -- deterministic tuning (numeric knobs — all reverted by ROLLBACK; the engineered lifecycle depends on
 -- these EXACT values). Pirates are frozen (speed 0) with a long range (they HOLD + fire in place), deal
@@ -203,6 +209,14 @@ update public.game_config set value='true'::jsonb where key='spatial_combat_enab
 do $tune$
 begin
   perform public.set_game_config('combat_damage_variance_pct', '0'::jsonb);   -- determinism (variance≡1)
+  -- 0314: the tick arms REAL weapon cooldowns and now() is txn-frozen — a positive cooldown means
+  -- fire-once-per-proof, which would stall the three-wave lifecycle (every wave is cleared by fire
+  -- across ticks). This harness asserts the fire-every-tick world, so it OWNS that precondition
+  -- in-txn, zeroed BEFORE anything snapshots a cooldown into weapons_json. The cooldown property
+  -- itself is proven where it is owned: danger-combat-proof's RSFEEL block.
+  perform public.set_game_config('enemy_synthetic_cooldown_seconds', '0'::jsonb);
+  perform public.set_game_config('combat_player_fallback_weapon_cooldown_seconds', '0'::jsonb);
+  update public.module_types set cooldown_seconds = 0 where cooldown_seconds is not null and cooldown_seconds > 0;
   perform public.set_game_config('combat_tick_logging', 'true'::jsonb);       -- combat_ticks rows land
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);      -- missile_salvo / wave_cleared events land
   perform public.set_game_config('enemy_hp_danger_scale', '0'::jsonb);        -- wave total hp independent of danger
