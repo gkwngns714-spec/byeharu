@@ -132,10 +132,15 @@ const T_SITE_NEW = `          perform report_create(e.id);
               join ship_groups g on g.group_id = f.group_id
              where f.id = e.fleet_id;
             if found and v_ae_on then
+              -- alias u, NOT cu: this function declares a record variable named cu (the death-loop
+              -- iterator), and plpgsql resolves qualified references against variables too — a cu
+              -- alias here raised "column reference cu.main_ship_id is ambiguous" on the first
+              -- real tick, and the 0206 per-row guard rolled that encounter's ENTIRE tick back,
+              -- wave spawn included. Caught only by the disposable CI run; no static probe can.
               select sum(msi.max_hp) into v_ae_cap
-                from combat_units cu
-                join main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
-               where cu.encounter_id = e.id and cu.side = 'player' and cu.main_ship_id is not null;
+                from combat_units u
+                join main_ship_instances msi on msi.main_ship_id = u.main_ship_id
+               where u.encounter_id = e.id and u.side = 'player' and u.main_ship_id is not null;
               if v_ae_cap is not null and v_ae_cap > 0 and v_ae_cap < 'Infinity'::double precision
                  and v_hp_after <= v_ae_cap * (v_ae_pct / 100.0) then
                 perform presence_request_leave(e.presence_id);
@@ -694,9 +699,12 @@ begin
   -- THE DENOMINATOR IS CAPACITY. The entry-hull denominator (player_integrity_max) is the
   -- compounding defect this slice was sent back for — assert it stays OUT of the arm's predicate
   -- and the capacity sum stays IN.
+  -- (the query aliases combat_units as u, never cu — cu is a declared record variable in this
+  -- function and plpgsql calls a cu-qualified reference ambiguous, which CI caught as a rolled-back
+  -- first tick)
   if position('select sum(msi.max_hp) into v_ae_cap' in v_code) = 0
-     or position('join main_ship_instances msi on msi.main_ship_id = cu.main_ship_id' in v_code) = 0
-     or position('cu.side = ''player'' and cu.main_ship_id is not null' in v_code) = 0 then
+     or position('join main_ship_instances msi on msi.main_ship_id = u.main_ship_id' in v_code) = 0
+     or position('u.side = ''player'' and u.main_ship_id is not null' in v_code) = 0 then
     raise exception '0310 ASSERT (e) FAIL: the arm does not derive REAL capacity from main_ship_instances.max_hp over the encounter''s member units';
   end if;
   if position('v_ae_cap is not null and v_ae_cap > 0 and v_ae_cap < ''Infinity''::double precision' in v_code) = 0 then
