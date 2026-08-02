@@ -2,10 +2,8 @@ import { useState } from 'react'
 import type { WorldCoord } from './openSpaceTransform'
 import { commandShipGroupCancelRoute, commandShipGroupGoRoute } from './pirateApi'
 import { routeOrderOutcomeMessage } from '../command/fleetOrderOutcome'
-import { fleetRetreatOutcomeMessage } from '../command/teamMove'
 import { teamReasonMessage } from '../command/teamReasonMessage'
-import { canonicalizeWorldTarget } from './spaceMoveCommand'
-import { openSpaceDestinationLabel } from './fleetGoTarget'
+import { routeCombatOutcomeMessage } from './fleetGoTarget'
 import { Badge, Button, OverlayPanel } from '../../components/ui'
 
 // PIRATE INTERCEPT — the player-facing ROUTE planner: plot 1-3 waypoints + a final open-space point to
@@ -61,11 +59,7 @@ export function PirateInterceptPanel({
       // arms consult) speaks first. The place it names is the FIRST plotted point — leg 1's target,
       // which is where the server aimed the retreat or the reposition — rendered as the canonical
       // view (the same rounding the server applies; display only, the wire stays raw).
-      const combat = fleetRetreatOutcomeMessage(
-        result.outcome,
-        'The fleet',
-        openSpaceDestinationLabel(canonicalizeWorldTarget(draftPoints[0])),
-      )
+      const combat = routeCombatOutcomeMessage(result.outcome, draftPoints[0])
       // INTERCEPT DEFERRED ENTRY — otherwise the order response says what THIS CALL did, never
       // whether an ambush is coming. It used to claim 'Route sent — ambushed on the first leg!' off
       // `intercepted`, a sentence that is permanently false once the ambush is deferred to the

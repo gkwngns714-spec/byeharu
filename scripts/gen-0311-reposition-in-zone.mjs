@@ -75,19 +75,31 @@ const G_GUARD_NEW = `      if v_enc.status = 'active'
       -- STRICTLY INSIDE an active danger zone that ALSO holds this encounter's engagement anchor
       -- MOVES the fleet, and the fight moves with it — no retreat armed, no destination stored, no
       -- window, no leg. Everything else falls through to the (a)/(b) retreat arms below, byte-
-      -- identical. The admission QUANTIFIES over every anchor-holding zone — adversarial review
-      -- showed that picking ONE zone (the first cut tie-broke by area) is wrong in both directions
-      -- when zones overlap; "does such a zone exist" has no choice to get wrong. Gated to
-      -- encounter 'active': a 'retreating' fight may only update its stored destination in arm (b)
-      -- — a mid-window jump would be a free escape from the damage window. False/NULL anywhere
-      -- (unstamped anchor, no zone, boundary graze) falls through to retreat: fail closed.
-      if v_enc.status = 'active'
-         and public.combat_encounter_zone_admits_point(v_enc.id, v_t_x, v_t_y) then
+      -- identical. The admission QUANTIFIES over every anchor-holding zone — a PURE RELAXATION of
+      -- the first cut's area tie-break, whose chosen zone could VETO a destination genuinely
+      -- inside another anchor-holding zone (adversarial review's finding; every grant the old rule
+      -- made is still a grant, since its winner is in the quantified set). Under overlap the
+      -- admitting zone may differ from the one the ambush fired in — INTENDED, not prevented.
+      -- Gated to encounter 'active': a 'retreating' fight may only update its stored destination
+      -- in arm (b) — a mid-window jump would be a free escape from the damage window. False/NULL
+      -- anywhere (unstamped anchor, no zone, boundary graze) falls through to retreat: fail closed.
+      if v_enc.status = 'active' then
         declare
-          v_rz_mode  text;
-          v_rz_eng_x double precision;
-          v_rz_eng_y double precision;
+          v_rz_admits boolean := false;
+          v_rz_mode   text;
+          v_rz_eng_x  double precision;
+          v_rz_eng_y  double precision;
         begin
+          -- FENCED: this RPC never raises at its boundary (the 0301 posture), and the admission
+          -- puts a PostGIS read under every mid-combat order — including site fights that
+          -- previously touched no geometry. A geometry failure must never break the retreat:
+          -- it reads as "not an in-zone move" and falls through.
+          begin
+            v_rz_admits := public.combat_encounter_zone_admits_point(v_enc.id, v_t_x, v_t_y);
+          exception when others then
+            v_rz_admits := false;
+          end;
+          if v_rz_admits then
           -- The fleet row, locked in this block's own order (encounter -> fleet).
           select f.location_mode into v_rz_mode
             from public.fleets f
@@ -136,6 +148,7 @@ const G_GUARD_NEW = `      if v_enc.status = 'active'
           -- UNVERIFIED. The first cut REFUSED here instead, and adversarial review showed the
           -- refusal regressed a capability every site fight has today (an in-zone-destination
           -- retreat order). Falling through takes nothing away from anyone.
+          end if;
         end;
       end if;
       -- ── end 0311 — the head continues verbatim from here ───────────────────────────────────────`;
@@ -197,12 +210,16 @@ const sql = `-- ═════════════════════�
 --      this fight?" TRUE iff some active zone holds the engagement anchor under a closure test
 --      (ST_DWithin, 1e-6) AND strictly contains the point (composing authority 1). It QUANTIFIES —
 --      it never resolves "the" zone. The first cut returned one zone chosen by an
---      ST_Area-ascending tie-break, and adversarial review proved that wrong in BOTH directions
---      under overlap: a thin low-area zone could veto a destination genuinely inside the fight's
---      zone, or could grant an exit from it. An existential has no choice to get wrong; overlaps
---      need no tie-break at all. FALSE when the anchor is unstamped or nothing qualifies — and
---      false means "not an in-zone move" => retreat => today's behaviour, the fail-closed default
---      protecting existing players.
+--      ST_Area-ascending tie-break; adversarial review proved the CHOICE could VETO a destination
+--      genuinely inside an anchor-holding zone (the smallest holder won and was tested alone).
+--      The existential is a PURE RELAXATION of that rule: the tie-break winner is itself in the
+--      quantified set, so GRANT_old implies GRANT_new unconditionally — only the veto class is
+--      removed, and there is no choice left to get wrong. Under overlap the admitting zone may be
+--      a DIFFERENT anchor-holding zone than the one the ambush fired in, and moving between
+--      overlapping zones that both hold the fight is INTENDED — this rule does not (and by design
+--      does not try to) fence the fleet into the single polygon the ambush rolled in. FALSE when
+--      the anchor is unstamped or nothing qualifies — and false means "not an in-zone move" =>
+--      retreat => today's behaviour, the fail-closed default protecting existing players.
 --
 --      ★ WHY THE ANCHOR ARM IS CLOSURE-WITH-EPSILON, NOT STRICT (the one deviation from the design
 --      packet, verified and upheld by adversarial review): the primary case this slice ships for —
@@ -266,14 +283,21 @@ const sql = `-- ═════════════════════�
 --                                advances any idle/space fleet with queued legs, with NO encounter
 --                                guard. That seam is PRE-EXISTING (the retreat arm has the same
 --                                shape today: a mid-combat route order queues legs while the fleet
---                                sits in its retreat window) and 0311 adds the 'repositioned'
---                                outcome to it: a repositioned fleet left with queued legs can be
---                                flown out of its fight by the route cron with no retreat armed.
+--                                sits in its retreat window) and 0311 CHEAPENS it on the new arm:
+--                                pre-0311 every such escape ran with a retreat ARMED — presence
+--                                retreating, the damage window charging — while a REPOSITIONED
+--                                fleet's queued legs can be flown out by the route cron with the
+--                                encounter fully 'active' and no window ever charged. The new arm
+--                                is also NARROW, which is why deferring is tolerable: it needs
+--                                waypoint[0] to land strictly inside an anchor-holding zone
+--                                (today's live zones span ~29-79 world units), where the
+--                                pre-existing retreat arm triggers on ANY mid-combat route order.
 --                                Closing it needs its own slice (an encounter guard in the route
 --                                cron, or queue abandonment in step 8) — deliberately not smuggled
 --                                in here. The CLIENT half is honest now: PirateInterceptPanel
---                                consults fleetRetreatOutcomeMessage first, so a combat-time route
---                                order reports what actually happened instead of "fleet underway".
+--                                composes routeCombatOutcomeMessage (the combat-copy authority
+--                                named with leg 1's target), so a combat-time route order reports
+--                                what actually happened instead of "fleet underway".
 --   command_ship_group_dock    — dark-path (timed_docking dark) submits through the mover with a
 --                                PORT target; a port strictly inside the fight's zone now
 --                                repositions to the port's coordinate instead of arming a retreat —
@@ -303,11 +327,23 @@ const sql = `-- ═════════════════════�
 --   - The reposition is INSTANT (the ambush park's own primitive). Enemy rows are NOT moved;
 --     whether an enemy keeps firing after the jump depends on its weapon range against the jump
 --     distance — the tick's existing 'close' arm (0234:242-244) pursues anything out of range.
---     THE CEILING AT TODAY'S PRODUCTION GEOMETRY (measured during adversarial review): the three
---     live zones span Snare 79x47, Reaver 35x31, Blackden 29x30 world units, against enemy weapon
---     range 120+ — NO in-zone reposition on today's zones can leave anyone's weapon range. The
---     mechanic is correct and currently cannot dodge fire — by geometry, not by defect; a larger
---     drawn zone changes that, a code change does not.
+--     THE CEILING AT TODAY'S PRODUCTION GEOMETRY (measured on production 2026-08-02 by the
+--     coordinator, via the Management API against danger_zones where status='active'): the three
+--     live zones span Snare 79.2x47, Reaver 35.1x31, Blackden 28.6x30 world units, against enemy
+--     weapon range 120+ — NO in-zone reposition on today's zones can leave anyone's weapon range.
+--     The mechanic is correct and currently cannot dodge fire — by geometry, not by defect; a
+--     larger drawn zone changes that, a code change does not.
+--     ★ THE OBSERVED SPANS DISAGREE WITH THE CHAIN-DERIVED BOUND, AND THAT IS A REAL PRODUCTION
+--     FINDING (pre-existing; neither caused nor fixed by this slice). The chain materializes a
+--     source='circle' boundary at 0.492x..1.77x of territory_radius (0296:11-12), and every live
+--     zone's radius is 12 (0289:69-72) => maximum span ~42.5. Blackden (28.6) and Reaver (35.1)
+--     comply; SNARE AT 79.2 IS ~1.9x THAT MAXIMUM — a hand-reshaped polygon still carrying
+--     source='circle' (zone_update preserves source bit-for-bit; 0300 lit seeded_zone_edit_enabled
+--     after 0296 deployed). Consequence the next reader needs: the next location_update touching
+--     Snare's x/y or territory_radius calls danger_zone_rematerialize_for_location (0296:141),
+--     which selects on source='circle' and will REGENERATE A RANDOM BLOB OVER THE OWNER'S SHAPE.
+--     The largest zone in the game — the most permissive for repositioning — is also the one most
+--     likely to be silently destroyed. Its fix is a provenance/source slice, not this one.
 --   - Lock-on, enemy spawn spread and the weapon-cooldown fix are slices 0312/0313 and a separate
 --     bug — deliberately NOT here.
 --
@@ -330,8 +366,9 @@ const sql = `-- ═════════════════════�
 --   (g) mover: retreat arms intact, exactly one retreat-destination write, the retired refusal
 --       token is ABSENT (site fights fall through, they are never refused)
 --   (h) mover: never touches combat_units directly (the leaf does), restamp present; the leaf is
---       player-side scoped and a pure translation
---   (i) mover: the admission is gated on 'active' (exactly one such gate) and arm (a) keeps its own
+--       a pure translation scoped to the one encounter's player side
+--   (i) mover: the admission is FENCED (a geometry failure falls through to retreat) and gated on
+--       'active' (exactly one such branch); arm (a) keeps its own gate
 --   (j) mover: no inline geometry (the authorities stay the only geometry readers)
 --   (k) metadata parity: the mover changed body and NOTHING else
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -439,8 +476,9 @@ comment on function public.combat_encounter_zone_admits_point(uuid, double preci
   'active danger zone holds the encounter''s engagement anchor (closure test, 1e-6 — an ambush '
   'anchors its fight ON the zone boundary, 0301:1109, where strictness is undefined to one ulp) '
   'AND strictly contains the destination (composing danger_zone_contains_point). QUANTIFIED over '
-  'every anchor-holding zone — never "the" zone: adversarial review proved an area tie-break '
-  'wrong in both directions under overlap. The linkage is DERIVED from engagement_x/y (the 0293 '
+  'every anchor-holding zone — never "the" zone: a pure relaxation of the first cut''s area '
+  'tie-break, whose chosen zone could veto a genuinely in-zone destination; under overlap ANY '
+  'anchor-holding zone may admit, by design. The linkage is DERIVED from engagement_x/y (the 0293 '
   'position authority), never stored. FALSE on an unstamped anchor or no qualifying zone — the '
   'mover then falls through to the retreat arms: fail closed.';
 
@@ -737,9 +775,12 @@ begin
   if position('side = ''player''' in v_code) = 0 then
     raise exception '0311 ASSERT (h) FAIL: the leaf is not scoped to the player side — enemy rows must not move';
   end if;
+  if position('encounter_id = p_encounter' in v_code) = 0 then
+    raise exception '0311 ASSERT (h) FAIL: the leaf is not scoped to the one encounter — it would translate every player unit in the database';
+  end if;
 end $h$;
 
--- (i) the admission is gated on 'active' — exactly one such gate, and arm (a) keeps its own
+-- (i) the admission is FENCED and gated on 'active'; arm (a) keeps its own gate
 do $i$
 declare v_code text; v_n integer;
 begin
@@ -747,14 +788,20 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_go';
   select count(*) into v_n
-    from regexp_matches(v_code, 'if v_enc\\.status = ''active''\\s+and public\\.combat_encounter_zone_admits_point', 'g');
+    from regexp_matches(v_code,
+      'v_rz_admits := public\\.combat_encounter_zone_admits_point\\(v_enc\\.id, v_t_x, v_t_y\\);\\s+exception when others then\\s+v_rz_admits := false;', 'g');
   if v_n <> 1 then
-    raise exception '0311 ASSERT (i) FAIL: % active-gated admission(s) (want exactly 1) — a ''retreating'' fight must never reposition', v_n;
+    raise exception '0311 ASSERT (i) FAIL: the admission call is not fenced (% match(es)) — a geometry failure would break the retreat; this RPC never raises at its boundary (0301)', v_n;
+  end if;
+  select count(*) into v_n
+    from regexp_matches(v_code, 'if v_enc\\.status = ''active'' then\\s+declare\\s+v_rz_admits boolean := false;', 'g');
+  if v_n <> 1 then
+    raise exception '0311 ASSERT (i) FAIL: % active-gated admission branch(es) (want exactly 1) — a ''retreating'' fight must never reposition', v_n;
   end if;
   v_n := (length(v_code) - length(replace(v_code, 'if v_enc.status = ''active'' then', '')))
          / length('if v_enc.status = ''active'' then');
-  if v_n <> 1 then
-    raise exception '0311 ASSERT (i) FAIL: % single-line active gates (want exactly 1: retreat arm a)', v_n;
+  if v_n <> 2 then
+    raise exception '0311 ASSERT (i) FAIL: % single-line active gates (want exactly 2: the admission branch + retreat arm a)', v_n;
   end if;
 end $i$;
 
