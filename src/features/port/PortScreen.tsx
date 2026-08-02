@@ -1,10 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useShellState } from '../../app/shellState'
 import { DockedPortCard } from './DockedPortCard'
 import { HaulBoardPanel } from './HaulBoardPanel'
 import { PortPickerPanel } from './PortPickerPanel'
 import { SalvageMarketPanel } from './SalvageMarketPanel'
-import { RepairPanel } from './RepairPanel'
 import { ShopPanel } from './ShopPanel'
 import { ShipyardPanel } from './ShipyardPanel'
 import { StationHangar } from './StationHangar'
@@ -46,11 +45,13 @@ export function PortScreen() {
     [map.fleetPositions, portNames],
   )
 
-  // The player's explicit pick (null = follow the default). Effective acting ship = the pick if it is
-  // still docked, else the shared selected ship if docked, else the FIRST docked ship (one docked ship →
-  // auto-selected, no forced picking). Null when nothing is docked (→ the sole-ship shim / empty state).
-  const [pickedShipId, setPickedShipId] = useState<string | null>(null)
-  const preferredShipId = pickedShipId ?? shipSelection.selectedShipId ?? map.mainShip?.main_ship_id ?? null
+  // ONE SELECTION AUTHORITY (repair-where-you-are): a pick here IS the shell selection
+  // (selection.selectShip — the same model the Fitting tab reads), so both tabs always agree on
+  // which ship is being commanded; the old Port-local pickedShipId (a second selection model that
+  // never told the shell) is DELETED. Effective acting ship = the shared selected ship if it is at
+  // a port, else the FIRST docked ship (resolveChosenShipId stays the one validator of a
+  // preference against the at-port set). Null when nothing is docked (→ the empty state).
+  const preferredShipId = shipSelection.selectedShipId ?? map.mainShip?.main_ship_id ?? null
   const chosenShipId = resolveChosenShipId(ports, preferredShipId)
 
   // The lifecycle refetch key now leads with the CHOSEN ship: switching the picked port/ship re-reads the
@@ -86,7 +87,7 @@ export function PortScreen() {
       {/* PORT-HUB — the port picker: pick which of your docked ports to act at. Renders only when you
           have at least one docked ship; one ship → its port shows here (highlighted), no forced pick.
           The chosen (port, ship) drives the dock context + every action panel below. */}
-      <PortPickerPanel ports={ports} chosenShipId={chosenShipId} onPick={setPickedShipId} />
+      <PortPickerPanel ports={ports} chosenShipId={chosenShipId} onPick={shipSelection.selectShip} />
       {!isDocked(dock) ? (
         chosenBerthPort ? (
           // M3 — the chosen ship is BERTHED here (listed above, consistent with the Fitting tab),
@@ -180,18 +181,10 @@ export function PortScreen() {
               locationId={dock.locationId}
               mainShipId={chosenShipId}
             />
-            {/* REPAIR-ECON (dark, flag-gated): the paid hull-repair desk — a ship-recovery SERVICE on
-                the main rail. No read RPC exists for repair (0201), so the panel gates itself on the
-                server's own repair_economy_enabled flag read honestly from PUBLIC-READ game_config (the
-                SalvageMarketPanel posture) — flag false (production today) → renders null, so production
-                is byte-unchanged. THE SEAM: a destroyed ship shows the free-recovery note here, never a
-                paid Repair button (the free repair_main_ship safelock handles destroyed ships).
-                locationId is the SERVER dock projection (this docked branch). */}
-            <RepairPanel
-              lifecycleKey={lifecycleKey}
-              locationId={dock.locationId}
-              mainShipId={chosenShipId}
-            />
+            {/* REPAIR-WHERE-YOU-ARE — the paid hull-repair desk MOVED to the Fitting detail's
+                condition block (its ONE mount: the surface that shows per-ship hull damage is the
+                surface that mends it; the RPC never needed this screen's dock projection — it
+                resolves the dock server-side). The DockedPortCard service row above says where. */}
             {/* PORT-SHOP (dark, flag-gated): the port outfitter — buy entry-level fitting modules +
                 ammo for credits. A port SERVICE on the main rail beside repair/salvage. Unlike those,
                 the shop has its OWN gated read RPC (get_port_shop, 0235) which rejects

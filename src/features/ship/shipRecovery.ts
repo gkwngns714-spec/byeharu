@@ -24,6 +24,42 @@ export interface DisabledShipRow {
   location_id: string | null
 }
 
+/**
+ * REPAIR-WHERE-YOU-ARE — the ONE mount decision for the Fitting detail's condition block: which
+ * repair concept a ship's state gets. Mirrors the server's mutual exclusion exactly (the free
+ * repair_main_ship gates on status='destroyed'; the paid repair_ship_hull_at_port REJECTS
+ * destroyed with ship_destroyed, 0201) — exactly one concept per state, never both, never
+ * neither. Both mount sites in FittingDetail read THIS value; neither carries its own status
+ * comparison, so the two surfaces can only flip together. Feed it the freshest status available
+ * (the screen's refetched shared read, falling back to the selection row) — a stale selection
+ * status here is what turns a mid-session destruction into a dead end.
+ */
+export type RepairConcept = 'paid_mend' | 'free_recovery'
+
+export function repairConcept(status: string): RepairConcept {
+  return status === 'destroyed' ? 'free_recovery' : 'paid_mend'
+}
+
+/**
+ * The ONE freshest-status resolution feeding every recovery decision (repairConcept, repairGate,
+ * the roster rows' isDisabled): prefer the REFETCHED shared read (fetchMyMainShips — re-read on
+ * every refresh-key tick and after every command), fall back to the never-repolled selection row.
+ * One leaf composed at its three sites — three inline copies of `row?.status ?? sel.status` was
+ * exactly the two-sites-one-comparison shape that produced the rev.1 dead end.
+ *
+ * HONEST LIMIT: the fallback is not only "pre-load". fetchMyMainShips collapses ANY read error to
+ * [] (the repo-wide fail-soft API posture), so a failed shared read also lands here and the stale
+ * selection status wins until the next good wave. Distinguishing error from genuinely-empty would
+ * mean changing that API contract for every reader — out of this slice; this note states the
+ * window instead of claiming it away.
+ */
+export function freshestShipStatus(
+  refetched: { status: string } | null | undefined,
+  selectionRow: { status: string },
+): string {
+  return refetched?.status ?? selectionRow.status
+}
+
 export type RepairGate =
   /** Not disabled — no recovery surface at all. */
   | { kind: 'not_disabled' }
