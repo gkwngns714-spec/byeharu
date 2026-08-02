@@ -49,7 +49,11 @@ const FLEE_MESSAGES: Record<string, string> = {
   // unmounts on the next poll and the combat panel takes over, where Retreat is the door.
   no_pending: 'Too late to slip away — the fight is starting. Order a retreat instead.',
   telegraph_disabled: 'Fleeing isn’t possible right now.',
-  not_authenticated: 'Sign in to command your fleet.',
+  // Deliberately the SAME sentence teamReasonMessage.ts:18 gives this token. One wire code must not
+  // read as two different things depending on which button produced it — a draft said "your fleet"
+  // here and "fleets" there for the identical server reply. If this map and that one ever need to
+  // disagree on a shared token, that is the signal to fold them, not to reword one.
+  not_authenticated: 'Sign in to command fleets.',
 }
 
 /** Player copy for a failed Flee press. `raw` is the thrown message (a reason token, or transport
