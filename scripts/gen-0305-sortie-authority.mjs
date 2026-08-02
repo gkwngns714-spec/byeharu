@@ -568,8 +568,14 @@ commit;
 
 const OUT = new URL('20260618000305_one_sortie_authority.sql', MIG)
 if (process.argv.includes('--check')) {
+  // Compare with line endings NORMALISED. Git checks this file out CRLF on Windows while the
+  // generator emits LF, so a raw !== compare reported "OUT OF DATE" on an untouched tree — every
+  // line differing by one invisible byte. That false alarm is worse than no check: it trains the
+  // reader to ignore the gate, and it is exactly what happened the first time 0308 wired --check
+  // into the proof selftest. gen-0308 already normalises on read; this brings 0305 to parity.
+  const norm = (s) => s.replace(/\r\n/g, '\n')
   const cur = readFileSync(OUT, 'utf8')
-  if (cur !== sql) {
+  if (norm(cur) !== norm(sql)) {
     console.error('0305 migration is OUT OF DATE — re-run: node scripts/gen-0305-sortie-authority.mjs')
     process.exit(1)
   }

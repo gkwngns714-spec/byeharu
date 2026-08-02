@@ -19,11 +19,40 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO_ROOT="$(cd "$SC
 tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD"
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
+
+  # ── GENERATED-MIGRATION PARITY GATE (added 0308) ───────────────────────────────────────────────
+  # 0305, 0306 and 0308 each re-create LIVE plpgsql by SLICING the deployed text and replacing one
+  # marked hunk, and each ships a generator whose --check re-derives the migration from those slices.
+  # That makes byte parity outside the hunks a property of the METHOD rather than a review promise —
+  # but ONLY if the generator is actually run. Before this gate existed, `--check` was wired into no
+  # workflow, no harness and no npm script, so a hand-edit of a generated migration passed every gate
+  # in the repo and would have surfaced as an exactly-once probe failing AT DEPLOY TIME ON PRODUCTION
+  # instead of in CI. Adversarial review found that hole. All three are gated together, not just the
+  # newest, because the gap was identical for the two that came before.
+  if command -v node >/dev/null 2>&1; then
+    for gen in gen-0305-sortie-authority gen-0306-dock-authority gen-0308-combat-roster-authority; do
+      # A MISSING generator is a HARD FAIL, not a skip. The first version of this gate wrapped the
+      # check in `if [ -f … ]; then … fi`, and adversarial review broke it empirically: hand-edit a
+      # generated migration AND delete its generator, and the selftest went green. A refactor that
+      # moved these into scripts/gen/ or renamed one would have silently un-verified all three
+      # migrations forever, and the failure would resurface as an exactly-once probe raising AT
+      # DEPLOY TIME ON PRODUCTION — the exact sequence this gate exists to prevent. Absence of the
+      # checker is not evidence of correctness; it is loss of the only evidence there was.
+      [ -f "$REPO_ROOT/scripts/$gen.mjs" ] \
+        || fail "$gen.mjs is MISSING — migration $(echo "$gen" | sed 's/^gen-\([0-9]*\).*/\1/') can no longer be verified against the slices it claims to take. Restore it or delete the gate deliberately; do not let it skip."
+      # stderr is NOT swallowed: the generator distinguishes "a source migration drifted" from "the
+      # file was hand-edited", and that line is the only actionable diagnostic.
+      node "$REPO_ROOT/scripts/$gen.mjs" --check \
+        || fail "$gen --check FAILED (its own message is above): the migration no longer matches the slices it takes from the deployed heads. Do NOT re-generate blindly — read the diff first; a slice that no longer matches may mean the head moved under you."
+    done
+  else
+    fail "node not found — the generated-migration parity gate cannot run, and a hand-edited migration would reach production unchecked"
+  fi
 
   tp_assert_self_rolling_back "$SQL"
 
@@ -123,6 +152,12 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "no positioned synthetic pirate spawned"                "$SQL" || fail "harness lacks the synthetic-pirate-spawn assert"
   grep -q "no pirate-sourced spatial missile_salvo"               "$SQL" || fail "harness lacks the pirate-fire assert"
   grep -q "no damage exchanged"                                   "$SQL" || fail "harness lacks the damage-dealt assert"
+  # 0308 — the roster-authority + weapon-authority properties are asserted in assert-form too.
+  grep -q "was seeded into its next fight (the 0308 defect)"      "$SQL" || fail "harness lacks the departed-ship-not-seeded assert"
+  grep -q "the snapshot was replaced"                             "$SQL" || fail "harness lacks the freeze-replaces-the-snapshot assert"
+  grep -q "a rig still counts as a gun (the 0308 defect)"         "$SQL" || fail "harness lacks the rig-is-not-a-gun assert"
+  grep -q "the ship does not fire its own attack"                 "$SQL" || fail "harness lacks the fallback-power-from-attack assert"
+  grep -q "drifted from its catalog row"                          "$SQL" || fail "harness lacks the fitted-weapon-exactness assert"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
