@@ -26,6 +26,9 @@ on:
       # 0308 rewrites the encounter builder + the ambush resolver — roster-touching branches must
       # run the intercept apply-and-behaviour gate too.
       - 'slice-combat-roster**'
+      # 0310 rewrites the combat tick itself (the HP auto-exit arm) and this proof carries its
+      # behaviour block (DZCOMBAT_PASS_AUTOEXIT) — auto-exit branches must run it.
+      - 'slice-combat-auto-exit**'
 
 permissions:
   contents: read

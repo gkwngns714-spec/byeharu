@@ -53,6 +53,9 @@ test('every known fleet-RPC reject reason maps to specific player text (not the 
     'invalid_group_index',
     'invalid_name',
     'ship_not_found',
+    // HP AUTO-EXIT — set_group_auto_exit (0310).
+    'invalid_auto_exit_pct',
+    'invalid_auto_exit_toggle',
     'must_unassign_first',
     'group_fleet_in_flight',
     'group_fleet_elsewhere',
