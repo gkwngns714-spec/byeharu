@@ -109,3 +109,12 @@ test('the retired 0232 code is gone from the map, not left as dead copy', () => 
 test('the retired 0298 code is gone from the map, not left as dead copy', () => {
   expect(teamReasonMessage('retreat_needs_port_destination')).toBe(FALLBACK)
 })
+
+// NEVER-SHIPPED PIN — 'reposition_requires_open_space' existed only in 0311's first cut, which
+// REFUSED an in-zone order from a fleet fighting 'present' at a site. Adversarial review showed the
+// refusal regressed a capability every site fight has today (an in-zone-destination retreat order),
+// so the server now FALLS THROUGH to the retreat arms instead and no emitter for this code ever
+// reached any deployment. It must stay out of the map: mapping it again would invite the refusal back.
+test('the reposition refusal code was never shipped and stays out of the map', () => {
+  expect(teamReasonMessage('reposition_requires_open_space')).toBe(FALLBACK)
+})

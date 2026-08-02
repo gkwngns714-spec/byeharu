@@ -54,6 +54,11 @@ const REASON_MESSAGES: Record<string, string> = {
   // where that name is in scope. THE RETREAT HAS NO REJECT: 0298 removed the port-only restriction,
   // so a coordinate order given mid-combat is accepted like any other and no reason code is emitted
   // for the shape of a destination (see the retirement pin in tests/teamReasonMessage.spec.ts).
+  // REPOSITION (0311): an in-zone order MOVES an open-space fleet and the fight continues — the
+  // 'repositioned' SUCCESS copy lives in fleetRetreatOutcomeMessage, per the rule above. There is
+  // deliberately NO reposition reject code: a fleet that cannot make the jump (fighting 'present'
+  // at a site) falls through server-side to the retreat arms, exactly as before 0311, so nothing
+  // new arrives here to map.
   fleet_ambiguous: 'This fleet’s position is unclear — try again in a moment.',
   group_scattered: 'The fleet’s ships are split across ports — dock them together once to gather the fleet.',
   no_origin: 'The fleet has nowhere to depart from yet.',

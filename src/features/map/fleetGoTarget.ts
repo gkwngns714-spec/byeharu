@@ -22,6 +22,7 @@
 // THERE because the per-ship wrapper sends the canonical target; the fleet wire sends raw.)
 
 import { canonicalizeWorldTarget } from './spaceMoveCommand'
+import { fleetRetreatOutcomeMessage } from '../command/teamMove'
 import { isWithinOpenSpaceBounds, type WorldCoord } from './openSpaceTransform'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
 
@@ -136,4 +137,18 @@ export function fleetGoSuccessMessage(input: {
       ? ` — ${input.shipCount} ship${input.shipCount === 1 ? '' : 's'} —`
       : ''
   return `${verb} ${input.fleetName}${count} to ${formatWorldPoint(input.canonical)}.`
+}
+
+// ── REPOSITION / RETREAT copy for the ROUTE surface (0311) ─────────────────────────────────────────
+// Leg 1 of a route COMPOSES command_ship_group_go (0301:2298-2301), so a route order given while
+// the fleet's fight is live comes back as one of the mover's combat outcomes with NO leg minted —
+// and the place the server aimed it at is the FIRST plotted point, never the route's final target.
+// This helper is the route surface's one composition of the combat-copy authority
+// (fleetRetreatOutcomeMessage) with that point's canonical view (the same rounding the server
+// applies; display only — the wire stays raw). Returns null for an ordinary route so the caller
+// keeps routeOrderOutcomeMessage. The caller (PirateInterceptPanel) must pass draftPoints[0]; the
+// index itself lives in the component and is not pinnable by a pure spec — the helper's name and
+// contract exist to make handing it anything else read wrong.
+export function routeCombatOutcomeMessage(outcome: unknown, firstPoint: WorldCoord): string | null {
+  return fleetRetreatOutcomeMessage(outcome, 'The fleet', openSpaceDestinationLabel(canonicalizeWorldTarget(firstPoint)))
 }
