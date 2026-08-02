@@ -513,13 +513,17 @@ export function TeamRosterPanel() {
                   ))}
 
                 {/* HP AUTO-EXIT (0310) — the fleet's combat safety line, LIT (dark-first is
-                    suspended by owner order). Renders ONLY when the settings read succeeded AND
-                    carries this fleet (fail closed to hidden on a pre-0310 DB or a flaky read —
-                    never a fabricated default). The toggle dispatches IMMEDIATELY (an off switch
-                    that waits for Save fails when it matters); the percent has a draft + Save with
-                    the client mirroring the server's [5,95] bounds as UX only — the RPC re-validates
-                    and is the authority. Same run()/busy/await-then-refetch discipline as every
-                    mutation in this panel; rejects route through the ONE reason map. */}
+                    suspended by owner order). The threshold is a percent of the fleet's FULL HULL
+                    CAPACITY (the server sums max_hp) — never the damaged hull it entered with —
+                    and every sentence below must say so; copy that drops the qualifier states a
+                    rule the engine does not run (the review that sent this slice back).
+                    Renders ONLY when the settings read succeeded AND carries this fleet (fail
+                    closed to hidden on a pre-0310 DB or a flaky read — never a fabricated
+                    default). The toggle dispatches IMMEDIATELY (an off switch that waits for Save
+                    fails when it matters); the percent has a draft + Save with the client
+                    mirroring the server's [5,95] bounds as UX only — the RPC re-validates and is
+                    the authority. Same run()/busy/await-then-refetch discipline as every mutation
+                    in this panel; rejects route through the ONE reason map. */}
                 {(() => {
                   const ae = autoExit?.[group.group_id]
                   if (!ae) return null
@@ -545,7 +549,7 @@ export function TeamRosterPanel() {
                               () =>
                                 ae.enabled
                                   ? `Auto-retreat is off — ${group.name} will keep fighting until you pull it out.`
-                                  : `Auto-retreat is on — ${group.name} will pull out at ${ae.pct}% hull.`,
+                                  : `Auto-retreat is on — ${group.name} will pull out at ${ae.pct}% of full hull.`,
                             )
                           }
                         >
@@ -560,7 +564,7 @@ export function TeamRosterPanel() {
                               className="w-14 rounded-lg border border-edge bg-surface-2 px-2 py-1 text-right font-mono text-xs tabular-nums text-ink"
                               aria-label={`Auto-retreat hull percent for fleet ${group.group_index} (${AUTO_EXIT_PCT_MIN}–${AUTO_EXIT_PCT_MAX})`}
                             />
-                            <span className="text-xs text-ink-muted">% hull</span>
+                            <span className="text-xs text-ink-muted">% of full hull</span>
                             <Button
                               size="sm"
                               variant="ghost"
@@ -572,7 +576,7 @@ export function TeamRosterPanel() {
                                 void run(
                                   `autoexit-pct:${group.group_id}`,
                                   () => setGroupAutoExit(group.group_id, ae.enabled, parsed.pct),
-                                  () => `${group.name} now pulls out at ${parsed.pct}% hull.`,
+                                  () => `${group.name} now pulls out at ${parsed.pct}% of full hull.`,
                                 )
                               }}
                             >

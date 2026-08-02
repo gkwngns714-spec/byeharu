@@ -55,3 +55,16 @@ test('the summary speaks player, never jargon or codes — and never the banned 
     }
   }
 })
+
+// THE COPY MUST STATE THE RULE THE SERVER RUNS (review finding: the first draft said "drops to
+// 30%" while the migration measured the damaged ENTRY hull — copy and engine told two different
+// rules). The server's denominator is the fleet's full hull capacity (sum of max_hp), so the
+// player-facing sentence must carry the capacity qualifier and must not describe an entry-hull
+// rule; and since a fleet entering a fight below the line exits on the first tick, the sentence
+// says that too rather than letting the owner discover it mid-fight.
+test('the ON summary states the capacity-based semantics the server implements', () => {
+  const on = autoExitSummary({ enabled: true, pct: 40 })
+  expect(on).toMatch(/40% of full strength/)
+  expect(on.toLowerCase()).not.toContain('entered') // no entry-hull phrasing
+  expect(on.toLowerCase()).toContain('leaves right away') // the first-tick consequence, stated
+})

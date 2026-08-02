@@ -88,31 +88,58 @@ const T_SITE_NEW = `          perform report_create(e.id);
         --                               truth).
         --   found and v_ae_on         — a fleet with no group tag, a group row that is gone, or
         --                               the toggle OFF behaves EXACTLY as before 0310.
-        --   player_integrity_max > 0  — the denominator, NOT NULL (0022) and written only by the
-        --                               two encounter creators as sum(hp_max) over the seeded
-        --                               roster; 0 means an empty roster, which the empty-manifest
-        --                               guard (0303) and the hunt's member checks refuse upstream —
-        --                               here it simply never fires.
+        --   THE DENOMINATOR IS REAL CAPACITY, NEVER THE ENTRY HULL. player_integrity_max sums
+        --                               combat_units.hp_max, and the creators seed hp_max from the
+        --                               ship's CURRENT hull (0301 v_hp := m.hp; 0168 says it
+        --                               outright: pre-existing damage carries in). A threshold
+        --                               against THAT compounds across un-repaired sorties (repair
+        --                               needs a port, 0297): capacity 1000 -> exit at 300 -> next
+        --                               entry 300 -> exit at 90 -> 27 -> one tick out-damages the
+        --                               whole margin and the death branch above concludes the fight
+        --                               before this arm is reached. The feature would evaporate in
+        --                               exactly the repeat-grind case it exists for. So the
+        --                               denominator is the sum of main_ship_instances.max_hp
+        --                               (0043 — integer, NOT NULL, CHECK > 0) over the encounter's
+        --                               OWN member units. A unit with main_ship_id NULL (a legacy
+        --                               catalog stack) contributes nothing, DELIBERATELY: this arm
+        --                               is spatial-only and every spatial player row is a member
+        --                               row; a hypothetical all-catalog roster sums to NULL and the
+        --                               guard below never fires — today's behaviour, fail closed.
+        --   v_ae_cap > 0 AND < Infinity — the two-sided totality guard. NOT self-equality: Postgres
+        --                               treats float NaN as EQUAL to NaN and ABOVE every value, so
+        --                               x = x is TRUE for NaN and a one-sided > 0 accepts it; the
+        --                               upper bound is what excludes NaN and +Infinity. Integer
+        --                               max_hp cannot produce either today — this is defence for a
+        --                               future type change, at the cost of one comparison.
         --   auto_exit_hp_pct          — CHECK-constrained to [5,95] on ship_groups; numeric NaN
         --                               sorts ABOVE every value so NaN fails the upper bound, and
         --                               both infinities fail a bound each — the comparison below is
         --                               total over every storable value.
+        -- CONSEQUENCE, DELIBERATE AND PROTECTIVE: a fleet that ENTERS a fight already at or below
+        -- its threshold (un-repaired from the last one) auto-exits on the FIRST tick. That is what
+        -- "pull out at 30 percent hull" means; the alternative is the compounding spiral above.
         -- Sited inside the not-v_wave_paused arm on purpose: never during the wave pause. Read fresh
         -- every tick on purpose: adjusting the threshold MID-FIGHT is the point of the feature.
         if e.status = 'active' and pr.status = 'active' and v_hp_after > 0 then
           declare
             v_ae_on  boolean;
             v_ae_pct numeric;
+            v_ae_cap double precision;
           begin
             select g.auto_exit_enabled, g.auto_exit_hp_pct
               into v_ae_on, v_ae_pct
               from fleets f
               join ship_groups g on g.group_id = f.group_id
              where f.id = e.fleet_id;
-            if found and v_ae_on
-               and e.player_integrity_max > 0
-               and v_hp_after <= e.player_integrity_max * (v_ae_pct / 100.0) then
-              perform presence_request_leave(e.presence_id);
+            if found and v_ae_on then
+              select sum(msi.max_hp) into v_ae_cap
+                from combat_units cu
+                join main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
+               where cu.encounter_id = e.id and cu.side = 'player' and cu.main_ship_id is not null;
+              if v_ae_cap is not null and v_ae_cap > 0 and v_ae_cap < 'Infinity'::double precision
+                 and v_hp_after <= v_ae_cap * (v_ae_pct / 100.0) then
+                perform presence_request_leave(e.presence_id);
+              end if;
             end if;
           end;
         end if;
@@ -152,12 +179,18 @@ const sql = `-- ═════════════════════�
 -- ██ DEFAULT ON AT 30% — A DELIBERATE, PROTECTIVE BEHAVIOUR CHANGE FOR EVERY EXISTING PLAYER ██
 -- Every existing ship_groups row receives auto_exit_enabled=true, auto_exit_hp_pct=30 the moment
 -- this applies. From the next combat tick onward, any group fleet in a fight whose remaining hull
--- drops to 30% or less of its at-entry total AUTO-REQUESTS the retreat — the same retreat a human
--- press produces, risk window included. A player who wants the old to-the-death behaviour turns the
--- toggle OFF (one call, persisted). Defaulting ON is deliberate: the owner's first instruction was
--- "use 30%", revised to "make it adjustable + a toggle", and the safety line protects the ~30 live
--- players who do not yet know the setting exists. Their in-flight fights pick the rule up on the
--- next tick (the tick reads the setting fresh each pass; no backfill of any encounter row).
+-- drops to 30% or less of its ships' FULL HULL CAPACITY (sum of main_ship_instances.max_hp — see
+-- THE DENOMINATOR below) AUTO-REQUESTS the retreat — the same retreat a human press produces, risk
+-- window included. A player who wants the old to-the-death behaviour turns the toggle OFF (one
+-- call, persisted). Defaulting ON is deliberate: the owner's first instruction was "use 30%",
+-- revised to "make it adjustable + a toggle", and the safety line protects the ~30 live players
+-- who do not yet know the setting exists. Their in-flight fights pick the rule up on the next tick
+-- (the tick reads the setting fresh each pass; no backfill of any encounter row).
+-- ██ AND THE SECOND HALF OF THAT CHANGE, STATED PLAINLY: a fleet that ENTERS a fight already at or
+-- below its threshold — un-repaired damage from the last fight, and repair requires a port (0297) —
+-- AUTO-EXITS ON THE FIRST TICK. That is what "pull out at 30% hull" means and it is the protective
+-- case, not an accident: measuring against the entry hull instead would compound across un-repaired
+-- sorties until the margin vanished (see THE DENOMINATOR). ██
 --
 -- ── STORAGE: ship_groups, NOT fleets ─────────────────────────────────────────────────────────────
 -- A fleet is minted FRESH per sortie (0231:687 / :878 / :937 — each hunt/send inserts a new fleets
@@ -174,11 +207,28 @@ const sql = `-- ═════════════════════�
 -- '-Infinity' the lower, so the two-sided CHECK is total over every value numeric can store. The
 -- self-assert proves that arithmetic BY EVALUATION, not by assumption.
 --
+-- ── THE DENOMINATOR: REAL CAPACITY, NEVER THE ENTRY HULL ─────────────────────────────────────────
+-- combat_encounters.player_integrity_max is NOT capacity. The creators seed combat_units.hp_max
+-- from the ship's CURRENT hull (0301:745 \`v_hp := m.hp\`; 0168:441 states it outright — "the
+-- ship's REAL CURRENT hp — pre-existing damage") and 0301:855-856 sums THAT into
+-- player_integrity_max. A threshold against the entry hull COMPOUNDS across un-repaired sorties
+-- (repair requires a port, 0297; an auto-exit with no ordered destination parks the fleet at its
+-- origin, not repaired): capacity 1000 -> exit at 300 -> next sortie's entry integrity is 300 ->
+-- exit at 90 -> 27 -> one tick of damage exceeds the whole margin and the death branch concludes
+-- the fight before the arm is ever evaluated. The feature would evaporate in exactly the
+-- repeat-grind case the owner lost two fleets to. So the arm derives the denominator itself: the
+-- sum of main_ship_instances.max_hp (0043:54 — integer NOT NULL CHECK > 0, the hull-capacity
+-- authority; 0186's trait fold writes it) over the encounter's OWN player member units, joined
+-- combat_units -> main_ship_instances on main_ship_id. A unit with main_ship_id NULL (legacy
+-- catalog stack) is EXCLUDED, deliberately: every spatial player row is a member row, and a
+-- hypothetical all-catalog roster sums to NULL, so the guard never fires — exactly the pre-0310
+-- behaviour, fail closed. No new column: capacity already has one authority (max_hp) and copying
+-- it onto combat_encounters would be a second snapshot of the same fact.
+--
 -- ── WHERE IT FIRES ───────────────────────────────────────────────────────────────────────────────
 -- Inside process_combat_ticks' SPATIAL arm, immediately AFTER the death branch (a dead fleet is
 -- dead, not retreating), inside \`if not v_wave_paused\` (never during the wave pause), reading the
--- tick's own v_hp_after against combat_encounters.player_integrity_max (the at-entry sum(hp_max)
--- the encounter creators wrote — 0301:855-856 / 0301:954). The AGGREGATE arm is deliberately NOT
+-- tick's own v_hp_after against the capacity sum above. The AGGREGATE arm is deliberately NOT
 -- touched: spatial_combat_enabled has been lit since 2026-07-19 and mode is STICKY per encounter
 -- (0242/0291 — derived from persisted position rows), so every encounter the live game creates
 -- takes the spatial arm; the aggregate arm survives only as the byte-parity path for position-less
@@ -219,6 +269,14 @@ const sql = `-- ═════════════════════�
 --     client reads them to render the control.
 --   fleets.group_id: read-only join, the same one 0308's group_sortie_live_members already takes;
 --     a nulled tag simply reads zero rows here (no auto-exit), which is the specified behaviour.
+--   main_ship_instances.max_hp: read-only capacity sum in the arm. Ships are never deleted
+--     (damaged-ships-never-deleted law), so the inner join holds for every member row; a destroyed
+--     ship's max_hp STAYS in the denominator on purpose — losing half the fleet IS the signal to
+--     leave, and shrinking the denominator as ships die would push the exit later exactly when it
+--     should come sooner.
+--   ship_groups table grants: this slice makes the table BEHAVIOUR-BEARING (auto_exit_enabled now
+--     decides whether a fleet survives), so its client write lockdown is ESTABLISHED here by
+--     REVOKE (the 0246/0254 law: revoke, never merely assert). Reads keep their RLS owner-SELECT.
 --   process_combat_ticks consumers: pg_cron (schedule untouched), and every prosrc-probing harness
 --     was swept — the elite-stat proof (no 'elite' token, random( still 2, its anchors untouched),
 --     the fallback-weapon proof (0-length-safe loop untouched), and 0299's carried-through pins are
@@ -243,16 +301,22 @@ const sql = `-- ═════════════════════�
 -- Re-apply 0299's process_combat_ticks definition (its section 2, verbatim), then
 --   drop function public.set_group_auto_exit(uuid, boolean, numeric);
 --   alter table public.ship_groups drop column auto_exit_enabled, drop column auto_exit_hp_pct;
--- Nothing else here writes state. To neutralise WITHOUT a deploy: the client can set every group's
--- toggle off (per player), or leave the columns and re-emit the tick without the arm.
+-- The two lockdown REVOKEs (ship_groups client table-write; the tick's execute) are kept on
+-- rollback — they codify the intended posture regardless of this feature. Nothing else here writes
+-- state. To neutralise WITHOUT a deploy: the client can set every group's toggle off (per player),
+-- or leave the columns and re-emit the tick without the arm.
 --
 -- ── SELF-ASSERT MAP (one DO block per check — the statement number IS the diagnosis) ─────────────
---   (a) columns exist with the right types, defaults and the two-sided CHECK
---   (b) the CHECK's arithmetic excludes NaN and both infinities — proven BY EVALUATION
+--   (a) columns exist with the right types, defaults, and the CHECK is present and validated
+--   (b) the DEPLOYED CHECK, evaluated: rejects NaN/±Infinity/4/96, accepts 5/30/95 — the real
+--       constraint expression is executed against each value, never a re-typed copy of it
 --   (c) set_group_auto_exit exists, is callable, validates, and composes the ONE group resolver
---   (d) ACLs: the RPC is authenticated-only; the tick stays engine-only
---   (e) tick: the auto-exit arm is present, guarded, and composes presence_request_leave ONCE
---   (f) tick: the arm sits inside the not-wave-paused spatial bookkeeping, after the death branch
+--   (d) ACLs, each ESTABLISHED here then asserted: the RPC authenticated-only; the tick's execute
+--       revoked from client roles; ship_groups client table-write revoked
+--   (e) tick: the auto-exit arm is present, guarded, capacity-based, and composes
+--       presence_request_leave ONCE
+--   (f) tick: the arm sits after the spatial death branch and before the aggregate arm — every
+--       positional anchor must EXIST or the check fails (absence is failure, not a pass)
 --   (g) tick: no second retreat authority was acquired (no direct status/event/timestamp writes)
 --   (h) tick: every carried-through 0298/0299 invariant survives the re-emission
 --   (i) metadata parity: the tick changed body and NOTHING else
@@ -282,9 +346,12 @@ begin
                   where table_schema = 'public' and table_name = 'fleets' and column_name = 'group_id') then
     raise exception '0310 PRECONDITION FAIL: fleets.group_id is missing — the fleet→group resolution this slice reads does not exist';
   end if;
+  -- the denominator's authority: main_ship_instances.max_hp (0043:54) must exist, and integer —
+  -- the totality argument in the arm's comment leans on the integer domain having no NaN/Infinity.
   if not exists (select 1 from information_schema.columns
-                  where table_schema = 'public' and table_name = 'combat_encounters' and column_name = 'player_integrity_max') then
-    raise exception '0310 PRECONDITION FAIL: combat_encounters.player_integrity_max is missing (0022) — the threshold has no denominator';
+                  where table_schema = 'public' and table_name = 'main_ship_instances'
+                    and column_name = 'max_hp' and data_type = 'integer' and is_nullable = 'NO') then
+    raise exception '0310 PRECONDITION FAIL: main_ship_instances.max_hp is not the integer NOT NULL capacity column (0043) — the threshold has no denominator authority';
   end if;
   if to_regprocedure('public.process_combat_ticks()') is null
      or to_regprocedure('public.presence_request_leave(uuid)') is null
@@ -333,10 +400,12 @@ alter table public.ship_groups
 comment on column public.ship_groups.auto_exit_enabled is
   'HP AUTO-EXIT toggle (0310). ON: any fleet of this group in combat auto-requests the canonical '
   'retreat (presence_request_leave — the same one the Retreat button reaches) the first tick its '
-  'remaining hull is at or below auto_exit_hp_pct percent of its at-entry total. OFF: the fleet '
-  'fights until destroyed, force-extracted, or manually retreated — exactly the pre-0310 world. '
-  'Default TRUE for every group, deliberately: this is the safety line of a game whose combat has '
-  'no win state. Sole writer: set_group_auto_exit.';
+  'remaining hull is at or below auto_exit_hp_pct percent of the fleet''s FULL CAPACITY (sum of '
+  'main_ship_instances.max_hp over the encounter''s member units — never the damaged entry hull, '
+  'which would compound across un-repaired sorties). A fleet entering a fight already below the '
+  'line therefore exits on the first tick. OFF: the fleet fights until destroyed, force-extracted, '
+  'or manually retreated — exactly the pre-0310 world. Default TRUE for every group, deliberately: '
+  'this is the safety line of a game whose combat has no win state. Sole writer: set_group_auto_exit.';
 comment on column public.ship_groups.auto_exit_hp_pct is
   'HP AUTO-EXIT threshold percent (0310), CHECK [5,95]. 0 and 100 are deliberately unreachable: '
   '"never" is the toggle''s job (one authority for OFF), and 100 would retreat on the first '
@@ -397,6 +466,19 @@ comment on function public.set_group_auto_exit(uuid, boolean, numeric) is
 -- (the 0254 prod grant-drift lesson: REVOKE, never merely assert).
 revoke execute on function public.set_group_auto_exit(uuid, boolean, numeric) from public, anon;
 grant  execute on function public.set_group_auto_exit(uuid, boolean, numeric) to authenticated;
+
+-- ── 2b. ESTABLISH THE LOCKDOWNS THIS MIGRATION ASSERTS — never assert-without-establish ──────────
+-- ship_groups becomes BEHAVIOUR-BEARING here (auto_exit_enabled decides whether a fleet survives a
+-- fight), and the chain never revoked its client table-write: RLS carries only the owner-SELECT
+-- policy (0160), so writes are default-denied today — defence in depth, not a live hole — but the
+-- Supabase project-default GRANT ALL is exactly the drift that aborted the 0254 deploy. Establish
+-- it the 0246 way. SELECT is deliberately kept: the client reads the settings to render the control.
+revoke insert, update, delete on table public.ship_groups from anon, authenticated;
+-- And the tick: it has never been client-executable, but this migration ASSERTS that posture in
+-- (d), and an assert whose condition the migration did not establish passes vacuously on the
+-- disposable CI Postgres (which has no Supabase project-default grants) and can only ever fire on
+-- prod — the exact 0254/0309-shaped abort this chain has already paid for once. Establish, then assert.
+revoke execute on function public.process_combat_ticks() from public, anon, authenticated;
 
 -- ── 3. CAPTURE METADATA BEFORE THE REWRITE (for parity check i) ──────────────────────────────────
 create temp table _0310_before (
@@ -492,32 +574,44 @@ begin
   if v_def is null then
     raise exception '0310 ASSERT (a) FAIL: ship_groups_auto_exit_hp_pct_range is missing or not validated';
   end if;
-  if position('auto_exit_hp_pct >=' in v_def) = 0 or position('auto_exit_hp_pct <=' in v_def) = 0
-     or position('5' in v_def) = 0 or position('95' in v_def) = 0 then
-    raise exception '0310 ASSERT (a) FAIL: the CHECK is not the two-sided [5,95] predicate: %', v_def;
+  -- shape only: both bounds mention the column. The exact 5/95 VALUES are proven in (b), which
+  -- EXECUTES this very definition — a substring hunt for '5' here would be satisfied by the '95'
+  -- and prove nothing (an earlier draft did exactly that).
+  if position('auto_exit_hp_pct >=' in v_def) = 0 or position('auto_exit_hp_pct <=' in v_def) = 0 then
+    raise exception '0310 ASSERT (a) FAIL: the CHECK is not a two-sided predicate over auto_exit_hp_pct: %', v_def;
   end if;
 end $a$;
 
--- (b) the CHECK's arithmetic excludes NaN and both infinities — proven BY EVALUATION, because
---     Postgres orders numeric NaN above every value and a one-sided \`> 0\` would ACCEPT it.
+-- (b) THE DEPLOYED CHECK, EVALUATED. The constraint's own decompiled expression — never a re-typed
+--     copy of it — is executed against each probe value, so this can only pass if the predicate
+--     that actually guards the column rejects NaN, both infinities and the out-of-range values,
+--     and accepts the whole [5,95] interval's edges and default. (Why NaN needs proving at all:
+--     Postgres orders numeric NaN ABOVE every value, so a one-sided \`>= 5\` ACCEPTS it — only the
+--     upper bound rejects it. And float NaN = NaN is TRUE here, so self-equality is NOT a test.)
 do $b$
+declare
+  v_def  text;
+  v_expr text;
+  v_pass boolean;
+  v_case record;
 begin
-  if ('NaN'::numeric >= 5 and 'NaN'::numeric <= 95) then
-    raise exception '0310 ASSERT (b) FAIL: the [5,95] predicate accepts NaN — the threshold comparison would never fire';
-  end if;
-  if ('Infinity'::numeric >= 5 and 'Infinity'::numeric <= 95) then
-    raise exception '0310 ASSERT (b) FAIL: the [5,95] predicate accepts Infinity';
-  end if;
-  if ('-Infinity'::numeric >= 5 and '-Infinity'::numeric <= 95) then
-    raise exception '0310 ASSERT (b) FAIL: the [5,95] predicate accepts -Infinity';
-  end if;
-  if (4::numeric >= 5 and 4::numeric <= 95) or (96::numeric >= 5 and 96::numeric <= 95) then
-    raise exception '0310 ASSERT (b) FAIL: the [5,95] predicate accepts an out-of-range value';
-  end if;
-  if not (5::numeric >= 5 and 5::numeric <= 95) or not (30::numeric >= 5 and 30::numeric <= 95)
-     or not (95::numeric >= 5 and 95::numeric <= 95) then
-    raise exception '0310 ASSERT (b) FAIL: the [5,95] predicate rejects an in-range value';
-  end if;
+  select pg_get_constraintdef(oid) into v_def
+    from pg_constraint where conname = 'ship_groups_auto_exit_hp_pct_range';
+  v_expr := regexp_replace(v_def, '^CHECK\\s*', '', 'i');
+  for v_case in
+    select * from (values
+      ('NaN',       false), ('Infinity', false), ('-Infinity', false),
+      ('4',         false), ('96',       false),
+      ('5',         true),  ('30',       true),  ('95',        true)
+    ) as t(val, want)
+  loop
+    execute 'select ' || replace(v_expr, 'auto_exit_hp_pct', format('(%L::numeric)', v_case.val))
+       into v_pass;
+    if v_pass is distinct from v_case.want then
+      raise exception '0310 ASSERT (b) FAIL: the DEPLOYED check % answers % for % (want %) — the guarding predicate is not the two-sided [5,95]',
+        v_def, v_pass, v_case.val, v_case.want;
+    end if;
+  end loop;
 end $b$;
 
 -- (c) the writer exists, is callable, validates, and composes the ONE group resolver
@@ -553,8 +647,11 @@ begin
   end if;
 end $c$;
 
--- (d) ACLs: the writer is authenticated-only; the tick stays engine-only
+-- (d) ACLs — every posture asserted here was ESTABLISHED by this migration's own REVOKEs (2b),
+--     so none of these can pass vacuously on the grant-less disposable CI Postgres and then fire
+--     for the first time on prod (the 0254/0309 abort shape).
 do $d$
+declare v_bad text;
 begin
   if not has_function_privilege('authenticated', 'public.set_group_auto_exit(uuid, boolean, numeric)', 'execute') then
     raise exception '0310 ASSERT (d) FAIL: authenticated cannot call set_group_auto_exit — the control would be dead';
@@ -564,7 +661,18 @@ begin
   end if;
   if has_function_privilege('authenticated', 'public.process_combat_ticks()', 'execute')
      or has_function_privilege('anon', 'public.process_combat_ticks()', 'execute') then
-    raise exception '0310 ASSERT (d) FAIL: process_combat_ticks became client-executable';
+    raise exception '0310 ASSERT (d) FAIL: process_combat_ticks is client-executable after this migration''s own revoke';
+  end if;
+  select string_agg(x.role || '.' || x.priv, ', ') into v_bad
+    from (select r as role, p as priv
+            from unnest(array['anon', 'authenticated']) r
+           cross join unnest(array['INSERT', 'UPDATE', 'DELETE']) p) x
+   where has_table_privilege(x.role, 'public.ship_groups', x.priv);
+  if v_bad is not null then
+    raise exception '0310 ASSERT (d) FAIL: ship_groups client table-write survives the revoke (%) — the behaviour-bearing table must have no client write path but its one RPC', v_bad;
+  end if;
+  if not has_table_privilege('authenticated', 'public.ship_groups', 'SELECT') then
+    raise exception '0310 ASSERT (d) FAIL: the revoke took SELECT with it — the client could no longer read the settings it renders';
   end if;
 end $d$;
 
@@ -583,11 +691,22 @@ begin
   if position('if e.status = ''active'' and pr.status = ''active'' and v_hp_after > 0 then' in v_code) = 0 then
     raise exception '0310 ASSERT (e) FAIL: the auto-exit arm lost its status/liveness guard — it could re-request on a retreating encounter or throw on a non-active presence';
   end if;
-  if position('e.player_integrity_max > 0' in v_code) = 0 then
-    raise exception '0310 ASSERT (e) FAIL: the denominator guard is gone — a zero at-entry integrity would make the comparison vacuous or wrong';
+  -- THE DENOMINATOR IS CAPACITY. The entry-hull denominator (player_integrity_max) is the
+  -- compounding defect this slice was sent back for — assert it stays OUT of the arm's predicate
+  -- and the capacity sum stays IN.
+  if position('select sum(msi.max_hp) into v_ae_cap' in v_code) = 0
+     or position('join main_ship_instances msi on msi.main_ship_id = cu.main_ship_id' in v_code) = 0
+     or position('cu.side = ''player'' and cu.main_ship_id is not null' in v_code) = 0 then
+    raise exception '0310 ASSERT (e) FAIL: the arm does not derive REAL capacity from main_ship_instances.max_hp over the encounter''s member units';
   end if;
-  if position('v_hp_after <= e.player_integrity_max * (v_ae_pct / 100.0)' in v_code) = 0 then
-    raise exception '0310 ASSERT (e) FAIL: the threshold predicate is not the specified one';
+  if position('v_ae_cap is not null and v_ae_cap > 0 and v_ae_cap < ''Infinity''::double precision' in v_code) = 0 then
+    raise exception '0310 ASSERT (e) FAIL: the two-sided denominator totality guard is gone — Postgres float NaN passes > 0 AND equals itself, only the upper bound excludes it';
+  end if;
+  if position('v_hp_after <= v_ae_cap * (v_ae_pct / 100.0)' in v_code) = 0 then
+    raise exception '0310 ASSERT (e) FAIL: the threshold predicate is not the capacity-based one';
+  end if;
+  if position('player_integrity_max * (v_ae_pct' in v_code) > 0 then
+    raise exception '0310 ASSERT (e) FAIL: the ENTRY-HULL denominator is back — the threshold would compound across un-repaired sorties and the feature would evaporate in the repeat-grind case';
   end if;
   if position('join ship_groups g on g.group_id = f.group_id' in v_code) = 0 then
     raise exception '0310 ASSERT (e) FAIL: the setting is not resolved fleet→group through fleets.group_id';
@@ -600,21 +719,40 @@ end $e$;
 -- (f) tick: the arm sits INSIDE the not-wave-paused spatial bookkeeping, AFTER the death branch and
 --     BEFORE the aggregate arm — never during the wave pause, never before death is decided.
 do $f$
-declare v_code text; v_at integer;
+declare
+  v_code  text;
+  v_at    integer;
+  v_gate  integer;
+  v_death integer;
+  v_agg   integer;
 begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'process_combat_ticks';
-  v_at := position('presence_request_leave(e.presence_id)' in v_code);
-  if v_at < position('if not v_wave_paused then' in v_code) then
-    raise exception '0310 ASSERT (f) FAIL: the auto-exit arm sits before the not-wave-paused gate — it could fire during the wave pause';
-  end if;
+  -- EVERY anchor must exist, or the check fails: position() answers 0 for an absent literal, and
+  -- v_at < 0 is never true, so an unguarded comparison would wave a drifted body through — the
+  -- fail-open shape this assert originally shipped with.
+  v_at    := position('presence_request_leave(e.presence_id)' in v_code);
+  v_gate  := position('if not v_wave_paused then' in v_code);
   -- the first status='defeat' write in the body is the SPATIAL death branch (branch (A)''s carries
   -- tick_number between status and ended_at, so it cannot match this literal).
-  if v_at < position('update combat_encounters set status=''defeat'', ended_at=now()' in v_code) then
+  v_death := position('update combat_encounters set status=''defeat'', ended_at=now()' in v_code);
+  v_agg   := position('perform fleet_sync_quantities(e.fleet_id, v_counts);' in v_code);
+  if v_at = 0 or v_gate = 0 or v_death = 0 or v_agg = 0 then
+    raise exception '0310 ASSERT (f) FAIL: a positional anchor is ABSENT (arm %, gate %, death %, aggregate %) — the body drifted and this ordering check can prove nothing',
+      v_at, v_gate, v_death, v_agg;
+  end if;
+  -- What this proves: the arm sits AFTER the spatial death branch and BEFORE the aggregate arm.
+  -- (True containment inside the not-v_wave_paused block is a property of the generator's slice
+  -- site — the hunk replaces the block's own closing lines — not of this positional probe: this
+  -- window also spans the paused branch's bookkeeping, which position() alone cannot separate.)
+  if v_at < v_gate then
+    raise exception '0310 ASSERT (f) FAIL: the auto-exit arm sits before the not-wave-paused gate opens';
+  end if;
+  if v_at < v_death then
     raise exception '0310 ASSERT (f) FAIL: the auto-exit arm sits before the spatial death branch — a dead fleet could be asked to retreat';
   end if;
-  if v_at > position('perform fleet_sync_quantities(e.fleet_id, v_counts);' in v_code) then
+  if v_at > v_agg then
     raise exception '0310 ASSERT (f) FAIL: the auto-exit arm landed in the aggregate arm — the deliberate spatial-only scope drifted';
   end if;
 end $f$;
@@ -708,7 +846,7 @@ begin
   if v_n <> 1 then
     raise exception '0310 ASSERT (i) FAIL: parity-checked % function(s), expected 1', v_n;
   end if;
-  raise notice '0310 SELF-ASSERT PASS: the HP auto-exit is live — default ON at 30 percent, player-adjustable [5,95], toggleable, composed through the one retreat authority';
+  raise notice '0310 SELF-ASSERT PASS: the HP auto-exit is live — default ON at 30 percent of REAL capacity (sum of max_hp, never the damaged entry hull), player-adjustable [5,95], toggleable, composed through the one retreat authority';
 end $i$;
 
 commit;

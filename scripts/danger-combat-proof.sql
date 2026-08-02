@@ -69,20 +69,30 @@
 --   DZCOMBAT_PASS_AUTOEXIT   — (0310) the HP auto-exit, staged on the REAL ambush chain and driven
 --                              by the REAL tick: a fleet whose group sets a 50% threshold fights
 --                              (real ambush → real encounter → real enemy fire) and, the first tick
---                              its hull is at or below the threshold, AUTO-REQUESTS the canonical
+--                              its hull is at or below 50% of its FULL CAPACITY (sum of
+--                              main_ship_instances.max_hp — the threshold's real denominator,
+--                              equal to the entry integrity here ONLY because the fleet is
+--                              factory-fresh, and asserted so), AUTO-REQUESTS the canonical
 --                              retreat (presence 'retreating', encounter 'retreating',
 --                              retreat_started_at stamped, exactly ONE retreat_started event) —
 --                              never a tick earlier (every tick observed above the threshold left
 --                              it fighting, and at least one such tick is REQUIRED or the block
 --                              fails vacuous); a second tick does NOT re-request; rewinding the
 --                              retreat clock completes it EXACTLY like a human press (encounter
---                              'escaped', fleet 'returning'); a group with the toggle OFF fights on
---                              far below the default threshold (the control that proves the flip
---                              assert is not vacuously green — and exactly what the pre-0310 tick
---                              does, so this block is RED on the pre-fix body by construction);
---                              set_group_auto_exit enforces its bounds ([5,95], NaN refused, null
---                              toggle refused, cross-player refused) and the table CHECK refuses
---                              NaN / out-of-range even on a direct write.
+--                              'escaped', fleet 'returning'); THEN THE DAMAGED RE-ENTRY, the
+--                              regression the capacity denominator exists for: the SAME fleet,
+--                              un-repaired, re-enters a fight ALREADY below its (raised)
+--                              threshold — its entry integrity asserted STRICTLY LESS than its
+--                              capacity, or the scenario proves nothing — and auto-exits on the
+--                              FIRST tick. An entry-hull denominator reads that first tick as
+--                              ~94% of "max" and fights on, so this scenario is RED on any body
+--                              measuring the entry hull (the cb10020 defect); a group with the
+--                              toggle OFF fights on far below the default threshold (the control
+--                              proving the flip assert is not vacuously green — and exactly what
+--                              the pre-0310 tick does, so the block is RED on the pre-fix body by
+--                              construction); set_group_auto_exit enforces its bounds ([5,95],
+--                              NaN refused, null toggle refused, cross-player refused) and the
+--                              table CHECK refuses NaN / out-of-range even on a direct write.
 --
 -- Self-rolling-back (begin;…rollback;, no COMMIT); every dark flag flipped ONLY inside the txn;
 -- provisioning is 100% real-RPC; group_sortie_members and combat_units are NEVER hand-written.
@@ -1196,9 +1206,11 @@ declare
   mv record; pi record; enc record; prs record;
   v_imax double precision; v_def double precision; v_bd double precision;
   v_eab_before double precision; v_eab numeric;
+  v_srg_before double precision;
   v_thresh double precision; v_hp double precision;
   v_hp_a double precision; v_imax_a double precision;
-  v_enc2 uuid; v_txt text;
+  v_cap double precision; v_cap3 double precision; v_imax3 double precision;
+  v_enc2 uuid; v_enc3 uuid; v_txt text;
   n_above int := 0;
   v_flipped boolean := false;
   v_started timestamptz;
@@ -1335,9 +1347,26 @@ begin
   select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
   v_eab := round(((0.06 * v_imax) * ((100 + v_def) / 100.0) / (v_bd * 1.25))::numeric, 6);
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab));
-  perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);  -- erosion must be monotone
+  -- erosion must be monotone; captured and restored at the end like every knob this block touches.
+  select coalesce(public.cfg_num('shield_regen_combat_pct'), 0) into v_srg_before;
+  perform public.set_game_config('shield_regen_combat_pct', '0'::jsonb);
 
-  v_thresh := v_imax * 0.50;
+  -- THE THRESHOLD'S REAL DENOMINATOR: the fleet's full capacity (sum of max_hp over the
+  -- encounter's member units) — exactly what the 0310 arm computes. For THIS factory-fresh fleet
+  -- it must equal the entry integrity, and that identity is asserted so the fresh-fleet loop below
+  -- is knowingly testing both denominators at once; the damaged re-entry afterwards is where they
+  -- part ways and the capacity one is proven to be the one in charge.
+  select sum(msi.max_hp)::double precision into v_cap
+    from public.combat_units cu
+    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
+   where cu.encounter_id = v_enc and cu.side = 'player' and cu.main_ship_id is not null;
+  if v_cap is null or v_cap <= 0 then
+    raise exception 'AUTOEXIT FAIL: no capacity resolved for group A''s encounter (member units missing?)';
+  end if;
+  if abs(v_cap - v_imax) > 1e-6 then
+    raise exception 'AUTOEXIT FAIL: a factory-fresh fleet''s capacity (%) differs from its entry integrity (%) — the fresh-fleet staging premise is broken', v_cap, v_imax;
+  end if;
+  v_thresh := v_cap * 0.50;
 
   -- ── THE LOOP: the REAL tick does the damage; every tick is judged BOTH ways. A tick that ends
   --    'active' at-or-below the threshold is the pre-0310 defect — fail. A tick that ends
@@ -1413,6 +1442,86 @@ begin
     raise exception 'AUTOEXIT FAIL: the fleet is % after completion (want returning — fleet_set_returning is the completion''s own verb)', v_txt;
   end if;
 
+  -- ── THE DAMAGED RE-ENTRY — the regression the capacity denominator exists for. ─────────────────
+  -- The same fleet, UN-REPAIRED (repair needs a port; it retreated to open coordinates), goes out
+  -- again and is ambushed again. Its entry hull is now well under its capacity, so the encounter's
+  -- own player_integrity_max (seeded from the CURRENT hull) and the real capacity DIVERGE — and
+  -- that divergence is asserted, or this scenario proves nothing. With the player's threshold
+  -- raised to 60%, the fleet enters ALREADY below the line and must auto-exit on the FIRST tick.
+  -- A body measuring the entry hull reads that tick as ~94% of "max" and fights on — this exact
+  -- assert is what fails on the cb10020 denominator, and what stops the compounding spiral
+  -- (capacity 1000 -> exit 300 -> next "max" 300 -> exit 90 -> 27 -> dead before the arm runs).
+  --
+  -- First, land the return leg so the group is commandable again (the MANIFESTHELD idiom: clocks
+  -- only, the settle itself is the real processor).
+  for i in 1..10 loop
+    exit when not exists (select 1 from public.fleet_movements where fleet_id = v_fleet and status = 'moving');
+    update public.fleet_movements set depart_at = depart_at - interval '1 hour',
+                                      arrive_at = arrive_at - interval '1 hour'
+     where fleet_id = v_fleet and status = 'moving';
+    perform public.process_fleet_movements();
+  end loop;
+  if exists (select 1 from public.fleet_movements where fleet_id = v_fleet and status = 'moving') then
+    raise exception 'AUTOEXIT FAIL: group A''s return leg never settled — the re-entry cannot be staged';
+  end if;
+
+  -- The un-repaired hull, from the ship's own row (the tick synced it all fight long).
+  select msi.hp::double precision, msi.max_hp::double precision into v_hp, v_cap
+    from public.main_ship_instances msi where msi.main_ship_id = sA;
+  if v_hp is null or v_hp <= 0 then
+    raise exception 'AUTOEXIT FAIL: group A''s ship reads hull % after its fight — the re-entry needs a damaged, living ship', v_hp;
+  end if;
+  if v_hp >= v_cap * 0.60 then
+    raise exception 'AUTOEXIT FAIL: group A''s ship still holds %/% hull — not below the 60%% re-entry threshold, so the first-tick exit could not be attributed to the capacity denominator (staging, not feature)', v_hp, v_cap;
+  end if;
+
+  -- The player raises the line to 60 — through the ONE writer, like every adjustment here.
+  r := pg_temp.call_as(uA, format('public.set_group_auto_exit(%L::uuid, true, 60)', gA));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTOEXIT FAIL: set 60 on A: %', r; end if;
+
+  -- Out again, through the SAME standing zone corridor (the fleet completed at its Home Base,
+  -- whose coordinate is the starter port's anchor — the same origin the first leg flew from).
+  r := pg_temp.call_as(uA, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gA, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'AUTOEXIT FAIL: re-entry go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'AUTOEXIT FAIL: the re-entry leg scheduled no ambush (the standing zone should cover it)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc3 from public.combat_encounters where player_id = uA and status = 'active';
+  if v_enc3 is null then raise exception 'AUTOEXIT FAIL: the re-entry ambush opened no encounter'; end if;
+
+  -- THE DIVERGENCE, ASSERTED: entry integrity (seeded from the damaged hull) strictly under
+  -- capacity. Equal values would mean this scenario cannot tell the two denominators apart.
+  select player_integrity_max into v_imax3 from public.combat_encounters where id = v_enc3;
+  select sum(msi.max_hp)::double precision into v_cap3
+    from public.combat_units cu
+    join public.main_ship_instances msi on msi.main_ship_id = cu.main_ship_id
+   where cu.encounter_id = v_enc3 and cu.side = 'player' and cu.main_ship_id is not null;
+  if v_cap3 is null or v_imax3 is null or v_imax3 >= v_cap3 then
+    raise exception 'AUTOEXIT FAIL: entry integrity % is not strictly below capacity % — the two denominators do not differ and the re-entry proves nothing', v_imax3, v_cap3;
+  end if;
+  if v_imax3 >= v_cap3 * 0.60 then
+    raise exception 'AUTOEXIT FAIL: the fleet re-entered at %/% — not below its 60%% line; the first-tick exit would be ambiguous', v_imax3, v_cap3;
+  end if;
+
+  -- ONE tick. Below the capacity line from the first evaluation → the canonical retreat, now.
+  perform pg_temp.ae_tick(v_enc3);
+  select * into enc from public.combat_encounters where id = v_enc3;
+  if enc.status is distinct from 'retreating' then
+    raise exception 'AUTOEXIT FAIL: the un-repaired fleet (%/% of capacity, threshold 60%%) did not auto-exit on entry (the compounding-denominator defect: the arm is measuring the damaged entry hull, not real capacity)',
+      enc.player_integrity_current, v_cap3;
+  end if;
+  if enc.player_integrity_current <= 0 then
+    raise exception 'AUTOEXIT FAIL: the re-entered fleet is at 0 hull — it died on the entry tick instead of leaving';
+  end if;
+  select count(*) into n from public.combat_events where encounter_id = v_enc3 and event_type = 'retreat_started';
+  if n <> 1 then
+    raise exception 'AUTOEXIT FAIL: the re-entry exit armed % retreat_started event(s) (want exactly 1)', n;
+  end if;
+
   -- ── GROUP B, THE CONTROL: toggle OFF → the pre-0310 world, far below the default threshold. ────
   select l.x, l.y into o_x, o_y
     from public.main_ship_instances s
@@ -1470,9 +1579,10 @@ begin
   end if;
 
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
+  perform public.set_game_config('shield_regen_combat_pct', to_jsonb(v_srg_before));
 
-  raise notice 'DZCOMBAT_PASS_AUTOEXIT ok: default ON at 30 for fresh groups; the player set 50%% / toggled OFF through the one writer (bad pct, NaN, null toggle, cross-player all refused; the table CHECK refuses NaN/150 beneath it); group A fought % tick(s) above its threshold untouched, then auto-requested the canonical retreat the tick its hull hit %/% (presence retreating, retreat_started_at stamped, exactly 1 retreat_started event), a second tick did not re-request, and the retreat COMPLETED like a human press (escaped, fleet returning, origin-base arm); group B — toggle OFF — fought on to %/% with zero retreat events: the pre-0310 world, reproduced as the control',
-    n_above, round(v_hp_a::numeric), round(v_imax_a::numeric), round(v_hp::numeric), round(v_imax::numeric);
+  raise notice 'DZCOMBAT_PASS_AUTOEXIT ok: default ON at 30 for fresh groups; the player set 50%% / toggled OFF through the one writer (bad pct, NaN, null toggle, cross-player all refused; the table CHECK refuses NaN/150 beneath it); group A fought % tick(s) above its CAPACITY-based threshold untouched, then auto-requested the canonical retreat the tick its hull hit %/% of capacity (presence retreating, retreat_started_at stamped, exactly 1 retreat_started event), a second tick did not re-request, and the retreat COMPLETED like a human press (escaped, fleet returning, origin-base arm); the DAMAGED RE-ENTRY (entry integrity % strictly under capacity %, threshold 60) auto-exited on its FIRST tick — the compounding-denominator regression, closed; group B — toggle OFF — fought on to %/% with zero retreat events: the pre-0310 world, reproduced as the control',
+    n_above, round(v_hp_a::numeric), round(v_imax_a::numeric), round(v_imax3::numeric), round(v_cap3::numeric), round(v_hp::numeric), round(v_imax::numeric);
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;
