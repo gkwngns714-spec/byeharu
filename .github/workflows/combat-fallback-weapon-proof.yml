@@ -20,6 +20,10 @@ on:
     branches:
       - 'autopilot/**'
       - 'fix/spatial-combat-empty-weapons'
+      # 0313 cuts combat_player_fallback_weapon_range (150->25) and the catalog gun — this proof's
+      # expected values were repointed to knob/catalog derivation in the same slice, so range
+      # branches must run it.
+      - 'slice-weapon-ranges**'
 
 permissions:
   contents: read

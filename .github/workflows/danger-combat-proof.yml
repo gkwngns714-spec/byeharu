@@ -29,6 +29,9 @@ on:
       # 0310 rewrites the combat tick itself (the HP auto-exit arm) and this proof carries its
       # behaviour block (DZCOMBAT_PASS_AUTOEXIT) — auto-exit branches must run it.
       - 'slice-combat-auto-exit**'
+      # 0313 cuts the weapon ranges below the spawn gap and this proof carries its behaviour block
+      # (DZCOMBAT_PASS_CLOSURE — units MOVE, fire only after closure) — range branches must run it.
+      - 'slice-weapon-ranges**'
 
 permissions:
   contents: read

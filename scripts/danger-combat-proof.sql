@@ -66,6 +66,16 @@
 --                              never the rig's power-8 entry: a rig is not a gun.
 --   DZCOMBAT_PASS_FITTEDEXACT — (0308) a ship with a REAL weapon fitted carries exactly its catalog
 --                              weapon entry — alone, field-for-field — and no fallback entry.
+--   DZCOMBAT_PASS_CLOSURE    — (0313) with the seeded ranges cut below the 30-unit escort spawn gap,
+--                              units MOVE: an escort and its pirate close on each other across real
+--                              ticks (pos_x/pos_y changing), neither fires while the gap exceeds its
+--                              own range, the escort's FIRST shot lands only on a tick whose pre-move
+--                              distance is inside its range (after at least one silent closing tick),
+--                              the pirate's first shot obeys ITS range the same way — while the
+--                              command ship (spawned at distance 0) fires from tick 1, so the fight
+--                              starts immediately even though the escorts must travel. This is the
+--                              CLOSE arm of combat_unit_decide_move running at SEEDED values for the
+--                              first time in the game's history.
 --   DZCOMBAT_PASS_AUTOEXIT   — (0310) the HP auto-exit, staged on the REAL ambush chain and driven
 --                              by the REAL tick: a fleet whose group sets a 50% threshold fights
 --                              (real ambush → real encounter → real enemy fire) and, the first tick
@@ -595,6 +605,7 @@ declare
   n int; n_pos int;
   v_enc uuid := (select v from dzc where k='v_enc');
   s_cmd uuid := (select v from dzc where k='s_cmd');
+  v_cat_range numeric;
 begin
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player';
   if n < 1 then raise exception 'DZCOMBAT FAIL SPATIAL: no player combat_units in the intercept encounter (want the group members)'; end if;
@@ -603,12 +614,15 @@ begin
     where encounter_id = v_enc and side = 'player' and pos_x is not null and pos_y is not null and move_speed is not null;
   if n_pos <> n then raise exception 'DZCOMBAT FAIL SPATIAL: only %/% player units carry positions — the encounter is NOT spatial (map would render nothing)', n_pos, n; end if;
 
+  -- the expected range is DERIVED from the deployed catalog row at assert time (0313 repoint: the
+  -- old form hard-coded the 150 seed — an ambient default this proof never owned).
+  select range into v_cat_range from public.module_types where id = 'autocannon_battery';
   select count(*) into n from public.combat_units
     where encounter_id = v_enc and main_ship_id = s_cmd
-      and (weapons_json->0->>'range')::double precision = 150;
-  if n <> 1 then raise exception 'DZCOMBAT FAIL SPATIAL: command ship weapons_json did not carry the fitted range (want 1 row at range 150)'; end if;
+      and (weapons_json->0->>'range')::numeric = v_cat_range;
+  if n <> 1 then raise exception 'DZCOMBAT FAIL SPATIAL: command ship weapons_json did not carry the fitted range (want 1 row at the catalog autocannon_battery range %)', v_cat_range; end if;
 
-  raise notice 'DZCOMBAT_PASS_SPATIAL ok: the intercept opened a SPATIAL encounter — % player units positioned, command ship carries its 150-range ring', n_pos;
+  raise notice 'DZCOMBAT_PASS_SPATIAL ok: the intercept opened a SPATIAL encounter — % player units positioned, command ship carries its catalog %-range ring', n_pos, v_cat_range;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_PIRATEFIRE: one tick → a spawned + firing pirate, damage dealt back ══════════
@@ -1585,6 +1599,216 @@ begin
 
   raise notice 'DZCOMBAT_PASS_AUTOEXIT ok: default ON at 30 for fresh groups; the player set 50%% / toggled OFF through the one writer (bad pct, NaN, null toggle, cross-player all refused; the table CHECK refuses NaN/150 beneath it); group A fought % tick(s) above its CAPACITY-based threshold untouched, then auto-requested the canonical retreat the tick its hull hit %/% of capacity (presence retreating, retreat_started_at stamped, exactly 1 retreat_started event), a second tick did not re-request, and the retreat COMPLETED like a human press (escaped, fleet returning, origin-base arm); the DAMAGED RE-ENTRY (entry integrity % strictly under capacity %, threshold 60) auto-exited on its FIRST tick — the compounding-denominator regression, closed; group B — toggle OFF — fought on to %/% with zero retreat events: the pre-0310 world, reproduced as the control',
     n_above, round(v_hp_a::numeric), round(v_imax_a::numeric), round(v_imax3::numeric), round(v_cap3::numeric), round(v_hp::numeric), round(v_imax::numeric);
+end $$;
+
+-- ════════ DZCOMBAT_PASS_CLOSURE (0313): CUT RANGES MAKE POSITION MATTER — UNITS MOVE, THEN FIRE ══════
+-- The behaviour nobody has ever observed in this game: before 0313, every range (120–245) dwarfed
+-- every spawn distance (0–30), so combat_unit_decide_move returned 'hold' on every tick of every
+-- real fight and no combat_units row ever changed its pos_x/pos_y. This block stages a fresh
+-- TWO-ship group (command + one escort) through the REAL ambush chain at the SEEDED knob/catalog
+-- values (no range/ring/speed tuning — the 0313 seeds ARE the subject), and drives the REAL tick:
+--   • premise, derived not assumed: ring > escort range AND ring > pirate range (exactly what 0313
+--     establishes; if a later retune re-buries the mechanic, this raises honestly);
+--   • tick 1: the command ship (dist 0) FIRES — combat still starts instantly — while the escort
+--     and the pirate both MOVE (positions change, their gap shrinks) and neither fires;
+--   • across ticks: the escort's FIRST salvo lands only on a tick whose recorded PRE-MOVE distance
+--     is within its own range, with at least one earlier silent tick (fire strictly AFTER closure),
+--     and the pirate's first salvo at the escort obeys ITS OWN shorter range the same way.
+-- Damage knobs are owned in-block (pirate attack tiny so the escort survives the approach; hp_base
+-- is already 1000 from setup so the wave survives) and restored after — the geometry knobs are NOT
+-- touched, that is the point.
+do $$
+declare
+  r jsonb; n int; i int;
+  uC uuid;
+  s1 uuid; s2 uuid; gC uuid;
+  o_x double precision; o_y double precision;
+  v_fleet uuid; v_mv uuid; v_enc uuid;
+  mv record; pi record;
+  u_cmd uuid; u_esc uuid; u_en uuid;
+  v_r_esc double precision; v_r_en double precision; v_ring double precision;
+  ex0 double precision; ey0 double precision; ex1 double precision; ey1 double precision;
+  nx0 double precision; ny0 double precision; nx1 double precision; ny1 double precision;
+  d_pre double precision; d_t1 double precision;
+  v_tick int;
+  v_esc_fire_tick int := null; v_esc_fire_dist double precision := null;
+  v_en_fire_tick int := null; v_en_fire_dist double precision := null;
+  n_silent int := 0;
+  v_eab_before double precision;
+begin
+  -- ── fresh funded player, two ships, ONE group, command designated — 100% real RPCs. ────────────
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.cl.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uC;
+  insert into public.player_wallet (player_id, balance) values (uC, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+
+  r := pg_temp.call_as(uC, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: commission 1: %', r; end if;
+  select main_ship_id into s1 from public.main_ship_instances where player_id = uC;
+  r := pg_temp.call_as(uC, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: commission 2: %', r; end if;
+  select main_ship_id into s2 from public.main_ship_instances where player_id = uC and main_ship_id <> s1 limit 1;
+  if s2 is null then raise exception 'CLOSURE FAIL: no second ship materialised'; end if;
+  r := pg_temp.call_as(uC, 'public.upsert_ship_group(1, ''Closure'')');
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: group: %', r; end if;
+  gC := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s1, gC));
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: assign 1: %', r; end if;
+  r := pg_temp.call_as(uC, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s2, gC));
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: assign 2: %', r; end if;
+  r := pg_temp.call_as(uC, format('public.set_fleet_command_ship(%L::uuid, true)', s1));
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: command: %', r; end if;
+
+  -- ── damage knobs owned in-block (geometry knobs deliberately NOT touched): the pirate must not
+  --    meaningfully hurt the escort during the approach, and 0310's default auto-exit (ON at 30)
+  --    must never trigger mid-scenario. Captured and restored below. ───────────────────────────────
+  select coalesce(public.cfg_num('enemy_attack_base'), 0) into v_eab_before;
+  perform public.set_game_config('enemy_attack_base', '0.001'::jsonb);
+
+  -- ── the REAL ambush, through the STANDING Auto Exit corridor (the AUTOEXIT re-entry idiom: the
+  --    zone already stands; a new fleet crossing it gets its own certain pending intercept). ───────
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uC and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gC
+   limit 1;
+  if o_x is null then raise exception 'CLOSURE FAIL: could not resolve the group''s docked origin'; end if;
+  r := pg_temp.call_as(uC, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gC, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'CLOSURE FAIL: go: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'CLOSURE FAIL: no pending ambush on the leg (the standing corridor should cover it)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id, fleet_id into v_enc, v_fleet from public.combat_encounters
+   where player_id = uC and status = 'active';
+  if v_enc is null then raise exception 'CLOSURE FAIL: the ambush opened no encounter'; end if;
+
+  select id into u_cmd from public.combat_units where encounter_id = v_enc and main_ship_id = s1;
+  select id into u_esc from public.combat_units where encounter_id = v_enc and main_ship_id = s2;
+  if u_cmd is null or u_esc is null then raise exception 'CLOSURE FAIL: the 2-ship roster did not seed 2 units'; end if;
+
+  -- the escort's own range, from its OWN frozen weapons_json (fitted or fallback — derived, never
+  -- assumed), and the seeded ring it spawned on.
+  select max((w->>'range')::double precision) into v_r_esc
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_esc;
+  if v_r_esc is null then raise exception 'CLOSURE FAIL: the escort carries no ranged weapon at all (want the fitted/fallback range)'; end if;
+  v_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
+  select public.osn_distance(e.pos_x, e.pos_y, c.pos_x, c.pos_y) into d_pre
+    from public.combat_units e, public.combat_units c where e.id = u_esc and c.id = u_cmd;
+  if abs(d_pre - v_ring) > 0.01 then
+    raise exception 'CLOSURE FAIL: escort spawned % from the command ship (want the % ring)', d_pre, v_ring;
+  end if;
+
+  -- ── TICK 1: the wave spawns at the anchor (dist 0 from the command ship, one ring from the
+  --    escort) inside this very call, then everyone moves/fires once. ──────────────────────────────
+  select pos_x, pos_y into ex0, ey0 from public.combat_units where id = u_esc;
+  perform pg_temp.ae_tick(v_enc);
+  select id into u_en from public.combat_units
+    where encounter_id = v_enc and side = 'enemy' and alive_count > 0
+    order by id limit 1;
+  if u_en is null then raise exception 'CLOSURE FAIL: no living pirate after tick 1'; end if;
+  select max((w->>'range')::double precision) into v_r_en
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_en;
+  if v_r_en is null then raise exception 'CLOSURE FAIL: the pirate carries no range in its weapons_json'; end if;
+
+  -- THE PREMISE 0313 ESTABLISHES, asserted not assumed: the spawn gap exceeds BOTH short ranges.
+  if v_ring <= v_r_esc or v_ring <= v_r_en then
+    raise exception 'CLOSURE FAIL premise: the % ring does not exceed both ranges (escort %, pirate %) — the seeded world no longer forces closure and this scenario proves nothing',
+      v_ring, v_r_esc, v_r_en;
+  end if;
+
+  -- tick 1, the command ship (dist 0) FIRED — the fight starts immediately despite the gap.
+  select count(*) into n from public.combat_events
+    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
+      and source = 'player' and payload_json->>'unit_id' = u_cmd::text;
+  if n < 1 then raise exception 'CLOSURE FAIL: the command ship (dist 0) did not fire on tick 1 — the fight no longer starts instantly'; end if;
+
+  -- tick 1, the escort and the pirate both MOVED (the first observed movement in a real fight)...
+  select pos_x, pos_y into ex1, ey1 from public.combat_units where id = u_esc;
+  if ex1 is not distinct from ex0 and ey1 is not distinct from ey0 then
+    raise exception 'CLOSURE FAIL: the escort did not move on tick 1 (still at %,%) — the CLOSE arm never ran', ex0, ey0;
+  end if;
+  select engagement_x, engagement_y into nx0, ny0 from public.combat_encounters where id = v_enc;
+  select pos_x, pos_y into nx1, ny1 from public.combat_units where id = u_en;
+  if nx1 is not distinct from nx0 and ny1 is not distinct from ny0 then
+    raise exception 'CLOSURE FAIL: the pirate did not move off its spawn anchor on tick 1 — the enemy CLOSE arm never ran';
+  end if;
+  -- ...toward each other: the gap after tick 1 is smaller than the spawn ring.
+  select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_t1
+    from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
+  if d_t1 >= v_ring then
+    raise exception 'CLOSURE FAIL: the escort-pirate gap after tick 1 is % (want < the % spawn gap) — they are not closing', d_t1, v_ring;
+  end if;
+  -- ...and NEITHER of them fired (both pre-move distances were the full ring, beyond both ranges).
+  select count(*) into n from public.combat_events
+    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
+      and payload_json->>'unit_id' in (u_esc::text, u_en::text);
+  if n <> 0 then
+    raise exception 'CLOSURE FAIL: % salvo(s) from the escort/pirate on tick 1 — something fired across a gap larger than its own range', n;
+  end if;
+
+  -- ── THE APPROACH: pre-move distance recorded BEFORE each tick; first fire checked against it. ───
+  for i in 2..12 loop
+    exit when v_esc_fire_tick is not null and v_en_fire_tick is not null;
+    select public.osn_distance(e.pos_x, e.pos_y, x.pos_x, x.pos_y) into d_pre
+      from public.combat_units e, public.combat_units x where e.id = u_esc and x.id = u_en;
+    perform pg_temp.ae_tick(v_enc);
+    select tick_number into v_tick from public.combat_encounters where id = v_enc;
+    if v_esc_fire_tick is null then
+      select count(*) into n from public.combat_events
+        where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo'
+          and payload_json->>'unit_id' = u_esc::text;
+      if n > 0 then
+        v_esc_fire_tick := v_tick; v_esc_fire_dist := d_pre;
+      elsif d_pre > v_r_esc then
+        n_silent := n_silent + 1;   -- a closing tick with the escort still legitimately silent
+      end if;
+    end if;
+    if v_en_fire_tick is null then
+      select count(*) into n from public.combat_events
+        where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo'
+          and payload_json->>'unit_id' = u_en::text;
+      if n > 0 then
+        v_en_fire_tick := v_tick; v_en_fire_dist := d_pre;
+      end if;
+    end if;
+  end loop;
+
+  if v_esc_fire_tick is null then
+    raise exception 'CLOSURE FAIL: the escort NEVER fired within 12 ticks — closure stalled (mutual approach at ~(3+0.2·difficulty)+~1 units/tick should be in range by tick 3-4)';
+  end if;
+  if v_esc_fire_dist > v_r_esc + 1e-6 then
+    raise exception 'CLOSURE FAIL: the escort''s first salvo (tick %) left at pre-move distance % — OUTSIDE its own % range; the fire gate is not honouring the cut range',
+      v_esc_fire_tick, v_esc_fire_dist, v_r_esc;
+  end if;
+  -- non-vacuity: the first shot must come strictly AFTER a verified silent closing tick. Tick 1 is
+  -- that tick by construction (the premise pinned gap > range, and the tick-1 assert above pinned
+  -- zero escort salvos), so the first fire may never be tick 1 itself.
+  if v_esc_fire_tick < 2 then
+    raise exception 'CLOSURE FAIL: the escort fired on tick % with no silent closing tick before it — the gap never exceeded its range and closure was not exercised (vacuous)', v_esc_fire_tick;
+  end if;
+  if v_en_fire_tick is null then
+    raise exception 'CLOSURE FAIL: the pirate NEVER fired at the escort within 12 ticks — the enemy approach stalled';
+  end if;
+  if v_en_fire_dist > v_r_en + 1e-6 then
+    raise exception 'CLOSURE FAIL: the pirate''s first salvo (tick %) left at pre-move distance % — OUTSIDE its own % range', v_en_fire_tick, v_en_fire_dist, v_r_en;
+  end if;
+  if v_en_fire_tick < v_esc_fire_tick then
+    raise exception 'CLOSURE FAIL: the short-ranged pirate (range %) fired on tick %, BEFORE the longer-ranged escort (range %, tick %) — the out-range order inverted',
+      v_r_en, v_en_fire_tick, v_r_esc, v_esc_fire_tick;
+  end if;
+
+  perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
+
+  raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED 0313 ranges (escort %, pirate %, spawn gap %), the command ship fired on tick 1 while the escort and the pirate MOVED across ticks (gap % -> % after tick 1) and held fire until closure — escort''s first salvo tick % at pre-move distance % (<= its range), pirate''s tick % at % (<= its range), % additional silent closing tick(s) after the verified-silent tick 1: position now matters in a real fight',
+    v_r_esc, v_r_en, v_ring, v_ring, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
 end $$;
 
 do $$ begin raise notice 'DANGER-ZONE COMBAT PROOF PASSED'; end $$;

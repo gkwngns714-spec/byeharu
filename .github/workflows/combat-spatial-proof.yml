@@ -22,6 +22,9 @@ on:
     branches:
       - 'autopilot/**'
       - 'slice-combat-s3**'
+      # 0313 cuts the seeded ranges this proof's geometry sits on (catalog gun 150->25) — its
+      # asserts were repointed in the same slice, so range branches must run it.
+      - 'slice-weapon-ranges**'
 
 permissions:
   contents: read
