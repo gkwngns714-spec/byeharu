@@ -72,36 +72,28 @@ const G_GUARD_NEW = `      if v_enc.status = 'active'
 
       -- ── 0311: REPOSITION INSIDE THE FIGHT'S OWN ZONE — "repositioning is a tactical move". ─────
       -- The owner's law: only an order OUT of the zone breaks combat. An order whose destination is
-      -- STRICTLY INSIDE the same active danger zone that anchors this encounter's engagement point
+      -- STRICTLY INSIDE an active danger zone that ALSO holds this encounter's engagement anchor
       -- MOVES the fleet, and the fight moves with it — no retreat armed, no destination stored, no
       -- window, no leg. Everything else falls through to the (a)/(b) retreat arms below, byte-
-      -- identical. Gated to encounter 'active': a 'retreating' fight may only update its stored
-      -- destination in arm (b) — a mid-window jump would be a free escape from the damage window.
-      -- The zone linkage is DERIVED from engagement_x/y (combat_encounter_zone), never stored:
-      -- NULL means "not in a zone" and falls through to retreat — the fail-closed default.
-      if v_enc.status = 'active' then
+      -- identical. The admission QUANTIFIES over every anchor-holding zone — adversarial review
+      -- showed that picking ONE zone (the first cut tie-broke by area) is wrong in both directions
+      -- when zones overlap; "does such a zone exist" has no choice to get wrong. Gated to
+      -- encounter 'active': a 'retreating' fight may only update its stored destination in arm (b)
+      -- — a mid-window jump would be a free escape from the damage window. False/NULL anywhere
+      -- (unstamped anchor, no zone, boundary graze) falls through to retreat: fail closed.
+      if v_enc.status = 'active'
+         and public.combat_encounter_zone_admits_point(v_enc.id, v_t_x, v_t_y) then
         declare
-          v_rz_zone  uuid;
           v_rz_mode  text;
           v_rz_eng_x double precision;
           v_rz_eng_y double precision;
         begin
-          v_rz_zone := public.combat_encounter_zone(v_enc.id);
-          if v_rz_zone is not null
-             and public.danger_zone_contains_point(v_rz_zone, v_t_x, v_t_y) then
-            -- The fleet row, locked in this block's own order (encounter -> fleet).
-            select f.location_mode into v_rz_mode
-              from public.fleets f
-             where f.id = v_enc.fleet_id and f.player_id = v_player
-             for update;
-            if v_rz_mode is distinct from 'space' then
-              -- A fleet that is NOT parked in open space (a hunt sortie 'present' at its site) is
-              -- REFUSED, typed: fleet_set_in_space nulls current_location_id, and whether that
-              -- corrupts the settle for a 'present' fleet holding an active location_presence is
-              -- UNVERIFIED. Refusing is the honest scope — this ships for ambush-born fights,
-              -- which always park in open space (0301:1109). Returned BEFORE any write.
-              return jsonb_build_object('ok', false, 'reason', 'reposition_requires_open_space');
-            end if;
+          -- The fleet row, locked in this block's own order (encounter -> fleet).
+          select f.location_mode into v_rz_mode
+            from public.fleets f
+           where f.id = v_enc.fleet_id and f.player_id = v_player
+           for update;
+          if v_rz_mode = 'space' then
             select ce.engagement_x, ce.engagement_y into v_rz_eng_x, v_rz_eng_y
               from public.combat_encounters ce where ce.id = v_enc.id;
             -- THE THREE WRITES, all composing what already exists:
@@ -111,14 +103,11 @@ const G_GUARD_NEW = `      if v_enc.status = 'active'
             --    is not in mid-fight) and would re-roll an ambush inside the zone it is already
             --    fighting in.
             perform public.fleet_set_in_space(v_enc.fleet_id, v_t_x, v_t_y);
-            -- 2. the player formation TRANSLATES by (destination - engagement) — never re-seeded,
-            --    so the 0301:749-757 ring survives by construction. Enemy rows are NOT touched:
-            --    the distance opens and the tick's existing 'close' arm (0234:242-244) pursues.
-            update public.combat_units
-               set pos_x = pos_x + (v_t_x - v_rz_eng_x),
-                   pos_y = pos_y + (v_t_y - v_rz_eng_y),
-                   updated_at = v_now
-             where encounter_id = v_enc.id and side = 'player';
+            -- 2. the player formation TRANSLATES by (destination - engagement) through the ONE
+            --    translation leaf — never re-seeded, so the 0301:749-757 ring survives by
+            --    construction. Enemy rows are NOT touched (see the header's blast-radius note on
+            --    what that means at production geometry).
+            perform public.combat_translate_player_formation(v_enc.id, v_t_x - v_rz_eng_x, v_t_y - v_rz_eng_y);
             -- 3. the engagement anchor RESTAMPS. Mandatory: the tick reads it fresh each pass
             --    (0299:477-478) and uses it for every later wave spawn (0299:713-722, :768-782)
             --    and both retreat-leg origins (0299:613, :616) — without this, wave 2 spawns at
@@ -135,12 +124,18 @@ const G_GUARD_NEW = `      if v_enc.status = 'active'
               'fleet_id', v_enc.fleet_id,
               'encounter_id', v_enc.id,
               'presence_id', v_enc.presence_id,
-              'zone_id', v_rz_zone,
               'member_count', v_member_n,
               'destination_location_id', p_location_id,
               'destination_x', v_t_x,
               'destination_y', v_t_y);
           end if;
+          -- NOT parked in open space (a hunt fight 'present' at its site): fall THROUGH to the
+          -- retreat arms below — today's behaviour EXACTLY, byte-for-byte from here down.
+          -- Reposition stays open-space-only because fleet_set_in_space nulls
+          -- current_location_id, and its interaction with a live 'present' location_presence is
+          -- UNVERIFIED. The first cut REFUSED here instead, and adversarial review showed the
+          -- refusal regressed a capability every site fight has today (an in-zone-destination
+          -- retreat order). Falling through takes nothing away from anyone.
         end;
       end if;
       -- ── end 0311 — the head continues verbatim from here ───────────────────────────────────────`;
@@ -178,9 +173,9 @@ const sql = `-- ═════════════════════�
 -- presence_request_leave, the sole retreat authority. There is no notion of WHERE the order points:
 -- redirecting inside the fight and fleeing to another system are the same action.
 --
--- THE RULE THIS MIGRATION INSTALLS: reposition iff the ordered destination is STRICTLY INSIDE the
--- same active danger zone that anchors the encounter's engagement point. Everything else retreats,
--- byte-identical to today.
+-- THE RULE THIS MIGRATION INSTALLS: reposition iff there EXISTS an active danger zone that (a)
+-- holds the encounter's engagement anchor and (b) strictly contains the ordered destination.
+-- Everything else retreats, byte-identical to today.
 --
 -- ── THE ZONE LINKAGE IS DERIVED, NEVER STORED ────────────────────────────────────────────────────
 -- combat_encounters has no zone column, location_presence.zone_id is the LEGACY zones table, and
@@ -191,54 +186,65 @@ const sql = `-- ═════════════════════�
 -- authority for where a fight physically is. A zone drawn AFTER a fight opened therefore governs it
 -- too — the linkage is live geometry, not a snapshot.
 --
--- ── TWO NEW AUTHORITIES ──────────────────────────────────────────────────────────────────────────
+-- ── THREE NEW AUTHORITIES ────────────────────────────────────────────────────────────────────────
 --   1. public.danger_zone_contains_point(zone, x, y) — "is this point strictly inside this active
 --      zone?" COMPOSED from pirate_intercept_leg_entry's degenerate zero-length-leg arm
 --      (0301:337-340), which already carries the ST_MakeValid/ST_CollectionExtract/ST_UnaryUnion
 --      repair (0301:317) that makes containment defined on self-intersecting owner-drawn polygons.
 --      No geometry re-implemented. STRICT on purpose: a reposition destination must be genuinely
 --      inside the zone — a boundary graze is not "inside".
---   2. public.combat_encounter_zone(encounter) — which active zone anchors this fight? Resolves the
---      zone whose CLOSURE the engagement point touches within 1e-6 world units (ST_DWithin), NULL
---      when engagement_x is NULL or no zone qualifies — and NULL means "not in a zone" => retreat
---      => today's behaviour, the fail-closed default protecting existing players.
+--   2. public.combat_encounter_zone_admits_point(encounter, x, y) — "is this an in-zone move for
+--      this fight?" TRUE iff some active zone holds the engagement anchor under a closure test
+--      (ST_DWithin, 1e-6) AND strictly contains the point (composing authority 1). It QUANTIFIES —
+--      it never resolves "the" zone. The first cut returned one zone chosen by an
+--      ST_Area-ascending tie-break, and adversarial review proved that wrong in BOTH directions
+--      under overlap: a thin low-area zone could veto a destination genuinely inside the fight's
+--      zone, or could grant an exit from it. An existential has no choice to get wrong; overlaps
+--      need no tie-break at all. FALSE when the anchor is unstamped or nothing qualifies — and
+--      false means "not an in-zone move" => retreat => today's behaviour, the fail-closed default
+--      protecting existing players.
 --
---      ★ THE ONE DELIBERATE DEVIATION FROM THE DESIGN PACKET, AND WHY: the packet specified strict
---      containment (composing authority 1) for this resolver too. But the primary case this slice
---      ships for — the ambush-born fight — anchors its engagement point AT THE ZONE ENTRY POINT
---      (the resolver parks the fleet at entry_x/y, 0301:1109, and combat_create_encounter reads
---      that position; scripts/danger-combat-proof.sql's ENGAGEMENT block pins engagement == the
---      recorded entry point). An entry point is BY CONSTRUCTION a point on the zone boundary
+--      ★ WHY THE ANCHOR ARM IS CLOSURE-WITH-EPSILON, NOT STRICT (the one deviation from the design
+--      packet, verified and upheld by adversarial review): the primary case this slice ships for —
+--      the ambush-born fight — anchors its engagement point AT THE ZONE ENTRY POINT (the resolver
+--      parks the fleet at entry_x/y, 0301:1109, and combat_create_encounter reads that position;
+--      scripts/danger-combat-proof.sql's ENGAGEMENT block pins engagement == the recorded entry
+--      point). An entry point is BY CONSTRUCTION a point on the zone boundary
 --      (pirate_intercept_leg_entry returns the first boundary-crossing of the leg), where strict
 --      ST_Contains answers FALSE — modulo one ulp of interpolation noise in either direction. The
---      literal composition would therefore have resolved NULL for exactly the fights the owner's
+--      literal strict composition would have answered false for exactly the fights the owner's
 --      directive is about, shipping the feature dead, nondeterministically. Closure-with-epsilon
---      (distance to the polygon <= 1e-6 — interior distance is 0, boundary distance is 0, one ulp
---      outside is ~1e-13) is deterministic on both sides of that boundary and is gameplay-
---      indistinguishable from containment (1e-6 world units on a ±10000 world). The raw-boundary
---      idiom follows the deployed prefilter at 0301:414-415 (ST_Intersects on z.boundary); distance
---      is not a topology predicate and does not need the validity repair.
---
---      OVERLAPPING ZONES: two active zones can contain one point and danger_zones has NO unique key
---      on location_id. Tie-break deterministically: ST_Area(z.boundary) asc, z.id asc — the
---      tightest zone wins; a nondeterministic predicate is not acceptable.
+--      (distance to the polygon <= 1e-6 — interior 0, boundary 0, one ulp outside ~1e-13) is
+--      deterministic on both sides of that boundary and gameplay-indistinguishable from
+--      containment (1e-6 world units on a ±10000 world). A player has no lever to place an anchor
+--      1e-6 outside a zone (review verified this too). The raw-boundary idiom follows the deployed
+--      prefilter at 0301:414-415; distance is not a topology predicate and needs no validity repair.
+--   3. public.combat_translate_player_formation(encounter, dx, dy) — THE one rigid translation of
+--      a fight's player formation (side='player' only; enemies never move). Extracted so
+--      combat_units.pos_x/pos_y keeps a countable writer set: the builder seeds (0301:749-757),
+--      the tick moves/spawns (0234/0299), and this leaf translates. There is NO other live
+--      translate site to re-point onto it: 0294's ambush translate lived in
+--      pirate_intercept_evaluate_leg, which 0301:2457 DROPPED — the resolver that replaced it
+--      parks the fleet BEFORE the encounter exists and never translates (0301:1101-1109).
 --
 -- ── WHERE THE BRANCH SITS (one hunk, located by exact deployed text, never retyped) ──────────────
 -- Inside step 8's "if v_enc.id is not null" block, AFTER the settling-race guard (0301:1706-1710)
 -- and BEFORE the destination write (0301:1715). Only when v_enc.status = 'active'; a 'retreating'
 -- encounter falls to arm (b) untouched — a mid-window jump would be a free escape from the damage
--- window. A fleet whose location_mode is not 'space' is REFUSED typed
--- ('reposition_requires_open_space'), never silently retreated: fleet_set_in_space nulls
--- current_location_id and its interaction with a live 'present' location_presence is unverified —
--- refusing is the safe, honest scope, and the client maps the reason to player copy.
+-- window. A fleet whose location_mode is not 'space' FALLS THROUGH to the retreat arms — today's
+-- behaviour exactly. (The first cut refused typed here; adversarial review showed that REGRESSED a
+-- real capability: every hunt fight sits 'present' at a site that carries a circle zone, so an
+-- in-zone-destination retreat order — legal today — would have started answering a refusal.
+-- Reposition stays open-space-only because fleet_set_in_space nulls current_location_id and its
+-- interaction with a live 'present' location_presence is unverified; falling through keeps the
+-- scope without taking anything away.)
 --
 -- ── WHAT MOVES (three writes, all composing existing primitives) ─────────────────────────────────
 --   fleets.space_x/y      — via fleet_set_in_space (0231:1146), the ONE writer, the ambush park's
 --                           own primitive. NO fleet_movements leg (see the branch comment).
---   combat_units pos      — side='player' rows TRANSLATE by (destination - engagement); never
---                           re-seeded, so the 0301:749-757 ring formation survives by construction.
---                           Enemy rows untouched: the distance opens and the tick's existing
---                           'close' arm (0234:242-244) pursues — deployed behaviour, not new code.
+--   combat_units pos      — side='player' rows TRANSLATE by (destination - engagement) through
+--                           combat_translate_player_formation; never re-seeded, so the
+--                           0301:749-757 ring formation survives by construction.
 --   combat_encounters     — engagement_x/y RESTAMP to the destination. The tick reads the anchor
 --                           fresh each pass (0299:477-478); later waves (0299:713-722, :768-782)
 --                           and both retreat-leg origins (0299:613, :616) follow the fight.
@@ -253,11 +259,21 @@ const sql = `-- ═════════════════════�
 --
 -- ── EVERY CONSUMER OF WHAT CHANGED, AND THE IMPACT ───────────────────────────────────────────────
 --   command_ship_group_go      — the one rewritten function; retreat arms byte-identical.
---   command_ship_group_go_route— leg 1 composes the mover; a mid-combat route order hits the same
---                                branch and may now answer 'repositioned' (ok:true, no leg) — its
---                                client reader (readFleetOrderOutcome) treats an unknown outcome as
---                                movement-started copy only after fleetRetreatOutcomeMessage, which
---                                gains the new outcome in the same slice (never ship half).
+--   command_ship_group_go_route— ★ NAMED NON-GOAL, NOT COVERED BY THIS SLICE. Leg 1 composes the
+--                                mover (0301:2298), then queues legs 2..N into fleet_route_legs
+--                                (0301:2308-2327) EVEN when leg 1 came back as a combat outcome
+--                                with no movement — and process_pirate_route_legs (0301:2364-2372)
+--                                advances any idle/space fleet with queued legs, with NO encounter
+--                                guard. That seam is PRE-EXISTING (the retreat arm has the same
+--                                shape today: a mid-combat route order queues legs while the fleet
+--                                sits in its retreat window) and 0311 adds the 'repositioned'
+--                                outcome to it: a repositioned fleet left with queued legs can be
+--                                flown out of its fight by the route cron with no retreat armed.
+--                                Closing it needs its own slice (an encounter guard in the route
+--                                cron, or queue abandonment in step 8) — deliberately not smuggled
+--                                in here. The CLIENT half is honest now: PirateInterceptPanel
+--                                consults fleetRetreatOutcomeMessage first, so a combat-time route
+--                                order reports what actually happened instead of "fleet underway".
 --   command_ship_group_dock    — dark-path (timed_docking dark) submits through the mover with a
 --                                PORT target; a port strictly inside the fight's zone now
 --                                repositions to the port's coordinate instead of arming a retreat —
@@ -271,39 +287,51 @@ const sql = `-- ═════════════════════�
 --   presence_request_leave     — stays the sole retreat authority; the reposition arm never calls
 --                                it and never writes retreat/presence state.
 --   fleet_set_in_space         — stays the sole writer of fleets.space_x/y; composed, not copied.
---   client                     — fleetRetreatOutcomeMessage gains 'repositioned'; teamReasonMessage
---                                gains 'reposition_requires_open_space'. Same slice.
+--   client                     — fleetRetreatOutcomeMessage gains 'repositioned';
+--                                PirateInterceptPanel consults it. Same slice.
 --
 -- ── BLAST RADIUS ON LIVE PLAYERS ─────────────────────────────────────────────────────────────────
---   - No data written at deploy time: no backfill, no flag, no schema change. DDL = two CREATE
---     FUNCTIONs + one CREATE OR REPLACE of the mover (row lock in pg_proc, no table lock).
---   - Which live fights change behaviour: only an order (a) against an ACTIVE encounter (b) whose
---     engagement point lies in an active danger zone (c) whose destination is strictly inside that
---     same zone (d) from a fleet parked in open space — i.e. exactly the ambush-born fight
---     redirected within its zone. Every other combination — outside destination, no zone,
---     retreating fight, docked/present fleet, no fight at all — is byte-identical to 0301+0305+0307
---     (the retreat arms and the whole no-combat path are untouched text).
---   - The reposition is INSTANT (the ambush park's own primitive). Enemies keep firing through the
---     jump: lock-on, spawn spread and the weapon-cooldown fix are slices 0312/0313 and a separate
+--   - No data written at deploy time: no backfill, no flag, no schema change. DDL = three CREATE
+--     FUNCTIONs + one CREATE OR REPLACE of the mover (row locks in pg_proc, no table lock).
+--   - Which live fights change behaviour: only an order (a) against an ACTIVE encounter (b) from a
+--     fleet parked in open space (c) whose destination is strictly inside an active zone that also
+--     holds the engagement anchor — i.e. exactly the ambush-born fight redirected within its zone.
+--     A 'present'/docked fleet's orders reach the SAME outcomes as today (the branch reads and
+--     falls through — identical envelope, identical writes; the only delta is the added zone
+--     reads). Retreating fights, no-zone fights, outside destinations, no fight at all:
+--     byte-identical to 0301+0305+0307.
+--   - The reposition is INSTANT (the ambush park's own primitive). Enemy rows are NOT moved;
+--     whether an enemy keeps firing after the jump depends on its weapon range against the jump
+--     distance — the tick's existing 'close' arm (0234:242-244) pursues anything out of range.
+--     THE CEILING AT TODAY'S PRODUCTION GEOMETRY (measured during adversarial review): the three
+--     live zones span Snare 79x47, Reaver 35x31, Blackden 29x30 world units, against enemy weapon
+--     range 120+ — NO in-zone reposition on today's zones can leave anyone's weapon range. The
+--     mechanic is correct and currently cannot dodge fire — by geometry, not by defect; a larger
+--     drawn zone changes that, a code change does not.
+--   - Lock-on, enemy spawn spread and the weapon-cooldown fix are slices 0312/0313 and a separate
 --     bug — deliberately NOT here.
 --
 -- ── ROLLBACK ─────────────────────────────────────────────────────────────────────────────────────
 -- Re-apply the deployed command_ship_group_go body with the 0311 hunk reverted (the guard text at
 -- 0301:1706-1710), then:
---   drop function public.combat_encounter_zone(uuid);
+--   drop function public.combat_encounter_zone_admits_point(uuid, double precision, double precision);
 --   drop function public.danger_zone_contains_point(uuid, double precision, double precision);
+--   drop function public.combat_translate_player_formation(uuid, double precision, double precision);
 -- Nothing else here writes state.
 --
 -- ── SELF-ASSERT MAP (one DO block per check — the statement number IS the diagnosis) ─────────────
---   (a) the two authorities exist with the right shape (STABLE, SECURITY DEFINER, pinned path)
---   (b) ACLs: neither authority is client-callable; service_role may execute
---   (c) zone resolver: deterministic tie-break pinned; fail-closed NULL/false smoke on empty input
+--   (a) the three authorities exist with the right shape (secdef, pinned path, right volatility)
+--   (b) ACLs: no authority is client-callable; service_role may execute all three
+--   (c) the admission QUANTIFIES: exists-shape, composes the containment leaf, and carries NO
+--       zone-choosing machinery (no order by / ST_Area / limit); fail-closed smoke on empty input
 --   (d) the destination test COMPOSES the geometry leaf (no second repair chain)
---   (e) mover: the reposition branch is present and composed (resolver + containment + the park)
---   (f) mover ORDER: guard -> reposition -> destination write -> retreat verbs
---   (g) mover: retreat arms intact, exactly one retreat-destination write, refusal typed
---   (h) mover: translate + restamp present, player-side scoped
---   (i) mover: the branch gates on 'active' exactly like arm (a) — two gates, no more
+--   (e) mover: the reposition branch is present and composed (admission + park + translate leaf)
+--   (f) mover ORDER: guard -> admission -> destination write -> retreat verbs
+--   (g) mover: retreat arms intact, exactly one retreat-destination write, the retired refusal
+--       token is ABSENT (site fights fall through, they are never refused)
+--   (h) mover: never touches combat_units directly (the leaf does), restamp present; the leaf is
+--       player-side scoped and a pure translation
+--   (i) mover: the admission is gated on 'active' (exactly one such gate) and arm (a) keeps its own
 --   (j) mover: no inline geometry (the authorities stay the only geometry readers)
 --   (k) metadata parity: the mover changed body and NOTHING else
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -378,48 +406,91 @@ comment on function public.danger_zone_contains_point(uuid, double precision, do
   'pirate_intercept_leg_entry''s degenerate zero-length-leg arm — the deployed repair + strict '
   'containment — never a second geometry implementation. NULL/garbage input, an inactive or '
   'missing zone, and a boundary graze all answer false: fail closed. Composed by '
-  'command_ship_group_go''s reposition arm for the ORDERED DESTINATION.';
+  'combat_encounter_zone_admits_point for the ORDERED DESTINATION.';
 
--- ── 2. THE ZONE-OF-THE-FIGHT AUTHORITY ───────────────────────────────────────────────────────────
--- See the header for why this one is closure-with-epsilon rather than strict: an ambush-born
--- fight's engagement point IS a zone-boundary point, where strictness is a coin flip.
-create or replace function public.combat_encounter_zone(p_encounter uuid)
-returns uuid
+-- ── 2. THE ADMISSION AUTHORITY ───────────────────────────────────────────────────────────────────
+-- Quantified, never a choice — see the header for why there is no "the" zone and why the anchor
+-- arm is closure-with-epsilon while the destination arm is strict.
+create or replace function public.combat_encounter_zone_admits_point(
+  p_encounter uuid,
+  p_x         double precision,
+  p_y         double precision
+) returns boolean
 language sql
 stable
 security definer
 set search_path to 'public'
 as $fn$
-  select z.id
-    from public.combat_encounters ce
-    join public.danger_zones z
-      on z.status = 'active'
-     and ST_DWithin(z.boundary, ST_MakePoint(ce.engagement_x, ce.engagement_y), 1e-6)
-   where ce.id = p_encounter
-     and ce.engagement_x is not null
-     and ce.engagement_y is not null
-   order by ST_Area(z.boundary) asc, z.id asc
-   limit 1;
+  select exists (
+    select 1
+      from public.combat_encounters ce
+      join public.danger_zones z
+        on z.status = 'active'
+       and ST_DWithin(z.boundary, ST_MakePoint(ce.engagement_x, ce.engagement_y), 1e-6)
+     where ce.id = p_encounter
+       and ce.engagement_x is not null
+       and ce.engagement_y is not null
+       and public.danger_zone_contains_point(z.id, p_x, p_y)
+  );
 $fn$;
 
-comment on function public.combat_encounter_zone(uuid) is
-  'THE one answer to "which active danger zone anchors this fight?" (0311). DERIVED from '
-  'combat_encounters.engagement_x/y — the 0293 position authority — never stored. Closure test '
-  'with a 1e-6 tolerance because an ambush anchors its fight ON the zone boundary (the entry '
-  'point, 0301:1109), where strict containment is undefined to one ulp. NULL when the engagement '
-  'point is unstamped or no active zone holds it — and NULL means "not in a zone", so the mover '
-  'falls through to the retreat arms: fail closed. Overlaps tie-break tightest-first '
-  '(ST_Area asc, id asc), deterministically.';
+comment on function public.combat_encounter_zone_admits_point(uuid, double precision, double precision) is
+  'THE one answer to "is this destination an in-zone move for this fight?" (0311): TRUE iff some '
+  'active danger zone holds the encounter''s engagement anchor (closure test, 1e-6 — an ambush '
+  'anchors its fight ON the zone boundary, 0301:1109, where strictness is undefined to one ulp) '
+  'AND strictly contains the destination (composing danger_zone_contains_point). QUANTIFIED over '
+  'every anchor-holding zone — never "the" zone: adversarial review proved an area tie-break '
+  'wrong in both directions under overlap. The linkage is DERIVED from engagement_x/y (the 0293 '
+  'position authority), never stored. FALSE on an unstamped anchor or no qualifying zone — the '
+  'mover then falls through to the retreat arms: fail closed.';
+
+-- ── 3. THE TRANSLATION LEAF ──────────────────────────────────────────────────────────────────────
+-- The ONE rigid translation of a fight's player formation. Enemy rows are never touched here.
+-- No other live site to fold in: 0294's ambush translate died with pirate_intercept_evaluate_leg
+-- (dropped 0301:2457).
+create or replace function public.combat_translate_player_formation(
+  p_encounter uuid,
+  p_dx        double precision,
+  p_dy        double precision
+) returns integer
+language plpgsql
+security definer
+set search_path to 'public'
+as $fn$
+declare
+  v_n integer;
+begin
+  if p_dx is null or p_dy is null then
+    raise exception 'combat_translate_player_formation: delta required (encounter %)', p_encounter;
+  end if;
+  update public.combat_units
+     set pos_x = pos_x + p_dx,
+         pos_y = pos_y + p_dy,
+         updated_at = now()
+   where encounter_id = p_encounter
+     and side = 'player';
+  get diagnostics v_n = row_count;
+  return v_n;
+end $fn$;
+
+comment on function public.combat_translate_player_formation(uuid, double precision, double precision) is
+  'THE one rigid translation of a fight''s player formation (0311): every side=''player'' row of '
+  'the encounter moves by exactly (dx, dy); enemy rows never move here (the tick''s close arm '
+  'pursues instead). Translation, never re-seeding — the spawn ring survives by construction. '
+  'Composed by command_ship_group_go''s reposition arm. combat_units.pos writers stay countable: '
+  'the builder seeds, the tick moves/spawns, this leaf translates.';
 
 -- ACLs: internal leaves — the composer is a security-definer engine function. Explicitly revoked
--- rather than merely un-granted (the 0254 prod grant-drift lesson). Neither takes the acting player
+-- rather than merely un-granted (the 0254 prod grant-drift lesson). None takes the acting player
 -- as an argument (the 0309 lesson).
 revoke execute on function public.danger_zone_contains_point(uuid, double precision, double precision) from public, anon, authenticated;
-revoke execute on function public.combat_encounter_zone(uuid) from public, anon, authenticated;
+revoke execute on function public.combat_encounter_zone_admits_point(uuid, double precision, double precision) from public, anon, authenticated;
+revoke execute on function public.combat_translate_player_formation(uuid, double precision, double precision) from public, anon, authenticated;
 grant execute on function public.danger_zone_contains_point(uuid, double precision, double precision) to service_role;
-grant execute on function public.combat_encounter_zone(uuid) to service_role;
+grant execute on function public.combat_encounter_zone_admits_point(uuid, double precision, double precision) to service_role;
+grant execute on function public.combat_translate_player_formation(uuid, double precision, double precision) to service_role;
 
--- ── 3. CAPTURE METADATA BEFORE THE REWRITE (for parity check k) ──────────────────────────────────
+-- ── 4. CAPTURE METADATA BEFORE THE REWRITE (for parity check k) ──────────────────────────────────
 create temp table _0311_before (
   fname text primary key, body_md5 text, owner text, secdef boolean, volatility "char",
   parallel "char", proconfig text, args text, result text, acl text
@@ -434,7 +505,7 @@ select p.proname, md5(p.prosrc), pg_get_userbyid(p.proowner), p.prosecdef, p.pro
  where n.nspname = 'public'
    and p.proname = 'command_ship_group_go';
 
--- ── 4. REWRITE THE HUNK (located by exact deployed text, never retyped) ──────────────────────────
+-- ── 5. REWRITE THE HUNK (located by exact deployed text, never retyped) ──────────────────────────
 do $rewrite$
 declare
   r record;
@@ -482,36 +553,38 @@ ${rows}
   raise notice '0311: the mover now repositions inside the fight''s own zone; everything else retreats, byte-identical';
 end $rewrite$;
 
--- ── 5. SELF-ASSERTS — one DO block per check; every probe strips comments first ─────────────────
+-- ── 6. SELF-ASSERTS — one DO block per check; every probe strips comments first ─────────────────
 
--- (a) the two authorities exist with the right shape
+-- (a) the three authorities exist with the right shape
 do $a$
 begin
   if to_regprocedure('public.danger_zone_contains_point(uuid, double precision, double precision)') is null
-     or to_regprocedure('public.combat_encounter_zone(uuid)') is null then
+     or to_regprocedure('public.combat_encounter_zone_admits_point(uuid, double precision, double precision)') is null
+     or to_regprocedure('public.combat_translate_player_formation(uuid, double precision, double precision)') is null then
     raise exception '0311 ASSERT (a) FAIL: an authority is missing';
   end if;
   if (select provolatile from pg_proc where oid = 'public.danger_zone_contains_point(uuid, double precision, double precision)'::regprocedure) <> 's'
-     or (select prosecdef from pg_proc where oid = 'public.danger_zone_contains_point(uuid, double precision, double precision)'::regprocedure) is not true
-     or (select provolatile from pg_proc where oid = 'public.combat_encounter_zone(uuid)'::regprocedure) <> 's'
-     or (select prosecdef from pg_proc where oid = 'public.combat_encounter_zone(uuid)'::regprocedure) is not true then
-    raise exception '0311 ASSERT (a) FAIL: both authorities must be STABLE SECURITY DEFINER';
+     or (select provolatile from pg_proc where oid = 'public.combat_encounter_zone_admits_point(uuid, double precision, double precision)'::regprocedure) <> 's'
+     or (select provolatile from pg_proc where oid = 'public.combat_translate_player_formation(uuid, double precision, double precision)'::regprocedure) <> 'v' then
+    raise exception '0311 ASSERT (a) FAIL: wrong volatility — the two reads are STABLE, the translate is VOLATILE';
   end if;
-  if not exists (select 1 from pg_proc where oid = 'public.combat_encounter_zone(uuid)'::regprocedure
-                    and 'search_path=public' = any (proconfig))
-     or not exists (select 1 from pg_proc where oid = 'public.danger_zone_contains_point(uuid, double precision, double precision)'::regprocedure
-                    and 'search_path=public' = any (proconfig)) then
-    raise exception '0311 ASSERT (a) FAIL: an authority lost its pinned search_path';
+  if exists (select 1 from pg_proc
+              where oid in ('public.danger_zone_contains_point(uuid, double precision, double precision)'::regprocedure,
+                            'public.combat_encounter_zone_admits_point(uuid, double precision, double precision)'::regprocedure,
+                            'public.combat_translate_player_formation(uuid, double precision, double precision)'::regprocedure)
+                and (prosecdef is not true or not ('search_path=public' = any (proconfig)))) then
+    raise exception '0311 ASSERT (a) FAIL: an authority lost SECURITY DEFINER or its pinned search_path';
   end if;
 end $a$;
 
--- (b) ACLs: neither authority is client-callable; service_role may execute
+-- (b) ACLs: no authority is client-callable; service_role may execute all three
 do $b$
 declare v_n integer;
 begin
   select count(*) into v_n
     from (values ('public.danger_zone_contains_point(uuid, double precision, double precision)'),
-                 ('public.combat_encounter_zone(uuid)')) as t(sig)
+                 ('public.combat_encounter_zone_admits_point(uuid, double precision, double precision)'),
+                 ('public.combat_translate_player_formation(uuid, double precision, double precision)')) as t(sig)
    where has_function_privilege('authenticated', t.sig, 'execute')
       or has_function_privilege('anon', t.sig, 'execute');
   if v_n > 0 then
@@ -519,35 +592,41 @@ begin
   end if;
   select count(*) into v_n
     from (values ('public.danger_zone_contains_point(uuid, double precision, double precision)'),
-                 ('public.combat_encounter_zone(uuid)')) as t(sig)
+                 ('public.combat_encounter_zone_admits_point(uuid, double precision, double precision)'),
+                 ('public.combat_translate_player_formation(uuid, double precision, double precision)')) as t(sig)
    where not has_function_privilege('service_role', t.sig, 'execute');
   if v_n > 0 then
     raise exception '0311 ASSERT (b) FAIL: % authority function(s) lack the service_role grant', v_n;
   end if;
 end $b$;
 
--- (c) zone resolver: deterministic tie-break pinned; fail-closed smoke on empty input
+-- (c) the admission QUANTIFIES — no zone-choosing machinery survives; fail-closed smoke
 do $c$
-declare v_code text; v_zone uuid; v_in boolean;
+declare v_code text; v_ok boolean;
 begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'public' and p.proname = 'combat_encounter_zone';
-  if position('ST_Area' in v_code) = 0 or position('order by' in v_code) = 0
-     or position('limit 1' in v_code) = 0 then
-    raise exception '0311 ASSERT (c) FAIL: the tie-break (ST_Area asc, id asc, limit 1) is gone — overlapping zones would resolve nondeterministically';
+   where n.nspname = 'public' and p.proname = 'combat_encounter_zone_admits_point';
+  if position('exists' in v_code) = 0 or position('danger_zone_contains_point' in v_code) = 0 then
+    raise exception '0311 ASSERT (c) FAIL: the admission is not an existential over the containment leaf';
+  end if;
+  if position('order by' in v_code) > 0 or position('ST_Area' in v_code) > 0 or position('limit' in v_code) > 0 then
+    raise exception '0311 ASSERT (c) FAIL: the admission still CHOOSES a zone (order by / ST_Area / limit) — the tie-break defect adversarial review killed';
   end if;
   if position('engagement_x is not null' in v_code) = 0 then
-    raise exception '0311 ASSERT (c) FAIL: the unstamped-engagement guard is gone';
+    raise exception '0311 ASSERT (c) FAIL: the unstamped-anchor guard is gone';
+  end if;
+  if position('ST_DWithin' in v_code) = 0 then
+    raise exception '0311 ASSERT (c) FAIL: the anchor arm lost its closure test — every ambush-born fight would retreat';
   end if;
   -- read-only smoke, safe on any database including production:
-  v_zone := public.combat_encounter_zone('00000000-0000-4311-8311-000000000311'::uuid);
-  if v_zone is not null then
-    raise exception '0311 ASSERT (c) FAIL: an encounter that does not exist resolved zone % (want NULL — fail closed)', v_zone;
+  v_ok := public.combat_encounter_zone_admits_point('00000000-0000-4311-8311-000000000311'::uuid, 0, 0);
+  if v_ok is distinct from false then
+    raise exception '0311 ASSERT (c) FAIL: an encounter that does not exist admits a point (%) — must be false, fail closed', v_ok;
   end if;
-  v_in := public.danger_zone_contains_point('00000000-0000-4311-8311-000000000311'::uuid, 0, 0);
-  if v_in is distinct from false then
-    raise exception '0311 ASSERT (c) FAIL: a zone that does not exist answered % (want false — fail closed)', v_in;
+  v_ok := public.danger_zone_contains_point('00000000-0000-4311-8311-000000000311'::uuid, 0, 0);
+  if v_ok is distinct from false then
+    raise exception '0311 ASSERT (c) FAIL: a zone that does not exist answered % (want false — fail closed)', v_ok;
   end if;
 end $c$;
 
@@ -576,12 +655,14 @@ begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_go';
-  if position('combat_encounter_zone(v_enc.id)' in v_code) = 0
-     or position('danger_zone_contains_point(v_rz_zone, v_t_x, v_t_y)' in v_code) = 0 then
-    raise exception '0311 ASSERT (e) FAIL: the mover does not compose the two zone authorities';
+  if position('combat_encounter_zone_admits_point(v_enc.id, v_t_x, v_t_y)' in v_code) = 0 then
+    raise exception '0311 ASSERT (e) FAIL: the mover does not compose the admission authority';
   end if;
   if position('fleet_set_in_space(v_enc.fleet_id, v_t_x, v_t_y)' in v_code) = 0 then
     raise exception '0311 ASSERT (e) FAIL: the reposition does not park through the one fleets.space writer';
+  end if;
+  if position('combat_translate_player_formation(v_enc.id, v_t_x - v_rz_eng_x, v_t_y - v_rz_eng_y)' in v_code) = 0 then
+    raise exception '0311 ASSERT (e) FAIL: the reposition does not translate through the one formation leaf';
   end if;
   if position('''order_outcome'', ''repositioned''' in v_code) = 0 then
     raise exception '0311 ASSERT (e) FAIL: the reposition envelope is missing';
@@ -593,7 +674,7 @@ begin
   end if;
 end $e$;
 
--- (f) mover ORDER: settling-race guard -> reposition -> destination write -> retreat verb
+-- (f) mover ORDER: settling-race guard -> admission -> destination write -> retreat verb
 do $f$
 declare v_code text;
 begin
@@ -601,10 +682,10 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_go';
   if position('movement_settled_retry' in v_code) = 0
-     or position('movement_settled_retry' in v_code) > position('combat_encounter_zone(v_enc.id)' in v_code) then
+     or position('movement_settled_retry' in v_code) > position('combat_encounter_zone_admits_point(v_enc.id' in v_code) then
     raise exception '0311 ASSERT (f) FAIL: the reposition branch does not sit AFTER the settling-race guard';
   end if;
-  if position('combat_encounter_zone(v_enc.id)' in v_code) > position('retreat_target_location_id = p_location_id' in v_code) then
+  if position('combat_encounter_zone_admits_point(v_enc.id' in v_code) > position('retreat_target_location_id = p_location_id' in v_code) then
     raise exception '0311 ASSERT (f) FAIL: the reposition branch does not sit BEFORE the retreat-destination write — a reposition would leave a stored destination behind';
   end if;
   if position('''order_outcome'', ''repositioned''' in v_code) > position('presence_request_leave(v_enc.presence_id)' in v_code) then
@@ -612,7 +693,7 @@ begin
   end if;
 end $f$;
 
--- (g) mover: retreat arms intact, exactly one retreat-destination write, refusal typed
+-- (g) mover: retreat arms intact, exactly one retreat-destination write, no refusal token
 do $g$
 declare v_code text; v_n integer;
 begin
@@ -629,45 +710,55 @@ begin
   if v_n <> 1 then
     raise exception '0311 ASSERT (g) FAIL: % retreat-destination writes (want exactly the one 0298 update — the reposition arm must never write retreat_target_*)', v_n;
   end if;
-  if position('reposition_requires_open_space' in v_code) = 0 then
-    raise exception '0311 ASSERT (g) FAIL: the non-space refusal is not typed';
+  if position('reposition_requires_open_space' in v_code) > 0 then
+    raise exception '0311 ASSERT (g) FAIL: the retired refusal token survives — a site fight must FALL THROUGH to the retreat, never be refused (the 131e027 regression adversarial review caught)';
   end if;
 end $g$;
 
--- (h) mover: translate + restamp present, player-side scoped
+-- (h) mover never touches combat_units directly; restamp present; the leaf is a scoped translation
 do $h$
 declare v_code text;
 begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_go';
-  if position('pos_x = pos_x + (v_t_x - v_rz_eng_x)' in v_code) = 0
-     or position('pos_y = pos_y + (v_t_y - v_rz_eng_y)' in v_code) = 0 then
-    raise exception '0311 ASSERT (h) FAIL: the formation translate is gone (or re-seeds instead of translating)';
-  end if;
-  if position('side = ''player''' in v_code) = 0 then
-    raise exception '0311 ASSERT (h) FAIL: the translate is not scoped to the player side — enemy rows must not move';
+  if position('combat_units' in v_code) > 0 then
+    raise exception '0311 ASSERT (h) FAIL: the mover touches combat_units directly — the translation leaf is the one writer here';
   end if;
   if position('set engagement_x = v_t_x' in v_code) = 0 then
     raise exception '0311 ASSERT (h) FAIL: the engagement restamp is gone — wave 2 would spawn at the abandoned point';
   end if;
+  select ${STRIP} into v_code
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'combat_translate_player_formation';
+  if position('pos_x = pos_x + p_dx' in v_code) = 0 or position('pos_y = pos_y + p_dy' in v_code) = 0 then
+    raise exception '0311 ASSERT (h) FAIL: the leaf does not TRANSLATE (re-seeding would fork the formation authority)';
+  end if;
+  if position('side = ''player''' in v_code) = 0 then
+    raise exception '0311 ASSERT (h) FAIL: the leaf is not scoped to the player side — enemy rows must not move';
+  end if;
 end $h$;
 
--- (i) mover: the branch gates on 'active' exactly like arm (a) — two single-line gates, no more
+-- (i) the admission is gated on 'active' — exactly one such gate, and arm (a) keeps its own
 do $i$
 declare v_code text; v_n integer;
 begin
   select ${STRIP} into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'command_ship_group_go';
+  select count(*) into v_n
+    from regexp_matches(v_code, 'if v_enc\\.status = ''active''\\s+and public\\.combat_encounter_zone_admits_point', 'g');
+  if v_n <> 1 then
+    raise exception '0311 ASSERT (i) FAIL: % active-gated admission(s) (want exactly 1) — a ''retreating'' fight must never reposition', v_n;
+  end if;
   v_n := (length(v_code) - length(replace(v_code, 'if v_enc.status = ''active'' then', '')))
          / length('if v_enc.status = ''active'' then');
-  if v_n <> 2 then
-    raise exception '0311 ASSERT (i) FAIL: % single-line active gates (want 2: the reposition gate + retreat arm a) — a ''retreating'' fight must never reposition', v_n;
+  if v_n <> 1 then
+    raise exception '0311 ASSERT (i) FAIL: % single-line active gates (want exactly 1: retreat arm a)', v_n;
   end if;
 end $i$;
 
--- (j) mover: no inline geometry — the two authorities stay the only geometry readers
+-- (j) mover: no inline geometry — the authorities stay the only geometry readers
 do $j$
 declare v_code text;
 begin
