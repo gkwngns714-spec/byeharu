@@ -21,6 +21,12 @@ SQL="$SCRIPT_DIR/encounter-canary-proof.sql"
 [ -f "$SQL" ] || { echo "proof sql not found: $SQL"; exit 1; }
 : "${DB_URL:?DB_URL (disposable stack) required}"
 
+# NO-LEAK BASELINE (the proofs-never-assert-ambient-defaults rule, fix shape 3): capture the
+# COMMITTED resolver flag BEFORE the run and demand it UNCHANGED after — never a hard-coded value.
+# The old check pinned `false`, the pre-0300 seed; 0300 lights the flag IN THE CHAIN, so the pin
+# failed on every post-0300 chain while proving nothing about leakage in either world.
+flag_before="$(psql "$DB_URL" -X -t -A -c "select public.cfg_bool('encounter_resolver_enabled')")"
+
 # capture without aborting so the psql output (incl. any RAISE) is always printed for diagnosis; the
 # marker loop below is the pass/fail gate.
 out="$(psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f "$SQL" 2>&1)" || true
@@ -58,14 +64,17 @@ begin
   if n <> 0 then raise exception 'ECP ROLLBACK FAIL: % canary_encounter profile(s) survived', n; end if;
   select count(*) into n from public.encounter_runtime_state;
   if n <> 0 then raise exception 'ECP ROLLBACK FAIL: % encounter_runtime_state row(s) survived', n; end if;
-  if public.cfg_bool('encounter_resolver_enabled') is not false then
-    raise exception 'ECP ROLLBACK FAIL: encounter_resolver_enabled is not false after the rollback';
-  end if;
+  -- (the resolver flag's no-leak check moved OUT of this block: the runner compares the COMMITTED
+  --  value before vs after the run — derived, never a hard-coded seed.)
   select count(*) into n from public.world_editor_audit where request_id like 'ecp-%';
   if n <> 0 then raise exception 'ECP ROLLBACK FAIL: % owner-RPC audit row(s) survived', n; end if;
   raise notice 'ECP_PASS_ROLLBACK_CLEAN';
 end \$\$;" 2>&1)" || true
 echo "$post"
 echo "$post" | grep -q 'ECP_PASS_ROLLBACK_CLEAN' || { echo "MISSING PASS MARKER: ECP_PASS_ROLLBACK_CLEAN"; exit 1; }
+
+flag_after="$(psql "$DB_URL" -X -t -A -c "select public.cfg_bool('encounter_resolver_enabled')")"
+[ "$flag_after" = "$flag_before" ] \
+  || { echo "ECP ROLLBACK FAIL: encounter_resolver_enabled leaked across the rollback ($flag_before -> $flag_after)"; exit 1; }
 
 echo 'ALL ENCOUNTER-CANARY PASS MARKERS PRESENT'
