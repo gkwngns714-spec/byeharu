@@ -19,15 +19,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO_ROOT="$(cd "$SC
 tp_init "${1:-}"
 SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT"
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
   [ -f "$SQL" ] || fail "proof sql not found"
 
-  # ── GENERATED-MIGRATION PARITY GATE (added 0308) ───────────────────────────────────────────────
-  # 0305, 0306 and 0308 each re-create LIVE plpgsql by SLICING the deployed text and replacing one
-  # marked hunk, and each ships a generator whose --check re-derives the migration from those slices.
+  # ── GENERATED-MIGRATION PARITY GATE (added 0308; 0311 joined) ──────────────────────────────────
+  # 0305, 0306, 0308 and 0311 each re-create LIVE plpgsql by SLICING the deployed text and replacing
+  # marked hunks, and each ships a generator whose --check re-derives the migration from those slices.
   # That makes byte parity outside the hunks a property of the METHOD rather than a review promise —
   # but ONLY if the generator is actually run. Before this gate existed, `--check` was wired into no
   # workflow, no harness and no npm script, so a hand-edit of a generated migration passed every gate
@@ -35,7 +35,7 @@ if [ "$MODE" = "selftest" ]; then
   # instead of in CI. Adversarial review found that hole. All three are gated together, not just the
   # newest, because the gap was identical for the two that came before.
   if command -v node >/dev/null 2>&1; then
-    for gen in gen-0305-sortie-authority gen-0306-dock-authority gen-0308-combat-roster-authority; do
+    for gen in gen-0305-sortie-authority gen-0306-dock-authority gen-0308-combat-roster-authority gen-0311-reposition-in-zone; do
       # A MISSING generator is a HARD FAIL, not a skip. The first version of this gate wrapped the
       # check in `if [ -f … ]; then … fi`, and adversarial review broke it empirically: hand-edit a
       # generated migration AND delete its generator, and the selftest went green. A refactor that
@@ -158,13 +158,28 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "a rig still counts as a gun (the 0308 defect)"         "$SQL" || fail "harness lacks the rig-is-not-a-gun assert"
   grep -q "the ship does not fire its own attack"                 "$SQL" || fail "harness lacks the fallback-power-from-attack assert"
   grep -q "drifted from its catalog row"                          "$SQL" || fail "harness lacks the fitted-weapon-exactness assert"
+  # 0311 — the reposition properties are asserted in assert-form too. A failing block reds CI, but a
+  # DELETED block would not — these pins are what makes deletion fail here.
+  grep -q "armed a retreat instead of repositioning"              "$SQL" || fail "harness lacks the in-zone-order-repositions assert"
+  grep -q "the tightest zone did not win the tie-break"           "$SQL" || fail "harness lacks the overlapping-zone tie-break assert"
+  grep -q "a reposition wrote a retreat destination"              "$SQL" || fail "harness lacks the no-retreat-destination-on-reposition assert"
+  grep -q "the in-zone order broke the combat"                    "$SQL" || fail "harness lacks the fight-continues assert"
+  grep -q "the formation did not translate with the fleet"        "$SQL" || fail "harness lacks the exact-delta translate assert"
+  grep -q "wave 2 would spawn at the abandoned point"             "$SQL" || fail "harness lacks the engagement-restamp assert"
+  grep -q "a reposition must never mint a leg"                    "$SQL" || fail "harness lacks the no-leg-on-reposition assert"
+  grep -q "the out-of-zone order did not retreat exactly as before" "$SQL" || fail "harness lacks the outside-still-retreats assert"
+  grep -q "a free escape from the damage window"                  "$SQL" || fail "harness lacks the retreating-never-jumps assert"
+  grep -q "the retreat window was restarted"                      "$SQL" || fail "harness lacks the no-clock-restart assert"
+  grep -q "was not refused with the typed reason"                 "$SQL" || fail "harness lacks the typed non-space refusal assert"
+  grep -q "the refusal left a write behind"                       "$SQL" || fail "harness lacks the refusal-writes-nothing assert"
+  grep -q "the out-of-zone retreat no longer works for a fleet fighting at a site" "$SQL" || fail "harness lacks the site-fight-retreat-preserved assert"
 
   # determinism: no session random() (0041 law). gen_random_uuid() is fixture identity only.
   grep -qE '[^_]random\(' "$SQL" && fail "harness uses random() (0041 determinism law)" || true
 
   tp_assert_out_of_scope "$SQL"
 
-  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route and command_ship_group_stop; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 1 combat tick; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage — asserted in assert-form; no random())"
+  echo "DANGER-ZONE COMBAT SELFTEST: ALL PASSED (self-rolling-back; every dark flag enabled only inside the txn; combat_telegraph kept dark; risk knobs = 1.0 for a certain plan; sole-writer law for group_sortie_members + combat_units AND for the intercept lifecycle/geometry — only a symmetric depart/arrive/trigger time-travel is allowed; provisioning + entry 100% real-RPC incl. pirate_zone_create, command_ship_group_go, command_ship_group_go_route and command_ship_group_stop; the ambush is fired by the REAL process_fleet_movements and the single direct resolver call is the negative re-fire probe; exactly 1 combat tick; every property — the order starts a journey and no fight, the point is the zone EDGE not its centre, trigger_at is the leg's own interpolated clock, nothing fires early, the arrival cannot be settled past a due ambush, the fleet parks at the entry point, the route is abandoned, engagement_x/y equals the entry point with the command ship seeded on it, it cannot fire twice, stop/re-order before due cancels and re-plans while stop after due is refused, positioned spatial units, spawned + firing pirate + damage, and (0311) an in-zone order REPOSITIONS the fight (exact-delta translate, restamp, tightest-zone tie-break, no retreat write, no leg) while an outside order retreats byte-identically, a retreating fight never jumps, and a site fight is refused typed with zero writes — asserted in assert-form; no random())"
   exit 0
 fi
 

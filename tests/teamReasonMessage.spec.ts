@@ -33,6 +33,9 @@ test('every known fleet-RPC reject reason maps to specific player text (not the 
     'unified_movement_disabled',
     'member_busy',
     'group_on_sortie',
+    // REPOSITION (0311): the in-zone jump is refused, typed, for a fleet fighting at a site
+    // (location_mode <> 'space') — an unexplained refusal reads as a bug.
+    'reposition_requires_open_space',
     'fleet_ambiguous',
     'group_scattered',
     'no_origin',
