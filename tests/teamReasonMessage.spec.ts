@@ -18,6 +18,10 @@ test('every known fleet-RPC reject reason maps to specific player text (not the 
     'not_authenticated',
     'group_not_found',
     'empty_group',
+    // NO LIVING SHIPS (0312) — emitted by command_ship_group_go (and via route leg 1, which
+    // composes it) and command_ship_group_dock when every ship in the group is destroyed.
+    // Distinct from empty_group: that fleet has no ships; this one has ships, all wrecked.
+    'no_living_ships',
     // hunt send (0168)
     'invalid_location',
     // shared readiness reject: hunt (0168) + docked-team move (0190)

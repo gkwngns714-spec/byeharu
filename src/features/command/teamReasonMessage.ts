@@ -19,6 +19,11 @@ const REASON_MESSAGES: Record<string, string> = {
   not_authenticated: 'Sign in to command fleets.',
   group_not_found: 'That fleet no longer exists.',
   empty_group: 'That fleet has no ships yet — add ships in the Fleets panel.',
+  // NO LIVING SHIPS (0312) — every ship in the group is wrecked, so the mover/dock refuse the
+  // order. DISTINCT from empty_group: that fleet has no ships at all; this one has ships and they
+  // are all disabled. The copy says what to actually do — the recovery path is per-ship (Fitting
+  // screen: Repair in port, Tow when adrift — shipRecovery.ts), never another fleet order.
+  no_living_ships: 'Every ship in this fleet is wrecked — repair them (or tow them to a port first) from the Fitting screen, then give the order again.',
   // hunt send (0168)
   invalid_location: 'This destination can’t take a fleet right now.',
   // shared readiness reject: hunt (0168 — every ship home and battle-ready) and docked-team move
