@@ -5,6 +5,176 @@ Newest entries at the top. Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## 2026-08-02 — An eight-domain audit, and the three things it found that were costing players (`#339` `#340` `#341` `#342`, **ALL DEPLOYED & verified on target**)
+
+> **DEPLOY STATE — read the head trap first.** `main` **`5105c6c`**. Migrations `0307`, `0308` and
+> `0309` are **applied to production**. But **`max(version)` reads `20260618000309`, not `0308`** —
+> `0309` merged and deployed *first*, and the other two are numbered below it, so the migration head
+> can never move for them. **Do not verify these by the head.** Ask the ledger and the deployed code:
+>
+> ```sql
+> select (select count(*) from supabase_migrations.schema_migrations where version='20260618000307'),
+>        (select count(*) from supabase_migrations.schema_migrations where version='20260618000308');
+> ```
+>
+> Verified on production this session (not from a green check): `0307` applied · `0308` applied ·
+> `movement_settle_arrival` carries **2** `reward_grant(` calls in *code* with comments stripped
+> (base arm + the new space arm) · `0308`'s three authorities present · builder uses
+> `module_is_firing_weapon` and **no longer** `t.range is not null` · builder uses
+> `group_sortie_live_members` · **0** client roles can execute any of the five `0309` revoked.
+
+**The owner's ask:** *"git pull byeharu, update yourself with laws, log, history. Do a Full audit with
+what currently built."* Then, on the findings: *"do the thing i need to do right now"* → *"merge all"*
+→ *"deploy them"*.
+
+### The audit
+
+Eight read-only domain agents (migration chain · combat runtime · game-loop closure · frontend/UX ·
+flag posture · duplicate authorities · CI harness · security). Every load-bearing claim was
+re-verified against source or production before being acted on — several did not survive that.
+
+**The finding that changes how work is verified here: production `game_config` has drifted off the
+migration chain, and two values exist in NO file in the repo.**
+
+| key | chain | PROD | written by |
+|---|---|---|---|
+| `mining_extract_radius` | 750 (`0102:48`) | **60** | nothing in the repo |
+| `dev_zone_editor_enabled` | false (`0238:24`) | **true** | nothing in the repo |
+| `blueprint_fragment_drop_rate` | 0 (`0185:96`) | **0.15** | `scripts/activate-shipyard.sql`, hand-run |
+| `max_active_fleets` | 3 (`0003:31`) | **6** | `scripts/activate-team-command.sql`, hand-run |
+| `main_ship_price` | 1000 (`0091:23`) | **250** | same |
+
+The disposable apply-proof boots the chain only, so **it validates a different game than the one
+being played**. `scripts/verify-mining.mjs:13` still asserts 750 and is now simply wrong. Paired with
+branch protection requiring **only `build`** — frontend tests and *every* disposable Postgres proof
+are non-gating and do not run on PR events — the net is empty twice over.
+
+Agent claims that did **not** survive verification, recorded so they are not re-inherited: the build
+loop is *not* walled off (prod faucet is 0.15); `mining_extract_radius` is *not* 750; `0300`'s
+self-assert is mechanically vacuous but had **zero** live exposure (all 44 keys present and true);
+`0304`'s standalone-zone trap is code-real but unexposed (all 3 active zones carry a location); and a
+flag ledger reporting `combat_tick_seconds`/`retreat_delay_seconds`/`enemy_hp_base`/
+`pirate_intercept_base_risk` as 12/30/6/0.35 was wrong on all four — later migrations overwrite them
+to 3/8/14/1.0, and production agrees.
+
+### `0307` — a survivor's haul banks WHERE IT ARRIVES
+
+`reward_grant` fired only in `movement_settle_arrival`'s `'base'` arm (`0208:154`). The `'space'` arm
+(`0208:163-166`) never read `reward_payload_json`; its own comment said *"no rewards (that is the base
+branch's job) … this branch is unreachable in production until the gate is lit."* **The gate was lit
+and nobody came back.** And `0299:602-618` mints a `'space'` leg **whenever the player names a
+destination** — port or coordinate. Only the no-destination fallback minted `'base'`.
+
+So *using the "retreat anywhere" feature the owner asked for three times destroyed the entire haul*,
+while the only paying exit was the one the NO-HOME law deprecates.
+
+The `'space'` arm now deposits, composing the base arm's own machinery — same `reward_grant`, same
+`reward_grants`-unique idempotency, byte-identical payload guard. Target: an arrival exactly at an
+active home-port-eligible location → that port's store via `get_or_create_store` (the same
+secure-at-any-port rule mining already uses); otherwise the oldest active base, verbatim from
+`0221:1031-1036`. Never grants against NULL, so a half-deposit cannot burn the key. The `'location'`
+arm is a **named non-goal** — `movement_attach_cargo`'s only live caller is `process_combat_ticks`,
+whose legs are only ever `'space'` or `'base'`.
+
+**Client, same slice.** `RETREAT_LOOT_LOST` — *"the rewards this fight had earned are lost — they are
+secured only by a retreat back to base"* — **deleted**, not reworded: it documented a defect as a rule
+and named a base the design does not have. Retreat and Flee stopped leaking raw Postgres text
+(`request_retreat: presence not active (is retreating)`; the bare token `no_pending`). Two further
+NO-HOME violations were caught by hand afterwards: `RoundLog.tsx:60` (*"returning to base"*) and
+`firstOrders.ts:86`, which broke **both** design laws in eleven words — *"Win your first hunt"*
+teaches a goal the game does not have, *"come home in one piece"* names a base that does not exist.
+
+### `0308` — the combat roster is live membership, and a mining rig is not a gun
+
+Two live defects. **(A)** The only functional delete of `group_sortie_members` in 300 migrations is
+`0305:247`, reachable only when the brake halts a fleet with a *live moving leg* — which an ambushed
+fleet does not have (`0303:234` cancels it). A fight ending by retreat, defeat or forced extract left
+the roster attached forever, and the builder read it with **no liveness filter** (`0301:726-731`).
+Reachable sequence: fight → conclude → legally unassign a ship → ambushed again → the freeze inserts
+nothing (`ON CONFLICT`) → **the departed ship is seeded into `combat_units`, takes tick damage while
+berthed at another port, and on defeat is marked destroyed.** **(B)** The weapons join filtered on
+`t.range is not null` — not weapon-ness, not `power > 0` — and `mining_rig_extension` is
+`range 120 / power 8`, so the `0262` fallback never fired: a ship with `attack_snapshot` 60 fired
+**8** while the card said 60. Same class as the defect that destroyed Fleet 1; `0262` fixed *"empty
+array"*, never *"array of things that are not guns"*.
+
+Three authorities, six hunks, **nothing retyped** — every hunk sliced from deployed text, asserted to
+occur exactly once, body length asserted to move by exactly the hunk delta.
+
+**The release is deliberately NOT at combat conclusion.** `0305:53-55` claimed *"battle reports read
+them"* — **false**; `report_create` reads only `combat_units`/`combat_encounters`. But `0199:573-590`
+and `0199:682` genuinely do, so a conclusion-time release would re-home live members mid-flight and
+silently end team-sortie captain XP. It lives at the ambush re-freeze, the one point every
+re-poisoning path passes.
+
+### `0309` — the client surface holds only what the client calls
+
+Five functions granted to `authenticated` and called by **nothing** in `src/`. Three actively harmful:
+`command_main_ship_settle_arrival_legacy` was **dropped by `0232:250` and RESURRECTED by `0301:1356`**
+on the written premise it was still a live consumer — it had not existed for 69 migrations — and
+`0300:70` then lit its only gate; `command_main_ship_stop_transit` reads `spatial_state`, dropped by
+`0231:1560`, so **every call raises**, and `0232:65-70` deferred its drop for one stated reason (a
+client ternary `FleetCommandPanel.tsx` no longer has); `stop_ship_group_transit` is its sole caller.
+Plus `group_sortie_is_open`, which takes the acting player as an **argument**, never reads
+`auth.uid()`, and is SECURITY DEFINER — the grant was the only gate on another player's live-combat
+state. Plus `pirate_intercept_preview_route`, an **uncapped** PostGIS loop whose own write-path
+sibling clamps the identical argument to 3.
+
+Revoke-only; the DROP is owed and named, blocked only by proof-file contention.
+
+### What adversarial review caught — in our own work
+
+- **`0309` shipped an assert demanding a `service_role` grant that never existed.** On a disposable
+  Postgres it raised and **aborted the whole chain** — CI reproduced it exactly, then went green on
+  the fix. It was conceptually wrong too: a SECURITY DEFINER function runs as its *owner*.
+- **`0309`'s revokes named only `anon, authenticated`.** `has_function_privilege` counts a
+  PUBLIC-held privilege, so a PUBLIC grant would have made the revoke a no-op while the assert still
+  saw it — **aborting a deploy instead of fixing anything**, i.e. the `0254` incident reproduced
+  inside the file citing `0254`. Now `from public, anon, authenticated`.
+- **`0308`'s header asserted a leak that does not exist.** It claimed `send_ship_group_hunt` "still
+  accretes" and scheduled a follow-up slice; each arm **mints a fresh fleet** before freezing
+  (`0231:687/:878/:937`). That consumer had been ruled on without being read.
+- **The parity guarantee had no enforcement.** `--check` was wired into no workflow, no harness, no
+  script, so a hand-edited generated migration passed every gate and would surface at deploy time on
+  production. Now gated for `0305`/`0306`/`0308` in `danger-combat-proof.sh selftest`. On its first
+  run it failed on a CRLF false alarm (fixed by normalising the comparison — verified line-endings
+  only, `36026 == 36026`, not real drift), and review then **broke the gate empirically**: a deleted
+  generator made it skip green. Missing file is now a hard fail, confirmed by deleting the generator
+  and watching the selftest fail.
+- **`0307`'s proof marker was registered nowhere.** A *failing* block reds CI, but a **deleted** block
+  left CI green — the proof gating nothing. Fixed as a class: `0306`'s marker had the same gap.
+
+### Proof
+
+`FLEETGO_PASS_LOOT_SECURES` — three full player chains through real RPCs: a chosen-port retreat
+**mints** that port's store (asserted absent beforehand) and banks the exact earned amount; an
+open-space retreat banks into the oldest store (asserted **distinct**, so the fallback is provably the
+fallback); the plain retreat pays through the untouched base arm; a replayed settle claims nothing and
+credits nothing twice. `DZCOMBAT_PASS_ROSTERAUTH` asserts **both** directions — the departed ship
+absent *and* the live member still seeded. `DZCOMBAT_PASS_RIGFALLBACK` pins the actual power value
+derived from the unit's own snapshot. `DZCOMBAT_PASS_FITTEDEXACT` is the control arm.
+
+`TEAM-COMMAND` remains red at `team-command-proof.sql:3359` (`SHIELD1`) — byte-identical to the
+pre-existing red on `main` and on every branch for a week; **seven blocks after line 3361 (23% of the
+file) never execute**, including the cron per-row-isolation proof.
+
+### Still open
+
+1. **No HP-threshold auto-exit exists anywhere.** The owner's core combat law — *"never to win, but
+   exit appropriately"* — is 0% implemented. Needs an owner-chosen threshold.
+2. **Hauls destroyed before `0307` are RECOVERABLE** — those movements sit `arrived` with
+   `reward_payload_json` and `reward_grant_source` intact and **no `reward_grants` row**. Repair is a
+   data migration on real balances; not built, owner's call.
+3. Captains unobtainable (`captain_shard_drop_rate` = 0, the sole faucet). Ranking has **no season
+   cron**, so the boards never existed. Trade is server-lit but compile-dark at
+   `osnReleaseGates.ts:23`, and `market_buy` is the only producer of cargo lots — so haul contracts
+   can be accepted and never delivered. Exploration sites were never scaled by `0227` and have no read
+   RPC, so the `blueprint_fragment` gating the build economy is unfindable.
+4. ~35 stale roster rows in prod — **inert** after `0308`, draining on each fleet's next ambush.
+5. The config drift above should be absorbed into a migration, or the proofs keep testing another game.
+
+---
+
 ## 2026-07-31 — Nothing was left to ship; what was left was the record (`#338`, **MERGED**)
 
 > **DEPLOY STATE.** Docs + one project-map data refresh. **No migration, no flag, no client change,
