@@ -57,7 +57,11 @@ export function RoundLog({
             </span>
           )
         } else if (t.result === 'escaped' || t.result === 'completed') {
-          line = <span className="text-warning">Fleet escaped — returning to base.</span>
+          // 0307: NOT "returning to base". There is no base — the fleet flies to wherever the
+          // retreat was pointed (a port or an open-space coordinate, 0299:602-618), and its earned
+          // bundle now banks on arrival at either. This line survived the earlier NO-HOME sweeps
+          // because it lives in the round log rather than in a command surface.
+          line = <span className="text-warning">Fleet broke off — carrying its haul out.</span>
         } else if (t.result === 'defeat') {
           line = <span className="text-danger">Fleet destroyed.</span>
         } else {
