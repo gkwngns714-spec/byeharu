@@ -3217,6 +3217,7 @@ declare
   v_lead_d0 double precision; v_lead_d1 double precision;
   v_lx double precision; v_ly double precision;      -- where ONE close puts the lead
   v_sim double precision; v_exp_tick int; v_obs_tick int; i int; u_en uuid;
+begin
   -- ══ ARM A — three hulls, NO command ship anywhere ═══════════════════════════════════════════════
   insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
