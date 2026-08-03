@@ -4131,6 +4131,12 @@ begin
   gNT := (r->>'group_id')::uuid;
   r := pg_temp.call_as(uNT, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sNT, gNT));
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: assign team member: %', r; end if;
+  -- ★ ADDED 2026-08-03. 0300:71 lit fleet_control_enabled, and send_ship_group_hunt then rejects a
+  -- ★ group with no designated command ship BEFORE any destination/readiness read (0231:483-490 —
+  -- ★ the gate is GROUP-scoped, so one arming covers both sends below). The five other sortie
+  -- ★ fixtures in this file were armed on 2026-07-27; NOHOME was missed because SHIELD1 had already
+  -- ★ made it unreachable, so nothing ever surfaced it.
+  perform pg_temp.arm_group(uNT, gNT);
 
   -- ── (2) LIT: flip launch_from_dock_enabled (raw update — the gate convention); the docked TEAM hunt
   --         launches ONE fleet FROM the port ─────────────────────────────────────────────────────────
