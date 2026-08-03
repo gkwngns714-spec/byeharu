@@ -42,8 +42,9 @@
 --    read-only, at production's live knobs: at The Furnace (base_difficulty 60, hidden) the synthetic
 --    enemy range is 3.6 + 0.04*60 = 6.0, the formation ring is 6.0, so the wave spawns INSIDE its own
 --    range, immediately kites, and settles at 5.8 = enemy_range - player_speed. The player's gun
---    reaches 5. It never fires; the pirate fires every tick. Fixed by the INVARIANT below, not by a
---    number: the wave must spawn OUTSIDE its own reach so it closes instead of kiting.
+--    reaches 5. It never fires; the pirate fires every tick. Fixed STRUCTURALLY, not by a number:
+--    the wave now spawns at (player ring + its own range + 1), so it is outside its own reach of
+--    EVERY player ship by construction and closes instead of kiting. No knob is moved.
 --
 -- ── WHAT THIS MIGRATION DOES ─────────────────────────────────────────────────────────────────────
 -- FOUR NEW LEAVES, each the single authority for one concept, each composed rather than copied:
@@ -58,10 +59,17 @@
 -- SIXTEEN HUNKS in process_combat_ticks and ONE in combat_create_group_encounter, every old_t sliced
 -- verbatim from the migration that owns its deployed text (0299 and 0315), every new_t derived from
 -- that slice. Nothing retyped.
--- ONE KNOB, RAISED BY DERIVATION, NOT BY DECREE: spatial_formation_ring_radius is set to at least
--- one world unit beyond the widest synthetic enemy range any live location can produce, computed at
--- apply time from the live knobs and the live locations. On today's world that is 6.0 -> 7.0, which
--- clears all three Ember sites. It only ever RAISES the value.
+-- NO KNOB IS MOVED, AND THAT IS DELIBERATE. An earlier draft of this slice raised
+-- spatial_formation_ring_radius 6.0 -> 7.0 so that the ring would clear the widest synthetic enemy
+-- range. Adversarial review killed it, correctly, for a reason worth recording: spawning the wave on
+-- the ESCORT RING does not establish the invariant at all. The escorts sit on that same circle, so
+-- the nearest escort is a CHORD away — 2*R*sin(pi/16) = 0.39*R, i.e. 2.73 at live numbers against a
+-- reach of 6.0 — and the property held only for the lead, the one hull at the anchor. Raising a knob
+-- to paper over that would have needed R > 2.56 * enemy_range, a ring of 16 rather than 7.
+-- The wave instead spawns at (spatial_formation_ring_radius + its own range + 1). Every player ship
+-- sits at radius <= spatial_formation_ring_radius, so the minimum distance from ANY player ship to
+-- ANY enemy is exactly that range + 1 — outside the wave's reach BY CONSTRUCTION, at every
+-- difficulty, with no tuning that can drift and no balance change riding along in this slice.
 --
 -- ── BLAST RADIUS ON THE LIVE GAME ────────────────────────────────────────────────────────────────
 --   * CREATE OR REPLACE of two functions plus four new ones: an atomic catalog swap. THE TICK BODY IS
@@ -70,14 +78,19 @@
 --     ZERO encounters in status active or retreating, so nothing was mid-fight.
 --   * combat_create_group_encounter changes only where an escort STANDS, and only for a fleet whose
 --     ninth-or-later escort used to wrap onto an occupied slot. Slots 0..7 are value-identical.
---   * The knob write raises one game_config row. Every reader takes it on its next read.
---   * NO schema change, NO grant widening (the four leaves are revoked from every client role), NO
---     reward, drop, threshold or difficulty value moved.
+--   * NO game_config write at all. NO schema change, NO grant widening (the four leaves are revoked
+--     from every client role), NO reward, drop, threshold, range, speed or difficulty value moved.
+--     This slice writes not one row outside pg_proc.
+--   * WHERE A FIGHT NOW OPENS FROM: the wave stands further out, so a fleet takes one to two more
+--     silent closing ticks before the first shot. Measured against the DEPLOYED mover at live knobs
+--     and the production minimum player combat speed of 0.2: the player fires on tick 1 at
+--     base_difficulty 40-60 and on tick 2 at 10-25, versus tick 1 everywhere before — except at The
+--     Furnace, where before this migration the player NEVER fires at all.
 --
 -- ── ROLLBACK ─────────────────────────────────────────────────────────────────────────────────────
--- Re-apply the deployed bodies with the hunks reverted (0299's and 0315's text), drop the four
--- leaves, and set spatial_formation_ring_radius back to its recorded prior value (captured into the
--- notice below at apply time). This migration writes no combat row and no player state.
+-- Re-apply the deployed bodies with the hunks reverted (0299's and 0315's text) and drop the four
+-- leaves. There is nothing else to unwind: this migration writes no config, no combat row and no
+-- player state.
 --
 -- ── SELF-ASSERT MAP (one DO block per check — the statement number IS the diagnosis) ─────────────
 -- WHAT THESE PROVE, HONESTLY: that the emitted TEXT is what this migration intended — never that it
@@ -87,11 +100,13 @@
 --   (b) ONE targeting authority: the tick's own candidates CTE is gone and both acquisitions compose
 --       the leaf
 --   (c) ONE liveness predicate, and the volley re-acquires
---   (d) the wave spawns through the formation leaf, on both arms, and no insert carries the anchor
+--   (d) the wave spawns through the formation leaf, on both arms, at (player ring + its own range
+--       + 1), and no insert carries the anchor — this is where invariant (A) is actually pinned
 --   (e) a retreating encounter cannot reach the spawn; the loop order is pinned; the kite is capped
 --       by the shortest gun
 --   (f) all four terminal arms are confined and all four consume the retreat target
---   (g) THE RANGE INVARIANT holds over every live location
+--   (g) invariant (B), the half geometry cannot establish: a closing wave comes to rest inside the
+--       WEAKEST player gun, at every location with a positive difficulty, hidden ones included
 --   (h) every carried-through 0299/0310/0314/0317/0331/0332 invariant survives the re-emission
 --   (i) metadata parity: the two rewritten functions changed body and NOTHING else
 -- ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -449,9 +464,21 @@ begin
               -- value-for-value, so no player formation moves; the wave takes phase 0.5 — half a slot — so
               -- an enemy never lands exactly on an escort, and the radius steps out every 8 slots so a wave
               -- larger than the ring still has distinct points.
+              -- AND THE RADIUS IS THE PLAYER RING PLUS THE WAVE'S OWN REACH, WHICH IS THE WHOLE POINT.
+              -- Spawning the wave ON the escort ring would NOT establish the invariant: the escorts sit on
+              -- that same circle, so the nearest escort is a CHORD away — 2*R*sin(pi/16), i.e. 0.39*R — and
+              -- at live numbers that is 2.73 against a reach of 6.0, deep inside the wave's own range. The
+              -- invariant would then hold only for the lead, the one hull standing at the anchor.
+              -- Every player ship sits at radius <= v_ring_radius from the anchor, so putting the wave at
+              -- v_ring_radius + its own range + 1 makes the minimum distance from ANY player ship to ANY
+              -- enemy exactly that range + 1: strictly outside the wave's reach, BY CONSTRUCTION, at every
+              -- difficulty. That is why this slice raises no knob and asserts no knob comparison — the
+              -- geometry is not a tuning that can drift, it is an identity. What a CI assertion still has to
+              -- check is the OTHER half, which geometry cannot fix: that when the closing wave stops closing
+              -- it is inside the PLAYER's range (see the range-invariant assert).
               for v_spawn_i in 1 .. v_enemy_count loop
                 select fp.x, fp.y into v_slot_x, v_slot_y
-                  from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius, v_spawn_slot, 0.5) fp;
+                  from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius + v_enemy_range + 1, v_spawn_slot, 0.5) fp;
                 insert into combat_units (
                   encounter_id, player_id, unit_type_id, side, ship_hp, initial_count, alive_count,
                   hp_max, hp_current, pos_x, pos_y, move_speed, weapons_json)
@@ -492,10 +519,22 @@ begin
           -- value-for-value, so no player formation moves; the wave takes phase 0.5 — half a slot — so
           -- an enemy never lands exactly on an escort, and the radius steps out every 8 slots so a wave
           -- larger than the ring still has distinct points.
+          -- AND THE RADIUS IS THE PLAYER RING PLUS THE WAVE'S OWN REACH, WHICH IS THE WHOLE POINT.
+          -- Spawning the wave ON the escort ring would NOT establish the invariant: the escorts sit on
+          -- that same circle, so the nearest escort is a CHORD away — 2*R*sin(pi/16), i.e. 0.39*R — and
+          -- at live numbers that is 2.73 against a reach of 6.0, deep inside the wave's own range. The
+          -- invariant would then hold only for the lead, the one hull standing at the anchor.
+          -- Every player ship sits at radius <= v_ring_radius from the anchor, so putting the wave at
+          -- v_ring_radius + its own range + 1 makes the minimum distance from ANY player ship to ANY
+          -- enemy exactly that range + 1: strictly outside the wave's reach, BY CONSTRUCTION, at every
+          -- difficulty. That is why this slice raises no knob and asserts no knob comparison — the
+          -- geometry is not a tuning that can drift, it is an identity. What a CI assertion still has to
+          -- check is the OTHER half, which geometry cannot fix: that when the closing wave stops closing
+          -- it is inside the PLAYER's range (see the range-invariant assert).
           v_spawn_slot := 0;
           for v_spawn_i in 1 .. v_enemy_count loop
             select fp.x, fp.y into v_slot_x, v_slot_y
-              from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius, v_spawn_slot, 0.5) fp;
+              from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius + v_enemy_range + 1, v_spawn_slot, 0.5) fp;
             insert into combat_units (
               encounter_id, player_id, unit_type_id, side, ship_hp, initial_count, alive_count,
               hp_max, hp_current, pos_x, pos_y, move_speed, weapons_json)
@@ -723,59 +762,7 @@ begin
   end if;
 end $rewrite$;
 
--- ── 4. THE RANGE INVARIANT, ESTABLISHED BY DERIVATION ────────────────────────────────────────────
--- THE LAW: a wave must spawn OUTSIDE its own weapon range. Inside it, the wave kites on tick one and
--- settles at (enemy_range - player_speed), which for a high-difficulty site is beyond the player's
--- own gun: the pirate fires every tick and the player never fires at all. Outside it, the wave
--- CLOSES, overshoots the kite band, and both sides engage. That is the entire difference between a
--- fight and a firing squad, and it is decided by one comparison:
---
---     spatial_formation_ring_radius  >  enemy_synthetic_range_base
---                                       + enemy_synthetic_range_per_difficulty * base_difficulty
---
--- for EVERY location that can host a fight — including hidden ones, because a hidden site is a site
--- that has not been released YET.
---
--- THE NUMBER IS DERIVED, NEVER DECREED: the required radius is computed here from the live knobs and
--- the live locations, with one world unit of headroom, and the knob is only ever RAISED. On a world
--- whose widest synthetic range is 6.0 (The Furnace, base_difficulty 60) that yields 7.0. A future
--- site that outgrows the ring fails assert (g) rather than silently becoming unwinnable.
-do $ring$
-declare
-  v_prev  double precision;
-  v_need  double precision;
-  v_next  double precision;
-  v_worst text;
-begin
-  v_prev := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
-  select max(coalesce(public.cfg_num('enemy_synthetic_range_base'), 120)
-             + l.base_difficulty * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5))
-    into v_need
-    from public.locations l
-   where l.base_difficulty > 0;
-  if v_need is null then
-    raise notice '0336: no location carries a positive base_difficulty — the formation ring is left at %', v_prev;
-    return;
-  end if;
-  select l.name into v_worst
-    from public.locations l
-   where l.base_difficulty > 0
-   order by l.base_difficulty desc, l.name asc
-   limit 1;
-  v_next := greatest(v_prev, v_need + 1);
-  if v_next <> v_prev then
-    update public.game_config
-       set value = to_jsonb(v_next), updated_at = now()
-     where key = 'spatial_formation_ring_radius';
-    if not found then
-      raise exception '0336 RING FAIL: game_config has no spatial_formation_ring_radius row to raise';
-    end if;
-  end if;
-  raise notice '0336: formation ring % -> % (widest synthetic enemy range % at %, plus one unit of headroom)',
-    v_prev, v_next, v_need, v_worst;
-end $ring$;
-
--- ── 5. SELF-ASSERTS — one DO block per check; every prosrc probe strips comments first ───────────
+-- ── 4. SELF-ASSERTS — one DO block per check; every prosrc probe strips comments first ───────────
 
 -- (a) the four leaves exist, with the right volatility/security, and NO client can execute them
 do $a$
@@ -883,8 +870,8 @@ begin
   select regexp_replace(p.prosrc, '--[^' || chr(10) || ']*', '', 'g') into v_code
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname = 'process_combat_ticks';
-  v_n := (length(v_code) - length(replace(v_code, 'public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius, v_spawn_slot, 0.5)', '')))
-         / length('public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius, v_spawn_slot, 0.5)');
+  v_n := (length(v_code) - length(replace(v_code, 'public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius + v_enemy_range + 1, v_spawn_slot, 0.5)', '')))
+         / length('public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring_radius + v_enemy_range + 1, v_spawn_slot, 0.5)');
   if v_n <> 2 then
     raise exception '0336 ASSERT (d) FAIL: % spawn arm(s) place their wave through the formation leaf (want exactly 2: the resolved arm and the synthetic arm)', v_n;
   end if;
@@ -1010,29 +997,64 @@ begin
   end if;
 end $f$;
 
--- (g) THE RANGE INVARIANT holds over every live location
+-- (g) THE HALF OF THE RANGE INVARIANT THAT GEOMETRY CANNOT ESTABLISH, over every live location
+--
+-- A fight needs two things, and only one of them is a shape.
+--   (A) THE WAVE MUST START OUTSIDE ITS OWN REACH, or it kites from tick zero and settles at
+--       (its range - the player's closing speed), which for a high-difficulty site is beyond the
+--       player's own gun: the pirate fires every tick and the player never fires at all. That is a
+--       firing squad, not a fight, and production's highest-difficulty site was exactly it.
+--       ⟶ (A) IS NOW STRUCTURAL. The wave spawns at v_ring_radius + its own range + 1, and every
+--       player ship sits at radius <= v_ring_radius, so the minimum distance from ANY player ship
+--       to ANY enemy is that range + 1. It cannot be violated by a knob, so there is nothing here
+--       to assert about it; assert (d) pins the EXPRESSION instead, which is the real guarantee.
+--   (B) WHEN THE CLOSING WAVE STOPS CLOSING, IT MUST BE INSIDE THE PLAYER'S RANGE. This one is NOT
+--       a shape and no spawn point can fix it. The mover stops closing at its own range, so the
+--       wave comes to rest somewhere in (its_range - its_speed, its_range]. If the whole of that
+--       interval is beyond the player's gun, the player still never fires — the standoff returns
+--       with a longer approach. It is avoided when either
+--            enemy_range(D) <= player_min_range        (the wave must come inside to shoot at all)
+--         or enemy_speed(D)  >  enemy_range(D) - player_min_range   (its last step overshoots past
+--                                                                    the player's range edge)
+--       PLAYER_MIN_RANGE IS THE WORST GUN IN THE GAME, derived: the synthesized fallback and every
+--       catalog firing weapon. The weakest-armed hull is the one that decides whether a site is
+--       playable, so the invariant is stated over it rather than over a hull anyone happens to fly.
+--
+-- Checked over EVERY location with a positive base_difficulty, hidden ones included — a hidden site
+-- is a site that has not been released YET, and releasing one must never be how this is discovered.
 do $g$
-declare r record; v_ring double precision; v_n integer := 0;
+declare r record; v_rp double precision; v_n integer := 0;
 begin
-  v_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
+  select least(coalesce(public.cfg_num('combat_player_fallback_weapon_range'), 'Infinity'::double precision),
+               coalesce((select min(t.range) from public.module_types t
+                          where public.module_is_firing_weapon(t)), 'Infinity'::double precision))
+    into v_rp;
+  -- NON-VACUITY: with no derivable player weapon range every comparison below would be against
+  -- Infinity and would pass unconditionally. Absence is failure, not a pass.
+  if v_rp is null or v_rp = 'Infinity'::double precision then
+    raise exception '0336 ASSERT (g) FAIL: no player weapon range could be derived — combat_player_fallback_weapon_range is absent AND the catalog carries no firing weapon, so the invariant would be checked against nothing';
+  end if;
   for r in
     select l.name, l.status, l.base_difficulty,
            coalesce(public.cfg_num('enemy_synthetic_range_base'), 120)
-           + l.base_difficulty * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5) as enemy_range
+           + l.base_difficulty * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5) as enemy_range,
+           coalesce(public.cfg_num('enemy_synthetic_speed_base'), 3)
+           + l.base_difficulty * coalesce(public.cfg_num('enemy_synthetic_speed_per_difficulty'), 0.2) as enemy_speed
       from public.locations l
      where l.base_difficulty > 0
   loop
     v_n := v_n + 1;
-    if not (v_ring > r.enemy_range) then
-      raise exception '0336 ASSERT (g) FAIL: % (%, base_difficulty %) spawns its wave INSIDE its own range — formation ring % is not greater than enemy range %. The wave kites on tick one and settles beyond the player''s gun: an unwinnable standoff. Raise spatial_formation_ring_radius, or lower enemy_synthetic_range_per_difficulty.',
-        r.name, r.status, r.base_difficulty, v_ring, r.enemy_range;
+    if not (r.enemy_range <= v_rp or r.enemy_speed > r.enemy_range - v_rp) then
+      raise exception '0336 ASSERT (g) FAIL: % (%, base_difficulty %) is an UNWINNABLE STANDOFF. Its wave reaches % and closes % per tick, so it comes to rest between % and % — entirely beyond the weakest player gun, which reaches %. The wave fires every tick and the player never fires at all. Fix the NUMBERS, not the spawn point: lower enemy_synthetic_range_per_difficulty, raise enemy_synthetic_speed_per_difficulty, or give the player a longer basic weapon.',
+        r.name, r.status, r.base_difficulty, r.enemy_range, r.enemy_speed,
+        r.enemy_range - r.enemy_speed, r.enemy_range, v_rp;
     end if;
   end loop;
   -- NON-VACUITY: an empty location set would satisfy the loop above while proving nothing.
   if v_n = 0 then
     raise exception '0336 ASSERT (g) FAIL: no location carries a positive base_difficulty — the invariant was checked against an EMPTY set and proves nothing';
   end if;
-  raise notice '0336 ASSERT (g) ok: the formation ring % clears the synthetic enemy range at all % hunt-capable location(s)', v_ring, v_n;
+  raise notice '0336 ASSERT (g) ok: at all % hunt-capable location(s), a closing wave comes to rest inside the weakest player gun (reach %)', v_n, v_rp;
 end $g$;
 
 -- (h) every carried-through invariant survives the re-emission
