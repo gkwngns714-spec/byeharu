@@ -4476,6 +4476,13 @@ begin
     where id in (v_mvhc, v_mvpc);
   if (public.movement_settle_arrival(v_mvhc)->>'settled')::boolean is not true then raise exception 'CRONGUARD FAIL settle healthy encounter'; end if;
   if (public.movement_settle_arrival(v_mvpc)->>'settled')::boolean is not true then raise exception 'CRONGUARD FAIL settle poison encounter'; end if;
+  -- ★ ADDED 2026-08-03. 0300 lit combat_telegraph_enabled (0230), so arrival QUEUES an 8s telegraph
+  -- ★ instead of opening the encounter inline — a settle no longer leaves an active encounter behind.
+  -- ★ COMBATPARITY/TEAMHUNT/TEAMSETTLE/SHIELD1/SHIELD2 all drive the telegraph cron for exactly this
+  -- ★ reason; CRONGUARD was missed because SHIELD1's defeat assert made it unreachable, so its
+  -- ★ "expected two active encounters" guard was never given the chance to fail.
+  perform pg_temp.open_telegraphed(v_fhc);
+  perform pg_temp.open_telegraphed(v_fpc);
   select id into v_ench from public.combat_encounters where fleet_id=v_fhc and status='active';
   select id into v_encp from public.combat_encounters where fleet_id=v_fpc and status='active';
   if v_ench is null or v_encp is null then raise exception 'CRONGUARD FAIL: expected two active encounters'; end if;
