@@ -293,7 +293,8 @@ if [ "$MODE" = "selftest" ]; then
   # exist, must assert the two denominators actually DIVERGE (or it proves nothing), and must
   # demand the first-tick exit an entry-hull denominator cannot produce.
   grep -q "did not auto-exit on entry"                            "$SQL" || fail "harness lacks the damaged-re-entry first-tick assert (the compounding-denominator regression)"
-  grep -q "the two denominators do not differ"                    "$SQL" || fail "harness lacks the re-entry divergence vacuity guard (entry integrity strictly under capacity)"
+  grep -q "it is not damaged, so a first-tick exit could not distinguish" "$SQL" || fail "harness lacks the re-entry divergence vacuity guard (0317 repoint: the LIVE hull, not the entry integrity, is the quantity that still varies)"
+  grep -q "the bar and the safety line are measuring different things again" "$SQL" || fail "harness lacks the 0317 identity pin (player_integrity_max IS the auto-exit denominator; a re-seed from live hp must fail here, not silently reopen the compounding denominator)"
   grep -q "differs from its entry integrity"                      "$SQL" || fail "harness lacks the fresh-fleet capacity==entry identity assert"
   # 0314 — the RuneScape-feel properties, in assert-form (each is RED on the pre-0314 tick body):
   # the harness OWNS the frozen-now() cooldown world (zeroed knobs) and RSFEEL owns its 3600s one.

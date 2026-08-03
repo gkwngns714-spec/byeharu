@@ -2021,7 +2021,7 @@ declare
   v_srg_before double precision;
   v_thresh double precision; v_hp double precision;
   v_hp_a double precision; v_imax_a double precision;
-  v_cap double precision; v_cap3 double precision; v_imax3 double precision;
+  v_cap double precision; v_cap3 double precision; v_imax3 double precision; v_cur3 double precision;
   v_enc2 uuid; v_enc3 uuid; v_txt text;
   n_above int := 0;
   v_flipped boolean := false;
@@ -2307,18 +2307,36 @@ begin
   select id into v_enc3 from public.combat_encounters where player_id = uA and status = 'active';
   if v_enc3 is null then raise exception 'AUTOEXIT FAIL: the re-entry ambush opened no encounter'; end if;
 
-  -- THE DIVERGENCE, ASSERTED: entry integrity (seeded from the damaged hull) strictly under
-  -- capacity. Equal values would mean this scenario cannot tell the two denominators apart.
-  select player_integrity_max into v_imax3 from public.combat_encounters where id = v_enc3;
+  -- ★ REPOINTED BY 0317, AND THE PROPERTY IS STRICTLY STRONGER. This asserted that the encounter's
+  -- ★ player_integrity_max was strictly UNDER capacity — because it was seeded from the ship's
+  -- ★ CURRENT hp, which is exactly the defect 0317 removed: the bar opened full on a battered fleet
+  -- ★ while this safety line divided by real capacity, so the two could never agree. hp_max is
+  -- ★ capacity now, so those two numbers are EQUAL BY CONSTRUCTION and the old premise can never
+  -- ★ hold again. The regression it guarded (an auto-exit measuring the damaged entry hull instead
+  -- ★ of capacity) is therefore closed structurally rather than by assertion — and the identity that
+  -- ★ closes it is asserted HERE, so a future change that re-seeds hp_max from live hp fails on this
+  -- ★ line instead of quietly reopening the compounding denominator.
+  -- ★ The DIVERGENCE this scenario still needs has moved to the quantity that still varies: the
+  -- ★ fleet's LIVE hull (player_integrity_current) strictly under its capacity. Equal values would
+  -- ★ mean the fleet re-entered undamaged and could not possibly be under its line, which is what
+  -- ★ would make the first-tick exit prove nothing.
+  select player_integrity_max, player_integrity_current into v_imax3, v_cur3
+    from public.combat_encounters where id = v_enc3;
   select sum(msi.max_hp)::double precision into v_cap3
     from public.combat_units u
     join public.main_ship_instances msi on msi.main_ship_id = u.main_ship_id
    where u.encounter_id = v_enc3 and u.side = 'player' and u.main_ship_id is not null;
-  if v_cap3 is null or v_imax3 is null or v_imax3 >= v_cap3 then
-    raise exception 'AUTOEXIT FAIL: entry integrity % is not strictly below capacity % — the two denominators do not differ and the re-entry proves nothing', v_imax3, v_cap3;
+  if v_cap3 is null or v_imax3 is null or v_cur3 is null then
+    raise exception 'AUTOEXIT FAIL: the re-entry encounter carries no integrity numbers (max %, current %, capacity %) — every comparison below would be vacuous', v_imax3, v_cur3, v_cap3;
   end if;
-  if v_imax3 >= v_cap3 * 0.60 then
-    raise exception 'AUTOEXIT FAIL: the fleet re-entered at %/% — not below its 60%% line; the first-tick exit would be ambiguous', v_imax3, v_cap3;
+  if v_imax3 is distinct from v_cap3 then
+    raise exception 'AUTOEXIT FAIL: the encounter''s player_integrity_max (%) is not the auto-exit''s own denominator, sum(main_ship_instances.max_hp) (%) — the bar and the safety line are measuring different things again (the pre-0317 compounding denominator)', v_imax3, v_cap3;
+  end if;
+  if v_cur3 >= v_cap3 then
+    raise exception 'AUTOEXIT FAIL: the fleet re-entered at full hull (% of %) — it is not damaged, so a first-tick exit could not distinguish a capacity denominator from anything else and the re-entry proves nothing', v_cur3, v_cap3;
+  end if;
+  if v_cur3 >= v_cap3 * 0.60 then
+    raise exception 'AUTOEXIT FAIL: the fleet re-entered at %/% — not below its 60%% line; the first-tick exit would be ambiguous', v_cur3, v_cap3;
   end if;
 
   -- ONE tick. Below the capacity line from the first evaluation → the canonical retreat, now.
@@ -2395,7 +2413,7 @@ begin
   perform public.set_game_config('enemy_attack_base', to_jsonb(v_eab_before));
   perform public.set_game_config('shield_regen_combat_pct', to_jsonb(v_srg_before));
 
-  raise notice 'DZCOMBAT_PASS_AUTOEXIT ok: default ON at 30 for fresh groups; the player set 50%% / toggled OFF through the one writer (bad pct, NaN, null toggle, cross-player all refused; the table CHECK refuses NaN/150 beneath it); group A fought % tick(s) above its CAPACITY-based threshold untouched, then auto-requested the canonical retreat the tick its hull hit %/% of capacity (presence retreating, retreat_started_at stamped, exactly 1 retreat_started event), a second tick did not re-request, and the retreat COMPLETED like a human press (escaped, fleet returning, origin-base arm); the DAMAGED RE-ENTRY (entry integrity % strictly under capacity %, threshold 60) auto-exited on its FIRST tick — the compounding-denominator regression, closed; group B — toggle OFF — fought on to %/% with zero retreat events: the pre-0310 world, reproduced as the control',
+  raise notice 'DZCOMBAT_PASS_AUTOEXIT ok: default ON at 30 for fresh groups; the player set 50%% / toggled OFF through the one writer (bad pct, NaN, null toggle, cross-player all refused; the table CHECK refuses NaN/150 beneath it); group A fought % tick(s) above its CAPACITY-based threshold untouched, then auto-requested the canonical retreat the tick its hull hit %/% of capacity (presence retreating, retreat_started_at stamped, exactly 1 retreat_started event), a second tick did not re-request, and the retreat COMPLETED like a human press (escaped, fleet returning, origin-base arm); the DAMAGED RE-ENTRY (0317: the encounter bar''s own max % IS the auto-exit denominator, capacity %, and the fleet re-entered with a LIVE hull strictly under its 60%% line) auto-exited on its FIRST tick — the compounding-denominator regression, now closed by construction and pinned by that identity; group B — toggle OFF — fought on to %/% with zero retreat events: the pre-0310 world, reproduced as the control',
     n_above, round(v_hp_a::numeric), round(v_imax_a::numeric), round(v_imax3::numeric), round(v_cap3::numeric), round(v_hp::numeric), round(v_imax::numeric);
 end $$;
 
