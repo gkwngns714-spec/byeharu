@@ -7,6 +7,7 @@ import type { GetMyShipFittingsResult } from '../modules/modulesTypes'
 import { getMyCaptainInstances } from '../captains/captainsApi'
 import type { GetMyCaptainInstancesResult } from '../captains/captainsTypes'
 import { fetchMyShipGroups, fetchMyShipGroupMap, type ShipGroupMapEntry } from '../command/teamApi'
+import { fleetLabel } from '../command/fleetLabel'
 import {
   buildTeamRoster,
   commandFleetState,
@@ -310,7 +311,13 @@ export function ShipScreen() {
                 {teams.map(({ group, ships: members }) => (
                   <div key={group.group_id} data-testid={`fitting-fleet-${group.group_id}`}>
                     <SectionLabel>
-                      {group.name} · Fleet {group.group_index} · {members.length} ship{members.length === 1 ? '' : 's'}
+                      {/* THE ONE NAMING RULE (command/fleetLabel), COMPOSED — never a hand-built
+                          prefix. The owner's fleets are NAMED "Fleet 1"/"Fleet 2", and this line
+                          printed `{name} · Fleet {group_index}`, i.e. "FLEET 1 · FLEET 1 · 4 SHIPS"
+                          — read off the live game, 2026-08-04. The slot index carried nothing the
+                          name did not already carry, so it is DELETED rather than de-duplicated by
+                          a second rule. */}
+                      {fleetLabel(group.name)} · {members.length} ship{members.length === 1 ? '' : 's'}
                     </SectionLabel>
                     {members.length > 0 ? (
                       <div className="mt-1.5 space-y-1.5">{members.map(shipRow)}</div>

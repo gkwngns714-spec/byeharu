@@ -4,7 +4,7 @@ import type { FleetMovement } from '../fleets/fleetTypes'
 import { LocationMarker } from './LocationMarker'
 import { FleetMovementLine } from './FleetMovementLine'
 import { isMovementInFlight, interpolateMovementPoint } from './movementInterpolation'
-import { teamMarkersLayer } from './teamMarkers'
+import { fleetLayer } from './teamMarkers'
 import { territoryLayer } from './territoryLayer'
 import { miningFieldRangeLayer } from './miningFieldLayer'
 import { MiningFieldMarker } from './MiningFieldMarker'
@@ -13,9 +13,9 @@ import { dangerZoneLayer } from './dangerZoneLayer'
 import { combatFocusWorldPoints, focusableEncounterId, spatialCombatLayer } from './spatialCombatLayer'
 import type { CombatEncounter, CombatEvent, CombatUnit } from '../combat/combatTypes'
 import type { DangerZoneLite } from './pirateApi'
-import type { GroupRow } from '../command/teamRoster'
-import type { DockedTeamRollup } from '../command/teamRollup'
+import type { GroupRow, ShipGroupMapEntry } from '../command/teamRoster'
 import type { UnifiedGroupFleetLite } from '../command/teamApi'
+import type { FleetPosition } from './mainshipApi'
 import { DevFixedSpacePreview } from './DevFixedSpacePreview'
 import { SpaceMoveTargetMarker } from './SpaceMoveTarget'
 import { classifyPointerGesture } from './spaceMoveCommand'
@@ -56,7 +56,8 @@ export function GalaxyMap({
   locations,
   movements,
   teamGroups,
-  dockedTeamRollups,
+  teamGroupMap,
+  fleetPositions,
   unifiedGroupFleets,
   combatSortieFleets,
   fleetGoView,
@@ -79,16 +80,17 @@ export function GalaxyMap({
 }: {
   locations: MapLocation[]
   movements: FleetMovement[]
-  // TEAMMAP-2: the owner's teams + the pure docked-team rollup (both empty while TEAM_COMMAND is
-  // dark — the additive team layer then renders nothing and the map is byte-identical to today).
+  // WHERE-IS-MY-FLEET: the three inputs the ONE fleet-presence authority reads — the owner's groups,
+  // the live membership map, and the SERVER's own per-ship place projection (get_my_fleet_positions,
+  // already polled by this hook for the Port hub). Zero groups → no fleet layer at all.
   teamGroups: GroupRow[]
-  dockedTeamRollups: DockedTeamRollup[]
-  // FLEET-GO 4a-1: the group's own unified fleets (charter §2). Feeds the in-space fleet badge in the
-  // team layer. [] while the unified flag is dark (useGalaxyMapData gates the read) → byte-identical.
+  teamGroupMap: Record<string, ShipGroupMapEntry>
+  fleetPositions: FleetPosition[]
+  // IDENTITY ONLY — the group's own `fleets.id`, so a fleet can find its OWN fight (the encounter join
+  // is on fleets.id). Never a position source: the positions projection above is already fleet-first
+  // for open space (0210). The two arrays are the partition useGalaxyMapData makes of ONE read; the
+  // layer re-unions them, because for identity the partition is irrelevant.
   unifiedGroupFleets: UnifiedGroupFleetLite[]
-  // MAP-INTEGRATION M1: the COMBAT-PRESENT group fleets (the dock fold's exact complement, partitioned
-  // once in useGalaxyMapData). Feeds the team layer's "in combat at X" badge so a fleet mid-hunt-combat
-  // never vanishes from the map. [] while the unified fetch is dark → byte-identical.
   combatSortieFleets: UnifiedGroupFleetLite[]
   // CLEAN-MAP HUB: the map is unobstructed by default. The ONE gesture that summons commands is a
   // DOUBLE-TAP on empty space (mouse double-click OR touch double-tap — both flow through pointer
@@ -391,6 +393,24 @@ export function GalaxyMap({
     setView(pts.length ? focusCamera(focusInputs) : { k: 1, tx: 0, ty: 0 })
   }
 
+  // ── THE FLEET LAYER, resolved ONCE per render ─────────────────────────────────────────────────────
+  // Two presentations, one authority: the world badges go inside the camera group; the fleets the world
+  // cannot place go in the overlay rail. Splitting them here — rather than letting each renderer decide
+  // who it draws — is what keeps "does this fleet appear?" a question with exactly one answer.
+  const fleetLayerView = fleetLayer({
+    groups: teamGroups,
+    membership: teamGroupMap,
+    positions: fleetPositions,
+    // The union of the two partitions useGalaxyMapData makes of ONE fleets read — identity only.
+    fleets: [...unifiedGroupFleets, ...combatSortieFleets],
+    locations,
+    norm,
+    k: view.k,
+    nowMs,
+    encounters: combatEncounters,
+    units: combatUnits,
+  })
+
   return (
     <div className="relative h-full w-full overflow-hidden rounded-card border border-edge bg-app shadow-card">
       <svg
@@ -567,29 +587,15 @@ export function GalaxyMap({
             )
           })}
 
-          {/* TEAMMAP-2 — the team marker layer, composed by the pure, hook-free `teamMarkersLayer`
-              helper (the shipLayer element-tree convention; the unit tests call the SAME function).
-              ADDITIVE beside the existing layers: in-flight team badges ride the shared movement
-              interpolation at the lead fleet's position (individual dashed lines + dots above stay
-              untouched), and complete docked teams badge their port's marker position. Empty teams
-              (TEAM_COMMAND dark, or no team in flight/docked) render nothing. */}
-          {teamMarkersLayer({
-            movements,
-            groups: teamGroups,
-            rollups: dockedTeamRollups,
-            locations,
-            norm,
-            k: view.k,
-            // FLEET-GO 4a-1: parked unified fleets → the in-space fleet badge ([] while dark).
-            unifiedFleets: unifiedGroupFleets,
-            // MAP-INTEGRATION M1: combat-present sorties → the in-combat fleet badge ([] while dark).
-            combatFleets: combatSortieFleets,
-            // …and the live fights themselves: the VERY SAME encounters and units the spatial layer
-            // below is drawn from, so a fleet's badge and that fleet's own ships are placed from ONE
-            // source and can never render as two things standing in two different places.
-            encounters: combatEncounters,
-            units: combatUnits,
-          })}
+          {/* ██ THE FLEET LAYER — one fleet, one marker, in EVERY state. ██ Composed by the pure,
+              hook-free `fleetLayer` helper (the shipLayer element-tree convention; the unit tests call
+              the SAME function). It replaced four badge resolvers that each decided for themselves
+              whether a fleet EXISTS, which is how a fleet docked at a port with only some of its ships
+              placed ended up drawn nowhere at all. Existence is now unconditional — one presence per
+              group — and the state picks the glyph. Encounters + units are the VERY SAME arrays the
+              spatial layer below is drawn from, so a fleet's badge and that fleet's own ships come
+              from ONE source and can never render as two things standing in two places. */}
+          {fleetLayerView.elements}
 
           {/* COMBAT-S4 — the SPATIAL-COMBAT layer, composed by the pure, hook-free `spatialCombatLayer`
               helper (the territoryLayer/teamMarkersLayer element-tree convention; the unit test calls
@@ -657,6 +663,27 @@ export function GalaxyMap({
       {/* top-right: the zoom cluster. S5 MAP-UX: the fleet coordinate-go confirm panel that used to
           stack here moved into the ONE bottom-center FleetCommandPanel (MapScreen). */}
       <OverlayRail slot="top-right">
+        {/* ── FLEETS THE WORLD CANNOT PLACE ────────────────────────────────────────────────────────
+            A fleet whose every ship reports `place='hidden'` has no coordinate anywhere in the game,
+            so a world badge would be a fabricated position. It still belongs ON the map — the owner
+            asked to be told where their fleets are, and "we don't know" is an answer; silence is not.
+            It rides the rail this corner already owns (the design-system rule for co-corner overlays)
+            and carries the SAME `fleet-marker-<groupId>` testid every placed badge does, so "exactly
+            one marker per fleet, in every state" stays a single query. Nothing to say → nothing
+            rendered; a clean map is unchanged. */}
+        {fleetLayerView.unplaced.length > 0 && (
+          <OverlayPanel className="flex flex-col gap-0.5" data-testid="fleet-unplaced-rail">
+            {fleetLayerView.unplaced.map((p) => (
+              <span
+                key={p.groupId}
+                data-testid={`fleet-marker-${p.groupId}`}
+                className="whitespace-nowrap text-[10px] text-ink-muted"
+              >
+                {p.label}
+              </span>
+            ))}
+          </OverlayPanel>
+        )}
         <OverlayPanel className="flex flex-col gap-1">
           {/* FOCUS THE FIGHT — a CAMERA control, so it lives with the other camera controls rather
               than forking a second place that moves the view. Mounted only while a battle actually

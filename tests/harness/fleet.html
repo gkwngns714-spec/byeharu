@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fleet markers harness (test only)</title>
+    <style>
+      /* Stands in for the Tailwind utilities the app supplies (`h-full w-full`); the harness loads no
+         app CSS, so the geometry here is explicit and deterministic. Deliberately NON-SQUARE and
+         OFFSET, like the camera harness — the map's letterbox and origin are part of what places a
+         badge, so a square box at 0,0 would hide the two mutants that matter most.
+         The SVG badges are positioned by SVG attributes, not CSS, so they render truthfully here;
+         the HTML overlay rail is Tailwind-positioned and simply flows, which is why the specs assert
+         its CONTENT rather than its corner. */
+      body { margin: 0; background: #0b0f17; color: #e6edf7; font: 14px/1.4 system-ui, sans-serif; }
+      #map-host { position: absolute; left: 24px; top: 24px; width: 900px; height: 560px; }
+      #map-host > div { width: 100%; height: 100%; }
+      #map-host > div > svg { display: block; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./fleetHarness.tsx"></script>
+  </body>
+</html>

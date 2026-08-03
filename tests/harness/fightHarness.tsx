@@ -43,7 +43,8 @@ function Fight({ twoFights }: { twoFights: boolean }) {
         locations={LOCATIONS}
         movements={[]}
         teamGroups={[]}
-        dockedTeamRollups={[]}
+        teamGroupMap={{}}
+        fleetPositions={[]}
         unifiedGroupFleets={[]}
         combatSortieFleets={[]}
         fleetGoView={null}

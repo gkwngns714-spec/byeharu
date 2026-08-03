@@ -157,6 +157,22 @@ export interface FleetPosition {
   place: FleetPositionPlace
   location_id: string | null // docked: the present fleet's current location; berthed: the berth port
   segment: FleetPositionSegment | null // transit only
+  /** WHERE-IS-MY-FLEET: the parked open-space coordinate, 'in_space' only (null on every other arm —
+   *  the server emits `case when v_place='in_space' then … else null end`).
+   *
+   *  These are NOT the retired per-ship spatial columns the header above says are gone. FLEET-GO 3c-3
+   *  made this arm FLEET-FIRST: the projection reads `fleets.space_x/space_y` through the ONE
+   *  ship→fleet resolver (0210), because the unified world parks the FLEET and never writes a ship
+   *  coordinate. The deployed body has emitted these two keys ever since; the client type simply never
+   *  declared them, so the only whole-fleet position the server hands out was unreadable here and the
+   *  map had to go fetch the fleet row itself to draw a parked fleet. Verified against the PRODUCTION
+   *  function body (2026-08-04), not against a migration file.
+   *
+   *  OPTIONAL, the `EncounterAnchorLite.engagement_x` posture: absent means "read from a server that
+   *  does not emit it", which every reader must treat exactly like null — no parked position, never a
+   *  guessed one. Fail closed, never `?? 0`. */
+  space_x?: number | null
+  space_y?: number | null
 }
 
 /**

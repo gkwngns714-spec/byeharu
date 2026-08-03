@@ -6,6 +6,8 @@ import {
   labelTier,
   labelVisible,
   LABEL_REVEAL_K,
+  MARKER_BELOW_LABEL_OFFSET,
+  MARKER_BELOW_LABEL_STEP,
   type MarkerStyleInputs,
 } from '../src/features/map/markerStyle'
 import { isDockablePortForDisplay, type ActivityType, type LocationType } from '../src/features/map/mapTypes'
@@ -153,4 +155,35 @@ test('dockability classifier: trade_outpost is the ONLY display-dockable type', 
   expect(isDockablePortForDisplay('trade_outpost')).toBe(true)
   expect(isDockablePortForDisplay('safe_zone')).toBe(false)
   expect(isDockablePortForDisplay('pirate_hunt')).toBe(false)
+})
+
+// ── BELOW-THE-MARKER TEXT clears the marker's own ink ─────────────────────────────────────────────
+// A fleet badge is drawn under the port its fleet is standing at. It was drawn at 14, which is INSIDE
+// the biggest marker's halo — measured on the owner's live map on 2026-08-04, where "Fleet 2 1/1" sat
+// struck through by the Slagworks diamond. This is the invariant that keeps that from coming back, and
+// it is stated against the marker geometry rather than against a screenshot, so it holds for a marker
+// size nobody has drawn yet.
+test('a label drawn BELOW a marker clears the widest ink any marker can draw', () => {
+  // Every marker the policy can produce, at its own size (all measurements are on-screen px, before
+  // the shared 1/k zoom division that both the marker and the label apply identically).
+  const extents = ALL_TYPES.flatMap((location_type) =>
+    [0, 1, 2].map((importance) => {
+      const l = loc({
+        location_type,
+        activity_type: importance > 0 ? ('hunt_pirates' as ActivityType) : ('none' as ActivityType),
+        reward_tier: importance,
+        base_difficulty: importance * 6,
+      })
+      const s = markerStyle(l)
+      // The two visible reaches: the identity halo, and the dockable port's hub ring (r * 1.45).
+      return Math.max(s.radius * s.haloRadius, s.hubRing ? s.radius * 1.45 : 0)
+    }),
+  )
+  const widest = Math.max(...extents)
+  // The label's own ink rises above its baseline: ~10px of font plus the 3px halo stroke it paints
+  // under itself. The offset is a BASELINE, so the ascent has to clear too.
+  const LABEL_ASCENT = 10 + 3
+  expect(MARKER_BELOW_LABEL_OFFSET).toBeGreaterThanOrEqual(widest + LABEL_ASCENT)
+  // And stacked fleets at one port must not write over each other either.
+  expect(MARKER_BELOW_LABEL_STEP).toBeGreaterThanOrEqual(LABEL_ASCENT - 3)
 })
