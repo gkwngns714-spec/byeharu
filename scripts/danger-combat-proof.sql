@@ -127,6 +127,20 @@
 --                              starts immediately even though the escorts must travel. This is the
 --                              CLOSE arm of combat_unit_decide_move running at SEEDED values for the
 --                              first time in the game's history.
+--   DZCOMBAT_PASS_LEAD       — (0315) EVERY fleet entering combat has a lead, whether or not any ship
+--                              carries the flag. A three-hull fleet with NO command ship anywhere
+--                              elects one by the stated rule (a real flag first, then the greatest
+--                              max_hp, then the lowest main_ship_id, over living hulls) — capacities
+--                              engineered so neither key can be the accidental reason — anchors
+--                              exactly that hull on the engagement point at aggro 100 with both
+--                              escorts at 0 on their unchanged ring slots, and FIRES ON TICK 1 from
+--                              the anchor alone (the ring provably exceeds an escort's range, so no
+--                              escort could have opened the fight). A fleet that DOES carry a
+--                              designated command ship is placed exactly as it is today even though
+--                              the fallback would have named the other hull on both derived keys —
+--                              the derivation is a fallback, never an override. A single-hull fleet
+--                              is its own lead. RED by construction on the pre-0315 body: a flagless
+--                              fleet put nobody on the anchor and nobody at priority 100.
 --
 -- Self-rolling-back (begin;…rollback;, no COMMIT); every dark flag flipped ONLY inside the txn;
 -- provisioning is 100% real-RPC; group_sortie_members and combat_units are NEVER hand-written.
@@ -2540,6 +2554,364 @@ begin
 
   raise notice 'DZCOMBAT_PASS_CLOSURE ok: at the SEEDED 0313 ranges (escort %, pirate %, spawn gap %), the command ship fired on tick 1 while the escort and the pirate MOVED across ticks (gap % -> % after tick 1) and held fire until closure — escort''s first salvo tick % at pre-move distance % (<= its range), pirate''s tick % at % (<= its range), % additional silent closing tick(s) after the verified-silent tick 1: position now matters in a real fight',
     v_r_esc, v_r_en, v_ring, v_ring, d_t1, v_esc_fire_tick, round(v_esc_fire_dist::numeric, 2), v_en_fire_tick, round(v_en_fire_dist::numeric, 2), n_silent;
+end $$;
+
+-- ════════ DZCOMBAT_PASS_LEAD (0315): EVERY FLEET ENTERING COMBAT HAS A LEAD ══════════════════════════
+-- The defect this block reds on: the builder asked main_ship_instances.is_command_ship directly and
+-- assumed some member answered true. On production exactly ONE ship in 74 does, and the owner's own
+-- fleets have none — because the unified mover command_ship_group_go (the verb an ambush interrupts)
+-- never required the flag, only the legacy hunt/expedition senders do. A flagless fleet therefore got
+-- NO hull at the engagement anchor (every hull on the 30-unit ring, outside its own 25 gun since
+-- 0313, so tick 1 fired nothing) and NO aggro screen (every row priority 0, so the tick's
+-- min(aggro_priority) tier admitted the whole fleet).
+--
+-- THREE FLEETS, all through the REAL ambush chain on the standing Auto Exit corridor:
+--   A — THREE hulls, NONE flagged (the owner's Fleet 1 shape). The two capacities are engineered so
+--       the rule's SECOND key decides against its THIRD: the id-first hull is the WEAKEST, and the
+--       two strongest tie on capacity so the uuid tie-break has to break it. Expected lead = the
+--       lower-id hull of the two strong ones. Then one real tick: the lead fires, the escorts (a
+--       full ring out, beyond their own range — asserted as a premise, not assumed) cannot, so the
+--       fight starting at all is attributable to the lead alone. RED BY CONSTRUCTION on the pre-0315
+--       body: there is no hull at distance 0 to find, and no row carries priority 100.
+--   B — TWO hulls, the WEAKER and HIGHER-id one designated through the real set_fleet_command_ship,
+--       the other boosted so the fallback would pick it on BOTH derived keys. The flag must still
+--       win, and the surviving escort must sit on ring slot 0 EXACTLY — that pair is the concrete
+--       form of "a fleet with a real command ship is placed exactly as it is today".
+--   C — ONE hull, not flagged: it is its own lead, on the anchor, priority 100.
+-- Ships' capacities are an OWNED precondition, written directly and BOTH ways at once (hp = max_hp,
+-- so every fleet enters at 100% of capacity and 0310's default 30% auto-exit can never fire
+-- mid-scenario). No RPC lets a proof choose a hull size — the 0185 hulls that would (650 / 420) are
+-- gated behind blueprint_fragment — and the thing under test is which hull the BUILDER elects, which
+-- is never written here. is_command_ship is only ever written through its sole real writer.
+do $$
+declare
+  r jsonb; n int;
+  uL uuid; uM uuid; uS uuid;
+  s1 uuid; s2 uuid; s3 uuid; sa uuid; sb uuid; sc uuid;
+  gL uuid; gM uuid; gS uuid;
+  o_x double precision; o_y double precision;
+  v_mv uuid; v_enc uuid;
+  mv record; pi record;
+  ax double precision; ay double precision;
+  v_ring double precision; v_r_esc double precision;
+  u_lead uuid; u_e0 uuid; u_e1 uuid;
+  d0 double precision; d1 double precision; d2 double precision;
+  px double precision; py double precision;
+  cap1 int; cap2 int; cap3 int;
+  v_lead_ship uuid; v_pri int; n_cmd int;
+begin
+  -- ══ ARM A — three hulls, NO command ship anywhere ═══════════════════════════════════════════════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.ld.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uL;
+  insert into public.player_wallet (player_id, balance) values (uL, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+
+  r := pg_temp.call_as(uL, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: commission A1: %', r; end if;
+  r := pg_temp.call_as(uL, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: commission A2: %', r; end if;
+  r := pg_temp.call_as(uL, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: commission A3: %', r; end if;
+  select main_ship_id into s1 from public.main_ship_instances where player_id = uL order by main_ship_id offset 0 limit 1;
+  select main_ship_id into s2 from public.main_ship_instances where player_id = uL order by main_ship_id offset 1 limit 1;
+  select main_ship_id into s3 from public.main_ship_instances where player_id = uL order by main_ship_id offset 2 limit 1;
+  if s1 is null or s2 is null or s3 is null then raise exception 'LEAD FAIL: three hulls did not materialise for arm A'; end if;
+
+  -- THE OWNED PRECONDITION: capacities that make the rule's own keys observable. The id-FIRST hull
+  -- is the weakest, and the other two TIE — so a green result cannot be produced by the uuid
+  -- tie-break alone (it would have named s1), nor by capacity alone (it does not separate s2/s3).
+  update public.main_ship_instances set max_hp = 600, hp = 600
+   where main_ship_id in (s2, s3);
+  select max_hp into cap1 from public.main_ship_instances where main_ship_id = s1;
+  select max_hp into cap2 from public.main_ship_instances where main_ship_id = s2;
+  select max_hp into cap3 from public.main_ship_instances where main_ship_id = s3;
+  if cap1 is null or cap2 is null or cap3 is null then
+    raise exception 'LEAD FAIL: a hull has no capacity — the lead rule''s second key has nothing to read';
+  end if;
+  if cap1 >= cap2 then
+    raise exception 'LEAD FAIL premise: the id-first hull carries capacity % against the strong pair''s % — the two capacities do not differ in the direction that makes the max_hp key decide anything', cap1, cap2;
+  end if;
+  if cap2 <> cap3 then
+    raise exception 'LEAD FAIL premise: the strong pair''s capacities are %/% — they must TIE or the uuid tie-break is never exercised', cap2, cap3;
+  end if;
+
+  r := pg_temp.call_as(uL, 'public.upsert_ship_group(1, ''Lead A'')');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: group A: %', r; end if;
+  gL := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uL, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s1, gL));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: assign A1: %', r; end if;
+  r := pg_temp.call_as(uL, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s2, gL));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: assign A2: %', r; end if;
+  r := pg_temp.call_as(uL, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', s3, gL));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: assign A3: %', r; end if;
+
+  -- the scenario's whole point, asserted rather than assumed: NOBODY here is a command ship.
+  select count(*) into n_cmd from public.main_ship_instances
+   where player_id = uL and is_command_ship;
+  if n_cmd <> 0 then
+    raise exception 'LEAD FAIL: % flagged ship(s) were provisioned into the flagless fleet — the scenario would prove the head''s own path, not the fallback', n_cmd;
+  end if;
+
+  -- the REAL ambush, through the STANDING Auto Exit corridor (the CLOSURE idiom).
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uL and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gL
+   limit 1;
+  if o_x is null then raise exception 'LEAD FAIL: could not resolve arm A''s docked origin'; end if;
+  r := pg_temp.call_as(uL, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gL, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: go A: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'LEAD FAIL: no pending ambush on arm A''s leg (the standing corridor should cover it)'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uL and status = 'active';
+  if v_enc is null then raise exception 'LEAD FAIL: the ambush opened no encounter for arm A'; end if;
+
+  -- ── the formation, measured from the encounter's OWN anchor ─────────────────────────────────────
+  select engagement_x, engagement_y into ax, ay from public.combat_encounters where id = v_enc;
+  if ax is null or ay is null then
+    raise exception 'LEAD FAIL: the encounter carries no engagement anchor — the anchor this assert measures from does not exist, and every distance below would be NULL and vacuous';
+  end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player';
+  if n <> 3 then raise exception 'LEAD FAIL: the 3-hull roster seeded % player unit(s)', n; end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'player' and (pos_x is null or pos_y is null);
+  if n <> 0 then
+    raise exception 'LEAD FAIL: % player unit(s) have a NULL coordinate — an unpositioned hull cannot prove where it spawned, and every comparison below would pass on nothing', n;
+  end if;
+
+  -- ★ EXACTLY ONE hull stands on the engagement anchor. This is the assert that is RED on the
+  --   pre-0315 body: with no flagged ship every hull took a ring slot and the count is 0.
+  select count(*) into n from public.combat_units cu
+   where cu.encounter_id = v_enc and cu.side = 'player'
+     and public.osn_distance(cu.pos_x, cu.pos_y, ax, ay) <= 1e-9;
+  if n = 0 then
+    raise exception 'LEAD FAIL: no hull stands on the engagement anchor — a flagless fleet spawned entirely on the escort ring, which is the defect (the enemy wave spawns AT this point and nothing could reach it)';
+  end if;
+  if n <> 1 then
+    raise exception 'LEAD FAIL: % hull(s) on the engagement anchor (want exactly 1 — a formation has one lead)', n;
+  end if;
+  select cu.id, cu.main_ship_id into u_lead, v_lead_ship from public.combat_units cu
+   where cu.encounter_id = v_enc and cu.side = 'player'
+     and public.osn_distance(cu.pos_x, cu.pos_y, ax, ay) <= 1e-9;
+
+  -- ★ it is the hull the RULE names: greatest capacity, then the lowest main_ship_id — s2, never
+  --   the id-first s1 (capacity decides) and never s3 (the tie-break decides).
+  if v_lead_ship is distinct from s2 then
+    raise exception 'LEAD FAIL: the lead is not the hull the rule names — anchored % (want %, the lower-id hull of the two at capacity %; s1 is id-first at capacity % and must lose on capacity, s3 ties on capacity and must lose on id)',
+      v_lead_ship, s2, cap2, cap1;
+  end if;
+
+  -- ★ the aggro screen names the SAME hull: 100 on the lead, 0 on every other, exactly one 100.
+  select aggro_priority into v_pri from public.combat_units where id = u_lead;
+  if v_pri is distinct from 100 then
+    raise exception 'LEAD FAIL: the anchored hull carries aggro priority % (want 100) — a hull standing on the enemy spawn point with no screen is the worst of both worlds', v_pri;
+  end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'player' and id <> u_lead and aggro_priority is distinct from 0;
+  if n <> 0 then
+    raise exception 'LEAD FAIL: % escort(s) do not carry aggro priority 0 — the tier filter would not screen the lead', n;
+  end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'player' and aggro_priority = 100;
+  if n <> 1 then raise exception 'LEAD FAIL: % player row(s) carry priority 100 (want exactly 1)', n; end if;
+
+  -- ★ the escorts keep the 0234 ring, taking slots 0 and 1 in main_ship_id order (s1 then s3).
+  v_ring := coalesce(public.cfg_num('spatial_formation_ring_radius'), 30);
+  select id into u_e0 from public.combat_units where encounter_id = v_enc and main_ship_id = s1;
+  select id into u_e1 from public.combat_units where encounter_id = v_enc and main_ship_id = s3;
+  if u_e0 is null or u_e1 is null then raise exception 'LEAD FAIL: an escort hull was not seeded'; end if;
+  select pos_x, pos_y into px, py from public.combat_units where id = u_e0;
+  if abs(px - (ax + v_ring * cos(0))) > 1e-6 or abs(py - (ay + v_ring * sin(0))) > 1e-6 then
+    raise exception 'LEAD FAIL: the escort ring slot moved — the id-first escort sits at (%,%), want slot 0 at (%,%)',
+      px, py, ax + v_ring * cos(0), ay + v_ring * sin(0);
+  end if;
+  select pos_x, pos_y into px, py from public.combat_units where id = u_e1;
+  if abs(px - (ax + v_ring * cos(2 * pi() / 8))) > 1e-6 or abs(py - (ay + v_ring * sin(2 * pi() / 8))) > 1e-6 then
+    raise exception 'LEAD FAIL: the escort ring slot moved — the second escort sits at (%,%), want slot 1 at (%,%)',
+      px, py, ax + v_ring * cos(2 * pi() / 8), ay + v_ring * sin(2 * pi() / 8);
+  end if;
+
+  -- ★ THE FIGHT FIRES ON TICK 1 — the thing that is broken today. The premise first, DERIVED from
+  --   the escort's own frozen weapons_json: the ring exceeds an escort's range, so no escort can
+  --   open the fight and any tick-1 salvo is the lead's alone. If a later retune buries that, this
+  --   raises honestly instead of passing for the wrong reason.
+  select max((w->>'range')::double precision) into v_r_esc
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w where cu.id = u_e0;
+  if v_r_esc is null then
+    raise exception 'LEAD FAIL: the escort carries no ranged weapon at all — the tick-1 attribution has no premise';
+  end if;
+  if v_ring <= v_r_esc then
+    raise exception 'LEAD FAIL premise: the % ring no longer exceeds the escort range % — an escort could open the fight from its formation slot and tick-1 fire would prove nothing about the lead',
+      v_ring, v_r_esc;
+  end if;
+  perform pg_temp.ae_tick(v_enc);
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
+     and source = 'player' and payload_json->>'unit_id' = u_lead::text;
+  if n < 1 then
+    raise exception 'LEAD FAIL: the fight did not fire on tick 1 — the lead is on the anchor but did not shoot, so a flagless fleet still opens a fight it cannot join';
+  end if;
+  select count(*) into n from public.combat_events
+   where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo'
+     and payload_json->>'unit_id' in (u_e0::text, u_e1::text);
+  if n <> 0 then
+    raise exception 'LEAD FAIL: % escort salvo(s) on tick 1 — an escort fired across a gap larger than its own range, so the tick-1 fire is not attributable to the lead', n;
+  end if;
+  if (select status from public.combat_encounters where id = v_enc) <> 'active' then
+    raise exception 'LEAD FAIL: arm A''s encounter left ''active'' on its first tick — the scenario is not measuring a live fight';
+  end if;
+
+  -- ══ ARM B — a REAL command ship still wins, and the fallback never overrides it ═════════════════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.ld2.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uM;
+  insert into public.player_wallet (player_id, balance) values (uM, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uM, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: commission B1: %', r; end if;
+  r := pg_temp.call_as(uM, 'public.commission_additional_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: commission B2: %', r; end if;
+  select main_ship_id into sa from public.main_ship_instances where player_id = uM order by main_ship_id offset 0 limit 1;
+  select main_ship_id into sb from public.main_ship_instances where player_id = uM order by main_ship_id offset 1 limit 1;
+  if sa is null or sb is null then raise exception 'LEAD FAIL: two hulls did not materialise for arm B'; end if;
+  -- the UN-flagged hull is made stronger AND is id-first, so the derivation would name it on BOTH
+  -- of its own keys. The flag has to beat both, or it is not first.
+  update public.main_ship_instances set max_hp = 600, hp = 600 where main_ship_id = sa;
+  r := pg_temp.call_as(uM, 'public.upsert_ship_group(1, ''Lead B'')');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: group B: %', r; end if;
+  gM := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uM, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sa, gM));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: assign B1: %', r; end if;
+  r := pg_temp.call_as(uM, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sb, gM));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: assign B2: %', r; end if;
+  r := pg_temp.call_as(uM, format('public.set_fleet_command_ship(%L::uuid, true)', sb));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: designate B: %', r; end if;
+  select count(*) into n_cmd from public.main_ship_instances where player_id = uM and is_command_ship;
+  if n_cmd <> 1 then raise exception 'LEAD FAIL: arm B carries % command ship(s) (want exactly 1)', n_cmd; end if;
+
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uM and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gM
+   limit 1;
+  if o_x is null then raise exception 'LEAD FAIL: could not resolve arm B''s docked origin'; end if;
+  r := pg_temp.call_as(uM, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gM, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: go B: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'LEAD FAIL: no pending ambush on arm B''s leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uM and status = 'active';
+  if v_enc is null then raise exception 'LEAD FAIL: the ambush opened no encounter for arm B'; end if;
+
+  select engagement_x, engagement_y into ax, ay from public.combat_encounters where id = v_enc;
+  if ax is null or ay is null then
+    raise exception 'LEAD FAIL: arm B''s encounter carries no engagement anchor — the anchor this assert measures from does not exist';
+  end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'player' and (pos_x is null or pos_y is null);
+  if n <> 0 then
+    raise exception 'LEAD FAIL: % arm-B unit(s) have a NULL coordinate — an unpositioned hull cannot prove where it spawned', n;
+  end if;
+  select public.osn_distance(cu.pos_x, cu.pos_y, ax, ay) into d1
+    from public.combat_units cu where cu.encounter_id = v_enc and cu.main_ship_id = sb;
+  select public.osn_distance(cu.pos_x, cu.pos_y, ax, ay) into d2
+    from public.combat_units cu where cu.encounter_id = v_enc and cu.main_ship_id = sa;
+  if d1 is null or d2 is null then
+    raise exception 'LEAD FAIL: an arm-B distance is NULL — a hull is missing from its own fleet''s formation';
+  end if;
+  if d1 > 1e-9 then
+    raise exception 'LEAD FAIL: the designated command ship stands % from the anchor (want 0) — the derivation overrode a real command ship, which it must never do', d1;
+  end if;
+  if abs(d2 - v_ring) > 1e-6 then
+    raise exception 'LEAD FAIL: the stronger un-flagged hull stands % from the anchor (want the % ring) — arm B''s placement is not what a flagged fleet gets today', d2, v_ring;
+  end if;
+  select pos_x, pos_y into px, py from public.combat_units where encounter_id = v_enc and main_ship_id = sa;
+  if abs(px - (ax + v_ring * cos(0))) > 1e-6 or abs(py - (ay + v_ring * sin(0))) > 1e-6 then
+    raise exception 'LEAD FAIL: the escort ring slot moved on a flagged fleet — the escort sits at (%,%), want slot 0 at (%,%)',
+      px, py, ax + v_ring * cos(0), ay + v_ring * sin(0);
+  end if;
+  select aggro_priority into v_pri from public.combat_units where encounter_id = v_enc and main_ship_id = sb;
+  if v_pri is distinct from 100 then
+    raise exception 'LEAD FAIL: the designated command ship carries aggro priority % (want 100)', v_pri;
+  end if;
+  select aggro_priority into v_pri from public.combat_units where encounter_id = v_enc and main_ship_id = sa;
+  if v_pri is distinct from 0 then
+    raise exception 'LEAD FAIL: the flagged fleet''s escort carries aggro priority % (want 0)', v_pri;
+  end if;
+  select count(*) into n from public.combat_units
+   where encounter_id = v_enc and side = 'player' and aggro_priority = 100;
+  if n <> 1 then raise exception 'LEAD FAIL: arm B carries % row(s) at priority 100 (want exactly 1)', n; end if;
+
+  -- ══ ARM C — a single-hull fleet is its own lead ═════════════════════════════════════════════════
+  insert into auth.users (instance_id,id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at,confirmation_token,recovery_token,email_change_token_new,email_change)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(),'authenticated','authenticated',
+            'dzc.ld3.'||replace(gen_random_uuid()::text,'-','')||'@example.com','',now(),now(),now(),'','','','')
+    returning id into uS;
+  insert into public.player_wallet (player_id, balance) values (uS, 1000000)
+    on conflict (player_id) do update set balance = excluded.balance;
+  r := pg_temp.call_as(uS, 'public.commission_first_main_ship()');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: commission C: %', r; end if;
+  select main_ship_id into sc from public.main_ship_instances where player_id = uS;
+  r := pg_temp.call_as(uS, 'public.upsert_ship_group(1, ''Lead C'')');
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: group C: %', r; end if;
+  gS := (r->>'group_id')::uuid;
+  r := pg_temp.call_as(uS, format('public.assign_ship_to_group(%L::uuid, %L::uuid)', sc, gS));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: assign C: %', r; end if;
+  select count(*) into n_cmd from public.main_ship_instances where player_id = uS and is_command_ship;
+  if n_cmd <> 0 then raise exception 'LEAD FAIL: arm C''s lone hull is flagged — the single-hull case must be proven WITHOUT a command ship'; end if;
+
+  select l.x, l.y into o_x, o_y
+    from public.main_ship_instances s
+    join public.fleets f on f.main_ship_id = s.main_ship_id and f.player_id = uS and f.status = 'present'
+    join public.location_presence lp on lp.fleet_id = f.id and lp.status = 'active'
+    join public.locations l on l.id = lp.location_id
+   where s.group_id = gS
+   limit 1;
+  if o_x is null then raise exception 'LEAD FAIL: could not resolve arm C''s docked origin'; end if;
+  r := pg_temp.call_as(uS, format('public.command_ship_group_go(%L::uuid, null, %s, %s)',
+                                  gS, round(o_x), round(o_y + 1000)));
+  if (r->>'ok')::boolean is not true then raise exception 'LEAD FAIL: go C: %', r; end if;
+  v_mv := (r->>'movement_id')::uuid;
+  select * into pi from public.pirate_intercepts where movement_id = v_mv and lifecycle_state = 'pending';
+  if pi is null then raise exception 'LEAD FAIL: no pending ambush on arm C''s leg'; end if;
+  select * into mv from public.fleet_movements where id = v_mv;
+  perform pg_temp.rewind_leg(v_mv, (mv.arrive_at - now()) + interval '5 seconds');
+  perform public.process_fleet_movements();
+  select id into v_enc from public.combat_encounters where player_id = uS and status = 'active';
+  if v_enc is null then raise exception 'LEAD FAIL: the ambush opened no encounter for arm C'; end if;
+  select engagement_x, engagement_y into ax, ay from public.combat_encounters where id = v_enc;
+  if ax is null or ay is null then
+    raise exception 'LEAD FAIL: arm C''s encounter carries no engagement anchor — the anchor this assert measures from does not exist';
+  end if;
+  select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'player';
+  if n <> 1 then raise exception 'LEAD FAIL: the single-hull roster seeded % player unit(s)', n; end if;
+  select public.osn_distance(cu.pos_x, cu.pos_y, ax, ay), cu.aggro_priority into d0, v_pri
+    from public.combat_units cu where cu.encounter_id = v_enc and cu.side = 'player';
+  if d0 is null then
+    raise exception 'LEAD FAIL: arm C''s lone hull has a NULL coordinate — an unpositioned hull cannot prove where it spawned';
+  end if;
+  if d0 > 1e-9 or v_pri is distinct from 100 then
+    raise exception 'LEAD FAIL: the single hull did not lead its own fleet — it stands % from the anchor at priority % (want 0 and 100)', d0, v_pri;
+  end if;
+
+  raise notice 'DZCOMBAT_PASS_LEAD ok: a THREE-hull fleet with no command ship anywhere elected its lead by the rule — capacity beat the id-first hull (% vs %) and the uuid tie-break broke the equal pair — anchoring exactly ONE hull on the engagement point at priority 100 with both escorts at 0 on ring slots 0 and 1, and the fight FIRED ON TICK 1 from that hull alone (ring % exceeds the escort range %, so no escort could have opened it); a fleet that DOES carry a designated command ship placed that ship on the anchor at 100 even though the fallback would have named the stronger, id-first hull on both of its own keys, with the escort still on ring slot 0 exactly; and a single-hull fleet is its own lead at distance 0, priority 100',
+    cap2, cap1, v_ring, v_r_esc;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_NOLIVE (0312): NO LIVING SHIPS, NO ORDERS ════════════════════════════════════
