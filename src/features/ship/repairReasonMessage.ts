@@ -10,8 +10,9 @@
 // surfaces a raw code and never throws. No React/DOM/state — unit-testable directly, the
 // salvageReasonMessage.ts / haulReasonMessage.ts mold. The repairEconomy.ts availability mirror
 // reuses these exact reason names, so display-only prechecks and real server rejects share ONE copy
-// source; the wreck-specific wording for a ship that is adrift lives in shipRecovery.repairGateNote,
-// which is about the GATE state rather than a server reject.
+// source; the sentence that describes the ship's POSITION SITUATION (rather than a server reject)
+// lives in shipRecovery.repairPositionLine, which composes this map for the one case where the two
+// coincide — a living hull that is not at a port reads not_at_port's words verbatim.
 
 const REASON_MESSAGES: Record<string, string> = {
   repair_economy_disabled: 'Repairs are not available here yet.',
