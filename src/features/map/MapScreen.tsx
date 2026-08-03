@@ -442,8 +442,10 @@ export function MapScreen() {
                       type="button"
                       onClick={openPiratePanel}
                       data-testid="map-action-pirate"
-                      aria-label="Pirate intercept"
-                      title="Pirate intercept"
+                      /* PLAIN-WORDS: the action is plotting a course around danger — "Pirate
+                         intercept" named the SERVER mechanic, not what the button does. */
+                      aria-label="Plot a route"
+                      title="Plot a route"
                       className="flex h-11 w-11 items-center justify-center rounded-full text-danger transition hover:bg-danger/15 active:bg-danger/25"
                     >
                       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
@@ -506,7 +508,7 @@ export function MapScreen() {
                             : hubView === 'zone'
                               ? // The zone NAMES itself in the header, so the panel body needs no title row.
                                 (zoneInfo?.title ?? 'Danger zone')
-                              : 'Pirate intercept'}
+                              : 'Plot a route'}
                       </p>
                       <button
                         type="button"

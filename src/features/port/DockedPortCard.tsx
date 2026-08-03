@@ -30,7 +30,7 @@ const SERVICE_LABELS: Record<string, string> = {
 const SERVICE_NOTES: Record<string, string> = {
   docking: 'Docked',
   market: 'Buy & sell goods',
-  repair: 'Hull repairs — in the Fitting tab',
+  repair: 'Hull repairs — in the Ships tab',
   refit: 'Refit your ship',
   recruitment: 'Hire captains',
 }
