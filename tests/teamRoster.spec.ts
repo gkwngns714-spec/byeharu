@@ -194,10 +194,11 @@ const loc = (over: Partial<MapLocation> & Pick<MapLocation, 'id' | 'name'>): Map
   y: 0,
   base_difficulty: 0,
   reward_tier: 0,
-  activity_type: 'trade',
+  activity_type: 'trade_visit', // the real ActivityType a trade_outpost carries; 'trade' is not one
   min_power_required: 0,
   is_public: true,
   status: 'active',
+  territory_radius: null, // 0217: always present in the get_world_map JSON; NULL = projects no territory
   ...over,
 })
 const pos = (over: Partial<FleetPosition> & Pick<FleetPosition, 'main_ship_id' | 'place'>): FleetPosition => ({

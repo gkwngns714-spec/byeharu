@@ -57,6 +57,7 @@ const liveZone = (over: Partial<LiveDangerZone> = {}): LiveDangerZone => ({
     [0, 400],
     [0, 0],
   ],
+  revision: 1, // 0275: the server-issued staleness token, always carried on a live row
   ...over,
 })
 

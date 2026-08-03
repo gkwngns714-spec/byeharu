@@ -34,7 +34,7 @@ test('derivePortsWithShips: groups docked ships by port, names them from the wor
     ],
     name,
   )
-  expect(ports).toEqual<PortWithShips[]>([
+  expect(ports).toEqual([
     {
       locationId: 'loc-haven',
       locationName: 'Haven',
@@ -44,7 +44,7 @@ test('derivePortsWithShips: groups docked ships by port, names them from the wor
       ],
     },
     { locationId: 'loc-slag', locationName: 'Slagworks', ships: [{ mainShipId: 's2', name: 'Wren', berthed: false }] },
-  ])
+  ] satisfies PortWithShips[])
 })
 
 // ── MAP-INTEGRATION M3 — 'berthed' counts as at-port (the Port↔Fitting contradiction fix) ────────
@@ -53,9 +53,9 @@ test('M3: a BERTHED ship (S1 unfleeted) IS a port entry, flagged berthed — con
     [fp({ main_ship_id: 's1', name: 'Kestrel', place: 'berthed', location_id: 'loc-haven' })],
     name,
   )
-  expect(ports).toEqual<PortWithShips[]>([
+  expect(ports).toEqual([
     { locationId: 'loc-haven', locationName: 'Haven', ships: [{ mainShipId: 's1', name: 'Kestrel', berthed: true }] },
-  ])
+  ] satisfies PortWithShips[])
   // and it participates in the chosen-ship resolution like any at-port ship
   expect(resolveChosenShipId(ports, null)).toBe('s1')
 })
@@ -147,9 +147,9 @@ test('derivePortsWithShips: an unknown / unnamed port falls back to a neutral la
     [fp({ main_ship_id: 's1', name: '', place: 'docked', location_id: 'loc-secret' })],
     name, // no entry for loc-secret
   )
-  expect(ports).toEqual<PortWithShips[]>([
+  expect(ports).toEqual([
     { locationId: 'loc-secret', locationName: 'Unknown port', ships: [{ mainShipId: 's1', name: 'Unnamed ship', berthed: false }] },
-  ])
+  ] satisfies PortWithShips[])
 })
 
 test('derivePortsWithShips: no docked ships anywhere → empty list (the empty state)', () => {
