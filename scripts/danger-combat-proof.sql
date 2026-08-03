@@ -4821,7 +4821,30 @@ begin
   select count(*) into n from public.combat_events
    where encounter_id = v_encB and tick_number = v_tB and event_type = 'unit_destroyed';
   if n <> 2 then
-    raise exception 'DEADFIRE FAIL: % pirate(s) destroyed in B''s exchange tick (want exactly 2 — two hulls, each sized to one-shot a pirate, and 0336 re-aims the second onto a LIVE target instead of throwing it away on the corpse)', n;
+    -- (0338) THE FAILURE CARRIES THE GEOMETRY. This arm needs BOTH hulls to reach the wave on the
+    -- exchange tick, and 0338 changed which DIRECTION the wave stands in — the radius is 0336's and
+    -- is untouched, but a hull-to-wave distance is a chord, so it moves with the bearing to the
+    -- city. A bare count cannot say whether the cause was reach, targeting or damage. Print it.
+    raise exception 'DEADFIRE FAIL: % pirate(s) destroyed in B''s exchange tick (want exactly 2 — two hulls, each sized to one-shot a pirate, and 0336 re-aims the second onto a LIVE target instead of throwing it away on the corpse). Anchor (%,%); player salvos this tick %; hulls: %; wave: %',
+      n, ax, ay,
+      (select count(*) from public.combat_events where encounter_id = v_encB and tick_number = v_tB
+        and event_type = 'missile_salvo' and source = 'player'),
+      (select string_agg(format('[%s at (%s,%s) d_anchor=%s range=%s power=%s aggro=%s]',
+                                left(u.id::text, 8), round(u.pos_x::numeric, 2), round(u.pos_y::numeric, 2),
+                                round(public.osn_distance(ax, ay, u.pos_x, u.pos_y)::numeric, 2),
+                                (select max((w->>'range')::double precision) from jsonb_array_elements(u.weapons_json) w),
+                                (select max((w->>'power')::double precision) from jsonb_array_elements(u.weapons_json) w),
+                                u.aggro_priority), ' ' order by u.id)
+         from public.combat_units u where u.encounter_id = v_encB and u.side = 'player'),
+      (select string_agg(format('[%s at (%s,%s) d_anchor=%s hp=%s range=%s dmin_hull=%s]',
+                                left(e.id::text, 8), round(e.pos_x::numeric, 2), round(e.pos_y::numeric, 2),
+                                round(public.osn_distance(ax, ay, e.pos_x, e.pos_y)::numeric, 2),
+                                round(e.hp_current::numeric, 3),
+                                (select max((w->>'range')::double precision) from jsonb_array_elements(e.weapons_json) w),
+                                round((select min(public.osn_distance(e.pos_x, e.pos_y, p.pos_x, p.pos_y))
+                                         from public.combat_units p
+                                        where p.encounter_id = v_encB and p.side = 'player')::numeric, 2)), ' ' order by e.id)
+         from public.combat_units e where e.encounter_id = v_encB and e.side = 'enemy');
   end if;
   select (payload_json->>'unit_id')::uuid into v_tgt from public.combat_events
    where encounter_id = v_encB and tick_number = v_tB and event_type = 'unit_destroyed'
