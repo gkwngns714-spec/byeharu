@@ -82,6 +82,11 @@ begin
   select main_ship_id into v_ship from public.main_ship_instances where player_id=uT;
   select balance into v_bal from public.player_wallet where player_id=uT;
 
+  -- THE PRECONDITION IS OURS, NOT THE SEED'S. Migration 0300 (lights_on) lights trade_market_enabled
+  -- IN THE CHAIN, so trusting the ambient seed made this assert a WORLD rather than a property. Set
+  -- the dark state under test — in-txn, rolled back with everything else, like the enable below.
+  update public.game_config set value='false'::jsonb where key='trade_market_enabled';
+
   r := pg_temp.call_as(uT, format('public.get_market_offers(%L::uuid)', v_ship));
   if (r->>'reason') is distinct from 'trade_market_disabled' then raise exception 'P0 FAIL offers: %', r; end if;
   r := pg_temp.call_as(uT, format('public.market_buy(%L::uuid, %L, %s, %L::uuid)', v_ship, 'ore', 1, gen_random_uuid()));
