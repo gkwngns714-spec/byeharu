@@ -3927,10 +3927,20 @@ declare
   slag  uuid := (select v from tcmd where k='slag');
   drift uuid := (select v from tcmd where k='drift');
   v_hunt uuid;
+  v_seed_fc jsonb;
 begin
-  -- ── (0) structural: fleet_control_enabled committed DARK; the surface deployed ──────────────────────
-  if coalesce((select value #>> '{}' from public.game_config where key='fleet_control_enabled'),'false') <> 'false' then
-    raise exception 'FLEETCTRL FAIL: fleet_control_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: this block OWNS its dark precondition; the surface deployed ─────────────────────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults). This asserted the COMMITTED seed was
+  -- ★ 'false'. 0300:71 lit fleet_control_enabled, so the assert was testing the WORLD, not the gate —
+  -- ★ and it never fired, because SHIELD1's defeat assert aborted the file ahead of it on every branch.
+  -- ★ The block now CAPTURES the committed value, SETS its own dark precondition in-txn, and restores
+  -- ★ exactly what it captured. Strictly stronger than the old form: the dark arm below is now
+  -- ★ genuinely dark instead of merely hoping the seed was, and the restore is correct through any
+  -- ★ future flip in EITHER direction rather than silently rewriting the seed to 'false'.
+  select value into v_seed_fc from public.game_config where key='fleet_control_enabled';
+  if v_seed_fc is null then
+    raise exception 'FLEETCTRL FAIL: fleet_control_enabled is absent from game_config (the 0204 gate was never seeded — a dark arm against a missing key can only false-green)'; end if;
+  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
   if to_regprocedure('public.set_fleet_command_ship(uuid, boolean)') is null then
     raise exception 'FLEETCTRL FAIL: set_fleet_command_ship(uuid,boolean) not deployed'; end if;
   if not exists (select 1 from information_schema.columns
@@ -4048,10 +4058,11 @@ begin
   r := pg_temp.call_as(uF, format('public.send_ship_group_hunt(%L::uuid, %L::uuid)', gCap, v_hunt));
   if (r->>'reason') is distinct from 'fleet_inactive_no_command' then raise exception 'FLEETCTRL FAIL: standing down the last command ship did not re-inactivate the fleet: %', r; end if;
 
-  -- restore the flag to the committed dark seed (rolled back regardless — the honesty loop checks it).
-  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
+  -- restore the CAPTURED committed value (rolled back regardless — the honesty loop checks it stayed
+  -- unchanged, in either direction; a literal 'false' here would be the same ambient assumption again).
+  update public.game_config set value=v_seed_fc where key='fleet_control_enabled';
 
-  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: flag committed dark; DARK a zero-command fleet HUNTS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on the group hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
+  raise notice 'TEAMCMD_PASS_FLEETCTRL ok: the block set its OWN dark precondition (committed value captured + restored); DARK a zero-command fleet HUNTS (no command requirement) and a 9th assign SUCCEEDS (no 8-cap) — byte-identical to today; LIT a zero-command fleet REJECTS fleet_inactive_no_command on the group hunt (the gate fires before the destination read), designating a command ship (owner-scoped, un-flag-gated, PERSISTED) ACTIVATES it, the 8th assign is OK while the 9th rejects fleet_full (held at 8), the per-fleet command role is CLEARED when a ship changes fleets, an ungrouped ship cannot be a command ship (ship_not_in_fleet), and standing down the last command ship RE-inactivates the fleet; flag restored in-txn';
 end $$;
 
 -- ════════ BLOCK NOHOME (NO-HOME, 0199): TEAM launch-from-dock + reconciler dock-at-return ════════
@@ -4069,10 +4080,16 @@ declare
   uNT uuid; sNT uuid; gNT uuid; v_team_fleet uuid; v_team_mv uuid;
   slag  uuid := (select v from tcmd where k='slag');
   v_hunt uuid;
+  v_seed_lfd jsonb;
 begin
-  -- ── (0) structural: the 0199 surface is deployed and the flag is committed DARK ──────────────────
-  if coalesce((select value #>> '{}' from public.game_config where key='launch_from_dock_enabled'),'false') <> 'false' then
-    raise exception 'NOHOME FAIL: launch_from_dock_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: the 0199 surface is deployed and this block OWNS its dark precondition ───────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL above.
+  -- ★ 0300:78 lit launch_from_dock_enabled, so asserting the committed seed was 'false' asserted a
+  -- ★ world, not the gate. Capture, set the dark precondition in-txn, restore what was captured.
+  select value into v_seed_lfd from public.game_config where key='launch_from_dock_enabled';
+  if v_seed_lfd is null then
+    raise exception 'NOHOME FAIL: launch_from_dock_enabled is absent from game_config (the 0199 gate was never seeded)'; end if;
+  update public.game_config set value='false'::jsonb where key='launch_from_dock_enabled';
   if to_regprocedure('public.send_ship_group_hunt(uuid, uuid, uuid)') is null
      or to_regprocedure('public.nohome_dock_returning_ship(uuid)') is null then
     raise exception 'NOHOME FAIL: the 0199 widened hunt or dock-at-return leaf is missing'; end if;
@@ -4152,8 +4169,9 @@ begin
   if (r->>'ok')::boolean is not true then raise exception 'NOHOME FAIL: a returned docked team could not launch again (H1 second-launch wedge): %', r; end if;
   if (r->>'fleet_id')::uuid = v_team_fleet then raise exception 'NOHOME FAIL: the second hunt reused the OLD team fleet (want a fresh sortie)'; end if;
 
-  -- restore the flipped gates in-txn (ROLLBACK reverts regardless — the .sh honesty check re-confirms).
-  update public.game_config set value='false'::jsonb where key='launch_from_dock_enabled';
+  -- restore the CAPTURED committed value in-txn (ROLLBACK reverts regardless — the .sh honesty check
+  -- re-confirms it is UNCHANGED, in either direction).
+  update public.game_config set value=v_seed_lfd where key='launch_from_dock_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
   raise notice 'TEAMCMD_PASS_NOHOME ok: the SINGLE-ship launch-from-dock arm is retired with the legacy single-ship send (retired 0232) (0232); the surviving TEAM path holds — a docked team hunt launches ONE fleet FROM the port (origin_type=location=Slagworks, member hunting, docked present fleet dissolved, return port recorded), the reconciler DOCKS the returning member at the recorded return port (never re-homed) splitting the shared fleet back into the member''s OWN present fleet (H1), and the returned team LAUNCHES AGAIN with a fresh sortie; flags restored in-txn';
@@ -4180,10 +4198,17 @@ declare
   v_buff_a text; v_buff_b text; v_expect text;
   abuff jsonb; bbuff jsonb;   -- A's / B's rolled buff stats_json (independent, from the catalog)
   base_a jsonb; base_b jsonb; lit jsonb;
+  v_seed_cb jsonb; v_seed_fc jsonb;
 begin
-  -- ── (0) structural: command_buffs_enabled committed DARK; the catalog/column/tier deployed ────────
-  if coalesce((select value #>> '{}' from public.game_config where key='command_buffs_enabled'),'false') <> 'false' then
-    raise exception 'CMDBUFF FAIL: command_buffs_enabled is not committed false (dark)'; end if;
+  -- ── (0) structural: this block OWNS its dark precondition; the catalog/column/tier deployed ───────
+  -- ★ REPOINTED 2026-08-03 (proofs-never-assert-ambient-defaults) — same shape as FLEETCTRL/NOHOME.
+  -- ★ 0300:68 lit command_buffs_enabled. Capture both gates this block moves, set the dark
+  -- ★ precondition the INERT arm at (4) actually needs, and restore exactly what was captured.
+  select value into v_seed_cb from public.game_config where key='command_buffs_enabled';
+  select value into v_seed_fc from public.game_config where key='fleet_control_enabled';
+  if v_seed_cb is null then
+    raise exception 'CMDBUFF FAIL: command_buffs_enabled is absent from game_config (the 0205 gate was never seeded)'; end if;
+  update public.game_config set value='false'::jsonb where key='command_buffs_enabled';
   if to_regprocedure('public.command_buff_roll_for_ship(uuid)') is null then
     raise exception 'CMDBUFF FAIL: command_buff_roll_for_ship not deployed'; end if;
   if not exists (select 1 from information_schema.columns
@@ -4311,13 +4336,13 @@ begin
   if lit is distinct from base_b then
     raise exception 'CMDBUFF FAIL: an ungrouped ship folded a fleet buff (the group_id gate breach)'; end if;
 
-  -- restore the flipped gates in-txn via the raw update (ROLLBACK reverts regardless — the .sh honesty
-  -- check re-confirms each committed flag is still false post-run).
-  update public.game_config set value='false'::jsonb where key='command_buffs_enabled';
-  update public.game_config set value='false'::jsonb where key='fleet_control_enabled';
+  -- restore the CAPTURED committed values in-txn via the raw update (ROLLBACK reverts regardless — the
+  -- .sh honesty check re-confirms each committed flag is UNCHANGED post-run, in either direction).
+  update public.game_config set value=v_seed_cb where key='command_buffs_enabled';
+  update public.game_config set value=v_seed_fc where key='fleet_control_enabled';
   update public.game_config set value='false'::jsonb where key='team_command_enabled';
 
-  raise notice 'TEAMCMD_PASS_CMDBUFF ok: command_buffs_enabled committed dark; the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
+  raise notice 'TEAMCMD_PASS_CMDBUFF ok: the block set its OWN dark precondition for command_buffs_enabled (committed value captured + restored); the AFTER-INSERT commission trigger rolled BOTH new ships a T0 buff = the deterministic hash derivation (immutable); DARK a designated command ship''s buff is INERT (adapter byte-identical to the baseline); LIT the command ship A''s buff folds FLEET-WIDE into every member EXACTLY per key (independent catalog derivation — combat_power/survival/repair/cargo/scouting/mining/retreat_safety + the multiplicative speed, every non-buff key byte-identical) with B''s OWN buff DORMANT, the command ship itself receives its buff, two command ships SUM both buffs (backups), a zero-command fleet folds NO buff, and an ungrouped ship folds NO buff (the group_id gate); flags restored in-txn';
 end $$;
 
 -- ════════ BLOCK CRONGUARD (CRON-GUARD, 0206): per-row exception isolation for the two hottest ═════
