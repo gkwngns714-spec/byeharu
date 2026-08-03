@@ -23,6 +23,8 @@ import {
   fitCameraToWorldPoints,
   focusWorldPoints,
   focusCamera,
+  sameCamera,
+  worldPointsFramed,
   type FocusInputs,
 } from '../src/features/map/galaxyCamera'
 
@@ -291,3 +293,62 @@ test('ZOOM-ANCHOR: clampPan overrides the anchor at the world edge', () => {
     expect(cam.ty).toBe(bound.ty)
   }
 })
+
+// ── 12. KEEP THE FIGHT ON SCREEN — the inverse of the fit, over the same projection. ─────────────────
+//       GalaxyMap re-frames a battle when its own points stop being framed; these pin the predicate
+//       that decides it, and the two properties that make the follow terminate rather than oscillate.
+test('FOLLOW: what the fit just framed is framed — the two answers agree, so a fit never re-triggers', () => {
+  // A production-shaped engagement: a 6-unit formation ring padded by its weapon reach, out in the
+  // world where the fight actually sits.
+  const fight: WorldCoord[] = [
+    { x: 1186, y: -808 },
+    { x: 1214, y: -808 },
+    { x: 1200, y: -822 },
+    { x: 1200, y: -794 },
+  ]
+  const cam = fitCameraToWorldPoints(fight)
+  expect(worldPointsFramed(fight, cam)).toBe(true)
+  // …with real margin, not by a hair: PAD is 8% a side, so the fit is a stable resting point.
+  for (const p of fight) {
+    const v = applyCamera(cam, worldToViewBox(p))
+    expect(inView(v)).toBeTruthy()
+    expect(Math.min(v.x, v.y)).toBeGreaterThan(VIEW * PAD * 0.9)
+  }
+})
+
+test('FOLLOW: a battle that walks off is NOT framed — which is the whole trigger', () => {
+  const opened: WorldCoord[] = [
+    { x: 1192, y: -808 },
+    { x: 1208, y: -792 },
+  ]
+  const cam = fitCameraToWorldPoints(opened)
+  // 0337 carries the whole engagement by one delta, tick after tick. 150 world units of travel
+  // against a frame that is tens of units wide: nothing of the fight is left in it.
+  const moved = opened.map((p) => ({ x: p.x + 120, y: p.y - 90 }))
+  expect(worldPointsFramed(moved, cam)).toBe(false)
+  // A single unit crossing the edge is enough — the box is the fight's, not one ship's.
+  expect(worldPointsFramed([opened[0], { x: opened[1].x + 120, y: opened[1].y }], cam)).toBe(false)
+  // …and re-fitting the moved fight frames it again (the follow lands, it does not chase).
+  expect(worldPointsFramed(moved, fitCameraToWorldPoints(moved))).toBe(true)
+})
+
+test('FOLLOW: nothing to frame is framed, and a non-finite point is ignored exactly as the fit ignores it', () => {
+  const cam = fitCameraToWorldPoints([{ x: 0, y: 0 }])
+  expect(worldPointsFramed([], cam)).toBe(true) // vacuous — never a re-fit with no points
+  expect(worldPointsFramed([{ x: Number.NaN, y: 0 }, { x: 0, y: 0 }], cam)).toBe(true)
+  // A point genuinely off the frame still answers false with a NaN sibling present.
+  expect(worldPointsFramed([{ x: Number.NaN, y: 0 }, { x: 9000, y: 9000 }], cam)).toBe(false)
+})
+
+test('FOLLOW: sameCamera is VALUE equality — the guard that stops a clamped fit re-applying forever', () => {
+  expect(sameCamera({ k: 2, tx: 3, ty: 4 }, { k: 2, tx: 3, ty: 4 })).toBe(true)
+  expect(sameCamera({ k: 2, tx: 3, ty: 4 }, { k: 2, tx: 3, ty: 4.0001 })).toBe(false)
+  expect(sameCamera({ k: 2, tx: 3, ty: 4 }, { k: 2.5, tx: 3, ty: 4 })).toBe(false)
+  // Re-fitting the same points twice is the case it has to catch: identical value, new object.
+  const pts: WorldCoord[] = [{ x: 10, y: 20 }, { x: 40, y: 60 }]
+  const a = fitCameraToWorldPoints(pts)
+  const b = fitCameraToWorldPoints(pts)
+  expect(a).not.toBe(b)
+  expect(sameCamera(a, b)).toBe(true)
+})
+

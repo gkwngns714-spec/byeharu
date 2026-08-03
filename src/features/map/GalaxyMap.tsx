@@ -31,6 +31,8 @@ import {
   fitCameraToWorldPoints,
   focusCamera,
   focusWorldPoints,
+  sameCamera,
+  worldPointsFramed,
   zoomCameraAbout,
   type Camera,
   type FocusInputs,
@@ -374,33 +376,86 @@ export function GalaxyMap({
   // the SAME `fitCameraToWorldPoints` the initial view and the reset button already use — one
   // framing authority, given different points.
   //
-  // AUTOMATIC ONCE PER BATTLE, then the camera is the player's again. Deliberately NOT gated on
+  // AUTOMATIC ON A NEW BATTLE, whatever the camera was doing. Deliberately NOT gated on
   // `userMovedRef`: a fight starting is the one event that outranks a camera the player set earlier,
   // and it is exactly the case the content-fit's "frozen once touched" rule would have silently
-  // skipped for every player who has ever panned. It fires once per encounter id, so a poll cannot
-  // yank the view back while the player is looking elsewhere mid-fight, and ⟲ still resets.
+  // skipped for every player who has ever panned. ⟲ still resets.
+  //
+  // ── AND THEN THE FIGHT WALKS OUT OF THE FRAME ─────────────────────────────────────────────────
+  // The owner, playing: "When enemy ship is destroyed, i teleport to some random place inside the
+  // zone." Nothing teleported. The frame was applied ONCE per encounter id, around the anchor the
+  // battle opened on, and at that fit the visible window is only ~33 world units across. Since 0337
+  // an in-combat reposition is a real multi-tick MOVE that translates the formation, the fleet row
+  // AND the encounter anchor by the same vector every tick (0337:486-492), and later waves form
+  // around the MOVED anchor. So the battle walks straight out of the box the camera is holding and
+  // keeps fighting off-screen, while the player stares at empty space — which is what a teleport
+  // looks like from inside the frame.
+  //
+  // THE RULE, and why it is this one and not "re-fit every tick":
+  //
+  //   FOLLOW ONLY A CAMERA WE OURSELVES SET. `framedCameraRef` holds the exact Camera OBJECT the
+  //   last fight-framing produced. While `view` is still that object — the player has not panned,
+  //   zoomed or reset since, because every one of those builds a new object — the camera is the
+  //   fight's, so the fight is re-framed whenever it leaves the frame. The instant the player moves
+  //   the camera themselves, identity differs and following stops dead: someone who deliberately
+  //   panned away is looking at something else on purpose, and yanking them back every tick would
+  //   be worse than the bug. ⌖ goes through this same path, so it re-ENTERS following — the manual
+  //   control is still the way back, it is just no longer the only way.
+  //
+  //   FIT ON THE RAW SERVER ROWS, NEVER `liveCombatUnits`. The smoothed rows move every animation
+  //   frame (useCombatMotion), so framing off those would re-evaluate the box ~30×/s and chase its
+  //   own tween. `combatUnits` changes once per poll, which bounds this to one re-frame per tick.
+  //
+  //   ONE BOUNDING BOX. `combatFocusWorldPoints` already answers "what box is the fight in" (each
+  //   unit padded by its own reach) and `fitCameraToWorldPoints` already answers "frame these
+  //   points". The off-screen test is the INVERSE of that fit over the SAME projection
+  //   (galaxyCamera.worldPointsFramed). No second bbox exists anywhere on this path.
+  //
+  //   IT CANNOT OSCILLATE. A fit leaves the box at (1−2·PAD) of the frame, strictly inside it, so
+  //   the next evaluation answers "framed" and stops. `sameCamera` is the belt-and-braces for the
+  //   one case where that reasoning does not hold — a fit whose k had to be CLAMPED need not
+  //   satisfy the framed test, and without the guard it would re-set the camera on every render.
   const fightId = useMemo(
     () => focusableEncounterId(combatEncounters, combatUnits),
     [combatEncounters, combatUnits],
   )
+  /** The camera the last fight-framing produced. Compared by IDENTITY on purpose — see the rule. */
+  const framedCameraRef = useRef<Camera | null>(null)
+  const applyFightCamera = useCallback((cam: Camera) => {
+    userMovedRef.current = true // the battle framing is now the camera; no content fit may override it
+    framedCameraRef.current = cam
+    setView(cam)
+  }, [])
   const focusFight = useCallback(
     (id: string | null) => {
       const pts = combatFocusWorldPoints(combatUnits, id)
       if (pts.length === 0) return
-      userMovedRef.current = true // the battle framing is now the camera; no auto-fit may override it
-      setView(fitCameraToWorldPoints(pts))
+      applyFightCamera(fitCameraToWorldPoints(pts))
     },
-    [combatUnits],
+    [combatUnits, applyFightCamera],
   )
   const focusedFightRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!fightId || focusedFightRef.current === fightId) return
-    focusedFightRef.current = fightId
-    // Intentional: frame the battle the moment it becomes visible. Ref-gated to exactly one
-    // application per encounter — this is the "derive the view from newly-arrived data" effect, not
-    // a render loop.
-    focusFight(fightId)
-  }, [fightId, focusFight])
+    if (!fightId) return
+    // Intentional: derive the view from newly-arrived data. Both arms are gated so this is a poll-rate
+    // decision, never a render loop.
+    if (focusedFightRef.current !== fightId) {
+      focusedFightRef.current = fightId
+      focusFight(fightId) // a new battle: frame it once, unconditionally
+      return
+    }
+    if (framedCameraRef.current !== view) return // the camera is the player's now — leave it alone
+    const pts = combatFocusWorldPoints(combatUnits, fightId)
+    if (pts.length === 0 || worldPointsFramed(pts, view)) return
+    const cam = fitCameraToWorldPoints(pts)
+    if (sameCamera(cam, view)) return
+    // The SAME sanctioned "derive the view from newly-arrived data" case as the content-fit effect
+    // above: the rows land from a poll, so this runs at most once per server tick, and every path
+    // that could re-enter it is closed by the three guards above (camera identity, already-framed,
+    // sameCamera). It cannot cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    applyFightCamera(cam)
+  }, [fightId, focusFight, applyFightCamera, combatUnits, view])
   // Reset re-enables the deterministic content-fit camera (frames the player ship / active movement,
   // else named content). NOT k=1/origin — at k=1 the fixed frame would show current seed content as a
   // tiny central cluster.
@@ -725,7 +780,9 @@ export function GalaxyMap({
         <OverlayPanel className="flex flex-col gap-1">
           {/* FOCUS THE FIGHT — a CAMERA control, so it lives with the other camera controls rather
               than forking a second place that moves the view. Mounted only while a battle actually
-              has ships on the map; a clean map is unchanged. */}
+              has ships on the map; a clean map is unchanged. It is ALSO how a player who panned away
+              re-enters the follow above: it sets the camera through the same `applyFightCamera`, so
+              the frame starts keeping up with the battle again from that click. */}
           {fightId && (
             <Button
               size="icon"

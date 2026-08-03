@@ -68,6 +68,67 @@ test('the battle is FRAMED, not left as a few pixels of the default camera', asy
   expect(await cameraScale(page)).toBeGreaterThan(50)
 })
 
+// ── THE FIGHT MOVES, AND THE FRAME GOES WITH IT ────────────────────────────────────────────────────
+// The owner, playing: "When enemy ship is destroyed, i teleport to some random place inside the zone."
+// The camera framed the battle ONCE, around the anchor it opened on; 0337 then made an in-combat
+// reposition a real multi-tick MOVE that carries the formation, the fleet row and the engagement
+// anchor together (0337:486-492). The fight leaves the frame and keeps going out there, and what the
+// player is left looking at is empty space. Only a RENDERED measurement can see this: every resolver
+// is correct while it happens, and the units' own coordinates are right — it is the CAMERA that is
+// wrong, and a camera is only observable as pixels.
+const MAP_HOST = '#map-host'
+
+/** Is this rendered element inside the map's own box? The map clips to it, so anything outside is
+ *  something the player cannot see. Both rects are the browser's. */
+async function insideMap(page: Page, testId: string): Promise<boolean> {
+  const host = await page.locator(MAP_HOST).boundingBox()
+  const box = await page.getByTestId(testId).boundingBox()
+  if (!host || !box) return false
+  return (
+    box.x >= host.x &&
+    box.y >= host.y &&
+    box.x + box.width <= host.x + host.width &&
+    box.y + box.height <= host.y + host.height
+  )
+}
+
+/** The camera group's whole transform — scale AND translate, so a pan is as visible as a zoom. */
+const cameraTransform = (page: Page) =>
+  page.evaluate((sel) => document.querySelector(sel)?.getAttribute('transform') ?? '', CAMERA_G)
+
+test('the battle WALKS AWAY and the frame follows it — the fight is never left off-screen', async ({ page }) => {
+  expect(await insideMap(page, FLEET), 'the opening frame holds the fight').toBe(true)
+  // The whole engagement moves ~150 world units — about 4.5 opening frames away (fightFixtures).
+  await page.getByTestId('reposition-fight').click()
+  // Let the step finish: the move is played over the server's own measured 3 s (combatMotion), and
+  // sampling mid-tween would measure the interpolator, not the camera.
+  await page.waitForTimeout(3400)
+  expect(await insideMap(page, FLEET), 'the fleet must still be on the map after the fight moves').toBe(true)
+  expect(await insideMap(page, 'spatial-combat-unit-unit-e1'), 'and so must the enemy it is fighting').toBe(true)
+  // …and it is still READABLE: re-framed on the fight, not zoomed out to the whole world to cheat
+  // the containment check.
+  const gap = apart(await centre(page, FLEET), await centre(page, 'spatial-combat-unit-unit-e1'))
+  expect(gap, 'the moved fight must be framed, not merely visible').toBeGreaterThan(40)
+})
+
+test('a player who panned away is LEFT there — the follow never yanks the camera back', async ({ page }) => {
+  // Deliberate camera control: pan off the fight. A fight starting outranks the player's camera; a
+  // fight MOVING does not, and the ⌖ control is the way back.
+  await page.mouse.move(200, 300)
+  await page.mouse.down()
+  await page.mouse.move(20, 640)
+  await page.mouse.up()
+  const held = await cameraTransform(page)
+  await page.getByTestId('reposition-fight').click()
+  await page.waitForTimeout(3400)
+  expect(await cameraTransform(page), 'the camera the player set must not move on its own').toBe(held)
+  // …and ⌖ still frames the battle where it NOW is (it re-enters the follow, it is not redundant).
+  await page.getByTestId('map-focus-fight').click()
+  expect(await insideMap(page, FLEET)).toBe(true)
+  const gap = apart(await centre(page, FLEET), await centre(page, 'spatial-combat-unit-unit-e1'))
+  expect(gap).toBeGreaterThan(40)
+})
+
 test('the focus control is offered while a battle has ships on the map', async ({ page }) => {
   await expect(page.getByTestId('map-focus-fight')).toBeVisible()
   // and it still frames the fight after the player has panned somewhere else entirely
