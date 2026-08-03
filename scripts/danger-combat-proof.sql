@@ -55,8 +55,11 @@
 --                              it is due is REFUSED (intercepted_in_transit) and the ambush fires.
 --   DZCOMBAT_PASS_SPATIAL    — the opened encounter is SPATIAL: player combat_units carry non-NULL
 --                              pos_x/pos_y and the command ship carries its fitted weapon range.
---   DZCOMBAT_PASS_PIRATEFIRE — after one process_combat_ticks(): a synthetic pirate spawned, FIRED a
---                              spatial missile_salvo, and took real damage back.
+--   DZCOMBAT_PASS_PIRATEFIRE — (re-premised 0336) a synthetic pirate spawns SILENT — it cannot fire on
+--                              the tick it arrives, because 0336 stands a wave outside its own reach
+--                              BY CONSTRUCTION — then CLOSES and FIRES a spatial missile_salvo whose
+--                              unit_id/target_id RESOLVE to a real enemy row and a real player SHIP
+--                              row of this encounter, and takes real damage back.
 --   DZCOMBAT_PASS_ROSTERAUTH — (0308) a ship UNASSIGNED after a concluded fight is NOT seeded into
 --                              the fleet's next ambush — it keeps its berth, status, hp — while the
 --                              ship still on the roster IS seeded; the re-ambush freeze REPLACED the
@@ -813,41 +816,127 @@ begin
   raise notice 'DZCOMBAT_PASS_SPATIAL ok: the intercept opened a SPATIAL encounter — % player units positioned, command ship carries its catalog %-range ring', n_pos, v_cat_range;
 end $$;
 
--- ════════ DZCOMBAT_PASS_PIRATEFIRE: one tick → a spawned + firing pirate, damage dealt back ══════════
+-- ════════ DZCOMBAT_PASS_PIRATEFIRE: the wave arrives SILENT, CLOSES, then FIRES for real ═════════════
+-- ── 0336 RE-PREMISED: THE SPAWN TICK IS NO LONGER THE FIRING TICK, AND THAT IS A NEW PROPERTY ─────
+-- WHAT THIS BLOCK PROVED BEFORE: after ONE process_combat_ticks() a synthetic pirate exists, carries a
+-- position, has emitted a spatial missile_salvo carrying unit_id/target_id, and has taken damage back.
+-- Every one of those is still true. The only thing that died is the TICK NUMBER: 0336 spawns a wave at
+-- (the MEASURED player-formation extent + THAT wave's own weapon range + 1) from the engagement anchor,
+-- so the wave arrives strictly outside its own reach of EVERY player ship by construction and cannot
+-- fire on the tick it spawns. "on tick 1" was a statement about the pre-0336 geometry, where every
+-- enemy was inserted on the anchor — i.e. on top of the lead, at distance 0 — and therefore shot the
+-- instant it existed. Asserting it now is asserting a world that no longer exists.
+--
+-- WHAT IS ASSERTED NOW, AND WHY IT IS AT LEAST AS STRONG:
+--   (1) NEW, AND ONLY 0336 MAKES IT STATABLE — the wave is SILENT on its spawn tick. The old form
+--       could not have asserted this: before 0336 the true answer was "it fires immediately". A body
+--       that ever lets a freshly-spawned wave shoot across its own structural clearance fails HERE.
+--   (2) THE FIRE ITSELF, OBSERVED RATHER THAN ASSUMED — ticks are driven until a pirate-sourced
+--       missile_salvo actually exists. The exit condition is the OBSERVATION, never a tick count: how
+--       many closing ticks a wave needs is a function of the site's difficulty (which sets both the
+--       wave's range and its speed) and of the fleet's own combat speed, and pinning a number here
+--       would re-introduce exactly the ambient assumption 0336 removed. The iteration is BOUNDED and
+--       a wave that never fires fails loudly, with the encounter status in the message.
+--   (3) STRONGER PAYLOAD — the old form only checked that the keys 'unit_id' and 'target_id' were
+--       PRESENT. They must now RESOLVE: unit_id to an enemy row OF THIS ENCOUNTER and target_id to a
+--       player SHIP row of it. A salvo addressed to nothing used to pass this block.
+--   (4) UNCHANGED — the pirate took real damage back (hp_current < hp_max), now NULL-pinned so an
+--       unwritten hp column cannot make the comparison vacuous.
+-- THE CADENCE DRIVER IS THE FILE'S OWN. This block used to hand-roll the rewind-then-tick idiom;
+-- pg_temp.ae_tick IS that idiom, already counted by the harness, so the block composes it and the
+-- proof ends up with one FEWER direct engine call site rather than one more.
 do $$
 declare
-  n int; v_enc uuid := (select v from dzc where k='v_enc');
+  n int; i int;
+  v_enc uuid := (select v from dzc where k='v_enc');
   v_e_hpmax double precision; v_e_hpcur double precision; v_e_dist double precision;
   v_eng_x double precision; v_eng_y double precision;
+  v_tick int; v_fire_tick int := null; v_status text;
 begin
   select count(*) into n from public.combat_units where encounter_id = v_enc and side = 'enemy';
   if n <> 0 then raise exception 'DZCOMBAT FAIL PIRATEFIRE precondition: % enemy rows before the first tick (want 0)', n; end if;
 
-  update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
-  perform public.process_combat_ticks();
+  -- ── THE SPAWN TICK ────────────────────────────────────────────────────────────────────────────
+  perform pg_temp.ae_tick(v_enc);
+  select tick_number into v_tick from public.combat_encounters where id = v_enc;
+  if v_tick is distinct from 1 then
+    raise exception 'DZCOMBAT FAIL PIRATEFIRE: the spawn tick is numbered % (want 1) — the silence assert below would be reading a tick that is not the one the wave arrived on', v_tick;
+  end if;
 
   select count(*) into n from public.combat_units
     where encounter_id = v_enc and side = 'enemy' and unit_type_id = 'pirate_synthetic' and pos_x is not null;
   if n < 1 then raise exception 'DZCOMBAT FAIL PIRATEFIRE: no positioned synthetic pirate spawned after tick 1'; end if;
 
-  -- the pirate spawns at the ENGAGEMENT point (the ambush), not at the location centre.
+  -- ── (1) 0336's NEW PROPERTY: A WAVE CANNOT SHOOT ON THE TICK IT ARRIVES ───────────────────────
+  select count(*) into n from public.combat_events
+    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'pirate';
+  if n <> 0 then
+    raise exception 'DZCOMBAT FAIL PIRATEFIRE: % pirate salvo(s) on the SPAWN tick — 0336 stands a wave at (measured player extent + its own range + 1), i.e. strictly outside its own reach of every player ship, so it MUST close before it can fire', n;
+  end if;
+
+  -- ── (2) DRIVE TICKS UNTIL THE WAVE HAS CLOSED AND ACTUALLY FIRED ─────────────────────────────
+  for i in 1 .. 12 loop
+    exit when v_fire_tick is not null;
+    select status into v_status from public.combat_encounters where id = v_enc;
+    if v_status is distinct from 'active' then
+      raise exception 'DZCOMBAT FAIL PIRATEFIRE: the encounter went % during the approach — it never got to fire, so this block observed nothing it exists to prove', v_status;
+    end if;
+    perform pg_temp.ae_tick(v_enc);
+    select tick_number into v_tick from public.combat_encounters where id = v_enc;
+    select count(*) into n from public.combat_events
+      where encounter_id = v_enc and tick_number = v_tick and event_type = 'missile_salvo'
+        and source = 'pirate' and payload_json ? 'unit_id' and payload_json ? 'target_id';
+    if n > 0 then v_fire_tick := v_tick; end if;
+  end loop;
+  if v_fire_tick is null then
+    raise exception 'DZCOMBAT FAIL PIRATEFIRE: no pirate-sourced spatial missile_salvo (with unit_id/target_id) within 12 ticks of the spawn — the wave never closed into its own range';
+  end if;
+  -- NON-VACUITY: the loop must have OBSERVED a closing approach. Tick 1 is pinned silent above, so a
+  -- first salvo on tick 1 would mean the two asserts contradict each other rather than that the loop ran.
+  if v_fire_tick <= 1 then
+    raise exception 'DZCOMBAT FAIL PIRATEFIRE: the first pirate salvo is recorded on tick % — the spawn tick was pinned SILENT, so this block observed no closing approach at all', v_fire_tick;
+  end if;
+
+  -- ── (3) THE PAYLOAD MUST RESOLVE, NOT MERELY EXIST ───────────────────────────────────────────
+  -- Compared as TEXT on purpose: a malformed payload must fail as a missing pair here, not as an
+  -- uncaught invalid-uuid cast somewhere inside the exists().
+  select count(*) into n from public.combat_events ev
+    where ev.encounter_id = v_enc and ev.tick_number = v_fire_tick
+      and ev.event_type = 'missile_salvo' and ev.source = 'pirate' and ev.target = 'player'
+      and exists (select 1 from public.combat_units u
+                   where u.encounter_id = v_enc and u.side = 'enemy'
+                     and u.id::text = ev.payload_json->>'unit_id')
+      and exists (select 1 from public.combat_units u
+                   where u.encounter_id = v_enc and u.side = 'player' and u.main_ship_id is not null
+                     and u.id::text = ev.payload_json->>'target_id');
+  if n < 1 then
+    raise exception 'DZCOMBAT FAIL PIRATEFIRE: the tick-% pirate salvo does not RESOLVE to a real firer/target pair — unit_id must name an enemy row of this encounter and target_id a player SHIP row of it', v_fire_tick;
+  end if;
+
+  -- WHERE IT STANDS. The wave is laid out on a ring around the ENGAGEMENT anchor — the point the
+  -- ambush recorded — not around the location centre, and (since 0336) not ON the anchor either.
+  -- Measured here for the notice and NULL-pinned so the notice cannot report a distance from nothing;
+  -- the exact ring is pinned where it is OWNED (DZCOMBAT_PASS_WAVERING, DZCOMBAT_PASS_CLOSURE).
   select engagement_x, engagement_y into v_eng_x, v_eng_y from public.combat_encounters where id = v_enc;
+  if v_eng_x is null or v_eng_y is null then
+    raise exception 'DZCOMBAT FAIL PIRATEFIRE: the encounter carries no engagement anchor (engagement_x/y is NULL) — the distance below would be measured from nothing';
+  end if;
   select public.osn_distance(pos_x, pos_y, v_eng_x, v_eng_y) into v_e_dist
-    from public.combat_units where encounter_id = v_enc and side = 'enemy' limit 1;
+    from public.combat_units where encounter_id = v_enc and side = 'enemy' order by id limit 1;
   if v_e_dist is null then raise exception 'DZCOMBAT FAIL PIRATEFIRE: could not measure the pirate distance'; end if;
 
-  select count(*) into n from public.combat_events
-    where encounter_id = v_enc and tick_number = 1 and event_type = 'missile_salvo' and source = 'pirate'
-      and payload_json ? 'unit_id' and payload_json ? 'target_id';
-  if n < 1 then raise exception 'DZCOMBAT FAIL PIRATEFIRE: no pirate-sourced spatial missile_salvo (with unit_id/target_id) on tick 1'; end if;
-
+  -- ── (4) IT TOOK REAL DAMAGE BACK ─────────────────────────────────────────────────────────────
   select hp_max, hp_current into v_e_hpmax, v_e_hpcur
-    from public.combat_units where encounter_id = v_enc and side = 'enemy' limit 1;
+    from public.combat_units where encounter_id = v_enc and side = 'enemy' order by id limit 1;
+  if v_e_hpmax is null or v_e_hpcur is null then
+    raise exception 'DZCOMBAT FAIL PIRATEFIRE: the pirate carries a NULL hp column (max %, current %) — the damage comparison below would be vacuous', v_e_hpmax, v_e_hpcur;
+  end if;
   if v_e_hpcur >= v_e_hpmax then
     raise exception 'DZCOMBAT FAIL PIRATEFIRE: pirate hp_current (%) not below hp_max (%) — no damage exchanged', v_e_hpcur, v_e_hpmax;
   end if;
 
-  raise notice 'DZCOMBAT_PASS_PIRATEFIRE ok: a synthetic pirate spawned near the engagement point (post-tick dist %), FIRED a spatial missile_salvo, and took real damage (hp %/%)', v_e_dist, v_e_hpcur, v_e_hpmax;
+  raise notice 'DZCOMBAT_PASS_PIRATEFIRE ok: the wave arrived SILENT on its spawn tick (0336 stands it outside its own reach by construction — zero pirate salvos on tick 1), then CLOSED and fired its first spatial missile_salvo on tick %, whose unit_id/target_id RESOLVE to a real enemy row and a real player ship row of this encounter; it stands % from the engagement anchor (the ambush point, never the location centre) and took real damage back (hp %/%)',
+    v_fire_tick, round(v_e_dist::numeric, 2), v_e_hpcur, v_e_hpmax;
 end $$;
 
 -- ════════ DZCOMBAT_PASS_MANIFESTHELD: an ambush on a fleet holding a RETAINED manifest ══════════════

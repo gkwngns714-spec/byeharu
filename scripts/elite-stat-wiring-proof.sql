@@ -10,13 +10,20 @@
 --                       plan, compared against an INDEPENDENTLY recomputed 0261 expectation (the count
 --                       roll re-derived here from the 0261 salt/idiom), across 16 seeds. Only the
 --                       top-level elite_policy tag differs (disabled_v1 -> multiplier_v1).
---   (d) FLAG-OFF      — with encounter_resolver_enabled=false the wave is the VERBATIM synthetic one.
+--   (d) FLAG-OFF      — with encounter_resolver_enabled=false the wave is the VERBATIM synthetic one:
+--                       the right row count, unit_type_id, hp_max formula and a NULL resolved_plan_json,
+--                       and (0336 repoint) the unit standing exactly on
+--                       combat_formation_point(anchor, MEASURED player extent + its OWN weapon range
+--                       + 1, slot, phase 0.5) — the ring replaced "at the location center", which was
+--                       only ever true while both spawn arms inserted every unit on the anchor.
 --   (e) DETERMINISM   — two resolves of the same (location, seed) are identical (the 0041 law).
 --   (f) WEAPONS/DAMAGE— elite AND normal enemy units, and the player unit, all carry a NON-EMPTY
 --                       weapons_json and real damage flows both ways. THIS IS THE FLEET-1 REGRESSION
 --                       GUARD: an empty weapons_json silently yielding 0 damage is the exact failure
 --                       that destroyed the owner's Fleet 1 (0262 is the fix path). Prove it cannot recur
---                       on the elite path.
+--                       on the elite path. (0336 repoint: the two-way damage is read from the tick it
+--                       is OBSERVED on rather than from the spawn tick — a wave now arrives outside its
+--                       own reach and has to CLOSE before it can fight back.)
 --
 -- Self-rolling-back (begin;...rollback;): flips every gate flag ONLY inside the txn, keeps ZERO state.
 -- combat_damage_variance_pct is pinned 0 (v_variance = 1) so every hp/damage number is exact; no session
@@ -133,9 +140,37 @@ begin
   perform public.set_game_config('combat_hit_variance_pct', '0'::jsonb);      -- exact numbers (0314 per-hit roll)
   perform public.set_game_config('combat_tick_logging',  'true'::jsonb);
   perform public.set_game_config('combat_event_logging', 'true'::jsonb);
-  perform public.set_game_config('enemy_synthetic_range_base', '10000'::jsonb); -- in range at dist 0
+  -- ── 0336 REPOINTED THIS SCENARIO'S GEOMETRY, AND THE OLD SPELLING IS NOW ACTIVELY HARMFUL ──────
+  -- This line used to read `enemy_synthetic_range_base = 10000  -- in range at dist 0`. Both halves of
+  -- that comment are dead:
+  --   * "at dist 0" — every enemy used to be inserted ON the engagement anchor, i.e. on top of the
+  --     player's lead ship. 0336 lays a wave out on a ring at (the MEASURED player-formation extent +
+  --     THAT unit's own weapon range + 1), so nothing stands at distance 0 from anything any more.
+  --   * "in range"  — a wave now arrives strictly OUTSIDE its own reach BY CONSTRUCTION, at every
+  --     difficulty. No range value can put it in range at spawn; that is the whole point of the fix.
+  -- What the 10000 does UNDER 0336 is exile the wave 10,001 units from a player whose gun reaches 5:
+  -- the enemy is unreachable, the player never fires, and every downstream assert in this file that
+  -- needs a shot to land dies with it. That ~10,000-unit spawn is the RULE WORKING, not a runaway —
+  -- recorded here so nobody re-chases it as a spawn bug.
+  -- THE REPOINT: choose a range whose STRUCTURAL clearance (range + 1) still fits inside the player's
+  -- own gun, so the wave lands where the player can reach it. 3 + base_difficulty*0.04 is 3.2-3.4 at
+  -- the difficulties this file touches — a spawn radius of 4.2-4.4 against a 5-unit autocannon.
+  perform public.set_game_config('enemy_synthetic_range_base', '3'::jsonb);
+  -- and the wave HOLDS exactly where 0336 puts it, so the FLAG-OFF block can compare its position
+  -- against combat_formation_point with no tolerance to hide behind. Raised to a positive value before
+  -- the RESOLVED run below, where the enemy has to CLOSE into its own range for the (f) two-way
+  -- damage assert.
   perform public.set_game_config('enemy_synthetic_speed_base', '0'::jsonb);
   perform public.set_game_config('enemy_synthetic_speed_per_difficulty', '0'::jsonb);
+  -- ── AND THE PLAYER HOLDS TOO — 0336's other consequence, OWNED rather than suffered. ───────────
+  -- A wave standing outside its own reach means every player ship can hit it while it cannot hit back,
+  -- which is precisely the KITE arm of combat_unit_decide_move: the player retreats to the edge of its
+  -- own range on every tick of every fight in this file. That drags the player formation's extent up
+  -- tick by tick, which moves the NEXT wave's spawn radius, which eventually pushes a wave outside the
+  -- player's gun and stalls the run. This file's scenario has always been "nothing moves"; under 0336
+  -- that costs BOTH speeds, not just the enemy's. Zeroing the scale makes every player row's
+  -- combat_units.move_speed 0, so the KITE step is least(0, ...) = 0 — the ship holds, and still fires.
+  perform public.set_game_config('combat_player_speed_scale', '0'::jsonb);
   -- enemy_hp_base / enemy_attack_base stay at their DEFAULTS: the enemy must really shoot back, so the
   -- (f) damage assertions measure real two-way damage rather than a zeroed-out stub.
 end $$;
@@ -388,22 +423,62 @@ begin
 end $$;
 
 -- ════════ (d) ELITE_PASS_FLAGOFF_SYNTHETIC — resolver off ⇒ the VERBATIM pre-resolver synthetic wave ══
+-- ── 0336 RE-PREMISED: "AT THE LOCATION CENTER" IS DEAD; THE RING IT LANDS ON IS NOT ──────────────
+-- The property this block owns is UNCHANGED: with encounter_resolver_enabled=false the tick must
+-- spawn the VERBATIM pre-E3 synthetic wave — the right row count, the right unit_type_id, the right
+-- hp_max formula, resolved_plan_json still NULL. Exactly ONE clause of it died. "the enemy is at the
+-- location center" was true only because both spawn arms inserted every unit at the engagement
+-- anchor; 0336 gives each unit its own slot on a ring, so that clause is now a statement about a
+-- world that no longer exists — and deleting it outright would throw away the only positional
+-- coverage this block has.
+-- IT IS REPLACED BY THE GEOMETRY THAT IS NOW TRUE, AND THAT GEOMETRY IS STRICTLY MORE INFORMATIVE:
+-- the unit must sit exactly on combat_formation_point(anchor, extent + its OWN weapon range + 1,
+-- slot, 0.5) for some slot of this wave. Every input is DERIVED, never typed in — the anchor from the
+-- same coalesce(engagement_x, loc.x) the tick evaluates, the extent MEASURED off the living player
+-- rows before the wave exists, and the range read back off the row's own frozen weapons_json. The old
+-- clause pinned two coordinates against one point; this pins them against the leaf the engine itself
+-- composes, so a spawn arm that stopped using combat_formation_point, or used it at the wrong radius,
+-- phase or slot, fails HERE rather than rendering a fight in the wrong place.
 update public.game_config set value='false'::jsonb where key='encounter_resolver_enabled';
 do $$
 declare uZ uuid := (select v from elfx where k='uZ'); g1 uuid := (select v from elfx where k='g1');
   v_hunt uuid := (select v from elfx where k='hunt'); v_enc uuid;
-  v_lx double precision; v_ly double precision; n int;
+  n_players int; n_enemy int; v_slot int; v_slot_found int := null;
   v_hpmax double precision; v_exp_hp double precision; v_px double precision; v_py double precision; v_ut text;
+  v_ax double precision; v_ay double precision; v_extent double precision; v_erange double precision;
+  v_fx double precision; v_fy double precision;
 begin
-  select x, y into v_lx, v_ly from public.locations where id = v_hunt;
   v_enc := pg_temp.send_and_settle(uZ, g1, v_hunt);
   insert into elfx values ('enc1', v_enc);
+
+  -- ── 0336: THE ANCHOR AND THE PLAYER EXTENT, BOTH READ BEFORE THE WAVE EXISTS ──────────────────
+  -- The tick places a wave around coalesce(combat_encounters.engagement_x, locations.x) — composed
+  -- here as the same expression, never as a literal. The extent is measured over the LIVING player
+  -- rows, which is what the spawn arm itself does, and it has to be read BEFORE the spawn tick: the
+  -- spawn happens before any movement inside that tick, so a reading taken afterwards would be the
+  -- extent of a formation that has already moved, not the one the wave was placed against.
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y) into v_ax, v_ay
+    from public.combat_encounters ce join public.locations l on l.id = ce.location_id
+   where ce.id = v_enc;
+  if v_ax is null or v_ay is null then
+    raise exception 'ELITE PROOF FAIL FLAGOFF: the encounter has no engagement anchor (engagement_x/y and the location centre are both NULL) — the spawn geometry below would be measured from nothing';
+  end if;
+  select count(*), coalesce(max(public.osn_distance(v_ax, v_ay, u.pos_x, u.pos_y)), 0)
+    into n_players, v_extent
+    from public.combat_units u
+   where u.encounter_id = v_enc and u.side = 'player' and u.alive_count > 0
+     and u.pos_x is not null and u.pos_y is not null;
+  -- NON-VACUITY: with no positioned living player row the coalesce would hand back a DEFAULT 0 that
+  -- looks exactly like a real measurement of a lone hull standing on the anchor.
+  if n_players < 1 then
+    raise exception 'ELITE PROOF FAIL FLAGOFF: no positioned living player unit before the spawn tick — the extent below would be a default rather than a measurement, and the radius assert would prove nothing';
+  end if;
 
   update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
   perform public.process_combat_ticks();
 
-  select count(*) into n from public.combat_units where encounter_id = v_enc and side='enemy';
-  if n <> 1 then raise exception 'ELITE PROOF FAIL FLAGOFF: % enemy rows (want the 1 synthetic)', n; end if;
+  select count(*) into n_enemy from public.combat_units where encounter_id = v_enc and side='enemy';
+  if n_enemy <> 1 then raise exception 'ELITE PROOF FAIL FLAGOFF: % enemy rows (want the 1 synthetic)', n_enemy; end if;
   select hp_max, pos_x, pos_y, unit_type_id into v_hpmax, v_px, v_py, v_ut
     from public.combat_units where encounter_id = v_enc and side='enemy';
   if v_ut <> 'pirate_synthetic' then raise exception 'ELITE PROOF FAIL FLAGOFF: enemy unit_type % (want pirate_synthetic)', v_ut; end if;
@@ -411,23 +486,60 @@ begin
               * coalesce(public.cfg_num('enemy_hp_base'),14)
               * (1 + 1 * coalesce(public.cfg_num('enemy_hp_danger_scale'),0.6)) * 1;
   if abs(v_hpmax - v_exp_hp) > 0.001 then raise exception 'ELITE PROOF FAIL FLAGOFF: enemy hp_max % <> the verbatim synthetic formula %', v_hpmax, v_exp_hp; end if;
-  if v_px is distinct from v_lx or v_py is distinct from v_ly then raise exception 'ELITE PROOF FAIL FLAGOFF: enemy not at the location center'; end if;
+
+  -- ── 0336 REPOINT OF THE POSITION CLAUSE ───────────────────────────────────────────────────────
+  -- NULL-PINNED FIRST: `x is distinct from NULL` is TRUE for every real number, so an unwritten
+  -- coordinate would have satisfied the OLD clause and would satisfy a naive distance form of the new
+  -- one. Absence of a position is failure here, never evidence.
+  if v_px is null or v_py is null then
+    raise exception 'ELITE PROOF FAIL FLAGOFF: the spawned enemy carries a NULL coordinate (%,%) — a missing position must fail, never pass a geometry assert by absence', v_px, v_py;
+  end if;
+  select max((w->>'range')::double precision) into v_erange
+    from public.combat_units cu, jsonb_array_elements(cu.weapons_json) w
+   where cu.encounter_id = v_enc and cu.side = 'enemy';
+  if v_erange is null then
+    raise exception 'ELITE PROOF FAIL FLAGOFF: the spawned enemy carries no weapon range in its own weapons_json — the spawn radius is DERIVED from that range and cannot be formed';
+  end if;
+  for v_slot in 0 .. n_enemy - 1 loop
+    select fp.x, fp.y into v_fx, v_fy
+      from public.combat_formation_point(v_ax, v_ay, v_extent + v_erange + 1, v_slot, 0.5) fp;
+    if v_fx is not null and v_fy is not null
+       and abs(v_px - v_fx) <= 0.000001 and abs(v_py - v_fy) <= 0.000001 then
+      v_slot_found := v_slot; exit;
+    end if;
+  end loop;
+  if v_slot_found is null then
+    raise exception 'ELITE PROOF FAIL FLAGOFF: the synthetic enemy stands at (%,%), which is not combat_formation_point(anchor %,%, radius % = measured extent % + its own range % + 1, slot, phase 0.5) for any slot of this wave — the flag-off arm is no longer laying the pre-E3 wave out through the one formation authority',
+      v_px, v_py, v_ax, v_ay, v_extent + v_erange + 1, v_extent, v_erange;
+  end if;
+
   if (select resolved_plan_json from public.combat_encounters where id = v_enc) is not null then
     raise exception 'ELITE PROOF FAIL FLAGOFF: resolved_plan_json is not NULL on a synthetic encounter';
   end if;
-  raise notice 'ELITE_PASS_FLAGOFF_SYNTHETIC';
+  raise notice 'ELITE_PASS_FLAGOFF_SYNTHETIC (verbatim pre-E3 wave: 1 pirate_synthetic row, hp_max %, resolved_plan_json NULL, standing exactly on combat_formation_point(anchor %,%, extent % + its own range % + 1, slot %, phase 0.5))',
+    round(v_hpmax::numeric, 3), v_ax, v_ay, v_extent, v_erange, v_slot_found;
 
   update public.combat_encounters set status='defeat', ended_at=now() where id = v_enc;
 end $$;
 
 -- ════════ (a)(b)(f) THE REAL CHAIN with the resolver ON — elite units spawn, are stronger, and FIGHT ══
 update public.game_config set value='true'::jsonb where key='encounter_resolver_enabled';
+-- ── 0336: THE WAVE HAS TO BE ABLE TO CLOSE HERE, WHICH THE FLAG-OFF BLOCK DELIBERATELY DENIED IT ──
+-- The FLAG-OFF block above froze the enemy at speed 0 so its position could be compared against
+-- combat_formation_point exactly. This block asserts (f), REAL TWO-WAY DAMAGE, and under 0336 a wave
+-- arrives strictly outside its own reach — so with speed 0 it would stand there forever and the enemy
+-- half of (f) could never be satisfied on a correct engine. The wave is given a speed so it CLOSES,
+-- which is what a wave does in the real game; the player still holds (combat_player_speed_scale 0), so
+-- the approach converges instead of turning into a kite chase. Owned in-txn like every other knob here
+-- and rolled back with the transaction.
+do $$ begin perform public.set_game_config('enemy_synthetic_speed_base', '2'::jsonb); end $$;
 do $$
 declare uZ uuid := (select v from elfx where k='uZ'); g2 uuid := (select v from elfx where k='g2');
   v_hunt uuid := (select v from elfx where k='hunt'); v_enc uuid; v_plan jsonb;
-  n int; v_ceiling int; v_mult double precision;
+  n int; i int; v_ceiling int; v_mult double precision;
   v_hp_lo double precision; v_hp_hi double precision;
   v_pdmg double precision; v_edmg double precision; v_bad int;
+  v_alive int; v_dmg_tick int := null;
 begin
   v_ceiling := greatest(1, coalesce(public.cfg_num('enemy_synthetic_max_units'), 6)::integer);
   v_mult    := coalesce(public.cfg_num('encounter_elite_difficulty_multiplier'), 2);
@@ -471,15 +583,45 @@ begin
   if v_bad > 0 then
     raise exception 'ELITE PROOF FAIL WEAPONS: % combat_unit row(s) carry an empty/powerless weapons_json — this is the Fleet-1 zero-damage regression', v_bad;
   end if;
+  -- ── 0336: DRIVE TICKS UNTIL THE WAVE HAS CLOSED AND FOUGHT BACK ───────────────────────────────
+  -- (f) used to read the ONE tick this block ran, because before 0336 every enemy was inserted on top
+  -- of the player and both sides fired the instant the wave existed. 0336 stands a wave at (measured
+  -- player extent + its own range + 1), strictly outside its own reach, so the enemy half of (f) is
+  -- simply not true yet on the spawn tick — on a CORRECT engine. The property is unchanged and the
+  -- assertions below are untouched; only the tick they are read from is now OBSERVED rather than
+  -- assumed to be the first. Bounded, with a loud failure and the living-enemy count in the message.
+  for i in 1 .. 12 loop
+    exit when v_dmg_tick is not null;
+    select count(*) into v_alive from public.combat_units
+     where encounter_id = v_enc and side = 'enemy' and alive_count > 0;
+    if v_alive < 1 then
+      raise exception 'ELITE PROOF FAIL DAMAGE: every spawned enemy was destroyed before it closed into its own range — the enemy half of (f) was never exercised';
+    end if;
+    update public.combat_encounters set last_resolved_at = last_resolved_at - interval '1 minute' where id = v_enc;
+    perform public.process_combat_ticks();
+    select tick_number into v_dmg_tick from public.combat_ticks
+     where encounter_id = v_enc and coalesce(enemy_damage, 0) > 0
+     order by tick_number desc limit 1;
+  end loop;
+  if v_dmg_tick is null then
+    raise exception 'ELITE PROOF FAIL DAMAGE: no tick recorded any enemy damage within 12 ticks of the spawn — the spawned enemies never closed into their own range, so they do not fight';
+  end if;
+  -- NON-VACUITY: 0336 makes the spawn tick silent by construction, so the observed damage tick must be
+  -- strictly later. A tick-1 answer would mean the structural clearance is gone, not that (f) holds.
+  if v_dmg_tick < 2 then
+    raise exception 'ELITE PROOF FAIL DAMAGE: enemy damage is recorded on tick % — 0336 stands a wave outside its own reach at spawn, so it cannot have fought back on the tick it arrived', v_dmg_tick;
+  end if;
+
   select player_damage, enemy_damage into v_pdmg, v_edmg
-    from public.combat_ticks where encounter_id = v_enc order by tick_number desc limit 1;
+    from public.combat_ticks where encounter_id = v_enc and tick_number = v_dmg_tick;
   if coalesce(v_pdmg, 0) <= 0 then
     raise exception 'ELITE PROOF FAIL DAMAGE: the player dealt % damage — the Fleet-1 zero-damage failure has recurred', v_pdmg;
   end if;
   if coalesce(v_edmg, 0) <= 0 then
     raise exception 'ELITE PROOF FAIL DAMAGE: the enemy (elite + normal) dealt % damage — the spawned enemies do not fight', v_edmg;
   end if;
-  raise notice 'ELITE_PASS_WEAPONS_DAMAGE';
+  raise notice 'ELITE_PASS_WEAPONS_DAMAGE (two-way damage measured on tick %, after the 0336 approach: player % / enemy %)',
+    v_dmg_tick, round(v_pdmg::numeric, 3), round(v_edmg::numeric, 3);
 end $$;
 
 do $$ begin raise notice 'ELITE STAT WIRING PROOF PASSED'; end $$;
