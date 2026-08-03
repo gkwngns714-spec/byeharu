@@ -64,6 +64,11 @@ on:
       # block, which 0316 turned into a pinned tick-count property — a five-times-tighter branch
       # that does not fire this gate ships the whole geometry on text self-asserts alone.
       - 'slice-combat-five-times**'
+      # 0317 rewrites the combat tick again (a unit destroyed earlier in a tick takes no turn — no
+      # move, no shot, on either side) and this proof carries its behaviour block
+      # (DZCOMBAT_PASS_DEADFIRE), which is RED by construction on the pre-0317 body. A branch that
+      # changes who is allowed to act inside a tick and does not fire this gate ships on text alone.
+      - 'slice-the-dead**'
 
 permissions:
   contents: read
