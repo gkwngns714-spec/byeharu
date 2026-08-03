@@ -1788,7 +1788,11 @@ end $$;
 -- around a remembered constant — same three areas, same three properties, no ambient value asserted:
 --   S      = ra_zone     [px-150, px+150] x [py+200, py+500]      area  90,000 (holds A1)
 --   SLIVER = drawn here  [A1x-5,   A1x+5] x [A1y-100, A1y+100]    area   2,000 (holds A1)
---   BIG    = drawn here  [A1x-350, A1x+350] x [A1y-300, A1y+400]  area 490,000 (holds A1)
+--   BIG    = drawn here  [A1x-350, A1x+350] x [A1y-150, A1y+550]  area 490,000 (holds A1)
+--          BIG's y-window is offset UPWARD from the anchor on purpose: same 700-unit span (so the
+--          area, and this block's largest-holder property, are unchanged) but clear of the
+--          commission port every fixture in this file departs from. Enforced, not remembered — see
+--          the port guard in the body.
 --   order 1: D1 = A1 + (100, 0) — inside S and BIG, NOT inside SLIVER (the lowest-area holder).
 --   order 2: D2 = A1 + (250, 0) — inside BIG only; S does not contain it. Area order must not
 --            decide: geometry does.
@@ -1830,15 +1834,45 @@ begin
                                   'DZC Overlap Sliver Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'REPOOVERLAP FAIL: sliver zone: %', r; end if;
   z_sliver := (r->>'zone_id')::uuid;
+  -- BIG's y-extent is deliberately OFFSET UPWARD from the anchor (-150 .. +550, not -300 .. +400).
+  -- Both spans are 700 units, so the area — and therefore this block's "largest holder" property —
+  -- is identical; what the offset buys is CLEARANCE OVER THE COMMISSION PORT. See the port guard
+  -- immediately below for why that is load-bearing and how it is enforced rather than remembered.
   v_verts := jsonb_build_array(
-    jsonb_build_array(a1x - 350, a1y - 300),
-    jsonb_build_array(a1x + 350, a1y - 300),
-    jsonb_build_array(a1x + 350, a1y + 400),
-    jsonb_build_array(a1x - 350, a1y + 400));
+    jsonb_build_array(a1x - 350, a1y - 150),
+    jsonb_build_array(a1x + 350, a1y - 150),
+    jsonb_build_array(a1x + 350, a1y + 550),
+    jsonb_build_array(a1x - 350, a1y + 550));
   r := pg_temp.call_as(uZ, format('public.pirate_zone_create(%L, %L::jsonb, %L::uuid)',
                                   'DZC Overlap Big Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'REPOOVERLAP FAIL: big zone: %', r; end if;
   z_big := (r->>'zone_id')::uuid;
+
+  -- ── ⛔ THE PORT GUARD: NO ZONE THIS BLOCK DRAWS MAY COVER THE COMMISSION PORT. ─────────────────
+  -- EVERY fixture in this file launches from the SAME berth: port_entry_commission_build docks every
+  -- commissioned starter at the one Haven location, so (px,py) here is also the departure point of
+  -- blocks that run hundreds of lines later — NOLIVE among them.
+  -- This proof pins pirate_intercept_base/min/max/exposure_floor to 1.0, so a leg touching an ACTIVE
+  -- zone is ambushed with CERTAINTY. And a leg that BEGINS inside a zone has entry fraction 0, so
+  -- trigger_at = depart + duration*0 = depart = now() — and now() is constant inside this one
+  -- transaction, so that ambush is due the instant it is planned. A later block's
+  -- command_ship_group_stop then answers 'intercepted_in_transit', which is CORRECT behaviour (the
+  -- EVASION block above asserts exactly that rule) arriving in a block that never asked for a fight.
+  -- THAT IS NOT A HYPOTHETICAL: it is how this block broke NOLIVE. When 0337 made the anchor stop
+  -- teleporting, these zones were re-centred on the anchor, and BIG's y-extent — written then as
+  -- a1y-300 — reached 150 units BELOW Haven, because the anchor sits ~200 units above the port. Two
+  -- disposable runs failed identically, ~2,000 lines away, in a block about dead fleets.
+  -- So the invariant is ENFORCED HERE, at the drawing site, in the block that owns the geometry —
+  -- not remembered in a comment and not paid for by the victim. A future author who re-shapes these
+  -- zones gets a named failure with the coordinates, instead of a mystery two thousand lines later.
+  if px is null or py is null then
+    raise exception 'REPOOVERLAP FAIL fixture: the commission port coordinates were not handed over — the port guard below cannot run and a zone drawn over the port would break a later block instead of this one'; end if;
+  if public.danger_zone_contains_point(z_sliver, px, py)
+     or public.danger_zone_contains_point(z_big, px, py) then
+    raise exception 'REPOOVERLAP FAIL fixture: a zone drawn here covers the COMMISSION PORT (%,%) — sliver:% big:%. Every fixture in this file launches from that berth, and this proof pins intercept risk to 1.0, so a leg departing INSIDE an active zone is ambushed at entry fraction 0 (due immediately) and a later block''s stop is refused intercepted_in_transit. Move the zone, do not relax the victim.',
+      px, py,
+      public.danger_zone_contains_point(z_sliver, px, py),
+      public.danger_zone_contains_point(z_big, px, py); end if;
 
   -- ── vacuity + isolation guards: the anchor is where the last block left it, the three zones hold
   -- ── it, the SLIVER is the lowest-area holder, and nothing else holds it. All derived, not assumed.
@@ -1952,6 +1986,12 @@ begin
                                   'DZC Far Non-Holder Zone', v_verts::text, v_hunt));
   if (r->>'ok')::boolean is not true then raise exception 'REPOOUTSIDE FAIL: far zone: %', r; end if;
   z_far := (r->>'zone_id')::uuid;
+  -- THE PORT GUARD, same law as REPOOVERLAP's: this block draws an ACTIVE zone while intercept risk
+  -- is pinned to 1.0, and every later fixture launches from the commission port. A zone over that
+  -- berth makes a later leg start inside it, due at entry fraction 0, and refuses that block's stop
+  -- with intercepted_in_transit. Uniform, cheap, and it names the offender at the drawing site.
+  if public.danger_zone_contains_point(z_far, px, py) then
+    raise exception 'REPOOUTSIDE FAIL fixture: the far zone covers the COMMISSION PORT (%,%) — every fixture in this file departs from that berth; move the zone, do not relax the block it breaks', px, py; end if;
 
   -- ── vacuity guards, all derived through the deployed authorities the mover itself consults. ─────
   select * into e from public.combat_encounters where id = v_enc;
