@@ -9,10 +9,9 @@ import {
   repairConfigFromRows,
   repairCostFor,
   repairDockState,
-  repairDockStateLine,
+  repairPriceLabel,
   type ShipHull,
 } from '../src/features/ship/repairEconomy'
-import { repairReasonMessage } from '../src/features/ship/repairReasonMessage'
 import type { FleetPositionPlace } from '../src/features/map/mainshipApi'
 
 // REPAIR-ECON — pure-logic specs for the hull-repair client mirrors (no app/Supabase). Asserts the
@@ -220,14 +219,9 @@ test('a berthed ship is REPAIRABLE in the mirror (the fleet-less dead end is gon
   expect(verdict).toEqual({ canRepair: true, reason: 'ok' })
 })
 
-test('repairDockStateLine: one honest sentence per blocked state; silence where no claim is honest', () => {
-  // at_port → the mend renders instead; unknown → no claim either way. Both say nothing.
-  expect(repairDockStateLine('at_port')).toBeNull()
-  expect(repairDockStateLine('unknown')).toBeNull()
-  // away → the availability mirror's not_at_port copy VERBATIM (one sentence source: a real server
-  // reject shows the same words).
-  expect(repairDockStateLine('away')).toBe(repairReasonMessage('not_at_port'))
-})
+// (The position SENTENCE moved to shipRecovery.repairPositionLine with the one-surface slice: one
+// function now answers for a wreck and a dent alike, so this module keeps only the position FOLD.
+// Its specs live in tests/shipRecovery.spec.ts.)
 
 test('a not-at-port fold flows to the not_at_port verdict', () => {
   const verdict = repairAvailability({
@@ -236,6 +230,35 @@ test('a not-at-port fold flows to the not_at_port verdict', () => {
   })
   expect(verdict).toEqual({ canRepair: false, reason: 'not_at_port' })
   expect(repairBlocks(verdict.reason)).toBe(true) // structural: the Repair button hard-disables
+})
+
+// ── price honesty (ONE price vocabulary for the ONE surface) ────────────────────────────────────────
+// The surface prices a wreck (free by law) and a dent (the knob) through the same label, so the
+// player reads one vocabulary. THE POINT: at the knob's live production value of 0 the desk used to
+// render "0 cr", which reads like a broken price rather than a free repair.
+test('repairPriceLabel: a real 0 says FREE; a real price says the price; unknown says nothing', () => {
+  expect(repairPriceLabel(0)).toBe('Free')
+  expect(repairPriceLabel(300)).toBe('300 cr')
+  expect(repairPriceLabel(1234567)).toBe('1,234,567 cr')
+  // null is "cost unknown — make no claim" (foldRepairRate's null), NOT free.
+  expect(repairPriceLabel(null)).toBe('—')
+  expect(repairPriceLabel(null)).not.toBe(repairPriceLabel(0))
+})
+
+test('price honesty end-to-end: the SAME label prices a knob-0 mend and a knob-2.5 mend', () => {
+  const free = repairConfigFromRows([
+    { key: 'repair_economy_enabled', value: true },
+    { key: 'repair_credits_per_hp', value: 0 },
+  ])
+  const priced = repairConfigFromRows([
+    { key: 'repair_economy_enabled', value: true },
+    { key: 'repair_credits_per_hp', value: 2.5 },
+  ])
+  expect(repairPriceLabel(repairCostFor(120, free.creditsPerHp))).toBe('Free')
+  expect(repairPriceLabel(repairCostFor(120, priced.creditsPerHp))).toBe('300 cr')
+  // A WRECK is free BY LAW (0335's cost policy sets v_per_hp := 0 for a wreck, ungated by the
+  // knob), and reads through the very same label — one price vocabulary, two policies.
+  expect(repairPriceLabel(0)).toBe('Free')
 })
 
 // ── button-disable policy (the salvage M2 posture) ──────────────────────────────────────────────────

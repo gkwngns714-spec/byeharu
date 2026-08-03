@@ -1,6 +1,5 @@
 import { strictConfigFlag } from '../../lib/gameConfigFold'
 import { foldStartingCredits, salvageStickyLit, salvageWalletDisplay } from '../port/salvageMarket'
-import { repairReasonMessage } from './repairReasonMessage'
 import type { FleetPosition } from '../map/mainshipApi'
 
 // REPAIR-ECON — PURE, framework-free types + client mirrors for the hull-repair desk.
@@ -123,20 +122,28 @@ export function repairDockState(pos: Pick<FleetPosition, 'place'> | undefined): 
   return 'away' // 'transit' | 'in_space'
 }
 
+// (The position SENTENCE lives in shipRecovery.repairPositionLine. It used to live here as
+// repairDockStateLine, the DENT half of a copy pair whose WRECK half — repairGateNote — lived in
+// shipRecovery.ts, because the two states were rendered by two different blocks. With one surface
+// there is one sentence source, and it is keyed on the two facts that decide the sentence: is this
+// a wreck, and where is it. This module keeps the position FOLD it owns the type for.)
+
 /**
- * The ONE line the condition surface shows for a damaged ship that cannot be repaired where it is —
- * null when there is nothing honest to say ('at_port' → the mend renders instead; 'unknown' → never
- * guess a claim). 'away' reuses the server's own not_at_port copy verbatim (ONE sentence source for
- * that reason — a real server reject shows the same words).
+ * THE ONE PRICE VOCABULARY for the repair surface — a wreck (free by law) and a dent (the knob)
+ * read through this same label, so the player never meets two ways of saying what a repair costs.
+ *
+ * ZERO SAYS "Free", NOT "0 cr". repair_credits_per_hp is 0 on production right now (the owner set
+ * it deliberately, and 0335 made the server honour 0 as FREE rather than as a misconfiguration).
+ * `${0} cr` renders as a broken-looking price for a repair that is genuinely free; this is the
+ * display half of that same correction.
+ *
+ * NULL IS NOT FREE. foldRepairRate answers null for an absent/unreadable/negative knob — "cost
+ * unknown, make no claim" — so it degrades to the em-dash, never to a free-repair promise the
+ * server would not honour.
  */
-export function repairDockStateLine(state: RepairDockState): string | null {
-  switch (state) {
-    case 'at_port':
-    case 'unknown':
-      return null
-    case 'away':
-      return repairReasonMessage('not_at_port')
-  }
+export function repairPriceLabel(cost: number | null): string {
+  if (cost === null) return '—'
+  return cost === 0 ? 'Free' : `${cost.toLocaleString('en-US')} cr`
 }
 
 // ── repair availability mirror (the 0335 reject order) ─────────────────────────────────────────────────
@@ -156,7 +163,7 @@ export type RepairReason =
 // precheck and let the server answer insufficient_credits — the salvage null-cap idiom) → ok.
 //
 // TWO deliberate divergences from the server's own order, both because this mirror is only ever
-// consulted for a LIVING hull (the panel renders under repairConcept === 'paid_mend'):
+// consulted for a LIVING hull (RepairPanel evaluates it inside its DENT policy block only):
 //   · `ship_destroyed` is gone. It was 0201's "this is the other function's job" reject; 0335 has no
 //     other function, and a wreck reaching this surface is a stale-status race the panel states
 //     honestly instead of mirroring.

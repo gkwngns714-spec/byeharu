@@ -1,4 +1,6 @@
 import { repairReasonMessage } from './repairReasonMessage'
+import { repairDockState, type RepairDockState } from './repairEconomy'
+import type { FleetPosition } from '../map/mainshipApi'
 
 // SHIP RECOVERY — the PURE view-model + copy for a DISABLED ship (migration 0297, unified by 0335).
 //
@@ -6,6 +8,17 @@ import { repairReasonMessage } from './repairReasonMessage'
 // Because a gate with no way out is a softlock, the same migration added the free always-available
 // tow (mainship_emergency_tow), which berths a wreck at the nearest port. This module is the ONE
 // place that decides which of the two a disabled ship should be offered.
+//
+// ONE SURFACE (this slice) — WHAT THIS MODULE STOPPED OWNING. 0335 unified the SERVER (one verb,
+// repair_ship_hull, whose only wreck/dent difference is the policy it applies) but the client kept
+// TWO repair blocks in FittingDetail and therefore kept the machinery to choose between them:
+//   · `repairConcept` — a SECOND decider beside `repairGate`, existing only to pick a mount. Two
+//     deciders over one fact need a spec asserting they agree, and tests/shipRecovery.spec.ts had
+//     exactly that. Both are deleted: `repairGate` is the one decider.
+//   · `canRepair` / `canTow` — a private two-valued action vocabulary, superseded by the ONE
+//     position vocabulary below ('away' is the tow; everything else is Repair).
+//   · `repairGateNote` — the WRECK half of a copy pair whose DENT half (repairDockStateLine) lived
+//     in repairEconomy.ts. One surface, one sentence source: `repairPositionLine`.
 //
 // 0335 REMOVED THIS MODULE'S SECOND JOB. It used to own a private reason vocabulary, because
 // repair_main_ship RAISED and its "reason codes" arrived as substrings of an exception message
@@ -33,27 +46,12 @@ export interface DisabledShipRow {
 }
 
 /**
- * REPAIR-WHERE-YOU-ARE — the ONE mount decision for the Fitting detail's condition block: which
- * repair SURFACE a ship's state gets. Since 0335 both surfaces command the same RPC
- * (repair_ship_hull); what differs is what the player is shown — a wreck gets a single free
- * "Repair ship" / "Tow" action, a living hull gets the priced stepper desk. Exactly one surface per
- * state, never both, never neither. Both mount sites in FittingDetail read THIS value; neither
- * carries its own status comparison, so the two surfaces can only flip together. Feed it the
- * freshest status available (the screen's refetched shared read, falling back to the selection row)
- * — a stale selection status here is what turns a mid-session destruction into a dead end.
- */
-export type RepairConcept = 'paid_mend' | 'free_recovery'
-
-export function repairConcept(status: string): RepairConcept {
-  return status === 'destroyed' ? 'free_recovery' : 'paid_mend'
-}
-
-/**
- * The ONE freshest-status resolution feeding every recovery decision (repairConcept, repairGate,
- * the roster rows' isDisabled): prefer the REFETCHED shared read (fetchMyMainShips — re-read on
- * every refresh-key tick and after every command), fall back to the never-repolled selection row.
- * One leaf composed at its three sites — three inline copies of `row?.status ?? sel.status` was
- * exactly the two-sites-one-comparison shape that produced the rev.1 dead end.
+ * The ONE freshest-status resolution feeding every state read of a ship (the repair surface's
+ * wreck policy and its gate, the roster rows' danger tone): prefer the REFETCHED shared read
+ * (fetchMyMainShips — re-read on every refresh-key tick and after every command), fall back to the
+ * never-repolled selection row. One leaf composed at its sites — inline copies of
+ * `row?.status ?? sel.status` were exactly the two-sites-one-comparison shape that produced the
+ * rev.1 dead end.
  *
  * HONEST LIMIT: the fallback is not only "pre-load". fetchMyMainShips collapses ANY read error to
  * [] (the repo-wide fail-soft API posture), so a failed shared read also lands here and the stale
@@ -97,27 +95,57 @@ export function repairGate(
   return row.at_port ? { kind: 'at_port', locationId: row.location_id } : { kind: 'adrift' }
 }
 
-/** Plain-language line above the action, per gate state. Says what is true and what to do. */
-export function repairGateNote(gate: RepairGate): string | null {
+/**
+ * ██ THE ONE POSITION ANSWER for the repair surface — a wreck and a dent alike. ██
+ *
+ * The server asks exactly one position question through exactly one authority
+ * (mainship_port_of_ship — 0335). The client needs TWO READS to cover every hull, because the two
+ * projections cover DISJOINT ship sets and neither can answer for the other:
+ *   · get_my_fleet_positions EXCLUDES destroyed ships outright (see shipRecoveryApi.ts's header) —
+ *     so a wreck has NO row, and a fold over `place` alone would answer 'unknown' for every wreck
+ *     forever, and the tow could never appear;
+ *   · get_my_disabled_ships contains ONLY destroyed ships — so it can say nothing about a dent.
+ * They are complementary, not duplicated. This fold is where they become ONE value, so the surface
+ * renders from a single position vocabulary and the panel carries no wreck/dent branch of its own
+ * for "where is it".
+ *
+ * The gate WINS for a wreck: if a positions row for a destroyed ship ever appeared (a stale wave,
+ * a server change), the readiness read is the authority the server's own gate agrees with.
+ */
+export function repairPosition(
+  gate: RepairGate,
+  pos: Pick<FleetPosition, 'place'> | undefined,
+): RepairDockState {
   switch (gate.kind) {
     case 'not_disabled':
-      return null
-    case 'adrift':
-      return '🛠 This ship is wrecked and adrift. Ships are only repaired in port — tow it in first.'
+      return repairDockState(pos) // a living hull: its own fleet-positions row
     case 'at_port':
+      return 'at_port'
+    case 'adrift':
+      return 'away'
     case 'unknown':
-      return '🛠 This ship is disabled. Repair it to get moving again.'
+      return 'unknown' // NOT 'away' — the tow never displaces a Repair we cannot rule out
   }
 }
 
-/** Whether the Repair action can be pressed for this gate state. */
-export function canRepair(gate: RepairGate): boolean {
-  return gate.kind === 'at_port' || gate.kind === 'unknown'
-}
-
-/** Whether the Tow action should be offered instead. */
-export function canTow(gate: RepairGate): boolean {
-  return gate.kind === 'adrift'
+/**
+ * ██ THE ONE SENTENCE SOURCE for the repair surface. ██ Replaces the copy PAIR that existed only
+ * because there were two blocks (repairGateNote here + repairDockStateLine in repairEconomy.ts),
+ * keyed instead on the two facts that actually decide the sentence.
+ *
+ * A WRECK always gets a line, whatever its position — its recovery must be named on screen even
+ * when the readiness read failed (NO-SOFTLOCK). A DENT speaks only when it cannot be mended where
+ * it is, and then in the SERVER'S OWN WORDS (repairReasonMessage('not_at_port') verbatim, so a
+ * display precheck and a real reject read identically); at a port the mend itself renders instead,
+ * and on an unknown position no claim either way is honest.
+ */
+export function repairPositionLine(wreck: boolean, state: RepairDockState): string | null {
+  if (wreck) {
+    return state === 'away'
+      ? 'This ship is wrecked and adrift. Ships are only repaired in port — tow it in first.'
+      : 'This ship is wrecked. Repair it to get moving again.'
+  }
+  return state === 'away' ? repairReasonMessage('not_at_port') : null
 }
 
 export const REPAIR_LABEL = 'Repair ship'

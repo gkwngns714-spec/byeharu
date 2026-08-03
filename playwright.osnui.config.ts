@@ -8,8 +8,10 @@ import { defineConfig, devices } from '@playwright/test'
 //
 // Harness entries (the root has no index.html): /dock.html — the real docked-port surface;
 // /camera.html — the real <GalaxyMap> + useWheelZoom under a real pointer; /fold.html — the real
-// <ReportsSection> (the Collapsible fold contract). Readiness polls /dock.html because ONE entry
-// is enough to prove the server is up; all are served by it.
+// <ReportsSection> (the Collapsible fold contract); /repair.html — the real <RepairPanel>, THE ONE
+// repair surface, driven across every server state (wreck / dent / adrift / dark flag / failed
+// reads). Readiness polls /dock.html because ONE entry is enough to prove the server is up; all
+// are served by it.
 export default defineConfig({
   testDir: './tests',
   testMatch: '**/*.uispec.ts',
