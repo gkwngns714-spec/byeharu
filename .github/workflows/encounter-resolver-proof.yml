@@ -23,14 +23,18 @@ name: ENCOUNTER RESOLVER — dark quad-flag resolver + byte-identical-when-off d
 
 on:
   workflow_dispatch:
+  # 0336 WIDENS THIS TRIGGER, and the widening is the point. This proof pins the VERBATIM synthetic
+  # wave lines, the verbatim reward formula and the whole 0234 aggregate arm inside the LIVE
+  # process_combat_ticks body, plus the guarantee that combat_create_group_encounter carries no E3
+  # token — and it fired only on branches that happened to name themselves in, never on `main` and
+  # never on `pull_request`. A slice that rewrites either body (0336 rewrites both) could land
+  # without this running once. A proof that fires only on the branches that remembered is not a net.
+  pull_request:
   push:
     branches:
+      - main
       - 'autopilot/**'
-      - 'slice-e3-encounter-resolver**'
-      - 'slice-e5-**'
-      - 'slice-elite-**'
-      # 0314 arms real weapon cooldowns — this harness owns the zeroed-cooldown precondition now.
-      - 'slice-runescape-**'
+      - 'slice-**'
 
 permissions:
   contents: read
