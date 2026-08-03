@@ -424,12 +424,31 @@ commit;
 
 const OUT = new URL('20260618000307_loot_secures_on_arrival.sql', MIG)
 if (process.argv.includes('--check')) {
-  const cur = readFileSync(OUT, 'utf8')
-  if (cur !== sql) {
-    console.error('0307 migration is OUT OF DATE — re-run: node scripts/gen-0307-loot-secures-on-arrival.mjs')
+  let onDisk
+  try {
+    onDisk = readFileSync(OUT, 'utf8')
+  } catch {
+    console.error('0307 CHECK FAIL: migration file is missing — it is DEPLOYED to production and must not vanish')
     process.exit(1)
   }
-  console.log('0307 migration is up to date with its source slices.')
+  // COMPARE WITH LINE ENDINGS NORMALISED. This file emits LF (line 22 already normalises the SLICES
+  // for exactly this reason), but git checks the migration out CRLF on every Windows tree, so a raw
+  // `!==` reported the untouched, deployed 0307 as OUT OF DATE with all 358 lines "differing" by one
+  // invisible byte. That is the identical false alarm gen-0305 hit on the parity gate's first run
+  // (c34ee51) and that gen-0306/gen-0308 were already written to avoid; 0307 shipped ten minutes
+  // before that lesson was learned (1d3e3e4, 2026-08-02 12:11 vs 4760fdc 12:21) and was never in the
+  // gate, so nothing ever ran its --check and the false alarm sat undiscovered. A gate that cries
+  // wolf is worse than none. Real drift — changed text on either side — still reds.
+  if (onDisk.replace(/\r\n/g, '\n') !== sql) {
+    console.error('0307 CHECK FAIL: the migration on disk is not what the slices generate.')
+    console.error('Either a source migration drifted (0208 / 0301) or the file was hand-edited.')
+    console.error('0307 IS APPLIED TO PRODUCTION — do NOT re-generate blindly. Read the diff first:')
+    console.error('  a regenerated file that differs from the deployed one makes the repo describe a')
+    console.error('  migration that never ran. Fix the cause, or pin the generator to the revision it')
+    console.error('  was generated from.')
+    process.exit(1)
+  }
+  console.log('0307 CHECK OK: migration matches the slices taken from 0208/0301.')
 } else {
   writeFileSync(OUT, sql)
   console.log(`wrote ${OUT.pathname} (${SITES.length} sites, ${sql.length} bytes)`)

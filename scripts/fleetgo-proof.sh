@@ -303,12 +303,17 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "unexpected length delta rewriting" "$MIG0306_TMP" \
     || fail "0306's rewrite does not assert the length moved by exactly the hunk delta — replace() could have touched more than the hunk"
   rm -f "$MIG0306_TMP"
-  # the migration must still be exactly what the generator's slices produce — a hand-edit here would
-  # silently drift the "old" text away from the deployed body and the rewrite would fail at deploy.
-  if command -v node >/dev/null 2>&1; then
-    node "$REPO_ROOT/scripts/gen-0306-dock-authority.mjs" --check >/dev/null 2>&1 \
-      || fail "0306 does not match the slices scripts/gen-0306-dock-authority.mjs takes from 0216 — it was hand-edited, or 0216 drifted"
-  fi
+  # "the migration must still be exactly what the generator's slices produce" is checked by the ONE
+  # generated-migration parity gate in scripts/danger-combat-proof.sh (selftest), which runs EVERY
+  # gen-*.mjs --check and hard-fails on an unregistered or missing one. A second copy of that check
+  # lived here for gen-0306 alone; it is deleted rather than extended. It was strictly weaker in
+  # three ways — it covered one generator of ten, it swallowed stderr (`>/dev/null 2>&1`, discarding
+  # the generator's own drifted-vs-hand-edited diagnostic, the only actionable line), and it silently
+  # skipped when node was absent. It was also narrower in CI: this suite fires on `osn3-**`/`slice-**`
+  # pushes only, while danger-combat-proof fires on `pull_request` and on push to main, so it gates
+  # every PR and every merge. Two mechanisms answering one question is the duplication the no-spaghetti
+  # law forbids, and the weaker one is what a reader would have trusted. 0307's own parity is covered
+  # there too; what belongs HERE is 0307's RUNTIME proof, asserted just below.
   # the runtime block must exist and must not be able to pass vacuously.
   grep -q "FLEETGO_PASS_EMPTY_FLEET" "$SQL" \
     || fail "no runtime proof that an emptied fleet is retired and the owner's deadlock is gone"
