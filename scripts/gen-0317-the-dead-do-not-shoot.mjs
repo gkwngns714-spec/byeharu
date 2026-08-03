@@ -73,8 +73,14 @@ const load = (f) => readFileSync(MIG(f), 'utf8').replace(/\r\n/g, '\n').split('\
   // the targeting block, and 0337 neither reads nor writes the liveness guard. It also adds no
   // `alive_count > 0` site to the loop (its own use is inside combat_fleet_move_speed, a separate
   // function), so assert (d)'s site count here is unaffected.
+  // 0338 JOINS THE EXEMPTION — by name, never by widening the window. It rewrites exactly TWO lines:
+  // the PHASE argument handed to combat_formation_point at each of the two wave-spawn arms, so an
+  // enemy wave arrives on the bearing to the zone's own settlement instead of on a bare constant.
+  // Those two call sites did not exist before 0336 CREATED them, so no slice this file takes from a
+  // pre-0336 head can overlap them: the disjointness is structural, not a judgement. 0338 moves no
+  // radius, no knob, no guard and no branch. Naming it here keeps this gate live for 0339 and after.
   const KNOWN_LATER_REWRITERS = new Set(['20260618000310', '20260618000314', '20260618000332', '20260618000336',
-                                         '20260618000337']);
+                                         '20260618000337', '20260618000338']);
   const reHunkRow = /\(\s*\d+\s*,\s*'process_combat_ticks'\s*,/;
   const newerSurgery = files.filter((f) => version(f) > '20260618000299'
     && !KNOWN_LATER_REWRITERS.has(version(f))

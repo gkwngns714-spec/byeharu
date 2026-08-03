@@ -50,7 +50,7 @@ SQL="$REPO_ROOT/scripts/danger-combat-proof.sql"
 # slices. Same law as every line above, for the seventh hand-resolved union of this one string: a
 # resolution that takes either side WHOLE drops the other's markers, the local run then never checks
 # for those notices, and the suite prints OVERALL_PASS with entire runtime blocks unverified.
-MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR"
+MARKERS="DZCOMBAT_PASS_ORDER DZCOMBAT_PASS_NOTYET DZCOMBAT_PASS_FIRE DZCOMBAT_PASS_ENGAGEMENT DZCOMBAT_PASS_ONCE DZCOMBAT_PASS_EVASION DZCOMBAT_PASS_SPATIAL DZCOMBAT_PASS_PIRATEFIRE DZCOMBAT_PASS_MANIFESTHELD DZCOMBAT_PASS_ROSTERAUTH DZCOMBAT_PASS_RIGFALLBACK DZCOMBAT_PASS_FITTEDEXACT DZCOMBAT_PASS_AUTOEXIT DZCOMBAT_PASS_REPOSITION DZCOMBAT_PASS_REPOHOLD DZCOMBAT_PASS_REPOOVERLAP DZCOMBAT_PASS_REPOOUTSIDE DZCOMBAT_PASS_REPOMODE DZCOMBAT_PASS_NOLIVE DZCOMBAT_PASS_CLOSURE DZCOMBAT_PASS_RSFEEL DZCOMBAT_PASS_LEAD DZCOMBAT_PASS_DEADFIRE DZCOMBAT_PASS_ONEPOWER DZCOMBAT_PASS_WRECKHOME DZCOMBAT_PASS_DOCKWRECK DZCOMBAT_PASS_OWNWORLD DZCOMBAT_PASS_RANGEINVARIANT DZCOMBAT_PASS_VOLLEY DZCOMBAT_PASS_WAVERING DZCOMBAT_PASS_RETREATNOSPAWN DZCOMBAT_PASS_NOWEDGE DZCOMBAT_PASS_ORDERSTABLE DZCOMBAT_PASS_SHORTGUN DZCOMBAT_PASS_RETREATCLEAR DZCOMBAT_PASS_NODIRECTION"
 PASS_LINE="DANGER-ZONE COMBAT PROOF PASSED"
 
 if [ "$MODE" = "selftest" ]; then
@@ -453,7 +453,7 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "the enemy CLOSE arm never ran"                         "$SQL" || fail "harness lacks the pirate-moved-off-anchor assert"
   grep -q "they are not closing"                                  "$SQL" || fail "harness lacks the gap-shrinks assert"
   grep -q "something fired across a gap larger than its own range" "$SQL" || fail "harness lacks the no-fire-beyond-range tick-1 assert"
-  grep -q "the escort NEVER fired within 12 ticks"                "$SQL" || fail "harness lacks the closure-completes assert (approach must reach firing range)"
+  grep -q "the escort NEVER fired within the derived observation window" "$SQL" || fail "harness lacks the closure-completes assert (approach must reach firing range; 0338 derives the window from the worst bearing the geometry admits, so a legitimate long approach is not reported as a stall)"
   grep -q "the fire gate is not honouring the cut range"          "$SQL" || fail "harness lacks the first-shot-within-own-range assert"
   grep -q "no silent closing tick before it"                      "$SQL" || fail "harness lacks the closure non-vacuity guard (at least one silent approach tick)"
   grep -q "the out-range order inverted"                          "$SQL" || fail "harness lacks the longer-range-fires-first assert"
@@ -517,15 +517,19 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "a flagless fleet still opens a fight its lead cannot join" "$SQL" \
     || fail "harness lacks the LEAD is-CLOSING-off-the-anchor assert (the direct 'it can join' evidence, and strictly more than the old form, which only proved the lead fired BECAUSE it stood at distance 0)"
   grep -q "the fleet never fired within 12 ticks of the spawn"    "$SQL" || fail "harness lacks the LEAD bounded joining loop (a fleet that cannot join must fail loudly, not hang)"
+  grep -q "at the WORST bearing the seeded world needs"           "$SQL" || fail "harness lacks the CLOSURE worst-bearing anti-sprawl bound (0338: the approach depends on the bearing to the city as well as the knobs, so the teeth must be a knob-only worst case, not one arbitrary chord)"
+  grep -q "at the WORST bearing the fleet needs"                  "$SQL" || fail "harness lacks the LEAD worst-bearing anti-sprawl bound (0338, same reason)"
+  grep -q "did not come from the hull this block measured as nearest" "$SQL" || fail "harness lacks the LEAD measured-opener assert (0338: which hull is nearest depends on where the city lies, so naming 'an escort' would assert one arrangement of the world)"
+  grep -q "either the election stopped anchoring exactly one hull" "$SQL" || fail "harness lacks the LEAD lead-stands-at-the-spawn-radius pin (the bearing-independent property that replaced the lead-is-furthest ordering)"
   grep -q "the fleet joined its fight on tick % but the engine"   "$SQL" || fail "harness lacks the LEAD predicted-equals-observed joining tick (growing silence must fail here, not pass as 'fires eventually')"
   grep -q "the fleet needs % ticks to join its own fight"         "$SQL" || fail "harness lacks the LEAD joining-tick upper bound (the sprawl must fail here, not in a playtest)"
   grep -q "there would be nothing to close and the silent opening tick above would be vacuous" "$SQL" \
     || fail "harness lacks the LEAD joining-tick lower bound (a hull already in range at spawn makes the silent opening tick vacuous)"
-  grep -q "so the lead is not the screened hull any more"         "$SQL" \
-    || fail "harness lacks the LEAD attribution, repointed: the lead must be STRICTLY FURTHER from the wave than every escort (that is the screen working, and it is the inverse of the dead 'only the lead can reach' premise)"
+  grep -q "or the wave is no longer going out at the radius 0336 established" "$SQL" \
+    || fail "harness lacks the LEAD attribution, repointed AGAIN by 0338: the lead-is-strictly-furthest ordering held only while the wave stood at a fixed bearing. It is replaced by the bearing-INDEPENDENT property — the lead stands EXACTLY the spawn radius from the wave — which pins the anchor election and 0336's radius in one line, while the screen itself is proven where it lives, in aggro"
   grep -q "a hull could open the fight from its spawn slot"       "$SQL" || fail "harness lacks the LEAD silent-spawn-tick premise (measured on the escort-to-wave gap, which is the gap that decides who can fire — never the ring)"
   grep -q "salvo(s) on the spawn tick"                            "$SQL" || fail "harness lacks the LEAD silent-opening-tick assert (the property only 0336 makes statable)"
-  grep -q "an opener that is not an escort"                       "$SQL" || fail "harness lacks the LEAD opener-is-the-nearest-hull assert"
+  grep -q "an opener that is not the near hull"                   "$SQL" || fail "harness lacks the LEAD opener-is-the-nearest-hull assert (0338: the near hull is MEASURED, because the bearing to the city decides whether it is an escort or the lead)"
   grep -q "the measured extent would not be this formation"       "$SQL" || fail "harness lacks the LEAD positioned-living-player non-vacuity guard"
   grep -q "the derivation overrode a real command ship"           "$SQL" || fail "harness lacks the flagged-fleet control assert (the fallback is never an override)"
   grep -qF "flagged ship(s) were provisioned into the flagless fleet" "$SQL" || fail "harness lacks the no-command-ship precondition assert (owned, never inherited)"
@@ -687,6 +691,18 @@ if [ "$MODE" = "selftest" ]; then
   grep -q "sit on a slot of combat_formation_point(anchor"        "$SQL" || fail "harness lacks the WAVERING formation-leaf assert (the radius is MEASURED and every unit must be reproduced by the leaf at half-slot phase on a slot no other unit used — so a later change to the spawn radius cannot make this block wrong)"
   grep -q "a ring cannot be told apart from a point or a line"    "$SQL" || fail "harness lacks the WAVERING wave-size vacuity guard"
   grep -q "an unpositioned wave cannot prove it arrived anywhere" "$SQL" || fail "harness lacks the WAVERING NULL-coordinate pin (the 0313 law)"
+  # WAVERING, 0338 half — the wave COMES OUT OF THE CITY. These four are what stop the origin half of
+  # 0338 from being silently deleted: without them the block still proves 0336's ring and prints its
+  # marker while the wave's bearing has gone back to meaning nothing.
+  grep -q "crosses the wave radius"                               "$SQL" || fail "harness lacks the WAVERING came-out-of-the-city assert (0338: exactly one pirate must stand where the ray from the anchor toward the zone's settlement crosses the measured radius)"
+  grep -q "off the bearing to the city"                           "$SQL" || fail "harness lacks the WAVERING arc-not-encirclement assert (0338: a whole-slot fan would let a six-pirate wave wrap most of the circle and stand behind the fleet)"
+  grep -q "the encounter carries no linked site"                  "$SQL" || fail "harness lacks the WAVERING site-really-linked pin (with a NULL site the leaf correctly falls back to the plain ring and the origin assert would pass while proving nothing)"
+  grep -q "the fight is anchored on its own site"                 "$SQL" || fail "harness lacks the WAVERING anchor-is-not-the-site pin (anchor = site is the no-direction case, in which the origin assert is vacuous)"
+  # NODIRECTION (0338) — a fight with no city to come FROM falls back to 0336's ring, not to a pile.
+  grep -q "there IS a direction to arrive from"                   "$SQL" || fail "harness lacks the NODIRECTION anchor-equals-site precondition (if a site fight ever stops anchoring on its site, this block measures the wrong thing and must say so)"
+  grep -q "falling back must not fall back to the pile"           "$SQL" || fail "harness lacks the NODIRECTION distinct-positions assert (the fallback must be 0336, and 0336's whole point is that a wave is n points)"
+  grep -q "sit on 0336''s plain ring"                             "$SQL" || fail "harness lacks the NODIRECTION fallback-is-the-predecessor assert (value for value, at 0336's own constant phase — not some third layout)"
+  grep -q "it must answer 0336''s own constant"                   "$SQL" || fail "harness lacks the NODIRECTION arrival-leaf assert (the leaf itself must answer the constant at the arguments the tick composes it with)"
   # RETREATNOSPAWN — pressing Retreat does not summon a bigger wave.
   grep -q "wave_spawned event(s) fired on the retreat tick"       "$SQL" || fail "harness lacks the RETREATNOSPAWN no-spawn assert (the pre-0336 red: four production encounters died to the wave their own Retreat summoned)"
   grep -q "the transition window is still OPEN"                   "$SQL" || fail "harness lacks the RETREATNOSPAWN transition-window vacuity guard (with the window open the head takes the next_wave_incoming pause and this block goes green on the defect)"

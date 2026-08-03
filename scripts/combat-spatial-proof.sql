@@ -40,7 +40,7 @@
 --   • s_bare — an escort with NO fitted weapon, which since 0262 carries the SYNTHESIZED fallback
 --              weapon, whose range this harness OWNS.
 -- The two escorts take ring slots 0 and 1 (angles 0 and pi/4) in main_ship_id order — which of them
--- takes which slot is a uuid coin-flip, and it CANNOT matter: the wave stands at phase 0.5, i.e.
+-- takes which slot is a uuid coin-flip, and it CANNOT matter: the wave stands on the bearing to the zone's own city (0338), i.e.
 -- half a slot between them, so slots 0 and 1 are mirror images about it and BOTH escorts are the
 -- same chord away from the wave. That symmetry is why this scenario uses exactly two escorts.
 --
@@ -88,7 +88,7 @@
 --                                  range).
 --   COMBATSPATIAL_PASS_ENEMY     — 0336's spawn geometry, pinned EXACTLY: one synthetic pirate,
 --                                  side='enemy', standing on combat_formation_point(anchor,
---                                  ring + its OWN weapon range + 1, slot 0, phase 0.5) — the point
+--                                  ring + its OWN weapon range + 1, slot 0, the arrival phase) — the point
 --                                  predicted from the knobs BEFORE the tick and compared to the row
 --                                  AFTER it. The old form asserted the location centre; after 0336
 --                                  that is simply false, and the "within one move_speed of the
@@ -491,6 +491,7 @@ declare
   s_bare uuid := (select v from cspatial where k='s_bare');
   v_anchor_x double precision; v_anchor_y double precision;
   v_ring double precision; v_diff double precision; v_er_pred double precision;
+  v_site_x double precision; v_site_y double precision;  -- (0338) the zone's own city
   v_px double precision; v_py double precision;      -- the PREDICTED wave slot-0 point
   v_ex double precision; v_ey double precision;      -- where the wave actually stands
   u_cmd uuid; u_arm uuid; u_bare uuid; u_en uuid;
@@ -505,24 +506,30 @@ declare
   v_exp_fire int;
   v_arm_cmd text; v_arm_arm text; v_arm_bare text;
 begin
-  select coalesce(e.engagement_x, l.x), coalesce(e.engagement_y, l.y), l.base_difficulty
-    into v_anchor_x, v_anchor_y, v_diff
+  select coalesce(e.engagement_x, l.x), coalesce(e.engagement_y, l.y), l.base_difficulty, l.x, l.y
+    into v_anchor_x, v_anchor_y, v_diff, v_site_x, v_site_y
     from public.combat_encounters e join public.locations l on l.id = e.location_id
    where e.id = v_enc;
   v_ring := public.cfg_num('spatial_formation_ring_radius');
 
   -- ── 0336's spawn geometry, PREDICTED BEFORE THE TICK from the knobs the tick itself reads.
   --    The wave's own range is (base + difficulty * per_difficulty), exactly the tick's expression,
-  --    and its slot-0 point is combat_formation_point(anchor, ring + that range + 1, 0, 0.5) — the
-  --    very leaf the tick composes. Predicting first and comparing after is what makes PASS_ENEMY a
-  --    pin on 0336 rather than a restatement of whatever the row happens to hold.
+  --    and its slot-0 point is combat_formation_point(anchor, ring + that range + 1, 0, the arrival
+  --    phase) — the very leaf the tick composes. Predicting first and comparing after is what makes
+  --    PASS_ENEMY a pin on 0336 rather than a restatement of whatever the row happens to hold.
+  --    0338 REPOINTED: the phase is no longer a bare constant. It comes from combat_wave_arrival_phase
+  --    — the one authority for which way a wave arrives from — composed here with the SAME arguments
+  --    the tick composes it with: this encounter's anchor and this encounter's own site. The RADIUS is
+  --    untouched, so every distance predicted below is unchanged in magnitude; only the direction the
+  --    wave stands in moves, which is exactly 0338's scope.
   v_er_pred := coalesce(public.cfg_num('enemy_synthetic_range_base'), 120)
                + v_diff * coalesce(public.cfg_num('enemy_synthetic_range_per_difficulty'), 5);
   if v_anchor_x is null or v_anchor_y is null or v_ring is null or v_er_pred is null then
     raise exception 'TICK1 FAIL: anchor (%,%), ring % or predicted enemy range % is NULL — the spawn-point pin would be vacuous', v_anchor_x, v_anchor_y, v_ring, v_er_pred;
   end if;
   select fp.x, fp.y into v_px, v_py
-    from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring + v_er_pred + 1, 0, 0.5) fp;
+    from public.combat_formation_point(v_anchor_x, v_anchor_y, v_ring + v_er_pred + 1, 0,
+           public.combat_wave_arrival_phase(v_anchor_x, v_anchor_y, v_site_x, v_site_y, 0)) fp;
 
   select id, pos_x, pos_y into u_cmd,  v_cmd_x0,  v_cmd_y0  from public.combat_units where encounter_id = v_enc and main_ship_id = s_cmd;
   select id, pos_x, pos_y into u_arm,  v_arm_x0,  v_arm_y0  from public.combat_units where encounter_id = v_enc and main_ship_id = s_arm;
@@ -577,7 +584,7 @@ begin
   -- is now simply false; the "within one move_speed of the centre" bound it had been softened to
   -- would, after 0336, pass for free on a wave that spawned anywhere at all. With the wave's speed
   -- owned at 0 its post-tick position IS its spawn position, so this pins the exact point instead —
-  -- radius = ring + ITS OWN weapon range + 1, slot 0, phase 0.5 — and cross-checks that the range in
+  -- radius = ring + ITS OWN weapon range + 1, slot 0, the arrival phase — and cross-checks that the range in
   -- its weapons_json is the one the radius was predicted from.
   select count(*) into n from public.combat_units
     where encounter_id = v_enc and side = 'enemy' and unit_type_id = 'pirate_synthetic';
@@ -593,9 +600,9 @@ begin
     raise exception 'TICK1 FAIL ENEMY: the wave carries range % but the knobs predict % — the radius pinned below was derived from the wrong reach', v_r_en, v_er_pred;
   end if;
   if abs(v_ex - v_px) > 1e-9 or abs(v_ey - v_py) > 1e-9 then
-    raise exception 'TICK1 FAIL ENEMY: the wave stands at %,% but combat_formation_point(anchor, ring % + its own range % + 1, slot 0, phase 0.5) is %,% — 0336''s wave-spawn geometry is not what landed', v_ex, v_ey, v_ring, v_r_en, v_px, v_py;
+    raise exception 'TICK1 FAIL ENEMY: the wave stands at %,% but combat_formation_point(anchor, ring % + its own range % + 1, slot 0, the arrival phase) is %,% — 0336''s wave-spawn geometry is not what landed', v_ex, v_ey, v_ring, v_r_en, v_px, v_py;
   end if;
-  raise notice 'COMBATSPATIAL_PASS_ENEMY ok: 1 synthetic pirate (side=enemy, unit_type_id=pirate_synthetic) standing exactly on combat_formation_point(anchor, ring % + its own range % + 1, slot 0, phase 0.5) = %,%', v_ring, v_r_en, v_ex, v_ey;
+  raise notice 'COMBATSPATIAL_PASS_ENEMY ok: 1 synthetic pirate (side=enemy, unit_type_id=pirate_synthetic) standing exactly on combat_formation_point(anchor, ring % + its own range % + 1, slot 0, the 0338 arrival phase toward its own city) = %,%', v_ring, v_r_en, v_ex, v_ey;
 
   -- ── THE DERIVED ARMS, one per witness, taken from the frozen PRE-MOVE snapshot. Each is the
   --    non-vacuity guard for the movement asserted immediately after it. ─────────────────────────
