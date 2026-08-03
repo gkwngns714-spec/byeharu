@@ -5,6 +5,8 @@ import { ActiveCombatPanel } from '../combat/ActiveCombatPanel'
 import { ReportsSection } from '../combat/ReportsSection'
 import { RankingPanel } from '../ranking/RankingPanel'
 import { useAuthStore } from '../../store/authStore'
+import { HOW_A_FIGHT_STARTS } from './howAFightStarts'
+import { NearMissSection } from '../combat/NearMissSection'
 import { EmptyState, Icon, Notice, PageHeader, Screen, Skeleton, screenRailClass, screenSplitClass } from '../../components/ui'
 
 // MISSION-TAB (owner order 2026-08-03: "make another tab of account - showing info as a whole,
@@ -90,9 +92,23 @@ export function MissionScreen() {
                 data-testid="mission-quiet"
                 icon={<Icon name="mission" size={28} />}
                 title="Nothing under way"
-                body="Orders are given from the Map — send a fleet to a port to trade, or into a pirate zone to hunt. Battles you start appear here live."
+                // HOW-A-FIGHT-STARTS: this used to read "…or into a pirate zone to hunt", which is
+                // the instruction the owner followed for four straight trips that could never
+                // start a fight — a zone is not a destination and the mover refuses combat
+                // destinations outright. The words now come from the ONE authority
+                // (howAFightStarts.ts) so this card can never drift from the map's own copy again.
+                body={`Send a fleet to a port to trade. ${HOW_A_FIGHT_STARTS} Battles you start appear here live.`}
               />
             )}
+            {/* WHAT HAPPENED #0 — near misses. A crossing that rolled an ambush and MISSED used to
+                leave no trace anywhere in the game, which with the probabilistic ambush the owner
+                chose to keep reads as "the combat system is broken". Self-hides when there are
+                none; every word comes from the same model the map alert uses. */}
+            <NearMissSection
+              misses={game.interceptMisses}
+              locations={game.locations}
+              activeMovementIds={game.movements.map((m) => m.id)}
+            />
             {/* The ONE reports surface — always lit, so the main rail is never empty (even
                 "No battles fought yet" renders the card). */}
             <ReportsSection reports={combat.reports} locations={game.locations} unitTypes={game.unitTypes} />

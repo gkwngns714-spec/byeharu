@@ -20,10 +20,20 @@ import type { DangerZoneLite } from './pirateApi'
 import type { MapLocation } from './mapTypes'
 import { polygonArea } from '../worldeditor/zoneGeometryMath'
 import { pointInRing } from './routeGeometry'
+import { teamDestinationKind } from '../command/teamDestination'
+import { A_ZONE_IS_NOT_A_HUNT, HOW_A_FIGHT_STARTS, huntSiteActionLabel } from '../command/howAFightStarts'
 
 export interface ZoneInfoRow {
   label: string
   value: string
+}
+
+/** The site inside this zone that a fleet can actually be sent to fight at. */
+export interface ZoneHuntSite {
+  locationId: string
+  name: string
+  /** The signpost's words, from the ONE hunt-copy authority. */
+  label: string
 }
 
 export interface ZoneInfo {
@@ -32,6 +42,19 @@ export interface ZoneInfo {
   title: string
   /** One sentence: what happens to you here. This is the whole reason the panel exists. */
   warning: string
+  /**
+   * THE SIGNPOST (owner, 2026-08-03: "i went to snare, zone, no fighting happens").
+   *
+   * Non-null ⇔ this zone is wrapped around a location the player can legally HUNT at, so the panel
+   * can offer the one step that turns "what is this place" into a fight. Null whenever that cannot
+   * be PROVEN — no attached location, a location this client has not loaded, or a location that is
+   * not a hunt destination — because an offer that leads nowhere is worse than no offer.
+   *
+   * It carries no action of its own: the panel hands the location id back to the map, which selects
+   * it exactly as tapping its marker would, and the EXISTING FleetCommandPanel hunt section renders.
+   * One hunt control, reached from one more place — never a second path to send_ship_group_hunt.
+   */
+  huntSite: ZoneHuntSite | null
   rows: ZoneInfoRow[]
 }
 
@@ -39,12 +62,18 @@ export interface ZoneInfo {
 const UNNAMED = 'Unnamed danger zone'
 
 /**
- * WHY THE WARNING IS NOT A PERCENTAGE: 0236 set the intercept risk to [0.98, 1.0] regardless of
- * fleet strength, by explicit owner directive — but that is live config, and printing a number the
- * client cannot read would be inventing precision. "Almost always" is what the design guarantees
- * and what a player can act on.
+ * WHY THE WARNING IS NOT A PERCENTAGE: the risk is computed per crossing from exposure and fleet
+ * strength, and the client cannot read it — printing a number would be inventing precision.
+ *
+ * WHY IT NO LONGER SAYS "ALMOST ALWAYS" (2026-08-03): that wording was written against 0236's
+ * [0.98, 1.0] pin, which production has long since left — `pirate_intercept_base_risk` is 1 with
+ * `min_risk` 0.02, `exposure_floor` 0.15 and `stat_reference` 120, so a strong fleet on a shallow
+ * crossing rolls low. The owner's last two crossings of the Snare rolled risk 0.545 and 0.240 and
+ * BOTH missed. Told "almost always attacked" and then attacked never, a player concludes the game
+ * is broken — which is exactly what happened. The sentence now states the mechanic honestly and,
+ * paired with the second one, says plainly that this is not how you pick a fight.
  */
-const WARNING = 'Pirates hunt here. A fleet crossing this zone is almost always attacked.'
+const WARNING = `Pirates raid this zone. ${A_ZONE_IS_NOT_A_HUNT}`
 
 /** Rounded to whole world units — a player is judging "can I go around it?", not surveying. */
 function describeSize(ring: readonly (readonly [number, number])[] | null): string | null {
@@ -84,10 +113,23 @@ export function buildZoneInfo(
   const size = describeSize(zone.ring)
   if (size) rows.push({ label: 'Size', value: size })
 
+  // THE SIGNPOST. `teamDestinationKind` is the SAME classifier the map uses to decide whether
+  // selecting a marker opens the hunt section — asked here rather than re-tested, so the panel can
+  // never offer a hunt the command surface would then refuse to render. 'expedition' (a port) and
+  // null (not a legal destination) both yield no offer: only a real hunt site earns one.
+  const huntSite: ZoneHuntSite | null =
+    near && teamDestinationKind(near) === 'hunt'
+      ? { locationId: near.id, name: near.name, label: huntSiteActionLabel(near.name) }
+      : null
+  // Say HOW, right where the confusion happens, but only when there is somewhere to say it about —
+  // a loose zone with no site would be handed an instruction it cannot act on.
+  const warning = huntSite ? `${WARNING} ${HOW_A_FIGHT_STARTS}` : WARNING
+
   return {
     id: zone.id,
     title: zone.name?.trim() ? zone.name.trim() : UNNAMED,
-    warning: WARNING,
+    warning,
+    huntSite,
     rows,
   }
 }
