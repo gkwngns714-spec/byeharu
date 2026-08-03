@@ -322,9 +322,18 @@ const H5_NEW = `${H5_OLD}
         v_rp_ty    double precision;
         v_rp_done  boolean;
       begin
+        -- THE SAME TWO CONDITIONS THE ORDER ARM ADMITTED ON, ASKED AGAIN AT THE MOMENT OF MOVING.
+        -- 'active' is the stale-destination fence described above. The join on location_mode='space'
+        -- is the other half: the order arm refuses a fight the fleet is 'present' at its site for,
+        -- because fleet_set_in_space nulls current_location_id and its interaction with a live
+        -- 'present' location_presence is UNVERIFIED — and this step composes that same primitive, so
+        -- it must hold the same condition. Checking it only at order time would leave a fleet that
+        -- became 'present' between the order and a later tick being quietly un-docked by the mover.
+        -- Fail closed: no row, no move, the order simply stands.
         select ce.reposition_x, ce.reposition_y, ce.engagement_x, ce.engagement_y
           into v_rp_x, v_rp_y, v_rp_ax, v_rp_ay
           from combat_encounters ce
+          join fleets f on f.id = ce.fleet_id and f.location_mode = 'space'
          where ce.id = e.id and ce.status = 'active';
         if v_rp_x is not null and v_rp_ax is not null then
           v_rp_speed := public.combat_fleet_move_speed(e.id);
@@ -795,6 +804,10 @@ begin
    where n.nspname = 'public' and p.proname = 'process_combat_ticks';
   if position('where ce.id = e.id and ce.status = ' || chr(39) || 'active' || chr(39) in v_code) = 0 then
     raise exception '0337 ASSERT (f) FAIL: the reposition step does not re-read the encounter status — a retreat armed earlier in THIS tick (0310''s auto-exit) would move the fleet anyway, which is the stale-destination defect this class always produces';
+  end if;
+  -- and the OTHER admission condition is asked at the moment of moving too, not only at order time
+  if position('join fleets f on f.id = ce.fleet_id and f.location_mode = ' || chr(39) || 'space' || chr(39) in v_code) = 0 then
+    raise exception '0337 ASSERT (f) FAIL: the step does not re-check that the fleet is in open space — it composes fleet_set_in_space, which nulls current_location_id, and a fleet that became ''present'' after the order would be silently un-docked by the mover';
   end if;
   -- and it is confined, so a movement defect can never void the fight (0310's lesson)
   if position('reposition step skipped for encounter' in regexp_replace(v_code, chr(10), ' ', 'g')) = 0 then
