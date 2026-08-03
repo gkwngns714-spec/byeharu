@@ -588,7 +588,7 @@ begin
   -- next time a gun range or the per-difficulty coefficient moves. So the range is SOLVED FOR here,
   -- from this encounter's own rows and the same expressions the spawn arm evaluates, and then
   -- verified against the spawned rows below. Every input is derived, none is typed in.
-  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y), l.x, l.y into v_ax, v_ay, v_sx, v_sy
+  select coalesce(ce.engagement_x, l.x), coalesce(ce.engagement_y, l.y) into v_ax, v_ay
     from public.combat_encounters ce join public.locations l on l.id = ce.location_id
    where ce.id = v_enc;
   if v_ax is null or v_ay is null then

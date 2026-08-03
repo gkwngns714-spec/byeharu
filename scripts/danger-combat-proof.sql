@@ -2881,7 +2881,28 @@ begin
   -- vacuity for the silence pin below: the volley tick really was a full pirate volley.
   select count(*) into n from public.combat_events
    where encounter_id = v_enc and tick_number = v_t1 and event_type = 'missile_salvo' and source = 'pirate';
-  if n < 3 then raise exception 'RSFEEL FAIL: only % pirate salvo(s) on the volley tick % — no volley to measure', n, v_t1; end if;
+  if n < 3 then
+    -- (0338) THE FAILURE CARRIES THE GEOMETRY. This block's premise is that the hull HOLDS THE
+    -- ANCHOR and the wave stands one ring out, so every pirate is the SAME distance away and the
+    -- volley lands on one tick. If that stops being true the count alone says nothing about why, and
+    -- the wave's layout is exactly what 0338 changed. Print it.
+    raise exception 'RSFEEL FAIL: only % pirate salvo(s) on the volley tick % — no volley to measure. Wave layout, anchor (%,%), hull at (%,%): %',
+      n, v_t1,
+      (select engagement_x from public.combat_encounters where id = v_enc),
+      (select engagement_y from public.combat_encounters where id = v_enc),
+      (select pos_x from public.combat_units where encounter_id = v_enc and side = 'player' limit 1),
+      (select pos_y from public.combat_units where encounter_id = v_enc and side = 'player' limit 1),
+      (select string_agg(format('[%s at (%s,%s) d_hull=%s alive=%s range=%s speed=%s]',
+                                left(e.id::text, 8), round(e.pos_x::numeric, 3), round(e.pos_y::numeric, 3),
+                                round(public.osn_distance(e.pos_x, e.pos_y, p.pos_x, p.pos_y)::numeric, 3),
+                                e.alive_count,
+                                (select max((w->>'range')::double precision) from jsonb_array_elements(e.weapons_json) w),
+                                e.move_speed), ' ' order by e.id)
+         from public.combat_units e
+         cross join lateral (select pos_x, pos_y from public.combat_units
+                              where encounter_id = v_enc and side = 'player' limit 1) p
+        where e.encounter_id = v_enc and e.side = 'enemy');
+  end if;
 
   -- (3) THE VISIBLE HIT: one hull_damage per landed hit, WITH its amount, under EVENT logging
   --     (combat_debug_logging is pinned false in setup — the promotion is the thing under test).
